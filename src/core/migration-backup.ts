@@ -329,7 +329,7 @@ function activeRestoreLocks(): string[] {
   const lockPaths = [getLockfileLockPath(), getIndexWriterLockPath()];
   const configLock = path.join(path.dirname(getConfigPath()), "config.json.lck");
   const dataDir = getDataDir();
-  for (const name of ["consolidate.lock", "reflect-distill.lock", "triage.lock"]) {
+  for (const name of ["improve.lock", "consolidate.lock", "reflect-distill.lock", "triage.lock"]) {
     lockPaths.push(path.join(dataDir, name));
   }
   const stashDirs = new Set<string>();
@@ -343,14 +343,52 @@ function activeRestoreLocks(): string[] {
     }
   }
   for (const stashDir of stashDirs) {
-    for (const name of ["consolidate.lock", "reflect-distill.lock", "triage.lock"]) {
+    for (const name of ["improve.lock", "consolidate.lock", "reflect-distill.lock", "triage.lock"]) {
       lockPaths.push(path.join(stashDir, ".akm", name));
+    }
+  }
+  for (const baseDir of [dataDir, ...[...stashDirs].map((stashDir) => path.join(stashDir, ".akm"))]) {
+    const extractLockDir = path.join(baseDir, "extract-locks");
+    try {
+      for (const entry of fs.readdirSync(extractLockDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith(".lock")) lockPaths.push(path.join(extractLockDir, entry.name));
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
   return [configLock, ...lockPaths].filter((lockPath) => {
     const probe = probeLock(lockPath);
-    return probe.state === "held" && probe.holderPid !== process.pid;
+    return probe.state === "held" && (lockPath !== configLock || probe.holderPid !== process.pid);
   });
+}
+
+function activeWorkflowLeases(): string[] {
+  const workflowPath = getWorkflowDbPath();
+  if (!fs.existsSync(workflowPath)) return [];
+  const db = openDatabase(workflowPath, { readonly: true });
+  try {
+    const runsTable = db
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'workflow_runs'")
+      .get();
+    if (!runsTable) return [];
+    const columns = new Set(
+      (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (!columns.has("engine_lease_holder") || !columns.has("engine_lease_until")) return [];
+    const now = new Date().toISOString();
+    return (
+      db
+        .prepare(
+          `SELECT id, engine_lease_holder AS holder, engine_lease_until AS expires
+           FROM workflow_runs
+           WHERE engine_lease_holder IS NOT NULL AND engine_lease_until IS NOT NULL AND engine_lease_until >= ?`,
+        )
+        .all(now) as Array<{ id: string; holder: string; expires: string }>
+    ).map((lease) => `${workflowPath}#run=${lease.id},holder=${lease.holder},expires=${lease.expires}`);
+  } finally {
+    db.close();
+  }
 }
 
 function restoreArtifact(source: string, destination: string): void {
@@ -366,10 +404,10 @@ export function restoreMigrationBackup(confirm: boolean): MigrationBackupResult 
   }
   return withConfigLock(() =>
     withMigrationBackupLock(() => {
-      const locks = activeRestoreLocks();
-      if (locks.length > 0) {
+      const blockers = [...activeRestoreLocks(), ...activeWorkflowLeases()];
+      if (blockers.length > 0) {
         throw new ConfigError(
-          `Refusing restore while AKM locks are active: ${locks.join(", ")}.`,
+          `Refusing restore while AKM locks or workflow leases are active: ${blockers.join(", ")}.`,
           "INVALID_CONFIG_FILE",
         );
       }

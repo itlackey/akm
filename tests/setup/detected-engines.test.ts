@@ -50,10 +50,24 @@ describe("setup detected engine identity", () => {
     expect(result.config.defaults?.engine).toBe("other");
   });
 
-  test("uses stable numeric collision suffixes and finds the suffix on rerun", () => {
+  test("rejects a preferred name occupied by the conflicting engine kind", () => {
     const config: AkmConfig = {
       ...base(),
       engines: { local: { kind: "agent", platform: "claude" } },
+    };
+    expect(() =>
+      upsertDetectedLlmEngine(config, {
+        provider: "local",
+        endpoint: "http://localhost:9000/v1",
+        model: "m",
+      }),
+    ).toThrow(/conflicts with configured agent engine/);
+  });
+
+  test("uses stable numeric suffixes for same-kind fingerprints and finds the suffix on rerun", () => {
+    const config: AkmConfig = {
+      ...base(),
+      engines: { local: { kind: "llm", endpoint: "http://localhost:8000/v1", model: "other" } },
     };
     const first = upsertDetectedLlmEngine(config, {
       provider: "local",
@@ -68,6 +82,21 @@ describe("setup detected engine identity", () => {
     });
     expect(second).toMatchObject({ name: "local-2", reused: true });
     expect(second.config.engines?.["local-2"]).toEqual(first.config.engines?.["local-2"]);
+  });
+
+  test("chooses the same fingerprint match regardless of config insertion order", () => {
+    const candidate = { provider: "local", endpoint: "http://localhost:9000/v1", model: "detected" };
+    const first = upsertDetectedLlmEngine(
+      {
+        ...base(),
+        engines: {
+          zed: { kind: "llm", endpoint: candidate.endpoint, model: "z" },
+          alpha: { kind: "llm", endpoint: candidate.endpoint, model: "a" },
+        },
+      },
+      candidate,
+    );
+    expect(first).toMatchObject({ name: "alpha", reused: true });
   });
 
   test("agent reruns reuse canonical platform and do not replace another explicit default", () => {

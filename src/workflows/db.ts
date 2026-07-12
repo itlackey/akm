@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ensureMigrationBackup } from "../core/migration-backup";
+import { ensureMigrationBackup, getMigrationBackupDir } from "../core/migration-backup";
 import { getWorkflowDbPath } from "../core/paths";
 import { type Database, openDatabase } from "../storage/database";
 import { type Migration, runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
@@ -47,6 +47,10 @@ import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
+  const isCanonical = path.resolve(dbPath) === path.resolve(getWorkflowDbPath());
+  // Preserve an originally absent workflow.db in the recovery manifest. SQLite
+  // creates the file at open time, so the cutover bundle must exist first.
+  if (isCanonical && !fs.existsSync(getMigrationBackupDir())) ensureMigrationBackup();
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -58,7 +62,7 @@ export function openWorkflowDatabase(dbPath = getWorkflowDbPath()): Database {
   // SQLITE_BUSY. #628: journal_mode is configurable via AKM_SQLITE_JOURNAL_MODE.
   applyStandardPragmas(db, { dataDir: dir });
   ensureBaseSchema(db);
-  runMigrations(db, { ensureCutoverBackup: dbPath === getWorkflowDbPath() });
+  runMigrations(db, { ensureCutoverBackup: isCanonical });
   return db;
 }
 

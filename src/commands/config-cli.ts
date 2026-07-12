@@ -17,14 +17,7 @@
  */
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { resolveStashDir } from "../core/common";
-import {
-  type AkmConfig,
-  DEFAULT_CONFIG,
-  loadConfig,
-  loadUserConfig,
-  mutateConfig,
-  saveConfig,
-} from "../core/config/config";
+import { type AkmConfig, DEFAULT_CONFIG, loadConfig, mutateConfig } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
@@ -104,31 +97,24 @@ function normalizeToggleTarget(target: string): "skills.sh" {
 }
 
 function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
-  const config = loadUserConfig();
-  const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
-  const idx = registries.findIndex(
-    (registry) =>
-      registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
-  );
-
-  if (idx >= 0) {
-    const existing = registries[idx];
-    const wasEnabled = existing.enabled !== false;
-    existing.enabled = enabled;
-    saveConfig({ ...config, registries });
-    return { changed: wasEnabled !== enabled, component: SKILLS_SH_NAME, enabled };
-  }
-
-  if (!enabled) {
-    // Materialize the skills.sh registry explicitly if absent.
-    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
-    saveConfig({ ...config, registries });
-    return { changed: true, component: SKILLS_SH_NAME, enabled: false };
-  }
-
-  registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: true });
-  saveConfig({ ...config, registries });
-  return { changed: true, component: SKILLS_SH_NAME, enabled: true };
+  let changed = false;
+  mutateConfig((config) => {
+    const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
+    const idx = registries.findIndex(
+      (registry) =>
+        registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
+    );
+    if (idx >= 0) {
+      const wasEnabled = registries[idx].enabled !== false;
+      registries[idx].enabled = enabled;
+      changed = wasEnabled !== enabled;
+      return { ...config, registries };
+    }
+    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled });
+    changed = true;
+    return { ...config, registries };
+  });
+  return { changed, component: SKILLS_SH_NAME, enabled };
 }
 
 function toggleComponent(

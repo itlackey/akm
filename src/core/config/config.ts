@@ -286,7 +286,7 @@ function saveConfigReal(config: AkmConfig): void {
   });
 }
 
-function validateCompleteConfig(config: AkmConfig): AkmConfig {
+export function validateCompleteConfig(config: AkmConfig): AkmConfig {
   const parseResult = AkmConfigSchema.safeParse(config);
   if (parseResult.success) return parseResult.data;
   const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
@@ -320,7 +320,9 @@ export function mutateConfig(
     }
     const current =
       text === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : parseAndValidateConfigText(text, configPath);
-    const next = validateCompleteConfig({ ...mutate(current), configVersion: CURRENT_CONFIG_VERSION });
+    const mutated = mutate(current);
+    if (mutated === current) return { config: current, written: false };
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
     ensureMigrationBackupWithConfigLockHeld();
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });

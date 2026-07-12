@@ -5,7 +5,7 @@
 import path from "node:path";
 import { isRemoteUrl } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig, loadUserConfig, saveConfig } from "../../core/config/config";
+import { getSources, loadConfig, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 
@@ -53,36 +53,39 @@ export function addStash(opts: {
   if (writable === true && providerType && providerType !== "filesystem" && providerType !== "git") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
   }
-  const config = loadUserConfig();
-  const sources = [...getSources(config)];
-  let entry: SourceConfigEntry;
+  let result: SourceAddResult | undefined;
 
   if (isRemoteUrl(target)) {
     if (!providerType) {
       throw new UsageError("--provider is required for URL sources (e.g. --provider git --provider website)");
     }
-    // Deduplicate by URL
-    if (sources.some((s) => s.url === target)) {
-      return { sources, added: false, message: "Source URL already configured" };
-    }
-    entry = { type: providerType, url: target };
-    if (name) entry.name = name;
-    if (writable) entry.writable = true;
-    if (providerOptions) entry.options = providerOptions;
-  } else {
-    // Filesystem path
-    const resolvedPath = path.resolve(target);
-    if (sources.some((s) => s.path && path.resolve(s.path) === resolvedPath)) {
-      return { sources, added: false, message: "Source path already configured" };
-    }
-    entry = { type: "filesystem", path: resolvedPath };
-    if (name) entry.name = name;
   }
-
-  sources.push(entry);
-  saveConfig({ ...config, sources });
-
-  return { sources, added: true, entry };
+  mutateConfig((config) => {
+    const sources = [...getSources(config)];
+    let entry: SourceConfigEntry;
+    if (isRemoteUrl(target)) {
+      if (sources.some((source) => source.url === target)) {
+        result = { sources, added: false, message: "Source URL already configured" };
+        return config;
+      }
+      entry = { type: providerType as string, url: target };
+      if (name) entry.name = name;
+      if (writable) entry.writable = true;
+      if (providerOptions) entry.options = providerOptions;
+    } else {
+      const resolvedPath = path.resolve(target);
+      if (sources.some((source) => source.path && path.resolve(source.path) === resolvedPath)) {
+        result = { sources, added: false, message: "Source path already configured" };
+        return config;
+      }
+      entry = { type: "filesystem", path: resolvedPath };
+      if (name) entry.name = name;
+    }
+    sources.push(entry);
+    result = { sources, added: true, entry };
+    return { ...config, sources };
+  });
+  return result as SourceAddResult;
 }
 
 /**
@@ -90,31 +93,25 @@ export function addStash(opts: {
  * Match priority: URL > path > name (most specific first).
  */
 export function removeStash(target: string): SourceRemoveResult {
-  const config = loadUserConfig();
-  const sources = [...getSources(config)];
   const isUrlTarget = isRemoteUrl(target);
   const resolvedPath = !isUrlTarget ? path.resolve(target) : undefined;
-
-  // Try URL match first, then path, then name (most specific → least specific)
-  let idx = -1;
-  if (isUrlTarget) {
-    idx = sources.findIndex((s) => s.url === target);
-  }
-  if (idx === -1 && resolvedPath) {
-    idx = sources.findIndex((s) => s.path && path.resolve(s.path) === resolvedPath);
-  }
-  if (idx === -1) {
-    idx = sources.findIndex((s) => s.name === target);
-  }
-
-  if (idx === -1) {
-    return { sources, removed: false, message: "No matching source found" };
-  }
-
-  const removed = sources.splice(idx, 1)[0];
-  saveConfig({ ...config, sources });
-
-  return { sources, removed: true, entry: removed };
+  let result: SourceRemoveResult | undefined;
+  mutateConfig((config) => {
+    const sources = [...getSources(config)];
+    let idx = isUrlTarget ? sources.findIndex((source) => source.url === target) : -1;
+    if (idx === -1 && resolvedPath) {
+      idx = sources.findIndex((source) => source.path && path.resolve(source.path) === resolvedPath);
+    }
+    if (idx === -1) idx = sources.findIndex((source) => source.name === target);
+    if (idx === -1) {
+      result = { sources, removed: false, message: "No matching source found" };
+      return config;
+    }
+    const removed = sources.splice(idx, 1)[0];
+    result = { sources, removed: true, entry: removed };
+    return { ...config, sources };
+  });
+  return result as SourceRemoveResult;
 }
 
 /**
