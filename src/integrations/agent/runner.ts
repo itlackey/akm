@@ -8,7 +8,9 @@ import type {
   ImproveProfileConfig,
   LlmConnectionConfig,
 } from "../../core/config/config";
+import { ConfigError } from "../../core/errors";
 import { materializeLlmConnection, type ResolvedLlmUse, resolveEngine, resolveLlmEngineUse } from "./engine-resolution";
+import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 
 export type ProcessSection = "improve" | "index" | "search" | string;
@@ -51,14 +53,52 @@ export function resolveValidationRunner(config: AkmConfig): RunnerSpec | null {
 
 /** Resolve a triage judgment's final engine selection. Explicit wrong engines never fall back. */
 export function resolveTriageJudgmentRunner(
-  judgment: Pick<ImproveProcessConfig, "engine" | "timeoutMs"> | undefined,
+  judgment: Pick<ImproveProcessConfig, "engine" | "model" | "timeoutMs" | "llm"> | undefined,
   config: AkmConfig,
 ): RunnerSpec | null {
   if (judgment?.engine) {
     const runner = resolveEngine(judgment.engine, config);
-    return judgment.timeoutMs === undefined ? runner : { ...runner, timeoutMs: judgment.timeoutMs };
+    if (runner.kind === "llm") {
+      const resolved = resolveLlmEngineUse(config, [judgment]);
+      return {
+        kind: "llm",
+        engine: resolved.engine,
+        connection: materializeLlmConnection(resolved),
+        timeoutMs: resolved.timeoutMs,
+      };
+    }
+    if (judgment.llm) {
+      throw new ConfigError(
+        `Triage judgment engine "${judgment.engine}" is an agent engine and cannot receive llm overrides.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    const profile = judgment.model
+      ? {
+          ...runner.profile,
+          model: resolveModel(
+            judgment.model,
+            runner.profile.platform ?? runner.profile.name,
+            runner.profile.modelAliases,
+            runner.profile.globalModelAliases,
+          ),
+          modelIsExact: true,
+        }
+      : runner.profile;
+    return {
+      ...runner,
+      profile,
+      ...(judgment.timeoutMs !== undefined ? { timeoutMs: judgment.timeoutMs } : {}),
+    };
   }
-  return resolveDefaultLlmRunner(config, judgment?.timeoutMs);
+  const resolved = resolveLlmEngineUse(config, judgment ? [judgment] : [], { optional: true });
+  if (!resolved) return null;
+  return {
+    kind: "llm",
+    engine: resolved.engine,
+    connection: materializeLlmConnection(resolved),
+    timeoutMs: resolved.timeoutMs,
+  };
 }
 
 /** Resolve an improve process through the active strategy and process overlays. */

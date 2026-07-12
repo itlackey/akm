@@ -300,7 +300,9 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   const endpoint = profile.endpoint ?? llmConfig?.endpoint;
   const apiKey = profile.apiKey !== undefined ? resolveSecret(profile.apiKey) : llmConfig?.apiKey;
   const model = profile.model
-    ? resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
+    ? profile.modelIsExact
+      ? profile.model
+      : resolveModel(profile.model, "opencode-sdk", profile.modelAliases, profile.globalModelAliases)
     : undefined;
 
   const sdkConfig: Record<string, unknown> = {};

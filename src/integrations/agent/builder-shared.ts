@@ -17,6 +17,7 @@
 
 import { UsageError } from "../../core/errors";
 import type { ShowResponse } from "../../sources/types";
+import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
 import type { AgentRunResult } from "./spawn";
 
@@ -37,6 +38,8 @@ export interface AgentDispatchRequest {
    * resolveModel() — never resolved before reaching the builder.
    */
   model?: string;
+  /** Bypass alias resolution because `model` was frozen/lowered already. */
+  modelIsExact?: boolean;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
   /**
@@ -57,6 +60,16 @@ export interface AgentDispatchRequest {
    * get it injected into the prompt. No builder consumes it yet.
    */
   schema?: Record<string, unknown>;
+}
+
+/** Resolve a raw dispatch model once, while preserving frozen/lowered models verbatim. */
+export function resolveDispatchModel(
+  request: Pick<AgentDispatchRequest, "model" | "modelIsExact">,
+  profile: AgentProfile,
+  platform: string,
+): string | undefined {
+  if (!request.model || request.modelIsExact) return request.model;
+  return resolveModel(request.model, platform, profile.modelAliases, profile.globalModelAliases);
 }
 
 /** Concrete command ready to hand to the spawn wrapper. */

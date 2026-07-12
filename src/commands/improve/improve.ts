@@ -29,7 +29,6 @@ import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexe
 import { akmIndex } from "../../indexer/indexer";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { resolveTriageJudgmentRunner } from "../../integrations/agent/runner";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -50,7 +49,7 @@ import {
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
 import { resolveProcessEnabled } from "./improve-profiles";
-import { preflightImproveStrategyEngines, resolveImproveStrategy } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 // #607 per-process lock primitives live in ./locks. Imported for internal use;
 // resetHeldProcessLocks is re-exported (the test seam imports it from here).
 import {
@@ -167,8 +166,6 @@ export interface AkmImproveOptions {
   extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
-  /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
-  repairValidationFailures?: boolean;
   /**
    * When true, only assets with recent feedback signals are eligible.
    * Disables the high-retrieval fallback path for type/all scope runs.
@@ -408,8 +405,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
   const _earlyConfig = options.config ?? loadConfig();
-  const selectedStrategy = resolveImproveStrategy(options.strategy, _earlyConfig);
-  preflightImproveStrategyEngines(selectedStrategy, _earlyConfig);
+  const resolvedPlan = resolveImprovePlan(options.strategy, _earlyConfig);
+  const selectedStrategy = resolvedPlan.strategy;
   const improveProfile = selectedStrategy.config;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
@@ -557,8 +554,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (primaryStashDir && shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)) {
       try {
         // Reuse the config resolved at the top of the run instead of a second load.
-        await withLlmStage("memory-contradiction", () =>
-          detectAndWriteContradictions(primaryStashDir, _earlyConfig, undefined, improveProfile),
+        await withLlmStage(
+          "memory-contradiction",
+          () =>
+            detectAndWriteContradictions(
+              primaryStashDir,
+              _earlyConfig,
+              undefined,
+              undefined,
+              resolvedPlan.processes.consolidate?.connection,
+            ),
+          { engine: resolvedPlan.processes.consolidate?.engine, process: "consolidate" },
         );
       } catch (err) {
         // Non-fatal: contradiction detection is a best-effort pass.
@@ -615,9 +621,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               const policy = resolveDrainPolicy(triageConfig?.policy);
               const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
               const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
-              const judgment = triageConfig?.judgment
-                ? resolveTriageJudgmentRunner(triageConfig.judgment, _earlyConfig)
-                : null;
               triageDrain = await drainProposalsFn({
                 stashDir: primaryStashDir,
                 policy,
@@ -626,7 +629,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 dryRun: false,
                 excludeIds: new Set<string>(),
                 ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
-                judgment,
+                judgment: resolvedPlan.triageJudgment,
               });
             } catch (err) {
               warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
@@ -925,6 +928,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             eventsCtx,
             initialCleanupWarnings: preEnsureCleanupWarnings,
             improveProfile,
+            resolvedPlan,
             strategyName: selectedStrategy.name,
             budgetSignal: budgetAbortController.signal,
           }),
@@ -1001,6 +1005,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             budgetMs,
             eventsCtx,
             improveProfile,
+            resolvedPlan,
             budgetSignal: budgetAbortController.signal,
           });
         },
@@ -1038,6 +1043,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             eventsCtx,
             budgetSignal: budgetAbortController.signal,
             improveProfile,
+            resolvedPlan,
             consolidationRan: preparation.consolidationRan,
             // R5: floor violations from this run's consolidate pass + the
             // auto-accepted volume so far (prep + loop gates) for churn detection.
@@ -1450,6 +1456,8 @@ export interface ImproveRunContext {
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
   improveProfile: import("./improve-profiles").ImproveProfileConfig;
+  /** Engine/materialized-connection snapshot shared by every process in this run. */
+  resolvedPlan: ResolvedImprovePlan;
   /**
    * #616 — run-budget abort signal (also carries a live `remainingBudgetMs`
    * getter). Threaded in so the loop stage participates in the same cooperative

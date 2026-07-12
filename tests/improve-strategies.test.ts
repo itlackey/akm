@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { resolveImproveStrategy } from "../src/commands/improve/improve-strategies";
+import { resolveImprovePlan, resolveImproveStrategy } from "../src/commands/improve/improve-strategies";
 import { ConfigError } from "../src/core/errors";
 
 describe("resolveImproveStrategy", () => {
@@ -38,5 +38,82 @@ describe("resolveImproveStrategy", () => {
     expect(() =>
       resolveImproveStrategy("does-not-exist", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
     ).toThrow(ConfigError);
+  });
+});
+
+describe("resolveImprovePlan", () => {
+  const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
+
+  test("materializes one fallback connection for every enabled process before dispatch", () => {
+    const plan = resolveImprovePlan("quick", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: { default: llm, validation: { ...llm, model: "repair" } },
+      defaults: { llmEngine: "default" },
+      improve: { strategies: { quick: { processes: { validation: { engine: "validation" } } } } },
+    });
+
+    expect(plan.strategy.name).toBe("quick");
+    expect(plan.processes.reflect?.engine).toBe("default");
+    expect(plan.processes.validation?.engine).toBe("validation");
+    expect(plan.processes.validation?.connection.model).toBe("repair");
+    expect(plan.processes.distill).toBeUndefined();
+  });
+
+  test("preflights default fallbacks and accepts an agent triage judgment", () => {
+    const plan = resolveImprovePlan("reflect-distill", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: {
+        default: llm,
+        reviewer: { kind: "agent", platform: "pi", model: "review" },
+      },
+      defaults: { llmEngine: "default" },
+      improve: {
+        strategies: {
+          "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+        },
+      },
+    });
+
+    expect(plan.processes.reflect?.engine).toBe("default");
+    expect(plan.processes.distill?.engine).toBe("default");
+    expect(plan.triageJudgment?.kind).toBe("agent");
+    expect(plan.triageJudgment?.timeoutMs).toBeNull();
+  });
+
+  test("keeps offline optional fallbacks absent but rejects a selected incompatible engine", () => {
+    expect(
+      resolveImprovePlan("quick", { configVersion: "0.9.0", semanticSearchMode: "auto" }).processes.reflect,
+    ).toBeUndefined();
+    expect(() =>
+      resolveImprovePlan("quick", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: { wrong: { kind: "agent", platform: "pi" } },
+        defaults: { llmEngine: "wrong" },
+      }),
+    ).toThrow('Engine "wrong" is not an LLM engine.');
+  });
+
+  test("rejects LLM-only overrides on an agent triage judgment", () => {
+    expect(() =>
+      resolveImprovePlan("reflect-distill", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        engines: {
+          llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "base" },
+          reviewer: { kind: "agent", platform: "pi" },
+        },
+        defaults: { llmEngine: "llm" },
+        improve: {
+          strategies: {
+            "reflect-distill": {
+              processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
+            },
+          },
+        },
+      }),
+    ).toThrow("cannot receive llm overrides");
   });
 });

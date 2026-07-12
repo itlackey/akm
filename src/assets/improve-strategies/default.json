@@ -11,6 +11,7 @@
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": true },
     "extract": { "enabled": true, "triage": { "enabled": true, "minScore": 2 } },
+    "validation": { "enabled": true },
     "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 },
     "triage": { "enabled": false, "applyMode": "queue", "policy": "personal-stash" },
     "recombine": { "enabled": false },

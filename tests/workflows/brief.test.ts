@@ -280,7 +280,7 @@ describe("workflow brief — solo step", () => {
     // on_error) is carried too — a driver needs every one to dispatch.
     expect(u.nodeId).toBe("build");
     expect(u.runner).toBe("sdk");
-    expect(u.timeoutMs).toBeNull();
+    expect(u.timeoutMs).toBe(600_000);
     expect(u.onError).toBe("fail");
     // #15: an un-journaled unit is `pending` with the completed report command,
     // and #14 embeds the --expect-step spine guard in it.

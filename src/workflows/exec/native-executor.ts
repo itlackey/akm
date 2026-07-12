@@ -1063,6 +1063,7 @@ export function buildAgentDispatchRequest(
   return {
     prompt,
     ...(request.model ? { model: request.model } : {}),
+    ...(request.engine ? { modelIsExact: true } : {}),
     ...(request.schema ? { schema: request.schema } : {}),
   };
 }
@@ -1147,7 +1148,9 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   }
 
   const { executeRunner } = await import("../../integrations/agent/runner-dispatch.js");
-  const profile = request.model ? { ...resolved.profile, model: request.model } : resolved.profile;
+  const profile = request.model
+    ? { ...resolved.profile, model: request.model, modelIsExact: request.engine !== undefined }
+    : resolved.profile;
   const result = await executeRunner(
     resolved.kind === "sdk"
       ? {
@@ -1320,6 +1323,7 @@ function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
     commandBuilder: snapshot.commandBuilder,
     ...(snapshot.workspace ? { workspace: snapshot.workspace } : {}),
     ...(request.invocation?.model ? { model: request.invocation.model } : {}),
+    ...(request.invocation?.model ? { modelIsExact: true } : {}),
   };
   if (snapshot.runnerKind === "agent") return { kind: "agent", profile };
   // The catalog is supplied transitively by the work-list only for hashing; the

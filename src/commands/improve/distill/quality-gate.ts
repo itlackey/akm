@@ -123,7 +123,7 @@ export function buildJudgePrompt(
  * Exported so reflect.ts can apply the same gate to reflect proposals (R-5 / #374).
  * Gated by the flag name `lesson_quality_gate` (or its alias
  * `proposal_quality_gate`) via {@link isLlmFeatureEnabled} — which reads
- * `profiles.improve.default.processes.distill.qualityGate.enabled` (and the
+ * the selected strategy's `processes.distill.qualityGate.enabled` (and the
  * corresponding `.reflect.qualityGate.enabled` for proposals).
  *
  * Fail-CLOSED (07 P0-2): returns `pass: false` (score -1) on timeout, parse

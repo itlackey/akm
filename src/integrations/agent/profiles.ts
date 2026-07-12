@@ -51,6 +51,8 @@ export interface AgentProfile {
   readonly sdkMode?: boolean;
   /** Model to use when sdkMode is true (e.g. "anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder"). */
   readonly model?: string;
+  /** The model has already been lowered through all alias tables. */
+  readonly modelIsExact?: boolean;
   /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from profiles.llm[defaults.llm].endpoint. */
   readonly endpoint?: string;
   /** API key for sdkMode endpoint. If absent, inherits from profiles.llm[defaults.llm].apiKey. */

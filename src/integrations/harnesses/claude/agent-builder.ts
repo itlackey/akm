@@ -41,8 +41,8 @@ import {
   type AgentDispatchRequest,
   assertNotFlag,
   normalizeTools,
+  resolveDispatchModel,
 } from "../../agent/builder-shared";
-import { resolveModel } from "../../agent/model-aliases";
 
 /**
  * Assemble the positional prompt: the task prompt and — when a schema is
@@ -75,7 +75,7 @@ export const claudeBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, "claude", profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, "claude") as string;
       args.push("--model", resolved);
     }
     if (req.tools) {

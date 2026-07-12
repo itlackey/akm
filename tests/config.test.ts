@@ -623,7 +623,7 @@ describe("LLM engine config", () => {
 
     test("getDefaultLlmConfig honors explicit defaults.llmEngine", () => {
       const cfg = { ...DEFAULT_CONFIG, defaults: { llmEngine: "primary" }, engines: { primary: engine } };
-      expect(getDefaultLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model });
+      expect(getDefaultLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model, timeoutMs: 600_000 });
     });
 
     test("getDefaultLlmConfig does not infer an engine named default", () => {
@@ -638,7 +638,7 @@ describe("LLM engine config", () => {
 
     test("requireLlmConfig resolves the selected LLM engine", () => {
       const cfg = { ...DEFAULT_CONFIG, defaults: { llmEngine: "local" }, engines: { local: engine } };
-      expect(requireLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model });
+      expect(requireLlmConfig(cfg)).toEqual({ endpoint: engine.endpoint, model: engine.model, timeoutMs: 600_000 });
     });
 
     test("requireLlmConfig throws when no LLM engine is selected", () => {
@@ -658,8 +658,16 @@ describe("LLM engine config", () => {
         defaults: { llmEngine: "primary" },
         engines: { primary: explicit, default: engine },
       };
-      expect(getDefaultLlmConfig(cfg)).toEqual({ endpoint: explicit.endpoint, model: explicit.model });
-      expect(requireLlmConfig(cfg)).toEqual({ endpoint: explicit.endpoint, model: explicit.model });
+      expect(getDefaultLlmConfig(cfg)).toEqual({
+        endpoint: explicit.endpoint,
+        model: explicit.model,
+        timeoutMs: 600_000,
+      });
+      expect(requireLlmConfig(cfg)).toEqual({
+        endpoint: explicit.endpoint,
+        model: explicit.model,
+        timeoutMs: 600_000,
+      });
     });
   });
 });

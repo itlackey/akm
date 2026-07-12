@@ -189,6 +189,8 @@ export interface AkmDistillOptions {
   stashDir?: string;
   /** Override the loaded config (test seam). */
   config?: AkmConfig;
+  /** Pre-resolved connection supplied by the improve invocation plan. */
+  llmConfig?: LlmConnectionConfig;
   /**
    * Optional chat seam for tests. Defaults to {@link chatCompletion}.
    * Stateless — no module-level fallback, callers always pass a function.
@@ -726,7 +728,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const stash = options.stashDir ?? resolveStashDir();
   const chat = options.chat ?? chatCompletion;
   const distillLlm =
-    resolveImproveProcessRunner(options.improveProfile, "distill", config)?.connection ?? getDefaultLlmConfig(config);
+    options.llmConfig ??
+    resolveImproveProcessRunner(options.improveProfile, "distill", config)?.connection ??
+    getDefaultLlmConfig(config);
   const lookup = options.lookupFn ?? defaultLookup;
   const readEventsImpl = options.readEventsFn ?? readEvents;
   // R1 opt-out must flow into every computeSalience call this command makes so

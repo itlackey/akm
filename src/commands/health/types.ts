@@ -47,6 +47,10 @@ export interface LlmUsageAggregate {
   reasoningTokens: number;
   /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
   byStage: Record<string, LlmUsageStageAggregate>;
+  /** Per-process breakdown using durable improve/runtime attribution. */
+  byProcess: Record<string, LlmUsageStageAggregate>;
+  /** Per-engine breakdown using the selected public engine name. */
+  byEngine: Record<string, LlmUsageStageAggregate>;
 }
 
 /** LLM usage totals for one pipeline stage. */

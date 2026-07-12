@@ -108,9 +108,8 @@ export interface AkmReflectOptions {
   ) => Promise<string>;
   /**
    * Override the loaded AkmConfig (test seam + for the quality gate).
-   * Needed by R-5 to access the proposal quality gate (now stored at
-   * `profiles.improve.default.processes.reflect.qualityGate.enabled`) without
-   * a real config file in tests.
+   * Needed by R-5 to access the selected strategy's proposal quality gate
+   * without a real config file in tests.
    */
   config?: import("../../core/config/config").AkmConfig;
   /**
@@ -124,9 +123,8 @@ export interface AkmReflectOptions {
    * 2-3 changed-token prose micro-rewrite with no code/frontmatter/structural/
    * negation/decision signal (see classifyReflectChange) — are deferred like
    * noop/cosmetic instead of becoming proposals. The improve loop resolves this
-   * from the ACTIVE profile's `processes.reflect.lowValueFilter.enabled`; the
-   * standalone `akm reflect` command leaves it off. (Previously read from a
-   * hardcoded `profiles.improve.default` path that ignored the active profile.)
+   * from the active strategy's `processes.reflect.lowValueFilter.enabled`; the
+   * standalone `akm reflect` command leaves it off.
    */
   lowValueFilter?: boolean;
   /**
@@ -1365,8 +1363,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // 7. R-5 / #374: Apply the proposal quality gate when enabled.
   // Mirrors the lesson quality gate on distill proposals. The gate uses
   // `runLessonQualityJudge` from distill.ts and is gated behind either
-  // `profiles.improve.default.processes.reflect.qualityGate.enabled` or
-  // `profiles.improve.default.processes.distill.qualityGate.enabled` (the
+  // `processes.reflect.qualityGate.enabled` or
+  // `processes.distill.qualityGate.enabled` on the selected strategy (the
   // `lesson_quality_gate` flag name is the legacy alias still accepted by
   // `isLlmFeatureEnabled`). Fail-CLOSED (07 P0-2): a judge error / no-LLM /
   // parse failure rejects the proposal rather than passing it through.
@@ -1490,9 +1488,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     const changeKind = classifyReflectChange(assetContent, payload.content);
     // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
     // pre-#639 behaviour (low-value treated the same as substantive). Resolved
-    // by the caller from the ACTIVE improve profile's
+    // by the caller from the active improve strategy's
     // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
-    // running profile (not a hardcoded `profiles.improve.default`) decides.
+    // running strategy decides.
     const lowValueFilterEnabled = options.lowValueFilter === true;
     const isDeferred =
       changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);

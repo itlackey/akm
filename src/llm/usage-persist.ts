@@ -34,6 +34,8 @@ export const LLM_USAGE_EVENT = "llm_usage";
 function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
   const metadata: Record<string, unknown> = { durationMs: record.durationMs };
   if (record.stage !== undefined) metadata.stage = record.stage;
+  if (record.engine !== undefined) metadata.engine = record.engine;
+  if (record.process !== undefined) metadata.process = record.process;
   if (record.model !== undefined) metadata.model = record.model;
   if (record.finishReason !== undefined) metadata.finishReason = record.finishReason;
   if (record.promptTokens !== undefined) metadata.promptTokens = record.promptTokens;

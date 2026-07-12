@@ -21,8 +21,7 @@ import { HARNESS_REGISTRY } from "../harnesses";
 // without importing this file back — avoiding an init-order cycle through
 // BUILTIN_BUILDERS (#563). Re-exported here so existing `agent/builders` import
 // sites keep working.
-import { type AgentCommandBuilder, assertNotFlag } from "./builder-shared";
-import { resolveModel } from "./model-aliases";
+import { type AgentCommandBuilder, assertNotFlag, resolveDispatchModel } from "./builder-shared";
 import { getBuiltinAgentProfile } from "./profiles";
 
 export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builder-shared";
@@ -51,7 +50,7 @@ const defaultBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveModel(req.model, profile.name, profile.modelAliases, profile.globalModelAliases);
+      const resolved = resolveDispatchModel(req, profile, profile.name) as string;
       args.push("--model", resolved);
     }
     args.push("--");

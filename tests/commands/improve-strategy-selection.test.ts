@@ -4,7 +4,7 @@ import {
   resolveProcessEnabled,
   shouldSkipRef,
 } from "../../src/commands/improve/improve-profiles";
-import { preflightImproveStrategyEngines, resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
+import { resolveImprovePlan, resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { ConfigError } from "../../src/core/errors";
@@ -184,29 +184,31 @@ describe("resolveImproveStrategy", () => {
   });
 });
 
-describe("preflightImproveStrategyEngines", () => {
+describe("resolveImprovePlan preflight", () => {
   const config: AkmConfig = {
     ...MINIMAL_CONFIG,
     engines: {
       agent: { kind: "agent", platform: "opencode" },
+      llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
     },
+    defaults: { llmEngine: "llm" },
   };
 
-  test("ignores an incompatible engine on a default-disabled process", () => {
+  test("preflights validation because it is enabled by default", () => {
     expect(() =>
-      preflightImproveStrategyEngines(
-        { name: "custom", config: { processes: { validation: { engine: "agent" } } } },
-        config,
-      ),
-    ).not.toThrow();
+      resolveImprovePlan("quick", {
+        ...config,
+        improve: { strategies: { quick: { processes: { validation: { engine: "agent" } } } } },
+      }),
+    ).toThrow('Engine "agent" is not an LLM engine.');
   });
 
   test("rejects an incompatible engine when that process is enabled", () => {
     expect(() =>
-      preflightImproveStrategyEngines(
-        { name: "custom", config: { processes: { validation: { enabled: true, engine: "agent" } } } },
-        config,
-      ),
+      resolveImprovePlan("quick", {
+        ...config,
+        improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "agent" } } } } },
+      }),
     ).toThrow('Engine "agent" is not an LLM engine.');
   });
 });
@@ -322,9 +324,9 @@ describe("resolveProcessEnabled", () => {
     // 0.8.0: feedbackDistillation was unified into distill (already asserted above).
   });
 
-  test("returns false for 'validation' (opt-in only, not in default profile)", () => {
+  test("returns true for validation by default", () => {
     const profile = resolveImproveStrategy(undefined, MINIMAL_CONFIG).config;
-    expect(resolveProcessEnabled("validation", profile)).toBe(false);
+    expect(resolveProcessEnabled("validation", profile)).toBe(true);
   });
 
   test("returns false for unknown process names", () => {
@@ -363,7 +365,7 @@ describe("resolveProcessEnabled", () => {
   test("empty profile falls back to IMPROVE_PROCESS_DEFAULTS", () => {
     expect(resolveProcessEnabled("reflect", {})).toBe(true);
     expect(resolveProcessEnabled("distill", {})).toBe(true);
-    expect(resolveProcessEnabled("validation", {})).toBe(false);
+    expect(resolveProcessEnabled("validation", {})).toBe(true);
     expect(resolveProcessEnabled("unknownThing", {})).toBe(false);
   });
 });

@@ -439,6 +439,8 @@ export function buildHealthHtmlReplacements(
     totalTokens: 0,
     reasoningTokens: 0,
     byStage: {},
+    byProcess: {},
+    byEngine: {},
   };
   const totalRuns = runs.length;
   const failedRuns = runs.filter((r) => !r.ok).length;

@@ -251,6 +251,8 @@ describe("renderWindowCompareMd", () => {
             totalTokens: 0,
             reasoningTokens: 0,
             byStage: {},
+            byProcess: {},
+            byEngine: {},
           },
         },
       };
