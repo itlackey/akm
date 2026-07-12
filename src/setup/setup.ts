@@ -811,21 +811,29 @@ export async function runResetRecommended(opts: {
   const recommended = deriveRecommendedConfig(env);
 
   let incoming: Partial<AkmConfig> = {};
-  if (opts.probe && recommended.llm && recommended.llm.provider !== "anthropic") {
-    const verified = await verifyOpenAiCompatibleEndpoint({
-      endpoint: recommended.llm.endpoint,
-      model: recommended.llm.model,
-      apiKeyEnvVar: recommended.llmApiKeyEnvVar,
-    });
-    if (verified.ok) {
+  if (recommended.llm && recommended.llm.provider !== "anthropic") {
+    let endpoint = recommended.llm.endpoint;
+    let accepted = true;
+    if (opts.probe) {
+      const verified = await verifyOpenAiCompatibleEndpoint({
+        endpoint,
+        model: recommended.llm.model,
+        apiKeyEnvVar: recommended.llmApiKeyEnvVar,
+      });
+      if (verified.ok) {
+        endpoint = verified.endpoint;
+      } else {
+        accepted = false;
+        warn(`[akm setup] Skipping detected LLM: ${verified.reason}. Verify it and rerun setup.`);
+      }
+    }
+    if (accepted) {
       incoming = upsertDetectedLlmEngine(incoming as AkmConfig, {
         provider: recommended.llm.provider ?? "local",
-        endpoint: verified.endpoint,
+        endpoint,
         model: recommended.llm.model,
         apiKeyEnvVar: recommended.llmApiKeyEnvVar,
       }).config;
-    } else {
-      warn(`[akm setup] Skipping detected LLM: ${verified.reason}. Verify it and rerun setup.`);
     }
   }
   if (recommended.embedding) incoming.embedding = recommended.embedding;

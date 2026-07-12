@@ -32,7 +32,7 @@ import {
 } from "../../src/setup/detect";
 import { deriveRecommendedConfig, runDetectOnly } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";
-import { withEnv } from "../_helpers/sandbox";
+import { withEnv, withMockedFetch } from "../_helpers/sandbox";
 
 // A value no test should ever surface anywhere in output.
 const SECRET_VALUE = "sk-SECRET-VALUE-MUST-NEVER-LEAK-1234567890";
@@ -326,6 +326,12 @@ describe("akm setup --reset-recommended", () => {
       AKM_STASH_DIR: workDir,
       AKM_FORCE_SETUP_TMP_STASH: "1",
       AKM_FORCE_INIT_TMP_STASH: "1",
+      ANTHROPIC_API_KEY: undefined,
+      OPENAI_API_KEY: SECRET_VALUE,
+      GEMINI_API_KEY: undefined,
+      GOOGLE_API_KEY: undefined,
+      GROQ_API_KEY: undefined,
+      AKM_LLM_API_KEY: undefined,
     };
     expect((await runCli(["backup", "create", "--for", "0.9.0", "--format", "json"], setupEnv)).status).toBe(0);
     // Seed a config with a custom registry entry that must survive the merge.
@@ -346,10 +352,22 @@ describe("akm setup --reset-recommended", () => {
     );
 
     try {
-      const result = await runCli(["setup", "--reset-recommended", "--no-init", "--format", "json"], setupEnv);
+      let openAiRequests = 0;
+      const result = await withMockedFetch(
+        () => runCli(["setup", "--reset-recommended", "--no-init", "--format", "json"], setupEnv),
+        (input) => {
+          if (String(input).includes("api.openai.com")) openAiRequests += 1;
+          return new Response("unavailable", { status: 503 });
+        },
+      );
 
       expect(result.status).toBe(0);
       const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+        engines?: Record<
+          string,
+          { kind?: string; provider?: string; endpoint?: string; model?: string; apiKey?: string }
+        >;
+        defaults?: { llmEngine?: string };
         registries?: Array<{ name?: string }>;
         archiveRetentionDays?: number;
         setup?: { taskSchedules?: { improve?: string; index?: string } };
@@ -360,6 +378,69 @@ describe("akm setup --reset-recommended", () => {
       // Opinionated cron defaults were merged in.
       expect(written.setup?.taskSchedules?.improve).toBe("0 2 * * *");
       expect(written.setup?.taskSchedules?.index).toBe("0 4 * * *");
+      // Detection persists the recommendation without making --probe a gate.
+      expect(written.defaults?.llmEngine).toBe("openai");
+      expect(written.engines?.openai).toEqual({
+        kind: "llm",
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/chat/completions",
+        model: "gpt-4o-mini",
+        apiKey: `\${OPENAI_API_KEY}`,
+      });
+      expect(openAiRequests).toBe(0);
+    } finally {
+      for (const d of [xdgConfig, xdgData, xdgState]) fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { probeStatus: 401, expectedEngine: false, expectedRequests: 1 },
+    { probeStatus: 200, expectedEngine: true, expectedRequests: 2 },
+  ])("--probe accepts or rejects the detected recommendation ($probeStatus)", async (testCase) => {
+    const xdgConfig = fs.mkdtempSync(path.join(os.tmpdir(), "akm-reset-probe-cfg-"));
+    const xdgData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-reset-probe-data-"));
+    const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-reset-probe-state-"));
+    const configPath = path.join(xdgConfig, "akm", "config.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const setupEnv = {
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
+      AKM_STASH_DIR: workDir,
+      AKM_FORCE_SETUP_TMP_STASH: "1",
+      AKM_FORCE_INIT_TMP_STASH: "1",
+      ANTHROPIC_API_KEY: undefined,
+      OPENAI_API_KEY: SECRET_VALUE,
+      GEMINI_API_KEY: undefined,
+      GOOGLE_API_KEY: undefined,
+      GROQ_API_KEY: undefined,
+      AKM_LLM_API_KEY: undefined,
+    };
+    expect((await runCli(["backup", "create", "--for", "0.9.0", "--format", "json"], setupEnv)).status).toBe(0);
+    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", stashDir: workDir }, null, 2), "utf8");
+
+    try {
+      let openAiRequests = 0;
+      const result = await withMockedFetch(
+        () => runCli(["setup", "--reset-recommended", "--probe", "--no-init", "--format", "json"], setupEnv),
+        (input) => {
+          if (!String(input).includes("api.openai.com")) return new Response("unavailable", { status: 503 });
+          openAiRequests += 1;
+          return new Response(
+            JSON.stringify({ choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":true}' } }] }),
+            { status: testCase.probeStatus, headers: { "content-type": "application/json" } },
+          );
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+        engines?: Record<string, { kind?: string }>;
+        defaults?: { llmEngine?: string };
+      };
+      expect(written.defaults?.llmEngine === "openai").toBe(testCase.expectedEngine);
+      expect(written.engines?.openai?.kind === "llm").toBe(testCase.expectedEngine);
+      expect(openAiRequests).toBe(testCase.expectedRequests);
     } finally {
       for (const d of [xdgConfig, xdgData, xdgState]) fs.rmSync(d, { recursive: true, force: true });
     }
