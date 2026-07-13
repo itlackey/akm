@@ -37,12 +37,9 @@ case "$suite" in
     ;;
 esac
 
-# Wall-clock safety net: anything past this is a genuine hang, not slow tests.
-if [ "$suite" = "unit" ]; then
-  PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-120s}"
-else
-  PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-300s}"
-fi
+# Individual tests have a 30-second limit below. This outer limit only catches
+# a stuck runner or process cleanup and leaves margin inside CI's 20-minute job.
+PER_ATTEMPT_TIMEOUT="${SHARD_TIMEOUT:-900s}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
