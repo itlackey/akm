@@ -102,7 +102,7 @@ async function waitForCompletedHistory(
           rows: Array<{ status: string; log: string; detail?: { exitCode?: number } }>;
         }
       ).rows;
-      if (rows[0]) return rows[0];
+      if (rows[0] && rows[0].status !== "active") return rows[0];
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
