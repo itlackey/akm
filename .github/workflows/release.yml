@@ -213,7 +213,7 @@ jobs:
           shopt -s nullglob
           tarballs=(candidate-package/*.tgz)
           test "${#tarballs[@]}" -eq 1
-          TARBALL="${tarballs[0]}"
+          TARBALL="$PWD/${tarballs[0]}"
           VERSION="$(tar -xOf "$TARBALL" package/package.json | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).version))')"
           if [ "$VERSION" != "$CANDIDATE_VERSION" ]; then
             echo "Candidate package version mismatch: expected $CANDIDATE_VERSION, got $VERSION"
