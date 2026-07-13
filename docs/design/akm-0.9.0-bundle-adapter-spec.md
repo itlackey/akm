@@ -34,6 +34,26 @@ OKF v0.1 (Google Cloud, June 2026 — [SPEC](https://github.com/GoogleCloudPlatf
 3. **AKM writes OKF-compatible bundles.** New knowledge files carry OKF frontmatter (`type`, `title`, `description`, `tags`, `timestamp`); bundles AKM creates carry `okf_version` and may carry `index.md`/`log.md`; cross-references use OKF bundle-relative links.
 4. **`kind` is OKF `type`.** The closed `AkmAssetType` union dies (plan §4.1); `kind` becomes the open OKF `type` string, guarded by a provenance-string-set lint (§3.4), never a union.
 
+### 0.3 The clean taxonomy — identity vs kind vs adapter vs tool directory
+
+The old `type` (`AkmAssetType`) conflated **five** roles at once — source selection, semantic classification, file naming, directory routing, and durable state keys (plan §6.1). That conflation is the muddiness this refactor removes. 0.9.0 keeps these strictly separate:
+
+| Concept | What it is | Source / grammar | Role | Explicitly NOT |
+|---|---|---|---|---|
+| **identity** | the one name of an item | `<bundle>/<local-id>`; `local-id` = OKF concept ID (file path − `.md`) | refs, addressing, state keys, links | not kind, not adapter, not component |
+| **kind** (= OKF `type`) | a descriptive label on a document | open string: OKF frontmatter `type` if present, else adapter-stamped by convention | rendering, action, ranking, kind-specific validation | not identity, not an adapter, not a directory |
+| **adapter** | a format-family owner | static id, selected **once per component root** | recognize / place / validate one on-disk format | not a kind; not per-item; never competes per-file |
+| **component** (a.k.a. "tool directory") | a materialized root governed by one adapter | `bundle_id + component_id` columns | provenance, write policy, git pathspecs | not identity, not kind |
+
+**Orthogonality rules — each kills a specific ambiguity:**
+
+1. **kind ≠ adapter; the relationship is many-to-many.** One adapter emits several kinds (the `claude` adapter → `command`, `agent`, `skill`, `instruction`). One kind is emitted by several adapters (`command` ← the `akm` workspace adapter, the `claude` and `opencode` tool adapters, or any `okf` bundle whose file declares `type: command`). A **kind is a label on a document; an adapter is a code module that reads a format.** They are different axes and neither is the other.
+2. **Presentation keys on `kind`; validation keys on `(adapter, kind)`.** `KIND_PRESENTATION` (§2) renders a `command` identically no matter which adapter produced it — a `command` is a `command`. The kind-specific *validators* (command frontmatter check, the Anthropic SKILL.md contract, the task-YAML schema) are applied by the adapter to the matching kind, and are written **once as plain functions** so `kind=skill` validates identically under the `akm`, `claude`, and `agent-skills` adapters (plan §13.3: shared code, not shared adapters).
+3. **A "tool directory" is just a component.** `.claude`/`.opencode` are component roots whose adapter understands a coding tool's on-disk layout; "tool directory" is a *description*, not a fourth concept. Which component/adapter a document came from is a **column** (provenance) — it is never in the ref and never changes the item's identity or kind. Re-mounting `.claude` under a different adapter re-stamps provenance columns and rekeys nothing (this is exactly why component is not a ref segment — §1.3).
+4. **Identity is path-only (OKF).** Neither kind, adapter, nor component is part of identity. Reclassifying a document's `type`, revalidating it under a different adapter, or moving it between components does **not** rename it — only moving the *file* does (an explicit rekey, plan §3.2). This is the whole point of drop-ref, and it is precisely OKF's rule that "the file path is the concept's identity."
+
+**Where AKM's value-add lives (the OKF floor vs the AKM layer).** OKF supplies the portable **metadata floor**: path identity, an open `type`, `title`/`description`/`tags`/`timestamp`, and bundle-relative links. AKM adds — *on top of that floor, without breaking OKF-compatibility* — (a) a curated **kind profile** with per-kind rendering/actions/ranking (§6); (b) **kind-specific validation** (SKILL.md contract, task schema, command/agent frontmatter, workflow structure); (c) **executable kinds** (`workflow`, `task`) with a runtime; (d) **sensitive kinds** (`env`, `secret`) whose values are never indexed; and (e) unified search, the FileChange transaction, and the improve loop. The markdown kinds are valid OKF concepts (a third-party OKF consumer reads them); the executable/sensitive kinds are AKM extensions **beyond** OKF (OKF is markdown-concepts only). An AKM workspace is therefore "an OKF bundle **plus** AKM's executable/sensitive extensions."
+
 ---
 
 ## 1. Bundle / component / installation model
@@ -228,11 +248,13 @@ The reference adapter; every other markdown adapter is a specialization of it.
 
 ---
 
-## 6. AKM-native format adapters (OKF concepts with a native `kind`)
+## 6. The AKM kind vocabulary (AKM's profile of OKF `type`)
 
-Each current AKM asset type becomes an OKF concept whose `type`/`kind` is the type name; recognition/placement/validation are faithful re-expressions of `ASSET_SPECS_INTERNAL` (asset-spec.ts:129-259), `matchers.ts`, the per-type linters, and `asset-registry.ts`. Full field-level detail (recognize rule, localId, placeNew, directoryList, renderer, validateL1) per format is in the native-format spec; summary:
+**These are `kind`s, not adapters** (§0.3). Each former AKM asset type becomes a `kind` — an OKF `type` value AKM renders/ranks/validates specially. They are **emitted by adapters**, not owned one-to-one: the `akm` workspace adapter (§7) stamps the whole vocabulary by directory convention; the `claude`/`opencode` tool adapters stamp the markdown subset by their own convention; the `okf` adapter reads any of them from a file's frontmatter `type`. There is **no `command` adapter or `skill` adapter** — those were the old type-routing (`ASSET_SPECS_INTERNAL`, asset-spec.ts:129-259; `matchers.ts` `DIR_TYPE_MAP`), now deleted.
 
-| kind | recognize (source) | localId | placeNew | directoryList | validateL1 delta over base | renderer source |
+The table below is therefore a **kind reference**: for each kind, the recognition convention an adapter uses to stamp it, its identity/placement rule, and its kind-specific validator (applied by whichever adapter emits it, as a shared function per §0.3 rule 2). "Owning subdir" is the directory the `akm`/`claude`/`opencode` adapters route on — not a separate adapter. Presentation (`renderer`/`action`) is keyed on the kind via `KIND_PRESENTATION` (§2), identical across adapters. Full field-level detail is in the native-format working notes; summary:
+
+| kind | recognize convention (source) | localId | placeNew | owning subdir | validateL1 delta over base | renderer source |
 |---|---|---|---|---|---|---|
 | skill | `SKILL.md` (matchers.ts:132,152) — dir is the item | dir name (asset-spec.ts:133) | `<name>/SKILL.md` (:138) | `skills` | `missing-skill-md` (skill-linter.ts:31) **+ NEW Anthropic contract** name≤64/desc≤1024/body<~500 lines | static-only |
 | command | `.md` under `commands/` + `$ARGUMENTS`/`agent`-fm probe (matchers.ts:49,209) | path−.md | `<name>.md` | `commands` | `missing-name-or-type`, type∈`{command}` (command-linter.ts) | static-only |
@@ -252,14 +274,17 @@ Each current AKM asset type becomes an OKF concept whose `type`/`kind` is the ty
 
 ---
 
-## 7. Integration-format adapters (layered around the OKF core)
+## 7. The adapter set (format families)
 
-| adapter | root/recognize | kinds emitted | localId | writable | directoryList | validateL1 delta | notes |
+The complete set of built-in adapters (§0.3: an **adapter is a format family**, selected once per component root, emitting one or more **kinds**). Every markdown kind these emit is a valid OKF concept; the executable/sensitive kinds are AKM extensions beyond OKF. A **"tool directory"** (`.claude`, `.opencode`) is simply a **component** whose adapter understands a coding tool's on-disk layout — the `claude`/`opencode` adapters are the `akm` workspace recognizer parameterized by a root prefix + instruction file, sharing the same subdir→kind rules and the same shared kind validators (§0.3 rule 2). No adapter competes per-file; recognition is per-file **within** the one adapter that owns the root.
+
+| adapter | format family / root | kinds emitted | localId | writable | owning dirs | validateL1 | notes |
 |---|---|---|---|---|---|---|---|
 | **claude** | `.claude/` dir-segment (matchers.ts:41-113,133) | command, agent, skill, instruction | `<kind>/<relpath−.md>` | yes | `commands,agents,skills` | command/agent type-check; skill SKILL.md contract (shared fns) | AKM stash layout **is** `.claude` minus the prefix; cheap relocation |
 | **opencode** | `.opencode/` dir-segment (**NEW**) | command, agent, instruction | `<kind>/<relpath−.md>` | yes | `command,agent` | command/agent type-check | `AGENTS.md`=instruction; `config.json` **not indexed** (env-var keys, invariant 15) |
 | **agent-skills** | `SKILL.md` (matchers.ts:152) | skill | `<dirname>` | yes | `skills` or `.` | `missing-skill-md` + **NEW** Anthropic name≤64/desc≤1024/body contract | standalone skill packages; SKILL.md codec shared with claude as functions |
-| **okf** (§5) | any non-reserved `.md` | `type`/knowledge | path−.md (OKF concept ID) | yes | `.` | lenient/base only | **the foundation** |
+| **okf** (§5) | generic OKF markdown; `kind`=frontmatter `type` (no dir routing) | any OKF `type` (default `knowledge`) | path−.md (OKF concept ID) | yes | `.` | lenient/base only (§5.4) | **the foundation**; consumes any OKF bundle incl. third-party |
+| **akm** | AKM workspace: OKF markdown **+** AKM subdir conventions (matchers.ts:41-113) **+** executable/sensitive extensions | knowledge, command, agent, skill, memory, lesson, fact, session, workflow, task, env, secret (§6) | OKF concept ID; `<kind>` unaffected | yes (markdown/workflow/task); env/secret index metadata only | all AKM subdirs (§6) | per-kind (§6), shared fns | **AKM's primary value-add format**; markdown kinds are OKF concepts, workflow/task/env/secret are AKM extensions. `claude`/`opencode` are this recognizer + a prefix |
 | **website** | crawl-cache `knowledge/*.md` (website-ingest.ts:180) | website | url slug | **no (Mode A)** | `knowledge` | base (read-only no-op) | Mode B export routes `content` through the destination `okf` adapter + FileChange txn; **NEW** frontmatter: canonical-vs-fetched URL, contentHash, links, ETag |
 | **generic-files** | any leftover file | document/script/file | path+ext | yes | `.` | base for text; integrity only otherwise | audit §8.7 unknown-kind-stays-searchable |
 
@@ -307,7 +332,14 @@ OKF bundle-relative markdown links (`[x](/tables/customers.md)`, `[y](./other.md
 
 ---
 
-## Sources
+## References / Citations
 
-- OKF v0.1 spec — GoogleCloudPlatform/knowledge-catalog `okf/SPEC.md`; Google Cloud announcement (June 12, 2026).
-- AKM plan/audit companions in this directory; current code at HEAD.
+**OKF (Open Knowledge Format)** — the foundational metadata format (§0):
+
+- Open Knowledge Format v0.1 specification — `GoogleCloudPlatform/knowledge-catalog`, `okf/SPEC.md`: <https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md> (concept identity = file path − `.md`; required open `type`; recommended `title`/`description`/`resource`/`tags`/`timestamp`; reserved `index.md`/`log.md`; bundle-relative links as relationships; `okf_version`; consumers MUST NOT reject unknown fields and MUST tolerate broken links).
+- Google Cloud, "How the Open Knowledge Format can improve data sharing" (announcement, June 12, 2026): <https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/>
+- OKF annotated guide: <https://okf.md/spec/>
+
+**Anthropic Agent Skills** — the `SKILL.md` L1 contract cited for the `skill` kind and the `agent-skills` adapter (§6, §7): Anthropic, *Agent Skills* documentation (SKILL.md authoring: `name` ≤64 chars, `description` ≤1024 chars stating what+when, body kept under ~500 lines, progressive disclosure) — docs.anthropic.com, Agent Skills.
+
+**AKM** — companion design docs in this directory (`akm-0.9.0-bundle-adapter-architecture-plan.md`, `akm-0.9.0-residual-complexity-audit.md`, `akm-0.9.0-greenfield-vs-refactor-decision.md`) and the current source at HEAD; all `file:line` references are to that tree.
