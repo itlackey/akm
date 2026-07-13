@@ -112,8 +112,9 @@ spawnSync(['git', 'ls-files', ...])
 - Add `better-sqlite3` as `optionalDependency` (prebuilt binaries, no compile step on common platforms)
 - Add `@types/better-sqlite3` to `devDependencies`
 - Add `semver` to `dependencies` (tiny, zero-deps)
-- Add `node: ">=20.0.0"` to `engines` (Node 20 floor: @clack/core uses node:util styleText)
-- Relax `preinstall` guard to allow Node >= 20
+- Add `node: ">=20.12.0"` to `engines` (`@clack/core` uses `node:util.styleText`,
+  which was added in Node 20.12)
+- Require Node >= 20.12 in the npm `preinstall` guard
 
 ---
 

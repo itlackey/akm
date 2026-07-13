@@ -296,6 +296,9 @@ npm install -g akm-cli@latest
 akm upgrade
 ```
 
+The npm package requires Node.js >= 20.12. It prefers a working Bun >= 1.0 on
+`PATH` and otherwise uses Node.js; the standalone binary is runtime-free.
+
 To try workflows:
 
 ```sh

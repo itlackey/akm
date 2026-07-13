@@ -24,13 +24,7 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
-**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
-
-```sh
-bun install -g akm-cli
-```
-
-**Option 3 — Node.js (requires Node.js >= 20.12):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
 
 ```sh
 npm install -g akm-cli
@@ -38,7 +32,12 @@ npm install -g akm-cli
 
 Upgrade in place with `akm upgrade`.
 
-> **AKM 0.9.0 supports three install paths:** prebuilt binary, Bun, or Node.js >= 20.12.
+The npm package always uses Node.js to bootstrap its cross-platform command.
+If a working [Bun](https://bun.sh) >= 1.0 is also on `PATH`, the launcher
+prefers Bun for execution; old, unusable, or absent Bun installations fall back
+to Node.js. Node.js remains required for the npm package. The standalone
+binaries are runtime-free.
+
 > The old `vault` asset type was removed in 0.9.0; use `env` for whole `.env`
 > groups and `secret` for standalone sensitive values.
 

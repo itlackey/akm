@@ -92,12 +92,12 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
 ] as const;
 
 /**
- * A schedule for the manual catch-up task. The scheduler requires a valid
- * cron expression even when the task is registered disabled, so we give the
- * unscheduled task a nominal far-future-ish cadence and leave it disabled —
- * the documented entry point is `akm tasks run akm-improve-catchup`.
+ * A schedule for the manual catch-up task. The scheduler requires a portable
+ * expression even when the task is registered disabled, so we give it a
+ * nominal daily cadence and leave it disabled. The documented entry point is
+ * `akm tasks run akm-improve-catchup`.
  */
-const MANUAL_TASK_NOMINAL_SCHEDULE = "0 4 1 1 *"; // 04:00 on Jan 1 — never effectively fires
+const MANUAL_TASK_NOMINAL_SCHEDULE = "0 4 * * *";
 
 /** Injected primitives so tests never touch the OS scheduler or a real stash. */
 export interface RegisterDefaultTasksDeps {

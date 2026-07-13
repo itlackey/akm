@@ -3,6 +3,8 @@
   <RegistrationInfo>
     <Description>akm scheduled task: {{TASK_ID}}</Description>
     <URI>{{FOLDER}}{{TASK_ID}}</URI>
+    <Source>{{SIGNATURE}}</Source>
+    <Documentation>Log target (informational only; schtasks doesn't redirect): {{LOG_PATH}}</Documentation>
   </RegistrationInfo>
   <Triggers>
 {{TRIGGER_XML}}
@@ -25,5 +27,4 @@
       <Arguments>{{ARGS}}</Arguments>
     </Exec>
   </Actions>
-  <!-- Log target (informational only; schtasks doesn't redirect): {{LOG_PATH}} -->
 </Task>

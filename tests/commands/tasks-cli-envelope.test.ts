@@ -16,7 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-
+import { buildScheduledTaskInvocation, type ScheduledTaskContext } from "../../src/tasks/scheduler-invocation";
 import { runCliCapture } from "../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
@@ -31,6 +31,19 @@ function makeStashDir(): string {
   disposers.push(d);
   fs.mkdirSync(path.join(d.dir, "tasks"), { recursive: true });
   return d.dir;
+}
+
+function writeDisabledCommandTask(stashDir: string): void {
+  fs.writeFileSync(
+    path.join(stashDir, "tasks", "disabled-command.yml"),
+    [
+      "version: 2",
+      'schedule: "@daily"',
+      "enabled: false",
+      `command: ${JSON.stringify([process.execPath, "-e", "process.exit(0)"])}`,
+      "",
+    ].join("\n"),
+  );
 }
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
@@ -66,5 +79,38 @@ describe("akm tasks — JSON envelope snapshot (WS6)", () => {
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);
     expect(env.code).toBe("ASSET_NOT_FOUND");
+  });
+
+  test("tasks run manually executes an intentionally disabled task", async () => {
+    const stash = makeStashDir();
+    writeDisabledCommandTask(stash);
+
+    const { stdout, status } = await runCli(["--json", "tasks", "run", "disabled-command"], stash);
+
+    expect(status).toBe(0);
+    expect(JSON.parse(stdout).result.status).toBe("completed");
+  });
+
+  test("a backend-generated invocation uses its captured stash and skips the disabled task", async () => {
+    const capturedStash = makeStashDir();
+    const ambientStash = makeStashDir();
+    writeDisabledCommandTask(capturedStash);
+    const root = path.dirname(capturedStash);
+    const context: ScheduledTaskContext = {
+      AKM_STASH_DIR: capturedStash,
+      AKM_CONFIG_DIR: path.join(root, "captured-config"),
+      AKM_DATA_DIR: path.join(root, "captured-data"),
+      AKM_CACHE_DIR: path.join(root, "captured-cache"),
+      AKM_STATE_DIR: path.join(root, "captured-state"),
+    };
+    const generated = buildScheduledTaskInvocation(["akm"], "disabled-command", context);
+    const ambientEnv: NodeJS.ProcessEnv = { AKM_STASH_DIR: ambientStash };
+
+    const { code, stdout } = await withEnv({ ...ambientEnv, ...generated.environment }, () =>
+      runCliCapture(["--json", ...generated.argv.slice(1)]),
+    );
+
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout).result.status).toBe("disabled");
   });
 });

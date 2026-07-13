@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
+import { buildHealthHtmlReplacements } from "../src/commands/health/html-report";
+import { renderRunsDetailMd } from "../src/commands/health/md-report";
 import type { GitRunner } from "../src/commands/health/stash-exposure";
 import type { AkmImproveResult } from "../src/commands/improve/improve";
 import { appendEvent } from "../src/core/events";
@@ -9,7 +11,11 @@ import { buildTaskRunId, insertTaskLogLines, openLogsDatabase } from "../src/cor
 import { openStateDatabase } from "../src/core/state-db";
 import type { SessionLogEntry } from "../src/integrations/session-logs";
 import { recordImproveRun } from "../src/storage/repositories/improve-runs-repository";
-import { upsertTaskHistory } from "../src/storage/repositories/task-history-repository";
+import {
+  finalizeTaskHistoryAttempt,
+  reserveTaskHistoryAttempt,
+  upsertTaskHistory,
+} from "../src/storage/repositories/task-history-repository";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,
@@ -494,6 +500,156 @@ describe("akmHealth", () => {
     // strategyFilteredRefs = latest run's count (7), NOT 7+5=12.
     expect(result.improve.strategyFilteredRefs).toBe(7);
   });
+
+  test("accounts for normalized and invalid legacy rows without changing metrics or the latest complete snapshot", () => {
+    const now = Date.now();
+    const completeStart = new Date(now - 120_000).toISOString();
+    const interruptedStart = new Date(now - 60_000).toISOString();
+    const invalidStart = new Date(now - 30_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-complete",
+        startedAt: completeStart,
+        completedAt: new Date(now - 110_000).toISOString(),
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        legacyProfile: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: fixtureResult({
+          memorySummary: { eligible: 25, derived: 5 },
+          plannedRefs: [{ ref: "memory:complete" }],
+        }),
+      });
+      recordImproveRun(db, {
+        id: "run-interrupted",
+        startedAt: interruptedStart,
+        completedAt: interruptedStart,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        legacyProfile: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: false,
+        result: {
+          schemaVersion: 1,
+          ok: false,
+          profile: "default",
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: [],
+          actions: [],
+          terminated: { reason: "signal", at: interruptedStart },
+        } as unknown as AkmImproveResult,
+      });
+      recordImproveRun(db, {
+        id: "run-invalid",
+        startedAt: invalidStart,
+        completedAt: new Date(now - 20_000).toISOString(),
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        legacyProfile: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: {
+          schemaVersion: 1,
+          ok: true,
+          profile: "default",
+          scope: { mode: "all" },
+          dryRun: false,
+          plannedRefs: Array.from({ length: 20 }, (_, index) => ({ ref: `memory:invalid-${index}` })),
+          actions: [],
+          terminated: { reason: "not-an-interrupted-row", at: invalidStart },
+        } as unknown as AkmImproveResult,
+      });
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({
+      since: "7d",
+      groupBy: "run",
+      windows: [{ name: "accounting", since: "7d" }],
+    });
+    expect(result.improve.memorySummary).toEqual({ eligible: 25, derived: 5 });
+    expect(result.improve.plannedRefs).toBe(1);
+    expect(result.improve.wallTime.count).toBe(1);
+    expect(result.improve.resultRows).toEqual({
+      total: 3,
+      included: 2,
+      normalized: 1,
+      skipped: { invalid: 1 },
+    });
+    expect(result.windows?.[0]?.runs).toBe(3);
+    expect(result.windows?.[0]?.improve.resultRows).toEqual(result.improve.resultRows);
+    expect(result.runs?.find((run) => run.id === "run-complete")?.resultStatus).toBe("valid");
+    expect(result.runs?.find((run) => run.id === "run-interrupted")?.resultStatus).toBe("normalized");
+    expect(result.runs?.find((run) => run.id === "run-invalid")?.resultStatus).toBe("invalid");
+
+    const markdown = renderRunsDetailMd(result.runs ?? []);
+    expect(markdown.split("\n")[0]).toContain("result_status");
+    expect(markdown).toContain("normalized");
+    expect(markdown).toContain("invalid");
+    expect(markdown).not.toContain("false (normalized)");
+
+    const html = buildHealthHtmlReplacements(result, {
+      window: "7d",
+      compare: "7d",
+      proposals: [],
+      echarts: "cdn",
+    });
+    expect(html["%%RUN_COUNT%%"]).toBe("2");
+    expect(html["%%RUNS_JS_CONST%%"]).not.toContain("run-invalid");
+    expect(html["%%ACTION_ITEMS_HTML%%"]).toContain("run-invalid");
+  }, 15_000);
+
+  test("uses the same deterministic latest-complete tie-break for metrics and HTML", () => {
+    const timestamp = new Date(Date.now() - 60_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      for (const [id, ok, eligible] of [
+        ["run-z", false, 90],
+        ["run-a", true, 10],
+      ] as const) {
+        recordImproveRun(db, {
+          id,
+          startedAt: timestamp,
+          completedAt: timestamp,
+          stashDir: "/tmp/stash",
+          dryRun: false,
+          strategy: "default",
+          scopeMode: "all",
+          scopeValue: null,
+          guidance: null,
+          ok,
+          result: fixtureResult({
+            schemaVersion: 2,
+            ok,
+            strategy: "default",
+            memorySummary: { eligible, derived: 1 },
+          }),
+        });
+      }
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "7d", groupBy: "run" });
+    expect(result.improve.memorySummary).toEqual({ eligible: 90, derived: 1 });
+    const html = buildHealthHtmlReplacements(result, {
+      window: "7d",
+      compare: "7d",
+      proposals: [],
+      echarts: "cdn",
+    });
+    expect(html["%%EXEC_SUMMARY_HTML%%"]).toContain("run-z");
+  }, 15_000);
 
   test("improve run is attributed to its scheduled akm-improve task via the ±5min task_history join", () => {
     const now = Date.now();
@@ -1062,30 +1218,82 @@ describe("akmHealth", () => {
     expect(result.metrics.stuckActiveRuns).toBe(0);
   });
 
-  test("omitting now defaults to real wall-clock (additive seam)", () => {
-    // A row started ~20min before real now must read as stuck without passing
-    // `now`, proving the default path is identical to calling Date.now().
-    const startedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  test("does not classify a finalized active workflow as crash-stuck", () => {
+    const now = Date.now();
+    const startedAt = new Date(now - 20 * 60 * 1000).toISOString();
+    const completedAt = new Date(now - 19 * 60 * 1000).toISOString();
     const db = openStateDatabase();
     try {
-      upsertTaskHistory(db, {
-        task_id: "active-task-default",
-        status: "active",
-        started_at: startedAt,
-        completed_at: null,
-        failed_at: null,
-        log_path: null,
-        target_kind: "prompt",
-        target_ref: null,
-        metadata_json: JSON.stringify({ durationMs: 0, profile: "opencode" }),
-      });
+      expect(
+        reserveTaskHistoryAttempt(db, {
+          task_id: "active-workflow",
+          status: "active",
+          started_at: startedAt,
+          completed_at: null,
+          failed_at: null,
+          log_path: null,
+          target_kind: null,
+          target_ref: null,
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null }),
+        }),
+      ).toBe(true);
+      expect(
+        finalizeTaskHistoryAttempt(db, {
+          task_id: "active-workflow",
+          status: "active",
+          started_at: startedAt,
+          completed_at: completedAt,
+          failed_at: null,
+          log_path: null,
+          target_kind: "workflow",
+          target_ref: "workflow:waiting",
+          metadata_json: JSON.stringify({
+            metadataVersion: 2,
+            durationMs: 60_000,
+            detail: { runId: "workflow-run" },
+          }),
+        }),
+      ).toBe(true);
     } finally {
       db.close();
     }
 
-    const result = akmHealth({ since: "30d" });
+    const result = akmHealth({
+      since: "30d",
+      now: () => now,
+      windows: [{ name: "active-runs", since: "30d" }],
+    });
+    expect(result.metrics.stuckActiveRuns).toBe(0);
+    expect(result.windows?.[0]?.metrics.stuckActiveRuns).toBe(0);
+  }, 15_000);
+
+  test("omitting now defaults to real wall-clock (additive seam)", () => {
+    // A reserved row started ~20min before real now must read as stuck without
+    // passing `now`, proving both the reservation shape and default clock path.
+    const startedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const db = openStateDatabase();
+    try {
+      expect(
+        reserveTaskHistoryAttempt(db, {
+          task_id: "active-task-default",
+          status: "active",
+          started_at: startedAt,
+          completed_at: null,
+          failed_at: null,
+          log_path: null,
+          target_kind: null,
+          target_ref: null,
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null }),
+        }),
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+
+    const result = akmHealth({ since: "30d", windows: [{ name: "active-runs", since: "30d" }] });
     expect(result.metrics.stuckActiveRuns).toBe(1);
-  });
+    expect(result.windows?.[0]?.metrics.stuckActiveRuns).toBe(1);
+  }, 15_000);
 
   test("passes requested since window through to session log candidates", () => {
     const seen: number[] = [];

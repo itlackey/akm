@@ -1,38 +1,49 @@
-#!/bin/sh
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#!/usr/bin/env node
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-case "$0" in
-	*/*) SCRIPT_PATH=$0 ;;
-	*)
-		SCRIPT_PATH=$(command -v -- "$0" 2>/dev/null || true)
-		if [ -z "$SCRIPT_PATH" ]; then
-			echo "akm launcher could not resolve its own path." >&2
-			exit 127
-		fi
-		;;
-esac
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-if command -v readlink >/dev/null 2>&1; then
-	while [ -L "$SCRIPT_PATH" ]; do
-		LINK_TARGET=$(readlink "$SCRIPT_PATH")
-		case "$LINK_TARGET" in
-			/*) SCRIPT_PATH=$LINK_TARGET ;;
-			*) SCRIPT_PATH=${SCRIPT_PATH%/*}/$LINK_TARGET ;;
-		esac
-	done
-fi
+if (!process.versions.bun) {
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  if (major < 20 || (major === 20 && minor < 12)) {
+    console.error("The akm-cli npm package requires Node.js >= 20.12 to bootstrap.");
+    process.exit(1);
+  }
+}
 
-SCRIPT_DIR=$(CDPATH= cd -- "${SCRIPT_PATH%/*}" && pwd)
+const bunProbe = process.versions.bun
+  ? { status: 0, stdout: process.versions.bun }
+  : spawnSync("bun", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    });
+const [bunMajor = 0] = (bunProbe.status === 0 ? bunProbe.stdout.trim() : "").split(".").map(Number);
+const useBun = bunMajor >= 1;
+const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
+const nodeEntry = fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
 
-if command -v bun >/dev/null 2>&1; then
-	exec bun "$SCRIPT_DIR/cli.js" "$@"
-fi
+if (!useBun && !process.versions.bun) {
+  await import("./cli-node.mjs");
+} else {
+  const command = useBun ? (process.versions.bun ? process.execPath : "bun") : "node";
+  const entry = useBun ? bunEntry : nodeEntry;
+  const runtime = useBun ? "Bun" : "Node.js";
+  const result = await new Promise((resolve) => {
+    const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit" });
+    child.once("error", (error) => resolve({ error }));
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
 
-if command -v node >/dev/null 2>&1; then
-	exec node "$SCRIPT_DIR/cli-node.mjs" "$@"
-fi
-
-echo "akm requires Bun or Node.js >= 20.12.0 on PATH." >&2
-exit 127
+  if (result.error) {
+    console.error(`akm launcher could not start ${runtime}: ${result.error.message}`);
+    process.exitCode = 127;
+  } else if (result.signal) {
+    process.kill(process.pid, result.signal);
+  } else {
+    process.exitCode = result.code ?? 1;
+  }
+}

@@ -158,11 +158,15 @@ const tasksRunCommand = defineCommand({
     name: "run",
     description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
   },
-  args: { id: { type: "positional", description: "Task id", required: true } },
+  args: {
+    id: { type: "positional", description: "Task id", required: true },
+    scheduled: { type: "boolean", description: "Internal marker for scheduler-generated runs", default: false },
+  },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const { id } = parseTaskRef(args.id);
-      const envelope = await akmTasksRun(id);
+      const envelope = await akmTasksRun(args.id, {
+        scheduled: args.scheduled === true,
+      });
       output("tasks-run", envelope);
       if (envelope.exitCode !== 0) process.exit(envelope.exitCode);
     });

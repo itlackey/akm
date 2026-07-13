@@ -119,6 +119,7 @@ export function openStateDatabase(dbPath?: string): Database {
     if (existed) {
       const preflight = openDatabase(resolvedPath, { readonly: true });
       try {
+        preflight.exec("PRAGMA busy_timeout = 30000");
         if (isCanonical) assertCurrentMigrationLedger(preflight, STATE_MIGRATIONS);
         else assertMigrationLedger(preflight, STATE_MIGRATIONS);
       } finally {

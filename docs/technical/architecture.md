@@ -354,11 +354,12 @@ External coding agents are reachable via two execution paths:
   startup against its own deadline (including `null`); no caller's timeout is
   stored in the shared lifecycle.
 
-Prompt tasks are versioned task YAML v2 assets. They resolve `engine` from the
-task or `defaults.engine`; LLM prompt tasks use plain chat completion and agent
-prompt tasks use the spawn or SDK runner. Task run history writes metadata v2
-with an `engine`; historical v1 metadata remains readable without being an active
-task configuration surface.
+New prompt tasks are versioned task YAML v2 assets. Valid 0.8 task YAML is
+normalized to the v2 runtime shape while reading and is not rewritten. Prompt
+tasks resolve `engine` from the task or `defaults.engine`; LLM prompt tasks use
+plain chat completion and agent prompt tasks use the spawn or SDK runner. Task
+run history writes metadata v2 with an `engine`; historical v1 metadata remains
+readable.
 
 Migration restore holds a global maintenance barrier from its final blocker
 check through artifact replacement. Index writers, improve/extract process

@@ -5,7 +5,10 @@ using search and show to discover capabilities.
 
 ## Runtime Requirement
 
-> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in this release.** Cross-runtime compatibility is planned for 0.9.0.
+The npm package requires Node.js >= 20.12 to bootstrap its command on every
+platform. If a working Bun >= 1.0 is also on `PATH`, the package launcher
+prefers Bun for execution; old, unusable, or absent Bun installations fall back
+to Node.js. The standalone binaries are runtime-free.
 
 ## Install
 
@@ -22,10 +25,10 @@ irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 Or download a standalone binary directly from the
 [GitHub releases](https://github.com/itlackey/akm/releases) page.
 
-**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
 
 ```sh
-bun install -g akm-cli
+npm install -g akm-cli
 ```
 
 ### Windows installation notes

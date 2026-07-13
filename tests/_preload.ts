@@ -197,7 +197,12 @@ const AKM_DIR_OVERRIDES: readonly string[] = [
 
 /** True iff `dir` is the temp root or strictly within it. */
 function isUnderTmp(dir: string): boolean {
-  return dir === TMP_REAL || dir.startsWith(TMP_REAL + path.sep);
+  try {
+    const real = fs.realpathSync(dir);
+    return real === TMP_REAL || real.startsWith(TMP_REAL + path.sep);
+  } catch {
+    return false;
+  }
 }
 
 /**

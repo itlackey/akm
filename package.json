@@ -1,6 +1,6 @@
 {
   "name": "akm-cli",
-  "version": "0.9.0-rc.3",
+  "version": "0.9.0-rc.4",
   "type": "module",
   "description": "akm (Agent Knowledge Management) — A package manager for AI agent skills, commands, tools, and knowledge. Works with Claude Code, OpenCode, Cursor, and any AI coding assistant.",
   "keywords": [
@@ -52,7 +52,7 @@
     "akm-migrate-storage": "dist/akm-migrate-storage"
   },
   "scripts": {
-    "preinstall": "node -e \"var ua=process.env.npm_config_user_agent||'';var v=(process.versions.node||'0').split('.').map(function(n){return parseInt(n,10)||0});var ok=v[0]>20||(v[0]===20&&(v[1]>12||(v[1]===12&&v[2]>=0)));if(process.versions.bun||ua.startsWith('bun/')||process.env.BUN_INSTALL||ok){process.exit(0)}console.error('\\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh), Node.js >= 20.12, or the prebuilt binary.\\n  Install options:\\n    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\\n    2. Node:   upgrade to Node.js 20.12 or newer (https://nodejs.org)\\n    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\\n');process.exit(1)\"",
+    "preinstall": "node -e \"var v=(process.versions.node||'0').split('.').map(function(n){return parseInt(n,10)||0});var ok=v[0]>20||(v[0]===20&&(v[1]>12||(v[1]===12&&v[2]>=0)));if(ok){process.exit(0)}console.error('\\n  ERROR: the akm-cli npm package requires Node.js >= 20.12.\\n  A working Bun >= 1.0 on PATH is optional and preferred for execution.\\n  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\\n    curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\\n');process.exit(1)\"",
     "build": "rm -rf dist && bun scripts/gen-config-schema.ts &&bun run tsc --project ./tsconfig.build.json && bun scripts/copy-assets.ts && bun scripts/fix-esm-extensions.ts",
     "check": "bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration",
     "check:fast": "bun run lint && bunx tsc --noEmit && bun run test:unit",
@@ -94,7 +94,6 @@
     "sqlite-vec": "^0.1.9"
   },
   "engines": {
-    "bun": ">=1.0.0",
     "node": ">=20.12.0"
   },
   "dependencies": {

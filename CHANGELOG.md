@@ -1234,14 +1234,16 @@ proposal and log storage, `--format html` output, and per-stage LLM telemetry.
 
 ### Added
 
-- **Cross-runtime: akm now runs on Node.js (≥ 20) in addition to Bun** (#560,
+- **Cross-runtime: akm now runs on Node.js >= 20.12 in addition to Bun** (#560,
   #465). A two-file runtime boundary (`src/storage/database.ts` owns SQLite via
   `bun:sqlite` on Bun / `better-sqlite3` on Node; `src/runtime.ts` owns every
   `Bun.*` API) contains all runtime-specific code, enforced by a lint guard so it
   cannot leak back out. A CI `node-smoke` matrix runs the built CLI under Node
-  20 and 22. **Minimum Node is 20** — the prompts dependency (`@clack/core`) uses
-  `node:util.styleText`, added in Node 20.12; Node 18 is EOL and unsupported.
-  Bun remains the primary/default runtime.
+  20 and 22. The prompts dependency (`@clack/core`) uses `node:util.styleText`,
+  added in Node 20.12; Node 18 is EOL and unsupported. The npm package uses Node
+  as its bootstrap and prefers a working Bun >= 1.0 for execution when both are
+  available. Old, unusable, or absent Bun installations fall back to Node.js;
+  standalone binaries remain runtime-free.
 - **`session` asset type — agent sessions are now searchable** (#561). The
   `extract` pass, after distilling memory proposals from a session, additionally
   writes the session itself as a first-class `session` asset

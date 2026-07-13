@@ -192,7 +192,7 @@ export function buildWindowMetrics(
   });
   const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
-  const activeRows = taskRows.filter((row) => row.status === "active");
+  const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
   const stuckActiveRuns = activeRows.filter(
     (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
   ).length;

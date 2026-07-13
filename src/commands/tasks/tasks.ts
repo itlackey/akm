@@ -27,11 +27,20 @@ import {
 } from "../../core/write-source";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
+import { findBareAkmExecutableIndex } from "../../tasks/command-executable";
 import { parseTaskDocument } from "../../tasks/parser";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
-import { exitCodeForStatus, readTaskHistory, runTask, type TaskRunResult } from "../../tasks/runner";
+import {
+  exitCodeForStatus,
+  INVALID_TASK_ATTEMPT_ID,
+  readTaskHistory,
+  recordTaskAttemptFailure,
+  runTask,
+  type TaskRunResult,
+} from "../../tasks/runner";
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../../tasks/schedule";
 import type { TaskDocument } from "../../tasks/schema";
+import { normaliseTaskId } from "../../tasks/task-id";
 import { validateTaskDocument } from "../../tasks/validator";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 
@@ -69,7 +78,14 @@ export interface TasksAddResult {
   target: TaskDocument["target"];
 }
 
-export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult> {
+export interface TaskMutationDeps {
+  backend?: TaskBackend;
+  writeAsset?: typeof writeAssetToSource;
+  deleteAsset?: typeof deleteAssetFromSource;
+  commitBoundary?: typeof commitWriteTargetBoundary;
+}
+
+export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps = {}): Promise<TasksAddResult> {
   const id = normaliseTaskId(input.id);
   const hasCommand =
     input.command !== undefined &&
@@ -100,7 +116,6 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
   const target = resolveTaskWriteTarget();
   const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
-  fs.mkdirSync(typeRoot, { recursive: true });
 
   const assetPath = resolveAssetPathFromName("task", typeRoot, id);
   if (!isWithin(assetPath, typeRoot)) {
@@ -132,25 +147,96 @@ export async function akmTasksAdd(input: TasksAddInput): Promise<TasksAddResult>
 
   const task = parseTaskDocument({ yaml, filePath: assetPath, id });
   await validateTaskDocument(task, { backend, stashDir });
+  const obsoleteReason = obsoleteBackupTaskReason(task);
+  if (obsoleteReason) throw new UsageError(obsoleteReason, "INVALID_FLAG_VALUE");
 
   const ref = taskAssetRef(id);
-  await writeAssetToSource(target.source, target.config, ref, yaml);
-
-  // Install in the OS scheduler. If install fails after the file was written,
-  // delete the file so the on-disk state never claims a task is registered
-  // when it isn't.
-  try {
-    const sched = selectBackend();
-    await sched.install(task);
-  } catch (err) {
+  const previousYaml = fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
+  let previousTask: TaskDocument | undefined;
+  let previousTaskError: unknown;
+  if (previousYaml !== undefined) {
     try {
-      await deleteAssetFromSource(target.source, target.config, ref);
-    } catch {
-      /* ignore */
+      previousTask = parseTaskDocument({ yaml: previousYaml, filePath: assetPath, id });
+    } catch (err) {
+      previousTaskError = err;
+    }
+  }
+  const sched = deps.backend ?? selectBackend();
+  const writeAsset = deps.writeAsset ?? writeAssetToSource;
+  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
+  const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
+  const wasInstalled = previousYaml !== undefined && (await sched.list()).some((entry) => entry.id === id);
+  let sourceRestoreArmed = false;
+  let installSucceeded = false;
+
+  try {
+    sourceRestoreArmed = true;
+    await writeAsset(target.source, target.config, ref, yaml);
+    await sched.install(task);
+    installSucceeded = true;
+    commitBoundary(target, `Update task:${id}`);
+  } catch (err) {
+    const rollbackErrors: unknown[] = [];
+    let sourceRestored = false;
+    if (sourceRestoreArmed) {
+      try {
+        if (previousYaml === undefined) {
+          if (fs.existsSync(assetPath)) {
+            await deleteAsset(target.source, target.config, ref);
+            sourceRestored = true;
+          }
+        } else {
+          await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, assetPath, previousYaml);
+          sourceRestored = true;
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    if (installSucceeded && !wasInstalled) {
+      try {
+        await sched.uninstall(id);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    } else if (installSucceeded && previousTask) {
+      try {
+        await sched.install(previousTask);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+        try {
+          if (typeof sched.setEnabled !== "function") {
+            throw new Error(`Scheduler backend "${sched.name}" cannot disable task "${id}".`);
+          }
+          await sched.setEnabled(id, false);
+        } catch (disableError) {
+          rollbackErrors.push(disableError);
+          try {
+            await sched.uninstall(id);
+          } catch (uninstallError) {
+            rollbackErrors.push(uninstallError);
+          }
+        }
+      }
+    } else if (installSucceeded && wasInstalled) {
+      rollbackErrors.push(previousTaskError ?? new Error(`Prior task "${id}" could not be restored.`));
+    }
+
+    if (sourceRestored) {
+      try {
+        commitBoundary(target, `Restore task:${id}`);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new AggregateError([err, ...rollbackErrors], `${message}; rollback for task "${id}" was incomplete.`);
     }
     throw err;
   }
-  commitWriteTargetBoundary(target, `Update task:${id}`);
 
   return {
     id,
@@ -177,7 +263,7 @@ export interface TasksListResult {
     when_to_use?: string;
     tags?: string[];
   }>;
-  /** Task IDs using retired v1 YAML. They are not executable or installable. */
+  /** Task IDs using an unsupported task schema version. */
   stale: string[];
 }
 
@@ -295,36 +381,74 @@ export async function akmTasksShow(id: string): Promise<{
   };
 }
 
-export async function akmTasksRemove(id: string): Promise<{ id: string; removed: true; backend: string }> {
+export async function akmTasksRemove(
+  id: string,
+  deps: TaskMutationDeps = {},
+): Promise<{ id: string; removed: true; backend: string }> {
   const normalised = normaliseTaskId(id);
   const target = resolveTaskWriteTarget();
   const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
-  await resolveAssetPath(stashDir, "task", normalised);
+  const filePath = await resolveAssetPath(stashDir, "task", normalised);
+  const yaml = fs.readFileSync(filePath, "utf8");
   const ref = taskAssetRef(normalised);
-  const sched = selectBackend();
-  let uninstallError: unknown;
-  let deleteError: unknown;
+  const sched = deps.backend ?? selectBackend();
+  const writeAsset = deps.writeAsset ?? writeAssetToSource;
+  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
+  const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
+  const wasInstalled = (await sched.list()).some((entry) => entry.id === normalised);
+  const previousTask = wasInstalled ? parseTaskDocument({ yaml, filePath, id: normalised }) : undefined;
+  let uninstallAttempted = false;
+  let deleteAttempted = false;
+
   try {
+    uninstallAttempted = true;
     await sched.uninstall(normalised);
+    deleteAttempted = true;
+    await deleteAsset(target.source, target.config, ref);
+    commitBoundary(target, `Remove task:${normalised}`);
   } catch (err) {
-    uninstallError = err;
+    const rollbackErrors: unknown[] = [];
+    let sourceRestored = false;
+    if (deleteAttempted) {
+      try {
+        await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, filePath, yaml);
+        sourceRestored = true;
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (uninstallAttempted && previousTask) {
+      try {
+        await sched.install(previousTask);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (sourceRestored) {
+      try {
+        commitBoundary(target, `Restore task:${normalised}`);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new AggregateError(
+        [err, ...rollbackErrors],
+        `${message}; rollback for task "${normalised}" was incomplete.`,
+      );
+    }
+    throw err;
   }
-  try {
-    await deleteAssetFromSource(target.source, target.config, ref);
-  } catch (err) {
-    deleteError = err;
-  }
-  if (uninstallError !== undefined) throw uninstallError;
-  if (deleteError !== undefined) throw deleteError;
-  commitWriteTargetBoundary(target, `Remove task:${normalised}`);
   return { id: normalised, removed: true, backend: sched.name };
 }
 
 export async function akmTasksSetEnabled(
   id: string,
   enabled: boolean,
+  deps: TaskMutationDeps = {},
 ): Promise<{ id: string; enabled: boolean; backend: string }> {
   const normalised = normaliseTaskId(id);
   const target = resolveTaskWriteTarget();
@@ -333,28 +457,66 @@ export async function akmTasksSetEnabled(
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
   const yaml = fs.readFileSync(filePath, "utf8");
-  // Parse before writing so stale v1 tasks are diagnosed without changing the
-  // source file or its installed scheduler entry.
-  parseTaskDocument({ yaml, filePath, id: normalised });
+  // Parse before writing so unsupported tasks are diagnosed without changing
+  // the source file or its installed scheduler entry.
+  const previousTask = parseTaskDocument({ yaml, filePath, id: normalised });
   const updated = setEnabledInYaml(yaml, enabled);
+  const task = parseTaskDocument({ yaml: updated, filePath, id: normalised });
+  const obsoleteReason = obsoleteBackupTaskReason(task);
+  if (obsoleteReason) throw new UsageError(obsoleteReason, "INVALID_FLAG_VALUE");
   const ref = taskAssetRef(normalised);
-  await writeAssetToSource(target.source, target.config, ref, updated);
-  const sched = selectBackend();
+  const sched = deps.backend ?? selectBackend();
+  const writeAsset = deps.writeAsset ?? writeAssetToSource;
+  const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
+  const wasInstalled = (await sched.list()).some((entry) => entry.id === normalised);
+  let sourceRestoreArmed = false;
+  let installSucceeded = false;
   try {
+    sourceRestoreArmed = true;
+    await writeAsset(target.source, target.config, ref, updated);
     // Reinstall from the (just-updated) definition rather than only toggling
     // the comment. A plain toggle leaves a stale schedule in place if the
     // .yml's `schedule:` changed while the task was disabled — re-enabling
     // would silently keep the old cron line. install() renders the block with
     // both the current schedule and the new enabled state, and is idempotent.
-    const task = parseTaskDocument({ yaml: updated, filePath, id: normalised });
     await sched.install(task);
+    installSucceeded = true;
+    commitBoundary(target, `Update task:${normalised}`);
   } catch (err) {
-    // Roll the file back so the YAML source-of-truth and the OS
-    // scheduler don't diverge silently when the backend call fails.
-    await writeAssetToSource(target.source, target.config, ref, yaml);
+    const rollbackErrors: unknown[] = [];
+    let sourceRestored = false;
+    if (sourceRestoreArmed) {
+      try {
+        await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, filePath, yaml);
+        sourceRestored = true;
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (installSucceeded) {
+      try {
+        if (wasInstalled) await sched.install(previousTask);
+        else await sched.uninstall(normalised);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (sourceRestored) {
+      try {
+        commitBoundary(target, `Restore task:${normalised}`);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new AggregateError(
+        [err, ...rollbackErrors],
+        `${message}; rollback for task "${normalised}" was incomplete.`,
+      );
+    }
     throw err;
   }
-  commitWriteTargetBoundary(target, `Update task:${normalised}`);
   return { id: normalised, enabled, backend: sched.name };
 }
 
@@ -364,16 +526,44 @@ export interface TasksRunResultEnvelope {
   exitCode: number;
 }
 
-export async function akmTasksRun(id: string): Promise<TasksRunResultEnvelope> {
-  const normalised = normaliseTaskId(id);
-  const stashDir = resolveStashDir();
+export async function akmTasksRun(id: string, options: { scheduled?: boolean } = {}): Promise<TasksRunResultEnvelope> {
+  const startedAt = new Date();
+  let normalised: string;
+  try {
+    normalised = parseTaskRef(id).id;
+  } catch (failure) {
+    recordTaskAttemptFailure({
+      taskId: INVALID_TASK_ATTEMPT_ID,
+      reason: "invalid_task_id",
+      failure,
+      startedAt,
+    });
+    throw failure;
+  }
+
+  let stashDir: string;
+  try {
+    stashDir = resolveStashDir();
+  } catch (failure) {
+    recordTaskAttemptFailure({
+      taskId: normalised,
+      reason: "task_load_failed",
+      failure,
+      startedAt,
+    });
+    throw failure;
+  }
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
-  const result = await runTask(normalised);
+  const result = await runTask(normalised, { stashDir, scheduled: options.scheduled === true });
+  const exitCode =
+    result.status === "failed" && result.target.kind === "command" && result.detail?.exitCode === 78
+      ? 78
+      : exitCodeForStatus(result.status);
   return {
     ok: result.status === "completed" || result.status === "disabled",
     result,
-    exitCode: exitCodeForStatus(result.status),
+    exitCode,
   };
 }
 
@@ -420,7 +610,7 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
         .map((f) => f.slice(0, -4))
     : [];
   const sched = deps.backend ?? selectBackend();
-  const backend = backendNameForPlatform();
+  const backend = sched.name;
   // Map id → installed signature so sync can detect schedule/enabled drift on
   // tasks that already exist in the scheduler, not just presence/absence.
   const present = new Map((await sched.list()).map((t) => [t.id, t.signature] as const));
@@ -434,14 +624,25 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
     let task: TaskDocument;
     try {
       task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
-    } catch (err) {
-      skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
-      continue;
-    }
-    try {
       await validateTaskDocument(task, { backend, stashDir });
+      const obsoleteReason = obsoleteBackupTaskReason(task);
+      if (obsoleteReason) throw new UsageError(obsoleteReason, "INVALID_FLAG_VALUE");
     } catch (err) {
       skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
+      if (present.has(id)) {
+        try {
+          await sched.setEnabled(id, false);
+        } catch (disableError) {
+          try {
+            await sched.uninstall(id);
+          } catch (uninstallError) {
+            throw new AggregateError(
+              [err, disableError, uninstallError],
+              `Task "${id}" is invalid and its installed scheduler entry could not be disabled or removed.`,
+            );
+          }
+        }
+      }
       continue;
     }
     if (!present.has(id)) {
@@ -472,6 +673,19 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
     }
   }
   return { installed, updated, removed, unchanged, skipped, backend: sched.name };
+}
+
+function obsoleteBackupTaskReason(task: TaskDocument): string | undefined {
+  if (!task.enabled || task.target.kind !== "command") return undefined;
+  const executableIndex = findBareAkmExecutableIndex(task.target.cmd);
+  if (executableIndex === undefined) return undefined;
+  const args = task.target.cmd.slice(executableIndex + 1);
+  if (args.length !== 2 || args[0] !== "db" || args[1] !== "backups") return undefined;
+  return (
+    `Task "${task.id}" invokes obsolete \`akm db backups\`, which only listed legacy backups and is not a 0.9 backup command. ` +
+    "AKM will not install or enable it; sync will keep any existing scheduler entry disabled, and the task file is unchanged. " +
+    "Use `akm backup create --for 0.9.0` for an explicit migration recovery snapshot."
+  );
 }
 
 export interface TasksDoctorResult {
@@ -547,26 +761,21 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-const VALID_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function normaliseTaskId(raw: string): string {
-  // Accept both .yml and .md suffixes from users so muscle memory from the
-  // pre-0.8.0 markdown task format doesn't produce a confusing "task not found".
-  const id = raw.trim().replace(/\.(yml|md)$/, "");
-  if (!id) {
-    throw new UsageError("Task id must be non-empty.", "MISSING_REQUIRED_ARGUMENT");
-  }
-  if (!VALID_ID_RE.test(id)) {
-    throw new UsageError(
-      `Task id "${id}" is invalid. Use letters, digits, dots, underscores, and dashes only.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return id;
-}
-
 function taskAssetRef(id: string): AssetRef {
   return { type: "task", name: id };
+}
+
+async function restoreTaskSourceBytes(
+  writeAsset: typeof writeAssetToSource,
+  source: Parameters<typeof writeAssetToSource>[0],
+  config: Parameters<typeof writeAssetToSource>[1],
+  ref: AssetRef,
+  filePath: string,
+  yaml: string,
+): Promise<void> {
+  await writeAsset(source, config, ref, yaml);
+  // The normal write path adds a trailing newline; rollback restores the raw snapshot exactly.
+  fs.writeFileSync(filePath, yaml, "utf8");
 }
 
 function resolveTaskWriteTarget() {
@@ -622,8 +831,8 @@ function isStaleTaskError(err: unknown): err is UsageError {
 
 function warnStaleTaskFiles(ids: readonly string[]): void {
   process.stderr.write(
-    `WARNING: ${ids.length} task file(s) use retired task schema v1 and were not loaded.\n` +
-      `         Rewrite them with version: 2 and replace profile with engine. See docs/migration/v0.8-to-v0.9.md#task-assets.\n` +
+    `WARNING: ${ids.length} task file(s) use an unsupported task schema version and were not loaded.\n` +
+      `         Use version: 2. See docs/migration/v0.8-to-v0.9.md#engine-and-task-assets.\n` +
       `         Affected: ${ids.map((id) => `tasks/${id}.yml`).join(", ")}\n`,
   );
 }

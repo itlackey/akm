@@ -12,7 +12,16 @@ import {
   toggleBlock,
   upsertBlock,
 } from "../src/tasks/backends/cron";
+import type { ScheduledTaskContext } from "../src/tasks/scheduler-invocation";
 import type { TaskDocument } from "../src/tasks/schema";
+
+const SCHEDULED_CONTEXT: ScheduledTaskContext = {
+  AKM_STASH_DIR: "/srv/akm stash/100%'s",
+  AKM_CONFIG_DIR: "/srv/akm config",
+  AKM_DATA_DIR: "/srv/akm data",
+  AKM_CACHE_DIR: "/srv/akm cache",
+  AKM_STATE_DIR: "/srv/akm state",
+};
 
 const TASK: TaskDocument = {
   version: 2,
@@ -26,19 +35,79 @@ const TASK: TaskDocument = {
 
 describe("cron backend helpers", () => {
   test("buildCronLine emits absolute akm path", () => {
-    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm");
-    expect(line).toBe("*/15 * * * * /usr/local/bin/akm tasks run ping >> /var/log/akm/ping.log 2>&1");
+    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", undefined, SCHEDULED_CONTEXT);
+    expect(line).toContain("/usr/local/bin/akm tasks run ping --scheduled");
+    expect(line).toContain("AKM_STASH_DIR=");
+    expect(line).not.toContain("AKM_LLM_API_KEY");
   });
 
   test("buildCronLine quotes paths containing spaces", () => {
-    const line = buildCronLine(TASK, ["/Applications/My Stuff/akm"], "/var/log");
+    const line = buildCronLine(TASK, ["/Applications/My Stuff/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
     expect(line).toContain("'/Applications/My Stuff/akm'");
   });
 
+  test("buildCronLine preserves the installer PATH for scheduled children", () => {
+    const line = buildCronLine(
+      TASK,
+      ["/home/user/.bun/bin/bun", "/opt/akm/cli.js"],
+      "/var/log",
+      "/home/user/.bun/bin:/usr/bin",
+      SCHEDULED_CONTEXT,
+    );
+    expect(line).toContain("PATH=/home/user/.bun/bin:/usr/bin /home/user/.bun/bin/bun /opt/akm/cli.js tasks run ping");
+  });
+
   test("buildCronLine escapes apostrophes for POSIX shell", () => {
-    const line = buildCronLine(TASK, ["/opt/akm's/bin/akm"], "/var/log/akm's");
+    const line = buildCronLine(TASK, ["/opt/akm's/bin/akm"], "/var/log/akm's", undefined, SCHEDULED_CONTEXT);
     expect(line).toContain("'/opt/akm'\\''s/bin/akm'");
     expect(line).toContain("'/var/log/akm'\\''s/ping.log'");
+  });
+
+  test("buildCronLine escapes cron percent syntax even inside POSIX shell quotes", () => {
+    const task = { ...TASK, id: "ping%done" };
+    const line = buildCronLine(
+      task,
+      ["/opt/100% ready/akm's bin"],
+      "/var/log/100% ready",
+      "/opt/100% tools/bin:/usr/bin",
+      SCHEDULED_CONTEXT,
+    );
+    expect(line).toContain("PATH='/opt/100'\\%' tools/bin:/usr/bin'");
+    expect(line).toContain("'/opt/100'\\%' ready/akm'\\''s bin'");
+    expect(line).toContain("tasks run ping\\%done");
+    expect(line).toContain("'/var/log/100'\\%' ready/ping'\\%'done.log'");
+  });
+
+  test("buildCronLine rejects newline injection from every interpolated input", () => {
+    const cases: Array<() => string> = [
+      () =>
+        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", "/usr/bin\n* * * * * injected", SCHEDULED_CONTEXT),
+      () =>
+        buildCronLine(TASK, ["/usr/local/bin/akm\n* * * * * injected"], "/var/log/akm", undefined, SCHEDULED_CONTEXT),
+      () =>
+        buildCronLine(
+          { ...TASK, id: "ping\n* * * * * injected" },
+          ["/usr/local/bin/akm"],
+          "/var/log/akm",
+          undefined,
+          SCHEDULED_CONTEXT,
+        ),
+      () =>
+        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm\n* * * * * injected", undefined, SCHEDULED_CONTEXT),
+    ];
+    for (const build of cases) expect(build).toThrow("control characters");
+  });
+
+  test("buildCronLine rejects C0, DEL, and C1 controls", () => {
+    for (const control of ["\0", "\t", "\n", "\r", "\u001f", "\u007f", "\u0085", "\u009f"]) {
+      expect(() =>
+        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", `/usr/bin${control}/bin`, SCHEDULED_CONTEXT),
+      ).toThrow("control characters");
+    }
+  });
+
+  test("renderBlock rejects control characters in marker ids", () => {
+    expect(() => renderBlock("ping\n# injected", "* * * * * X", true)).toThrow("control characters");
   });
 
   test("renderBlock wraps the cron line in begin/end markers", () => {
@@ -130,6 +199,18 @@ describe("cron backend helpers", () => {
       { id: "other", body: "# akm:disabled 0 2 * * * /bin/akm tasks run other" },
     ]);
   });
+
+  test("malformed marker blocks fail instead of consuming following crontab entries", () => {
+    const malformed = ["# akm:task ping BEGIN", "*/15 * * * * /bin/akm tasks run ping", "0 1 * * * user-job"].join(
+      "\n",
+    );
+
+    expect(() => listBlocks(malformed)).toThrow("malformed akm task block");
+    expect(() => removeBlock(malformed, "ping")).toThrow("malformed akm task block");
+    expect(() => toggleBlock(malformed, "ping", false)).toThrow("malformed akm task block");
+    expect(() => upsertBlock(malformed, "ping", renderBlock("ping", "X", true))).toThrow("malformed akm task block");
+    expect(malformed).toContain("0 1 * * * user-job");
+  });
 });
 
 // ── drift detection (the `tasks sync` schedule-change fix) ───────────────────
@@ -160,7 +241,14 @@ const SYNC_TASK: TaskDocument = {
 };
 
 describe("cron backend drift detection", () => {
-  const opts = (exec: CronExec) => ({ exec, logDir: "/var/log/akm", akmArgv: ["/usr/local/bin/akm"] });
+  const opts = (exec: CronExec) => ({
+    exec,
+    fs: { ensureDir() {} },
+    logDir: "/var/log/akm",
+    akmArgv: ["/usr/local/bin/akm"],
+    envPath: false as const,
+    scheduledContext: SCHEDULED_CONTEXT,
+  });
   // The cron backend's list() is synchronous, but the TaskBackend interface
   // types it as `… | Promise<…>`; resolve through the concrete array shape so
   // indexing stays type-safe.
@@ -200,5 +288,104 @@ describe("cron backend drift detection", () => {
     const sig2 = listSync(backend)[0].signature;
     expect(sig1).toBe(sig2);
     expect(sig1).toBe(backend.expectedSignature?.(SYNC_TASK));
+  });
+
+  test("signature remains stable with escaped percent, spaces, and apostrophes", () => {
+    const exec = memoryExec();
+    const backend = CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/100% ready/akm's",
+      akmArgv: ["/opt/100% ready/akm's bin"],
+      envPath: "/opt/100% tools/bin:/usr/bin",
+      scheduledContext: SCHEDULED_CONTEXT,
+    });
+    backend.install(SYNC_TASK);
+    const sig1 = listSync(backend)[0].signature;
+    backend.install(SYNC_TASK);
+    const sig2 = listSync(backend)[0].signature;
+    expect(sig1).toBe(sig2);
+    expect(sig1).toBe(backend.expectedSignature?.(SYNC_TASK));
+  });
+
+  test("expected signature changes when the resolved AKM context changes", () => {
+    const original = CRON_BACKEND(opts(memoryExec()));
+    const moved = CRON_BACKEND({
+      ...opts(memoryExec()),
+      scheduledContext: { ...SCHEDULED_CONTEXT, AKM_DATA_DIR: "/srv/moved data" },
+    });
+
+    expect(original.expectedSignature?.(SYNC_TASK)).not.toBe(moved.expectedSignature?.(SYNC_TASK));
+  });
+
+  test("a failed crontab replacement restores the complete prior crontab", () => {
+    let store = "0 1 * * * user-job\n";
+    let failNextWrite = false;
+    const writes: string[] = [];
+    const exec: CronExec = {
+      read: () => ({ status: 0, stdout: store, stderr: "" }),
+      write(content) {
+        writes.push(content);
+        store = content;
+        if (failNextWrite) {
+          failNextWrite = false;
+          return { status: 1, stdout: "", stderr: "injected write failure" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+    const backend = CRON_BACKEND(opts(exec));
+    backend.install(SYNC_TASK);
+    const prior = store;
+    failNextWrite = true;
+
+    expect(() => backend.install({ ...SYNC_TASK, schedule: "45 */6 * * *" })).toThrow("injected write failure");
+
+    expect(writes).toHaveLength(3);
+    expect(store).toBe(prior);
+    expect(store).toContain("*/15 * * * *");
+    expect(store).not.toContain("45 */6 * * *");
+  });
+
+  test("an unterminated block aborts uninstall without writing the crontab", () => {
+    const malformed = "# akm:task ping BEGIN\n*/15 * * * * old-command\n0 1 * * * user-job\n";
+    let writes = 0;
+    const exec: CronExec = {
+      read: () => ({ status: 0, stdout: malformed, stderr: "" }),
+      write: () => {
+        writes += 1;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    expect(() => CRON_BACKEND(opts(exec)).uninstall("ping")).toThrow("malformed akm task block");
+    expect(writes).toBe(0);
+  });
+
+  test("log-directory creation failure aborts install before reading or writing crontab", () => {
+    let reads = 0;
+    let writes = 0;
+    const exec: CronExec = {
+      read: () => {
+        reads += 1;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      write: () => {
+        writes += 1;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+    const backend = CRON_BACKEND({
+      ...opts(exec),
+      fs: {
+        ensureDir() {
+          throw new Error("injected log directory failure");
+        },
+      },
+    });
+
+    expect(() => backend.install(SYNC_TASK)).toThrow("injected log directory failure");
+    expect(reads).toBe(0);
+    expect(writes).toBe(0);
   });
 });

@@ -20,15 +20,21 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
-**Option 2 — Bun (requires [Bun](https://bun.sh) >= 1.0):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
 
 ```sh
-bun install -g akm-cli
+npm install -g akm-cli
 ```
 
 Upgrade in place: `akm upgrade`
 
-> **AKM 0.8 requires the Bun runtime or the prebuilt binary. Node.js is not supported in this release.** Cross-runtime compatibility is planned for 0.9.0. See [Privacy & data](docs/data-and-telemetry.md) for details on what akm stores locally.
+The npm package always uses Node.js to bootstrap its cross-platform command.
+If a working [Bun](https://bun.sh) >= 1.0 is also on `PATH`, the launcher
+prefers Bun for execution; old, unusable, or absent Bun installations fall back
+to Node.js. Node.js remains required for the npm package. The standalone
+binaries are runtime-free.
+
+See [Privacy & data](docs/data-and-telemetry.md) for details on what akm stores locally.
 
 ### From source (contributors only)
 

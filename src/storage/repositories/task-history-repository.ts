@@ -126,6 +126,59 @@ export interface TaskHistoryRow {
 }
 
 /**
+ * Atomically reserve one task-attempt identity.
+ *
+ * The existing unique `(task_id, started_at)` index arbitrates concurrent
+ * processes: exactly one caller receives `true` for a candidate timestamp.
+ * Callers can advance by one millisecond and retry without a schema change.
+ */
+export function reserveTaskHistoryAttempt(db: Database, row: TaskHistoryRow): boolean {
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO task_history
+         (task_id, status, started_at, completed_at, failed_at, log_path,
+          target_kind, target_ref, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.task_id,
+      row.status,
+      row.started_at,
+      row.completed_at ?? null,
+      row.failed_at ?? null,
+      row.log_path ?? null,
+      row.target_kind ?? null,
+      row.target_ref ?? null,
+      row.metadata_json,
+    );
+  return Number(result.changes) === 1;
+}
+
+/** Finalize a row previously created by {@link reserveTaskHistoryAttempt}. */
+export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): boolean {
+  const result = db
+    .prepare(
+      `UPDATE task_history
+       SET status = ?, completed_at = ?, failed_at = ?, log_path = ?,
+           target_kind = ?, target_ref = ?, metadata_json = ?
+       WHERE task_id = ? AND started_at = ?
+         AND status = 'active' AND completed_at IS NULL`,
+    )
+    .run(
+      row.status,
+      row.completed_at ?? null,
+      row.failed_at ?? null,
+      row.log_path ?? null,
+      row.target_kind ?? null,
+      row.target_ref ?? null,
+      row.metadata_json,
+      row.task_id,
+      row.started_at,
+    );
+  return Number(result.changes) === 1;
+}
+
+/**
  * Upsert a task history row.
  */
 export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
@@ -160,7 +213,7 @@ export function getTaskHistory(db: Database, taskId: string): TaskHistoryRow | u
     .prepare(
       `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
               target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC LIMIT 1`,
+       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT 1`,
     )
     .get(taskId) as TaskHistoryRow | undefined;
 }
@@ -173,7 +226,7 @@ export function getTaskHistoryRuns(db: Database, taskId: string, limit = 50): Ta
     .prepare(
       `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
               target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC LIMIT ?`,
+       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`,
     )
     .all(taskId, limit) as TaskHistoryRow[];
 }
@@ -212,7 +265,7 @@ export function queryTaskHistory(
     .prepare(
       `SELECT task_id, status, started_at, completed_at, failed_at, log_path,
               target_kind, target_ref, metadata_json
-       FROM task_history ${where} ORDER BY started_at DESC`,
+       FROM task_history ${where} ORDER BY started_at DESC, id DESC`,
     )
     .all(...(params as SqlValue[])) as TaskHistoryRow[];
 }

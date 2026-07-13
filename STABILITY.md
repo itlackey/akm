@@ -154,9 +154,11 @@ These changes are planned and will land in a known future release. They
 are not part of the current stability contract; you should plan migrations
 around them.
 
-- **0.9.0 — Bun/Node cross-runtime support** (issue #465) — 0.8 hard-
-  requires Bun (or the prebuilt binary). 0.9 will support Node ≥ 22 as
-  well. The CLI surface will not change; the install instructions will.
+- **0.9.0 — Bun/Node cross-runtime support** (issue #465) — the npm package
+  requires Node.js >= 20.12 as its bootstrap and prefers a working Bun >= 1.0
+  for execution when both are available. Old, unusable, or absent Bun
+  installations fall back to Node.js. Standalone binaries are runtime-free.
+  The CLI surface does not change; the install instructions do.
 - **Storage layout consolidation**
   — under user review. Will be announced before any move happens.
 

@@ -39,7 +39,9 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { UsageError } from "../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
+import { findBareAkmExecutableIndex } from "./command-executable";
 import { TASK_SCHEMA_VERSION, type TaskDocument, type TaskPromptTarget, type TaskTarget } from "./schema";
+import { validateTaskId } from "./task-id";
 
 export interface ParseTaskInput {
   /** The full YAML contents of the task file. */
@@ -51,7 +53,8 @@ export interface ParseTaskInput {
 }
 
 export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
-  const { yaml, filePath, id } = input;
+  const { yaml, filePath } = input;
+  const id = validateTaskId(input.id);
 
   let data: Record<string, unknown>;
   try {
@@ -71,6 +74,8 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     );
   }
 
+  const legacy = data.version === undefined || data.version === 1;
+  if (legacy) data = normalizeV1Task(data, filePath);
   requireVersion(data, id, filePath);
   rejectUnknownKeys(data, id, filePath);
 
@@ -119,7 +124,8 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     };
   } else if (hasCommand) {
     rejectTargetFields(data, ["timeoutMs"], id, filePath);
-    const cmd = readCommand(data.command, filePath, id);
+    const parsedCommand = readCommand(data.command, filePath, id);
+    const cmd = legacy ? normalizeV1Command(parsedCommand) : parsedCommand;
     target = { kind: "command", cmd };
   } else {
     rejectTargetFields(data, ["engine", "model", "timeoutMs", "llm"], id, filePath);
@@ -129,7 +135,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     }
     const engine = optionalString(data.engine, "engine", filePath);
     const model = optionalString(data.model, "model", filePath);
-    const timeoutMs = readTimeout(data.timeoutMs, filePath);
+    const timeoutMs = readTimeout(data.timeoutMs, filePath, legacy);
     const llm = readLlmOverrides(data.llm, filePath);
     target = {
       kind: "prompt",
@@ -141,7 +147,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     };
   }
 
-  const timeoutMs = hasCommand ? readTimeout(data.timeoutMs, filePath) : undefined;
+  const timeoutMs = hasCommand ? readTimeout(data.timeoutMs, filePath, legacy) : undefined;
 
   return {
     version: TASK_SCHEMA_VERSION,
@@ -178,13 +184,133 @@ const TASK_KEYS = new Set([
 ]);
 const SHARED_KEYS = new Set(["version", "name", "description", "when_to_use", "tags", "schedule", "enabled"]);
 
+/** Lower the complete permissive 0.8 task shape into the strict v2 reader shape. */
+function normalizeV1Task(data: Record<string, unknown>, filePath: string): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { version: TASK_SCHEMA_VERSION };
+  for (const key of ["schedule", "workflow", "prompt", "command", "name", "description", "when_to_use"] as const) {
+    const value = data[key];
+    if (value === undefined || value === null) continue;
+    if (key === "command" && Array.isArray(value)) {
+      normalized[key] = value.filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+    } else if (key === "command") {
+      normalized[key] = value;
+    } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      normalized[key] = String(value).trim();
+    } else {
+      normalized[key] = value;
+    }
+  }
+
+  normalized.enabled = data.enabled === undefined ? true : data.enabled === true;
+
+  if (typeof data.tags === "string") {
+    normalized.tags = data.tags
+      .split(/[\s,]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  } else if (Array.isArray(data.tags)) {
+    normalized.tags = data.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0);
+  }
+
+  const hasWorkflow = "workflow" in data && data.workflow !== "" && data.workflow != null;
+  const hasPrompt = "prompt" in data && data.prompt !== "" && data.prompt != null;
+
+  if (hasWorkflow && data.params && typeof data.params === "object" && !Array.isArray(data.params)) {
+    normalized.params = data.params;
+  } else if (hasWorkflow && typeof data.params === "string" && data.params.trim()) {
+    try {
+      const params = JSON.parse(data.params);
+      if (params && typeof params === "object" && !Array.isArray(params)) normalized.params = params;
+      else normalized.params = data.params;
+    } catch {
+      normalized.params = data.params;
+    }
+  }
+
+  if (hasPrompt && data.profile !== undefined && data.profile !== null) {
+    const profile = legacyString(data.profile);
+    if (profile === undefined) {
+      throw new UsageError(`Key "profile" must be a string. File: ${filePath}`, "INVALID_FLAG_VALUE");
+    }
+    if (profile) normalized.engine = profile;
+  }
+
+  if (!hasWorkflow && "timeoutMs" in data) {
+    const timeout = data.timeoutMs;
+    if (timeout === null || timeout === "null" || timeout === 0 || (typeof timeout === "number" && timeout < 0)) {
+      normalized.timeoutMs = null;
+    } else if (typeof timeout === "number" && timeout > 0) {
+      normalized.timeoutMs = timeout;
+    }
+  }
+
+  return normalized;
+}
+
+function legacyString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+/** Rewrite only the removed AKM spelling; arbitrary command arguments remain untouched. */
+function normalizeV1Command(cmd: string[]): string[] {
+  const akmIndex = findBareAkmExecutableIndex(cmd);
+  if (akmIndex === undefined) return cmd;
+  const improveIndex = findImproveSubcommandIndex(cmd, akmIndex);
+  if (improveIndex === undefined) return cmd;
+  return cmd.map((part, index) => {
+    if (index <= improveIndex) return part;
+    if (part === "--profile") return "--strategy";
+    if (part.startsWith("--profile=")) return `--strategy=${part.slice("--profile=".length)}`;
+    return part;
+  });
+}
+
+const AKM_GLOBAL_BOOLEAN_OPTIONS = new Set([
+  "--quiet",
+  "-q",
+  "--verbose",
+  "--no-quiet",
+  "--no-verbose",
+  "--quiet=false",
+  "--verbose=false",
+]);
+const AKM_GLOBAL_VALUE_OPTIONS = new Set(["--format", "--output", "--detail", "--shape"]);
+
+function findImproveSubcommandIndex(cmd: readonly string[], akmIndex: number): number | undefined {
+  let index = akmIndex + 1;
+  while (index < cmd.length) {
+    const part = cmd[index];
+    if (part === "improve") return index;
+    if (AKM_GLOBAL_BOOLEAN_OPTIONS.has(part)) {
+      index += 1;
+      continue;
+    }
+    if (AKM_GLOBAL_VALUE_OPTIONS.has(part)) {
+      if (index + 1 >= cmd.length) return undefined;
+      index += 2;
+      continue;
+    }
+    if (
+      [...AKM_GLOBAL_VALUE_OPTIONS].some((option) => part.startsWith(`${option}=`) && part.length > option.length + 1)
+    ) {
+      index += 1;
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 function requireVersion(data: Record<string, unknown>, id: string, filePath: string): void {
   if (data.version === TASK_SCHEMA_VERSION) return;
   const actual = data.version === undefined ? "missing" : JSON.stringify(data.version);
   throw new UsageError(
     `TASK_SCHEMA_VERSION_UNSUPPORTED: Task "${id}" uses task schema version ${actual}; version: 2 is required. File: ${filePath}`,
     "TASK_SCHEMA_VERSION_UNSUPPORTED",
-    "Rewrite the task using version: 2 and replace profile with engine.",
+    "Use task schema version: 2.",
   );
 }
 
@@ -308,9 +434,10 @@ function readParams(value: unknown, filePath: string): Record<string, unknown> {
   throw new UsageError(`Key "params" must be a mapping. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }
 
-function readTimeout(value: unknown, filePath: string): number | null | undefined {
+function readTimeout(value: unknown, filePath: string, legacy = false): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
+  if (legacy && typeof value === "number" && Number.isFinite(value) && value > 0) return value;
   if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
   throw new UsageError(`Key "timeoutMs" must be a positive integer or null. File: ${filePath}`, "INVALID_FLAG_VALUE");
 }

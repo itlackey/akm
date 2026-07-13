@@ -63,11 +63,24 @@ export interface LlmUsageStageAggregate {
   reasoningTokens: number;
 }
 
+export interface ImproveResultRowAccounting {
+  /** Non-dry-run improve-result rows observed in the requested window. */
+  total: number;
+  /** Rows decoded and admitted to result-derived metrics. */
+  included: number;
+  /** Included rows repaired as the known interrupted v1 compatibility shape. */
+  normalized: number;
+  /** Rows omitted from result-derived metrics, grouped by bounded reason. */
+  skipped: { invalid: number };
+}
+
 export interface ImproveHealthMetrics {
   invoked: number;
   completed: number;
   skipped: number;
   skipReasons: Record<string, number>;
+  /** Always emitted by `akm health`; optional for existing schema-v3 value constructors. */
+  resultRows?: ImproveResultRowAccounting;
   plannedRefs: number;
   /**
    * Refs the planner dropped up-front because no enabled pass on the active
@@ -618,6 +631,10 @@ export interface ImproveRunSummary {
   completedAt: string;
   wallTimeMs: number;
   ok: boolean;
+  /** Decoder disposition for this persisted result row. */
+  resultStatus?: "valid" | "normalized" | "invalid";
+  /** True when the decoded envelope is complete rather than terminated/normalized/invalid. */
+  resultComplete?: boolean;
   strategy: string | null;
   legacyProfile: string | null;
   scope: { mode: string; value?: string };
@@ -652,6 +669,7 @@ export interface WindowResult {
   name: string;
   since: string;
   until: string;
+  /** All non-dry-run rows in the window; decoder accounting is additive under improve.resultRows. */
   runs: number;
   improve: ImproveHealthMetrics;
   metrics: HealthMetrics;

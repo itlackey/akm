@@ -133,6 +133,8 @@ function coercePct(raw: number | string | undefined): number | undefined {
 
 interface ReportRun {
   id: string;
+  resultStatus: "valid" | "normalized" | "invalid";
+  resultComplete: boolean;
   taskId: string;
   strategy: string | null;
   legacyProfile: string | null;
@@ -187,6 +189,8 @@ function reshapeRun(r: ImproveRunSummary): ReportRun {
   const geMs = ge.durationMs || 0;
   return {
     id: r.id,
+    resultStatus: r.resultStatus ?? "valid",
+    resultComplete: r.resultComplete ?? (r.resultStatus === undefined || r.resultStatus === "valid"),
     taskId: r.taskId ?? "manual",
     strategy: r.strategy,
     legacyProfile: r.legacyProfile,
@@ -403,7 +407,11 @@ export function buildHealthHtmlReplacements(
   opts: HealthHtmlReportOptions,
 ): Record<string, string> {
   const deltas = opts.deltas ?? {};
-  const runs = (result.runs ?? []).map(reshapeRun).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const compareRuns = (a: ReportRun, b: ReportRun): number =>
+    a.startedAt.localeCompare(b.startedAt) || a.completedAt.localeCompare(b.completedAt) || a.id.localeCompare(b.id);
+  const allRuns = (result.runs ?? []).map(reshapeRun).sort(compareRuns);
+  const invalidRuns = allRuns.filter((run) => run.resultStatus === "invalid");
+  const runs = allRuns.filter((run) => run.resultStatus !== "invalid");
   const improve = result.improve;
   const proposals = opts.proposals;
   const sem = readSemSearch(result.advisories);
@@ -464,7 +472,10 @@ export function buildHealthHtmlReplacements(
   const reportTitle = reportDate ? `AKM Health Report — ${reportDate}` : "AKM Health Report";
   const lastRun = runs[runs.length - 1];
   const generatedAt = lastRun ? lastRun.completedAt || lastRun.startedAt || sinceIso : sinceIso;
-  const latest = [...runs].reverse().find((r) => r.ok) ?? lastRun;
+  const latest = [...runs]
+    .filter((run) => run.resultComplete)
+    .sort(compareRuns)
+    .at(-1);
   // Freshness: surface the newest run's timestamp + the generated-at anchor in
   // the exec card. Staleness is computed deterministically (no Date.now()) from
   // the gap between the window start (`since`) and the newest run we have: if no
@@ -550,6 +561,9 @@ export function buildHealthHtmlReplacements(
     li("Report window", esc(opts.window)),
     li("Compare window", esc(opts.compare)),
     li("Runs", `${num(totalRuns)} (${failedRuns} failed)`),
+    li("Included result rows", num(improve.resultRows?.included ?? totalRuns)),
+    li("Normalized result rows", num(improve.resultRows?.normalized ?? 0)),
+    li("Invalid result rows skipped", num(improve.resultRows?.skipped.invalid ?? invalidRuns.length)),
     li(
       "Stash derived",
       `<abbr title="Whole-stash recount of derived assets at report time — not a per-run sum.">${num(improve.memorySummary.derived)}</abbr>`,
@@ -876,6 +890,17 @@ export function buildHealthHtmlReplacements(
     seen.add(item.key);
     items.push(item);
   };
+
+  if (invalidRuns.length > 0) {
+    pushItem({
+      key: "invalid-improve-result-rows",
+      prio: "P2",
+      cls: "warn",
+      title: `${invalidRuns.length} invalid improve result row${invalidRuns.length === 1 ? "" : "s"} skipped`,
+      descHtml: `Excluded from result-derived metrics: ${invalidRuns.map((run) => `<code>${esc(run.id)}</code>`).join(", ")}.`,
+      remedy: `akm health --since=${opts.window} --group-by run`,
+    });
+  }
 
   // Hard advisories from the health check engine (own remediation in message).
   for (const a of result.advisories) {

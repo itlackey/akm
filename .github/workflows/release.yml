@@ -9,6 +9,19 @@ on:
         type: string
 
 jobs:
+  # SECURITY: Repository settings must protect the `release` environment with required reviewers.
+  # Workflow YAML selects the environment but cannot configure or verify its approval protection.
+  release-gates:
+    # Artifacts uploaded by a called workflow belong to this caller run, so the
+    # publish jobs below can promote these exact immutable candidates. A local
+    # reusable workflow cannot use a dynamic @ref, so every candidate checkout
+    # is pinned through the explicit ref input instead.
+    needs: [lint, test-unit, test-integration]
+    uses: ./.github/workflows/release-gates.yml
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ inputs.version }}
+
   # Speed strategy (see also ci.yml): shard across SEPARATE runner jobs; each
   # shard runs a plain `bun test` (no `--isolate`, no `--parallel`).
   # `--parallel` at ANY N (including 1) implies `--isolate` and spawns worker
@@ -25,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -47,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -67,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -78,8 +91,11 @@ jobs:
         run: bash scripts/run-test-shard.sh integration
 
   version:
-    needs: [lint, test-unit, test-integration]
+    needs: [lint, test-unit, test-integration, release-gates]
     runs-on: ubuntu-latest
+    environment: release
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
     permissions:
       contents: write
     outputs:
@@ -87,139 +103,204 @@ jobs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - name: Validate dispatch branch and version
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          BRANCH="${{ github.ref_name }}"
-          DEFAULT="${{ github.event.repository.default_branch }}"
-          VERSION="${{ inputs.version }}"
-          if [ "$BRANCH" = "$DEFAULT" ]; then
-            echo "Dispatched from default branch ($BRANCH)."
-          elif [[ "$BRANCH" == release/* ]] && echo "$VERSION" | grep -qE '-'; then
-            echo "Dispatched from release branch ($BRANCH) with prerelease version ($VERSION)."
-          elif [[ "$BRANCH" == hotfix/* ]] && ! echo "$VERSION" | grep -qE '-'; then
-            echo "Dispatched from hotfix branch ($BRANCH) with stable version ($VERSION)."
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+          if [ "$BRANCH_NAME" = "$DEFAULT_BRANCH" ]; then
+            echo "Dispatched from default branch ($BRANCH_NAME)."
+          elif [[ "$BRANCH_NAME" == release/* ]] && echo "$CANDIDATE_VERSION" | grep -qE '-'; then
+            echo "Dispatched from release branch ($BRANCH_NAME) with prerelease version ($CANDIDATE_VERSION)."
+          elif [[ "$BRANCH_NAME" == hotfix/* ]] && ! echo "$CANDIDATE_VERSION" | grep -qE '-'; then
+            echo "Dispatched from hotfix branch ($BRANCH_NAME) with stable version ($CANDIDATE_VERSION)."
           else
-            echo "Releases must be dispatched from $DEFAULT, from a release/* branch with a prerelease version, or from a hotfix/* branch with a stable version."
-            echo "Got branch=$BRANCH version=$VERSION"
+            echo "Releases must be dispatched from $DEFAULT_BRANCH, from a release/* branch with a prerelease version, or from a hotfix/* branch with a stable version."
+            echo "Got branch=$BRANCH_NAME version=$CANDIDATE_VERSION"
             exit 1
           fi
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.ref_name }}
+          fetch-depth: 2
 
       - uses: actions/setup-node@v5
         with:
           node-version: 20
+
+      - name: Verify release source or exact version-commit retry
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "$SOURCE_SHA" ]; then
+            PARENT_SHA="$(git rev-parse HEAD^)"
+            CHANGED_FILES="$(git diff --name-only "$SOURCE_SHA" "$HEAD_SHA")"
+            COMMIT_SUBJECT="$(git log -1 --pretty=%s)"
+            CURRENT_VERSION="$(node -p "require('./package.json').version")"
+            if [ "$PARENT_SHA" != "$SOURCE_SHA" ] || [ "$CHANGED_FILES" != "package.json" ] || [ "$COMMIT_SUBJECT" != "chore: bump version to $CANDIDATE_VERSION" ] || [ "$CURRENT_VERSION" != "$CANDIDATE_VERSION" ]; then
+              echo "Release source moved after dispatch and is not the exact generated version commit."
+              echo "source=$SOURCE_SHA head=$HEAD_SHA parent=$PARENT_SHA files=$CHANGED_FILES version=$CURRENT_VERSION"
+              exit 1
+            fi
+            node -e 'const {execFileSync}=require("node:child_process");const before=JSON.parse(execFileSync("git",["show",`${process.argv[1]}:package.json`],{encoding:"utf8"}));const after=require("./package.json");before.version=process.argv[2];if(JSON.stringify(before)!==JSON.stringify(after)){console.error("Version retry changed package.json beyond version");process.exit(1)}' "$SOURCE_SHA" "$CANDIDATE_VERSION"
+          fi
+
       - name: Bump version
-        run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "$CANDIDATE_VERSION" --no-git-tag-version --allow-same-version
 
       - name: Commit and tag
         id: tag
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
           if ! git diff --cached --quiet; then
-            git commit -m "chore: bump version to ${{ inputs.version }}"
-            git push
+            git commit -m "chore: bump version to $CANDIDATE_VERSION"
+            git push origin "HEAD:$BRANCH_NAME"
           fi
-          if git rev-parse -q --verify "refs/tags/v${{ inputs.version }}" >/dev/null; then
-            echo "Tag v${{ inputs.version }} already exists locally."
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/v$CANDIDATE_VERSION" >/dev/null; then
+            if [ "$(git rev-list -n 1 "v$CANDIDATE_VERSION")" != "$RELEASE_SHA" ]; then
+              echo "Tag v$CANDIDATE_VERSION exists at a different commit."
+              exit 1
+            fi
           else
-            git tag "v${{ inputs.version }}"
+            git tag "v$CANDIDATE_VERSION"
           fi
-          if git ls-remote --tags origin | grep -q "refs/tags/v${{ inputs.version }}$"; then
-            echo "Tag v${{ inputs.version }} already exists on origin."
+          REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/v$CANDIDATE_VERSION" | cut -f1)"
+          if [ -n "$REMOTE_TAG" ]; then
+            if [ "$REMOTE_TAG" != "$RELEASE_SHA" ]; then
+              echo "Remote tag v$CANDIDATE_VERSION exists at a different commit."
+              exit 1
+            fi
           else
-            git push origin "v${{ inputs.version }}"
+            git push origin "v$CANDIDATE_VERSION"
           fi
-          echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          if echo "${{ inputs.version }}" | grep -qE '[-]'; then
+          echo "tag=v$CANDIDATE_VERSION" >> "$GITHUB_OUTPUT"
+          if echo "$CANDIDATE_VERSION" | grep -qE '[-]'; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
   publish:
-    needs: version
+    needs: [version, release-gates]
     runs-on: ubuntu-latest
+    environment: release
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.version.outputs.tag }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: bun install
       - run: npm install -g npm@latest
-      - name: Publish to npm
+      - uses: actions/download-artifact@v6
+        with:
+          name: akm-package-candidate
+          path: candidate-package
+      - name: Publish attested package candidate to npm
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          shopt -s nullglob
+          tarballs=(candidate-package/*.tgz)
+          test "${#tarballs[@]}" -eq 1
+          TARBALL="$PWD/${tarballs[0]}"
+          VERSION="$(tar -xOf "$TARBALL" package/package.json | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).version))')"
+          if [ "$VERSION" != "$CANDIDATE_VERSION" ]; then
+            echo "Candidate package version mismatch: expected $CANDIDATE_VERSION, got $VERSION"
+            exit 1
+          fi
+          CANDIDATE_INTEGRITY="$(node -e 'const fs=require("node:fs");const {createHash}=require("node:crypto");const bytes=fs.readFileSync(process.argv[1]);console.log(`sha512-${createHash("sha512").update(bytes).digest("base64")}`)' "$TARBALL")"
+
+          verify_published_candidate() {
+            local published_integrity
+            published_integrity="$(npm view "akm-cli@$VERSION" dist.integrity 2>/dev/null)" || return 1
+            if [ -z "$published_integrity" ]; then
+              return 1
+            fi
+            if [ "$published_integrity" != "$CANDIDATE_INTEGRITY" ]; then
+              echo "Candidate integrity mismatch for existing akm-cli@$VERSION"
+              echo "candidate=$CANDIDATE_INTEGRITY"
+              echo "published=$published_integrity"
+              return 2
+            fi
+            return 0
+          }
+
+          retry_published_candidate() {
+            local attempt verify_status
+            for attempt in 1 2 3 4 5; do
+              if verify_published_candidate; then
+                return 0
+              else
+                verify_status=$?
+              fi
+              if [ "$verify_status" -eq 2 ]; then
+                return 2
+              fi
+              if [ "$attempt" -lt 5 ]; then
+                sleep $((attempt * 5))
+              fi
+            done
+            return 1
+          }
+
           if npm view "akm-cli@$VERSION" version >/dev/null 2>&1; then
-            echo "akm-cli@$VERSION is already published; skipping npm publish."
+            if retry_published_candidate; then
+              echo "akm-cli@$VERSION already matches the candidate; skipping npm publish."
+              exit 0
+            else
+              verify_status=$?
+            fi
+            if [ "$verify_status" -eq 2 ]; then
+              echo "Published candidate does not match the immutable package candidate."
+            else
+              echo "Published candidate integrity remained unavailable after retries."
+            fi
+            exit 1
+          fi
+
+          if echo "$VERSION" | grep -qE '[-]'; then
+            echo "Prerelease detected ($VERSION); publishing candidate with --tag next"
+            PUBLISH_ARGS=(--ignore-scripts --provenance --access public --tag next)
+          else
+            PUBLISH_ARGS=(--ignore-scripts --provenance --access public)
+          fi
+
+          if npm publish "$TARBALL" "${PUBLISH_ARGS[@]}"; then
             exit 0
           fi
-          if echo "$VERSION" | grep -qE '[-]'; then
-            echo "Prerelease detected ($VERSION) — publishing with --tag next"
-            npm publish --provenance --access public --tag next
+
+          # A concurrent retry may have won the publish race. Accept it only if
+          # the registry bytes are exactly this immutable candidate.
+          if retry_published_candidate; then
+            echo "A concurrent publish produced the exact candidate."
+            exit 0
           else
-            npm publish --provenance --access public
+            verify_status=$?
           fi
+          if [ "$verify_status" -eq 2 ]; then
+            echo "Published candidate does not match the immutable package candidate."
+          else
+            echo "Published candidate integrity remained unavailable after retries."
+          fi
+          exit 1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  build:
-    needs: version
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - target: bun-linux-x64
-            artifact: akm-linux-x64
-          - target: bun-linux-arm64
-            artifact: akm-linux-arm64
-          - target: bun-darwin-x64
-            artifact: akm-darwin-x64
-          - target: bun-darwin-arm64
-            artifact: akm-darwin-arm64
-          - target: bun-windows-x64
-            artifact: akm-windows-x64.exe
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.version.outputs.tag }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - run: bun install --omit optional
-
-      - name: Compile binary
-        # @huggingface/transformers is an OPTIONAL dependency, omitted from the
-        # install above, and loaded lazily at runtime via a dynamic import
-        # (src/llm/embedders/local.ts) after `akm setup` installs it. Mark it
-        # --external so `bun build --compile` leaves that import as a runtime
-        # require instead of trying to resolve/bundle the (absent) package —
-        # without this the compile fails "Could not resolve @huggingface/transformers"
-        # (regression surfaced when #693 moved the import to a module-level loader).
-        run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --external @huggingface/transformers --outfile ${{ matrix.artifact }} --define "AKM_VERSION='${{ inputs.version }}'"
-
-      - uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-
   github-release:
-    needs: [version, build]
+    needs: [version, publish]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     steps:
@@ -257,17 +338,20 @@ jobs:
           done
 
       - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
-          TAG="${{ needs.version.outputs.tag }}"
-          REPO="${{ github.repository }}"
           PRERELEASE_FLAG=""
-          if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then
+          if [ "$PRERELEASE" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
           upload_assets() {
             gh release upload "$TAG" \
-              --repo "$REPO" \
+              --repo "$REPOSITORY" \
               --clobber \
               artifacts/checksums.txt \
               artifacts/akm-linux-x64/akm-linux-x64 \
@@ -279,14 +363,14 @@ jobs:
               artifacts/install.ps1
           }
 
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
             upload_assets
             exit 0
           fi
 
           for attempt in 1 2 3 4 5; do
             if gh release create "$TAG" \
-              --repo "$REPO" \
+              --repo "$REPOSITORY" \
               --title "$TAG" \
               --generate-notes \
               $PRERELEASE_FLAG \
@@ -301,14 +385,11 @@ jobs:
               exit 0
             fi
 
-            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
               upload_assets
               exit 0
             fi
 
             sleep $((attempt * 10))
           done
-
           exit 1
-        env:
-          GH_TOKEN: ${{ github.token }}

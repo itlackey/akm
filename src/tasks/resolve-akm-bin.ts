@@ -11,10 +11,11 @@
  * Resolution order:
  *
  *   1. `$AKM_BIN` (explicit override; takes precedence everywhere).
- *   2. `process.execPath` + the resolved CLI script — works when running
+ *   2. `process.execPath` alone for a Bun standalone executable.
+ *   3. `process.execPath` + the resolved CLI script — works when running
  *      from a development checkout (`bun /repo/src/cli.ts`) and from a
  *      compiled install (`bun /opt/akm/dist/cli.js`).
- *   3. `which akm` / `where akm` — last resort when the binary is on PATH
+ *   4. `which akm` / `where akm` — last resort when the binary is on PATH
  *      but neither override applies.
  *
  * Returns the argv array the scheduler should execute (e.g.
@@ -27,6 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConfigError } from "../core/errors";
+import { mainPath as runtimeMainPath } from "../runtime";
 
 export interface ResolvedAkmInvocation {
   /** Argv prefix the OS scheduler should execute (one shell-safe path per element). */
@@ -36,7 +38,13 @@ export interface ResolvedAkmInvocation {
 }
 
 export function resolveAkmInvocation(
-  options: { env?: NodeJS.ProcessEnv; cliEntryUrl?: string } = {},
+  options: {
+    env?: NodeJS.ProcessEnv;
+    cliEntryUrl?: string;
+    runtime?: "bun" | "node";
+    execPath?: string;
+    mainPath?: string;
+  } = {},
 ): ResolvedAkmInvocation {
   const env = options.env ?? process.env;
 
@@ -45,9 +53,19 @@ export function resolveAkmInvocation(
     return { argv: [override], via: "AKM_BIN" };
   }
 
+  const runtime = options.runtime ?? (process.versions.bun ? "bun" : "node");
+  const execPath = options.execPath ?? process.execPath;
+  const mainPath = options.mainPath ?? runtimeMainPath;
+  const isStandaloneMain =
+    mainPath?.startsWith("/$bunfs/") || (mainPath !== undefined && /^[A-Za-z]:[\\/]~BUN[\\/]/i.test(mainPath));
+  if (runtime === "bun" && isStandaloneMain && execPath) {
+    return { argv: [execPath], via: "execPath" };
+  }
+
   const cliPath = resolveCliEntry(options.cliEntryUrl ?? import.meta.url);
-  if (cliPath && process.execPath) {
-    return { argv: [process.execPath, cliPath], via: "execPath" };
+  if (cliPath && execPath) {
+    const entry = runtime === "node" ? resolveNodeCliEntry(cliPath) : cliPath;
+    if (entry) return { argv: [execPath, entry], via: "execPath" };
   }
 
   const whichBin = findOnPath("akm", env);
@@ -60,6 +78,11 @@ export function resolveAkmInvocation(
     "INVALID_CONFIG_FILE",
     "Set AKM_BIN to the absolute path of the akm binary, or ensure `akm` is on PATH.",
   );
+}
+
+function resolveNodeCliEntry(cliPath: string): string | undefined {
+  const wrapper = path.join(path.dirname(cliPath), "cli-node.mjs");
+  return fs.existsSync(wrapper) ? wrapper : undefined;
 }
 
 /**

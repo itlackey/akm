@@ -35,6 +35,7 @@ export interface InstalledTaskRef {
 export interface TaskBackend {
   /** Stable name surfaced by `tasks doctor`. */
   readonly name: ScheduleBackend;
+  /** Replace a native definition transactionally; rejection must leave the prior definition active. */
   install(task: TaskDocument): Promise<void> | void;
   uninstall(id: string): Promise<void> | void;
   setEnabled(id: string, enabled: boolean): Promise<void> | void;
