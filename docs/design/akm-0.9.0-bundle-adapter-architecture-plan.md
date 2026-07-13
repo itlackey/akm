@@ -465,7 +465,7 @@ Pure removals, no design decision. Each is assigned to an existing chunk; add to
 
 | Deletion | Evidence | Chunk | ~LOC |
 |---|---|---|---|
-| Vendored `echarts.min.js` → **CDN** (KEEP the HTML health report — maintainer decision) | `echarts.min.js` = 1,034,102 B inlined by default (`html-report.ts:384`) → replace with a CDN `<script src>` (e.g. jsDelivr pinned version); the report + `md-report`/JSON paths all stay. Caveat: chart rendering then requires network at view time (text/tables still render offline). | 9 | −1 MB asset (report LOC kept) |
+| Vendored `echarts.min.js` → **CDN** (KEEP the HTML health report — maintainer decision) | `echarts.min.js` = 1,034,102 B inlined by default (`html-report.ts:384`). **The CDN mechanism already exists** (`html-report.ts:41` `ECHARTS_CDN` + `:383` `buildEchartsTag` switch on `AKM_ECHARTS`) — the work is only to **flip the default `inline`→`cdn`** and drop the vendored asset, not implement anything. Report + `md-report`/JSON paths stay. Caveat: charts then need network at view time (text/tables still render offline). | 9 | −1 MB asset (report LOC kept) |
 | `recombine`/`synthesis` cross-episodic subsystem — supersedes §5's "keep as learn recipe" | `recombine.ts` 1009 + `recombine-repository.ts` 290 + `migrations.ts:679` table; `default.json:15` enabled:false; sibling measured **0% accept** (`synthesize.json:2`) | 7 | −1,300 |
 | Second workflow codec — collapse classic-markdown into the YAML program codec (markdown is a strict subset → same IR, `ir/freeze.ts:145`) | `renderer.ts:10` "two formats, one asset type"; every op implemented twice | 8 | −650 |
 | Env-gated deterministic embedder facade → test fixture | `deterministic.ts:8` "NEVER used in production (env-gated, off)"; only `AKM_EMBED_DETERMINISTIC=1` reaches it; no config/CLI sets it | 9 | −110 |
@@ -494,7 +494,50 @@ Framework-before-second-consumer additions this plan introduced, cut to the mini
 - **Adapter facets** → data-driven format table for trivial renderer/action; per-format code only where `recognize`/`validateL1` differ; no one-implementer lifecycle/authoring/export facet interfaces. (§2.3)
 - **Supersession** → reuse the existing `archiveMemory` encoding only; no parallel in-place `supersededBy`+demotion representation. (§6)
 - **Outcome-weight parity flag** → still deferred, but resolved in the §13.2 measurement pass rather than carried indefinitely.
+- **Storage `Repository<Row,Domain>` base class (plan §4.7)** → do **NOT** introduce (§14 F8). 12 of 13 repos are plain function modules; the open/borrow duplication is already solved by `managed-db.ts`. Ship only the `jsonColumn()` codec helper and keep the function-module convention — a class hierarchy over function modules is framework-before-value, the same anti-pattern this section guards against.
 
 ### 13.4 Leave alone (do not over-cut)
 
-Embeddings + FTS/vector hybrid ranking core (broadly-used); the three OS scheduler backends (real per-OS need — confirm the embedded runner covers the case before cutting launchd/schtasks); the JSON output envelope and human/agent shape axis (load-bearing); `archiveMemory` and the extract/consolidate core (the ~4 processes with proven live output); the `ndcg`/`recall`/`mrr` math (relocate, don't delete).
+Embeddings + FTS/vector hybrid ranking core (broadly-used); the three OS scheduler backends — **VERIFIED load-bearing (§14 F-tasks): there is NO in-process scheduler; `tasks/embedded.ts` only lists YAML templates for the setup wizard, so AKM delegates all recurring scheduling to the OS, and dropping launchd/schtasks would leave macOS/Windows with no scheduling at all. Residual-audit finding #8 is WITHDRAWN.**; the JSON output envelope and human/agent shape axis (load-bearing); `archiveMemory` and the extract/consolidate core (the ~4 processes with proven live output); the `ndcg`/`recall`/`mrr` math (relocate, don't delete). **Also verified load-bearing and left alone:** the workflow frozen-plan / run-lease / per-unit journal / resume machinery (well-decomposed already — no god-fn treatment needed); the shared SQLite migration engine + `managed-db` + provider seam; the engine/spawn/dispatch runtime (`spawn.runAgent`, `engine-resolution`, `runner`); the harness registry (a real DRY win). See §14.
+
+---
+
+## 14. Survivor Value + Architecture Audit (verified, not assumed)
+
+Four audits checked the ~44K LOC the greenfield analysis called "load-bearing" — not to accept it on faith, but to (a) confirm it actually provides value and (b) find any part needing cleaner architecture. **Verdict: the survivors are genuinely load-bearing** — retrieval core, workflow runtime, storage/migration engine, and engine/spawn/dispatch runtime are all VALUE-CONFIRMED with real consumers + dedicated tests. No survivor subsystem is low-value. The residual gold-plating is thin scaffolding around proven pipelines, plus a few architecture smells and two corrections to prior findings.
+
+### 14.1 Corrections to earlier findings
+
+- **Scheduler backends — residual-audit finding #8 WITHDRAWN.** `tasks/embedded.ts` is not a runner/scheduler (only lists templates); `tasks/runner.ts` is a one-shot executor invoked *by* the OS scheduler. All recurring scheduling is delegated to cron/launchd/schtasks; each has genuine host-independent format-builder tests (`tasks-{launchd,schtasks,cron}-backend.test.ts`). Keep all three (§13.4).
+- **echarts→CDN is a default-flip, not an implementation.** The CDN path already exists (`html-report.ts:41` `ECHARTS_CDN`, `:383` `buildEchartsTag`/`AKM_ECHARTS`); flip the default and drop the vendored asset (§13.1).
+- **Plan's own `Repository<Row,Domain>` base class → don't build it** (§13.3): 12/13 repos are function modules; ship `jsonColumn()` only.
+
+### 14.2 Additional REFACTOR-ARCHITECTURE (fold into named chunks)
+
+| # | Finding | Evidence | Target | Chunk | ~LOC |
+|---|---------|----------|--------|-------|------|
+| A1 | Dead search-hit-enricher registration framework | `registerSearchHitEnricher`/`additionalEnrichers`/`_reset*` (`search-hit-enrichers.ts:105`) have **zero callers**; `enrichSearchHit` always uses the fixed default list | collapse to a fixed array; drop the register/reset machinery + `enrichers` param | 5 | −25 |
+| A2 | `buildWhyMatched` re-derives ranking scoring (drift seam) | `db-search.ts:837` re-scans matches + `:776` recomputes boost constants byte-identical to `metadataRankingContributor` (`ranking-contributors.ts:292`) | record fired contributors in `applyScoreContributors`, derive `whyMatched` from that; delete the parallel scorer | 5 | −40 |
+| A3 | `loadSalienceRankScores` = the only cross-DB reach on the search hot path | `ranking.ts:97` opens **state.db per query** to apply the outcome-derived `salience-ranking` contributor (`SALIENCE_WEIGHT=0.2`) — the same signal the tripwire measures at `corr=+0.0104` | add this consumer to the §13.2 `w_o=0` measurement; if outcome is noise it dies here too, removing the index.db→state.db coupling | 13.2 | −(with cluster A) |
+| W1 | `runtime/ ↔ exec/` layer inversion | `runtime/runs.ts:27` + `unit-checkin.ts:21` import *up* into `exec/` (`frozen-judge`, `param-secrets`, `GATE_EVALUATION_PHASE`) → mutual dependency | move those 3 primitives down into `runtime/` (or `workflows/core/`); dependency flows `exec→runtime` only | 8 | ~180 moved |
+| W2 | `engine_lease_*` overloaded as two concurrency primitives | durable single-driver lease (90s TTL heartbeat) *and* short-lived finalize/settle mutex (`report.ts:774,1070`) share one column pair | give the settle mutex its own `finalize_lock_*` (or typed holder + `acquireFinalizeLock`); lands free in the §8 `state-018` DDL rewrite | 8 | ~0 (schema) |
+| H1 | `AkmHarness` capability→field presence enforced at runtime, not compile time | 14-field descriptor with 5 `?`-optional facet fields; `session-logs/index.ts:41` **throws at module load** when `sessionLogs===true` but provider absent | capability-discriminated union (required-when-true typing) so it's a compile error; retire the load-time throw + presence test. **NOTE: the runtime/session/format 3-object split the plan floated is NOT warranted** — spawn + engine-resolution are already facet-decoupled | 9 | type-safety refactor |
+| H2 | Health report conflates view-model + HTML assembly | `buildHealthHtmlReplacements` (`html-report.ts:401`, ~657) computes arithmetic/staleness/trends AND emits HTML inline; no typed seam | extract pure `AkmHealthResult→HealthReportViewModel` (unit-testable) + thin VM→fragment renderer — deeper than §4.7's line-count split | 9 | restructure |
+| H3 | `runAgent` in-file kill-ladder duplicated | SIGTERM→SIGKILL ladder inlined 2× (`spawn.ts:527,545`) on top of the cross-file dup §4.6 already targets | one `scheduleKillLadder(proc,{reason})` covers both in-file copies + the `sdk-runner` copy | 9 | −(with §4.6) |
+| S1 | Source root-detect predicate + install-pipeline skeleton triplicated | 3× "is this a populated stash root?" (`git-provider.hasExtractedRepo`, `provider-utils.detectStashRoot`, `website-ingest.hasExtractedSite`); 3× materialize skeleton (git/npm/website) | one `isMaterializedStashRoot(dir, directoryList)` + a `materialize(spec)` template (medium confidence — tar/git/crawl differ) | 4.6 | −(broader than plan) |
+| L1 | `text/registry.ts` dead `register/deregister` (symmetric to §13.1 #25) | only self-testing callers; near-byte-identical to `shapes/registry.ts` | fold into the §4.7 "3 parallel registries" consolidation → one generic `CommandRegistry<H>` factory | 9 | −(with §4.7) |
+
+### 14.3 Additional small deletions (dead/reserved surface)
+
+- **`AkmHarness.resume` field + `*_RESUME_FLAG` constants** — reserved-dead across all 10 harnesses; zero argv/workflow consumers (symmetric to the `effort` finding). Delete. (~30–40 LOC, Chunk 9)
+- **`derivedMemoryEnricher` searchHints no-op branch** (`search-hit-enrichers.ts:83`) — self-described no-op. Delete. (~6 LOC, Chunk 5)
+- **Retrieval-DB exports orphaned by recombine deletion** — `getEntitiesByEntryIds` (`db.ts:1109`), `getNeighborsByEntryId` (`:896`) have recombine/consolidate as their only consumers; remove in the **same chunk** as the recombine deletion (Chunk 7), not left as dead index-DB APIs.
+- **Stale doc-comments (P2 harnesses)** — every P2 result-extractor header says "NOT registered anywhere" but each **is** registered (`native-executor.ts:1178`); `builder-shared.ts:52` says `schema` unconsumed but 4 builders consume `req.schema`. Fix in the P2 sweep so future audits aren't misled. `model-aliases.ts:45` covering only claude/opencode is hard evidence the 7 P2 harnesses can't dispatch end-to-end (reinforces the opt-in demotion, not deletion).
+
+### 14.4 DoD gap surfaced
+
+- **Node `better-sqlite3` driver is untested** (`database.ts:16` "additive, not CI-tested this pass"). The cross-runtime claim rests on an unexercised branch, and DoD §12.2 item 9 requires preserve-list infra to be exercised by a test. Add a Node-runtime test or explicitly scope the driver as Bun-first.
+
+### 14.5 Post-cutover prune (note in the §8 checklist)
+
+- After the full re-key, `plan-classifier.ts:17-113`'s legacy-version-drift arms (`missing-plan`/`unsupported-version`/mismatched-metadata, ~100 LOC) become unreachable — collapse to a 2-state `supported | corrupt` classifier. Not a 0.9.0 deletion (pre-migration DBs still hit it); a 0.10 follow-up so the dead defensive breadth isn't carried forward silently.
