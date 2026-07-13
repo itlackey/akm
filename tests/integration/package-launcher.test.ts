@@ -134,12 +134,7 @@ beforeAll(async () => {
   const node = Bun.which("node");
   if (!node) throw new Error("Node.js is required for the package launcher contract test");
   const isolatedNode = path.join(nodeOnlyPathDir, process.platform === "win32" ? "node.exe" : "node");
-  try {
-    fs.linkSync(fs.realpathSync(node), isolatedNode);
-  } catch {
-    fs.copyFileSync(node, isolatedNode);
-  }
-  fs.chmodSync(isolatedNode, 0o755);
+  fs.symlinkSync(fs.realpathSync(node), isolatedNode);
 
   fakeBun(oldBunPathDir, "0.9.9");
   fakeBun(unusableBunPathDir, "bun probe failed", 1);
