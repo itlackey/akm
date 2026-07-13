@@ -1,435 +1,449 @@
-# AKM 0.9.0 — Bundle/Adapter + Simplified Architecture: Final Implementation Plan
+# AKM 0.9.0 — Comprehensive Clean-Up Implementation Plan
 
-**Status:** Consensus-approved, implementation-ready. Supersedes doc1 (`improve-self-learning-analysis.md`) and doc2 (`engine-strategy-refactor-plan.md`) where they conflict.
-**Branch model:** single long-lived integration branch, one cutover, ships as 0.9.0.
-**Baseline commit:** `cf44e11` (already post engine/strategy cutover).
+**Bundle Adapters, Drop-Ref + Full Re-Key, improve Decomposition, and a Whole-Repo Debt Sweep**
 
-**Grounded-claim verification (2026-07-13):** the plan's load-bearing `file:line` claims were adversarially verified against the source at `cf44e11`. The three core mechanisms — copy-not-relocate quarantine, persisted-key identity re-key, and the load-bearing content-probe classification — are all CONFIRMED. Corrections folded in: **14 built-in types, not 15** (`vault` removed in 0.9.0) → identity re-key for **13/14**; feedback's durable key is **`usage_events.entry_ref`**, not an `asset_ref` column; the taxonomy consumer census is **43 files (~48 touched total)**; and three kept pure fns (`SCRIPT_EXTENSIONS`/`WORKFLOW_EXTENSIONS`/`canonicalizeWorkflowName`) need a **live util home** distinct from the frozen migrator leaf (Appendix §11).
-
-**User sign-off recorded (2026-07-13):** the FULL asset-taxonomy retirement is **FOLDED INTO 0.9.0**. There is **no separate post-0.9.0 taxonomy cutover.** In the shipped 0.9.0 runtime, `AssetSpec` + the `ASSET_SPECS_INTERNAL` registry, type-directory mapping, the closed `AkmAssetType` taxonomy, the type-routed lint registry, the type-to-renderer/type-action maps, and the global matcher competition/specificity contest are all **GONE from the live path** — replaced by per-format bundle adapters + L1 validators folded in. The old-layout knowledge required by the one-time migrator ships in the 0.9.0 binary as a single **quarantined pure leaf module**, isolation-tested and `@removeIn 0.10.0`. The two remaining accepted amendments **stand**: salience is neutralized by a **reversible parity config flip** (machinery + state tables **kept, not deleted**); the ranking saturation-harness fix and the per-contributor prove-or-delete verdict stay **deferred off the single-track critical path**.
+Status: APPROVED architecture. This is an implementation plan, not a proposal. Baseline HEAD: `b7877d9` / `cf44e11` (post engine-strategy cutover). Single track, in-branch, no intermediate release.
 
 ---
 
-## 1. Executive Decision & Scope
+## 1. Executive Summary
 
 ### 1.1 What 0.9.0 is
 
-0.9.0 is the **file-and-search kernel** cutover. AKM stops being a type-taxonomy-routed asset platform with a candidate→proposal→plan→changeset pipeline and multiple parallel learning substrates, and becomes:
+0.9.0 is a **single-track, no-release, net-simplification** refactor that replaces AKM's asset-type taxonomy with **bundle adapters**, drops the `[origin//]type:name` ref for an **opaque adapter-owned id** with a **one-time full state re-key**, decomposes the **improve god-modules** into named passes, and **sweeps every remaining structural debt** the subsystem review surfaced so the churn stops. There is no `0.8.x → 0.9.0` compatibility window, no dual-write, no feature flags kept past cutover. One atomic migration, one throwaway migrator (`@removeIn 0.10.0`), one green branch that merges when the whole thing is done.
 
-- **A ref→file resolver over one normalized model.** `index()` resolves a `type:name` ref to an absolute path and emits one `SearchDocument`. `improve` reads files directly from the filesystem (from a frozen snapshot manifest, never the live tree).
-- **A two-verb improve loop.** Every semantic operation is either **revise** (rewrite an existing file) or **learn** (create a new file from evidence). `extract`/`distill`/`inference`/`recombine`/`synthesis` become `learn` recipes; `reflect` is a `revise` recipe.
-- **A proposal-only, snapshot-bounded run model.** One frozen input snapshot per run (hash manifest, not a copied workspace); every semantic process emits `Proposal` objects carrying `FileChange[]`; no mid-run semantic writes or reindex; one transactional apply at end; reindex affected paths once.
-- **A small bundle-adapter contract with per-format ownership.** Adapters index (recognize + normalize their own format), provide guidance paths, validate `FileChange[]`, and optionally place new files. There is **no global type taxonomy, no closed `AkmAssetType`, and no matcher-competition/specificity contest** — each format is owned by exactly one adapter with explicit recognition. Adapters never own mutation.
-- **A verification ladder that gates auto-apply on evidence, not self-confidence.** L1 deterministic safety (base checks + per-format L1 validators), L2 behavioral/comparative evidence, L3 field outcome. Self-confidence is metadata only.
+### 1.2 Four objectives (no debate, no re-scope)
 
-The **taxonomy dies in 0.9.0** (§4.2, D12). "Zero taxonomy in the runtime" means zero on the **live path** — `index → search/rank → lint → improve → write`. The one-time migrator still ships in the 0.9.0 binary (it must, because `akm migrate` runs on the user install using that binary), but its knowledge of the old 14-type layout is confined to a **quarantined pure leaf module** (`src/migrate/legacy/legacy-layout.ts`) that is isolation-tested, imports nothing from the deleted registry surfaces, and is marked `@removeIn 0.10.0`.
+1. **Asset-types → bundle adapters.** Delete `AssetSpec` / `AkmAssetType` closed union / `TYPE_DIRS` / global matchers / renderer+action registries / `StashEntry`-as-model / type-derived paths / `[origin//]type:name` refs. Bundle adapters own native formats, on-disk conventions, authoring rules, recognition, placement, renderer, and L1 validation. Core owns install / index / search / change-transaction / state / bindings / improve.
+2. **Drop-ref + full re-key.** `type:name` refs become opaque bundle-scoped adapter-owned ids. One atomic `0.8 → 0.9` migration re-keys **all** state, fail-closed, backup-verified, throwaway migrator.
+3. **Decompose improve.** Four god functions (`runImprovePreparationStage` ~1544, `akmImprove` ~943, `akmReflect` ~707, `akmDistill` ~635) become thin orchestrators over named passes on an explicit `RunContext`, mirroring the already-decomposed `consolidate.ts`. Two verbs: `revise` (reflect) and `learn` (extract/distill/inference/recombine/synthesis).
+4. **Sweep all remaining debt.** Ambient-config threading, config over-engineering, DRY consolidations, concrete defects, dead/unwired code, misleading names — comprehensively, so this is one-and-done.
 
-### 1.2 Single-track mandate (non-negotiable — D1)
+### 1.3 Hard rules
 
-- One aggressive refactor on **one long-lived integration branch**.
-- **No intermediate releases.** 0.9.0 is the first and only release of the new architecture.
-- **No staged/dual-format compatibility layer.** Migration is a one-time cutover embedded in the branch.
-- Only **local iteration** for testing/verification.
-- **"No intermediate release" binds releases, not commit hygiene.** The tree stays green per-commit (`bun run check`), gated by `tests/contracts` + `tests/architecture`. The staged "release/0.9 maintenance branch + releasable vertical slices + feature freeze" model from doc2 Perspective 3 is **rejected**; doc2's vertical-slice *ordering* is retained as in-branch chunk ordering (§5). The taxonomy fold is split into an **enabling seam (Chunk 1.5) + a per-format replacement ledger (Chunk 4.5) + a migration-consuming deletion (Chunk 7)** precisely so that big-bang deletion — forbidden by Risk row 1 — never happens.
+- **NET LOC REMOVED must exceed added.** Target ≈ **−9,000 to −10,500 net** across the repo (§12 ledger).
+- **No new features. No new machinery/frameworks.** Adapters, `RunContext`, and the shared `Repository<Row,Domain>` base are *refactors of existing coupled functionality into proper boundaries*, not new subsystems.
+- **Keep valuable features + proven infra** (audit S26): `writeFileAtomic`, symlink containment, SQLite hardening, git exact-path staging, credential redaction, engine freezing, workflow frozen-plan, scheduler safety, deterministic search benchmarks, typed errors. Every §-level preserve list is binding.
 
-### 1.3 Explicitly out of scope for 0.9.0
+### 1.4 Corrections folded from the sweep (supersede the committed plan)
 
-Two items only remain deferred off the single-track critical path (evidence-driven, panel amendment to the rubric):
-
-1. **Ranking saturation-harness fix** (`ranking-ablation-and-saturation-analysis.md` §4/§7/§8: displayScore clamp+quantize+alphabetical-tiebreak) and the run-to-run stability guard (#14). This is open research and stays off the critical path.
-2. **Per-contributor prove-or-delete verdict** for salience/outcome and LLM graph extraction. For 0.9.0, a reversible parity config flip stands in (§8, D10); machinery and state tables are **kept, not deleted**.
-
-**Taxonomy retirement is NO LONGER deferred.** The prior "full asset-taxonomy retirement → separate post-0.9.0 cutover" deferral is **removed by user decision**; the full retirement is folded into 0.9.0 (§4.2, §5 Chunks 1.5/4.5/7, D12). Salience stays under the reversible D10 parity flip (machinery/state tables kept).
-
-**Rubric-amendment flags requiring maintainer sign-off** (panel consensus, not disagreement): (a) **taxonomy folded into 0.9.0 — user-approved**; (b) D10 premise corrected from "salience inert (w_o=0)" to "salience live-but-unproven/leaning-negative → parity flip"; (c) the two deferrals above.
+- Ref/migration decision **superseded**: DROP-REF + FULL-RE-KEY, no compat, no dual-write (was: ref-preserving migration).
+- `config-schema.ts` is **1415 LOC / 252 `.optional()` / 3 `.default()`** (verified), not the stale §4 figure of 1012/219.
+- `akmConsolidateInner` is **already decomposed** — do not re-plan it; current large consolidate targets are `planConsolidation` (~433), `handleMergeOp` (~298), `handlePromoteOp` (~215).
+- `SearchDocument` / `IndexDocument` **do not exist** (grep-verified zero hits). The normalized model must be **minted from the existing `StashEntry`** plus added provenance fields.
+- Already-fixed, **do not re-churn**: `runFtsQuery` swallow (B7), `improve?.default` deep-chain (A3), `m=months vs minutes` conflict (B1 headline), `CONFIG_SUBCOMMAND_SET` desync (B2), grid-search-at-import (distill policy), `FEEDBACK_FAILURE_MODES` dup, `asNonEmptyString`/`firstString` dup, `writeFileAtomic` dead branch, `setup/legacy-config.ts` (already deleted), `AGENT_PLATFORMS` trap. Residual debt around each is separately named below.
 
 ---
 
-## 2. Target Architecture
+## 2. Target Proper-Core Architecture
 
-### 2.1 Kernel primitives
+### 2.1 The boundary
 
-**`BundleMount`** — a mounted source of bundle files. Carries the source id/root and the adapter that indexes/validates it. Replaces bundle-local `.akm` runtime state (dies, D12) and the source `wikiName` special case (dies). Runtime state lives centrally, not per-bundle.
-
-**`SearchDocument`** — the **only** common normalized model (D2). Already exists in `src/indexer`. Amendments:
-- **Add typed source-ref/provenance fields NOW** (`sourceRef`, origin path/bundle, content hash) — load-bearing for auditable rollback (doc1 R8). Unanimous.
-- **`SearchDocument.type` is an open string provenance token**, no longer a member of a closed `AkmAssetType` union. It is stamped by the recognizing adapter; consumers treat it as an opaque namespace token (§4.3 severances).
-- **Do NOT add a first-class salience/outcome field.** Salience is live-by-default but unproven and leaning net-negative on disjoint corpora (D10/F4); committing the one kernel model to it is premature. If salience survives the deferred measurement pass, it composes at the *ranking layer* via the existing `ctx.salienceRankScores` input, not via the kernel document. Any interim metadata rides the D4 open key/value bag.
-- No semantic-views registry, no universal item hierarchy, no adapter `read()` facade.
-
-**Recognition is per-format and adapter-owned.** There is no global `runMatchers` specificity competition and no `DIR_TYPE_MAP`. Each adapter recognizes its own format explicitly (recognizer + `placeNew` + locally-stamped renderer/action). The old-layout recognition algorithm survives **only** inside the migrator's quarantined frozen leaf (see below), never on the live path.
-
-**Migrator-only frozen descriptor (`src/migrate/legacy/legacy-layout.ts`).** The migrator's knowledge of the old 14-type layout ships as a single **quarantined pure leaf**: a frozen data table `{type, stashDir, recognizerId}` plus four pure functions (`isRelevantFile`, `toCanonicalName`, `toAssetPath`, `canonicalizeWorkflowName`) **extracted-and-pruned** (copied verbatim, not imported) from the old `asset-spec`, with **zero non-stdlib imports** and zero imports from `src/core/asset/*`, `src/indexer/walk/*`, or `src/commands/lint/*`. No `registerAssetType`, no renderer/action maps, no `TYPE_DIRS` export, no `AkmAssetType` union, no matcher registration. This is the **only** retained derivative of the old taxonomy, and it is deleted with the legacy path (`@removeIn 0.10.0`). It is a *copy*, not a relocation: a `git mv` of the real `asset-spec.ts` (imports `buildWorkflowAction`, `registerActionBuilder`, `registerTypeRenderer` at :7-8) or `matchers.ts` (imports `defaultRendererRegistry`, `looksLikeWorkflow`, `looksLikeWorkflowProgram`, `registerMatcher` at :13-19, **plus `SCRIPT_EXTENSIONS` from `asset-spec` at :14** — a sixth cross-module edge, so matchers depends on asset-spec too) would transitively drag the renderer registry, file-context matcher machinery, and both workflow parsers into the quarantine, recreating a live mini-registry and making a strict no-import isolation test unwritable. Relocate-then-prune-to-pure yields the identical artifact — the import graph, not the label, is the deliverable. Pure-JSON is also rejected: recognition is **algorithmic**, not tabular (skill = parent-dirname; workflow ext-collapse; env `.env`→`default`/`<name>.env`→`<name>`; secret = any file minus `.lock`/`.sensitive` sidecars) — a `{stashDir,extensions}` descriptor cannot express it.
-
-**`FileChange`** — `{ op: 'replace'|'create'|'delete', relPath, absPath, beforeHash?, content? }`. Core-owned. `beforeHash` is the single optimistic-concurrency/drift guard (= the D7-L1 before-hash check). Replace-file **retains prior content in a recoverable archive** (never a silent hard-delete) so consolidation stays non-destructive-with-history (Zep invalidate-and-keep, arXiv:2501.13956).
-
-**`Proposal`** — one object collapsing candidate→proposal→plan→changeset (D4):
 ```
-Proposal {
-  changes: FileChange[]        // core-owned, with beforeHash
-  evidence: {                  // bounded envelope — NOT a per-process schema
-    l1?: DeterministicResult   // typed
-    l2?: EvaluatorResult       // typed: {score, effectSize, protectedRegression} | 'no-automatic-evaluator'
-    l3?: FieldOutcome          // typed
-    meta: Record<string,unknown>   // ONE open bag; self-confidence lives here, metadata-only
-  }
-  status: 'pending'|'auto-apply'|'review'|'applied'|'rejected'|'reverted'
-}
+CLI boundary ── builds ──▶ RunContext { config, stashDir, dbs, adapters, clock, logger }
+                                   │
+        ┌──────────────────────────┼───────────────────────────────┐
+   BUNDLE ADAPTERS (per format)   CORE (format-agnostic)        STORAGE (DB repos)
+   own: recognize / placeNew /    owns: install, index, search,  own: table SQL over a
+        renderer / action /             change-transaction,           shared Repository<Row,
+        L1 validate / native            state, bindings, improve,      Domain> base
+        conventions                     memory lifecycle
 ```
-Extend `tests/contracts/reflect-propose-envelope.test.ts` — do not replace it. No separate lock/lease.
 
-**`Diagnostic`** — `validate()` return element (`Issue[]`): `{ level, code, message, path, field? }`. Emitted by adapter validation and by L1 checks (base-linter `runBaseChecks` + per-format L1 validators, missing-ref, secrets, protected-fields).
+**Refactor-not-addition note:** every element below already exists in coupled form; 0.9.0 relocates it behind a boundary and deletes the coupling. No element is a green-field addition.
 
-### 2.2 Adapter contract — FINAL shape (D3)
+### 2.2 Minimal durable types
 
-```ts
-interface BundleAdapter {
-  index(files: string[]): SearchDocument[]
-  guidancePaths: string[]                      // plain absolute paths, NOT a 'guidance' domain type
-  validate(changes: FileChange[]): Issue[]
-  placeNew?(evidence: EvidenceEnvelope): string  // relPath; optional
-}
-```
-- **`planUpdate` is DROPPED.** Verified zero consumers in `src` (F7). It is the one seam that would let adapters own mutation semantics — its removal is what keeps this a file tool, not a platform. All mutation is core-owned `FileChange[]`.
-- **Each adapter owns recognition, placement, and its renderer/action locally.** `placeNew` (adapter-owned canonicalizer) replaces the deleted `resolveAssetPathFromName`/`TYPE_DIRS` write path; directory-index resolution (`SKILL.md`) and secret sidecar exclusion (`.lock`/`.sensitive`) each land in exactly one adapter with no cross-adapter leakage.
-- No `read()` facade. No update computation in adapters.
-- Pin this exact 3-method+optional surface in `tests/contracts/extension-points.test.ts` so it cannot regrow a `read()`/`planUpdate` facade.
+- **`SearchDocument`** — *minted by renaming `StashEntry`* (`indexer/passes/metadata.ts:60`, ~40 fields) and **adding typed provenance** (`sourceRef`, `origin`, `contentHash`) that today is carried out-of-band on `DbIndexedEntry.{filePath,stashDir}` and resolved at query time (`db-search.ts:100,210`). Drop the wiki-only fields `wikiRole`/`pageKind` (`metadata.ts:106,112`) into the knowledge fold. This is a **rename + field move**, not a new type.
+- **`AssetRef`** — opaque bundle-scoped id string. `asset-ref.ts` (140 LOC) survives as a **pure parser**: grammar + `makeAssetRef`/`refToString` + `validateName` traversal/null-byte/drive-letter guards (`:121-136`). Delete the closed-union `isAssetType` gate (`:109`), `TYPE_ALIASES` (`:25-27`), and the vault `UsageError` (`:98-103`).
+- **`Proposal`** — one object `{ changes: FileChange[]; beforeHash; status; evidence }`. Today it carries a single `payload{content,frontmatter?}` blob (`proposal/repository.ts:287`, `proposals-repository.ts:66-69`) that cannot express multi-file consolidate. This is a **shape change**, +40 LOC, the only net-add in the changes area.
+- **`FileChange`** — `{ path; before?; after?; op }`, applied by one core transaction.
 
-### 2.3 Improve as revise/learn (D5)
+### 2.3 Adapter base + facets
 
-Two semantic verbs, both emitting `Proposal`s:
+One `BundleAdapter` interface, one adapter per native format. Facets (each replacing a deleted global slice):
 
-| Verb | Meaning | Recipes (former processes) |
-|---|---|---|
-| **revise** | rewrite an existing file | `reflect` |
-| **learn** | new file from evidence | `extract`, `distill`, `inference`, `recombine`, `synthesis` |
+| Facet | Replaces (deleted global) |
+|---|---|
+| `recognize(FileContext) → SearchDocument?` | `matchers.ts` global competition + `file-context.runMatchers` specificity contest (`:242-265`) + `classifyBySmartMd` (`:181-222`) |
+| `placeNew(ref) → path` | `TYPE_DIRS[type]` + `resolveAssetPathFromName` (`path-resolver.ts:28-33`, `write-source.ts:488-493`, `sources/resolve.ts:21-110`) |
+| `directoryList() → string[]` | `Object.values(TYPE_DIRS)` (git-stash pathspecs, provider-utils root detection, graph-extraction) |
+| `renderer` / `action` (locally stamped) | `asset-registry.ts` static `TYPE_TO_RENDERER`/`ACTION_BUILDERS` (`:21-58`) + `asset-spec` `rendererName`/`actionBuilder` split-brain |
+| `validateL1(FileContext) → LintIssue[]` | `LINTER_MAP`/`getLinterForType` + 9 per-type linter classes |
 
-- **consolidate/recombine are `learn` recipes emitting multi-file `FileChange[]` with non-destructive supersession** — frontmatter `supersededBy` + rank demotion on merged inputs (Mem0 ADD/UPDATE/DELETE/NOOP arXiv:2504.19413; Zep invalidate-and-keep arXiv:2501.13956), never hard-delete. This preserves auditable contradiction handling (doc1 G8/R7).
-- **CLS two-timescale invariant preserved as a recipe CONFIG value** (a `minConfirmingRuns` integer in the strategy JSON), NOT a new cross-episode subsystem — otherwise it reconstitutes the multi-cycle machinery D9 deletes.
-- Recipes are converted **one at a time behind a stable envelope-emitting facade** (§5); the 12 strategy JSONs in `src/assets/improve-strategies/` and `improve-cli-surface.test.ts` are the behavioral invariant each conversion must preserve.
-
-### 2.4 Snapshot + selection — unified artifact (D6 + D8)
-
-**One hash manifest is the run's single authority:**
-```
-Manifest {
-  entries: { [ref]: { absPath, beforeHash } }
-  configVersion, engineVersion, dbMigrationCursor   // folded into the manifest hash
-}
-manifestHash = hash(entries + versions + cursor)     // == the D8 input fingerprint
-```
-- Snapshot is a **hash manifest, never a copied/staging workspace**.
-- `improve` reads files via fs **from manifest `absPath` entries only**, never the live tree — this closes the read-path reindex-contention race.
-- Proposal-only run; **one end-of-run transactional apply** (reusing `sqlite-migrations` transaction discipline); **reindex affected paths once**.
-- **Apply-time `beforeHash` comparison is the sole transactional guarantee** — abort the whole batch on any drift.
-- **Config-ahead-of-DB skew fails closed:** because the manifest hash folds in `configVersion`/`engineVersion`/`dbMigrationCursor`, a skewed install (the documented `configVersion 0.9.0` over `state.db@016` incident, MIG-2) produces a manifest mismatch and refuses to run rather than writing over skewed state.
-- **`manifestHash` is the single input fingerprint**, replacing the overlapping cooldown/dedup/grace/no-op caches. No second hashing subsystem.
-
-**Evidence-driven selection (D8):** "No corrective evidence → no unattended semantic rewrite." Corrective evidence is defined concretely and auditably as one of: a **linked revert**, an **explicit feedback valence**, a **failed task replay**, or a **detected contradiction** on the target ref. `usage/salience/age` **only reorder within the corrective-evidence-eligible set** — they may never promote a ref out of the ineligible set, and no leaf may re-derive eligibility from ambient `loadConfig`.
-
-### 2.5 Verification ladder (D7)
-
-- **L1 — deterministic safety** (`base-linter.ts runBaseChecks` + `missing-ref` + **per-format L1 validators folded in**): parse/conformance/links/protected-fields/before-hash/secrets. Per-type linter routing (`LINTER_MAP`/`getLinterForType`) is **deleted**; the old per-type linter checks fold into `runBaseChecks` + a per-format L1 validator owned by each adapter. **NEW: Anthropic SKILL.md contract as the skill-format L1 validator** — name ≤64, description ≤1024 stating what+when, body <~500 lines, progressive disclosure (the format-specific evaluator both docs omit; Anthropic skill-authoring best practices). Wiki broken-xref folds into base-linter missing-ref.
-- **L2 — behavioral/comparative** (ONE evaluator, reusing existing tooling): `evaluate(): { score, effectSize, protectedRegression } | 'no-automatic-evaluator'`. Reuses `scripts/akm-eval/src/curate-bench.ts` + `src/core/eval/rank-metrics.ts` + a collapse/entropy canary. The **`'no-automatic-evaluator'` state is mandatory** — for prose/skills where AKM has no automatic evaluator, it forbids auto-apply and routes to L3 human. A judge-only verdict is never labeled "objectively verified" (guards the self-preference-bias vector, arXiv:2410.21819).
-- **L3 — field outcome:** human accept, feedback, revert.
-
-**Auto-apply policy:** auto-apply only for **mechanical (L1-only) changes** OR **objectively-verified-semantic** changes (L2 pass with effect floor + no protected regression). Encoded as a contracts test on `improve-auto-accept.ts` so it cannot regress to the current self-confidence gate (distill auto-accepts ~83–85% on self-confidence today — that gate is retired). **Self-confidence is metadata only, never authorization.**
+**Split-brain resolution (gap filled):** `asset-registry` statically maps renderers/actions for **all 14** types; `asset-spec` *also* carries `rendererName`/`actionBuilder` for only **8** (workflow/env/secret/wiki/lesson/task/session/fact). The remaining **6** (script/skill/command/agent/knowledge/memory) get their renderer **only** from the static registry map. Each per-format adapter must **locally stamp its own renderer+action**; the 6 static-only mappings must not be lost in the port.
 
 ---
 
-## 3. Consensus Record (D1–D12)
+## 3. Identity & Full Re-Key Migration
 
-| # | Decision | Final resolution & folded amendments | Residual |
+### 3.1 The new identity
+
+`[origin//]type:name` → **opaque bundle-scoped adapter-owned id**. `type` is no longer part of identity; it becomes an **open provenance string** on `SearchDocument`, guarded only by the §7.3 provenance-string-set pin (a lint/test), never by a closed union.
+
+### 3.2 Complete state re-key list (state.db)
+
+Every table/column keyed on the old ref is re-keyed in one transaction:
+
+- `asset_salience` (ref), `asset_outcome` (ref) — re-key via the `rekeyStateDbForMove` SQL pattern (`mv-cli.ts:928,957`), generalized to a full-table pass.
+- `proposals` (`entry_ref`), `usage_events` (`entry_ref` — the feedback keying, preserved finding), `improve_runs`, `extract_sessions`, `task_history`.
+- `workflow_runs` / `workflow_run_steps` / `workflow_run_units` — after they are merged into state.db (§8).
+- index.db is **regenerable** — it is dropped and rebuilt post-migration, not re-keyed.
+
+### 3.3 One-time atomic, fail-closed
+
+- Single migration `state-018` (cutover). Wrap the entire re-key + `workflow.db` ATTACH/`INSERT…SELECT` (§8) in one transaction on the shared engine (`storage/engines/sqlite-migrations.ts`: append-only ledger, SHA-256 body sealing, transaction-per-migration).
+- **Backup-verified-restorable** first (`core/migration-backup.ts`): fail-closed-to-restore on any nonzero orphan.
+- No dual-write, no `0.8` read path retained after commit.
+
+### 3.4 Throwaway migrator
+
+- `src/migrate/legacy/` holds the `0.8 → 0.9` migrator, **all** tagged `@removeIn 0.10.0`.
+- `src/migrate/legacy/legacy-layout.ts` seeds from a **frozen COPY** (not `git-mv`) of `SCRIPT_EXTENSIONS`/`WORKFLOW_EXTENSIONS`/`canonicalizeWorkflowName` so the live util home can evolve without touching the migrator.
+- The pre-0.9 filesystem-proposal import (`proposal/legacy-import.ts` 131 LOC + `proposal_fs_imports` table + `proposals-repository.ts:258-302` ledger) folds into this single migrator and is deleted from the live path.
+
+---
+
+## 4. Comprehensive DELETE / MOVE / REPLACE / DECOMPOSE Inventory
+
+Net-LOC is signed. "Repoint" = consumer edited to read adapter metadata; counted where the deleted source lives.
+
+### 4.1 Asset-type core
+
+| Action | Target (file:line) | LOC | Net |
 |---|---|---|---|
-| **D1** | Delivery model | **Single-track, one branch, no intermediate release.** Green-per-commit on a long-lived integration branch; `bun run check` + `tests/contracts` + `tests/architecture` as trunk gates; merge gated on `release-gates.yml` + fresh-install smoke + upgrade-from-beta.52 smoke + **curate-golden nDCG/MRR non-regression** + **migrator-isolation test**. | none |
-| **D2** | Kernel | **One `SearchDocument`; index resolves ref→absPath; improve reads via fs from snapshot manifest paths.** Add typed **provenance/source-ref fields now**; `type` is an **open string provenance token** (no closed union); **no salience/outcome field** (unproven/leaning-negative → ranking-layer only if it survives the deferred pass). Lint boundary forbids new `loadConfig`/`resolveStashDir` in improve leaves; drop vestigial `getImproveProcessConfig` `_config` param. | none |
-| **D3** | Adapter contract | **Drop `planUpdate`** (zero consumers). `{ index→SearchDocument[], guidancePaths:string[], validate(FileChange[])→Issue[], placeNew? }`, pinned in `extension-points.test.ts`. Adapters own recognition + placement + local renderer/action — no global matcher competition. | none |
-| **D4** | Proposal = changeset | **One `FileChange[]+beforeHash+status` object.** Evidence envelope = typed L1/L2/L3 slots + one open bag; self-confidence metadata-only; `beforeHash` sole drift guard. | none |
-| **D5** | Two verbs | **revise/learn.** consolidate/recombine = `learn` recipes with non-destructive supersession; CLS gate = recipe config value; convert recipe-by-recipe behind a stable facade. | none |
-| **D6** | Snapshot + proposal-only | **Hash-manifest snapshot (never copied workspace); proposal-only; one transactional batch; reindex-once.** Manifest hash folds in config/engine version + DB cursor (skew fails closed). Manifest hash **is** the D8 fingerprint. | none |
-| **D7** | Verification ladder | **L1 deterministic-first (base checks + per-format L1 validators + SKILL.md validator); type-routed lint registry deleted; L2 one evaluator with mandatory `no-automatic-evaluator` state; self-confidence metadata-only; auto-apply only mechanical or L2-verified.** | none |
-| **D8** | Evidence-driven selection | **One fingerprint = manifest hash.** "No corrective evidence → no unattended rewrite"; corrective evidence defined concretely; usage/salience/age reorder within eligible set only. | none |
-| **D9** | Delete-by-default | Remove from loop **AND** `config-schema.ts` (drop fields, don't gate); each deletion carries a prove-or-delete ticket with named baseline + effect floor. | none |
-| **D10** | Prove-or-delete salience/graph | **Resolver third path:** naive per-contributor ablation is unmeasurable (saturation trap, F3); stack-level ablation is regime-robust and already net-negative on disjoint E6 (F4). **For 0.9.0: one-line reversible config default flip to salience parity** (`outcomeWeightEnabled:false` → w_o=0 and/or default `salience-ranking` contributor OFF) — neutralize an unproven live booster **without deleting machinery or state tables**. Stack-level ablation (`AKM_ABLATE_CONTRIBUTORS`) added as a merge gate. **Per-contributor verdict + §7/§8 clamp fix deferred.** | premise corrected from "inert" to "live-but-unproven"; sign-off flagged |
-| **D11** | Migration | **One-time atomic; recognition sourced from PERSISTED KEYS, not a live registry; convert+remap+re-key+backup+report; no dual-format.** Primary ground truth is the stored `type:name` strings in `asset_salience`/`asset_outcome`/`feedback` + index rows (already minted canonical names) — the migrator **re-keys off those persisted strings** and does not re-run the global matcher. The frozen `legacy-layout.ts` leaf is a verifier/relocator only (old `type:name`→old on-disk path; recognizing un-indexed on-disk files). Ref grammar `[origin//]type:name` stays byte-stable; `type` becomes an open adapter namespace token; re-key is **identity for 13 of 14 types**; only `wiki:*`→`knowledge:*` and explicit-extension workflow rows transform. `--dry-run` surfaces every collision before any destructive step; **any nonzero orphan fails closed to unconditional restore** (not gated on the D10 parity flip). Layout + state re-key + 009/010/017 + workflow-010 **before** configVersion flip (flip keyed on the DB migration cursor, fixes MIG-2). Drift on physical relocation / un-indexed files guarded by the Chunk-0 golden canonical-name oracle. | none |
-| **D12** | What-dies | **Full taxonomy DIES IN 0.9.0 (user-approved fold — no separate post-0.9.0 cutover).** Deleted from the live runtime: `asset-spec.ts` (`ASSET_SPECS_INTERNAL` + `AssetSpec` + register/deregister/`TYPE_DIRS`/`resolveAssetPathFromName` etc.), `asset-registry.ts` (renderer/action singletons), closed `AkmAssetType` union in `common.ts`, closed-union validation in `asset-ref.ts`, the entire `matchers.ts` global competition + `file-context.ts` `runMatchers` specificity contest, `path-resolver.ts` type-dir probing, `lint/registry.ts` `LINTER_MAP`/per-type linters, wiki asset-type + wiki command. The four pure recognition fns survive ONLY as the frozen COPY in `src/migrate/legacy/legacy-layout.ts` (`@removeIn 0.10.0`, isolation-tested). Also die now: source `wikiName` special case, bundle-local `.akm` runtime state, direct semantic mutation, type-derived write paths, candidate/plan/changeset intermediates, cooldown/dedup/grace/no-op caches, self-confidence auto-apply gate. | user-approved: folded into 0.9.0 |
+| DELETE | `core/asset/asset-registry.ts` (whole; `:21-100` renderer/action maps) | 100 | −100 |
+| DELETE | `asset-spec.ts:326-328` TYPE_DIRS + `:297-320` register/deregister/getAssetTypes + registry/renderer/action body | ~230 of 359 | −230 |
+| MOVE | `asset-spec.ts` `SCRIPT_EXTENSIONS` (`:104`, 17 exts), `WORKFLOW_EXTENSIONS` (`:42`), `canonicalizeWorkflowName` (`:55`) → live util home (`core/recognition-util.ts`) | ~30 | 0 |
+| DELETE | `asset-spec.ts` `buildTaskAction`/`toPosix` private helpers + 8 actionBuilder closures | — | (in −230) |
+| DELETE | `common.ts:29-88` `ASSET_TYPES`/`AkmAssetType`/`ASSET_TYPE_SET`/`isAssetType` block | ~60 | −60 |
+| REPLACE | `asset-ref.ts` closed-union `isAssetType` (`:109`), `TYPE_ALIASES` (`:25-27`), vault `UsageError` (`:98-103`) → drop | ~20 | −20 |
+| KEEP | `asset-ref.ts` grammar + `makeAssetRef`/`refToString`/`validateName` guards | 120 | 0 |
 
-**Residual dissent:** none at decision level. Sign-off items flagged for the record: **D12 taxonomy folded into 0.9.0 (user-approved)**, D10 premise-corrected, and the two remaining deferrals (saturation-harness fix + per-contributor prove-or-delete).
+### 4.2 Config schema
 
----
-
-## 4. Grounded Current-State Map: What Dies / What Survives
-
-*Census re-measured against `cf44e11`. The code-quality-review numbers (dated 2026-07-03/04) are stale — re-measure at branch start before sizing any chunk.* **The full runtime consumer census of the taxonomy is 43 consumer files, not the ~34 earlier estimates (plus ~5 co-modified/deleted surface modules → ~48 files touched total) — it MUST be enumerated exhaustively before sizing Chunk 4.5 (§5, Appendix §1); any missed consumer silently breaks resolution. The two most load-bearing single files are `indexer/ensure-index.ts` (the `Object.entries(ASSET_SPECS)`×`TYPE_DIRS[type]` index-build loop) and `sources/resolve.ts` (recognition+canonical+placement hub).**
-
-### 4.1 Survives (reused, not rewritten)
-
-| Subsystem | Path | LOC | Role in 0.9.0 |
+| Action | Target | LOC | Net |
 |---|---|---|---|
-| Ref parser (decoupled) | `src/core/asset/asset-ref.ts` | 140 | **Kept as a pure parser** — grammar + `makeAssetRef`/`refToString` kept; closed-union `isAssetType` validation (:109) and `TYPE_ALIASES` narrowing **removed** (`type` is now an open token). |
-| RunnerSpec seam | `src/integrations/agent/runner.ts:24` | — | Kept. `llm\|agent\|sdk` union; only RunnerSpec.kind switch. |
-| Engine resolver | `src/integrations/agent/engine-resolution.ts` | — | Kept (:271/:282/:305). |
-| SearchDocument + write-path indexer | `src/indexer/index-written-assets.ts` | 157 | Kept; already wired into proposal promotion (`repository.ts:1295`). `type` field becomes open string provenance. |
-| Search/ranking stack | `src/indexer/search/*` | — | Kept; `ranking-contributors.ts` salience contributor **parity-flipped** (D10), not removed. `TYPE_BOOST` (:11) already local `Record<string,number>`, no asset-spec import; `entry.type` string comparisons keep working. |
-| Base linter | `src/commands/lint/base-linter.ts` | — | **Kept as the L1 engine**; extended with SKILL.md validator + wiki-xref fold-in + per-format L1 validators. Its `getAssetTypes()`-derived `REF_RE` and `resolveAssetPathFromName`/`TYPE_DIRS` ref-path resolution (:142-213) lose their registry source → ref-path resolution becomes **adapter-provided**. |
-| Salience machinery + state tables | `src/commands/improve/salience.ts`, `asset_salience`/`asset_outcome` | — | **Kept under the reversible D10 parity flip** — NOT deleted. `import type { AkmAssetType }` (:52) → `string`; `makeAssetRef` cast (:650) → `string`; `DEFAULT_TYPE_ENCODING_WEIGHTS` (:135) already `Record<string,number>`, kept as a local table. |
-| Migration ledger | `src/storage/engines/sqlite-migrations.ts` | — | Kept; single schema authority; apply-batch and state re-key reuse its transaction discipline. |
-| Curate/eval harness | `scripts/akm-eval/src/curate-bench.ts`, `src/core/eval/rank-metrics.ts` | — | Kept; L2 evaluator + merge gate. |
-| `deepMergeConfig` | — | — | Kept; single merge impl for config/setup/strategy/overlay. |
+| DECOMPOSE | `config-schema.ts:311-593` `ImproveProcessConfigSchema` (262-line god-object, ~40 "only meaningful on X" comments) → per-process discriminated schemas | — | −120 |
+| DELETE | `:817-835` `ImproveCalibrationSchema` + `:837-852` `ImproveExplorationSchema` (whole default-off subtrees) | 36 | −36 |
+| DELETE | `:437-439` homeostaticDemotion archaeology, `:546` `emitAs` reserved-dead, `:686-690` `pushOnCommit` deprecated | 15 | −15 |
+| DELETE/OPEN | `:915-926` `GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED` (10 hardcoded, incl stale `wiki`) → source from adapter metadata | 12 | −12 |
+| DELETE | `:704,750` + `config-types.ts:115` + `config-sources.ts:93,111` `wikiName` (5 sites) | 8 | −8 |
+| RENAME | `:857-860` `outcomeWeightEnabled` comment (falsely says "Default false (parity)"; runtime is default-ON `w_o=0.15`) | 0 | 0 |
+| RENAME | `:473-474,484` `mergeInformationFloor` "ADVISORY; never refused" comment — it **is** a live gate at `anti-collapse.ts:143` | 0 | 0 |
+| DELETE | `config.ts:250-256` `getImproveProcessConfig` vestigial `_config` param | 1 | −1 |
 
-### 4.2 Dies in 0.9.0
+### 4.3 Index / search / read
 
-| What | Path / anchor | Mechanism |
+| Action | Target | LOC | Net |
+|---|---|---|---|
+| MINT | `StashEntry` (`metadata.ts:60`) → `SearchDocument` + provenance fields; drop wiki fields `wikiRole`/`pageKind` | — | −40 |
+| REPLACE | `matchers.ts` global competition + `classifyBySmartMd` (`:181-222`) + `classifyByWiki`/`wikiMatcher` (`:251,296`) → adapter `recognize` | — | −? (adapters) |
+| DELETE | `file-context.ts:242-265` `runMatchers` specificity machinery (KEEP renderer registry `:202-229`, `buildFileContext`, lazy caching `:94-116`) | ~25 | −25 |
+| REPLACE | `path-resolver.ts:8,28-33` disk-probe `resolveViaDisk`/`buildDiskCandidates` → adapter `placeNew` (KEEP `resolveViaIndex` `:56-63`, symlink containment `:79-81`) | ~30 | −30 |
+| REPOINT | `ensure-index.ts:58,88-89` staleness loop (`ASSET_SPECS×TYPE_DIRS×spec.isRelevantFile/stashDir`) → adapter root enumeration | — | 0 |
+| REPOINT | `walk/walker.ts:15` `isRelevantAssetFile` → adapter per-file recognition | — | 0 |
+| DELETE | `walk/walker.ts:32` `walkStash` + `:21` `DirectoryGroup` (dead in src/, only in `tests/integration/walker.test.ts`) | 45 | −45 |
+| REPOINT | `graph-extraction.ts:42,944,1159` bidirectional TYPE_DIRS (`:944` dir-seg→type, `:1159` type→dir) → adapter `directoryList` + includeable-format flag | — | 0 |
+| CONSOLIDATE | `indexer.ts:956-977` `persistDirRecords` full-rebuild wipe → shared repo truncation incl `utility_scores_scoped` (fixes B4) | — | −15 |
+| CONSOLIDATE | 3 divergent `mergeLegacyEntry` copies (`manifest.ts:167`, `indexer.ts:1727`, `registry/build-index.ts:371`) | — | −30 |
+| INLINE | `db.ts:1173` `getEmbeddableEntryCount` (byte-identical to `getEntryCount`; misleading) | 6 | −6 |
+| CONSOLIDATE | `db-search.ts:483-530` scored path vs `:607-637` enumerate path → one `applyResultFilters` | — | −40 |
+| CONSOLIDATE | `.stash.json` `legacyOverrides` (`metadata.ts:253,279`; applied `indexer.ts:1552`, `manifest.ts:147`, `build-index.ts:360`) → fold to migrator | — | −60 |
+| DELETE | `indexer.ts:243` `void config;` + `:414` `void sources;` suppression hacks | 2 | −2 |
+| THREAD | `db-search.ts:88/291/767` `rendererRegistry` param + `search-hit-enrichers.ts:10` `getRenderer` → RunContext | — | −15 |
+
+### 4.4 improve / memory / salience
+
+| Action | Target | LOC | Net |
+|---|---|---|---|
+| DECOMPOSE | `preparation.ts:825` `runImprovePreparationStage` (~1544) → passes | — | −600 |
+| DECOMPOSE | `improve.ts:413` `akmImprove` (~943, inline multi-cycle loop) → orchestrator | — | −400 |
+| DECOMPOSE | `reflect.ts:939` `akmReflect` (~707) → passes; collapse double disk-read (`:1017-1023` + `:1400-1409`) | — | −400/−30 |
+| DECOMPOSE | `distill.ts:678` `akmDistill` (~635) → passes | — | −? |
+| DECOMPOSE | `consolidate.ts:1387` `planConsolidation` (~433) + `handleMergeOp:2117` (~298) + `handlePromoteOp:2477` (~215) | — | −300 |
+| DECOMPOSE/TRIM | `distill-promotion-policy.ts:650-1491` `DEFAULT_PROMOTION_POLICY_SELECTION` (~840 LOC payload; production reads only `.selectedModel.{name,threshold}`) → keep frozen `{selectedModel}` only; bench recomputes | 840 | −820 |
+| DELETE | `loop-stages.ts:117-160,307-331` self-consistency Jaccard majority-vote (D7: self-confidence ≠ authorization) | 120 | −120 |
+| DELETE | `improve-auto-accept.ts:77-215` exploration promotion + self-confidence auto-apply gate | 150 | −150 |
+| DELETE | `calibration.ts` + `preparation.ts:102-164` `maybeAutoTuneThreshold` (default-off, no field grounding) | 250 | −250 |
+| DELETE | `procedural.ts` (procedural-in-core, default-off `#634`, single-project overfit) | 500 | −500 |
+| DELETE | `outcome-loop.ts:127-305` `review_pressure` + `migrations.ts:564,570` column+index (wired-but-dead F7) | 60 | −60 |
+| DELETE | `feedback-valence.ts` `ValenceScore.lane` (computed, never read) | 25 | −25 |
+| DELETE | improve default-off branches: `autoTune` (`improve.ts:497`), dedup (`#617`), judged-state cache (`#581`), hotProbation, schemaSimilarity, proceduralAwareFloor | — | −300 |
+| THREAD | `extract.ts:550` `processSession` (19 positional args) → RunContext | — | −10 |
+| CONSOLIDATE | 5 copies JSON.stringify-per-value frontmatter serializer (`distill.ts:490`, `recombine.ts:1000`, `content-repair.ts:95/136/159`) → one `serializeFrontmatterQuoted` | — | −40 |
+| CONSOLIDATE | `resolveParentRef` (`memory-improve.ts:820` vs `memory-contradiction-detect.ts:135`) + `isDerivedMemory` (name-keyed vs path-keyed, divergent) | — | −40 |
+| CONSOLIDATE | `MAX_REJECTED_PROPOSALS` declared twice (`reflect.ts:228`, `distill.ts:905`) | 3 | −3 |
+| CONSOLIDATE | `memory-improve.ts:315-328,730-735` raw fs read/parse/write → imported `mutateFrontmatter` (`:9`) | — | −20 |
+| RENAME | `improve-result-file.ts:64,86` `relativeImproveResultPath`/`writeImproveResultFile` (writes DB row, name says file) | 0 | 0 |
+
+### 4.5 changes / proposals / wiki / lint / mv
+
+| Action | Target | LOC | Net |
+|---|---|---|---|
+| CONSOLIDATE | 3 FS journal engines → one FileChange transaction: `repository.ts:1036-1416` proposal-txn + `:1417-1530` reject-txn + `mv-cli.ts:309-541,1020-1120` move-txn (preserve fsync + before-hash) | — | −590/−350 |
+| DELETE | `wiki/wiki.ts` (1182 LOC, 40 exports) — command subsystem; keep only broken-xref as base-linter missing-ref fold | 1182 | −1000 |
+| DELETE | `wiki/wiki-templates.ts` + `assets/wiki/ingest-workflow-template.md` | 60 | −60 |
+| CONSOLIDATE | 9 per-type linters + `registry.ts` `LINTER_MAP`/`getLinterForType` + `types.ts AssetLinter` → `runBaseChecks` + adapter `validateL1` | — | −250 |
+| INLINE | `lint/index.ts:37` `STASH_SUBDIRS` + subdir→linter routing (`:117-189`) | 40 | −40 |
+| ADD | Skill adapter `validateL1`: Anthropic SKILL.md contract (name≤64, desc≤1024, body<~500 lines) — genuinely new, small | — | +? |
+| DECOMPOSE | `repository.ts:2069` `formatUnifiedDiff` / `:2093` `formatNewAssetDiff` | 30 | −30 |
+| CONSOLIDATE | `proposal-cli.ts:109-163,213-275` bulk accept/reject loops → `bulkAdjudicateProposals` in `proposal.ts` | 70 | −70 |
+| DELETE | `proposal/legacy-import.ts` + `proposals-repository.ts:258-302` + `proposal_fs_imports` table → migrator | 160 | −160 |
+| DELETE | `repository.ts:439,482,487,659` dedup/cooldown machinery (callers already pass `force:true`) | 120 | −120 |
+| DELETE | `repository.ts:874` `recordGateDecision` + `Proposal.gateDecision` + drain confidence gate | 80 | −80 |
+| DECOMPOSE | `repository.ts:198` `ProposalPayload` single-content → `FileChange[]` | — | +40 |
+| RENAME | `lint/types.ts:15` `dangerous-vault-key` LintIssueType (vault removed 0.9.0) | 0 | 0 |
+| THREAD | `write-source.ts:487-501` `resolveAssetFilePath` TYPE_DIRS → adapter `placeNew` (KEEP git exact-path boundary, `sanitizeCommitMessage`, `isWithin`) | — | −15 |
+| THREAD | `drain.ts:42`, `propose.ts:19`, `repository.ts:50` TYPE_DIRS importers | — | −20 |
+| MOVE | base-linter ref grammar `REF_BOUNDARY_PREFIX_CLASS_SRC`/`REF_SLUG_CHAR_CLASS_SRC` (`:173-174`, consumed by `mv-cli.ts:64-65`) → live util home; REF_RE type-alternation sourced from adapters | — | −20 |
+
+### 4.6 sources / registry / integrations / setup
+
+| Action | Target | LOC | Net |
+|---|---|---|---|
+| CONSOLIDATE | `caps()` byte-identical across 8 harness `index.ts` + `homeDir()` (`claude/config-import.ts:22`) → BaseHarness/shared | 70/8 | −78 |
+| CONSOLIDATE | `git-provider.ensureGitMirror` + `website-ingest.ensureWebsiteMirror` freshness/stale-fallback → `withFreshnessCache({ttlMs,staleMs})` | — | −40 |
+| CONSOLIDATE | `claude/session-log.ts` (321) + `opencode/session-log.ts` (435) shared skeleton → `AbstractSessionLogProvider` (format-specific readers kept) | — | −80 |
+| CONSOLIDATE | `spawn.ts:107,315-356` SIGTERM→SIGKILL ladder + envelope vs `opencode-sdk/sdk-runner.ts:430-452` | — | −60 |
+| DECOMPOSE | `registry/resolve.ts:650-757` inline semver engine → `registry/semver.ts` (unit-testable) | — | 0 |
+| DECOMPOSE | `setup/steps/connection.ts` (940; `stepLlm:185`, `stepSmallModelConnection:455`, `stepAgentConnection:733`) → collectInput/probe/deriveConfig | — | −40 |
+| DECOMPOSE | `sources/website-ingest.ts` (746; SSRF+normalize+fetch+crawl+HTML→md+FS) → passes | — | −20 |
+| FIX | `sources/providers/npm.ts:55` `path()` throws → resolve cache dir lazily like `git-provider.path()` | 0 | 0 |
+| FIX | `config-sources.ts:35` `parseSourceSpec` non-exhaustive switch (6 variants) | 0 | 0 |
+| THREAD | `sources/resolve.ts:21-110` `resolveAssetPath`/`resolveByCanonicalName` (walkStashFlat+runMatchers fallback) → adapter | 25 | −25 |
+| THREAD | `provider-utils.ts:14` `REGISTRY_STASH_DIR_NAMES`, `git-stash.ts:241` pathspecs, `git-provider.ts:198` `hasExtractedRepo` → adapter `directoryList` | — | 0 |
+| RENAME | `sources/wiki-fetchers/` (registry.ts, youtube.ts) → `snapshot-fetchers/` (feeds knowledge/website path; NOT wiki) | 0 | 0 |
+| THREAD | `commands/env/env-binding.ts:21`, `env-cli.ts`, `secret-cli.ts` `resolveAssetPathFromName` → env/secret adapter `placeNew` | — | 0 |
+| REPOINT | `registry/build-index.ts` (StashEntry/generateMetadataFlat/detectStashRoot) — unlisted taxonomy consumer | — | 0 |
+
+### 4.7 storage / DBs / output / health / tasks / cli
+
+| Action | Target | LOC | Net |
+|---|---|---|---|
+| CONSOLIDATE | `workflows/db.ts` (426) merge into state.db (§8) | 426 | −426 |
+| CONSOLIDATE | `storage/locations.ts:32` `workflowDb` + `core/paths.ts` `getWorkflowDbPath` + `migration-backup.ts:113,224,374,472,1140` workflow branches | — | −60 |
+| DECOMPOSE | `indexer/db/db.ts` (2063, ~12 domains) → entries/vector/fts/utility/usage repos under storage; invert arrow (`index-db.ts:5`, `registry-cache.ts:6` stop importing openers from indexer) | — | net-neutral (−150 dup) |
+| CONSOLIDATE | `storage/repositories/*` (13 repos, no base) → `Repository<Row,Domain>` + `jsonColumn()` codec | — | −120 |
+| DECOMPOSE | `output/text/helpers.ts` (1418, 59 fns); extract `formatShowPlain:528` APPLY/workflow agent-directives to structured module | — | −200 |
+| DECOMPOSE | `output/renderers.ts` (871) + `workflows/renderer.ts:23-25` (183) type-renderer registry → per-adapter (D12) | — | −250 |
+| CONSOLIDATE | `output/shapes.ts` + `shapes/registry.ts` + `text/registry.ts` (3 parallel registries) | — | −150 |
+| DECOMPOSE | `commands/health.ts:132` `akmHealth` (~272) | — | net-neutral |
+| DECOMPOSE | `health/html-report.ts:401` `buildHealthHtmlReplacements` (file 1058) | — | −200 |
+| DECOMPOSE | `health/improve-metrics.ts:191` `summarizeImproveCompleted` (~440) | — | net-neutral |
+| DECOMPOSE | `health/types.ts` (685 type dump) → per-domain | — | −100 |
+| DECOMPOSE | `tasks/runner.ts` (698) | — | −150 |
+| CONSOLIDATE | `tasks/backends/{cron,launchd,schtasks}.ts` `*Exec`/`*Fs`/`*Options` boilerplate → `BackendExec<Extra>` + `runOrThrow` (KEEP strategy pattern) | — | −80 |
+| CONSOLIDATE | `cli.ts:137,602,652` `resolveHelpMigrateVersionArg`/`findCittyTopLevelCommand`/`parseAllFlagValues` argv re-scanners | — | −60 |
+| CONSOLIDATE | duration residue: `consolidate.ts:2825` `parseSinceToIso` shadow + `extract.ts:414` `[mhd]/i` regex + `memory-improve.ts:377` "N days ago" → `core/time.ts` | — | −40 |
+| THREAD | ambient reads: `loadConfig` ×90, `resolveStashDir` ×56, `?? loadConfig` 56 sites, 22 `_set*ForTests` → RunContext | — | −250 |
+| DECOMPOSE | `standards/resolve-standards-context.ts:20,25,50,73-92` wiki Feature-A branch (KEEP Feature-B, `resolve-stash-standards`, repoint `resolve-type-conventions`) | 45 | −45 |
+
+### 4.8 standards (wiki-death blast radius)
+
+- DELETE `resolve-standards-context.ts` Feature-A: `:20` wiki imports, `:25` `WIKI_INFRA_BASENAMES`, `:50` `extractWikiNameFromRef`, `:73-92` `loadWikiSchema` → collapse to Feature-B path (−45).
+- KEEP `resolve-stash-standards.ts`.
+- REPOINT `resolve-type-conventions.ts:29,51` `getAssetTypes` + basename validation → adapter type-set / §7.3 provenance pin; wiki drops from any valid-type set.
+
+---
+
+## 5. improve Decomposition Map
+
+Target shape mirrors the already-decomposed `consolidate.ts` (narrow/plan/apply) and the small pure scorers (`computeSalience`, `evaluateCollapseAlerts`).
+
+**Two verbs, one envelope:**
+- `revise` = reflect. `learn` = extract / distill / inference / recombine / synthesis.
+- Each verb emits a single `Proposal { FileChange[] + beforeHash + status }` through one envelope facade.
+- All passes read files **only from the run's hash-manifest snapshot** (D6), fixing the reflect double disk-read (`reflect.ts:1017-1023` + `:1400-1409`).
+
+**Decomposition:**
+
+| God fn | Becomes | Passes (named, over `RunContext`) |
 |---|---|---|
-| `AssetSpec` + `ASSET_SPECS_INTERNAL` registry | `src/core/asset/asset-spec.ts` (359) | **Deleted from runtime.** `AssetSpec` interface, `ASSET_SPECS_INTERNAL`, `registerAssetType`/`deregisterAssetType`/`getAssetTypes`/`TYPE_DIRS`/`isRelevantAssetFile`/`deriveCanonicalAssetName`/`deriveCanonicalAssetNameFromStashRoot`/`resolveAssetPathFromName`. The four pure recognition fns survive ONLY as the frozen COPY in `src/migrate/legacy/legacy-layout.ts` (migrator-only). **Live-path note:** `SCRIPT_EXTENSIONS` (:104), `WORKFLOW_EXTENSIONS` (:42), and `canonicalizeWorkflowName` (:55) still have **live (non-migrator) consumers** (`indexer/indexer.ts`, `matchers.ts`→adapters, `workflows/{authoring,runtime/runs,runtime/workflow-asset-loader,exec/brief}.ts`, `mv-cli.ts`) that cannot import the quarantined leaf — they must relocate to a **live util home** (a script-ext constant + a workflow-name util, or the workflow adapter), distinct from the frozen migrator copy, before Chunk 7, or these files break on `asset-spec.ts` deletion despite using no closed-union behavior (Appendix §11). |
-| Type-to-renderer / type-action maps | `src/core/asset/asset-registry.ts` (100) | Deleted. `TYPE_TO_RENDERER` + `ACTION_BUILDERS` singletons + `registerTypeRenderer`/`registerActionBuilder`/`defaultRendererRegistry`. Renderers/actions become **per-adapter, locally stamped**. |
-| Closed `AkmAssetType` taxonomy | `src/core/common.ts:29-86` | Deleted. Closed `AkmAssetType` union + `ASSET_TYPES`/`ASSET_TYPE_SET` (derived from `getAssetTypes()` at module-eval) + `isAssetType` (= `Object.hasOwn(TYPE_DIRS,type)`). Becomes an open adapter-namespace check or is deleted. |
-| Closed-union ref validation | `src/core/asset/asset-ref.ts` | `TYPE_ALIASES` closed map + `isAssetType` validation in `parseAssetRef` (:109) + `AssetRef.type` narrowing deleted (file itself **kept** as pure parser, §4.1). |
-| Global matcher competition | `src/indexer/walk/matchers.ts` | Deleted **entirely**: `DIR_TYPE_MAP`, `classifyByExtension/Directory/ParentDirHint/SmartMd/Wiki/WorkflowProgram`, specificity numbers, `registerBuiltinMatchers`. Replaced by per-format adapter recognizers with explicit ownership. |
-| Matcher specificity contest | `src/indexer/walk/file-context.ts:242-265` | Deleted. `runMatchers` sort-by-specificity / later-registered-wins-ties + `registerMatcher`/`MatchResult` specificity machinery. No global competition survives. |
-| Type-dir path probing | `src/indexer/walk/path-resolver.ts` | Deleted (`buildDiskCandidates` via `resolveAssetPathFromName` + `TYPE_DIRS`, :8,28-33). `directoryIndexNames` (default `["SKILL.md"]` at `path-resolver.ts:70`, an overridable option — `schema-repair.ts:277` passes a 3-element list `["SKILL.md","index.md","README.md"]`) moves into the **skill adapter**, which must preserve both the default and the caller-override capability, not hardcode a single index name. Resolution becomes adapter-owned. |
-| Type-routed lint registry | `src/commands/lint/registry.ts` | Deleted. `LINTER_MAP` subdir→linter routing + `getLinterForType`; per-type linter classes (agent/command/knowledge/memory/skill/task/fact/workflow) fold into `base-linter.runBaseChecks` + per-format L1 validators. |
-| Wiki asset-type + wiki command | `src/wiki/wiki.ts` (1182), `wiki-templates.ts` | Wiki asset-type + wiki command + `classifyByWiki`/`wikiMatcher` deleted; broken-xref (`wiki.ts:919-1000`) folds into base-linter missing-ref (SPEC-1). Preserve xref checks as an L1 fold-in; retire the command surface. |
-| Source `wikiName` special case | `src/sources/*` | Deleted. |
-| Bundle-local `.akm` runtime state | (per-bundle) | Deleted; state centralized. |
-| Direct semantic mutation processes | improve monoliths | Die via D6/D8 proposal-only + snapshot. |
-| Type-derived write paths | improve/proposal write path | Already `ResolvedWriteTarget` (INT-1); residual type-derivation removed — placement becomes adapter `placeNew`. |
-| Candidate→proposal→plan→changeset intermediate types | improve/proposal | Collapsed into single `Proposal` (D4). |
-| Overlapping cooldown/dedup/grace/no-op caches | improve selection | Replaced by single `manifestHash` (D8). |
-| Self-confidence auto-apply gate | `improve-auto-accept.ts` | Retired; auto-apply gated on L1/L2 (D7). |
-| D9 delete-list items | config-schema + loop | Removed from loop **and** `config-schema.ts`. |
-| Vestigial `_config` param | `config.ts:250` `getImproveProcessConfig` | Deleted. |
+| `runImprovePreparationStage` (~1544) | orchestrator | snapshot-manifest, candidate-gather, salience-score, valence-score, standards-context, eligibility-filter |
+| `akmImprove` (~943) | orchestrator | per-cycle → pass sequence; **same-run multi-cycle deleted** (D7) |
+| `akmReflect` (~707) | orchestrator | source-snapshot-read (single), revise-propose, size-gate |
+| `akmDistill` (~635) | orchestrator | extract-candidates, promote-policy-apply (frozen `{selectedModel}`), distill-propose |
+| `processSession` (19 args) | `RunContext` + `SessionInput` | one context object replaces the positional list |
 
-**Only retained taxonomy derivative:** the frozen `src/migrate/legacy/legacy-layout.ts` leaf (four extracted-and-pruned pure fns + a frozen `{type,stashDir,recognizerId}` table, zero non-stdlib imports). It is quarantined, isolation-tested, and **deleted with the legacy path (`@removeIn 0.10.0`)**. It is never on the live path.
+**Deleted from loop AND config-schema (D7/D9):** self-confidence authorization, exploration promotion (`improve-auto-accept.ts:77-215`), Jaccard self-consistency voting (`loop-stages.ts:117-160,307-331`), confidence/calibration auto-tuning (`calibration.ts`, `improve.ts:497`), procedural-in-core (`procedural.ts`).
 
-### 4.3 Severances in kept machinery (not deletions — the tables are already string-keyed)
-
-| Where | Anchor | Change |
-|---|---|---|
-| Graph extraction (kept-but-measured) | `src/indexer/graph/graph-extraction.ts:42,944,1159` | `TYPE_DIRS` is a **runtime dep** and MUST be severed to **adapter metadata** (a kept subsystem cannot import the deleted registry). Real extra fold work outside prior D10 scope — **explicitly in-scope now**; confirm the adapter-metadata directory-list interface and add it to the graph-boost subsystem's contract. |
-| Salience | `salience.ts:52,650,135` | `import type { AkmAssetType }` → `string`; `makeAssetRef` cast → `string`; `DEFAULT_TYPE_ENCODING_WEIGHTS` already `Record<string,number>`, kept as a local table. |
-| Ranking contributors | `ranking-contributors.ts:11,183,320,338,359` | `TYPE_BOOST` already local `Record<string,number>`, no asset-spec import; `entry.type==='memory'/'lesson'/'fact'` are plain string comparisons that keep working. No change beyond confirming no closed-union dependency. |
-| ~40 further consumers | (full census, Appendix §1) | Enumerate all 43 runtime consumers (~48 files touched total) exhaustively before Chunk 4.5. |
-
-### 4.4 Re-plumbed (highest blast radius)
-
-Improve monoliths (`src/commands/improve/`, ~23.7K LOC / 38 files) converted recipe-by-recipe behind the envelope facade:
-`preparation.ts` (2375; `runImprovePreparationStage`), `consolidate.ts` (3118; `akmConsolidateInner`), `reflect.ts` (1645), `improve.ts` (1565; `akmImprove`), `distill-promotion-policy.ts` (1510), `extract.ts` (1477), `loop-stages.ts` (1403), `distill.ts` (1324), `recombine.ts` (1009). Per-process files deleted **only after** all emit through the unified path.
-
-Ambient-access debt to retire during re-plumb: `loadConfig()` 90×, `resolveStashDir()` 56×, `_set…ForTests` 22 seams. A lint guard (modeled on `scripts/lint-runtime-boundary.ts`) forbids **new** `loadConfig`/`resolveStashDir` in improve leaves.
+**Shared helpers minted (net-add ≈+500 total, dwarfed by deletions):** envelope facade, `RunContext`, `serializeFrontmatterQuoted`, single `resolveParentRef`/`isDerivedMemory`.
 
 ---
 
-## 5. Single-Track Execution Order
+## 6. Memory Lifecycle (Refactor of consolidate)
 
-Each chunk is an **in-branch work unit** (not a release). Every chunk ends with `bun run check` green and its named gate passing before the next begins. Deletions happen in the **same chunk/commit** as the replacement lands (deletion ledger), so the tree never carries dead duplicates. This reconciles doc2's dependency-first vertical-slice *ordering* with the no-release mandate: the slices are commit clusters, not shippable increments.
+Memory lifecycle stays in the consolidate module, re-expressed as **non-destructive `learn` recipes** — never hard-delete.
 
-Because the taxonomy fold's blast radius is **43 runtime consumer files (~48 touched total)** stacked on the improve re-plumb, and big-bang deletion is forbidden by Risk row 1, taxonomy death is split into an **enabling seam (Chunk 1.5) → a per-format replacement ledger (Chunk 4.5) → a migration-consuming deletion (Chunk 7)**, each green-per-commit.
-
-**Highest-risk cluster — the on-disk resolution path.** `path-resolver.ts` + `sources/resolve.ts` + `walker.ts` + `indexer/passes/metadata.ts` + `ensure-index.ts` + `manifest.ts` + three `sources/providers/*` + `write-source.ts` + the proposal write trio all derive canonical identity or disk placement from `TYPE_DIRS`/`resolveAssetPathFromName`; a single missed consumer breaks ref resolution **silently** (not at build time). `ensure-index.ts` and `sources/resolve.ts` are the two most load-bearing single files — re-point them first.
-
-**Chunk 0 — Re-measure, capture goldens & scaffold guards.**
-- Snapshot current LOC/call-site census (db.ts 2063, `.optional()` 252, `resolveStashDir` 56, `loadConfig` 90) so sizing is not off drifted numbers.
-- **Capture TWO golden fixtures from the live minting code before touching any code:**
-  - **(a) Canonical-name ORACLE** over the whole corpus — capture `toCanonicalName` output from the live minting code; the extracted `legacy-layout.ts` pure fns must later reproduce it **byte-for-byte** (drift guard for physical relocation / un-indexed files). Capture from the live minting sites — `deriveCanonicalAssetNameFromStashRoot` in `metadata.ts`/`manifest.ts`/`sources/resolve.ts`/`mv-cli.ts` — **before** any Wave-1 edit touches those four files (they are themselves consumers slated for edit).
-  - **(b) Index-classification / retrieval GOLDEN** (curate-golden nDCG/MRR + `tests/commands/__snapshots__`). **Non-negotiable and belongs HERE, not at migration time:** `classifyBySmartMd` (`matchers.ts:197-222`) resolves ambiguous loose `.md` (agent/command/workflow/knowledge) by **content probe** and `runMatchers` is a genuine specificity contest (`file-context.ts:242-265`, later-registered-wins-ties). Per-format adapter ownership either replicates that probe or consciously reduces unowned `.md` to deterministic `knowledge` — a **behavior change** that can regress the single merge gate. Baseline it now.
-- Add the isolation/contract-test skeleton (`tests/architecture/migrator-isolation.test.ts`).
-- Classify every test as **INVARIANT** (must stay green throughout) vs **EXPECTED-CHURN** (re-baselined deliberately):
-  - Invariants: `tests/contracts/*` (engine-boundary, extension-points, migration-baseline, module-boundaries, ref-resolver-contract, reflect-propose-envelope, runtime-boundaries), `tests/architecture/*`, `tests/workflows/conformance`, lint guards.
-  - **Reclassified as EXPECTED-CHURN (no longer INVARIANT):** `tests/contracts/asset-types.test.ts`, `config-schema-drift.test.ts`; plus `tests/storage/__snapshots__`, `tests/commands/__snapshots__`, output-baseline snapshots.
-- Add the ambient-read lint boundary (no new `loadConfig`/`resolveStashDir` in improve leaves).
-- **Deletion ledger:** none yet.
-- **Gate:** both goldens captured + committed; new lint guard active; census recorded; existing suite green.
-
-**Chunk 1 — Freeze the kernel contracts.** (approved, unchanged)
-- Land `FileChange`, `Proposal` (with bounded evidence envelope), `Diagnostic`, and the 3-method adapter contract as **contracts tests first** (`extension-points.test.ts`, extend `reflect-propose-envelope.test.ts`). Drop `planUpdate`.
-- Add typed provenance/source-ref fields to `SearchDocument`.
-- **Deletion ledger:** remove `planUpdate` surface and any candidate/plan intermediate type stubs with no runtime consumer.
-- **Gate:** contracts tests green; adapter surface pinned; `bun run check` green.
-
-**Chunk 1.5 — Open the type token (reversible seam, MANDATORY FIRST).**
-- Make `type` a **string end-to-end**: `parseAssetRef`/`isAssetType` stop validating the closed union; sever the two type-only `AkmAssetType` imports (`salience.ts:52`, `:650` cast → `string`); confirm `SearchDocument.type` is string provenance.
-- **Wave-1 set that must drop closedness before `common.ts`'s module-eval union derivation dies:** `asset-ref.ts` (`isAssetType` :109), `common.ts` itself, `salience.ts` (:52 type, :650 cast), `eligibility.ts`, `indexer/passes/metadata.ts`, plus type-only importers `collapse-detector`/`mv-cli`/`manifest`/`db-search`/`ranking`. **`salience.ts` MUST land here** — before Chunk 6's D10 parity flip, which depends on the string-keyed tables.
-- `ASSET_SPECS` still exists and still routes, but **NOTHING depends on its closedness.** Mandatory-first because `common.ts` derives the union from the registry at module-eval — the registry cannot die until nothing consumes its closedness.
-- **Deletion ledger:** none (zero deletion).
-- **Gate:** full suite green with `type` as an open string; **no closed-union dependents remain (grep-verified)**.
-
-**Chunk 2 — Snapshot + proposal-only apply machinery.** (approved, unchanged)
-- Build the unified hash manifest `{ref→{absPath,beforeHash}}` folding in config/engine version + DB cursor; wire proposal-only run, one end-of-run transactional apply (reusing `sqlite-migrations` discipline), reindex-affected-once, abort-on-drift.
-- Crash-test the apply (model on `migration-apply-crash.test.ts`).
-- Still drives the **existing** processes (facade not yet built) — no behavior change yet.
-- **Deletion ledger:** delete the cooldown/dedup/grace/no-op cache modules; `manifestHash` replaces them.
-- **Gate:** crash test green; config-ahead-of-DB skew test fails closed; `bun run check` green.
-
-**Chunk 3 — Recipe-by-recipe conversion to revise/learn behind the envelope facade.** (approved, unchanged)
-- Introduce the stable proposal-emitting facade. Convert one process at a time: `reflect` (revise) first, then `extract`/`distill`/`inference`/`recombine`/`synthesis` (learn). consolidate/recombine emit multi-file `FileChange[]` with non-destructive supersession. CLS gate becomes a `minConfirmingRuns` strategy-JSON field.
-- Preserve the 12 strategy JSONs + `improve-cli-surface.test.ts` as behavioral invariants per conversion.
-- **Deletion ledger (per conversion):** delete each per-process monolith's direct-mutation path and its per-process unit tests **only after** it emits through the facade. Delete the `_config` param on `getImproveProcessConfig`.
-- **Gate (per conversion):** `improve-cli-surface.test.ts` + strategy-JSON behavioral tests green; no new ambient reads; `bun run check` green.
-
-**Chunk 4 — Verification ladder + auto-apply policy.** (approved, unchanged in intent; L1 validators fold in here so they pre-exist for Chunk 4.5 reuse)
-- Wire L1 (existing base-linter/missing-ref/secrets/before-hash) + the new SKILL.md L1 validator; fold wiki broken-xref into base-linter missing-ref; **fold the per-format L1 validators into `base-linter.runBaseChecks` HERE** so they pre-exist for adapter reuse.
-- Implement the single L2 evaluator over `curate-bench.ts`/`rank-metrics.ts` with the mandatory `'no-automatic-evaluator'` state.
-- Encode the auto-apply contracts test ("L1 pass AND (L2 effect-floor + no protected regression)"); retire the self-confidence gate on `improve-auto-accept.ts`.
-- **Deletion ledger:** delete the wiki command subsystem surface + `wikiName` special case; delete self-confidence auto-apply gating.
-- **Gate:** auto-apply contracts test green; SKILL.md validator test green; wiki xref checks still fire via base-linter; `bun run check` green.
-
-**Chunk 4.5 / "T" — Per-format adapters + per-format deletion ledger.**
-- Stand up **one bundle adapter per format** (recognizer + `validate` + `placeNew` + locally-stamped renderer/action), reusing the Chunk-4 folded L1 validators.
-- **As each format's adapter lands, DELETE that format's slice of `matchers.ts` / lint registry / renderer map / path-resolver probe IN THE SAME COMMIT** (per-format deletion ledger). Sequence `adapter.placeNew` **before** deleting the type-derived write paths.
-- **Delete the `runMatchers` specificity contest (`file-context.ts:242-265`; the sort/tiebreak logic extends to :265) ONLY once every consumer — `sources/resolve.ts`, `indexer/passes/metadata.ts`, `read/show.ts`, `walker.ts` — is adapter-owned.** `registerBuiltinMatchers` wiring in `indexer/init.ts` flips to per-adapter registration in this wave.
-- **Sever `graph-extraction` `TYPE_DIRS` → adapter metadata** (§4.3).
-- Directory-index (`SKILL.md`) resolution and secret sidecar exclusion (`.lock`/`.sensitive`) each land in exactly ONE adapter with no cross-adapter leakage.
-- **Resolve the content-probe decision (openItems):** if `classifyBySmartMd`'s probe is load-bearing for nDCG/MRR, an adapter must replicate it; otherwise the unowned-`.md`→`knowledge` reduction is a deliberately re-baselined behavior change — not a silent regression.
-- **Deletion ledger (per-format, same-commit):** `matchers.ts` `classifyBy*` slice, lint registry entry + per-type linter, renderer/action map entry, path-resolver probe.
-- **Gate (per commit):** format's adapter green + its deleted machinery gone + **Chunk-0 retrieval golden non-regressed** (re-baseline deliberately if the content-probe reduction is accepted).
-
-**Chunk 5 — D9 deletions.** (approved, unchanged)
-- Remove each delete-list item from the loop **and** `config-schema.ts` (drop fields). File a one-line prove-or-delete ticket per item (baseline + effect floor).
-- **Deletion ledger:** self-confidence authorization, confidence-threshold auto-tuning, live-exploration promotion, Jaccard self-consistency voting, generic self-critique loops, same-run multi-cycle improve, generic cross-format lesson judge, procedural learning in core, LLM-directed semantic merge/delete, proactive rewrite without corrective evidence.
-- **Gate:** `config-schema-drift.test.ts` green with **shrunk** `.optional()` count; `bun run check` green.
-
-**Chunk 6 — D10 salience parity flip + ablation gate.** (approved; DEPENDS on Chunk 1.5's string-keyed tables landing first)
-- One-line reversible config default flip to salience parity (`outcomeWeightEnabled:false` → w_o=0 and/or default `salience-ranking` contributor OFF). Machinery and state tables **untouched**.
-- Add stack-level ablation (`AKM_ABLATE_CONTRIBUTORS`) as a merge gate on curate-golden + E6.
-- **Deletion ledger:** none (reversible flip, not deletion).
-- **Gate:** curate-golden nDCG/MRR non-regression; stack-level ablation gate green.
-
-**Chunk 7 — Migration + registry death (LAST in-branch step).**
-- Create `src/migrate/legacy/legacy-layout.ts` — the extracted-and-pruned four pure fns + frozen `{type,stashDir,recognizerId}` table, **zero non-stdlib imports, header `@removeIn 0.10.0`**. **Assert it reproduces the Chunk-0 canonical-name oracle byte-for-byte.**
-- Run the migration (§6): `akm migrate --dry-run` collision report; verified restorable backup; recognition sourced from **persisted keys**; canonical-identity reconstruction; ref remap (identity for 13/14 types); state re-key of `asset_salience`/`asset_outcome`/`feedback` + `improve_runs.scope_value` (scope_mode='ref') inside the ONE end-of-run transaction with state-017 + workflow-010; **unconditional fail-closed-to-restore on any nonzero orphan**; configVersion flip is the LAST write, keyed on the DB migration cursor.
-- **Precondition for deletion:** every one of the ~30 `resolveAssetPathFromName`/`TYPE_DIRS`/`deriveCanonical*` importers — including `ensure-index.ts`, `sources/resolve.ts`, `write-source.ts`, the proposal write trio, and the env/secret/task placement consumers — must already be re-pointed to adapters (or the live util home per Appendix §11) **before** deletion, or resolution breaks **silently** rather than failing the build. The three kept pure fns (`SCRIPT_EXTENSIONS`/`WORKFLOW_EXTENSIONS`/`canonicalizeWorkflowName`) must have landed in their live util home (Appendix §11).
-- **Once the runtime no longer imports the registry, DELETE** `asset-spec.ts`, `asset-registry.ts`, and the closed-union residue in `common.ts` / `asset-ref.ts` (after the migrator has consumed the frozen COPY).
-- Add `tests/architecture/migrator-isolation.test.ts` (nothing outside `src/migrate/legacy/**` imports `legacy-layout`; `legacy-layout` imports nothing from the deleted registry surfaces) + a **min-supported-from-version test**.
-- **Deletion ledger (same-chunk, after the migrator consumes the frozen copy):** `asset-spec.ts`, `asset-registry.ts`, `common.ts` closed-union residue; bundle-local `.akm` runtime state; type-derived write-path residue; any old-layout writers.
-- **Gate:** migrator-isolation test green; `--dry-run` collision report present; unconditional restore on nonzero orphan proven by `migration-apply-crash.test.ts`; fresh-install smoke + upgrade-from-beta.52 smoke green; full suite green; **runtime import-graph free of `legacy-layout`**.
-
-**Merge to main (the single release gate):** `release-gates.yml` + fresh-install smoke + upgrade-from-beta.52 smoke + curate-golden nDCG/MRR non-regression + stack-level ablation gate + **migrator-isolation test**, all green.
+- **install → bind → enable** is the proper design of today's implicit activation (refactor, not new).
+- The LLM-directed hard ops become non-destructive: `handleMergeOp` (`consolidate.ts:2117`), `handleDeleteOp` (`:2416`), `handleContradictOp` (`:2693`), `handlePromoteOp` (`:2477`, memory→lesson) → emit `FileChange`s with frontmatter `supersededBy` + rank demotion, building on the existing `archiveMemory` primitive (`consolidate.ts:838`).
+- **Preserve** the transactional discipline: `writeJournal`/`checkForIncompleteJournal`/`cleanupJournal`, backup/recovery; the LOOK/CHANGE separation and signal-delta corrective-evidence gate (2026-05-26 synchronized-wave fix); no lossy in-place reconsolidation (raw assets + additive distill + no-op gate + git history).
+- `resolveParentRef`/`isDerivedMemory` divergence (name-keyed vs path-keyed) collapses to one keyed-on-ref impl so the contradiction-edge producer/consumer cannot disagree.
 
 ---
 
-## 6. Data & State Migration (one-time, embedded in the cutover)
+## 7. Index / Search / Read / Changes Sweep
 
-**Authority — PERSISTED KEYS, not a live registry.** The primary recognition source is the **stored `type:name`-bearing refs** already present in `asset_salience` (migration 009, `src/core/state/migrations.ts:509-510`), `asset_outcome` (010, `:557-558`), **`usage_events.entry_ref` (feedback's durable key — feedback rows live in `usage_events`, PK autoincrement `id`, durable ref column `entry_ref` = `origin//type:name`; the rowid-keyed `entry_id` utility-update path needs no ref re-key)**, and index rows. Those strings **are** the already-minted canonical names, so the migrator re-keys state history directly from them — it does **not** re-run the global matcher competition (`runMatchers`, `file-context.ts:242`) and does **not** re-derive canonical names for state rows. The **frozen `src/migrate/legacy/legacy-layout.ts` leaf** (§2.1) is used **only** for (a) mapping an old `type:name` to its old on-disk path to physically relocate/convert the file, and (b) recognizing on-disk files that have **no persisted row**. This is why no live registry is needed at runtime: old ground truth is DATA (stored refs), not code.
+### 7.1 Normalized model
+One `SearchDocument` (renamed `StashEntry` + typed provenance). `validateStashEntry` (`metadata.ts:292,296`) relaxes from the closed `isAssetType` gate to an open-token check (Chunk 1.5); its ordering-dependency doc-comment (`:287-291`) is deleted.
 
-**Order (single atomic operation, backup-boundary-wrapped):**
-1. **Recognition** — enumerate distinct `asset_ref` across `asset_salience`/`asset_outcome`/`feedback` + index rows (all already `type:name`). Secondary/verifier only: the frozen directory-keyed recognizer for on-disk files lacking a persisted row.
-2. **Layout detection** — key on the **DB migration cursor**, not config version (fixes MIG-2). Detect old-layout vs native bundle.
-3. **`akm migrate --dry-run`** — emit the ref-remap + state-re-key report **and surface every collision** (§ collision handling) **before any destructive step**.
-4. **Verified restorable backup** — mandatory, written **and verified restorable** before any write; refuse to proceed otherwise (the documented live incident had no valid backup).
-5. **Canonical-identity reconstruction** — parse each old `type:name`. For workflow, apply the frozen `canonicalizeWorkflowName` so `workflow:foo.yaml/.yml/.md` collapse to `workflow:foo`. `env`/`secret` names are already stored canonically (`env:default`, `secret:team/deploy.key`).
-6. **Layout conversion** — old-layout → native bundle formats. New on-disk placement is computed via the per-format adapter's `placeNew`/canonicalizer, **not** the frozen descriptor. Drift on physical relocation / un-indexed files is guarded by the Chunk-0 golden canonical-name oracle.
-7. **Ref remap** — keep the `[origin//]type:name` grammar **byte-stable**; retire only the CLOSED union behind it (`type` becomes an open adapter-owned namespace token). Remap is **IDENTITY for 13 of 14 types** (skill/command/agent/knowledge/memory/lesson/session/fact/script/task/env/secret + collapsed workflow) — no row rewrite, zero orphan surface. (`ASSET_SPECS_INTERNAL` defines exactly **14 built-ins**; `vault` was removed in 0.9.0. `wiki` is the sole fully-transforming type; `workflow` transforms only for rows carrying an explicit `.yaml`/`.yml`/`.md` extension.) Real transforms confined to: **(a) `wiki:<page>` → `knowledge:<page>`** (wiki dies, D12); **(b) workflow rows still carrying an explicit extension → collapsed.** A new ref scheme is **rejected** (would remap every state key and explode orphan risk).
-8. **State re-key** — `UPDATE asset_salience/asset_outcome SET asset_ref=new WHERE asset_ref=old`, and for feedback `UPDATE usage_events SET entry_ref=new WHERE entry_ref=old` (feedback's durable key is `usage_events.entry_ref`, not an `asset_ref` column; the rowid-keyed `entry_id` utility path needs no ref re-key), plus `improve_runs.scope_value WHERE scope_mode='ref'`, inside the ONE end-of-run transaction (reusing `sqlite-migrations` discipline); **state-017 + workflow-010 run in the same transaction.** Identity rows are no-ops. **IMPORTANT:** `mv-cli.ts` REJECTS wiki refs for re-key (`mv-cli.ts:29,77`), so the `wiki→knowledge` re-key **cannot reuse mv-cli's guard**; reuse the state-rekey SQL pattern (`rekeyStateDbForMove`, :928,957), not the wiki-refusing guard path.
-9. **Config translation** — **real** `profiles→engines/strategies` translation (diagnostic-only is wrong under no-legacy-adapter), including `Fast/fast` unified-map collision handling.
-10. **`configVersion` flip — the LAST write**, gated on the DB migration cursor (successful state.db 017 + workflow.db 010) + verified backup.
-11. **Report** — assert **re-keyed-vs-orphaned counts** for `asset_salience`/`asset_outcome`/`feedback`. Because most re-keys are identity, the expected orphan set is empty, so **any nonzero orphan is a hard legible failure → restore UNCONDITIONALLY** (NOT gated on the D10 parity flip — the salience/outcome tables persist under the reversible flip, and the deferred pass may revive outcome weighting).
+### 7.2 Recognition/placement/renderer are adapter-owned
+`matchers.ts` + `file-context` specificity + `path-resolver` disk-probe + `walker.walkStash` gone. `ensure-index` staleness and `graph-extraction` type↔dir maps read adapter directory metadata (bidirectional: `:944` dir→type, `:1159` type→dir, plus include-flag). `resolveViaIndex(lookup)` and symlink containment survive.
 
-**Collision handling (required by the fold).** `wiki→knowledge` and workflow ext-collapse can map two old refs onto one new ref (`wiki:foo` + `knowledge:foo`, or `workflow:foo.md` + `workflow:foo.yaml` — two files / one key). The `--dry-run` report MUST surface **every collision before any destructive step** so operators can pre-resolve. On collision, **FAIL CLOSED to restore** (do NOT silently merge learning history; the workflow adapter's canonicalizer must detect the two-file/one-key case and the migrator must refuse rather than pick one silently).
+### 7.3 Provenance-type string-set pin (DoD contract test)
+The deleted closed union is replaced by a lint/test pinning the open provenance-type set, sourced from adapter metadata. It must cover every consumer that parsed the closed list:
+- `db-search.ts:320` `parseRefPrefixQuery(query, getAssetTypes())` — or `type:name` prefix queries silently stop recognizing types.
+- `base-linter` `REF_RE` type-alternation.
+- `ranking-contributors.ts:11` `TYPE_BOOST`, `salience.ts:135` `DEFAULT_TYPE_ENCODING_WEIGHTS`, `common.ts` `ASSET_TYPES` tuple, `config-schema.ts:915-926` graph-include list, website-ingest `'website'`/`'knowledge'` stamping (`:180,385`).
 
-**Properties:** idempotent, resumable (per `migration-apply-crash.test.ts` discipline). **Decouple routine reads/telemetry from backup enforcement** (`core/events.ts:238` → `core/state-db.ts:108` → `core/migration-backup.ts:194+`) so a partially-migrated install still reads (fixes MIG-8). **Fix the false self-update message** that claims `akm index` migrates config (it won't).
+### 7.4 Read path wiki removal
+`show.ts:428-432` `forcedWikiMatch` (keyed on `source.wikiName`) + `search-source.ts:29,63,75,88,113,119` `SearchSource.wikiName` + `db-search.ts:94,101` + `metadata.ts:684` + `indexer.ts:836` deleted with the wiki fold. `searchInWiki` (`wiki.ts:713`) retargets `knowledge`.
 
-**External old-format bundle import (support-window policy).** With zero legacy recognition on the live path, an `akm import` of a 0.8 registry stash must either be routed through the quarantined migrator during the support window **or** be declared unsupported (migrate-at-source). This needs an explicit release-management policy line — it is the one place the mandate genuinely bites.
-
-**No permanent dual-format / legacy-akm compatibility adapter.** The `@removeIn 0.10.0` marker on `legacy-layout.ts` + the isolation test are the only thing preventing the frozen snapshot from being re-adopted as a live registry / permanent legacy adapter. **Schedule enforcement is a PROCESS risk:** if 0.10 slips, the shipped-but-quarantined migrator becomes exactly the permanent legacy adapter the guard exists to prevent — flag to release management; the code guard cannot enforce the schedule.
+### 7.5 db.ts decomposition + arrow inversion
+`db.ts` (2063) splits into table repositories under `storage/repositories/`; the storage→indexer opener imports (`index-db.ts:5`, `registry-cache.ts:6`) invert to indexer→storage. Full-rebuild wipe becomes one shared truncation including `utility_scores_scoped` (B4). **Preserve** FK pre-flight guard (`db.ts:847`), vec-table transaction (`:858-864`), incremental FTS dirty-queue (`:774`), per-row corrupt-JSON skip-with-warn (do NOT reintroduce silent swallow), `deleteRelatedRows` cascade completeness (`:650-738`).
 
 ---
 
-## 7. Verification & Evaluation Strategy
+## 8. Activation & Runtime + Three-DB Model
 
-Grounded in existing tooling; **build no new eval platform inside improve.**
+### 8.1 Three DBs (merge workflow.db in)
+Today FOUR DBs (`storage/locations.ts:28-32`): index.db, state.db, workflow.db, logs.db. Target THREE:
 
-### 7.1 Frozen case sets to build
-- **Chunk-0 golden fixtures (captured from live minting code before any code change):** (a) the **canonical-name oracle** over the corpus (drift guard; the extracted `legacy-layout.ts` pure fns must reproduce it byte-for-byte); (b) the **index-classification / retrieval golden** (nDCG/MRR + `tests/commands/__snapshots__`). Any accepted content-probe-classification reduction for unowned `.md` is deliberately re-baselined, not silently regressed.
-- **curate-golden** (`scripts/akm-eval`) — the deterministic retrieval fixture; L2 evaluator + merge gate on nDCG/MRR non-regression.
-- **E6 disjoint-domain corpus** — for the stack-level ablation gate (regime-robust; already shows the tuned stack net-negative, meanNdcg 0.673→0.723 when all score contributors ablated).
-- **Trigger / holdout / canary / negative slices** — reported **per-slice, never one aggregate** (sequentially-evolving-memory degradation hides in aggregates; arXiv:2605.15384).
-- **Collapse/entropy canary** — churn/collapse detector for the L2 evaluator.
-- **Task-replay set** — deterministic replay for behavioral L2 and for the "failed task replay" corrective-evidence signal.
+- **state.db** (durable): events, proposals, task_history, improve_runs, extract_sessions **+ migrated workflow_runs/steps/units**.
+- **index.db** (regenerable search cache).
+- **logs.db** (high-volume purgeable) — **KEEP SEPARATE** (`#579`, `docs/technical/logs-audit.md`), joined via ATTACH.
 
-### 7.2 Auto-apply policy per level
-- **L1-only (mechanical):** auto-apply allowed.
-- **L2 objectively-verified-semantic:** auto-apply allowed **iff** effect floor met **and** no protected-field regression.
-- **`'no-automatic-evaluator'` (prose/skills):** auto-apply **forbidden** → route to L3 human.
-- **Self-confidence:** metadata only, never a gate.
-- Encoded as a contracts test on `improve-auto-accept.ts`.
+### 8.2 workflow.db → state.db merge mechanics (gap filled)
+The bundle plan never described this merge; it is an approved target that must be specified:
+1. state.db migration `state-018` `CREATE TABLE`s `workflow_runs`/`workflow_run_steps`/`workflow_run_units` at FINAL shape (fold the 10 `WORKFLOW_MIGRATIONS` bodies `workflows/db.ts:178-368` into one baseline DDL).
+2. One-time `ATTACH` old workflow.db, `INSERT…SELECT` the three tables into state.db inside the **same** cutover transaction as the state re-key (§3.3).
+3. `bootstrapPreVersioningDb` (`workflows/db.ts:398`) dies (0.7-era, irrelevant post-cutover).
+4. Delete physical workflow.db.
 
-### 7.3 Provenance-type string set pin (replaces the lost compile-time guard)
-With the closed `AkmAssetType` union deleted, the compile-time guarantee that ranking (`TYPE_BOOST`, `entry.type` hardcodes), salience (`DEFAULT_TYPE_ENCODING_WEIGHTS`), and adapters agree on the same type strings is gone. **A lint/test pins the provenance-type string set** those three surfaces must agree on. Note: `encoding_source='type-stub'` rows in `asset_salience` (`salience.ts:253/272`) become semantically stale (no live type-weight path) but harmless under the parity flip — confirm the recompute path does not choke on refs whose left token is now an adapter/format id.
+**Blast radius is small and single-seam:** the only DB-opening gateway is `withWorkflowRunsRepo` (`workflow-runs-repository.ts:650`); its `WorkflowRunsRepository(db)` constructor (`:220`) already takes an **injected** Database and owns all table-scoped SQL — re-pointing to `withStateDb` requires **zero SQL rewrite**. Re-point also: `workflows/exec/brief.ts`, `workflows/exec/watch.ts`, `cli/config-migrate.ts:45` (`runWorkflowMigrations`). Delete `workflows/db.ts`, `getWorkflowDbPath`, `StorageLocations.workflowDb`, `WORKFLOW_MIGRATIONS`, and the workflow.db branches in `migration-backup.ts` (collapse to one state.db backup to verify-restore).
 
-### 7.4 Merge gates (the single release)
-`release-gates.yml` + fresh-install smoke + upgrade-from-beta.52 smoke + curate-golden nDCG/MRR non-regression + stack-level ablation gate + migrator-isolation test.
+### 8.3 Preserve
+Shared migration engine (append-only ledger, SHA-256 body sealing, transaction-per-migration, ordered-prefix assertion); `applyStandardPragmas` (30s busy_timeout, FK); maintenance-barrier/migration-operation guards; backup-verified-restorable fail-closed path; `core/events.ts` `EventsContext` DI (the exemplar RunContext copies); workflow frozen-plan integrity (plan_json/plan_hash migration 006), per-unit claim/lease/heartbeat (008/009).
 
 ---
 
-## 8. Prove-or-Delete Experiments
+## 9. Salience / Feedback / Ranking
 
-Each carries a one-line ticket recording **baseline, metric, harness, effect floor, kill criterion**. Re-entry of any D9-deleted item uses the identical bar.
+### 9.1 Kept intact
+Salience 3-vector model + `asset_salience`/`asset_outcome` tables + `upsertAssetSalience` CASE non-lowering guard (`salience.ts:442-455`) + `isContentEncodingRow` provenance heuristic (`:408`); `computeSalience`, `computeValenceScore`, `evaluateCollapseAlerts` (the decomposition-target shape); `DEFAULT_TYPE_ENCODING_WEIGHTS` table; deterministic ranking/bm25 column weights + curate-golden nDCG/MRR harness.
 
-| Target | Baseline | Metric / harness | Decision for 0.9.0 | Kill criterion (deferred) |
-|---|---|---|---|---|
-| **Salience rank-score (D10)** | BM25+vector stack without salience | Stack-level ablation (`AKM_ABLATE_CONTRIBUTORS`) on curate-golden + E6, per-slice | **Parity flip (reversible), machinery + tables kept.** Live booster neutralized; nothing deleted. | After §7 clamp fix: if per-contributor ablation on the fixed (unsaturated-regime) harness shows salience does not beat baseline by the effect floor on a disjoint corpus → delete wiring, keep tables until re-key story resolved. |
-| **Outcome-weight term (D10)** | w_o=0 parity | Same harness | **Parity (w_o=0) for 0.9.0.** | Same as salience; revive only if it beats parity on the fixed harness. |
-| **LLM graph extraction / boost (D10)** | BM25+vector without `graph-boost` | Stack-level ablation, per-slice, disjoint corpus | **Kept but measured**; `TYPE_DIRS` runtime dep severed to adapter metadata (§4.3). Not flipped (no evidence of live harm distinct from salience). | Delete `graph-extraction`/`graph-boost`/`graph-dedup` if it fails to beat baseline on the fixed harness. |
-| **D9 deletions** (self-confidence auth, confidence auto-tuning, Jaccard voting, generic self-critique, same-run multi-cycle, generic lesson judge, procedural-in-core, LLM-directed merge/delete, proactive rewrite w/o corrective evidence) | current behavior | curate-golden + collapse-canary | **Deleted now** (from loop + config-schema). | Re-entry requires beating the named baseline + collapse-canary by the declared effect floor. |
+### 9.2 Dead-lane deletions NOW
+- `review_pressure`: `outcome-loop.ts:127-305` compute/decay/return + `migrations.ts:564,570` column+index. `updateAssetOutcome` is called only at `preparation.ts:1630` which reads **only** `result.outcomeScore`; no consumer reads `.reviewPressure`. (−60)
+- `ValenceScore.lane`: computed, never read (only `.valence`/`.attention` consumed). (−25)
 
-**Blocking constraint (why per-contributor verdicts are deferred):** the in-repo ablation returns Δ=0 for 12/13 contributors on curate-golden **and** E6 as a saturation artifact (clamp+quantize+alphabetical-tiebreak). Per-contributor prove-or-delete is **unmeasurable** until the §7 clamp/sort fix + unsaturated-regime queries land (open research, off the critical path). The **stack-level** ablation is regime-robust and drives the 0.9.0 parity decision. **Note:** this deferral is orthogonal to the taxonomy fold — the taxonomy dies in 0.9.0 regardless; only the salience/graph verdict waits on the fixed harness.
+### 9.3 Parity-flip DEFERRED (reconciled with saturation finding)
+The salience **outcome weight is LIVE-but-unproven** (`w_o=0.15` applied by default), not inert — corrected premise D10. There is **no single config default to flip**: `outcomeWeightEnabled` (`config-schema.ts:861`) has **no `.default()`**; the runtime default lives in the read expression `!== false` at **3 sites**: `distill.ts:749`, `salience.ts:356`, `preparation.ts:1728`. The parity flip requires **~4 edits**, not one line:
+1. Change the `!== false` reads to `=== true` (or add `.default(false)` and honor it) at all 3 sites.
+2. Correct the `config-schema.ts:857-860` comment (currently falsely "Default false (parity)").
+Machinery (weight-selection block, tables, CASE guards, `isContentEncodingRow`) is **kept untouched** under this reversible flag. The flip is **deferred** (parity-first), not a deletion — reconciled with the saturation-harness finding that keeps the table proven-neutral rather than dropping it.
 
----
-
-## 9. Risks of the Single-Track Approach + Mitigations
-
-| Risk | Why it bites under single-track | Mitigation |
-|---|---|---|
-| **Big-bang integration / tree goes red — now compounded by the taxonomy fold** | D5 re-plumbs six 1.5–3K-LOC monoliths; **the fold stacks a 43-file (≈48 touched total) taxonomy-consumer blast radius on top.** The prior mitigation ("taxonomy deletion removed from 0.9.0") is **REVERSED by the user decision.** | **Replacement mitigation:** Chunk 1.5 reversible seam ("open the type token" — nothing depends on registry closedness) + Chunk 4.5 per-format **same-commit deletion ledger** (each adapter deletes its own matcher/lint/renderer/path slice as it lands) + Chunk 7 migration-consuming registry death, each green-per-commit; `tests/contracts` + `tests/architecture` as trunk gates on every commit; `check:changed` as the fast per-commit loop. The **43-file (≈48 touched) blast radius stacked on the improve re-plumb raises integration-branch red-window and reviewer load under single-track/no-release — accepted.** |
-| **Migration is one-shot with no fallback** | No intermediate release; local-only iteration; documented live config-ahead-of-DB incident with no valid backup. | Atomic backup-verified-restorable migration; DB-cursor-keyed detection; `--dry-run` **collision** report; recognition off persisted keys (no live registry); idempotent/resumable; **unconditional continuity assertion with fail-closed-to-restore on any nonzero orphan** (not gated on the D10 flip); reads decoupled from backup enforcement; two migration smokes (fresh + upgrade-from-beta.52) as merge gates; Chunk-0 canonical-name oracle guards physical-relocation / un-indexed drift. |
-| **Frozen migrator re-adopted as a permanent legacy registry** | The old recognition algorithm still ships in the 0.9.0 binary; nothing structural stops it becoming the live path again. | `legacy-layout.ts` is a **pure leaf** (zero non-stdlib imports, zero registry imports); `tests/architecture/migrator-isolation.test.ts` asserts nothing outside `src/migrate/legacy/**` imports it and it imports nothing from the deleted surfaces; `@removeIn 0.10.0` + min-supported-from-version test. **Schedule slip is a PROCESS risk flagged to release management — the code guard cannot enforce the 0.10 removal date.** |
-| **Lost compile-time type-agreement guard** | Deleting the closed `AkmAssetType` union removes the compiler's guarantee that ranking / salience / adapters agree on type strings. | A lint/test pins the provenance-type string set (§7.3). |
-| **Ambient config/path debt defeats engine threading** | 90× `loadConfig`, 56× `resolveStashDir`; leaves re-derive stale defaults after the orchestrator resolved the engine/strategy. | Lint boundary forbidding new ambient reads in improve leaves; delete `_config` param; snapshot-manifest-only fs reads. |
-| **Silent capability loss via deletion** | D9/D12 remove code with no compile-visible signal. | Every deletion carries a prove-or-delete ticket (named baseline + effect floor); deletion removes config-schema fields so `config-schema-drift.test.ts` and `.optional()` count visibly shrink; the Chunk-0 retrieval golden catches any classification-behavior regression from adapter recognition. |
-| **Deleting load-bearing ranking machinery on a blind metric** | Naive prove-or-delete would delete salience/graph-boost on a saturated metric. | Defer per-contributor verdict; 0.9.0 uses reversible parity flip only; stack-level ablation (regime-robust) is the merge gate. |
-| **Two hashing subsystems / evidence bloat** | D6 manifest + D8 fingerprint, and a per-process evidence schema, could ship as duplicate machinery. | One manifest hash = the fingerprint; evidence envelope bounded to typed L1/L2/L3 slots + one open bag. |
-| **Local iteration cannot verify a learning system** | No field L3 before ship. | curate-golden nDCG/MRR non-regression as a hard merge gate; adopt the post-rc.2 30-clean-day `improve_cycle_metrics` window as the L3 field-outcome window single-track permits. |
-
-**Rollback model:** because there is no intermediate release, rollback = **branch reset** (discard the integration branch) up to merge. Post-merge, the only in-field rollback is the migration's verified restorable backup — hence the unconditional backup-verify gate. **Oracle/golden tests are captured from *current* `cf44e11` behavior** (strategy JSONs, `improve-cli-surface.test.ts`, output-baseline/storage/commands snapshots, **plus the Chunk-0 canonical-name oracle + retrieval golden**) at Chunk 0 so each conversion is checked against real prior behavior, not a re-imagined spec.
+### 9.4 Wave-1 type-only severs (this area)
+`salience.ts:52` (`import type AkmAssetType`), `:650` cast; `eligibility.ts:9` import, `:39` scope validation → open-token, `:169`/`:477` casts. All string-keyed underneath; severance is type-only.
 
 ---
 
-## 10. Definition of Done for 0.9.0
+## 10. Cross-Cutting Debt Clean-Up
 
-0.9.0 merges to main when **all** hold:
+### 10.1 Ambient-config threading (D2/A2)
+`loadConfig` ×90, `resolveStashDir` ×56, `?? loadConfig|resolveStashDir|getDbPath` 56 sites, 22 `_set*ForTests` seams. Thread a `RunContext` from the CLI boundary; no ambient reads in leaves; retire test seams as call sites convert. (−250). Exemplar: `core/events.ts` `EventsContext`.
 
-1. **Kernel:** one `SearchDocument` with typed provenance fields; `type` is an **open string provenance token** (no closed union); `index()` resolves ref→absPath; improve reads via fs from the snapshot manifest only. No semantic-views registry, universal item hierarchy, or adapter `read()` facade in the tree.
-2. **Adapter:** 3-method+optional contract with **no `planUpdate`**, pinned in `extension-points.test.ts`; each adapter owns recognition + placement + local renderer/action; **no global matcher competition / specificity contest survives.**
-3. **Proposal:** single `FileChange[]+beforeHash+status` object; bounded evidence envelope; candidate/plan/changeset intermediate types deleted.
-4. **Improve:** only two verbs (revise/learn); all recipes emit through the unified facade; per-process monoliths' direct-mutation paths deleted; consolidate/recombine use non-destructive supersession; CLS gate is a strategy-JSON config value.
-5. **Run model:** snapshot = hash manifest (no copied workspace); proposal-only; one transactional batch; reindex-once; abort-on-`beforeHash`-drift; config-ahead-of-DB skew fails closed; the manifest hash is the sole selection fingerprint (cooldown/dedup/grace/no-op caches deleted).
-6. **Verification:** L1 deterministic (base checks + per-format L1 validators + SKILL.md validator); **type-routed lint registry (`LINTER_MAP`/`getLinterForType`) deleted**; wiki broken-xref folded into base-linter missing-ref; L2 single evaluator with `'no-automatic-evaluator'` state; auto-apply contracts test enforces mechanical-or-L2-verified; self-confidence gate retired.
-7. **Deletions:** all D9 items removed from loop **and** `config-schema.ts`; `.optional()` count measurably reduced; each deletion has a prove-or-delete ticket. Wiki command subsystem, `wikiName` special case, bundle-local `.akm` state, type-derived write paths gone.
-8. **Taxonomy retired from the live runtime path** (`index → search/rank → lint → improve → write`): `asset-spec.ts` (`ASSET_SPECS_INTERNAL`/`AssetSpec`/`TYPE_DIRS`/`resolveAssetPathFromName` etc.), `asset-registry.ts` (type-to-renderer/type-action maps), the closed `AkmAssetType` union in `common.ts`, closed-union validation in `asset-ref.ts`, the `matchers.ts` global competition, and the `file-context.ts` `runMatchers` specificity contest are **all gone from the runtime**; `graph-extraction` `TYPE_DIRS` runtime dep severed to adapter metadata. `tests/architecture/migrator-isolation.test.ts` green (nothing outside `src/migrate/legacy/**` imports `legacy-layout`; `legacy-layout` imports nothing from the deleted registry surfaces); `@removeIn 0.10.0` marker + min-supported-from-version test present.
-9. **Migrator-only descriptor:** the frozen `src/migrate/legacy/legacy-layout.ts` leaf is the ONLY retained taxonomy derivative, is quarantined + isolation-tested, and the **runtime import-graph is free of `legacy-layout`**. It is scheduled for deletion with the legacy path (`@removeIn 0.10.0`).
-10. **Migration:** `akm migrate` re-keys `asset_salience`/`asset_outcome`/`feedback` + `improve_runs.scope_value` off the **persisted `type:name` strings** (identity for 13 of 14 types); real `profiles→engines/strategies` translation with `Fast/fast` handling; atomic, backup-verified-restorable, idempotent/resumable; DB-cursor-keyed detection; configVersion flip is the last write; **`--dry-run` surfaces every `wiki→knowledge` / workflow-ext-collapse collision before any destructive step**; any nonzero orphan **fails closed to unconditional restore (not gated on the D10 parity flip)**; report shows **zero orphaned** `asset_salience`/`asset_outcome`/`feedback` rows; routine reads decoupled from backup enforcement; false self-update `akm index` message fixed.
-11. **Ref grammar:** `[origin//]type:name` stays **byte-stable**; `type` is an open adapter-owned namespace token; **no new ref scheme.**
-12. **Chunk-0 golden fixtures** — canonical-name oracle AND index-classification/retrieval golden (nDCG/MRR + `__snapshots__`) — captured from the live minting code; the extracted `legacy-layout.ts` pure fns reproduce the oracle **byte-for-byte**; any accepted content-probe-classification reduction for unowned `.md` is deliberately re-baselined, not silently regressed.
-13. **Type-agreement pin:** a lint/test pins the provenance-type string set that ranking (`TYPE_BOOST`, `entry.type` hardcodes) / salience (`DEFAULT_TYPE_ENCODING_WEIGHTS`) / adapters agree on, replacing the compile-time guard lost with the closed union.
-14. **Salience:** reversible parity flip applied; machinery + state tables intact; stack-level ablation gate green on curate-golden + E6.
-15. **Green:** `bun run check` green on every commit of the integration branch; merge gated on `release-gates.yml` + fresh-install smoke + upgrade-from-beta.52 smoke + curate-golden nDCG/MRR non-regression + stack-level ablation gate + migrator-isolation test.
-16. **Sign-off recorded** on the evidence-driven rubric amendments: **D12 taxonomy folded into 0.9.0 (user-approved)**, D10 premise-corrected, and the two remaining deferrals (ranking saturation-harness fix + per-contributor prove-or-delete).
+### 10.2 Config over-engineering
+252 `.optional()` / 3 `.default()` / 1415 LOC → per-process discriminated schemas with real `.default()`s; drop reserved/advisory/observe-only knobs (§4.2). `mergeInformationFloor` is NOT purely advisory (live gate `anti-collapse.ts:143`) — deleting its schema changes behavior; only the misleading comment is fixed, the field stays.
+
+### 10.3 DRY consolidations
+Frontmatter serializer (5→1), `resolveParentRef`/`isDerivedMemory` (2→1 each), `mergeLegacyEntry` (3→1), `caps()`/`homeDir()` (9→1), mirror-freshness (2→1), session-log skeleton, spawn ladder, semver engine extraction, duration residue → `core/time.ts`.
+
+### 10.4 Concrete defects
+- `--since` parser (B1 headline already fixed): remove residual `consolidate.ts:2825` shadow (returns input unchanged vs canonical throw), `extract.ts:414` `[mhd]/i` (reintroduces m-ambiguity), `memory-improve.ts:377`.
+- `indexer.ts:956-977` full-rebuild wipe missing `utility_scores_scoped` (B4).
+- `npm.ts:55` `path()` throws (interface violation).
+- `config-sources.ts:35` non-exhaustive `parseSourceSpec` switch.
+
+### 10.5 Dead / unwired
+`walker.walkStash`, `review_pressure`, `ValenceScore.lane`, `improve-auto-accept` exploration, `calibration`, `procedural`, dedup/cooldown/gate, legacy-import, `void config;`/`void sources;`, calibration/exploration schema subtrees.
+
+### 10.6 Misleading names
+`getEmbeddableEntryCount`, `improve-result-file.ts` (writes DB row), `dangerous-vault-key` LintIssueType, `sources/wiki-fetchers/`, `outcomeWeightEnabled` comment, `mergeInformationFloor` comment, `formatShowPlain` (embeds policy).
 
 ---
 
-## Appendix — Open items to resolve before/at the named chunk
+## 11. Single-Track Execution Order
 
-These do not change any decision above; they are load-bearing details the panel flagged.
+In-branch chunks. Each chunk: deletion ledger, local green gate (`typecheck + unit + affected integration`), net-LOC-removed asserted. **Chunk 0 golden capture must re-anchor drifted lines** (`classifyBySmartMd` is at `matchers.ts:181`, not `:197`; re-measure config-schema before sizing).
 
-1. **Full runtime consumer census is 43 consumers (~48 files touched total), not 34** — enumerate exhaustively before sizing Chunk 4.5. The two most load-bearing single files: `indexer/ensure-index.ts` (`Object.entries(ASSET_SPECS)`×`TYPE_DIRS[type]` core index-build loop) and `sources/resolve.ts` (recognition+canonical+placement hub). Beyond the experts' lists, add: `read/knowledge.ts`, `improve/session-asset.ts`, `core/action-contributors.ts`, `standards/resolve-type-conventions.ts`, `indexer/indexer.ts`, `indexer/passes/metadata.ts`, `search-hit-enrichers.ts`, `walker.ts`, `sources/providers/{git-provider,git-stash,provider-utils}.ts`, `workflows/{authoring,exec/brief,runtime/runs,runtime/workflow-asset-loader}.ts`, `integrations/agent/prompts.ts`, `core/env-secret-ref.ts`, `commands/env/{env-cli,env-binding,secret-cli}.ts`, `commands/tasks/tasks.ts`, `commands/proposal/{drain,propose,repository}.ts` (all import `TYPE_DIRS`/`resolveAssetPathFromName` — re-point before Chunk 7), `commands/graph/graph.ts`, `commands/improve/distill.ts`, `commands/sources/schema-repair.ts`, `commands/read/show.ts`, `commands/sources/{init,source-clone,info}.ts`, `commands/completions.ts`, `core/write-source.ts`, `commands/improve/{eligibility,collapse-detector}.ts`. **The env/secret/task placement consumers actively call the dying canonicalizer/path-resolver, so §6's "env/secret already stored canonically" holds for the *name* side only, not the *path* side.** Excluded as comment-only (not real consumers): `core/lesson-lint.ts`, `resolve-standards-context.ts`, `fts-query.ts`. Any missed consumer silently breaks resolution.
-2. **Content-probe classification decision** — confirm at Chunk 0 whether `classifyBySmartMd`'s agent/command/workflow/knowledge probe is load-bearing for retrieval (nDCG/MRR). If yes, an adapter must replicate it (net-zero abstraction, added risk) rather than reduce unowned `.md` to deterministic `knowledge`. Resolve before Chunk 4.5, not at migration time.
-3. **`graph-extraction.ts` `TYPE_DIRS` severance (:42,944,1159)** to adapter metadata is real fold work outside the prior D10 "kept but measured" scope — confirm the adapter-metadata directory-list interface and add it to the graph-boost subsystem's contract.
-4. **`asset-ref.ts` friendly errors are taxonomy-flavored** — decide whether the open-token parser keeps the vault-removed `UsageError` (:98-103) and `environment→env` `TYPE_ALIASES` (:26) as adapter-owned string aliases/messages or drops them; dropping degrades upgrade-path error quality.
-5. **Single-adapter ownership** — directory-index resolution (`path-resolver` `directoryIndexNames`, default `["SKILL.md"]` at :70, overridable — `schema-repair.ts:277` supplies `["SKILL.md","index.md","README.md"]`) and secret sidecar exclusion (`.lock`/`.sensitive`) must each land in exactly ONE adapter with no cross-adapter leakage, or the "no global map" win is illusory.
-6. **`encoding_source='type-stub'` rows** in `asset_salience` (`salience.ts:253/272`) become semantically stale — no live type-weight path; dormant under the D10 parity flip. Harmless (`DEFAULT_TYPE_ENCODING_WEIGHTS` kept) but document that type-stub provenance no longer reflects a live code path; confirm the recompute path does not choke on refs whose left token is now an adapter/format id.
-7. **Empirically confirm which types actually hold `asset_salience`/`asset_outcome`/feedback rows** (wiki? secret? env?) before finalizing orphan-risk sizing. Correction: `upsertAssetSalience` is driven from the improve preparation pipeline over the **eligible/processable set** (`preparation.ts`), **not** an unconditional loop over every indexed asset — type-stub rows accrue only for improve-loop-touched refs. Size orphan risk against "refs the improve loop has touched," and still confirm which of `wiki`/`env`/`secret` actually hold rows before finalizing the fail-closed guard.
-8. **External old-format bundle import post-cutover** (`akm import` of a 0.8 registry stash) — with zero legacy recognition on the live path, either route import through the quarantined migrator during the support window or declare old external bundles unsupported (migrate-at-source). Needs an explicit policy line (§6).
-9. **`@removeIn 0.10.0` schedule enforcement is a PROCESS risk** — if 0.10 slips, the shipped-but-quarantined migrator becomes the permanent legacy adapter the isolation guard exists to prevent. Flag to release management; the code guard cannot enforce the schedule.
-10. **Workflow `foo.md` + `foo.yaml` collapsing to one ref** (two files / one key) is ambiguous — the workflow adapter's canonicalizer must detect it and the migrator must refuse (fail-closed) rather than pick one silently; verify this is covered by the `--dry-run` collision surfacing.
-11. **Live home for the three kept pure fns (SUBSTANTIVE — do before Chunk 7).** `SCRIPT_EXTENSIONS` (`asset-spec.ts:104`), `WORKFLOW_EXTENSIONS` (:42), and `canonicalizeWorkflowName` (:55) live inside the deleted `asset-spec.ts` but have **live consumers** — `indexer/indexer.ts`, `indexer/walk/matchers.ts`→adapters, `workflows/{authoring/authoring,runtime/runs,runtime/workflow-asset-loader,exec/brief}.ts`, `commands/mv-cli.ts` — that cannot import the quarantined, isolation-tested `legacy-layout.ts`. They need a **live util relocation target** (a script-ext constant + a workflow-name util, or the workflow adapter) distinct from the frozen migrator copy; without it these files break on `asset-spec.ts` deletion in Chunk 7 despite using no closed-union behavior. Not a mechanism change — a required relocation the deletion ledger must schedule.
+**Chunk 0 — Golden capture & oracles.** Snapshot recognition/placement/renderer/lint outputs for all 14 formats; capture `deriveCanonicalAssetNameFromStashRoot` minting oracle (`mv-cli.ts:769,1266`); re-anchor all line numbers at HEAD. Gate: golden fixtures committed. Net: 0.
+
+**Chunk 1 — Adapter base + util home.** Introduce `BundleAdapter` interface; relocate `SCRIPT_EXTENSIONS`/`WORKFLOW_EXTENSIONS`/`canonicalizeWorkflowName` + ref grammar constants to `core/recognition-util.ts`. Frozen COPY into `migrate/legacy/legacy-layout.ts`. Net: ~0.
+
+**Chunk 1.5 — Open the type token (Wave-1 type-only severs).** `common.ts:29-88` union block, `salience.ts:52/650`, `eligibility.ts:9/39/169/477`, `mv-cli.ts:51,145,154,743`, `asset-ref.ts:109`. Relax `validateStashEntry` to open-token. Gate: grep `AkmAssetType` → **0**. Net: −80.
+
+**Chunk 2 — Per-format adapters (14).** Each stamps recognize/placeNew/directoryList/renderer/action/validateL1 locally (incl 6 static-only renderer mappings). Skill adapter gains SKILL.md contract. Net: adapters ≈ net-zero-to-negative (replace deleted globals).
+
+**Chunk 3 — Delete taxonomy globals.** `asset-registry.ts`, `asset-spec` registry/renderer/action, `matchers.ts` competition, `file-context:242-265`, `path-resolver` disk-probe, `LINTER_MAP`+9 linters, `output/renderers.ts` type-registry. Repoint graph-extraction/ensure-index/walker/write-source/sources-resolve/provider-utils/git-stash/build-index to adapter metadata. Gate: grep `TYPE_DIRS` → **0**, `resolveAssetPathFromName` → **0**, `runMatchers` → **0**. Net: ~−1000+.
+
+**Chunk 4 — Wiki death.** Delete `wiki/wiki.ts`, `wiki-templates.ts`, template asset; broken-xref → base-linter missing-ref; fold `wikiRole`/`pageKind` → knowledge; delete `wikiName` (5 config sites + indexer/search + read path `show.ts:428-432` + `SearchSource.wikiName`); rename `wiki-fetchers/`→`snapshot-fetchers/` (keep youtube/website); collapse `resolve-standards-context` Feature-A. Gate: grep `wikiName` → **0**, `wiki` type token → **0**. Net: ~−1300.
+
+**Chunk 5 — SearchDocument + db.ts split.** Rename `StashEntry`→`SearchDocument` + provenance; split `db.ts` into storage repos + `Repository<Row,Domain>` base; invert storage↔indexer arrow; unify scored/enumerate filter path; fold `.stash.json` legacyOverrides + `mergeLegacyEntry` → migrator. Gate: grep `StashEntry` → **0**, `.stash.json`/`loadStashFile` → **0**. Net: ~−320.
+
+**Chunk 6 — Proposal → FileChange[] + one transaction.** Collapse 3 FS journal engines into one FileChange transaction (preserve fsync + before-hash); `Proposal{changes:FileChange[]}`; delete dedup/cooldown/gate; `bulkAdjudicateProposals`; legacy-import → migrator. Gate: grep `parseAssetRef` → **0**; journal dirs removed. Net: ~−900.
+
+**Chunk 7 — improve decomposition + dead-lane deletions.** Decompose the 4 god fns + consolidate ops (non-destructive learn recipes); delete self-consistency/exploration/calibration/procedural/autotune/review_pressure/ValenceScore.lane; trim promotion-policy literal; RunContext into `processSession`; serializer/resolveParentRef consolidation. Net: ~−3900.
+
+**Chunk 8 — Three-DB merge + migration cutover.** `state-018` (workflow DDL fold + full re-key + workflow.db ATTACH INSERT…SELECT, one atomic fail-closed txn); delete `workflows/db.ts` + workflowDb locations/paths/backup branches; drop+rebuild index.db. Throwaway migrator `@removeIn 0.10.0`. Gate: 4→3 DBs; backup-verified restore green. Net: ~−500.
+
+**Chunk 9 — Cross-cutting sweep.** Ambient RunContext threading (retire `_set*ForTests`); config discriminated schemas + reserved-knob deletion; output helpers/shape-registry dedup; health/tasks god decomposition; cli argv-rescanner + duration residue + caps/homeDir/mirror/session-log/spawn/semver/connection dedup; npm.path() + parseSourceSpec fixes. Gate: grep `resolveStashDir` residual only in RunContext builder. Net: ~−2000.
+
+**Zero-count grep gates (must all pass at merge):** `TYPE_DIRS`, `AkmAssetType`, `parseAssetRef`, `wikiName`, `StashEntry`, `resolveStashDir` (outside RunContext builder), `.stash.json`, `getAssetTypes`, `ASSET_SPECS`, `LINTER_MAP`.
+
+---
+
+## 12. Net-Simplification Ledger, DoD, Contract Tests, Risks
+
+### 12.1 Net-simplification ledger (by area)
+
+| Area | Net LOC |
+|---|---|
+| Asset-type core + config + standards | −550 to −700 |
+| index/search/read/changes | −320 (pre-adapter recognition) |
+| improve/memory/salience | −3900 |
+| changes/proposals/wiki/lint/mv | −3000 |
+| sources/registry/integrations/setup | −400 to −450 |
+| workflows/storage/DBs/output/health/tasks/cli | −2500 |
+| Adapters + RunContext + shared helpers (adds) | +≈600 |
+| **TOTAL** | **≈ −9,000 to −10,500 net removed** |
+
+### 12.2 Definition of Done
+
+1. All zero-count grep gates pass.
+2. 4→3 DBs; migration atomic, fail-closed, backup-verified restore green; throwaway migrator `@removeIn 0.10.0`.
+3. Every format handled by one adapter; no global matcher/renderer/action/linter registry remains.
+4. `Proposal` carries `FileChange[]`; one transaction applies all mutation (proposal/revert/mv).
+5. improve = 2 verbs over passes; no god fn >~200 LOC in improve.
+6. Salience machinery intact; dead lanes (review_pressure, ValenceScore.lane) gone; outcome-weight under reversible parity flag.
+7. Ambient `loadConfig`/`resolveStashDir` gone from leaves; RunContext threaded.
+8. Net LOC removed > added (≥ −9,000).
+9. All preserve-list infra (S26) present and exercised by a test.
+
+### 12.3 Architecture contract tests
+
+- **Provenance-type pin** (§7.3): open type-set sourced from adapters; `type:name` prefix parsing + base-linter REF_RE + ranking/salience keys all resolve.
+- **Golden recognition/placement/renderer/lint** parity for all 14 formats (Chunk 0 fixtures).
+- **Canonical-name minting** oracle parity (`deriveCanonicalAssetNameFromStashRoot`).
+- **git exact-path staging** still scopes to adapter `directoryList()` (not nothing-staged).
+- **Migration round-trip**: 0.8 fixture DB → cutover → all refs re-keyed, zero orphans, restore-on-fault.
+- **One transaction**: mid-apply fault leaves no partial write (before-hash abort).
+
+### 12.4 Risks & mitigations
+
+- **git-stash pathspec silent degrade** — a preserved S26 feature (`git-stash.ts:241`) is built from dying `Object.values(TYPE_DIRS)`; if the adapter `directoryList()` is not wired, `git add -- <pathspecs>` scopes to nothing and commits skip. Mitigation: contract test in 12.3; wire before Chunk 3 lands.
+- **Install-time recognition underweighted** — `provider-utils.detectStashRoot` (`:33-197`) and `git-provider.hasExtractedRepo` (`:188-202`) are second recognition sites; `akm add` fails to detect a valid bundle root if only the index path is repointed. Mitigation: thread adapter directory-list into both.
+- **website snapshot machinery mis-deleted with wiki** — `fetchWebsiteMarkdownSnapshot`/youtube feed the knowledge path, not wiki. Mitigation: rename-not-delete `wiki-fetchers/`.
+- **Migration non-atomicity** — full re-key + workflow merge must share one transaction; a split leaves index.db/state.db inconsistent. Mitigation: single `state-018`, backup-verified fail-closed.
+- **Parity-flip premise** — outcome weight is default-ON, not inert; a naive "flip the config default" is a no-op (no `.default()` exists). Mitigation: the 3-site `!== false` edit + comment fix, deferred, reversible.
+- **Line drift** — several plan anchors already drifted (`classifyBySmartMd` :181, `processSession` :550/19-args, `stepSmallModelConnection` :455). Mitigation: Chunk 0 re-anchors before any golden capture.
