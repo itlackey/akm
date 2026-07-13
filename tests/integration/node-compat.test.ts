@@ -16,7 +16,7 @@
  * are structurally identical. We compare key fields (not raw strings) so minor
  * whitespace / ordering differences don't produce false failures.
  *
- * Prerequisites (wired in release-gates.yml node-compat job):
+ * Prerequisites (wired in the CI Node smoke job):
  *   - `bun run build`  →  dist/cli-node.mjs
  *   - `npm install --no-save better-sqlite3`  →  native binding for Node ABI
  *
