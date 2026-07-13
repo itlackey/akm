@@ -961,6 +961,7 @@ export async function runImproveMaintenancePasses(args: {
     resolvedPlan,
   } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
+  if (budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
   const config = options.config ?? loadConfig();
   const sources = resolveSourceEntries(options.stashDir, config);

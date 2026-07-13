@@ -35,6 +35,7 @@ import { overrideSeam } from "../_helpers/seams";
 
 interface CapturedCall {
   responseSchema: Record<string, unknown> | undefined;
+  enableThinking: boolean | undefined;
   messageCount: number;
 }
 
@@ -77,6 +78,7 @@ beforeEach(() => {
   overrideSeam(_setChatCompletionForTests, async (_config, messages, options) => {
     capturedCalls.push({
       responseSchema: options?.responseSchema,
+      enableThinking: options?.enableThinking,
       messageCount: messages.length,
     });
     return stubReturn;
@@ -168,6 +170,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     expect(result.ok).toBe(true);
     expect(capturedCalls.length).toBe(1);
     expect(capturedCalls[0].responseSchema).toBe(REFLECT_JSON_SCHEMA as Record<string, unknown>);
+    expect(capturedCalls[0].enableThinking).toBe(false);
   });
 
   test("when `chat` test seam is provided, chatCompletion is NOT called (responseSchema is ignored)", async () => {

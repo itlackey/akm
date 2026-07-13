@@ -68,7 +68,8 @@ import {
   type ProposalsContext,
 } from "../proposal/repository";
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
-import { deriveLessonRef, runLessonQualityJudge } from "./distill";
+import { deriveLessonRef } from "./distill";
+import { runReflectQualityJudge } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { classifyReflectChange } from "./reflect-noise";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -900,6 +901,9 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
       ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
       ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      // Reflect requires a machine-readable payload. Visible chain-of-thought
+      // can consume the output cap before the model reaches the JSON object.
+      enableThinking: false,
     });
     return {
       ok: true,
@@ -1375,8 +1379,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 7. R-5 / #374: Apply the proposal quality gate when enabled.
-  // Mirrors the lesson quality gate on distill proposals. The gate uses
-  // `runLessonQualityJudge` from distill.ts and is gated behind either
+  // Uses revision-specific preservation and feedback criteria and is gated behind either
   // `processes.reflect.qualityGate.enabled` or
   // `processes.distill.qualityGate.enabled` on the selected strategy.
   // Fail-CLOSED (07 P0-2): a judge error / no-LLM /
@@ -1397,29 +1400,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
 
   if (qualityGateEnabled && runtimeConfig) {
-    const assetContent: string | null = (() => {
-      if (!options.ref) return null;
-      try {
-        const refParsed = parseAssetRef(options.ref);
-        const candidates = [
-          path.join(stash, `${refParsed.type}s`, `${refParsed.name}.md`),
-          path.join(stash, `${refParsed.type}s`, refParsed.name, "index.md"),
-        ];
-        for (const p of candidates) {
-          if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
-        }
-        return null;
-      } catch {
-        return null;
-      }
-    })();
-
-    const judgeResult = await runLessonQualityJudge(
+    const judgeResult = await runReflectQualityJudge(
       runtimeConfig,
       payload.content,
       assetContent ?? "",
+      feedback,
       chatFn,
-      undefined,
       runnerIsLlm(runnerSpec) ? materializeLlmRunnerConnection(runnerSpec) : undefined,
     );
     if (!judgeResult.pass) {

@@ -17,8 +17,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmImprove, resetHeldProcessLocks } from "../../../src/commands/improve/improve";
+import { withOptionalProcessLock } from "../../../src/commands/improve/locks";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
+import { acquireMaintenanceBarrier } from "../../../src/core/maintenance-barrier";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -75,6 +77,55 @@ afterEach(() => {
 });
 
 describe("akm improve — skip-if-locked (#607 per-process locks)", () => {
+  test("does not invoke a stage when its process lock is held", async () => {
+    const lockPath = plantHeldTriageLock();
+    let invoked = false;
+
+    const result = await withOptionalProcessLock(
+      {
+        lockPath,
+        staleAfterMs: 30 * 60 * 1000,
+        skipIfLocked: true,
+        label: "triage",
+      },
+      async () => {
+        invoked = true;
+        return "ran";
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(invoked).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  test("does not invoke a stage when the maintenance barrier is held", async () => {
+    const lockPath = path.join(stashDir, ".akm", "triage.lock");
+    const releaseBarrier = acquireMaintenanceBarrier();
+    let invoked = false;
+
+    try {
+      const result = await withOptionalProcessLock(
+        {
+          lockPath,
+          staleAfterMs: 30 * 60 * 1000,
+          skipIfLocked: true,
+          label: "triage",
+        },
+        async () => {
+          invoked = true;
+          return "ran";
+        },
+      );
+
+      expect(result).toBeUndefined();
+      expect(invoked).toBe(false);
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      releaseBarrier();
+    }
+  });
+
   test(
     "completes successfully when triage.lock is held and skipIfLocked is set (triage skipped)",
     async () => {

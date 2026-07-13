@@ -77,6 +77,52 @@ describe("chatCompletion JSON Schema payload", () => {
   });
 });
 
+describe("chatCompletion thinking controls", () => {
+  const messages = [{ role: "user" as const, content: "Return a result" }];
+
+  test("sends vLLM thinking controls through chat_template_kwargs", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const { url, server } = createRequestServer((body) => {
+      requestBody = body;
+      return Response.json({ choices: [{ message: { content: "ok" } }] });
+    });
+    try {
+      await chatCompletion({ endpoint: url, model: "test-model", provider: "vllm" }, messages, {
+        enableThinking: false,
+      });
+      expect(requestBody).toEqual({
+        model: "test-model",
+        messages,
+        temperature: 0.3,
+        chat_template_kwargs: { enable_thinking: false },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("preserves the top-level control for non-vLLM providers", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const { url, server } = createRequestServer((body) => {
+      requestBody = body;
+      return Response.json({ choices: [{ message: { content: "ok" } }] });
+    });
+    try {
+      await chatCompletion({ endpoint: url, model: "test-model", provider: "lmstudio" }, messages, {
+        enableThinking: false,
+      });
+      expect(requestBody).toEqual({
+        model: "test-model",
+        messages,
+        temperature: 0.3,
+        enable_thinking: false,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
 describe("probeLlmCapabilities JSON Schema response", () => {
   test("sends the exact schema wrapper required by vLLM and accepts the expected response", async () => {
     let requestBody: Record<string, unknown> | undefined;

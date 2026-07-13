@@ -326,6 +326,16 @@ describe("akm improve — multi-cycle (#616)", () => {
       const collectEligibleRefsFn = makeCollectFn(new Set(["memory:seed"]));
       // Both cycles would be productive, so only the budget gate can stop cycle 2.
       const prepFn = makePrepFn({ gateAutoAccepted: 1 });
+      const loopFn = mock(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return {
+          reflectsWithErrorContext: 0,
+          memoryRefsForInference: new Set<string>(),
+          gateAutoAcceptedCount: 0,
+          gateAutoAcceptFailedCount: 0,
+        };
+      });
+      const postLoopFn = makePostLoopFn();
 
       const result = await akmImprove(
         seams({
@@ -336,6 +346,8 @@ describe("akm improve — multi-cycle (#616)", () => {
           ensureIndexFn,
           collectEligibleRefsFn: collectEligibleRefsFn as never,
           runImprovePreparationStageFn: prepFn as never,
+          runImproveLoopStageFn: loopFn as never,
+          runImprovePostLoopStageFn: postLoopFn as never,
         }),
       );
 
@@ -344,6 +356,7 @@ describe("akm improve — multi-cycle (#616)", () => {
       expect(ensureIndexFn).toHaveBeenCalledTimes(1);
       expect(collectEligibleRefsFn).toHaveBeenCalledTimes(1);
       expect(prepFn).toHaveBeenCalledTimes(1);
+      expect(postLoopFn).not.toHaveBeenCalled();
       expect((result as { cyclesRun?: number }).cyclesRun).toBeUndefined();
     },
     TIMEOUT_MS,

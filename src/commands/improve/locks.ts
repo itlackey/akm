@@ -14,7 +14,7 @@ import {
   releaseLock,
   tryAcquireLockSync,
 } from "../../core/file-lock";
-import { withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
+import { tryWithMaintenanceStartBarrier, withMaintenanceStartBarrier } from "../../core/maintenance-barrier";
 import { warn } from "../../core/warn";
 
 // #607 Lock Decomposition: fine-grained per-process locks replace the single
@@ -55,11 +55,15 @@ export function tryAcquireProcessLock(
   lockLabel: string,
 ): ProcessLockAcquisition {
   let recoveryEvent: Parameters<typeof appendEvent>[0] | undefined;
-  const result = withMaintenanceStartBarrier(() =>
+  const acquire = () =>
     tryAcquireProcessLockUnlocked(lockPath, staleAfterMs, skipIfLocked, lockLabel, (event) => {
       recoveryEvent = event;
-    }),
-  );
+    });
+  const result = skipIfLocked ? tryWithMaintenanceStartBarrier(acquire) : withMaintenanceStartBarrier(acquire);
+  if (!result) {
+    warn(`[improve] maintenance barrier held; skipping ${lockLabel} (--skip-if-locked)`);
+    return { state: "skipped" };
+  }
   if (recoveryEvent) {
     try {
       appendEvent(recoveryEvent);
@@ -195,15 +199,10 @@ export function releaseHeldLocksIfOwned(): void {
 }
 
 /**
- * RAII for the "best-effort stage" lock pattern: acquire the lock if available,
- * run `body` REGARDLESS of acquisition, and release the lock in a `finally` iff
- * we acquired it (on both the normal and the throw path). This makes
- * release-on-throw LOCAL instead of relying on a distant outer catch.
+ * RAII for the best-effort stage lock pattern: acquire the lock if available,
+ * run `body` only while owning it, and release it on both success and failure.
  *
- * Behaviour matches the hand-rolled `acquired = tryAcquire(...) === "acquired";
- * …run stage…; if (acquired) release` idiom it replaces:
- *   - When the lock is held and `skipIfLocked` is set, `tryAcquireProcessLock`
- *     returns `state: "skipped"` → the stage still runs (unlocked), nothing to release.
+ *   - When the lock is held and `skipIfLocked` is set, the stage is not invoked.
  *   - When the lock is held and `skipIfLocked` is NOT set, `tryAcquireProcessLock`
  *     throws (propagated here before `body` runs; nothing acquired, nothing released).
  *   - The process-exit backstop (`releaseHeldLocksIfOwned`) still covers a
@@ -212,11 +211,12 @@ export function releaseHeldLocksIfOwned(): void {
 export async function withOptionalProcessLock<T>(
   opts: { lockPath: string; staleAfterMs: number; skipIfLocked: boolean | undefined; label: string },
   body: () => Promise<T>,
-): Promise<T> {
+): Promise<T | undefined> {
   const acquisition = tryAcquireProcessLock(opts.lockPath, opts.staleAfterMs, opts.skipIfLocked, opts.label);
+  if (acquisition.state === "skipped") return undefined;
   try {
     return await body();
   } finally {
-    if (acquisition.state === "acquired") releaseProcessLock(acquisition.ownership);
+    releaseProcessLock(acquisition.ownership);
   }
 }

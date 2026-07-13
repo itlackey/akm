@@ -340,4 +340,37 @@ describe("improve engine-plan boundaries", () => {
       stash.cleanup();
     }
   });
+
+  test("post-loop maintenance is a no-op when the run budget is already exhausted", async () => {
+    const stash = makeStashDir();
+    try {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        stashDir: stash.dir,
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        defaults: { improveStrategy: "disabled" },
+        improve: { strategies: { disabled: { processes: disabledProcesses() } } },
+      };
+      const plan = resolveImprovePlan("disabled", config, { repairValidationFailures: false });
+      const controller = new AbortController();
+      controller.abort("improve budget exhausted");
+
+      const result = await runImproveMaintenancePasses({
+        options: { config, stashDir: stash.dir },
+        primaryStashDir: stash.dir,
+        actionableRefs: [],
+        memoryRefsForInference: new Set(),
+        allWarnings: [],
+        reindexFn: async () => undefined,
+        budgetSignal: controller.signal,
+        improveProfile: plan.strategy.config,
+        resolvedPlan: plan,
+      });
+
+      expect(result).toEqual({ memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 });
+    } finally {
+      stash.cleanup();
+    }
+  });
 });

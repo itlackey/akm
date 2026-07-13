@@ -21,6 +21,7 @@ import path from "node:path";
 
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { listProposals } from "../../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
 import { quietQualityGateConfig } from "../../_helpers/factories";
 
@@ -301,6 +302,50 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
     // The frontmatter block appears exactly once (no double `---`).
     const fmDelimCount = (finalContent.match(/^---$/gm) ?? []).length;
     expect(fmDelimCount).toBe(2);
+  });
+});
+
+describe("Reflect quality gate — source context", () => {
+  test("judges the proposal against the source content already loaded by reflect", async () => {
+    const stash = makeStashDir();
+    const sourceContent = `---\ndescription: Source context regression guard\n---\n\nSOURCE_ONLY_MARKER\n\n${LONG_SOURCE_BODY}\n`;
+    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+    const config = {
+      ...quietQualityGateConfig(),
+      engines: {
+        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        judge: {
+          kind: "llm",
+          endpoint: "http://localhost:11434/v1/chat/completions",
+          model: "test-model",
+        },
+      },
+      defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
+      improve: {
+        strategies: { default: { processes: { distill: { qualityGate: { enabled: true } } } } },
+      },
+    } as AkmConfig;
+    let judgePrompt = "";
+
+    const result = await akmReflect({
+      ref: "knowledge:quality-source",
+      stashDir: stash,
+      config,
+      assetContent: sourceContent,
+      runAgentOptions: {
+        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge:quality-source", content: candidateContent }), "", 0),
+      },
+      chat: async (_connection, messages) => {
+        judgePrompt = messages[1]?.content ?? "";
+        return JSON.stringify({ score: 4.5, reason: "adds useful detail" });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(judgePrompt).toContain("SOURCE_ONLY_MARKER");
+    expect(judgePrompt).toContain("FEEDBACK ALIGNMENT");
+    expect(judgePrompt).toContain("PRESERVATION");
+    expect(judgePrompt).not.toContain("Does the lesson add information not already present");
   });
 });
 

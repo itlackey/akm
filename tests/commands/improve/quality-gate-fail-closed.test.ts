@@ -77,4 +77,20 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     expect(result.pass).toBe(true);
     expect(result.score).toBeCloseTo(4.5, 9);
   });
+
+  test("disables thinking for the JSON-only judge call", async () => {
+    let enableThinking: boolean | undefined;
+    const result = await runLessonQualityJudge(
+      configWithLlm(),
+      "some lesson body",
+      "some source body",
+      async (_config, _messages, options) => {
+        enableThinking = options?.enableThinking;
+        return JSON.stringify({ score: 4.5, reason: "adds new info" });
+      },
+    );
+
+    expect(result.pass).toBe(true);
+    expect(enableThinking).toBe(false);
+  });
 });
