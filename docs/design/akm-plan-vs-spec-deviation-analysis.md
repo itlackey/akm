@@ -101,13 +101,13 @@ Format-neutrality and removal of the closed asset taxonomy (spec §4/§6, D1); a
 
 ---
 
-## 4. Decisions you need to make
+## 4. Resolutions (maintainer, 2026-07-13)
 
-The deviations reduce to a few forks. My recommendation in each case is to **align to the spec** except where your later instructions deliberately override it:
+1. **DEV-1 OKF — HYBRID.** Format-neutral kernel (History D2 stands): OKF is the reference/default adapter, not the kernel schema; Claude/OpenCode/skill/workflow/task/env formats stay native. Adopt OKF field names incl. open **`type`** as a non-authoritative descriptor — it presents/ranks/filters but never authorizes execution or identity, and is not `kind`.
+2. **DEV-2 Ref — OKF concept ID + optional `bundle//` prefix.** `ref := [<bundle>//]<concept-id>` where concept-id = path within bundle − `.md`. Component is absorbed into the path (a provenance column), not a distinct segment. Supersedes both my two-segment and the spec's three-segment form.
+3. **DEV-3/4/5 — RESTORE all three.** Bindings/activation (install≠activate), the full bounded memory lifecycle (normative §25), and the third `consolidate` verb are in scope for 0.9.0. Retained simplifications: renderer/action as a data table, and adapter facets as **optional methods** on one interface (not a rigid hierarchy — History §8.3). The storage `Repository<Row,Domain>` decision is unrelated and stands (ship `jsonColumn()` only).
+4. **DEV-6 Facets** — resolved by #3: capabilities restored, expressed as optional methods.
+5. **DEV-7 Wiki — restore the LLM Wiki adapter.** The `wiki` asset-*type* dies; the adapter is a first-class built-in owning `schema.md`/`index.md`/`log.md`/raw/pages/xrefs/citations/ingest. No fold to `knowledge`.
+6. **Minor (DEV-8/9/10)** — add progressive disclosure L0/L1/L2, export `#fragment` refs, and clarify that "no dual-format" does not forbid index-parity dual-emit during cutover.
 
-1. **OKF (DEV-1):** Is OKF the **foundational kernel schema** (my current spec, per your later instruction) or a **flagship adapter that is not the kernel schema** (History D2)? And is the field **`type`** (drives behavior) or **`kind`** (opaque)? *These two docs say adapter-not-schema + `kind`; your later messages say foundational + `type`. I need you to pick which wins.*
-2. **Ref shape (DEV-2):** three-segment `<bundle>/<component>/<local-id>` (spec) or two-segment `<bundle>/<local-id>` (my plan)? *I lean spec (3-segment): it's just a path and component is structural.*
-3. **The `§13.3` scope-downs (DEV-3/4/5/6):** the spec requires bindings/activation, a full memory lifecycle, three verbs (incl. consolidate), and adapter facets. My `§13.3` deferred/scoped these as "framework-before-second-consumer." Given your "these work today — refactors, not additions," *I recommend reverting the scope-downs and restoring them as spec-required refactors* (keeping only the data-table renderer and optional-method facet shape, which the History itself endorses).
-4. **Wiki (DEV-7):** restore an LLM Wiki adapter (spec) or keep the wiki→knowledge collapse (my plan)?
-
-Everything else (progressive disclosure, export fragments, index-parity dual-emit) is a straightforward add-back to match the spec.
+Applied to: the reconciled `akm-0.9.0-bundle-adapter-spec.md`, and the plan's reconciliation banner + §5/§6/§13.3/Chunk-4 edits.

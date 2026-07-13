@@ -4,7 +4,15 @@
 
 Status: APPROVED architecture. This is an implementation plan, not a proposal. Baseline HEAD: `b7877d9` / `cf44e11` (post engine-strategy cutover). Single track, in-branch, no intermediate release.
 
-**Companion spec:** the concrete bundle/adapter *how* — the adapter contract, per-format adapters, indexing, and the **OKF (Open Knowledge Format) foundation** (AKM bundles are OKF bundles; AKM is OKF-compatible by default) — is specified in [`akm-0.9.0-bundle-adapter-spec.md`](./akm-0.9.0-bundle-adapter-spec.md). Read it alongside §2/§7 here.
+**Companion spec:** the concrete bundle/adapter *how* is in [`akm-0.9.0-bundle-adapter-spec.md`](./akm-0.9.0-bundle-adapter-spec.md), reconciled with the normative `akm-format-neutral-bundle-workspace-spec.md`. Read it alongside §2/§7.
+
+**Reconciliation (2026-07-13):** four maintainer decisions (recorded in `akm-plan-vs-spec-deviation-analysis.md`) update this plan; the reconciled bundle-adapter spec is authoritative where sections below still conflict:
+1. **OKF hybrid** — format-neutral kernel; OKF is the reference/default adapter (not the kernel schema); field is open `type` (presents/ranks, not execution/identity).
+2. **Ref = OKF concept id + optional `bundle//` prefix** — component absorbed into the path, not a separate segment.
+3. **Bindings/activation, the full bounded memory lifecycle, and a third `consolidate` verb are IN SCOPE** — reversing the §13.3 scope-down; only the data-table renderer and optional-method adapter facets are retained simplifications. (The storage `Repository<Row,Domain>` decision in §13.3/§14 is unrelated and stands.)
+4. **LLM Wiki adapter restored** — the `wiki` asset-type dies; the adapter does not.
+
+Passages below that still say "two verbs," "wiki→knowledge fold," or "defer bindings/memory" are superseded by these.
 
 ---
 
@@ -18,7 +26,7 @@ Status: APPROVED architecture. This is an implementation plan, not a proposal. B
 
 1. **Asset-types → bundle adapters.** Delete `AssetSpec` / `AkmAssetType` closed union / `TYPE_DIRS` / global matchers / renderer+action registries / `StashEntry`-as-model / type-derived paths / `[origin//]type:name` refs. Bundle adapters own native formats, on-disk conventions, authoring rules, recognition, placement, renderer, and L1 validation. Core owns install / index / search / change-transaction / state / bindings / improve.
 2. **Drop-ref + full re-key.** `type:name` refs become opaque bundle-scoped adapter-owned ids. One atomic `0.8 → 0.9` migration re-keys **all** state, fail-closed, backup-verified, throwaway migrator.
-3. **Decompose improve.** Four god functions (`runImprovePreparationStage` ~1544, `akmImprove` ~943, `akmReflect` ~707, `akmDistill` ~635) become thin orchestrators over named passes on an explicit `RunContext`, mirroring the already-decomposed `consolidate.ts`. Two verbs: `revise` (reflect) and `learn` (extract/distill/inference/recombine/synthesis).
+3. **Decompose improve.** Four god functions (`runImprovePreparationStage` ~1544, `akmImprove` ~943, `akmReflect` ~707, `akmDistill` ~635) become thin orchestrators over named passes on an explicit `RunContext`, mirroring the already-decomposed `consolidate.ts`. **Three verbs:** `revise` (reflect), `learn` (extract/distill/inference/recombine/synthesis), and `consolidate` (bound the memory tier — the only op that retires source content; see the memory lifecycle, §6 + normative §25).
 4. **Sweep all remaining debt.** Ambient-config threading, config over-engineering, DRY consolidations, concrete defects, dead/unwired code, misleading names — comprehensively, so this is one-and-done.
 
 ### 1.3 Hard rules
@@ -256,7 +264,7 @@ Net-LOC is signed. "Repoint" = consumer edited to read adapter metadata; counted
 
 Target shape mirrors the already-decomposed `consolidate.ts` (narrow/plan/apply) and the small pure scorers (`computeSalience`, `evaluateCollapseAlerts`).
 
-**Two verbs, one envelope:**
+**Three verbs, one envelope** (revise / learn / **consolidate**; consolidate is the only op that retires source content and carries the bounded memory lifecycle, §6):
 - `revise` = reflect. `learn` = extract / distill / inference / recombine / synthesis.
 - Each verb emits a single `Proposal { FileChange[] + beforeHash + status }` through one envelope facade.
 - All passes read files **only from the run's hash-manifest snapshot** (D6), fixing the reflect double disk-read (`reflect.ts:1017-1023` + `:1400-1409`).
@@ -392,7 +400,7 @@ In-branch chunks. Each chunk: deletion ledger, local green gate (`typecheck + un
 
 **Chunk 3 — Delete taxonomy globals.** `asset-registry.ts`, `asset-spec` registry/renderer/action, `matchers.ts` competition, `file-context:242-265`, `path-resolver` disk-probe, `LINTER_MAP`+9 linters, `output/renderers.ts` type-registry. Repoint graph-extraction/ensure-index/walker/write-source/sources-resolve/provider-utils/git-stash/build-index to adapter metadata. Gate: grep `TYPE_DIRS` → **0**, `resolveAssetPathFromName` → **0**, `runMatchers` → **0**. Net: ~−1000+.
 
-**Chunk 4 — Wiki death.** Delete `wiki/wiki.ts`, `wiki-templates.ts`, template asset; broken-xref → base-linter missing-ref; fold `wikiRole`/`pageKind` → knowledge; delete `wikiName` (5 config sites + indexer/search + read path `show.ts:428-432` + `SearchSource.wikiName`); rename `wiki-fetchers/`→`snapshot-fetchers/` (keep youtube/website); collapse `resolve-standards-context` Feature-A. Gate: grep `wikiName` → **0**, `wiki` type token → **0**. Net: ~−1300.
+**Chunk 4 — Wiki asset-type death; LLM Wiki *adapter* restored.** The `wiki` *asset-type* dies (delete the type token, `wikiName` config special-case at 5 sites + indexer/search + read path `show.ts:428-432` + `SearchSource.wikiName`; rename `wiki-fetchers/`→`snapshot-fetchers/` keeping youtube/website; collapse `resolve-standards-context` Feature-A). But the **LLM Wiki adapter is a first-class built-in** (DEV-7): relocate the native wiki semantics from `wiki/wiki.ts`/`wiki-templates.ts` into an `llm-wiki` adapter that owns `schema.md`/`index.md`/`log.md`/`raw/`/`pages/`/xrefs/citations/ingest + validation — do **not** fold wiki pages into `knowledge`. Gate: grep `wikiName` → **0**; `wiki` type token → **0**; `llm-wiki` adapter conformance tests green. Net: smaller than the prior −1300 (adapter retained, not deleted).
 
 **Chunk 5 — SearchDocument + db.ts split.** Rename `StashEntry`→`SearchDocument` + provenance; split `db.ts` into storage repos + `Repository<Row,Domain>` base; invert storage↔indexer arrow; unify scored/enumerate filter path; fold `.stash.json` legacyOverrides + `mergeLegacyEntry` → migrator. Gate: grep `StashEntry` → **0**, `.stash.json`/`loadStashFile` → **0**. Net: ~−320.
 
@@ -492,9 +500,9 @@ Batch them: one measurement run decides all three at once.
 
 Framework-before-second-consumer additions this plan introduced, cut to the minimum (saves ~500–900 new LOC that would otherwise be built then removed):
 
-- **Bindings/activation** → keep implicit activation for 0.9.0; no `workspace_bindings` table / export digests / trust layer (zero consumers today). (§6)
-- **Adapter facets** → data-driven format table for trivial renderer/action; per-format code only where `recognize`/`validateL1` differ; no one-implementer lifecycle/authoring/export facet interfaces. (§2.3)
-- **Supersession** → reuse the existing `archiveMemory` encoding only; no parallel in-place `supersededBy`+demotion representation. (§6)
+- **Bindings/activation** → **RESTORED to 0.9.0 (DEV-3, reverses the prior deferral):** install≠activate; `Binding` is a durable-core record in `state.db`; `install→index→bind→enable`; installation grants no execution/scheduling/tools/env/secrets. Per normative §18. *(The earlier "keep implicit / no workspace_bindings" note is superseded.)*
+- **Adapter facets** → renderer/action stays a **data table**; authoring/export/memory capabilities are **restored as OPTIONAL METHODS** on the one `BundleAdapter` interface (DEV-6) — not a rigid `extends` hierarchy (History §8.3). *(The earlier "no lifecycle/authoring/export facet" note is superseded; the retained simplification is optional-methods-not-hierarchy.)*
+- **Memory lifecycle** → **RESTORED as first-class (DEV-4):** the full bounded lifecycle (states, water-marks/backpressure, claim coverage, workspace content-addressed archive built on `archiveMemory`, purge, read-only overlay) per normative §25 — a refactor of `consolidate.ts`, not a new subsystem. *(The earlier "fold into non-destructive learn recipes / no MemoryLifecycleAdapter" note is superseded.)*
 - **Outcome-weight parity flag** → still deferred, but resolved in the §13.2 measurement pass rather than carried indefinitely.
 - **Storage `Repository<Row,Domain>` base class (plan §4.7)** → do **NOT** introduce (§14 F8). 12 of 13 repos are plain function modules; the open/borrow duplication is already solved by `managed-db.ts`. Ship only the `jsonColumn()` codec helper and keep the function-module convention — a class hierarchy over function modules is framework-before-value, the same anti-pattern this section guards against.
 
