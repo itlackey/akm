@@ -32,6 +32,7 @@ Status: APPROVED architecture. This is an implementation plan, not a proposal. B
 - `akmConsolidateInner` is **already decomposed** — do not re-plan it; current large consolidate targets are `planConsolidation` (~433), `handleMergeOp` (~298), `handlePromoteOp` (~215).
 - `SearchDocument` / `IndexDocument` **do not exist** (grep-verified zero hits). The normalized model must be **minted from the existing `StashEntry`** plus added provenance fields.
 - Already-fixed, **do not re-churn**: `runFtsQuery` swallow (B7), `improve?.default` deep-chain (A3), `m=months vs minutes` conflict (B1 headline), `CONFIG_SUBCOMMAND_SET` desync (B2), grid-search-at-import (distill policy), `FEEDBACK_FAILURE_MODES` dup, `asNonEmptyString`/`firstString` dup, `writeFileAtomic` dead branch, `setup/legacy-config.ts` (already deleted), `AGENT_PLATFORMS` trap. Residual debt around each is separately named below.
+- **Residual-complexity audit folded in** (companion `akm-0.9.0-residual-complexity-audit.md`, integrated in §13): ~4,300 LOC of **confident gold-plating deletions** fold into the chunks below (net-LOC ledger updated); a further ~6,000–12,000 LOC of **default-on-but-unproven** subsystems (graph extraction, collapse/canary monitor, the outcome-loop/encoding-salience/scoped-utility apparatus) go to a **single 0.9.1 measurement pass** rather than being litigated here; and the plan's **own new machinery** (bindings/activation, adapter facets, second supersession encoding) is **scoped down before it ships** (§13.3) — cheaper not to build than to remove later.
 
 ---
 
@@ -72,6 +73,8 @@ One `BundleAdapter` interface, one adapter per native format. Facets (each repla
 | `validateL1(FileContext) → LintIssue[]` | `LINTER_MAP`/`getLinterForType` + 9 per-type linter classes |
 
 **Split-brain resolution (gap filled):** `asset-registry` statically maps renderers/actions for **all 14** types; `asset-spec` *also* carries `rendererName`/`actionBuilder` for only **8** (workflow/env/secret/wiki/lesson/task/session/fact). The remaining **6** (script/skill/command/agent/knowledge/memory) get their renderer **only** from the static registry map. Each per-format adapter must **locally stamp its own renderer+action**; the 6 static-only mappings must not be lost in the port.
+
+**Facet scope-down (§13.3 — avoid framework-before-second-consumer):** do NOT mint per-format facet *interfaces* for the trivial cases. `renderer`/`action` for most formats are pure constant maps — keep them as a small **data-driven format table**, not a class per format. Write real per-format code only where `recognize`/`validateL1` genuinely differ (skill SKILL.md, workflow codec, wiki→knowledge, env/secret safety). Do **not** introduce a `MemoryLifecycleAdapter`/`AuthoringAdapter`/`ExportAdapter` interface hierarchy — a memory-lifecycle facet would have exactly one implementer today; express it as ordinary functions in the memory module.
 
 ---
 
@@ -276,8 +279,8 @@ Target shape mirrors the already-decomposed `consolidate.ts` (narrow/plan/apply)
 
 Memory lifecycle stays in the consolidate module, re-expressed as **non-destructive `learn` recipes** — never hard-delete.
 
-- **install → bind → enable** is the proper design of today's implicit activation (refactor, not new).
-- The LLM-directed hard ops become non-destructive: `handleMergeOp` (`consolidate.ts:2117`), `handleDeleteOp` (`:2416`), `handleContradictOp` (`:2693`), `handlePromoteOp` (`:2477`, memory→lesson) → emit `FileChange`s with frontmatter `supersededBy` + rank demotion, building on the existing `archiveMemory` primitive (`consolidate.ts:838`).
+- **Activation scope-down (§13.3):** keep today's **implicit activation** for 0.9.0. Do NOT mint a `workspace_bindings` table, export digests, or a trust-decision layer — grep shows **zero** `workspace_bindings`/`bindWorkspace` consumers today and one implicit workspace. The install→bind→enable *lifecycle* is the eventual proper design, but building the table + trust machinery now is framework-before-second-consumer; defer until a real multi-workspace consumer exists.
+- The LLM-directed hard ops become non-destructive: `handleMergeOp` (`consolidate.ts:2117`), `handleDeleteOp` (`:2416`), `handleContradictOp` (`:2693`), `handlePromoteOp` (`:2477`, memory→lesson) → route through the **existing** `archiveMemory` primitive (`consolidate.ts:838`) via the new `FileChange` transaction. **One supersession encoding only** — reuse `archiveMemory`'s archive-move + `superseded_by` frontmatter + git history; do **not** add a second in-place `supersededBy`+demotion representation that every downstream reader would then have to understand (§13.3).
 - **Preserve** the transactional discipline: `writeJournal`/`checkForIncompleteJournal`/`cleanupJournal`, backup/recovery; the LOOK/CHANGE separation and signal-delta corrective-evidence gate (2026-05-26 synchronized-wave fix); no lossy in-place reconsolidation (raw assets + additive distill + no-op gate + git history).
 - `resolveParentRef`/`isDerivedMemory` divergence (name-keyed vs path-keyed) collapses to one keyed-on-ref impl so the contradiction-edge producer/consumer cannot disagree.
 
@@ -341,7 +344,7 @@ Salience 3-vector model + `asset_salience`/`asset_outcome` tables + `upsertAsset
 The salience **outcome weight is LIVE-but-unproven** (`w_o=0.15` applied by default), not inert — corrected premise D10. There is **no single config default to flip**: `outcomeWeightEnabled` (`config-schema.ts:861`) has **no `.default()`**; the runtime default lives in the read expression `!== false` at **3 sites**: `distill.ts:749`, `salience.ts:356`, `preparation.ts:1728`. The parity flip requires **~4 edits**, not one line:
 1. Change the `!== false` reads to `=== true` (or add `.default(false)` and honor it) at all 3 sites.
 2. Correct the `config-schema.ts:857-860` comment (currently falsely "Default false (parity)").
-Machinery (weight-selection block, tables, CASE guards, `isContentEncodingRow`) is **kept untouched** under this reversible flag. The flip is **deferred** (parity-first), not a deletion — reconciled with the saturation-harness finding that keeps the table proven-neutral rather than dropping it.
+Machinery (weight-selection block, tables, CASE guards, `isContentEncodingRow`) is **kept untouched** under this reversible flag. The flip is **deferred** (parity-first), not a deletion — reconciled with the saturation-harness finding that keeps the table proven-neutral rather than dropping it. The parity flip and the whole outcome-loop / encoding-salience / scoped-utility apparatus resolve **together** in the **0.9.1 measurement pass** (§13.2): one nDCG/MRR + saturation-harness run at `w_o=0` decides keep-or-delete for the entire cluster at once, rather than litigating each contributor in 0.9.0.
 
 ### 9.4 Wave-1 type-only severs (this area)
 `salience.ts:52` (`import type AkmAssetType`), `:650` cast; `eligibility.ts:9` import, `:39` scope validation → open-token, `:169`/`:477` casts. All string-keyed underneath; severance is type-only.
@@ -416,7 +419,9 @@ In-branch chunks. Each chunk: deletion ledger, local green gate (`typecheck + un
 | sources/registry/integrations/setup | −400 to −450 |
 | workflows/storage/DBs/output/health/tasks/cli | −2500 |
 | Adapters + RunContext + shared helpers (adds) | +≈600 |
-| **TOTAL** | **≈ −9,000 to −10,500 net removed** |
+| Residual confident deletions folded in (§13.1) | −≈4,300 (+1 MB asset) |
+| **TOTAL (0.9.0)** | **≈ −13,000 to −15,000 net removed** |
+| 0.9.1 measurement-pass prove-or-delete tier (§13.2) | up to a further −6,000 to −12,000 |
 
 ### 12.2 Definition of Done
 
@@ -447,3 +452,49 @@ In-branch chunks. Each chunk: deletion ledger, local green gate (`typecheck + un
 - **Migration non-atomicity** — full re-key + workflow merge must share one transaction; a split leaves index.db/state.db inconsistent. Mitigation: single `state-018`, backup-verified fail-closed.
 - **Parity-flip premise** — outcome weight is default-ON, not inert; a naive "flip the config default" is a no-op (no `.default()` exists). Mitigation: the 3-site `!== false` edit + comment fix, deferred, reversible.
 - **Line drift** — several plan anchors already drifted (`classifyBySmartMd` :181, `processSession` :550/19-args, `stepSmallModelConnection` :455). Mitigation: Chunk 0 re-anchors before any golden capture.
+
+---
+
+## 13. Residual Complexity Integration (from the residual-complexity audit)
+
+The audit (companion `akm-0.9.0-residual-complexity-audit.md`) assumed this plan fully implemented and found the gold-plating that still survives. It is folded in three ways below. Rule unchanged: net removal, no new machinery.
+
+### 13.1 Confident deletions folded into the chunks (≈ −4,300 LOC + 1 MB)
+
+Pure removals, no design decision. Each is assigned to an existing chunk; add to that chunk's deletion ledger and grep-gate.
+
+| Deletion | Evidence | Chunk | ~LOC |
+|---|---|---|---|
+| HTML health report + vendored `echarts.min.js` (keep JSON + md paths) | `echarts.min.js` = 1,034,102 B inlined by default (`html-report.ts:384`); sole caller `cli.ts:383` for one command | 9 | −1,800 (+1 MB) |
+| `recombine`/`synthesis` cross-episodic subsystem — supersedes §5's "keep as learn recipe" | `recombine.ts` 1009 + `recombine-repository.ts` 290 + `migrations.ts:679` table; `default.json:15` enabled:false; sibling measured **0% accept** (`synthesize.json:2`) | 7 | −1,300 |
+| Second workflow codec — collapse classic-markdown into the YAML program codec (markdown is a strict subset → same IR, `ir/freeze.ts:145`) | `renderer.ts:10` "two formats, one asset type"; every op implemented twice | 8 | −650 |
+| Env-gated deterministic embedder facade → test fixture | `deterministic.ts:8` "NEVER used in production (env-gated, off)"; only `AKM_EMBED_DETERMINISTIC=1` reaches it; no config/CLI sets it | 9 | −110 |
+| `core/eval/rank-metrics.ts` → relocate under `scripts/akm-eval/` | only importer is `scripts/akm-eval/.../curate-metrics.ts:7` re-export; **zero** `src/` importers | 9 | −180 (move) |
+| Filesystem plugin-loader for a one-element fetcher registry → inline | one-element registry (youtube) behind a generic loader | 4 | −55 |
+| `--format html` generic template framework → health-only render (every other command's "HTML" is JSON-in-`<pre>`, `cli/shared.ts:205`) | `html-render.ts:26` per-command template + unused `default.html` | 9 | −160 |
+| `review_pressure` / `ValenceScore.lane` (already §9.2) | no readers | 7 | −85 |
+
+These raise the 0.9.0 total to **≈ −13,000 to −15,000 net** (§12.1).
+
+### 13.2 0.9.1 measurement pass (prove-or-delete tier, up to a further −6,000 to −12,000)
+
+Do **not** litigate these in 0.9.0 — they are default-on subsystems whose value is *unmeasured*, and one harness run resolves them together. Gate a single **0.9.1 measurement pass** on one nDCG/MRR + saturation-harness run against the curate-golden set (the same run the §9.3 parity flip needs):
+
+- **Cluster A — the near-zero-signal apparatus** (~600 LOC + tables): outcome loop, encoding-salience NLP model (`encoding-salience.ts`, 258), scoped-utility EMA (`utility_scores_scoped`), dual weight-triple + parity flag. The code's own tripwire reports `corr=+0.0104` at n=5,706 and emits `outcome_proxy_dead` (`preparation.ts:1678`). Run at `w_o=0`; if rankings don't move, delete the loop + `review_pressure` + scoped table + parity triple, and fall encoding back to the existing `DEFAULT_TYPE_ENCODING_WEIGHTS` stub.
+- **Graph extraction** (~4,288 LOC, `indexer/graph/*` + `llm/graph-extract.ts`): default-on, per-batch LLM cost, one conditional `computeGraphBoost` (`db-search.ts:782`) with no nDCG proof. Must show a measured rank delta or go default-off + drop the boost.
+- **Collapse/canary monitor** (~900 LOC): `collapse-detector.ts:22` "observe-only… nothing is ever blocked"; runs FTS probes + full scans every cycle for advisory-only alerts. Must have caught one real event or collapse to a single cheap health metric.
+
+Batch them: one measurement run decides all three at once.
+
+### 13.3 Scope-down the plan's own new machinery (before it ships)
+
+Framework-before-second-consumer additions this plan introduced, cut to the minimum (saves ~500–900 new LOC that would otherwise be built then removed):
+
+- **Bindings/activation** → keep implicit activation for 0.9.0; no `workspace_bindings` table / export digests / trust layer (zero consumers today). (§6)
+- **Adapter facets** → data-driven format table for trivial renderer/action; per-format code only where `recognize`/`validateL1` differ; no one-implementer lifecycle/authoring/export facet interfaces. (§2.3)
+- **Supersession** → reuse the existing `archiveMemory` encoding only; no parallel in-place `supersededBy`+demotion representation. (§6)
+- **Outcome-weight parity flag** → still deferred, but resolved in the §13.2 measurement pass rather than carried indefinitely.
+
+### 13.4 Leave alone (do not over-cut)
+
+Embeddings + FTS/vector hybrid ranking core (broadly-used); the three OS scheduler backends (real per-OS need — confirm the embedded runner covers the case before cutting launchd/schtasks); the JSON output envelope and human/agent shape axis (load-bearing); `archiveMemory` and the extract/consolidate core (the ~4 processes with proven live output); the `ndcg`/`recall`/`mrr` math (relocate, don't delete).
