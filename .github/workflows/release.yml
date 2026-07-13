@@ -146,6 +146,7 @@ jobs:
               echo "source=$SOURCE_SHA head=$HEAD_SHA parent=$PARENT_SHA files=$CHANGED_FILES version=$CURRENT_VERSION"
               exit 1
             fi
+            # shellcheck disable=SC2016 # ${...} are JS template literals evaluated by node, not shell expansions
             node -e 'const {execFileSync}=require("node:child_process");const before=JSON.parse(execFileSync("git",["show",`${process.argv[1]}:package.json`],{encoding:"utf8"}));const after=require("./package.json");before.version=process.argv[2];if(JSON.stringify(before)!==JSON.stringify(after)){console.error("Version retry changed package.json beyond version");process.exit(1)}' "$SOURCE_SHA" "$CANDIDATE_VERSION"
           fi
 
@@ -219,6 +220,7 @@ jobs:
             echo "Candidate package version mismatch: expected $CANDIDATE_VERSION, got $VERSION"
             exit 1
           fi
+          # shellcheck disable=SC2016 # ${...} is a JS template literal evaluated by node, not a shell expansion
           CANDIDATE_INTEGRITY="$(node -e 'const fs=require("node:fs");const {createHash}=require("node:crypto");const bytes=fs.readFileSync(process.argv[1]);console.log(`sha512-${createHash("sha512").update(bytes).digest("base64")}`)' "$TARBALL")"
 
           verify_published_candidate() {
