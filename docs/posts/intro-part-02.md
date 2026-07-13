@@ -29,11 +29,15 @@ Pick your poison:
 # Standalone binary (no runtime needed)
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
-# Or via Bun
-bun install -g akm-cli
+# Or via npm (Node.js >= 20.12 required)
+npm install -g akm-cli
 ```
 
-That's it. You now have the `akm` binary on your PATH. And when a new version drops, `akm upgrade` handles it in place.
+The npm package requires Node.js >= 20.12 to bootstrap its command. If a working
+Bun >= 1.0 is also on `PATH`, the launcher prefers Bun for execution; old,
+unusable, or absent Bun installations fall back to Node.js. Standalone binaries
+are runtime-free. You now have the `akm` binary on your `PATH`. When a new
+version drops, `akm upgrade` handles it in place.
 
 ## Initialize Your Stash
 

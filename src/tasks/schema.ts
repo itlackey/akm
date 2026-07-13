@@ -56,7 +56,7 @@ export interface TaskCommandTarget {
 export type TaskTarget = TaskWorkflowTarget | TaskPromptTarget | TaskCommandTarget;
 
 export interface TaskDocument {
-  /** Source-file version. Task YAML v1 is stale and never normalized here. */
+  /** Runtime schema version. Valid 0.8 task YAML is normalized to this shape while reading. */
   version: typeof TASK_SCHEMA_VERSION;
   schemaVersion: typeof TASK_SCHEMA_VERSION;
   /** Filesystem-derived id (basename without `.yml`). */

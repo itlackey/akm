@@ -82,9 +82,11 @@ containing secrets or private notes.
 
 ## Known non-issues
 
-- **`akm` requires Bun, Node.js >= 20.12, or the prebuilt binary.** Older
-  Node.js versions are unsupported because required runtime APIs are missing.
-  This is a compatibility limitation, not a security risk.
+- **The `akm-cli` npm package requires Node.js >= 20.12 as its bootstrap.** A
+  working Bun >= 1.0 is preferred for execution when it is also on `PATH`; old,
+  unusable, or absent Bun installations fall back to Node.js. Bun does not
+  remove the package's Node.js requirement. Standalone binaries are
+  runtime-free. This is a compatibility limitation, not a security risk.
 - **Workflows can read any file the akm process can read.** This is not a
   bug — see "Threat model" above.
 - **Installing `akm-cli` runs the preinstall hook.** The hook only validates

@@ -170,6 +170,33 @@ function makeRun(overrides: Partial<ImproveRunSummary> = {}): ImproveRunSummary 
 }
 
 describe("renderRunsDetailMd", () => {
+  test("keeps ok boolean and exposes decoder status in a separate column", () => {
+    const out = renderRunsDetailMd([makeRun({ ok: false, resultStatus: "normalized" })]);
+    const [header, row] = out.split("\n");
+    const headers = header.trim().split(/\s{2,}/);
+    const cells = row.trim().split(/\s{2,}/);
+
+    expect(headers).toEqual([
+      "ts",
+      "ok",
+      "strategy",
+      "legacy_profile",
+      "actions",
+      "refl_ok/fail/cd/skip",
+      "distill_q/llm-fail/qrej/cfg/skip",
+      "cons_proc/promo/merge/del",
+      "mem_cons/written/skip",
+      "graph_f/e/r",
+      "orphans",
+      "lint_f/fl",
+      "result_status",
+    ]);
+    expect(cells[1]).toBe("false");
+    expect(cells[2]).toBe("default");
+    expect(cells.at(-1)).toBe("normalized");
+    expect(row).not.toContain("false (normalized)");
+  });
+
   test("renders the header row and one aligned data row", () => {
     const run = makeRun({
       startedAt: "2026-07-03T00:00:00.000Z",
@@ -265,5 +292,41 @@ describe("renderWindowCompareMd", () => {
     const failedRow = out.split("\n").find((l) => l.startsWith("improve.actions.reflect.failed"));
     expect(failedRow).toBeDefined();
     expect(failedRow).toContain("!+200%");
+  });
+
+  test("renders result-row accounting without changing the runs denominator", () => {
+    const improve = zeroImprove();
+    improve.resultRows = { total: 5, included: 3, normalized: 1, skipped: { invalid: 2 } };
+    const window: WindowResult = {
+      name: "current",
+      since: "2026-07-01T00:00:00.000Z",
+      until: "2026-07-02T00:00:00.000Z",
+      runs: 5,
+      improve,
+      metrics: {
+        taskFailRate: 0,
+        agentFailureRate: 0,
+        stuckActiveRuns: 0,
+        logBackingRate: 1,
+        probeRoundTripMs: null,
+        llmUsage: {
+          calls: 0,
+          totalDurationMs: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          reasoningTokens: 0,
+          byStage: {},
+          byProcess: {},
+          byEngine: {},
+        },
+      },
+    };
+
+    const out = renderWindowCompareMd([window], undefined);
+    expect(out).toContain("runs");
+    expect(out).toContain("improve.resultRows.included");
+    expect(out).toContain("improve.resultRows.normalized");
+    expect(out).toContain("improve.resultRows.skipped.invalid");
   });
 });

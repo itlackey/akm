@@ -16,9 +16,9 @@
  *   • a launchd plist `<StartCalendarInterval>` / `<StartInterval>` (macOS),
  *   • Task Scheduler XML triggers (Windows).
  *
- * The shared subset is `*`, single integers, `*\/N`, plus the `@hourly /
+ * The shared subset is `*`, single integers, `*\/N`, `A-B/N`, plus the `@hourly /
  * @daily / @weekly / @monthly` aliases. Patterns outside that — multi-value
- * lists, ranges, step values other than `*\/N`, day-of-month AND
+ * lists, plain ranges, day-of-month AND
  * day-of-week combinations — are rejected with a {@link UsageError}.
  *
  * Cron is the most permissive of the three backends; some patterns it
@@ -56,11 +56,13 @@ export interface ScheduleFields {
  *   • star          `*`
  *   • single value  `5`
  *   • step on star  `*\/15`
+ *   • step on range `2-22/4`
  */
 export type ScheduleField =
   | { kind: "star" }
   | { kind: "value"; value: number }
   | { kind: "step"; step: number }
+  | { kind: "rangeStep"; start: number; end: number; step: number }
   // 2026-05-27: cron-style comma list, e.g. `7,37 * * * *` (twice per hour).
   // `values` is the deduped, ascending list of valid integers within
   // `[limit.min, limit.max]`. translateToCron emits the field verbatim;
@@ -85,9 +87,9 @@ const FIELD_LIMITS = {
 } as const;
 
 const SUPPORTED_HINT =
-  "Supported subset: `*`, single integers (`5`), step-on-star (`*/N`), and comma lists (`7,37`). " +
+  "Supported subset: `*`, single integers (`5`), steps (`*/N`, `A-B/N`), and comma lists (`7,37`). " +
   "Aliases: `@hourly`, `@daily`, `@weekly`, `@monthly`. " +
-  "Lists, ranges, and named days/months are not supported.";
+  "Plain ranges and named days/months are not supported.";
 
 export function parseSchedule(input: string, backend: ScheduleBackend): ScheduleSpec {
   const cron = expandAlias(input);
@@ -151,6 +153,20 @@ function parseField(raw: string, name: string, limit: { min: number; max: number
     return { kind: "step", step };
   }
 
+  const rangeStepMatch = raw.match(/^(\d+)-(\d+)\/(\d+)$/);
+  if (rangeStepMatch) {
+    const start = Number(rangeStepMatch[1]);
+    const end = Number(rangeStepMatch[2]);
+    const step = Number(rangeStepMatch[3]);
+    if (start < limit.min || end > limit.max || start > end || step <= 0) {
+      throw new UsageError(
+        `Invalid ${name} range-step "${raw}" in schedule "${original}" (allowed ${limit.min}-${limit.max}).`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    return { kind: "rangeStep", start, end, step };
+  }
+
   if (/^\d+$/.test(raw)) {
     const value = Number(raw);
     if (value < limit.min || value > limit.max) {
@@ -193,15 +209,15 @@ export function translateToCron(spec: ScheduleSpec): string {
 }
 
 /**
- * Build the inner XML for the `Triggers` of a launchd plist's
- * `StartCalendarInterval` array, OR a single `StartInterval` integer when the
- * schedule is a single `*\/N` minute step (the simpler launchd primitive).
+ * Build the calendar entries for a launchd plist's `StartCalendarInterval`.
+ * Steps are expanded to wall-clock values instead of using `StartInterval`,
+ * whose phase is relative to load time rather than cron's clock boundaries.
  */
 export interface LaunchdTrigger {
-  /** Use `<integer>N</integer>` under `<key>StartInterval</key>`. */
-  intervalSeconds?: number;
   /** Use `<dict>…</dict>` under `<key>StartCalendarInterval</key>`. */
   calendar?: LaunchdCalendar;
+  /** Use `<array>` of dictionaries under `<key>StartCalendarInterval</key>`. */
+  calendars?: LaunchdCalendar[];
 }
 
 export interface LaunchdCalendar {
@@ -214,28 +230,34 @@ export interface LaunchdCalendar {
 
 export function translateToLaunchd(spec: ScheduleSpec): LaunchdTrigger {
   const f = spec.fields;
+  rejectDomDowCombination(spec, "macOS launchd");
 
-  // `*/N` minute (everything else `*`) → StartInterval = N*60 seconds.
+  // Expand minute steps into clock-minute anchors. StartInterval would drift
+  // from cron whenever the agent is loaded away from a matching boundary.
   if (
-    f.minute.kind === "step" &&
+    (f.minute.kind === "step" || f.minute.kind === "rangeStep") &&
     f.hour.kind === "star" &&
     f.dom.kind === "star" &&
     f.month.kind === "star" &&
     f.dow.kind === "star"
   ) {
-    return { intervalSeconds: f.minute.step * 60 };
+    return { calendars: expandFieldValues(f.minute, FIELD_LIMITS.minute).map((Minute) => ({ Minute })) };
   }
 
-  // `*/N` hour → StartInterval = N*3600.
+  // Likewise, anchor hour steps to the same hours cron selects each day.
   if (
     f.minute.kind === "value" &&
-    f.minute.value === 0 &&
-    f.hour.kind === "step" &&
+    (f.hour.kind === "step" || f.hour.kind === "rangeStep") &&
     f.dom.kind === "star" &&
     f.month.kind === "star" &&
     f.dow.kind === "star"
   ) {
-    return { intervalSeconds: f.hour.step * 3600 };
+    return {
+      calendars: expandFieldValues(f.hour, FIELD_LIMITS.hour).map((Hour) => ({
+        Minute: f.minute.kind === "value" ? f.minute.value : 0,
+        Hour,
+      })),
+    };
   }
 
   // Otherwise build a calendar dict from concrete values. launchd treats any
@@ -256,12 +278,25 @@ export function translateToLaunchd(spec: ScheduleSpec): LaunchdTrigger {
   if (f.dow.kind === "value") calendar.Weekday = f.dow.value;
 
   // launchd's CalendarInterval requires at least one specific key. If every
-  // field is `*` the schedule has no anchor and we'd need a StartInterval
-  // instead — treat this as "every minute".
+  // Expand every-minute to explicit minute boundaries rather than a
+  // load-relative 60-second interval.
   if (Object.keys(calendar).length === 0) {
-    return { intervalSeconds: 60 };
+    return {
+      calendars: expandFieldValues({ kind: "step", step: 1 }, FIELD_LIMITS.minute).map((Minute) => ({ Minute })),
+    };
   }
   return { calendar };
+}
+
+function expandFieldValues(
+  field: Extract<ScheduleField, { kind: "step" | "rangeStep" }>,
+  limit: { min: number; max: number },
+): number[] {
+  const start = field.kind === "rangeStep" ? field.start : limit.min;
+  const end = field.kind === "rangeStep" ? field.end : limit.max;
+  const values: number[] = [];
+  for (let value = start; value <= end; value += field.step) values.push(value);
+  return values;
 }
 
 function rejectStepInsideCalendar(field: ScheduleField, name: string, spec: ScheduleSpec): void {
@@ -270,6 +305,13 @@ function rejectStepInsideCalendar(field: ScheduleField, name: string, spec: Sche
       `Schedule "${spec.raw}" uses step (${name} = */N) in a position macOS launchd cannot express. ${SUPPORTED_HINT}`,
       "INVALID_FLAG_VALUE",
       "Either restrict the step to the minute or hour field only, or rewrite the schedule with concrete values.",
+    );
+  }
+  if (field.kind === "rangeStep") {
+    throw new UsageError(
+      `Schedule "${spec.raw}" uses range-step (${name} = A-B/N) in a position macOS launchd cannot express. ${SUPPORTED_HINT}`,
+      "INVALID_FLAG_VALUE",
+      "Restrict the range-step to the minute or hour field, or rewrite the schedule with a concrete value.",
     );
   }
   if (field.kind === "list") {
@@ -291,14 +333,20 @@ function rejectStepInsideCalendar(field: ScheduleField, name: string, spec: Sche
  */
 export type SchtasksTrigger =
   | { kind: "minute"; everyMinutes: number }
-  | { kind: "hour"; everyHours: number }
+  | { kind: "minuteValues"; minutes: number[] }
+  | { kind: "hour"; everyHours: number; atMinute: number }
+  | { kind: "hourValues"; hours: number[]; atMinute: number }
   | { kind: "daily"; atHour: number; atMinute: number }
   | { kind: "weekly"; atHour: number; atMinute: number; daysOfWeek: number[] };
 
+const MAX_SCHTASKS_TRIGGERS = 48;
+
 export function translateToSchtasks(spec: ScheduleSpec): SchtasksTrigger {
   const f = spec.fields;
+  rejectDomDowCombination(spec, "Windows Task Scheduler");
 
-  // `*/N` minute → MINUTE, every N.
+  // A repetition interval is cron-equivalent indefinitely only when it divides
+  // the field's wall-clock cycle. Other steps must reset at every hour.
   if (
     f.minute.kind === "step" &&
     f.hour.kind === "star" &&
@@ -306,19 +354,73 @@ export function translateToSchtasks(spec: ScheduleSpec): SchtasksTrigger {
     f.month.kind === "star" &&
     f.dow.kind === "star"
   ) {
+    if (60 % f.minute.step !== 0) {
+      return minuteValuesTrigger(expandFieldValues(f.minute, FIELD_LIMITS.minute), spec);
+    }
     return { kind: "minute", everyMinutes: f.minute.step };
   }
 
-  // `0 */N * * *` → HOURLY, every N.
+  if (
+    f.minute.kind === "rangeStep" &&
+    f.hour.kind === "star" &&
+    f.dom.kind === "star" &&
+    f.month.kind === "star" &&
+    f.dow.kind === "star"
+  ) {
+    if (f.minute.start === FIELD_LIMITS.minute.min && f.minute.end === FIELD_LIMITS.minute.max) {
+      if (60 % f.minute.step === 0) return { kind: "minute", everyMinutes: f.minute.step };
+    }
+    return minuteValuesTrigger(expandFieldValues(f.minute, FIELD_LIMITS.minute), spec);
+  }
+
+  // Fixed-minute hour schedules can use one daily-reset repetition only when
+  // the interval divides 24 hours. Non-divisors become explicit daily times.
   if (
     f.minute.kind === "value" &&
-    f.minute.value === 0 &&
     f.hour.kind === "step" &&
     f.dom.kind === "star" &&
     f.month.kind === "star" &&
     f.dow.kind === "star"
   ) {
-    return { kind: "hour", everyHours: f.hour.step };
+    if (24 % f.hour.step === 0 && f.hour.step < 24) {
+      return { kind: "hour", everyHours: f.hour.step, atMinute: f.minute.value };
+    }
+    return {
+      kind: "hourValues",
+      hours: expandFieldValues(f.hour, FIELD_LIMITS.hour),
+      atMinute: f.minute.value,
+    };
+  }
+
+  if (
+    f.minute.kind === "value" &&
+    f.hour.kind === "rangeStep" &&
+    f.dom.kind === "star" &&
+    f.month.kind === "star" &&
+    f.dow.kind === "star"
+  ) {
+    if (f.hour.start === FIELD_LIMITS.hour.min && f.hour.end === FIELD_LIMITS.hour.max) {
+      if (24 % f.hour.step === 0 && f.hour.step < 24) {
+        return { kind: "hour", everyHours: f.hour.step, atMinute: f.minute.value };
+      }
+    }
+    return {
+      kind: "hourValues",
+      hours: expandFieldValues(f.hour, FIELD_LIMITS.hour),
+      atMinute: f.minute.value,
+    };
+  }
+
+  // `M * * * *` includes the shipped top-of-hour task and arbitrary fixed
+  // minutes. A daily calendar trigger resets the hourly repetition each day.
+  if (
+    f.minute.kind === "value" &&
+    f.hour.kind === "star" &&
+    f.dom.kind === "star" &&
+    f.month.kind === "star" &&
+    f.dow.kind === "star"
+  ) {
+    return { kind: "hour", everyHours: 1, atMinute: f.minute.value };
   }
 
   // `M H * * *` → DAILY at H:M.
@@ -351,8 +453,29 @@ export function translateToSchtasks(spec: ScheduleSpec): SchtasksTrigger {
   throw new UsageError(
     `Schedule "${spec.raw}" cannot be expressed as a Windows Task Scheduler trigger. ${SUPPORTED_HINT}`,
     "INVALID_FLAG_VALUE",
-    "Use one of: */N minutes, every N hours (0 */N * * *), daily at HH:MM, or weekly on a single weekday.",
+    "Use one of: minute steps/range-steps, fixed-minute hour steps/range-steps, hourly, daily, or weekly on a single weekday.",
   );
+}
+
+function minuteValuesTrigger(minutes: number[], spec: ScheduleSpec): SchtasksTrigger {
+  if (minutes.length > MAX_SCHTASKS_TRIGGERS) {
+    throw new UsageError(
+      `Schedule "${spec.raw}" requires ${minutes.length} native triggers; Windows Task Scheduler allows at most ${MAX_SCHTASKS_TRIGGERS}.`,
+      "INVALID_FLAG_VALUE",
+      "Use a full-field step whose interval divides 60, or reduce the minute range.",
+    );
+  }
+  return { kind: "minuteValues", minutes };
+}
+
+function rejectDomDowCombination(spec: ScheduleSpec, backend: string): void {
+  if (spec.fields.dom.kind !== "star" && spec.fields.dow.kind !== "star") {
+    throw new UsageError(
+      `Schedule "${spec.raw}": day-of-month and day-of-week use OR semantics in cron, which ${backend} cannot express portably.`,
+      "INVALID_FLAG_VALUE",
+      "Use either day-of-month or day-of-week, but not both.",
+    );
+  }
 }
 
 /** Human-readable summary used by `tasks doctor`. */

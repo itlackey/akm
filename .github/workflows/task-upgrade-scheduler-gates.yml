@@ -1,0 +1,341 @@
+name: Task Upgrade and Scheduler Gates
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA to build and attest
+        required: true
+        type: string
+      version:
+        description: Exact package and binary version to build
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA to build (defaults to the dispatched commit)
+        required: false
+        type: string
+      version:
+        description: Exact package and binary version to build
+        required: true
+        type: string
+
+jobs:
+  package-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: bun install
+      - name: Stamp and build package candidate
+        run: |
+          npm version "$CANDIDATE_VERSION" --no-git-tag-version --allow-same-version
+          cp .github/README.npm.md README.md
+          bun run build
+      - name: Pack package candidate once
+        run: |
+          mkdir candidate-package
+          npm pack --ignore-scripts --pack-destination candidate-package
+          shopt -s nullglob
+          tarballs=(candidate-package/*.tgz)
+          test "${#tarballs[@]}" -eq 1
+      - uses: actions/upload-artifact@v5
+        with:
+          name: akm-package-candidate
+          path: candidate-package/*.tgz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  binary-candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64
+            artifact: akm-linux-x64
+          - target: bun-linux-arm64
+            artifact: akm-linux-arm64
+          - target: bun-darwin-x64
+            artifact: akm-darwin-x64
+          - target: bun-darwin-arm64
+            artifact: akm-darwin-arm64
+          - target: bun-windows-x64
+            artifact: akm-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --omit optional
+      - name: Compile versioned binary candidate
+        run: bun build ./src/cli.ts --compile --target="$BUN_TARGET" --external @huggingface/transformers --outfile "$ARTIFACT" --define "AKM_VERSION='$CANDIDATE_VERSION'"
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+          BUN_TARGET: ${{ matrix.target }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  published-upgrade:
+    needs: package-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: bun install --omit optional
+      - uses: actions/download-artifact@v6
+        with:
+          name: akm-package-candidate
+          path: candidate-package
+      - id: candidate
+        name: Resolve immutable package candidate
+        run: |
+          shopt -s nullglob
+          tarballs=(candidate-package/*.tgz)
+          test "${#tarballs[@]}" -eq 1
+          echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+      - name: Published 0.8.14 migration to the exact candidate version
+        run: bun test tests/integration/published-task-upgrade.test.ts
+        env:
+          AKM_PUBLISHED_UPGRADE_TESTS: "1"
+          AKM_PUBLISHED_UPGRADE_TARBALL: ${{ steps.candidate.outputs.tarball }}
+          AKM_CANDIDATE_VERSION: ${{ env.CANDIDATE_VERSION }}
+
+  linux-standalone:
+    needs: binary-candidates
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+            artifact: akm-linux-x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            artifact: akm-linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --omit optional
+      - uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: candidate-binary
+      - run: chmod +x "candidate-binary/$ARTIFACT"
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+      - name: Execute candidate standalone-generated scheduler output
+        run: bun test tests/integration/linux-standalone-scheduler.test.ts
+        env:
+          AKM_STANDALONE_SCHEDULER_TESTS: "1"
+          AKM_STANDALONE_TEST_BIN: ${{ github.workspace }}/candidate-binary/${{ matrix.artifact }}
+          AKM_CANDIDATE_ARCH: ${{ matrix.arch }}
+          AKM_CANDIDATE_VERSION: ${{ env.CANDIDATE_VERSION }}
+
+  macos-launchd:
+    needs: binary-candidates
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+      AKM_NATIVE_TASK_ID: akm-ci-darwin-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+            artifact: akm-darwin-x64
+          - runner: macos-15
+            arch: arm64
+            artifact: akm-darwin-arm64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --omit optional
+      - uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: candidate-binary
+      - run: chmod +x "candidate-binary/$ARTIFACT"
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+      - name: Preserve native launchd home
+        run: |
+          echo "AKM_NATIVE_HOME=$HOME" >> "$GITHUB_ENV"
+          echo "AKM_NATIVE_GATE_DIR=$RUNNER_TEMP/akm-native-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Run exact candidate through a disposable launchd job
+        run: bun test tests/integration/native-scheduler.test.ts
+        env:
+          AKM_NATIVE_SCHEDULER_TESTS: "1"
+          AKM_NATIVE_TEST_BIN: ${{ github.workspace }}/candidate-binary/${{ matrix.artifact }}
+          AKM_CANDIDATE_ARCH: ${{ matrix.arch }}
+          AKM_CANDIDATE_VERSION: ${{ env.CANDIDATE_VERSION }}
+      - name: Unconditionally remove this launchd gate job
+        if: always()
+        run: |
+          label="com.akm.task.$AKM_NATIVE_TASK_ID"
+          launchctl bootout "gui/$(id -u)/$label" || true
+          launchctl enable "gui/$(id -u)/$label" || true
+          rm -f "$HOME/Library/LaunchAgents/$label.plist"
+          rm -rf "$AKM_NATIVE_GATE_DIR"
+
+  windows-task-scheduler:
+    needs: [binary-candidates, package-candidate]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+      AKM_NATIVE_NODE_TASK_ID: akm-ci-node-win32-${{ github.run_id }}-${{ github.run_attempt }}
+      AKM_NATIVE_TASK_ID: akm-ci-win32-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Validate candidate version
+        shell: bash
+        run: |
+          if ! node -e 'const v=process.env.CANDIDATE_VERSION ?? ""; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(v)) process.exit(1)'; then
+            echo "Invalid candidate version: $CANDIDATE_VERSION"
+            exit 2
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: bun install --omit optional
+      - uses: actions/download-artifact@v6
+        with:
+          name: akm-windows-x64.exe
+          path: candidate-binary
+      - uses: actions/download-artifact@v6
+        with:
+          name: akm-package-candidate
+          path: candidate-package
+      - name: Preserve native Task Scheduler home
+        shell: pwsh
+        run: |
+          "AKM_NATIVE_HOME=$env:USERPROFILE" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AKM_NATIVE_GATE_DIR=$env:RUNNER_TEMP\akm native win32 $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Install the packed npm candidate with HOME absent
+        shell: pwsh
+        run: |
+          $tarballs = @(Get-ChildItem -LiteralPath "candidate-package" -Filter "*.tgz")
+          if ($tarballs.Count -ne 1) { throw "Expected exactly one package candidate" }
+          $installDir = Join-Path $env:RUNNER_TEMP "akm packed npm $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"
+          $npmCache = Join-Path $installDir "npm cache"
+          New-Item -ItemType Directory -Path $installDir, $npmCache -Force | Out-Null
+          $savedHome = $env:HOME
+          Remove-Item Env:HOME -ErrorAction SilentlyContinue
+          try {
+            $env:npm_config_cache = $npmCache
+            npm install --prefix $installDir --no-audit --no-fund $tarballs[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "npm candidate install failed with exit $LASTEXITCODE" }
+          } finally {
+            if ($null -ne $savedHome) { $env:HOME = $savedHome }
+          }
+          $packedBin = Join-Path $installDir "node_modules\.bin\akm.cmd"
+          if (-not (Test-Path -LiteralPath $packedBin)) { throw "Missing packed launcher: $packedBin" }
+          "AKM_NATIVE_NODE_BIN=$((Get-Command node).Source)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AKM_NATIVE_NODE_GATE_DIR=$env:RUNNER_TEMP\akm native node win32 $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AKM_NATIVE_PACKAGE_DIR=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AKM_NATIVE_PACKED_BIN=$packedBin" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Run exact standalone and packed Node candidates through disposable Task Scheduler jobs
+        shell: pwsh
+        run: bun test tests/integration/native-scheduler.test.ts
+        env:
+          AKM_NATIVE_SCHEDULER_TESTS: "1"
+          AKM_NATIVE_TEST_BIN: ${{ github.workspace }}\candidate-binary\akm-windows-x64.exe
+          AKM_CANDIDATE_ARCH: x64
+          AKM_CANDIDATE_VERSION: ${{ env.CANDIDATE_VERSION }}
+      - name: Unconditionally remove this Task Scheduler gate job
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($taskName in @($env:AKM_NATIVE_TASK_ID, $env:AKM_NATIVE_NODE_TASK_ID)) {
+            $task = Get-ScheduledTask -TaskPath "\akm\" -TaskName $taskName -ErrorAction SilentlyContinue
+            if ($null -ne $task) {
+              Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
+              Unregister-ScheduledTask -InputObject $task -Confirm:$false -ErrorAction SilentlyContinue
+            }
+          }
+          Remove-Item -LiteralPath $env:AKM_NATIVE_GATE_DIR -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $env:AKM_NATIVE_NODE_GATE_DIR -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $env:AKM_NATIVE_PACKAGE_DIR -Recurse -Force -ErrorAction SilentlyContinue

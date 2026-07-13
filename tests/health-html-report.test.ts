@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../src/commands/health";
@@ -17,6 +17,10 @@ import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmS
 
 let storage: IsolatedAkmStorage;
 let cleanup: Cleanup = () => {};
+
+// Each fixture invokes the real health DB round-trip probe. Loaded CI runners
+// can exceed Bun's 5s default even though the renderer itself is synchronous.
+setDefaultTimeout(30_000);
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();

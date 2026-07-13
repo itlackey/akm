@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from "../src/core/logs-db";
 import { createMigrationBackup } from "../src/core/migration-backup";
 import type { AgentRunResult } from "../src/integrations/agent";
@@ -170,6 +171,99 @@ describe("runTask — workflow target", () => {
       expect(result.status).toBe(expected);
     });
   }
+});
+
+describe("runTask — 0.8 command target", () => {
+  test("runs a nested akm command with a stripped scheduler PATH", async () => {
+    writeTask("legacy-self", 'schedule: "@daily"\ncommand: akm --version\nenabled: true\n');
+
+    const result = await withEnv({ PATH: "/usr/bin:/bin" }, () => runTask("legacy-self", { stashDir, logDir }));
+
+    expect(result.status).toBe("completed");
+    expect(result.detail?.exitCode).toBe(0);
+    expect(fs.readFileSync(result.log, "utf8")).toContain("0.9.0");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "resolves only the command position after env options and assignments",
+    async () => {
+      writeTask(
+        "legacy-env-self",
+        [
+          'schedule: "@daily"',
+          `command: ${JSON.stringify(["env", "--unset", "akm", "MODE=fast", "akm", "--version"])}`,
+          "enabled: true",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await withEnv({ PATH: "/usr/bin:/bin" }, () => runTask("legacy-env-self", { stashDir, logDir }));
+
+      expect(result.status).toBe("completed");
+      expect(result.detail?.exitCode).toBe(0);
+      expect(fs.readFileSync(result.log, "utf8")).toContain("0.9.0");
+    },
+  );
+
+  test("executes an explicitly selected akm path without replacing it", async () => {
+    const vendorDir = path.join(tmpRoot, "vendor");
+    const executable = path.join(vendorDir, process.platform === "win32" ? "akm.exe" : "akm");
+    fs.mkdirSync(vendorDir, { recursive: true });
+    try {
+      fs.linkSync(process.execPath, executable);
+    } catch {
+      fs.copyFileSync(process.execPath, executable);
+    }
+    if (process.platform !== "win32") fs.chmodSync(executable, 0o755);
+    writeTask(
+      "explicit-akm",
+      [
+        'schedule: "@daily"',
+        `command: ${JSON.stringify([executable, "-e", 'console.log("explicit vendor akm")'])}`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runTask("explicit-akm", { stashDir, logDir });
+
+    expect(result.status).toBe("completed");
+    expect(fs.readFileSync(result.log, "utf8")).toContain("explicit vendor akm");
+  });
+
+  test("uses the platform temp directory when HOME is absent", async () => {
+    const fallbackDir = path.join(tmpRoot, "command-cwd");
+    fs.mkdirSync(fallbackDir, { recursive: true });
+    writeTask(
+      "portable-cwd",
+      [
+        "version: 2",
+        'schedule: "@daily"',
+        `command: ${JSON.stringify([process.execPath, "-e", "console.log('cwd=' + process.cwd())"])}`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = await withEnv({ HOME: undefined, TMPDIR: fallbackDir, TEMP: fallbackDir, TMP: fallbackDir }, () =>
+      runTask("portable-cwd", { stashDir, logDir }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${fallbackDir}`);
+  });
+
+  test("does not fall back to PATH when a bare self-invocation cannot be resolved", async () => {
+    writeTask("unresolved-self", 'schedule: "@daily"\ncommand: akm --version\nenabled: true\n');
+    const execPath = process.execPath;
+
+    try {
+      process.execPath = "";
+      await expect(withEnv({ PATH: "" }, () => runTask("unresolved-self", { stashDir, logDir }))).rejects.toThrow(
+        "Cannot resolve absolute path to the akm binary",
+      );
+    } finally {
+      process.execPath = execPath;
+    }
+  });
 });
 
 describe("runTask — prompt target", () => {
@@ -424,8 +518,40 @@ describe("runTask — prompt target", () => {
   });
 });
 
-describe("runTask — disabled tasks no-op", () => {
-  test("disabled task is recorded but not dispatched", async () => {
+describe("runTask — disabled tasks", () => {
+  test("manual invocation dispatches an intentionally disabled task", async () => {
+    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
+    let called = false;
+    const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
+      called = true;
+      return {
+        run: {
+          id: "manual-disabled",
+          workflowRef: ref,
+          workflowTitle: "Manual disabled run",
+          status: "completed",
+          params,
+          createdAt: "2025-01-01T00:00:00Z",
+          updatedAt: "2025-01-01T00:00:00Z",
+          completedAt: "2025-01-01T00:00:00Z",
+          currentStepId: null,
+        },
+        workflow: { ref, title: "Manual disabled run", steps: [] },
+      };
+    };
+
+    const result = await runTask("off", {
+      stashDir,
+      logDir,
+      startWorkflowRunImpl: fakeWf as never,
+      now: () => new Date("2025-01-01T00:00:00Z"),
+    });
+
+    expect(called).toBe(true);
+    expect(result.status).toBe("completed");
+  });
+
+  test("scheduler-generated invocation is recorded but not dispatched", async () => {
     writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
     let called = false;
     const fakeWf = async () => {
@@ -437,6 +563,7 @@ describe("runTask — disabled tasks no-op", () => {
       logDir,
       startWorkflowRunImpl: fakeWf as never,
       now: () => new Date("2025-01-01T00:00:00Z"),
+      scheduled: true,
     });
     expect(called).toBe(false);
     expect(result.status).toBe("disabled");
@@ -454,5 +581,43 @@ describe("resolveAkmInvocation", () => {
   test("AKM_BIN takes precedence", () => {
     const r = resolveAkmInvocation({ env: { AKM_BIN: "/abs/akm" } });
     expect(r).toEqual({ argv: ["/abs/akm"], via: "AKM_BIN" });
+  });
+
+  test("uses the Node wrapper when a scheduler is installed from Node", () => {
+    const fixtureDir = path.join(tmpRoot, "invocation-dist");
+    const tasksFixtureDir = path.join(fixtureDir, "tasks");
+    fs.mkdirSync(tasksFixtureDir, { recursive: true });
+    fs.writeFileSync(path.join(tasksFixtureDir, "resolve-akm-bin.js"), "");
+    fs.writeFileSync(path.join(fixtureDir, "cli.js"), "");
+    fs.writeFileSync(path.join(fixtureDir, "cli-node.mjs"), "");
+    const r = resolveAkmInvocation({
+      env: {},
+      runtime: "node",
+      execPath: "/usr/bin/node",
+      cliEntryUrl: pathToFileURL(path.join(tasksFixtureDir, "resolve-akm-bin.js")).href,
+    });
+    expect(r.argv).toEqual(["/usr/bin/node", path.join(fixtureDir, "cli-node.mjs")]);
+  });
+
+  test("uses the source CLI entry when running through Bun", () => {
+    const r = resolveAkmInvocation({
+      env: {},
+      runtime: "bun",
+      execPath: "/usr/bin/bun",
+      mainPath: path.resolve(import.meta.dir, "../src/cli.ts"),
+      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+    });
+    expect(r.argv).toEqual(["/usr/bin/bun", path.resolve(import.meta.dir, "../src/cli.ts")]);
+  });
+
+  test("uses only the executable for a Bun standalone build", () => {
+    const r = resolveAkmInvocation({
+      env: {},
+      runtime: "bun",
+      execPath: "/opt/akm",
+      mainPath: "/$bunfs/root/src/cli.ts",
+      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+    });
+    expect(r).toEqual({ argv: ["/opt/akm"], via: "execPath" });
   });
 });

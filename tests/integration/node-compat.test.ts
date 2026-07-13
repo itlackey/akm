@@ -69,6 +69,15 @@ function nodeRun(args: string[], env: Record<string, string>, stdin?: string): N
   };
 }
 
+function generatedCronCommand(crontab: string, id: string): string {
+  const lines = crontab.split(/\r?\n/);
+  const begin = lines.indexOf(`# akm:task ${id} BEGIN`);
+  const body = lines[begin + 1] ?? "";
+  const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
+  if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
+  return match[1];
+}
+
 function parseJson(text: string): unknown {
   try {
     return JSON.parse(text.trim());
@@ -646,6 +655,128 @@ describe("tasks parity", () => {
     const bunJson = parseJson(bunResult.stdout) as { shape?: string } | undefined;
     expect(nodeJson?.shape).toBe(bunJson?.shape);
   });
+
+  test.skipIf(!ENABLED)("tasks doctor registers the supported Node wrapper", () => {
+    setupStorage();
+    const result = nodeRun(["tasks", "doctor"], nodeEnv);
+    assertNoBoundaryLeak(result, "tasks doctor");
+    expect(result.status).toBe(0);
+    const json = parseJson(result.stdout) as { akm?: { argv?: string[] } } | undefined;
+    expect(path.basename(json?.akm?.argv?.[0] ?? "")).toMatch(/^node(?:\.exe)?$/);
+    expect(json?.akm?.argv?.[1]).toBe(CLI_ENTRY);
+  });
+
+  test.skipIf(!ENABLED || process.platform !== "linux")(
+    "generated scheduler command runs a nested akm through the Node fallback",
+    () => {
+      setupStorage();
+      const root = path.dirname(stashDir);
+      const fakeBin = path.join(root, "fake-bin");
+      const fakeCrontab = path.join(root, "crontab");
+      const launcher = path.join(REPO_ROOT, "dist", "akm");
+      const resolvedNode = Bun.which(NODE_BIN);
+      if (!resolvedNode) throw new Error(`Could not resolve Node executable: ${NODE_BIN}`);
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "crontab"),
+        [
+          "#!/bin/sh",
+          `if [ "\${1:-}" = "-l" ]; then`,
+          `  if [ -f "${fakeCrontab}" ]; then cat "${fakeCrontab}"; exit 0; fi`,
+          '  echo "no crontab for sandbox" >&2',
+          "  exit 1",
+          "fi",
+          `if [ "\${1:-}" = "-" ]; then cat > "${fakeCrontab}"; exit $?; fi`,
+          "exit 2",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const schedulerPath = [fakeBin, path.dirname(launcher), path.dirname(resolvedNode), "/usr/bin", "/bin"].join(
+        path.delimiter,
+      );
+      expect(schedulerPath.split(path.delimiter)).not.toContain(path.dirname(process.execPath));
+      const schedulerEnv = {
+        ...nodeEnv,
+        FAKE_CRONTAB: fakeCrontab,
+        PATH: schedulerPath,
+      };
+      const schedulerProcessEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ...schedulerEnv,
+        AKM_OUTPUT: "json",
+        NO_COLOR: "1",
+        CI: "1",
+      };
+      delete schedulerProcessEnv.BUN_TEST;
+      delete schedulerProcessEnv.NODE_ENV;
+      const launcherRun = (args: string[]): NodeResult => {
+        const result = nodeSpawnSync(resolvedNode, [launcher, ...args], {
+          env: schedulerProcessEnv,
+          encoding: "utf8",
+          timeout: 120_000,
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        return {
+          status: result.status ?? -1,
+          stdout: String(result.stdout ?? ""),
+          stderr: String(result.stderr ?? ""),
+        };
+      };
+      const id = `node-fallback-${process.pid}-${Date.now()}`;
+      let taskAdded = false;
+
+      try {
+        const crontabProbe = nodeSpawnSync("crontab", ["-"], {
+          env: schedulerProcessEnv,
+          input: "# node fallback crontab probe\n",
+          encoding: "utf8",
+        });
+        expect(crontabProbe.status, String(crontabProbe.stderr)).toBe(0);
+        expect(fs.readFileSync(fakeCrontab, "utf8")).toContain("node fallback crontab probe");
+        fs.rmSync(fakeCrontab);
+
+        const doctor = launcherRun(["tasks", "doctor"]);
+        assertNoBoundaryLeak(doctor, "Node fallback tasks doctor");
+        expect(doctor.status).toBe(0);
+        expect((parseJson(doctor.stdout) as { akm?: { argv?: string[] } })?.akm?.argv?.[1]).toBe(CLI_ENTRY);
+
+        const add = launcherRun(["tasks", "add", id, "--schedule", "@daily", "--command", "akm --version"]);
+        assertNoBoundaryLeak(add, "Node fallback tasks add");
+        expect(add.status).toBe(0);
+        taskAdded = true;
+
+        expect(
+          fs.existsSync(fakeCrontab),
+          `scheduler output missing\nadd stdout:\n${add.stdout}\nadd stderr:\n${add.stderr}`,
+        ).toBe(true);
+        const crontab = fs.readFileSync(fakeCrontab, "utf8");
+        expect(crontab).toContain(CLI_ENTRY);
+        const scheduled = nodeSpawnSync("/bin/sh", ["-c", generatedCronCommand(crontab, id)], {
+          env: schedulerProcessEnv,
+          encoding: "utf8",
+          timeout: 120_000,
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        expect(
+          scheduled.status,
+          `generated Node scheduler command\nstdout:\n${scheduled.stdout}\nstderr:\n${scheduled.stderr}`,
+        ).toBe(0);
+
+        const history = launcherRun(["tasks", "history", "--id", id, "--limit", "1"]);
+        expect(history.status).toBe(0);
+        const row = (parseJson(history.stdout) as { rows?: Array<{ status: string; log: string }> })?.rows?.[0];
+        expect(row?.status).toBe("completed");
+        expect(fs.readFileSync(row?.log as string, "utf8")).toContain(
+          (JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { version: string }).version,
+        );
+      } finally {
+        if (taskAdded) launcherRun(["tasks", "remove", id]);
+      }
+    },
+    180_000,
+  );
 });
 
 // ── setup (spawnSync + writeResponseToFile) ───────────────────────────────────

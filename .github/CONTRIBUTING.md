@@ -30,13 +30,17 @@ For local development, prefer a shell alias over a wrapper symlink/script:
 alias akm='bun /home/founder3/code/github/itlackey/akm/src/cli.ts'
 ```
 
-If you choose a wrapper file instead, **do not** make it a symlink to `~/.bun/bin/akm`. Bun's global install chain is:
+If you choose a wrapper file instead, **do not** make it a symlink to a
+package-manager global `akm`. A global npm install ultimately links its
+platform shim to the package launcher:
 
 ```
-~/.local/bin/akm  →  ~/.bun/bin/akm  →  ~/.bun/install/global/node_modules/akm-cli/dist/cli.js
+<global bin>/akm  →  <global modules>/akm-cli/dist/akm
 ```
 
-A symlink into that chain means any `bun install -g akm-cli` (or `akm upgrade`) silently replaces what `akm` runs with the published compiled bundle rather than your local source. The alias form avoids that entire class of problem.
+A symlink into that chain means any `npm install -g akm-cli` (or `akm upgrade`)
+silently replaces what `akm` runs with the published package rather than your
+local source. The alias form avoids that entire class of problem.
 
 ### Running Tests
 

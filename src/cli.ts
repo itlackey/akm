@@ -3,9 +3,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: akm-cli 0.9 runs on Bun (primary) and Node.js >= 20 (#465,
-// #560). The runtime boundary (src/runtime.ts, src/storage/database.ts) makes
-// the Node path additive. Under Node the CLI must be launched via the
+// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 20.12
+// (#465, #560), then its launcher prefers a working Bun >= 1.0 when available.
+// The runtime boundary (src/runtime.ts, src/storage/database.ts) supports both.
+// Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
@@ -20,12 +21,11 @@
     const nodeOk = major > 20 || (major === 20 && (minor > 12 || (minor === 12 && patch >= 0)));
     if (!nodeOk) {
       console.error(
-        "\n  ERROR: akm-cli requires the Bun runtime (https://bun.sh) or Node.js >= 20.12.\n" +
+        "\n  ERROR: the akm-cli npm package requires Node.js >= 20.12.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
-          "  Install options:\n" +
-          "    1. Bun:    curl -fsSL https://bun.sh/install | bash  &&  bun install -g akm-cli\n" +
-          "    2. Node:   upgrade to Node.js 20.12 or newer (https://nodejs.org)\n" +
-          "    3. Binary: curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n",
+          "  Bun >= 1.0 is optional for execution; it does not replace the Node.js bootstrap.\n" +
+          "  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\n" +
+          "    curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash\n",
       );
       process.exit(1);
     }
@@ -75,7 +75,7 @@ process.on("uncaughtException", (err) => {
 import fs from "node:fs";
 import path from "node:path";
 import { type ArgsDef, defineCommand, runMain } from "citty";
-import { findCittyTopLevelCommand } from "./cli/parse-args";
+import { findCittyTopLevelCommand, findCittyTopLevelCommandIndex } from "./cli/parse-args";
 import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { backupCommand } from "./commands/backup-cli";
@@ -117,6 +117,7 @@ import { workflowCommand } from "./commands/workflow-cli";
 import { bestEffort } from "./core/best-effort";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
+import { assertNoPendingMigrationOperation } from "./core/migration-operation";
 import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
@@ -595,12 +596,23 @@ export const main = defineCommand({
 
 const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
 
+function isTaskRunWithId(argv: readonly string[]): boolean {
+  const args = argv.slice(2);
+  const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
+  const command = commandIndex >= 0 ? args[commandIndex] : undefined;
+  if (command !== "tasks" && command !== "task") return false;
+  const taskArgs = args.slice(commandIndex + 1);
+  return taskArgs[0] === "run" && typeof taskArgs[1] === "string" && !taskArgs[1].startsWith("-");
+}
+
 /** Recovery/setup surfaces must remain reachable when config.json is invalid. */
 export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   const args = argv.slice(2);
   if (args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-v")) return true;
-  const command = findCittyTopLevelCommand([...args], MAIN_TOP_LEVEL_ARGS);
+  const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
+  const command = commandIndex >= 0 ? args[commandIndex] : undefined;
   if (command === "setup" || command === "backup" || command === "migrate") return true;
+  if (isTaskRunWithId(argv)) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));
@@ -637,6 +649,7 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // rather than letting the raw exception escape with a stack trace.
   try {
     applyEarlyStderrFlags(process.argv);
+    if (isTaskRunWithId(process.argv)) assertNoPendingMigrationOperation();
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
   } catch (error: unknown) {

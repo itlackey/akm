@@ -133,15 +133,196 @@ describe("parseTaskDocument", () => {
     }
   });
 
-  test("rejects missing or stale v1 versions with the dedicated code", () => {
-    for (const yaml of [
-      'schedule: "@daily"\ncommand: echo old\n',
-      'version: 1\nschedule: "@daily"\ncommand: echo old\n',
-    ]) {
-      expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(
-        "TASK_SCHEMA_VERSION_UNSUPPORTED",
-      );
-    }
+  test("normalizes valid 0.8 command tasks to v2 without changing arbitrary arguments", () => {
+    const task = parseTaskDocument({
+      yaml: [
+        'schedule: "@daily"',
+        "command: env MODE=fast akm improve --profile=quick --auto-accept safe",
+        'enabled: "true"',
+        "tags: scheduled, improve",
+        "timeoutMs: 0",
+      ].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+    expect(task.version).toBe(2);
+    expect(task.enabled).toBe(false);
+    expect(task.tags).toEqual(["scheduled", "improve"]);
+    expect(task.timeoutMs).toBeNull();
+    expect(task.target).toEqual({
+      kind: "command",
+      cmd: ["env", "MODE=fast", "akm", "improve", "--strategy=quick", "--auto-accept", "safe"],
+    });
+  });
+
+  test("normalizes 0.8 improve flags when bare akm follows env options and assignments", () => {
+    const command = [
+      "/usr/bin/env",
+      "--ignore-environment",
+      "--unset",
+      "OLD_MODE",
+      "MODE=fast",
+      "akm.exe",
+      "improve",
+      "--profile",
+      "quick",
+      "--input=/opt/vendor/akm",
+    ];
+    const task = parseTaskDocument({
+      yaml: ['schedule: "@daily"', `command: ${JSON.stringify(command)}`].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+
+    expect(task.target).toEqual({
+      kind: "command",
+      cmd: [
+        "/usr/bin/env",
+        "--ignore-environment",
+        "--unset",
+        "OLD_MODE",
+        "MODE=fast",
+        "akm.exe",
+        "improve",
+        "--strategy",
+        "quick",
+        "--input=/opt/vendor/akm",
+      ],
+    });
+  });
+
+  test.each([
+    [
+      "boolean global options",
+      ["akm", "--quiet", "--verbose", "improve", "--profile", "quick"],
+      ["akm", "--quiet", "--verbose", "improve", "--strategy", "quick"],
+    ],
+    [
+      "negative boolean global options",
+      ["akm", "--no-quiet", "--no-verbose", "improve", "--profile", "quick"],
+      ["akm", "--no-quiet", "--no-verbose", "improve", "--strategy", "quick"],
+    ],
+    [
+      "inline boolean global options",
+      ["akm", "--quiet=false", "--verbose=false", "improve", "--profile", "quick"],
+      ["akm", "--quiet=false", "--verbose=false", "improve", "--strategy", "quick"],
+    ],
+    [
+      "global options with separate values",
+      ["akm", "--format", "json", "--detail", "brief", "improve", "--profile=quick"],
+      ["akm", "--format", "json", "--detail", "brief", "improve", "--strategy=quick"],
+    ],
+    [
+      "global options with inline values",
+      ["akm", "--output=result.json", "--shape=agent", "improve", "--profile", "quick"],
+      ["akm", "--output=result.json", "--shape=agent", "improve", "--strategy", "quick"],
+    ],
+  ])("normalizes 0.8 improve flags after valid global options (%s)", (_label, command, expected) => {
+    const task = parseTaskDocument({
+      yaml: ['schedule: "@daily"', `command: ${JSON.stringify(command)}`].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+
+    expect(task.target).toEqual({ kind: "command", cmd: expected });
+  });
+
+  test.each([
+    ["absolute executable", ["/opt/retained-0.8/akm", "improve", "--profile", "quick"]],
+    ["relative executable", ["./akm", "improve", "--profile=quick"]],
+    [
+      "env-wrapped absolute executable",
+      ["env", "MODE=fast", "/opt/retained-0.8/akm", "--quiet", "improve", "--profile", "quick"],
+    ],
+  ])("preserves an operator-owned 0.8 command using an explicit AKM path (%s)", (_label, command) => {
+    const task = parseTaskDocument({
+      yaml: ['schedule: "@daily"', `command: ${JSON.stringify(command)}`].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+
+    expect(task.target).toEqual({ kind: "command", cmd: command });
+  });
+
+  test.each([
+    ["env option value", ["env", "--unset", "akm", "node", "improve", "--profile", "quick"]],
+    ["non-AKM path", ["/opt/vendor/not-akm", "improve", "--profile", "quick"]],
+    ["global option operand", ["akm", "--output", "improve", "--profile", "quick"]],
+  ])("does not normalize a non-executable AKM token or option operand (%s)", (_label, command) => {
+    const task = parseTaskDocument({
+      yaml: ['schedule: "@daily"', `command: ${JSON.stringify(command)}`].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+
+    expect(task.target).toEqual({ kind: "command", cmd: command });
+  });
+
+  test.each([
+    "profile: [opencode]",
+    "profile: { name: opencode }",
+  ])("keeps rejecting a non-scalar 0.8 prompt profile: %s", (profile) => {
+    const yaml = ['schedule: "@daily"', "prompt: Review this", profile].join("\n");
+    expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/prompt.yml", id: "prompt" })).toThrow(
+      'Key "profile" must be a string',
+    );
+  });
+
+  test("does not apply 0.8 flag normalization to a v2 command", () => {
+    const command = ["akm", "improve", "--profile", "user-defined-argument"];
+    const task = parseTaskDocument({
+      yaml: ["version: 2", 'schedule: "@daily"', `command: ${JSON.stringify(command)}`].join("\n"),
+      filePath: "/stash/tasks/x.yml",
+      id: "x",
+    });
+
+    expect(task.target).toEqual({ kind: "command", cmd: command });
+  });
+
+  test("normalizes 0.8 prompt profile and JSON workflow params", () => {
+    const prompt = parseTaskDocument({
+      yaml: 'version: 1\nschedule: "@daily"\nprompt: Review this\nprofile: opencode\n',
+      filePath: "/stash/tasks/prompt.yml",
+      id: "prompt",
+    });
+    expect(prompt.target).toMatchObject({ kind: "prompt", engine: "opencode" });
+
+    const workflow = parseTaskDocument({
+      yaml: 'schedule: "@daily"\nworkflow: workflow:backup\nparams: \'{"region":"us"}\'\n',
+      filePath: "/stash/tasks/workflow.yml",
+      id: "workflow",
+    });
+    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflow:backup", params: { region: "us" } });
+  });
+
+  test("preserves the permissive 0.8 field contract without weakening v2", () => {
+    const command = parseTaskDocument({
+      yaml: [
+        "schedule: ' @daily '",
+        "command: [akm, --version, '', 7]",
+        "timeoutMs: 1.5",
+        "unknownLegacyKey: ignored",
+      ].join("\n"),
+      filePath: "/stash/tasks/command.yml",
+      id: "command",
+    });
+    expect(command.schedule).toBe("@daily");
+    expect(command.target).toEqual({ kind: "command", cmd: ["akm", "--version"] });
+    expect(command.timeoutMs).toBe(1.5);
+
+    const workflow = parseTaskDocument({
+      yaml: 'schedule: "@daily"\nworkflow: " workflow:backup "\nprofile: ignored\ntimeoutMs: 20\n',
+      filePath: "/stash/tasks/workflow.yml",
+      id: "workflow",
+    });
+    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflow:backup", params: {} });
+  });
+
+  test("rejects unknown future task schema versions", () => {
+    const yaml = 'version: 3\nschedule: "@daily"\ncommand: echo future\n';
+    expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(
+      "TASK_SCHEMA_VERSION_UNSUPPORTED",
+    );
   });
 
   test("rejects profile and wrong-target fields", () => {
@@ -164,6 +345,33 @@ describe("parseTaskDocument", () => {
   test("rejects invalid YAML", () => {
     const yaml = "version: 2\nschedule: [unterminated\n";
     expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
+  });
+
+  test("rejects filesystem-derived ids that the CLI would reject", () => {
+    const yaml = 'version: 2\nschedule: "@daily"\ncommand: echo unsafe\n';
+    try {
+      parseTaskDocument({ yaml, filePath: "/stash/tasks/manual task.yml", id: "manual task" });
+      throw new Error("expected invalid task id rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as UsageError).code).toBe("INVALID_FLAG_VALUE");
+      expect((err as Error).message).toContain('Task id "manual task" is invalid');
+    }
+  });
+
+  test.each([
+    ["daily.yaml", "bare task id"],
+    ["CoM1.backup", "reserved Windows device name"],
+  ])("rejects non-portable filesystem-derived id %s", (id, message) => {
+    const yaml = 'version: 2\nschedule: "@daily"\ncommand: echo unsafe\n';
+    try {
+      parseTaskDocument({ yaml, filePath: `/stash/tasks/${id}.yml`, id });
+      throw new Error("expected invalid task id rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as UsageError).code).toBe("INVALID_FLAG_VALUE");
+      expect((err as Error).message).toContain(message);
+    }
   });
 
   test("rejects unknown keys and non-boolean enabled", () => {

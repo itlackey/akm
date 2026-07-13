@@ -52,6 +52,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
     "graph_f/e/r",
     "orphans",
     "lint_f/fl",
+    "result_status",
   ];
   const rows = runs.map((r) => {
     const totalActions =
@@ -81,6 +82,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
       `${r.graphExtraction.extractedFiles}/${r.graphExtraction.entities}/${r.graphExtraction.relations}`,
       String(r.orphansPurged),
       `${r.lintFixed}/${r.lintFlagged}`,
+      r.resultStatus ?? "valid",
     ];
   });
   return renderTable(headers, rows);
@@ -104,7 +106,14 @@ export function renderWindowCompareMd(windows: WindowResult[], deltas: Record<st
     "improve.memoryInference.skippedNoFacts",
   ]);
   const rows: string[][] = [];
-  for (const path of INTERESTING_DELTA_PATHS) {
+  const paths = [
+    "runs",
+    "improve.resultRows.included",
+    "improve.resultRows.normalized",
+    "improve.resultRows.skipped.invalid",
+    ...INTERESTING_DELTA_PATHS,
+  ];
+  for (const path of paths) {
     const values = windows.map((w) => String(readNumericPath(w, path)));
     const delta = deltas?.[path];
     let deltaStr = "—";

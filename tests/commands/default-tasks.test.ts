@@ -20,6 +20,7 @@ import {
   registerDefaultTasks,
 } from "../../src/commands/tasks/default-tasks";
 import type { TasksAddInput, TasksAddResult, TasksListResult } from "../../src/commands/tasks/tasks";
+import { parseSchedule, type ScheduleBackend } from "../../src/tasks/schedule";
 
 /**
  * An in-memory fake of the task store: `add` records the call and appends to
@@ -142,6 +143,17 @@ describe("registerDefaultTasks (#552)", () => {
     for (const spec of DEFAULT_IMPROVE_TASKS) {
       const call = deps.calls.find((c) => c.id === spec.id);
       expect(String(call?.command)).toContain(`--strategy ${spec.strategy}`);
+    }
+  });
+
+  test("every effective default schedule translates on every backend", async () => {
+    const deps = makeFakeDeps();
+    await registerDefaultTasks({ serverInstall: true, deps });
+
+    for (const call of deps.calls) {
+      for (const backend of ["cron", "launchd", "schtasks"] satisfies ScheduleBackend[]) {
+        expect(() => parseSchedule(call.schedule, backend)).not.toThrow();
+      }
     }
   });
 });

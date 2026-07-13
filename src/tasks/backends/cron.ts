@@ -27,13 +27,18 @@
 // Tests inject a fake exec so unit tests don't touch the real crontab.
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, translateToCron } from "../schedule";
+import {
+  buildScheduledTaskInvocation,
+  resolveScheduledTaskContext,
+  type ScheduledTaskContext,
+} from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
+import { nodeFs } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
 export type CronExecResult = { status: number; stdout: string; stderr: string };
@@ -45,23 +50,36 @@ export interface CronExec {
   write(content: string): CronExecResult;
 }
 
+export interface CronFs {
+  ensureDir(dir: string): void;
+}
+
 export interface CronBackendOptions {
   exec?: CronExec;
+  fs?: CronFs;
   /** Override the absolute log directory. Defaults to {@link getTaskLogDir}. */
   logDir?: string;
   /** Override the akm invocation argv. Tests use this to skip resolution. */
   akmArgv?: string[];
+  /** Override the PATH captured for the scheduled process. Set to false to omit it. */
+  envPath?: string | false;
+  /** Override the resolved non-secret AKM directory context. */
+  scheduledContext?: ScheduledTaskContext;
 }
 
-const BEGIN = (id: string) => `# akm:task ${id} BEGIN`;
-const END = (id: string) => `# akm:task ${id} END`;
+const BEGIN = (id: string) => `# akm:task ${assertCronValue(id)} BEGIN`;
+const END = (id: string) => `# akm:task ${assertCronValue(id)} END`;
 const DISABLED_PREFIX = "# akm:disabled ";
 const BLOCK_RE = /^# akm:task ([\w.@:_-]+) BEGIN$/;
+const BLOCK_END_RE = /^# akm:task ([\w.@:_-]+) END$/;
 
 export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
   const exec = options.exec ?? defaultCronExec();
+  const fsLike = options.fs ?? nodeFs();
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
+  const envPath = options.envPath === false ? undefined : (options.envPath ?? process.env.PATH);
+  const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
 
   return {
     name: "cron",
@@ -69,29 +87,29 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
       // Create the log directory before writing the crontab line — cron
       // appends with `>>` and the surrounding shell will fail the entire
       // entry if the parent directory doesn't exist.
-      ensureDir(logDir);
-      const cronLine = buildCronLine(task, akmArgv, logDir);
+      fsLike.ensureDir(logDir);
+      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext);
       const existing = readCrontab(exec);
       const block = renderBlock(task.id, cronLine, task.enabled);
       const next = upsertBlock(existing, task.id, block);
-      writeCrontab(exec, next);
+      replaceCrontab(exec, existing, next);
     },
     uninstall(id: string) {
       const existing = readCrontab(exec);
       const next = removeBlock(existing, id);
-      writeCrontab(exec, next);
+      replaceCrontab(exec, existing, next);
     },
     setEnabled(id: string, enabled: boolean) {
       const existing = readCrontab(exec);
       const next = toggleBlock(existing, id, enabled);
-      writeCrontab(exec, next);
+      replaceCrontab(exec, existing, next);
     },
     list(): InstalledTaskRef[] {
       const existing = readCrontab(exec);
       return listBlocks(existing).map(({ id, body }) => ({ id, signature: normalizeSignature(body) }));
     },
     expectedSignature(task: TaskDocument): string {
-      const cronLine = buildCronLine(task, akmArgv, logDir);
+      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext);
       return normalizeSignature(cronBlockBody(cronLine, task.enabled));
     },
   };
@@ -99,12 +117,23 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
 
 // ── helpers (exported for tests) ────────────────────────────────────────────
 
-export function buildCronLine(task: TaskDocument, akmArgv: string[], logDir: string): string {
+export function buildCronLine(
+  task: TaskDocument,
+  akmArgv: string[],
+  logDir: string,
+  envPath: string | undefined,
+  scheduledContext: ScheduledTaskContext,
+): string {
   const spec = parseSchedule(task.schedule, "cron");
   const cronExpr = translateToCron(spec);
   const logPath = path.join(logDir, `${task.id}.log`);
-  const cmd = [...akmArgv, "tasks", "run", task.id].map((part) => quoteForCron(part)).join(" ");
-  return `${cronExpr} ${cmd} >> ${quoteForCron(logPath)} 2>&1`;
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext);
+  const cmd = invocation.argv.map((part) => quoteForCron(part)).join(" ");
+  const contextPrefix = Object.entries(invocation.environment)
+    .map(([key, value]) => `${key}=${quoteForCron(value)}`)
+    .join(" ");
+  const pathPrefix = envPath === undefined ? "" : `PATH=${quoteForCron(envPath)} `;
+  return `${cronExpr} ${contextPrefix} ${pathPrefix}${cmd} >> ${quoteForCron(logPath)} 2>&1`;
 }
 
 /** The crontab line as it appears inside a block — commented when disabled. */
@@ -122,26 +151,51 @@ export function renderBlock(id: string, cronLine: string, enabled: boolean): str
  * drift signature, and exported for tests.
  */
 export function listBlocks(existing: string): Array<{ id: string; body: string }> {
-  const out: Array<{ id: string; body: string }> = [];
+  return parseBlocks(existing).map(({ id, body }) => ({ id, body }));
+}
+
+interface ParsedCronBlock {
+  id: string;
+  body: string;
+  start: number;
+  end: number;
+}
+
+function parseBlocks(existing: string): ParsedCronBlock[] {
+  const out: ParsedCronBlock[] = [];
   const lines = existing.split(/\r?\n/);
   let currentId: string | null = null;
+  let start = -1;
   let body: string[] = [];
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const begin = line.match(BLOCK_RE);
     if (begin) {
+      if (currentId !== null) throw malformedBlockError(currentId);
       currentId = begin[1];
+      start = index;
       body = [];
       continue;
     }
-    if (currentId !== null && line === END(currentId)) {
-      out.push({ id: currentId, body: body.join("\n") });
+    const end = line.match(BLOCK_END_RE);
+    if (end) {
+      if (currentId === null || end[1] !== currentId) throw malformedBlockError(currentId ?? end[1]);
+      out.push({ id: currentId, body: body.join("\n"), start, end: index });
       currentId = null;
+      start = -1;
       body = [];
       continue;
     }
     if (currentId !== null) body.push(line);
   }
+  if (currentId !== null) throw malformedBlockError(currentId);
   return out;
+}
+
+function malformedBlockError(id: string): ConfigError {
+  return new ConfigError(
+    `Crontab contains a malformed akm task block for "${id}"; refusing to modify it.`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 /** Collapse incidental whitespace so signature comparison ignores it. */
@@ -162,26 +216,16 @@ export function upsertBlock(existing: string, id: string, block: string): string
 
 export function removeBlock(existing: string, id: string): string {
   const lines = existing.split(/\r?\n/);
-  const out: string[] = [];
-  let inBlock = false;
-  for (const line of lines) {
-    if (!inBlock && line === BEGIN(id)) {
-      inBlock = true;
-      continue;
-    }
-    if (inBlock && line === END(id)) {
-      inBlock = false;
-      continue;
-    }
-    if (inBlock) continue;
-    out.push(line);
-  }
+  const blocks = parseBlocks(existing).filter((block) => block.id === id);
+  if (blocks.length === 0) return existing;
+  const out = lines.filter((_, index) => !blocks.some((block) => index >= block.start && index <= block.end));
   // Collapse trailing blank lines.
   while (out.length > 0 && out[out.length - 1] === "") out.pop();
   return out.join("\n");
 }
 
 export function toggleBlock(existing: string, id: string, enabled: boolean): string {
+  parseBlocks(existing);
   const lines = existing.split(/\r?\n/);
   const out: string[] = [];
   let inBlock = false;
@@ -213,11 +257,23 @@ export function toggleBlock(existing: string, id: string, enabled: boolean): str
 }
 
 function quoteForCron(part: string): string {
+  assertCronValue(part);
   // crontab passes the rest of the line to /bin/sh -c, so quote anything that
   // isn't a plain shell-safe token. Single-quote and escape embedded single
-  // quotes via the standard shell idiom: `'foo'\''bar'`.
-  if (/^[A-Za-z0-9_\-./@:%=+,]+$/.test(part)) return part;
-  return `'${part.replace(/'/g, `'\\''`)}'`;
+  // quotes via the standard shell idiom: `'foo'\''bar'`. Cron interprets `%`
+  // before the shell, even inside quotes, so close the quote around its escape.
+  if (/^[A-Za-z0-9_\-./@:%=+,]+$/.test(part)) return part.replaceAll("%", "\\%");
+  return `'${part.replace(/'/g, `'\\''`).replace(/%/g, `'\\%'`)}'`;
+}
+
+function assertCronValue(value: string): string {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      throw new ConfigError("Cron values must not contain control characters.", "INVALID_CONFIG_FILE");
+    }
+  }
+  return value;
 }
 
 function readCrontab(exec: CronExec): string {
@@ -245,12 +301,17 @@ function writeCrontab(exec: CronExec, content: string): void {
   }
 }
 
-function ensureDir(dir: string): void {
+function replaceCrontab(exec: CronExec, existing: string, next: string): void {
   try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch {
-    // Best-effort: the install will surface a clearer error if the cron
-    // line later fails at runtime due to a missing redirection target.
+    writeCrontab(exec, next);
+  } catch (err) {
+    try {
+      writeCrontab(exec, existing);
+    } catch (rollbackError) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new AggregateError([err, rollbackError], `${message}; restoring the prior crontab also failed.`);
+    }
+    throw err;
   }
 }
 

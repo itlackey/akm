@@ -73,12 +73,63 @@ export function nodeFs(): NodeFs {
  */
 export function spawnCommand(args: string[]): ExecResult {
   const [bin, ...rest] = args;
-  const r = spawnSync(bin, rest, { encoding: "utf8" });
+  const r = spawnSync(bin, rest);
   return {
     status: r.status ?? 1,
-    stdout: r.stdout ?? "",
-    stderr: r.stderr ?? "",
+    stdout: decodeCommandOutput(r.stdout),
+    stderr: decodeCommandOutput(r.stderr),
   };
+}
+
+/** Decode native command output, including the UTF-16 XML emitted by schtasks. */
+export function decodeCommandOutput(output: string | Buffer | null | undefined): string {
+  if (output === null || output === undefined) return "";
+  if (typeof output === "string") return output.replace(/^\uFEFF/, "");
+  if (output.length === 0) return "";
+
+  if (output[0] === 0xef && output[1] === 0xbb && output[2] === 0xbf) {
+    return output.toString("utf8", 3);
+  }
+  if (output[0] === 0xff && output[1] === 0xfe) {
+    return output.subarray(2).toString("utf16le");
+  }
+  if (output[0] === 0xfe && output[1] === 0xff) {
+    return decodeUtf16Be(output.subarray(2));
+  }
+
+  const pairs = Math.floor(output.length / 2);
+  if (pairs > 1) {
+    let evenNuls = 0;
+    let oddNuls = 0;
+    for (let i = 0; i < pairs * 2; i += 2) {
+      if (output[i] === 0) evenNuls += 1;
+      if (output[i + 1] === 0) oddNuls += 1;
+    }
+    if (oddNuls / pairs > 0.6) return output.toString("utf16le");
+    if (evenNuls / pairs > 0.6) return decodeUtf16Be(output);
+  }
+
+  return output.toString("utf8");
+}
+
+/** Return XML bytes-safe for {@link NodeFs.writeFile}, which always writes UTF-8. */
+export function normalizeXmlForUtf8File(xml: string): string {
+  const source = xml.replace(/^\uFEFF/, "");
+  const declaration = '<?xml version="1.0" encoding="UTF-8"?>';
+  if (/^<\?xml\b[^?]*\?>/i.test(source)) {
+    return source.replace(/^<\?xml\b[^?]*\?>/i, declaration);
+  }
+  return `${declaration}\n${source}`;
+}
+
+function decodeUtf16Be(output: Buffer): string {
+  const evenLength = output.length - (output.length % 2);
+  const swapped = Buffer.allocUnsafe(evenLength);
+  for (let i = 0; i < evenLength; i += 2) {
+    swapped[i] = output[i + 1];
+    swapped[i + 1] = output[i];
+  }
+  return swapped.toString("utf16le");
 }
 
 /**

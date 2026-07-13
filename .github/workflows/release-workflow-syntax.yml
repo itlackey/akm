@@ -1,0 +1,33 @@
+name: Workflow Syntax
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "tests/workflow-release-gates.test.ts"
+      - "tests/release-check.sh"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tests/workflow-release-gates.test.ts"
+      - "tests/release-check.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate GitHub Actions syntax and contexts
+        env:
+          ACTIONLINT_ARCHIVE_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive" -o "$archive"
+          printf '%s  %s\n' "$ACTIONLINT_ARCHIVE_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" actionlint
+          ./actionlint

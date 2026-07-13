@@ -10,6 +10,8 @@ export interface DecodedImproveResult {
   envelope: ImproveResultEnvelope;
   strategy: string | null;
   legacyProfile: string | null;
+  /** True only for interrupted v1 rows persisted before memorySummary existed. */
+  normalizedLegacyPartial: boolean;
 }
 
 const COMMON_FIELDS = [
@@ -56,8 +58,26 @@ const COMMON_FIELDS = [
   "terminated",
 ] as const;
 
-const V1_FIELDS = new Set<string>([...COMMON_FIELDS, "profile", "profileFilteredRefs"]);
+const V1_FIELDS = new Set<string>([...COMMON_FIELDS, "profile", "profileFilteredRefs", "stalenessDetection"]);
 const V2_FIELDS = new Set<string>([...COMMON_FIELDS, "strategy", "strategyFilteredRefs"]);
+const STALENESS_DETECTION_FIELDS = new Set([
+  "considered",
+  "deprecated",
+  "confirmed",
+  "skipped",
+  "durationMs",
+  "warnings",
+]);
+const INTERRUPTED_V1_FIELDS = new Set([
+  "schemaVersion",
+  "ok",
+  "profile",
+  "scope",
+  "dryRun",
+  "plannedRefs",
+  "actions",
+  "terminated",
+]);
 
 function fail(message: string): never {
   throw new Error(`invalid improve-result envelope: ${message}`);
@@ -70,6 +90,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requireExactFields(value: Record<string, unknown>, allowed: Set<string>): void {
   const unknown = Object.keys(value).filter((key) => !allowed.has(key));
   if (unknown.length > 0) fail(`unknown field${unknown.length === 1 ? "" : "s"}: ${unknown.sort().join(", ")}`);
+}
+
+function isKnownInterruptedV1Partial(value: Record<string, unknown>): boolean {
+  if (Object.keys(value).some((key) => !INTERRUPTED_V1_FIELDS.has(key))) return false;
+  if (value.ok !== false || typeof value.dryRun !== "boolean") return false;
+  if (value.profile !== undefined && typeof value.profile !== "string") return false;
+  if (!Array.isArray(value.plannedRefs) || value.plannedRefs.length !== 0) return false;
+  if (!Array.isArray(value.actions) || value.actions.length !== 0) return false;
+  if (!isRecord(value.scope)) return false;
+  if (Object.keys(value.scope).some((key) => key !== "mode" && key !== "value")) return false;
+  if (value.scope.mode !== "all" && value.scope.mode !== "type" && value.scope.mode !== "ref") return false;
+  if (value.scope.value !== undefined && typeof value.scope.value !== "string") return false;
+  if (!isRecord(value.terminated)) return false;
+  if (Object.keys(value.terminated).some((key) => !["reason", "at", "errorMessage"].includes(key))) return false;
+  if (typeof value.terminated.reason !== "string" || typeof value.terminated.at !== "string") return false;
+  return value.terminated.errorMessage === undefined || typeof value.terminated.errorMessage === "string";
 }
 
 function validateCommon(value: Record<string, unknown>): void {
@@ -138,6 +174,30 @@ function validateCommon(value: Record<string, unknown>): void {
   ] as const) {
     if (value[field] !== undefined && !isRecord(value[field])) fail(`${field} must be an object`);
   }
+  if (isRecord(value.terminated)) {
+    requireExactFields(value.terminated, new Set(["reason", "at", "errorMessage"]));
+    if (typeof value.terminated.reason !== "string" || typeof value.terminated.at !== "string") {
+      fail("terminated.reason and terminated.at must be strings");
+    }
+    if (value.terminated.errorMessage !== undefined && typeof value.terminated.errorMessage !== "string") {
+      fail("terminated.errorMessage must be a string when present");
+    }
+  }
+}
+
+function validateV1StalenessDetection(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) fail("stalenessDetection must be an object");
+  const unknown = Object.keys(value).filter((key) => !STALENESS_DETECTION_FIELDS.has(key));
+  if (unknown.length > 0) {
+    fail(`stalenessDetection has unknown field${unknown.length === 1 ? "" : "s"}: ${unknown.sort().join(", ")}`);
+  }
+  for (const field of ["considered", "deprecated", "confirmed", "skipped", "durationMs"] as const) {
+    if (typeof value[field] !== "number") fail(`stalenessDetection.${field} must be a number`);
+  }
+  if (!Array.isArray(value.warnings) || value.warnings.some((warning) => typeof warning !== "string")) {
+    fail("stalenessDetection.warnings must be an array of strings");
+  }
 }
 
 /** Decode the persisted public v1/v2 contract without guessing across versions. */
@@ -153,16 +213,24 @@ export function decodeImproveResult(input: string | unknown): DecodedImproveResu
   if (!isRecord(parsed)) fail("root must be an object");
 
   if (parsed.schemaVersion === 1) {
-    requireExactFields(parsed, V1_FIELDS);
-    validateCommon(parsed);
-    if (parsed.profile !== undefined && typeof parsed.profile !== "string") fail("profile must be a string");
-    if (parsed.profileFilteredRefs !== undefined && !Array.isArray(parsed.profileFilteredRefs)) {
+    let normalized = parsed;
+    let normalizedLegacyPartial = false;
+    if (normalized.memorySummary === undefined && isKnownInterruptedV1Partial(normalized)) {
+      normalized = { ...normalized, memorySummary: { eligible: 0, derived: 0 } };
+      normalizedLegacyPartial = true;
+    }
+    requireExactFields(normalized, V1_FIELDS);
+    validateCommon(normalized);
+    validateV1StalenessDetection(normalized.stalenessDetection);
+    if (normalized.profile !== undefined && typeof normalized.profile !== "string") fail("profile must be a string");
+    if (normalized.profileFilteredRefs !== undefined && !Array.isArray(normalized.profileFilteredRefs)) {
       fail("profileFilteredRefs must be an array");
     }
     return {
-      envelope: parsed as LegacyAkmImproveResult,
+      envelope: normalized as LegacyAkmImproveResult,
       strategy: null,
-      legacyProfile: typeof parsed.profile === "string" ? parsed.profile : null,
+      legacyProfile: typeof normalized.profile === "string" ? normalized.profile : null,
+      normalizedLegacyPartial,
     };
   }
 
@@ -179,6 +247,7 @@ export function decodeImproveResult(input: string | unknown): DecodedImproveResu
       envelope: parsed as unknown as AkmImproveResult,
       strategy: parsed.strategy,
       legacyProfile: null,
+      normalizedLegacyPartial: false,
     };
   }
 

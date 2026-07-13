@@ -43,6 +43,7 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     completed: 0,
     skipped: 0,
     skipReasons: {},
+    resultRows: { total: 0, included: 0, normalized: 0, skipped: { invalid: 0 } },
     plannedRefs: 0,
     strategyFilteredRefs: 0,
     actions: {
@@ -631,6 +632,14 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
 // command file holds no raw SQL. `ImproveRunRow` aliases the owner's row shape.
 type ImproveRunRow = ImproveRunSummaryRow;
 
+function compareImproveRunRecency(a: ImproveRunRow, b: ImproveRunRow): number {
+  const started = a.started_at.localeCompare(b.started_at);
+  if (started !== 0) return started;
+  const completed = (a.completed_at ?? "").localeCompare(b.completed_at ?? "");
+  if (completed !== 0) return completed;
+  return a.id.localeCompare(b.id);
+}
+
 export function summarizeImproveRuns(
   db: Database,
   since: string,
@@ -650,18 +659,35 @@ export function summarizeImproveRuns(
 
   // memorySummary is a whole-stash snapshot per run, so the window value is the
   // MOST RECENT run's snapshot (current state) — not a sum across runs.
-  let latestStartMs = Number.NEGATIVE_INFINITY;
+  let latestCompleteRow: ImproveRunRow | undefined;
   let latestMemorySummary: ImproveHealthMetrics["memorySummary"] | undefined;
   let latestStrategyFilteredRefs = 0;
 
+  if (!accum.resultRows) throw new Error("invariant: improve result-row accounting was not initialized");
+  accum.resultRows.total = rows.length;
+
   for (const row of rows) {
-    const result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
+    let decoded: ReturnType<typeof decodeImproveResult>;
+    try {
+      decoded = decodeImproveResult(row.result_json);
+    } catch {
+      accum.resultRows.skipped.invalid += 1;
+      continue;
+    }
+    accum.resultRows.included += 1;
+    if (decoded.normalizedLegacyPartial) accum.resultRows.normalized += 1;
+    const result = decoded.envelope as unknown as Record<string, unknown>;
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
 
     const startMs = new Date(row.started_at).getTime();
-    if (Number.isFinite(startMs) && startMs >= latestStartMs) {
-      latestStartMs = startMs;
+    if (
+      !decoded.normalizedLegacyPartial &&
+      result.terminated === undefined &&
+      Number.isFinite(startMs) &&
+      (latestCompleteRow === undefined || compareImproveRunRecency(row, latestCompleteRow) > 0)
+    ) {
+      latestCompleteRow = row;
       latestMemorySummary = perRow.memorySummary;
       latestStrategyFilteredRefs = perRow.strategyFilteredRefs;
     }
@@ -719,8 +745,17 @@ export function summarizePhaseDurations(samples: number[]): {
  * Used by `akm health --detail per-run`.
  */
 export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number, taskId: string): ImproveRunSummary {
-  const decoded = decodeImproveResult(row.result_json);
-  const result = decoded.envelope as unknown as Record<string, unknown>;
+  let result: Record<string, unknown> = {};
+  let resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = "invalid";
+  try {
+    const decoded = decodeImproveResult(row.result_json);
+    result = decoded.envelope as unknown as Record<string, unknown>;
+    resultStatus = decoded.normalizedLegacyPartial ? "normalized" : "valid";
+  } catch {
+    // Keep the persisted row visible in per-run output, but do not project its
+    // unknown payload or admit its duration to result-derived denominators.
+    wallTimeMs = 0;
+  }
   const perRow = projectRunMetrics(result);
   finalizeImproveMetrics(perRow);
 
@@ -735,6 +770,8 @@ export function projectImproveRunSummary(row: ImproveRunRow, wallTimeMs: number,
     completedAt: row.completed_at,
     wallTimeMs,
     ok: row.ok === 1,
+    resultStatus,
+    resultComplete: resultStatus === "valid" && result.terminated === undefined,
     strategy: row.strategy,
     legacyProfile: row.legacyProfile,
     scope: {
