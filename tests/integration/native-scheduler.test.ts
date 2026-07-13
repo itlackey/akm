@@ -185,9 +185,12 @@ test.skipIf(!ENABLED)(
       expectSuccess(add, "native tasks add");
       taskAdded = true;
 
+      const installedXml =
+        process.platform === "win32" ? run(["schtasks", "/Query", "/TN", target, "/XML"], env) : undefined;
+      if (installedXml) expectSuccess(installedXml, "schtasks query before sync");
       const sync = run([binary, "tasks", "sync"], env);
       expectSuccess(sync, "native tasks sync after scheduler materialization");
-      expect(JSON.parse(sync.stdout)).toMatchObject({
+      expect(JSON.parse(sync.stdout), installedXml?.stdout).toMatchObject({
         installed: [],
         updated: [],
         unchanged: [id],
