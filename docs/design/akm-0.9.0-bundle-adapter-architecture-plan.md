@@ -4,6 +4,8 @@
 
 Status: APPROVED architecture. This is an implementation plan, not a proposal. Baseline HEAD: `b7877d9` / `cf44e11` (post engine-strategy cutover). Single track, in-branch, no intermediate release.
 
+**Companion spec:** the concrete bundle/adapter *how* — the adapter contract, per-format adapters, indexing, and the **OKF (Open Knowledge Format) foundation** (AKM bundles are OKF bundles; AKM is OKF-compatible by default) — is specified in [`akm-0.9.0-bundle-adapter-spec.md`](./akm-0.9.0-bundle-adapter-spec.md). Read it alongside §2/§7 here.
+
 ---
 
 ## 1. Executive Summary
