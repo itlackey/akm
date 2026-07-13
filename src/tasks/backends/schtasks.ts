@@ -478,7 +478,7 @@ function taskXmlSignature(xml: string): string | undefined {
     if (!triggers || !principals || !settings || !actions) return undefined;
 
     normalizeTriggerBoundaries(triggers);
-    normalizeNativeDefaults(triggers, settings);
+    normalizeNativeDefaults(triggers, principals, settings);
     const enabledElement = findChild(settings, "Enabled");
     const enabledValue = enabledElement ? elementText(enabledElement).toLowerCase() : undefined;
     const enabled = enabledValue === undefined || enabledValue === "true" || enabledValue === "1";
@@ -624,7 +624,7 @@ const MATERIALIZED_SETTING_DEFAULTS: Record<string, string> = {
   executiontimelimit: "PT72H",
   priority: "7",
   compatibility: "Vista",
-  useunifiedschedulingengine: "false",
+  useunifiedschedulingengine: "true",
   disallowstartonremoteappsession: "false",
   volatile: "false",
 };
@@ -636,7 +636,14 @@ const MATERIALIZED_IDLE_DEFAULTS: Record<string, string> = {
   restartonidle: "false",
 };
 
-function normalizeNativeDefaults(triggers: XmlElement, settings: XmlElement): void {
+function normalizeNativeDefaults(triggers: XmlElement, principals: XmlElement, settings: XmlElement): void {
+  for (const principal of elementChildren(principals)) {
+    principal.children = principal.children.filter((child) => {
+      if (typeof child === "string") return true;
+      return child.name.toLowerCase() !== "runlevel" || elementText(child).toLowerCase() !== "leastprivilege";
+    });
+  }
+
   settings.children = settings.children.filter((child) => {
     if (typeof child === "string") return true;
     const name = child.name.toLowerCase();
@@ -648,7 +655,9 @@ function normalizeNativeDefaults(triggers: XmlElement, settings: XmlElement): vo
   for (const trigger of elementChildren(triggers)) {
     trigger.children = trigger.children.filter((child) => {
       if (typeof child === "string") return true;
-      return child.name.toLowerCase() !== "executiontimelimit" || elementText(child) !== "PT72H";
+      const name = child.name.toLowerCase();
+      if (name === "enabled") return elementText(child).toLowerCase() !== "true";
+      return name !== "executiontimelimit" || elementText(child) !== "PT72H";
     });
   }
 }

@@ -412,9 +412,12 @@ describe("schtasks backend signatures", () => {
 
   test("native materialized schema defaults do not create false drift", () => {
     const task = makeTask("*/5 * * * *");
-    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions()).replace(
-      "  <Settings>",
-      `  <Settings>
+    const installedXml = buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", xmlOptions())
+      .replace("      <RunLevel>LeastPrivilege</RunLevel>\n", "")
+      .replace("      <Enabled>true</Enabled>\n      <ScheduleByDay>", "      <ScheduleByDay>")
+      .replace(
+        "  <Settings>",
+        `  <Settings>
     <AllowStartOnDemand>true</AllowStartOnDemand>
     <AllowHardTerminate>true</AllowHardTerminate>
     <StartWhenAvailable>false</StartWhenAvailable>
@@ -426,8 +429,9 @@ describe("schtasks backend signatures", () => {
     <Hidden>false</Hidden>
     <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT72H</ExecutionTimeLimit>
-    <Priority>7</Priority>`,
-    );
+    <Priority>7</Priority>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>`,
+      );
     const backend = SCHTASKS_BACKEND({
       exec: queryExec(installedXml),
       akmArgv: ["C:/akm.exe"],
