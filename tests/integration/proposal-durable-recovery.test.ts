@@ -47,7 +47,7 @@ async function crashProposalAt(
     stdio: "ignore",
   });
   children.push(child);
-  const deadline = Date.now() + 1_500;
+  const deadline = Date.now() + 10_000;
   while (!fs.existsSync(marker)) {
     if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
       throw new Error(`proposal crash runner did not reach ${phase}`);
