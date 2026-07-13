@@ -419,8 +419,8 @@ In-branch chunks. Each chunk: deletion ledger, local green gate (`typecheck + un
 | sources/registry/integrations/setup | −400 to −450 |
 | workflows/storage/DBs/output/health/tasks/cli | −2500 |
 | Adapters + RunContext + shared helpers (adds) | +≈600 |
-| Residual confident deletions folded in (§13.1) | −≈4,300 (+1 MB asset) |
-| **TOTAL (0.9.0)** | **≈ −13,000 to −15,000 net removed** |
+| Residual confident deletions folded in (§13.1) | −≈2,500 (+ 1 MB echarts asset via CDN; HTML report kept) |
+| **TOTAL (0.9.0)** | **≈ −11,000 to −13,000 net removed (+1 MB asset dropped)** |
 | 0.9.1 measurement-pass prove-or-delete tier (§13.2) | up to a further −6,000 to −12,000 |
 
 ### 12.2 Definition of Done
@@ -465,7 +465,7 @@ Pure removals, no design decision. Each is assigned to an existing chunk; add to
 
 | Deletion | Evidence | Chunk | ~LOC |
 |---|---|---|---|
-| HTML health report + vendored `echarts.min.js` (keep JSON + md paths) | `echarts.min.js` = 1,034,102 B inlined by default (`html-report.ts:384`); sole caller `cli.ts:383` for one command | 9 | −1,800 (+1 MB) |
+| Vendored `echarts.min.js` → **CDN** (KEEP the HTML health report — maintainer decision) | `echarts.min.js` = 1,034,102 B inlined by default (`html-report.ts:384`) → replace with a CDN `<script src>` (e.g. jsDelivr pinned version); the report + `md-report`/JSON paths all stay. Caveat: chart rendering then requires network at view time (text/tables still render offline). | 9 | −1 MB asset (report LOC kept) |
 | `recombine`/`synthesis` cross-episodic subsystem — supersedes §5's "keep as learn recipe" | `recombine.ts` 1009 + `recombine-repository.ts` 290 + `migrations.ts:679` table; `default.json:15` enabled:false; sibling measured **0% accept** (`synthesize.json:2`) | 7 | −1,300 |
 | Second workflow codec — collapse classic-markdown into the YAML program codec (markdown is a strict subset → same IR, `ir/freeze.ts:145`) | `renderer.ts:10` "two formats, one asset type"; every op implemented twice | 8 | −650 |
 | Env-gated deterministic embedder facade → test fixture | `deterministic.ts:8` "NEVER used in production (env-gated, off)"; only `AKM_EMBED_DETERMINISTIC=1` reaches it; no config/CLI sets it | 9 | −110 |
