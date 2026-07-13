@@ -95,6 +95,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     eventsCtx,
     improveProfile,
     resolvedPlan,
+    budgetSignal,
   } = args;
 
   // O-1 (#364): compute remaining budget at call time so each sub-call
@@ -199,6 +200,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     stashDir: primaryStashDir,
     config: options.config ?? loadConfig(),
     eventsCtx,
+    targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
     // candidateCount drives the exploration budget. loopRefs is the per-phase
     // set for reflect/distill; pass it so exploration budget is proportional.
@@ -211,6 +213,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     stashDir: primaryStashDir,
     config: options.config ?? loadConfig(),
     eventsCtx,
+    targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
     candidateCount: loopRefs.length,
   });
@@ -283,7 +286,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           const reflectProfileRunner = resolvedPlan.processes.reflect.runner;
           const reflectCallArgs = {
             ref: planned.ref,
-            ...(options.target ? { sourceName: options.target } : {}),
+            ...(options.sourceName ? { sourceName: options.sourceName } : {}),
             ...(options.legacyBareState ? { legacyBareState: true } : {}),
             task: options.task,
             // Active strategy supplies non-engine process tuning.
@@ -296,6 +299,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             // (default off when unset), so the running strategy decides.
             lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
             ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+            signal: budgetSignal,
             runner: reflectProfileRunner ?? null,
             // Attribution: carry the eligibility lane so reflect stamps it on
             // the reflect_invoked event and the persisted proposal.
@@ -427,13 +431,13 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           // the asset changed; reset the counter so the dampener lifts.
           if (isNoChange && eventsCtx?.db) {
             try {
-              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.target));
+              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
             } catch {
               // best-effort: plasticity counter failure never blocks the run
             }
           } else if (reflectResult.ok && eventsCtx?.db) {
             try {
-              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.target));
+              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
             } catch {
               // best-effort
             }
@@ -581,7 +585,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
           () =>
             distillFn({
               ref: planned.ref,
-              ...(options.target ? { sourceName: options.target } : {}),
+              ...(options.sourceName ? { sourceName: options.sourceName } : {}),
               ...(options.legacyBareState ? { legacyBareState: true } : {}),
               ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
               ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
@@ -591,6 +595,7 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
               llmConfig: resolvedPlan.processes.distill.runner
                 ? materializeLlmRunnerConnection(resolvedPlan.processes.distill.runner)
                 : null,
+              signal: budgetSignal,
               // Attribution: carry the eligibility lane so distill stamps it on the
               // distill_invoked event and the persisted proposal.
               ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -617,9 +622,9 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
         if (eventsCtx?.db) {
           try {
             if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
-              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.target));
+              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
             } else if (distillResult.outcome === "queued") {
-              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.target));
+              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
             }
           } catch {
             // best-effort: plasticity counter failure never blocks the run
@@ -723,7 +728,7 @@ export async function runImprovePostLoopStage(args: {
   appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
   cleanupWarnings: string[];
   memoryRefsForInference: Set<string>;
-  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   eventsCtx?: EventsContext;
   /** O-1 (#364): shared wall-clock AbortSignal; forwarded to maintenance passes. */
   budgetSignal?: AbortSignal;
@@ -798,8 +803,7 @@ export async function runImprovePostLoopStage(args: {
   }
 
   // #609 — recombine / synthesize pass. Whole-corpus cross-episodic
-  // generalization. Runs in the post-loop stage under consolidate.lock (it
-  // reads the consolidated corpus and writes proposals). Opt-in: gated on the
+  // generalization. Runs in the post-loop stage under the whole-run lock. Opt-in: gated on the
   // `recombine` process being enabled, whole-stash / type scope (never `ref`),
   // and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
   let recombination: RecombineResult | undefined;
@@ -938,7 +942,7 @@ export async function runImproveMaintenancePasses(args: {
   actionableRefs: ImproveEligibleRef[];
   memoryRefsForInference: Set<string>;
   allWarnings: string[];
-  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   /** D9: true when consolidation ran and wrote at least one record this improve run. */
   consolidationRan?: boolean;
   /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
@@ -996,7 +1000,7 @@ export async function runImproveMaintenancePasses(args: {
       db = undefined;
     }
     try {
-      await reindexFn({ stashDir });
+      await reindexFn({ stashDir, signal: budgetSignal });
     } finally {
       db = openIndexDb();
     }

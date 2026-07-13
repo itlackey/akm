@@ -145,9 +145,13 @@ describe("runAutoAcceptGate — threshold decisions", () => {
 
   test("forwards the resolved named write target to proposal promotion", async () => {
     const promoteFn = mock(async (_stash, _cfg, id: string) => makePromotion(id));
-    const config = { defaultWriteTarget: "team" } as AkmConfig;
+    const config = { defaultWriteTarget: "primary" } as AkmConfig;
 
-    await runAutoAcceptGate([candidate("p1", 0.97)], baseConfig({ config }), promoteFn as never);
+    await runAutoAcceptGate(
+      [candidate("p1", 0.97)],
+      baseConfig({ config, targetSelector: "team" }),
+      promoteFn as never,
+    );
 
     expect(promoteFn).toHaveBeenCalledWith(
       STUB_STASH,

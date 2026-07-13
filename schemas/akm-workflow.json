@@ -86,11 +86,11 @@
       "description": "Provider-specific request fields. Top-level AKM-owned fields are forbidden; credential-shaped keys are forbidden recursively after lowercase/non-alphanumeric normalization.",
       "propertyNames": {
         "not": {
-          "enum": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
+          "enum": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "chattemplatekwargs", "authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
         }
       },
       "additionalProperties": { "$ref": "#/definitions/extraParamValue" },
-      "x-akm-protectedTopLevelNormalizedKeys": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking"],
+      "x-akm-protectedTopLevelNormalizedKeys": ["model", "messages", "temperature", "maxtokens", "responseformat", "stream", "streamoptions", "enablethinking", "chattemplatekwargs"],
       "x-akm-recursivelyForbiddenNormalizedKeys": ["authorization", "headers", "apikey", "token", "password", "secret", "cookie", "setcookie"]
     },
     "extraParamValue": {

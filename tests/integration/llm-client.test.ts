@@ -101,6 +101,31 @@ describe("chatCompletion thinking controls", () => {
     }
   });
 
+  test("rejects an extraParams chat_template_kwargs override before dispatch", async () => {
+    let requestCount = 0;
+    const { url, server } = createRequestServer(() => {
+      requestCount++;
+      return Response.json({ choices: [{ message: { content: "ok" } }] });
+    });
+    try {
+      await expect(
+        chatCompletion(
+          {
+            endpoint: url,
+            model: "test-model",
+            provider: "vllm",
+            extraParams: { chat_template_kwargs: { enable_thinking: true } },
+          },
+          messages,
+          { enableThinking: false },
+        ),
+      ).rejects.toThrow("chat_template_kwargs is protected by AKM");
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("preserves the top-level control for non-vLLM providers", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {

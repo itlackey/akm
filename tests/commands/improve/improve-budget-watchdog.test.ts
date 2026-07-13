@@ -3,7 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { armBudgetWatchdog } from "../../../src/commands/improve/improve";
+import fs from "node:fs";
+import path from "node:path";
+import { akmImprove, armBudgetWatchdog } from "../../../src/commands/improve/improve";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // A deterministic, controllable fake timer so we can exercise the
 // concurrency-sensitive ordering of the H7 (#566) cooperative-drain watchdog
@@ -171,5 +175,63 @@ describe("armBudgetWatchdog (H7 #566)", () => {
     expect(controller.signal.aborted).toBe(false);
     expect(exitCalls).toBe(0);
     expect(timers.pendingCount).toBe(0);
+  });
+});
+
+describe("akmImprove whole-run deadline", () => {
+  test("is active and shared with initial blocking index work", async () => {
+    const storage = withIsolatedAkmStorage();
+    const config = {
+      semanticSearchMode: "off",
+      stashDir: storage.stashDir,
+      defaults: { improveStrategy: "quiet-test" },
+      improve: {
+        strategies: {
+          "quiet-test": {
+            processes: {
+              reflect: { enabled: false },
+              distill: { enabled: false },
+              consolidate: { enabled: false },
+              memoryInference: { enabled: false },
+              graphExtraction: { enabled: false },
+              extract: { enabled: false },
+              validation: { enabled: false },
+              triage: { enabled: false },
+              proactiveMaintenance: { enabled: false },
+              recombine: { enabled: false },
+              procedural: { enabled: false },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+    let receivedSignal: AbortSignal | undefined;
+    let remainingAtIndex: number | undefined;
+
+    try {
+      await akmImprove({
+        stashDir: storage.stashDir,
+        config,
+        timeoutMs: 10_000,
+        ensureIndexFn: async (_stashDir, options) => {
+          receivedSignal = options?.signal;
+          remainingAtIndex = (options?.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
+          expect(fs.existsSync(path.join(storage.stashDir, ".akm", "improve.lock"))).toBe(true);
+          return false;
+        },
+        collectEligibleRefsFn: async () => ({
+          plannedRefs: [],
+          memorySummary: { eligible: 0, derived: 0 },
+          strategyFilteredRefs: [],
+        }),
+      });
+    } finally {
+      storage.cleanup();
+    }
+
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal?.aborted).toBe(false);
+    expect(remainingAtIndex).toBeGreaterThan(0);
+    expect(remainingAtIndex).toBeLessThanOrEqual(10_000);
   });
 });

@@ -161,7 +161,7 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
 
     const db = openStateDatabase();
     try {
-      const salience = getAssetSalience(db, "skill:ws2-gamma");
+      const salience = getAssetSalience(db, "stash//skill:ws2-gamma");
       expect(salience).toBeDefined();
 
       // WS-2 warm-start seeds outcome_salience to DIVERSITY_FLOOR_FRACTION (0.1)
@@ -200,7 +200,7 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
     const db1 = openStateDatabase();
     let firstOutcomeSalience: number | undefined;
     try {
-      firstOutcomeSalience = getAssetSalience(db1, "skill:ws2-delta")?.outcome_salience;
+      firstOutcomeSalience = getAssetSalience(db1, "stash//skill:ws2-delta")?.outcome_salience;
     } finally {
       db1.close();
     }
@@ -210,7 +210,7 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
 
     const db2 = openStateDatabase();
     try {
-      const secondSalience = getAssetSalience(db2, "skill:ws2-delta");
+      const secondSalience = getAssetSalience(db2, "stash//skill:ws2-delta");
       // The row must still exist and outcome_salience must be defined.
       expect(secondSalience).toBeDefined();
       expect(typeof secondSalience?.outcome_salience).toBe("number");

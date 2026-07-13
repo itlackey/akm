@@ -23,7 +23,7 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
-import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
+import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { createProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import type { AkmDistillResult } from "../distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../distill-promotion-policy";
@@ -47,7 +47,8 @@ export interface PromoteMemoryContext {
   config: AkmConfig;
   strategy?: ImproveProfileConfig;
   llmConfig?: LlmConnectionConfig;
-  chat: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+  signal?: AbortSignal;
+  chat: (config: LlmConnectionConfig, messages: ChatMessage[], options?: ChatCompletionOptions) => Promise<string>;
   stash: string;
   lookup: (ref: string) => Promise<string | null>;
   fetchSimilarLessonsFn: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
@@ -140,10 +141,14 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     ].join("\n");
 
     try {
-      const mergeResponse = await chat(ctx.llmConfig, [
-        { role: "system", content: "Return only valid JSON. No prose." },
-        { role: "user", content: mergePrompt },
-      ]);
+      const mergeResponse = await chat(
+        ctx.llmConfig,
+        [
+          { role: "system", content: "Return only valid JSON. No prose." },
+          { role: "user", content: mergePrompt },
+        ],
+        ctx.signal ? { signal: ctx.signal } : undefined,
+      );
       const mergeResult = parseEmbeddedJsonResponse<{
         action: "ADD" | "UPDATE" | "NOOP";
         content?: string;
@@ -203,14 +208,11 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   if (ctx.strategy?.processes?.distill?.qualityGate?.enabled ?? true) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(resolvedPromotionContent.slice(0, 500), 3);
-    const judgeResult = await runLessonQualityJudge(
-      config,
-      resolvedPromotionContent,
-      assetContent ?? "",
-      chat,
-      similarLessons.length > 0 ? similarLessons : undefined,
-      ctx.llmConfig,
-    );
+    const judgeResult = await runLessonQualityJudge(config, resolvedPromotionContent, assetContent ?? "", chat, {
+      ...(similarLessons.length > 0 ? { similarLessons } : {}),
+      ...(ctx.llmConfig ? { llmConfig: ctx.llmConfig } : {}),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    });
     if (!judgeResult.pass) {
       if (judgeResult.reviewNeeded) {
         // Uncertainty band (2.5–3.5): queue as review_needed instead of rejecting.

@@ -10,6 +10,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
+import type { LockOwnership } from "../../core/file-lock";
 import type {
   AkmImproveResult,
   EligibilitySource,
@@ -59,17 +60,7 @@ import {
 import { countEvalCases } from "./eval-cases";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
 import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
-// #607 per-process lock primitives live in ./locks. Imported for internal use;
-// resetHeldProcessLocks is re-exported (the test seam imports it from here).
-import {
-  PROCESS_LOCK_DEFS,
-  processLockPath,
-  releaseAllProcessLocks,
-  releaseHeldLocksIfOwned,
-  releaseProcessLock,
-  tryAcquireProcessLock,
-  withOptionalProcessLock,
-} from "./locks";
+import { improveLockPath, MIN_IMPROVE_LOCK_STALE_MS, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 // The cycle loop / post-loop / maintenance stages live in ./loop-stages.
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
@@ -83,7 +74,6 @@ import { type AkmReflectResult, akmReflect } from "./reflect";
 import { errMessage } from "./shared";
 import { shouldReadLegacyBareImproveState } from "./source-identity";
 
-export { resetHeldProcessLocks } from "./locks";
 // Re-exported from ./loop-stages for test importers (improve-db-locking).
 export { runImproveMaintenancePasses } from "./loop-stages";
 // Re-exported from ./preparation so existing importers (tests, callers) resolve.
@@ -96,6 +86,8 @@ export interface AkmImproveOptions {
   target?: string;
   /** Write target resolved once at the improve invocation boundary. */
   writeTarget?: ResolvedWriteTarget;
+  /** Stable source identity used for durable source-qualified improve state. */
+  sourceName?: string;
   /**
    * Confidence threshold (0-100). Undefined disables auto-accept for all
    * sub-processes (consolidation will prompt interactively on HTTP paths).
@@ -120,13 +112,9 @@ export interface AkmImproveOptions {
   timeoutMs?: number;
   limit?: number;
   /**
-   * When another improve run already holds a per-process lock, skip that
-   * specific process gracefully instead of failing with a "already running"
-   * config error (exit 78). Each process (consolidate, reflect+distill, triage)
-   * has its own lock; a held lock skips only that process, not the entire run.
-   * Intended for high-frequency scheduled runs (e.g. the every-30-min `quick`
-   * pass) that would otherwise pile up exit-78 failures whenever a longer run
-   * is in progress. Default: false (preserve hard error per lock).
+   * When another improve run already holds the lock, skip the whole run
+   * gracefully instead of failing with an "already running" config error.
+   * Intended for scheduled runs that should not overlap. Default: false.
    */
   skipIfLocked?: boolean;
   /** Named improve strategy from improve.strategies or built-in strategy names. */
@@ -183,7 +171,7 @@ export interface AkmImproveOptions {
    */
   extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
-  reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
+  reindexFn?: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   /** Attempt LLM-driven repair after the unconditional structural validation sweep. Default true. */
   repairValidationFailures?: boolean;
   /**
@@ -411,6 +399,15 @@ export function armBudgetWatchdog(
 }
 
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
+  const startMs = Date.now();
+  const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000;
+  const budgetAbortController = new AbortController();
+  Object.defineProperty(budgetAbortController.signal, "remainingBudgetMs", {
+    get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
+    enumerable: false,
+    configurable: true,
+  });
+  let clearBudgetTimer = (): void => {};
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const reflectFn = options.reflectFn ?? akmReflect;
   const distillFn = options.distillFn ?? akmDistill;
@@ -425,15 +422,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;
   // Resolve the improve profile for this run. Profile drives type filtering,
   // process gating, and default autoAccept/limit values.
-  let _earlyConfig = options.config ?? loadConfig();
-  const writeTarget =
-    options.writeTarget ??
-    (options.target
-      ? resolveWriteTarget(_earlyConfig, options.target, { requireWritable: !options.dryRun })
-      : undefined);
-  if (writeTarget && options.target) {
-    _earlyConfig = { ..._earlyConfig, defaultWriteTarget: writeTarget.source.name };
-  }
+  const _earlyConfig = options.config ?? loadConfig();
   const resolvedPlan =
     options.resolvedPlan ??
     resolveImprovePlan(options.strategy, _earlyConfig, {
@@ -442,7 +431,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const selectedStrategy = resolvedPlan.strategy;
   const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const improveProfile = selectedStrategy.config;
-  const hasNamedWriteTarget = options.target !== undefined || _earlyConfig.defaultWriteTarget !== undefined;
+  const writeTarget =
+    options.writeTarget ??
+    (options.target || _earlyConfig.defaultWriteTarget || !options.stashDir
+      ? resolveWriteTarget(_earlyConfig, options.target, { requireWritable: !options.dryRun })
+      : {
+          source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },
+          config: {
+            type: "filesystem" as const,
+            name: "stash",
+            path: options.stashDir,
+            writable: true,
+          },
+        });
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
   // automatically pick up the profile-driven defaults.
@@ -451,21 +452,18 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // Pin nested calls and quality gates to the same config snapshot as the
     // invocation plan. They must never reload a changed config mid-run.
     config: _earlyConfig,
-    ...(writeTarget
-      ? {
-          ...(hasNamedWriteTarget ? { target: writeTarget.source.name } : {}),
-          writeTarget,
-          stashDir: writeTarget.source.path,
-          consolidateOptions: {
-            ...options.consolidateOptions,
-            ...(hasNamedWriteTarget ? { target: writeTarget.source.name } : {}),
-            writeTarget,
-          },
-        }
-      : {}),
+    target: writeTarget.selector,
+    sourceName: writeTarget.source.name,
+    writeTarget,
+    stashDir: writeTarget.source.path,
+    consolidateOptions: {
+      ...options.consolidateOptions,
+      target: writeTarget.selector,
+      writeTarget,
+    },
     legacyBareState:
       options.legacyBareState ??
-      shouldReadLegacyBareImproveState(writeTarget?.source.name, writeTarget?.source.path, _earlyConfig),
+      shouldReadLegacyBareImproveState(writeTarget.source.name, writeTarget.source.path, _earlyConfig),
     autoAccept: options.autoAccept ?? improveProfile.autoAccept,
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.
@@ -481,8 +479,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     primaryStashDir = undefined;
   }
   const syncRepoDir = writeTarget?.source.repoPath ?? primaryStashDir;
-  const initialGitPaths =
-    syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
+  let initialGitPaths = new Set<string>();
 
   // C2 (#553/#554/#499): resolve the state.db path ONCE, synchronously, at the
   // command boundary — before the first `await` below. Every state.db open in
@@ -512,16 +509,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // The global tune call is intentionally removed here. See per-phase calls
   // below (near each makeGateConfig / runAutoAcceptGate block).
 
-  // #607 Lock decomposition: three per-process locks replace the single
-  // `improve.lock`. Each process acquires only the lock(s) it needs, so
-  // quick-shredder consolidate can run alongside daily reflect+distill.
-  //
-  //   consolidate.lock     — protects consolidate + memoryInference + graphExtraction (index.db writers)
-  //   reflect-distill.lock — protects reflect + distill (state.db proposal writers)
-  //   triage.lock          — protects triage pre-pass (state.db proposal promotions)
-  //
-  // Lock base directory — same `.akm/` under the primary stash dir.
+  // One conservative run lock protects the complete mutation window, including
+  // triage, indexing, proposal work, maintenance, and final stash sync.
   const lockBaseDir = primaryStashDir ? path.join(primaryStashDir, ".akm") : path.join(options.stashDir ?? ".", ".akm");
+  const resolvedLockPath = improveLockPath(lockBaseDir);
+  const lockStaleAfterMs = Math.max(MIN_IMPROVE_LOCK_STALE_MS, budgetMs + 10 * 60 * 1000);
 
   const preEnsureCleanupWarnings: string[] = [];
   // #616: assigned by runIndexAndCollect() (closure) so TS cannot prove definite
@@ -568,8 +560,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
 
       try {
-        await ensureIndexFn(primaryStashDir, { mode: "blocking" });
+        await ensureIndexFn(primaryStashDir, { mode: "blocking", signal: budgetAbortController.signal });
       } catch (err) {
+        if (budgetAbortController.signal.aborted) throw err;
         preEnsureCleanupWarnings.push(`ensureIndex failed: ${errMessage(err)}`);
       }
 
@@ -630,6 +623,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
         );
       } catch (err) {
+        if (budgetAbortController.signal.aborted) throw err;
         // Non-fatal: contradiction detection is a best-effort pass.
         warn(`[improve] contradiction detection failed (non-fatal): ${errMessage(err)}`);
       }
@@ -644,63 +638,73 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         : undefined;
   };
 
-  // Holds our own process.on("exit") backstop so the finally can remove EXACTLY
-  // that handler (not every exit listener in the process). Declared in the scope
-  // shared by the try and its finally; assigned when the backstop is registered.
+  let improveLockOwnership: LockOwnership | undefined;
   let exitBackstop: (() => void) | undefined;
+  const releaseRunLock = (): void => {
+    const ownership = improveLockOwnership;
+    if (!ownership) return;
+    improveLockOwnership = undefined;
+    try {
+      releaseImproveLock(ownership);
+    } catch {
+      // Best-effort cleanup. Exact ownership prevents deleting a successor.
+    }
+  };
+
+  if (!options.dryRun) {
+    const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
+    clearBudgetTimer = armBudgetWatchdog(Math.max(1, remainingBudget ?? budgetMs), budgetAbortController);
+  }
 
   try {
-    // #607: Per-process lock acquisition. Each process acquires only the lock(s)
-    // it needs. The dry-run branch produces plannedRefs/memorySummary WITHOUT any
-    // locks (decision: dry-run never mutates the queue).
     if (!options.dryRun) {
-      // Backstop release on process.exit() (signal handler / budget watchdog),
-      // which skips the finally below. Removed in that finally on the normal path.
-      const releaseAllOnExit = (): void => releaseHeldLocksIfOwned();
-      exitBackstop = releaseAllOnExit;
-      process.on("exit", releaseAllOnExit);
+      const acquisition = tryAcquireImproveLock(resolvedLockPath, lockStaleAfterMs, options.skipIfLocked);
+      if (acquisition.state === "skipped") {
+        clearBudgetTimer();
+        return {
+          schemaVersion: 2,
+          ok: true,
+          strategy: selectedStrategy.name,
+          scope,
+          dryRun: false,
+          skipped: { reason: "lock-held" },
+          memorySummary: { eligible: 0, derived: 0 },
+          plannedRefs: [],
+          actions: [],
+          ...(options.runId !== undefined ? { runId: options.runId } : {}),
+        };
+      }
+      improveLockOwnership = acquisition.ownership;
+      exitBackstop = releaseRunLock;
+      process.on("exit", exitBackstop);
+      initialGitPaths =
+        syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
 
-      // #607 triage pre-pass: acquire triage.lock, drain the standing pending
-      // backlog BEFORE ensureIndex so improve generates fresh proposals against
-      // a cleared queue (no `duplicate_pending` collisions) and ensureIndex
-      // absorbs triage's promotions for free. Release immediately after —
-      // triage.lock is not needed again until the next improve run.
+      // Drain the standing proposal backlog before indexing so fresh proposal
+      // generation sees promotions from this same serialized run.
       if (primaryStashDir && resolvedPlan.processes.triage.enabled) {
         if (scope.mode === "ref") {
           warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
         } else {
-          const triageLPath = processLockPath(lockBaseDir, "triage");
-          const triageResult = tryAcquireProcessLock(
-            triageLPath,
-            PROCESS_LOCK_DEFS.triage.staleAfterMs,
-            options.skipIfLocked,
-            "triage",
-          );
-          if (triageResult.state === "skipped") {
-            triageDrain = undefined;
-          } else {
-            try {
-              const triageConfig = improveProfile.processes?.triage;
-              const policy = resolveDrainPolicy(triageConfig?.policy);
-              const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
-              const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
-              triageDrain = await drainProposalsFn({
-                stashDir: primaryStashDir,
-                ...(options.target ? { target: options.target } : {}),
-                config: options.config,
-                policy,
-                applyMode,
-                maxAccepts,
-                dryRun: false,
-                excludeIds: new Set<string>(),
-                ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
-                judgment: resolvedPlan.triageJudgment,
-              });
-            } catch (err) {
-              warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
-            } finally {
-              releaseProcessLock(triageResult.ownership);
-            }
+          try {
+            const triageConfig = improveProfile.processes?.triage;
+            const policy = resolveDrainPolicy(triageConfig?.policy);
+            const applyMode: "queue" | "promote" = triageConfig?.applyMode ?? "queue";
+            const maxAccepts = triageConfig?.maxAcceptsPerRun ?? 25;
+            triageDrain = await drainProposalsFn({
+              stashDir: primaryStashDir,
+              ...(options.target ? { target: options.target } : {}),
+              config: options.config,
+              policy,
+              applyMode,
+              maxAccepts,
+              dryRun: false,
+              excludeIds: new Set<string>(),
+              ...(triageConfig?.maxDiffLines !== undefined ? { maxDiffLines: triageConfig.maxDiffLines } : {}),
+              judgment: resolvedPlan.triageJudgment,
+            });
+          } catch (err) {
+            warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
           }
         }
       }
@@ -724,39 +728,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         plannedRefs,
         ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
       };
+      clearBudgetTimer();
       return result;
     }
   } catch (err) {
-    releaseAllProcessLocks();
+    clearBudgetTimer();
+    if (exitBackstop) {
+      process.removeListener("exit", exitBackstop);
+      exitBackstop = undefined;
+    }
+    releaseRunLock();
     throw err;
   }
 
-  // #607: per-process locks are acquired/released around each stage below.
-  // The triage pre-pass already ran under triage.lock (released). The
-  // preparation stage runs under consolidate.lock, the loop stage under
-  // reflect-distill.lock, and the post-loop stage under consolidate.lock again.
-  // Each stage acquires its lock just before starting and releases in finally.
-  // best-effort `unlinkSync` is a no-op when no lock file exists.
-  const startMs = Date.now();
-  const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
-  // O-1 (#364): Create a shared AbortController derived from startMs + budgetMs.
-  // Every async seam receives this signal so a hung sub-call cannot extend the
-  // run past the declared budget.
-  // References: Anthropic *Building Effective Agents* (2024); CoALA §5 (arXiv:2309.02427).
-  const budgetAbortController = new AbortController();
-  // Attach a live `remainingBudgetMs` getter to the signal so sub-callers
-  // (e.g. consolidate.ts cold-start budget estimation) can read the remaining
-  // wall-clock budget without needing an extra plumbing parameter. The property
-  // is computed at access time via a getter so it always reflects the actual
-  // elapsed time rather than a stale snapshot taken at arm time.
-  Object.defineProperty(budgetAbortController.signal, "remainingBudgetMs", {
-    get: () => Math.max(0, budgetMs - (Date.now() - startMs)),
-    enumerable: false,
-    configurable: true,
-  });
-  // Declared in the outer scope so the `finally` can clear the timer even if a
-  // throw occurs before/after it is armed. Defaults to a no-op until armed.
-  let clearBudgetTimer = (): void => {};
   // I1: open a single state.db connection for the entire improve run so all
   // appendEvent calls reuse one handle instead of open/migrate/close per call.
   let eventsDb: import("../../storage/database").Database | undefined;
@@ -851,15 +835,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   };
 
   try {
-    // H7 (#566): arm the budget watchdog. `armBudgetWatchdog` captures both the
-    // budget timer and the hard-kill timer it schedules on exhaustion, returning
-    // a single dispose() that clears whichever are still pending. The `finally`
-    // calls dispose() via `clearBudgetTimer` (RAII), so a clean cooperative
-    // drain cancels the pending hard-kill before it can fire — the process then
-    // exits naturally instead of being force-`exit(0)`-ed mid-flush, which could
-    // truncate an in-flight log or `state.db` transaction.
-    clearBudgetTimer = armBudgetWatchdog(budgetMs, budgetAbortController);
-
     try {
       eventsDb = openStateDatabase(resolvedStateDbPath);
       eventsCtx = { db: eventsDb };
@@ -901,9 +876,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // #616 — bounded multi-cycle phasing. The prep->loop->post-loop sequence is
     // wrapped in an N-cycle loop. Each cycle re-runs ensureIndex +
     // collectEligibleRefs (via runIndexAndCollect) so gate-accepted output of
-    // cycle N becomes selectable input to cycle N+1. The per-stage process locks
-    // (consolidate / reflect-distill) are acquired+released INSIDE each cycle,
-    // exactly as the single-pass path did. For maxCycles:1 the loop runs once and
+    // cycle N becomes selectable input to cycle N+1. The whole sequence runs
+    // under the invocation's single lock. For maxCycles:1 the loop runs once and
     // every accumulator below collapses to the single-cycle value (sum-of-one,
     // concat-of-one, last==only) => BYTE-IDENTICAL to pre-#616.
     //
@@ -932,7 +906,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let graphExtractionDurationMs = 0;
     let orphansPurged: number | undefined;
     let proposalsExpired: number | undefined;
-    let processLockSkipped = false;
     // Concatenated arrays.
     const allWarnings: string[] = [];
     let deadUrls: ImprovePostLoopResult["deadUrls"];
@@ -982,8 +955,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       }
 
-      // Consolidation owns the preparation-stage process lock. Other preparation
-      // work uses its narrower writer leases and remains independently runnable.
       const runPreparation = () =>
         runImprovePreparationStageImpl({
           scope,
@@ -1002,47 +973,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           strategyName: selectedStrategy.name,
           budgetSignal: budgetAbortController.signal,
         });
-      const consolidateLPath = processLockPath(lockBaseDir, "consolidate");
-      const preparationResult = resolvedPlan.processes.consolidate.enabled
-        ? await withOptionalProcessLock(
-            {
-              lockPath: consolidateLPath,
-              staleAfterMs: PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-              skipIfLocked: options.skipIfLocked,
-              label: "consolidate",
-            },
-            runPreparation,
-          )
-        : await runPreparation();
-      if (!preparationResult) {
-        appendEvent(
-          {
-            eventType: "improve_skipped",
-            ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-            metadata: { strategy: selectedStrategy.name, reason: "lock_held", process: "consolidate" },
-          },
-          eventsCtx,
-        );
-        const result: AkmImproveResult = {
-          schemaVersion: 2,
-          ok: true,
-          strategy: selectedStrategy.name,
-          scope,
-          dryRun: false,
-          skipped: { reason: "lock-held" },
-          memorySummary,
-          plannedRefs: [],
-          actions: [],
-          ...(options.runId !== undefined ? { runId: options.runId } : {}),
-        };
-        emitImproveCompletedEvent(
-          result,
-          { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0, totalDurationMs: Date.now() - startMs },
-          eventsCtx,
-        );
-        return result;
-      }
-      preparation = preparationResult;
+      preparation = await runPreparation();
       prepGateCount += preparation.gateAutoAcceptedCount;
       prepGateFailedCount += preparation.gateAutoAcceptFailedCount;
 
@@ -1058,14 +989,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       }
 
-      // #607: acquire reflect-distill.lock for the loop stage (reflect + distill
-      // both write proposals to state.db). Released immediately after.
       const runLoop = () => {
-        // Post-lock cooldown re-filter for proactive refs (#SELECT-TIME-LEAK).
-        // Planning built `lastReflectProposalTs` BEFORE acquiring this lock, so a
-        // concurrent run's `reflect_invoked` writes are invisible to it. Now that
-        // we hold the lock, re-read fresh timestamp maps for the proactive subset
-        // and drop any ref whose cooldown has been consumed by the concurrent run.
+        // Re-read cooldown timestamps immediately before execution so external
+        // proposal writes that occurred before this run acquired its lock are visible.
         const proactiveLoopRefs = preparation.loopRefs.filter((r) => r.eligibilitySource === "proactive");
         let postLockLoopRefs = preparation.loopRefs;
         if (proactiveLoopRefs.length > 0) {
@@ -1073,13 +999,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           const freshReflectTs = buildLatestProposalTsMap(
             proactiveRefStrs,
             "reflect",
-            options.target,
+            options.sourceName,
             options.legacyBareState,
           );
           const freshDistillTs = buildLatestProposalTsMap(
             proactiveRefStrs,
             "distill",
-            options.target,
+            options.sourceName,
             options.legacyBareState,
           );
           const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
@@ -1121,36 +1047,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           budgetSignal: budgetAbortController.signal,
         });
       };
-      const reflectDistillLPath = processLockPath(lockBaseDir, "reflectDistill");
-      const loopResultOrSkipped =
-        resolvedPlan.processes.reflect.enabled || resolvedPlan.processes.distill.enabled
-          ? await withOptionalProcessLock(
-              {
-                lockPath: reflectDistillLPath,
-                staleAfterMs: PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
-                skipIfLocked: options.skipIfLocked,
-                label: "reflect-distill",
-              },
-              runLoop,
-            )
-          : await runLoop();
-      if (!loopResultOrSkipped) {
-        processLockSkipped = true;
-        appendEvent(
-          {
-            eventType: "improve_skipped",
-            ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-            metadata: { strategy: selectedStrategy.name, reason: "lock_held", process: "reflect-distill" },
-          },
-          eventsCtx,
-        );
-      }
-      const loopResult = loopResultOrSkipped ?? {
-        reflectsWithErrorContext: 0,
-        memoryRefsForInference: new Set<string>(),
-        gateAutoAcceptedCount: 0,
-        gateAutoAcceptFailedCount: 0,
-      };
+      const loopResult = await runLoop();
       const loopGateCountThisCycle = loopResult.gateAutoAcceptedCount;
       reflectsWithErrorContext += loopResult.reflectsWithErrorContext;
       loopGateCount += loopResult.gateAutoAcceptedCount;
@@ -1176,66 +1073,25 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         info("[improve] post-loop maintenance skipped (wall-clock budget exhausted)");
         postLoopResult = emptyPostLoopResult;
       } else {
-        const runPostLoop = () =>
-          runImprovePostLoopStageImpl({
-            scope,
-            options,
-            primaryStashDir,
-            actionableRefs: preparation.actionableRefs,
-            appliedCleanup: preparation.appliedCleanup,
-            cleanupWarnings: preparation.cleanupWarnings,
-            memoryRefsForInference,
-            reindexFn,
-            eventsCtx,
-            budgetSignal: budgetAbortController.signal,
-            improveProfile,
-            resolvedPlan,
-            consolidationRan: preparation.consolidationRan,
-            // R5: floor violations from this run's consolidate pass + the
-            // auto-accepted volume so far (prep + loop gates) for churn detection.
-            consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
-            acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
-          });
-        const needsConsolidateLock =
-          resolvedPlan.processes.memoryInference.enabled || resolvedPlan.processes.graphExtraction.enabled;
-        const needsReflectDistillLock =
-          resolvedPlan.processes.recombine.enabled || resolvedPlan.processes.procedural.enabled;
-        const runPostLoopWithReflectLock = () =>
-          needsReflectDistillLock
-            ? withOptionalProcessLock(
-                {
-                  lockPath: reflectDistillLPath,
-                  staleAfterMs: PROCESS_LOCK_DEFS.reflectDistill.staleAfterMs,
-                  skipIfLocked: options.skipIfLocked,
-                  label: "reflect-distill",
-                },
-                runPostLoop,
-              )
-            : runPostLoop();
-        const consolidatePostLPath = processLockPath(lockBaseDir, "consolidate");
-        const postLoopResultOrSkipped = needsConsolidateLock
-          ? await withOptionalProcessLock(
-              {
-                lockPath: consolidatePostLPath,
-                staleAfterMs: PROCESS_LOCK_DEFS.consolidate.staleAfterMs,
-                skipIfLocked: options.skipIfLocked,
-                label: "consolidate",
-              },
-              runPostLoopWithReflectLock,
-            )
-          : await runPostLoopWithReflectLock();
-        if (!postLoopResultOrSkipped) {
-          processLockSkipped = true;
-          appendEvent(
-            {
-              eventType: "improve_skipped",
-              ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-              metadata: { strategy: selectedStrategy.name, reason: "lock_held", process: "post-loop" },
-            },
-            eventsCtx,
-          );
-        }
-        postLoopResult = postLoopResultOrSkipped ?? emptyPostLoopResult;
+        postLoopResult = await runImprovePostLoopStageImpl({
+          scope,
+          options,
+          primaryStashDir,
+          actionableRefs: preparation.actionableRefs,
+          appliedCleanup: preparation.appliedCleanup,
+          cleanupWarnings: preparation.cleanupWarnings,
+          memoryRefsForInference,
+          reindexFn,
+          eventsCtx,
+          budgetSignal: budgetAbortController.signal,
+          improveProfile,
+          resolvedPlan,
+          consolidationRan: preparation.consolidationRan,
+          // R5: floor violations from this run's consolidate pass + the
+          // auto-accepted volume so far (prep + loop gates) for churn detection.
+          consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
+          acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
+        });
       }
       const postLoopGateCountThisCycle = postLoopResult.gateAutoAcceptedCount;
       // Last-wins point-in-time objects.
@@ -1271,8 +1127,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
       cyclesRun++;
 
-      if (processLockSkipped) break;
-
       // #616 fixed-point stop: a cycle that produced ZERO gate-accepted proposals
       // (summed across prep + loop + post-loop) would feed cycle N+1 an identical
       // ref set, so end the loop here rather than spin a pointless next cycle.
@@ -1294,7 +1148,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       strategy: selectedStrategy.name,
       scope,
       dryRun: false,
-      ...(processLockSkipped ? { skipped: { reason: "lock-held" } } : {}),
       ...(guidance ? { guidance } : {}),
       memorySummary,
       ...(memoryCleanupPlan
@@ -1436,9 +1289,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // O-1 (#364): Clear the budget abort timer so it does not keep the event
     // loop alive after the run completes.
     clearBudgetTimer();
-    // #607: release any per-process locks still held (backstop for error paths;
-    // the normal path already released each lock after its stage completed).
-    releaseAllProcessLocks();
     // Drop ONLY our own process.exit backstop so it does not fire later (or
     // accumulate across repeated in-process calls). Must NOT use
     // removeAllListeners("exit") here: in the in-process model (tests and
@@ -1448,6 +1298,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       process.removeListener("exit", exitBackstop);
       exitBackstop = undefined;
     }
+    releaseRunLock();
     // I1: close the long-lived state.db connection opened at the top of the run.
     try {
       eventsDb?.close();

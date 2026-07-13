@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { releaseProcessLock, tryAcquireProcessLock } from "../../../src/commands/improve/locks";
+import { releaseImproveLock, tryAcquireImproveLock } from "../../../src/commands/improve/locks";
 import { probeLock, reclaimStaleLock, tryAcquireLockSync } from "../../../src/core/file-lock";
 
 const [mode, lockPath, readyPath, gatePath, resultPath, payload = String(process.pid)] = process.argv.slice(2);
@@ -19,21 +19,21 @@ function writeResult(value: boolean): void {
 }
 
 if (mode === "process-holder") {
-  const acquisition = tryAcquireProcessLock(lockPath, Number(payload), true, "test");
+  const acquisition = tryAcquireImproveLock(lockPath, Number(payload), true);
   writeResult(acquisition.state === "acquired");
   fs.writeFileSync(readyPath, "ready");
   if (acquisition.state === "acquired") {
     try {
       waitForGate();
     } finally {
-      releaseProcessLock(acquisition.ownership);
+      releaseImproveLock(acquisition.ownership);
     }
   }
 } else if (mode === "process-attempt") {
-  const acquisition = tryAcquireProcessLock(lockPath, Number(payload), true, "test");
+  const acquisition = tryAcquireImproveLock(lockPath, Number(payload), true);
   writeResult(acquisition.state === "acquired");
   fs.writeFileSync(readyPath, "ready");
-  if (acquisition.state === "acquired") releaseProcessLock(acquisition.ownership);
+  if (acquisition.state === "acquired") releaseImproveLock(acquisition.ownership);
 } else if (mode === "acquire") {
   fs.writeFileSync(readyPath, "ready");
   writeResult(Boolean(tryAcquireLockSync(lockPath, payload)));

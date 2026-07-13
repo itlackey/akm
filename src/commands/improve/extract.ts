@@ -224,7 +224,7 @@ export interface AkmExtractOptions {
   chat?: (
     config: LlmProfileConfig,
     messages: ChatMessage[],
-    options?: { timeoutMs?: number | null; responseSchema?: Record<string, unknown> },
+    options?: { timeoutMs?: number | null; responseSchema?: Record<string, unknown>; signal?: AbortSignal },
   ) => Promise<string>;
   /** Override proposal clock/id (test seam). */
   ctx?: ProposalsContext;
@@ -239,6 +239,8 @@ export interface AkmExtractOptions {
   improveProfile?: ImproveProfileConfig;
   /** Hard timeout for each LLM call (ms); null disables it. */
   timeoutMs?: number | null;
+  /** Optional caller-driven cancellation signal. */
+  signal?: AbortSignal;
   /**
    * Re-process sessions even if state.db says they were already extracted
    * (and no new events have arrived since). Default `false` — the discovery
@@ -583,6 +585,7 @@ async function processSession(
   // file read is incurred.
   prior: ExtractedSessionRow | undefined,
   force: boolean,
+  signal: AbortSignal | undefined,
   // Stash authoring standards (convention/meta fact bodies) for non-wiki
   // output. Resolved ONCE per run by the caller and threaded in so facts are
   // not re-read per session. Empty string when none exist.
@@ -726,6 +729,7 @@ async function processSession(
       llmRaw = await chat(getLlmConfig(), [{ role: "user", content: prompt }], {
         timeoutMs,
         responseSchema: EXTRACT_JSON_SCHEMA,
+        ...(signal ? { signal } : {}),
       });
       return llmRaw;
     },
@@ -1168,6 +1172,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const extractStandardsContext = resolveExtractStandards(stashDir);
 
   for (const summary of candidates) {
+    if (options.signal?.aborted) break;
     // #602 — the already-extracted skip moved INTO processSession (the content
     // hash needs the session body, only available after readSession). The prior
     // row + bypass flags are threaded through; an unchanged session returns
@@ -1236,6 +1241,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         hotProbationEnabled,
         prior,
         options.force === true,
+        options.signal,
         extractStandardsContext,
       );
       sessions.push(result);

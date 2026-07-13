@@ -6,11 +6,11 @@
 
 ## Executive summary
 
-The codebase is in good shape. The high-value refactors here are overwhelmingly **subtractive**: collapsing verbatim copy-paste helpers into one home, and lifting a handful of repeated mechanical idioms (chunked-SQL loops, `Math.max(0,Math.min(1,…))`, `JSON.parse(row)+warn`, empty-string validators) into tiny named helpers. None require new abstraction layers.
+The codebase is in good shape. The high-value refactors here are overwhelmingly **subtractive**: collapsing verbatim copy-paste helpers into one home, and lifting a handful of repeated mechanical idioms (chunked-SQL loops, `Math.max(0,Math.min(1,…))`, `JSON.parse(row)+warn`, empty-string validators) into tiny named helpers. None require new abstraction layers. The former stage-lock finding is resolved: improve now uses one exact-ownership whole-run lock with initialization, `finally`, and process-exit cleanup.
 
-Two findings are **not cosmetic — they are latent bugs** that a consolidation fixes as a side effect, and they lead the roadmap:
+The survey identified two non-cosmetic findings; the improve lock issue is now resolved and the metadata merge remains open:
 
-1. **`improve.ts` leaks a process lock on throw.** Three of the four lock sites release the lock *after* an `await` with **no `try/finally`** (verified: consolidate-prep 1601-1624, reflect-distill 1642-1699, consolidate-post 1712-1734), while the triage site (1304-1339) correctly uses `try/finally`. A `withProcessLock` wrapper both dedups and guarantees release-on-throw.
+1. **Resolved: improve lock lifecycle.** The stage-lock topology was removed in favor of one exact-ownership whole-run lock with complete cleanup coverage.
 2. **`mergeLegacyEntry` has silently diverged.** `indexer.ts:1695` preserves `source/quality/confidence` via `?? entry.x`; `manifest.ts:167` is a naive `{...entry, ...legacy, filename}` that **drops** that precedence. The survey called them "identical" — they are not. Consolidating to one definition fixes a real metadata-loss path in the manifest.
 
 The single biggest cross-cutting observation the per-slice survey could not see: there is **one DB-lifecycle RAII idiom** (`open → try → finally close → rethrowIfTestIsolationError`) hand-rolled across registry, graph, workflows, and tasks — even though the repo *already* established `withIndexDb` / `withWorkflowRunsRepo` as the canonical shape. The win is to adopt the existing convention at the hand-rolled sites, not to invent new wrappers.
@@ -33,13 +33,9 @@ The single biggest cross-cutting observation the per-slice survey could not see:
 
 ## P0 — Correctness + dedup (do first, with tests)
 
-### P0.1 — `withProcessLock` in improve.ts (fixes lock-leak-on-throw)
-- **Files:** `src/commands/improve/improve.ts` (triage 1304-1339; consolidate-prep 1601-1624; reflect-distill 1642-1699; consolidate-post 1712-1734)
-- **Pattern:** RAII resource-guard (`withXxx`, matching the repo's existing `withIndexDb` convention)
-- **What it fixes/deletes:** Three of four sites release the lock *outside* any `try/finally`, after an `await` — they leak the process lock if the awaited stage throws. Wrap acquire→run→release in `withProcessLock<T>(lockPath, staleMs, skipIfLocked, name, fn)` returning `T | "skipped"`. Collapses 4 acquire/release blocks (~8 lines each) into 4 call sites **and** makes release-on-throw uniform.
-- **Effort:** M
-- **Confidence:** High (lead-verified the asymmetry directly: triage uses `finally`, the other three do not)
-- **Note:** This is a real bug, not cosmetics. Add a test that throws inside the stage fn and asserts the lock file is released. Highest-priority item in the whole survey.
+### P0.1 — Whole-run improve lock (resolved)
+- **Files:** `src/commands/improve/improve.ts`, `src/commands/improve/locks.ts`
+- **Resolution:** Stage locks were removed. One exact-ownership `improve.lock` spans triage, indexing, every cycle, failure-path sync, final sync, and result assembly. Tests pin skip semantics, stale recovery, initialization failures, listener cleanup, and on-disk release.
 
 ### P0.2 — Consolidate diverged `mergeLegacyEntry` (fixes metadata loss)
 - **Files:** `src/indexer/indexer.ts:1695-1707`, `src/indexer/manifest.ts:167-170` → one home in `src/indexer/passes/metadata.ts`

@@ -72,6 +72,8 @@ export interface AutoAcceptGateConfig {
   config: AkmConfig | (() => AkmConfig);
   /** Events context for appending the "promoted" event on each acceptance. */
   eventsCtx: EventsContext | undefined;
+  /** Configured source selector used for proposal promotion. */
+  targetSelector?: string;
   /**
    * WS-4 exploration budget: when set, at most this many candidates per run
    * are promoted regardless of confidence (logged eligibilitySource="exploration",
@@ -242,7 +244,6 @@ export async function runAutoAcceptGate(
     }
 
     try {
-      const target = resolvedConfig.defaultWriteTarget;
       const resolvedEligibilitySource: string | undefined = isExploration
         ? "exploration"
         : currentProposal?.eligibilitySource;
@@ -251,7 +252,7 @@ export async function runAutoAcceptGate(
         resolvedConfig,
         proposalId,
         {
-          ...(target ? { target } : {}),
+          ...(cfg.targetSelector ? { target: cfg.targetSelector } : {}),
           eventMetadata: {
             autoAccept: true,
             confidence,
@@ -376,6 +377,7 @@ export function makeGateConfig(
     stashDir: string | undefined;
     config: AkmConfig | (() => AkmConfig);
     eventsCtx: EventsContext | undefined;
+    targetSelector?: string;
     /** WS-4: path to state.db for reading per-phase threshold. */
     stateDbPath?: string;
     /**
@@ -415,6 +417,7 @@ export function makeGateConfig(
     stashDir: shared.stashDir,
     config: shared.config,
     eventsCtx: shared.eventsCtx,
+    ...(shared.targetSelector ? { targetSelector: shared.targetSelector } : {}),
     ...(explorationBudgetCount !== undefined && explorationBudgetCount > 0 ? { explorationBudgetCount } : {}),
     ...overrides,
   };

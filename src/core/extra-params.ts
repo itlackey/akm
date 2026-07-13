@@ -11,6 +11,7 @@ export const EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS = [
   "stream",
   "streamoptions",
   "enablethinking",
+  "chattemplatekwargs",
 ] as const;
 
 export const EXTRA_PARAMS_CREDENTIAL_KEYS = [

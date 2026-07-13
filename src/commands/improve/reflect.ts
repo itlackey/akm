@@ -89,6 +89,8 @@ export interface AkmReflectOptions {
   engine?: string;
   /** Override the spawn timeout. */
   timeoutMs?: number;
+  /** Shared improve deadline signal for direct LLM dispatch and judging. */
+  signal?: AbortSignal;
   /** Test seam: override the stash dir. */
   stashDir?: string;
   /** Test seam: forwarded to runAgent for fake spawn / timers. */
@@ -849,6 +851,8 @@ export interface RunReflectViaLlmOptions {
   connection: LlmProfileConfig;
   /** Hard timeout for the LLM request in ms. */
   timeoutMs?: number | null;
+  /** Optional caller-driven cancellation signal. */
+  signal?: AbortSignal;
   /** Prior draft for Self-Refine critique (injected on iterations > 0). */
   priorDraft?: string;
   /** Current refinement iteration (0-based). */
@@ -899,6 +903,7 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
   try {
     const stdout = await (opts.chat ?? chatCompletion)(opts.connection, messages, {
       ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
       ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
       ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
       // Reflect requires a machine-readable payload. Visible chain-of-thought
@@ -1203,6 +1208,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
             prompt,
             connection: spec.connection,
             ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+            ...(options.signal ? { signal: options.signal } : {}),
             priorDraft,
             iteration: iter,
             responseSchema: REFLECT_JSON_SCHEMA,
@@ -1378,62 +1384,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   }
 
-  // 7. R-5 / #374: Apply the proposal quality gate when enabled.
-  // Uses revision-specific preservation and feedback criteria and is gated behind either
-  // `processes.reflect.qualityGate.enabled` or
-  // `processes.distill.qualityGate.enabled` on the selected strategy.
-  // Fail-CLOSED (07 P0-2): a judge error / no-LLM /
-  // parse failure rejects the proposal rather than passing it through.
-  // G-Eval (arXiv:2303.16634) — quality judgment before admission.
-  const runtimeConfig =
-    options.config ??
-    (() => {
-      try {
-        return loadConfig();
-      } catch {
-        return undefined;
-      }
-    })();
-  const chatFn = options.chat ?? chatCompletion;
-  const qualityGateEnabled =
-    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
-    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
-
-  if (qualityGateEnabled && runtimeConfig) {
-    const judgeResult = await runReflectQualityJudge(
-      runtimeConfig,
-      payload.content,
-      assetContent ?? "",
-      feedback,
-      chatFn,
-      runnerIsLlm(runnerSpec) ? materializeLlmRunnerConnection(runnerSpec) : undefined,
-    );
-    if (!judgeResult.pass) {
-      // Quality gate rejected the proposal — surface as parse_error so the
-      // improve orchestrator can log it and move on without crashing.
-      appendEvent({
-        eventType: "reflect_completed",
-        ref: payload.ref,
-        metadata: {
-          source: "reflect",
-          qualityRejected: true,
-          qualityScore: judgeResult.score,
-          qualityReason: judgeResult.reason,
-        },
-      });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error" as const,
-        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-      };
-    }
-  }
-
-  // 7b. Reflect content-preservation rails:
+  // 7. Reflect content-preservation rails:
   //     - Restore source frontmatter so reflect can never strip indexable
   //       fields (`description`, `when_to_use`, `tags`, ...).
   //     - Reset protected identity fields (`name`, `ref`, `id`, `slug`,
@@ -1511,6 +1462,47 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
             : changeKind === "low-value"
               ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
               : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+      };
+    }
+  }
+
+  // 7c. Judge the exact sanitized content that can be persisted. Fail closed
+  // on cancellation, transport failure, malformed output, or an invalid score.
+  const qualityGateEnabled =
+    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
+    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
+  if (qualityGateEnabled) {
+    const judgeResult = await runReflectQualityJudge(
+      config,
+      payload.content,
+      assetContent ?? "",
+      feedback,
+      options.chat ?? chatCompletion,
+      {
+        ...(runnerIsLlm(runnerSpec) ? { llmConfig: materializeLlmRunnerConnection(runnerSpec) } : {}),
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+    );
+    if (!judgeResult.pass) {
+      appendEvent({
+        eventType: "reflect_completed",
+        ref: payload.ref,
+        metadata: {
+          source: "reflect",
+          qualityRejected: true,
+          qualityScore: judgeResult.score,
+          qualityReason: judgeResult.reason,
+        },
+      });
+      return {
+        schemaVersion: 2,
+        ok: false,
+        reason: "parse_error" as const,
+        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
         ...(options.ref ? { ref: options.ref } : {}),
         engine: engineName,
         exitCode: result.exitCode,

@@ -454,7 +454,7 @@ Each `$STASH/wikis/<wikiName>/` contains:
 | Path | Format | Purpose |
 |---|---|---|
 | `$DATA/akm.lock.lck` | Plain text (PID) | Advisory write-lock for `akm.lock` mutations. Created with `O_EXCL`; stale locks (dead PIDs) auto-reclaimed. Best-effort: 3 retries × 100ms. |
-| `$STASH/.akm/improve.lock` | JSON `{ pid, startedAt }` | Prevents concurrent `akm improve` runs on the same stash. Stale locks auto-reclaimed by PID liveness check. |
+| `$STASH/.akm/improve.lock` | JSON `{ pid, startedAt, lockId }` | Serializes the complete live `akm improve` mutation window from triage through final sync. Exact ownership protects successor locks during release. Stale locks are reclaimed when the PID is dead or after the larger of four hours and the configured run budget plus ten minutes. |
 
 ---
 

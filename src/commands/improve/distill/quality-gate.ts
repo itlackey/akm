@@ -117,6 +117,30 @@ export function buildJudgePrompt(
   return lines.join("\n");
 }
 
+function boundedDocument(content: string, maxChars = 6000): string {
+  if (content.length <= maxChars) return content;
+  const half = Math.floor((maxChars - 80) / 2);
+  return `${content.slice(0, half)}\n\n[... middle omitted for bounded judge context ...]\n\n${content.slice(-half)}`;
+}
+
+function buildChangedRegion(sourceContent: string, candidateContent: string): string {
+  const source = sourceContent.split("\n");
+  const candidate = candidateContent.split("\n");
+  let prefix = 0;
+  while (prefix < source.length && prefix < candidate.length && source[prefix] === candidate[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < source.length - prefix &&
+    suffix < candidate.length - prefix &&
+    source[source.length - 1 - suffix] === candidate[candidate.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+  const removed = source.slice(prefix, source.length - suffix).join("\n");
+  const added = candidate.slice(prefix, candidate.length - suffix).join("\n");
+  return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
+}
+
 /** Build quality criteria for revising an existing asset in place. */
 export function buildReflectJudgePrompt(candidateContent: string, sourceContent: string, feedback: string[]): string {
   return [
@@ -136,12 +160,17 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
     "",
     "Source asset content:",
     "```",
-    sourceContent.slice(0, 2000),
+    boundedDocument(sourceContent),
     "```",
     "",
     "Proposed revision:",
     "```",
-    candidateContent.slice(0, 2000),
+    boundedDocument(candidateContent),
+    "```",
+    "",
+    "Changed region:",
+    "```",
+    buildChangedRegion(sourceContent, candidateContent),
     "```",
     "",
     'Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}',
@@ -155,13 +184,20 @@ type QualityJudgeChat = (
   options?: ChatCompletionOptions,
 ) => Promise<string>;
 
+export interface QualityJudgeOptions {
+  similarLessons?: Array<{ ref: string; content: string }>;
+  llmConfig?: LlmConnectionConfig;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+}
+
 async function runQualityJudge(
   config: AkmConfig,
   prompt: string,
   chat: QualityJudgeChat,
-  llmConfigOverride?: LlmConnectionConfig,
+  options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const llmConfig = llmConfigOverride ?? getDefaultLlmConfig(config);
+  const llmConfig = options.llmConfig ?? getDefaultLlmConfig(config);
   if (!llmConfig) {
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
@@ -172,10 +208,21 @@ async function runQualityJudge(
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: prompt },
       ],
-      { enableThinking: false },
+      {
+        enableThinking: false,
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
     );
     const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
-    if (!parsed || typeof parsed.score !== "number") {
+    if (
+      !parsed ||
+      typeof parsed.score !== "number" ||
+      !Number.isFinite(parsed.score) ||
+      parsed.score < 1 ||
+      parsed.score > 5 ||
+      typeof parsed.reason !== "string"
+    ) {
       return { pass: false, score: -1, reason: "judge parse failed — cannot judge, failing closed" };
     }
     // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
@@ -209,16 +256,9 @@ export async function runLessonQualityJudge(
   lessonContent: string,
   sourceContent: string,
   chat: QualityJudgeChat,
-  /** D-4 / #390: top-3 similar existing lessons for dedup check. */
-  similarLessons?: Array<{ ref: string; content: string }>,
-  llmConfigOverride?: LlmConnectionConfig,
+  options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(
-    config,
-    buildJudgePrompt(lessonContent, sourceContent, similarLessons),
-    chat,
-    llmConfigOverride,
-  );
+  return runQualityJudge(config, buildJudgePrompt(lessonContent, sourceContent, options.similarLessons), chat, options);
 }
 
 /** Judge an in-place reflect revision without applying new-lesson novelty criteria. */
@@ -228,14 +268,9 @@ export async function runReflectQualityJudge(
   sourceContent: string,
   feedback: string[],
   chat: QualityJudgeChat,
-  llmConfigOverride?: LlmConnectionConfig,
+  options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(
-    config,
-    buildReflectJudgePrompt(candidateContent, sourceContent, feedback),
-    chat,
-    llmConfigOverride,
-  );
+  return runQualityJudge(config, buildReflectJudgePrompt(candidateContent, sourceContent, feedback), chat, options);
 }
 
 // ── Quality-rejection helper ─────────────────────────────────────────────────

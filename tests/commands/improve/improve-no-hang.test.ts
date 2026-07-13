@@ -51,7 +51,12 @@ function writeMemory(stashDir: string, name: string, body: string): void {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
+  saveConfig(
+    withTestImproveLlm({
+      semanticSearchMode: "off",
+      improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
+    }),
+  );
   await akmIndex({ stashDir, full: true });
 }
 

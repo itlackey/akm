@@ -144,7 +144,7 @@ sequenceDiagram
 - `src/commands/improve/preparation.ts:101-2300+` — `maybeAutoTuneThreshold()` (101), `runConsolidationPass()` (209), proactive-maintenance selection (1243-1312), high-salience gate (1315-1383), eligibility attribution (1443-1458), unified salience/outcome computation loop (1460-1850+), `runImprovePreparationStage()` (775)
 - `src/commands/improve/loop-stages.ts:69,692,863` — `runImproveLoopStage()`, `runImprovePostLoopStage()`, `runImproveMaintenancePasses()`
 - `src/commands/improve/improve-auto-accept.ts:148,356` — `runAutoAcceptGate()`, `makeGateConfig()`
-- `src/commands/improve/locks.ts:25-124` — `PROCESS_LOCK_DEFS`, `tryAcquireProcessLock()`, `releaseProcessLock()`
+- `src/commands/improve/locks.ts` — `improveLockPath()`, `tryAcquireImproveLock()`, `releaseImproveLock()`
 - `src/commands/improve/triage.ts:102` — `scoreSessionTriage()`
 - `src/commands/improve/eval-cases.ts:46` — `countEvalCases()`
 - `src/integrations/agent/prompts.ts:248` — `buildReflectPrompt()`
@@ -168,7 +168,7 @@ sequenceDiagram
 - `src/commands/improve/encoding-salience.ts:1-259` — novelty×0.40 + magnitude×0.35 + predictionError×0.25 (6-11); weights/floors (15-51); tokenization (55-197); `computeNovelty()`/`computeMagnitude()`/`computePredictionError()` (201-237); `scoreEncodingSalience()` (249-258)
 - `src/commands/improve/outcome-loop.ts:1-450` — prediction-error-shaped outcome formula (6-125); `AssetOutcomeRow` (129-139); `updateAssetOutcome()` (197-305, differential update + warm-start); `getAssetOutcome()` (308-315); `getAllAssetOutcomes()` (323-329); `getOutcomeScoresByRefs()` (331-348); `outcomeScoreToSalience()` (353-391); `computeOutcomeCorrelation()` (398-430, quality tripwire)
 - `src/commands/improve/homeostatic.ts` — `isSchemaConsistent()`, `applySchemaSimilarityPenalty()`, `checkDistillFidelity()` (the standalone `runHomeostaticDemotion()` pass and `DemotionConfig` were removed 2026-07-02, R4 — decay now lives in `computeSalience`'s recency term)
-- `src/commands/improve/proactive-maintenance.ts:36-230` — `DEFAULT_DUE_DAYS`/`DEFAULT_MAX_PER_RUN` (36-37), `selectProactiveMaintenanceRefs()` (121-184), `filterProactiveDue()` (199-230, post-lock cooldown re-filter)
+- `src/commands/improve/proactive-maintenance.ts:36-230` — `DEFAULT_DUE_DAYS`/`DEFAULT_MAX_PER_RUN` (36-37), `selectProactiveMaintenanceRefs()` (121-184), `filterProactiveDue()` (199-230, pre-execution cooldown re-filter)
 
 ## Recombine / Procedural (entity clustering & synthesis)
 
