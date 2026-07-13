@@ -1,4 +1,5 @@
 # Fedora 39 — bun install method
+FROM node:22 AS node-runtime
 FROM fedora:39
 
 RUN dnf install -y curl unzip git && dnf clean all
@@ -6,6 +7,8 @@ RUN dnf install -y curl unzip git && dnf clean all
 # Install bun
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+RUN node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 20 || (major === 20 && minor < 12)) process.exit(1)'
 
 # Install dependencies first (cached until package.json/bun.lock change)
 WORKDIR /opt/akm

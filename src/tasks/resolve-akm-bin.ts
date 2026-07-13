@@ -56,7 +56,9 @@ export function resolveAkmInvocation(
   const runtime = options.runtime ?? (process.versions.bun ? "bun" : "node");
   const execPath = options.execPath ?? process.execPath;
   const mainPath = options.mainPath ?? runtimeMainPath;
-  if (runtime === "bun" && mainPath?.startsWith("/$bunfs/") && execPath) {
+  const isStandaloneMain =
+    mainPath?.startsWith("/$bunfs/") || (mainPath !== undefined && /^[A-Za-z]:[\\/]~BUN[\\/]/i.test(mainPath));
+  if (runtime === "bun" && isStandaloneMain && execPath) {
     return { argv: [execPath], via: "execPath" };
   }
 

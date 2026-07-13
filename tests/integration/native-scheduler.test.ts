@@ -28,12 +28,17 @@ interface RunResult {
   stderr: string;
 }
 
-function run(argv: string[], env: NodeJS.ProcessEnv = process.env): RunResult {
+function run(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  options: { windowsVerbatimArguments?: boolean } = {},
+): RunResult {
   const result = spawnSync(argv[0], argv.slice(1), {
     env,
     encoding: "utf8",
     timeout: 120_000,
     maxBuffer: 32 * 1024 * 1024,
+    windowsVerbatimArguments: options.windowsVerbatimArguments,
   });
   return {
     status: result.status ?? -1,
@@ -270,7 +275,9 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     const runPackedCli = (args: string[]): RunResult => {
       const comspec = process.env.ComSpec ?? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe");
       const quotedArgs = args.map((arg) => `"${arg.replaceAll('"', '""')}"`).join(" ");
-      return run([comspec, "/d", "/s", "/c", `""${launcher}" ${quotedArgs}"`], env);
+      return run([comspec, "/d", "/s", "/c", `""${launcher}" ${quotedArgs}"`], env, {
+        windowsVerbatimArguments: true,
+      });
     };
 
     try {

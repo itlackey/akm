@@ -1,4 +1,5 @@
 # Alpine 3.19 — bun install method (musl libc)
+FROM node:22-alpine AS node-runtime
 FROM alpine:3.19
 
 RUN apk add --no-cache curl unzip bash git ca-certificates gcompat libstdc++
@@ -6,6 +7,8 @@ RUN apk add --no-cache curl unzip bash git ca-certificates gcompat libstdc++
 # Install bun (requires gcompat for musl)
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+RUN node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 20 || (major === 20 && minor < 12)) process.exit(1)'
 
 # Install dependencies first (cached until package.json/bun.lock change)
 WORKDIR /opt/akm

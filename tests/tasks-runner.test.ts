@@ -620,4 +620,15 @@ describe("resolveAkmInvocation", () => {
     });
     expect(r).toEqual({ argv: ["/opt/akm"], via: "execPath" });
   });
+
+  test("uses only the executable for a Windows Bun standalone build", () => {
+    const r = resolveAkmInvocation({
+      env: {},
+      runtime: "bun",
+      execPath: "D:\\akm\\akm.exe",
+      mainPath: "B:\\~BUN\\root\\src\\cli.ts",
+      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+    });
+    expect(r).toEqual({ argv: ["D:\\akm\\akm.exe"], via: "execPath" });
+  });
 });
