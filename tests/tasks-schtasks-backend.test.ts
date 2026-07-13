@@ -823,18 +823,18 @@ describe("schtasks backend transactional install", () => {
     expect(transaction.enabled()).toBe(true);
   });
 
-  test("rollback rewrites a queried UTF-16 declaration to match the UTF-8 temp file", () => {
+  test("rollback rewrites a queried UTF-8 declaration to match the UTF-16 temp file", () => {
     const transaction = transactionBackend();
     transaction.backend.install(makeTask("0 9 * * *", "ping", true));
     const priorXml = transaction.installedXml();
     if (!priorXml) throw new Error("missing installed XML");
-    transaction.setQueriedXml(priorXml.replace('encoding="UTF-8"', 'encoding="UTF-16"'));
+    transaction.setQueriedXml(priorXml.replace('encoding="UTF-16"', 'encoding="UTF-8"'));
     transaction.failNext("create");
 
     expect(() => transaction.backend.install(makeTask("30 10 * * *", "ping", true))).toThrow("injected create failure");
 
     expect(transaction.installedXml()).toBe(priorXml);
-    expect(transaction.installedXml()).toContain('encoding="UTF-8"');
-    expect(transaction.installedXml()).not.toContain('encoding="UTF-16"');
+    expect(transaction.installedXml()).toContain('encoding="UTF-16"');
+    expect(transaction.installedXml()).not.toContain('encoding="UTF-8"');
   });
 });

@@ -68,6 +68,11 @@ function withoutHarnessOverrides(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEn
   ]) {
     delete env[key];
   }
+  if (overrides.PATH !== undefined) {
+    for (const key of Object.keys(env)) {
+      if (key.toLowerCase() === "path") delete env[key];
+    }
+  }
   Object.assign(env, overrides);
   return env;
 }

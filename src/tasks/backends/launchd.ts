@@ -381,9 +381,9 @@ function parseDisabledLabels(output: string): Set<string> | undefined {
   const disabled = new Set<string>();
   let body = envelope[1];
   while (body.trim()) {
-    const entry = /^\s*"([^"\r\n]+)"\s*=>\s*(true|false)\s*/.exec(body);
+    const entry = /^\s*"([^"\r\n]+)"\s*=>\s*(true|false|enabled|disabled)\s*/.exec(body);
     if (!entry) return undefined;
-    if (entry[2] === "true") disabled.add(entry[1]);
+    if (entry[2] === "true" || entry[2] === "disabled") disabled.add(entry[1]);
     body = body.slice(entry[0].length);
   }
   return disabled;

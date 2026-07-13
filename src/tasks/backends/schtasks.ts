@@ -45,7 +45,7 @@ import {
   type ScheduledTaskContext,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
-import { escapeXml, nodeExec, nodeFs, normalizeXmlForUtf8File } from "./exec-utils";
+import { escapeXml, nodeExec, nodeFs, normalizeXmlForUtf16File } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
 export interface SchtasksExec {
@@ -90,7 +90,7 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
   return {
     name: "schtasks",
     install(task: TaskDocument) {
-      const xml = normalizeXmlForUtf8File(
+      const xml = normalizeXmlForUtf16File(
         buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder, scheduledContext, userSid }),
       );
       const query = exec.run(["schtasks", "/Query", "/TN", taskName(task.id), "/XML"]);
@@ -103,7 +103,7 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
             "INVALID_CONFIG_FILE",
           );
         }
-        previous = { xml: normalizeXmlForUtf8File(query.stdout), enabled };
+        previous = { xml: normalizeXmlForUtf16File(query.stdout), enabled };
       } else if (!isMissingTaskResult(query)) {
         throw new ConfigError(
           `schtasks /Query failed (exit ${query.status}): ${query.stderr || query.stdout || "no output"}.`,
@@ -708,6 +708,9 @@ function defaultSchtasksExec(): SchtasksExec {
 function defaultSchtasksFs(): SchtasksFs {
   return {
     ...nodeFs(),
+    writeFile(file, content) {
+      fs.writeFileSync(file, `\uFEFF${content}`, { encoding: "utf16le" });
+    },
     removeFile(file) {
       try {
         fs.rmSync(file, { force: true });

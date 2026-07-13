@@ -112,10 +112,10 @@ export function decodeCommandOutput(output: string | Buffer | null | undefined):
   return output.toString("utf8");
 }
 
-/** Return XML bytes-safe for {@link NodeFs.writeFile}, which always writes UTF-8. */
-export function normalizeXmlForUtf8File(xml: string): string {
+/** Return XML with the declaration required by Task Scheduler's UTF-16 input. */
+export function normalizeXmlForUtf16File(xml: string): string {
   const source = xml.replace(/^\uFEFF/, "");
-  const declaration = '<?xml version="1.0" encoding="UTF-8"?>';
+  const declaration = '<?xml version="1.0" encoding="UTF-16"?>';
   if (/^<\?xml\b[^?]*\?>/i.test(source)) {
     return source.replace(/^<\?xml\b[^?]*\?>/i, declaration);
   }

@@ -600,6 +600,22 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
     }
   });
 
+  test("reads modern launchctl enabled and disabled values", () => {
+    const exec = makeFakeExec();
+    const { backend } = makeBackend(exec);
+    const task = makeTask("0 9 * * *");
+    backend.install(task);
+    exec.printDisabledResult = {
+      status: 0,
+      stdout: 'disabled services = {\n\t"com.akm.task.ping" => disabled\n\t"com.example.enabled" => enabled\n}\n',
+      stderr: "",
+    };
+
+    expect(backend.list()).toEqual([
+      { id: "ping", signature: backend.expectedSignature?.({ ...task, enabled: false }) },
+    ]);
+  });
+
   test("signature changes with schedule or enabled state", () => {
     const { backend } = makeBackend();
     const task = makeTask("0 9 * * *");
