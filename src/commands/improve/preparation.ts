@@ -369,6 +369,7 @@ export async function runConsolidationPass(args: {
       stashDir: primaryStashDir,
       config: consolidationConfig,
       eventsCtx,
+      targetSelector: options.target,
       stateDbPath: eventsCtx?.dbPath,
     },
     { minimumThreshold: 95 },
@@ -531,6 +532,7 @@ async function runSessionExtractPass(args: {
   improveProfile: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
+  budgetSignal?: AbortSignal;
   seedGateAccepted: number;
   seedGateFailed: number;
 }): Promise<{
@@ -540,7 +542,16 @@ async function runSessionExtractPass(args: {
   warnings: string[];
   extractGateCfg: ReturnType<typeof makeGateConfig>;
 }> {
-  const { options, primaryStashDir, improveProfile, resolvedPlan, eventsCtx, seedGateAccepted, seedGateFailed } = args;
+  const {
+    options,
+    primaryStashDir,
+    improveProfile,
+    resolvedPlan,
+    eventsCtx,
+    budgetSignal,
+    seedGateAccepted,
+    seedGateFailed,
+  } = args;
   const warnings: string[] = [];
   // Phase 0.4 — session-extract pass.
   //
@@ -573,6 +584,7 @@ async function runSessionExtractPass(args: {
     stashDir: primaryStashDir,
     config: extractConfig,
     eventsCtx,
+    targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
   });
   // #554 minNewSessions gate: skip the entire extract pass (ensureIndex was
@@ -659,6 +671,7 @@ async function runSessionExtractPass(args: {
                 config: extractConfig,
                 resolvedPlan: extractPlan,
                 dryRun: options.dryRun ?? false,
+                signal: budgetSignal,
                 ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
                 // C2: pin extract's skip-tracking state.db open to the boundary path.
                 ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
@@ -829,7 +842,7 @@ export async function runImprovePreparationStage(args: {
   memoryCleanupPlan?: MemoryCleanupPlan;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
-  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
@@ -910,6 +923,7 @@ export async function runImprovePreparationStage(args: {
     improveProfile,
     resolvedPlan,
     eventsCtx,
+    budgetSignal,
     seedGateAccepted: consolidationPass.gateAutoAcceptedCount,
     seedGateFailed: consolidationPass.gateAutoAcceptFailedCount,
   });
@@ -962,7 +976,7 @@ export async function runImprovePreparationStage(args: {
     }
     if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
       try {
-        await reindexFn({ stashDir: primaryStashDir });
+        await reindexFn({ stashDir: primaryStashDir, signal: budgetSignal });
       } catch (err) {
         cleanupWarnings.push(`reindex after cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1048,19 +1062,19 @@ export async function runImprovePreparationStage(args: {
   const latestFeedbackTs = buildLatestFeedbackTsMap(
     candidateRefs,
     feedbackSinceCutoff,
-    options.target,
+    options.sourceName,
     options.legacyBareState,
   );
   const lastReflectProposalTs = buildLatestProposalTsMap(
     candidateRefs,
     "reflect",
-    options.target,
+    options.sourceName,
     options.legacyBareState,
   );
   const lastDistillProposalTs = buildLatestProposalTsMap(
     candidateRefs,
     "distill",
-    options.target,
+    options.sourceName,
     options.legacyBareState,
   );
 
@@ -1214,7 +1228,7 @@ export async function runImprovePreparationStage(args: {
     const feedbackCandidateSet = new Set(feedbackCandidateRefs);
     const feedbackRefByDurableKey = new Map(
       feedbackCandidateRefs.flatMap((ref) =>
-        improveStateReadRefs(ref, options.target, options.legacyBareState).map((key) => [key, ref]),
+        improveStateReadRefs(ref, options.sourceName, options.legacyBareState).map((key) => [key, ref]),
       ),
     );
     if (feedbackCandidateSet.size > 0) {
@@ -1291,9 +1305,9 @@ export async function runImprovePreparationStage(args: {
     // Fix (WS-1 blocker 3): union the feedback pool into the lookup.
     const allCandidateRefs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];
     retrievalCounts = getRetrievalCounts(dbForRetrieval, allCandidateRefs, {
-      sourceName: options.target,
+      sourceName: options.sourceName,
       stashDir: primaryStashDir,
-      includeLegacyBare: options.legacyBareState || !options.target,
+      includeLegacyBare: options.legacyBareState,
     });
     lastUseMsForProactive = getLastUseMsByRef(
       dbForRetrieval,
@@ -1444,7 +1458,12 @@ export async function runImprovePreparationStage(args: {
         // found later in the scan lost its slot to an earlier lower-scoring one.
         const qualifying: Array<{ ref: ImproveEligibleRef; score: number }> = [];
         for (const r of candidates) {
-          const row = readAssetSalienceForImproveRef(dbForHighSalience, r.ref, options.target, options.legacyBareState);
+          const row = readAssetSalienceForImproveRef(
+            dbForHighSalience,
+            r.ref,
+            options.sourceName,
+            options.legacyBareState,
+          );
           if (
             row &&
             isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
@@ -1747,7 +1766,7 @@ export async function runImprovePreparationStage(args: {
           const row = readAssetSalienceForImproveRef(
             dbForStoredEncoding,
             r.ref,
-            options.target,
+            options.sourceName,
             options.legacyBareState,
           );
           if (row && isContentEncodingRow(row, type)) {
@@ -1845,11 +1864,11 @@ export async function runImprovePreparationStage(args: {
         //
         // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
         const allStoredScores = getAllRankScores(stateDb);
-        const existingAllScores = options.target
+        const existingAllScores = options.sourceName
           ? new Map(
               [...allStoredScores].flatMap(([ref, score]) => {
                 const parsed = parseAssetRef(ref);
-                return parsed.origin === options.target || (options.legacyBareState && !parsed.origin)
+                return parsed.origin === options.sourceName || (options.legacyBareState && !parsed.origin)
                   ? [[bareImproveRef(ref), score] as const]
                   : [];
               }),
@@ -1971,7 +1990,7 @@ export async function runImprovePreparationStage(args: {
         }
 
         for (const [ref, vector] of salienceMap) {
-          upsertAssetSalience(stateDb, durableImproveRef(ref, options.target), vector, nowForSalience);
+          upsertAssetSalience(stateDb, durableImproveRef(ref, options.sourceName), vector, nowForSalience);
         }
       },
       { path: eventsCtx?.dbPath },
@@ -2058,11 +2077,11 @@ export async function runImprovePreparationStage(args: {
         (replayDb) => {
           const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
           const storedRankScores = getAllRankScores(replayDb);
-          const allRankScores = options.target
+          const allRankScores = options.sourceName
             ? new Map(
                 [...storedRankScores].flatMap(([ref, score]) => {
                   const parsed = parseAssetRef(ref);
-                  return parsed.origin === options.target || (options.legacyBareState && !parsed.origin)
+                  return parsed.origin === options.sourceName || (options.legacyBareState && !parsed.origin)
                     ? [[bareImproveRef(ref), score] as const]
                     : [];
                 }),
@@ -2076,7 +2095,7 @@ export async function runImprovePreparationStage(args: {
           const candidates: Array<{ ref: string; rankScore: number }> = [];
           for (const [ref, rankScore] of allRankScores) {
             if (alreadyInPool.has(ref)) continue;
-            const noOps = readConsecutiveNoOpsForImproveRef(replayDb, ref, options.target, options.legacyBareState);
+            const noOps = readConsecutiveNoOpsForImproveRef(replayDb, ref, options.sourceName, options.legacyBareState);
             if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
               convergedSkipped++;
               continue;
@@ -2159,7 +2178,10 @@ export async function runImprovePreparationStage(args: {
       const ownsNoOpDb = !eventsCtx?.db;
       try {
         for (const r of mergedRefs) {
-          noOpMap.set(r.ref, readConsecutiveNoOpsForImproveRef(noOpDb, r.ref, options.target, options.legacyBareState));
+          noOpMap.set(
+            r.ref,
+            readConsecutiveNoOpsForImproveRef(noOpDb, r.ref, options.sourceName, options.legacyBareState),
+          );
         }
       } finally {
         if (ownsNoOpDb) noOpDb.close();

@@ -5,16 +5,13 @@
 /**
  * Tests for the SELECT-time cooldown leak fix (Phase 3).
  *
- * ROOT CAUSE (from diagnosis):
- *   `selectProactiveMaintenanceRefs` runs BEFORE `reflect-distill.lock` is
- *   acquired. Run B's planning builds `lastReflectTs` while Run A's reflect is
- *   still in-flight, so both runs compute `due=true` for the same ref. Both
- *   then acquire the lock in turn and reflect the same ref — a ~16x storm.
+ * ROOT CAUSE (from diagnosis): planning can use cooldown timestamps captured
+ * before execution, so refs claimed just before lock acquisition need a fresh
+ * due check.
  *
  * THE FIX:
  *   `filterProactiveDue(selected, lastReflectTs, lastDistillTs, dueDays, now)`
- *   re-applies the DUE gate with freshly-read timestamp maps INSIDE the lock,
- *   dropping refs that became non-due while this run waited for the lock.
+ *   re-applies the DUE gate with freshly-read timestamp maps under the run lock.
  *
  * These tests drive `filterProactiveDue` directly.
  */

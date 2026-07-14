@@ -310,9 +310,8 @@ export interface AkmImproveResult {
   };
   dryRun: boolean;
   /**
-   * Present when the run did no work because another improve held the lock and
-   * `skipIfLocked` was set. The run still exits 0 and records a (non-productive)
-   * row so the skip is auditable; `reason` is `"lock-held"`.
+   * Present when the run did no work because another improve held the whole-run
+   * lock and `skipIfLocked` was set. The run exits 0; `reason` is `"lock-held"`.
    */
   skipped?: { reason: string };
   guidance?: string;

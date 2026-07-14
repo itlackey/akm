@@ -67,6 +67,9 @@ Options:
                         Only process refs with recent feedback signal events
   --min-retrieval-count <n>
                         Retrieval fallback threshold when no recent feedback exists (default: 5)
+  --timeout-ms <n>      Wall-clock budget for the entire live run (default: 7200000)
+  --skip-if-locked      Exit 0 without doing work when another improve run owns
+                        the whole-run lock; no triage, indexing, events, or sync
   --json-to-stdout      Emit the full JSON result on stdout (legacy behaviour).
                         (0.8.0+: full result is recorded in the improve_runs table of
                         state.db and stdout is empty; use --json-to-stdout for the prior

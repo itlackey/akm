@@ -188,11 +188,13 @@ export interface AkmDistillOptions {
   config?: AkmConfig;
   /** Pre-resolved connection supplied by the improve invocation plan. */
   llmConfig?: LlmConnectionConfig | null;
+  /** Shared improve deadline signal for generation and quality judging. */
+  signal?: AbortSignal;
   /**
    * Optional chat seam for tests. Defaults to {@link chatCompletion}.
    * Stateless — no module-level fallback, callers always pass a function.
    */
-  chat?: (config: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>;
+  chat?: typeof chatCompletion;
   /** Override the proposals clock / id generator (test seam). */
   ctx?: ProposalsContext;
   /**
@@ -880,6 +882,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     config,
     strategy: options.improveProfile,
     llmConfig: distillLlm,
+    signal: options.signal,
     chat,
     stash,
     lookup,
@@ -990,7 +993,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       }
       // Test seam: preserve the two-arg signature so existing fake `chat`
       // functions (which return markdown strings) continue to work.
-      return chat(distillLlm, messages);
+      return chat(distillLlm, messages, options.signal ? { signal: options.signal } : undefined);
     },
     null as string | null,
     {
@@ -1137,14 +1140,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (options.improveProfile?.processes?.distill?.qualityGate?.enabled ?? true) {
     // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
     const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
-    const judgeResult = await runLessonQualityJudge(
-      config,
-      content,
-      assetContent ?? "",
-      chat,
-      similarLessons.length > 0 ? similarLessons : undefined,
-      distillLlm,
-    );
+    const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat, {
+      ...(similarLessons.length > 0 ? { similarLessons } : {}),
+      ...(distillLlm ? { llmConfig: distillLlm } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
     if (!judgeResult.pass) {
       if (judgeResult.reviewNeeded) {
         return writeQualityRejection(

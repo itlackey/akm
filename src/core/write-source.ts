@@ -345,6 +345,9 @@ function warnIfPushOnCommit(config: SourceConfigEntry): void {
  * {@link writeAssetToSource}.
  */
 export interface ResolvedWriteTarget {
+  /** Configured source name used when an API must re-resolve the destination. */
+  selector?: string;
+  /** Stable source identity. Durable state uses `source.name`. */
   source: WriteTargetSource;
   config: SourceConfigEntry;
 }
@@ -573,6 +576,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   };
 
   return {
+    selector: runtime.name,
     source: {
       kind,
       name: runtime.name,

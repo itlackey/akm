@@ -169,7 +169,7 @@ describe("WS-1 wiring — first run (empty table)", () => {
 
     const db = openStateDatabase();
     try {
-      const row = getAssetSalience(db, "skill:beta");
+      const row = getAssetSalience(db, "stash//skill:beta");
       expect(row).toBeDefined();
       expect(row?.rank_score).toBeGreaterThan(0);
     } finally {
@@ -321,7 +321,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const db = openStateDatabase();
     try {
       // no_change reflect → recordNoOp → consecutive_no_ops = 1
-      const noOps = getConsecutiveNoOps(db, "skill:delta");
+      const noOps = getConsecutiveNoOps(db, "stash//skill:delta");
       expect(noOps).toBeGreaterThanOrEqual(1);
     } finally {
       db.close();
@@ -368,7 +368,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const db = openStateDatabase();
     try {
       // queued distill → resetConsecutiveNoOps → 0
-      const noOps = getConsecutiveNoOps(db, "skill:epsilon");
+      const noOps = getConsecutiveNoOps(db, "stash//skill:epsilon");
       expect(noOps).toBe(0);
     } finally {
       db.close();
@@ -411,13 +411,13 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     const dbSetup = openStateDatabase();
     const IDENTICAL_RANK_SCORE = 0.6;
     try {
-      upsertAssetSalience(dbSetup, "skill:alpha-stable", {
+      upsertAssetSalience(dbSetup, "stash//skill:alpha-stable", {
         encoding: 0.9,
         outcome: 0,
         retrieval: 0.5,
         rankScore: IDENTICAL_RANK_SCORE,
       });
-      upsertAssetSalience(dbSetup, "skill:beta-fresh", {
+      upsertAssetSalience(dbSetup, "stash//skill:beta-fresh", {
         encoding: 0.9,
         outcome: 0,
         retrieval: 0.5,
@@ -427,7 +427,7 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
       // Manually set alpha-stable to the dampen threshold.
       dbSetup
         .prepare(`UPDATE asset_salience SET consecutive_no_ops = ? WHERE asset_ref = ?`)
-        .run(3 /* SALIENCE_NO_OP_DAMPEN_THRESHOLD */, "skill:alpha-stable");
+        .run(3 /* SALIENCE_NO_OP_DAMPEN_THRESHOLD */, "stash//skill:alpha-stable");
     } finally {
       dbSetup.close();
     }
@@ -467,10 +467,10 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     try {
       const alphaRow = dbCheck
         .prepare(`SELECT rank_score, consecutive_no_ops FROM asset_salience WHERE asset_ref = ?`)
-        .get("skill:alpha-stable") as { rank_score: number; consecutive_no_ops: number } | undefined;
+        .get("stash//skill:alpha-stable") as { rank_score: number; consecutive_no_ops: number } | undefined;
       const betaRow = dbCheck
         .prepare(`SELECT rank_score FROM asset_salience WHERE asset_ref = ?`)
-        .get("skill:beta-fresh") as { rank_score: number } | undefined;
+        .get("stash//skill:beta-fresh") as { rank_score: number } | undefined;
 
       expect(alphaRow).toBeDefined();
       expect(betaRow).toBeDefined();

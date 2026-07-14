@@ -350,6 +350,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Improve RC stabilization.** Restored one ownership-safe whole-run lock from
+  triage through final sync; `--skip-if-locked` is a true no-op; the run deadline
+  now starts before indexing and reaches index waits, generation, reindexing, and
+  quality judges; reflect judges the sanitized final candidate with bounded
+  changed-region context; write-target selectors no longer replace durable source
+  identity; and vLLM thinking controls cannot be overridden through `extraParams`.
 - **Proposal promotion, reversion, and rejection are durable and recoverable.**
   Acceptance and reversion persist target ownership and content fingerprints,
   publish atomically across filesystem layouts, index immediately, commit exact

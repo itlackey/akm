@@ -27,7 +27,12 @@ function makeTempDir(prefix: string): string {
 
 async function buildIndex(stashDir: string): Promise<void> {
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
+  saveConfig(
+    withTestImproveLlm({
+      semanticSearchMode: "off",
+      improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
+    }),
+  );
   await akmIndex({ stashDir, full: true });
 }
 
@@ -718,6 +723,7 @@ describe("akm improve memory cleanup", () => {
           { type: "filesystem", name: "local", path: stashDir, writable: true },
           { type: "website", name: "docs-site", url: websiteUrl },
         ],
+        improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
       }),
     );
 

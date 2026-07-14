@@ -54,9 +54,9 @@ list the **footguns that have already bitten us** so we don't reintroduce them.
 
 ## 1. Pass inventory (what runs, in order)
 
-`akmImprove()` (improve.ts) → its internal multi-cycle `for (cycleIndex …)` loop
-(same function), each cycle = **preparation → loop → post-loop**, under three
-independent locks (`triage.lock`, `consolidate.lock`, `reflect-distill.lock`).
+`akmImprove()` (improve.ts) acquires one whole-run `improve.lock`, then enters its
+internal multi-cycle `for (cycleIndex …)` loop. Each cycle is **preparation → loop
+→ post-loop** under that same lock through final sync.
 Cycle stops early when `gateAcceptedThisCycle === 0` (fixed-point).
 
 Post-D1, the three stages are separate exported functions: `runImprovePreparationStage()`
@@ -67,9 +67,9 @@ Post-D1, the three stages are separate exported functions: `runImprovePreparatio
 
 | Pass | Stage | file · symbol | Produces | Gating |
 |---|---|---|---|---|
-| triage drain | pre | improve.ts `akmImprove()` (pre-cycle triage block, before the `for (cycleIndex …)` loop) | promote/reject/defer of **backlog** proposals | `triage` enabled, `scope.mode!=="ref"`, `triage.lock` |
+| triage drain | pre | improve.ts `akmImprove()` (pre-cycle triage block, before the `for (cycleIndex …)` loop) | promote/reject/defer of **backlog** proposals | `triage` enabled, `scope.mode!=="ref"`, whole-run lock held |
 | ensureIndex + collectEligibleRefs | pre-cycle | eligibility.ts `collectEligibleRefs()` (called from `akmImprove()`) | `plannedRefs` | always |
-| consolidation | prep 0.3 | preparation.ts `runConsolidationPass()` (called from `runImprovePreparationStage()`) | merge/delete memories → proposals | pool-delta mtime gate, `minPoolSize` (default **500**), `consolidate.lock` |
+| consolidation | prep 0.3 | preparation.ts `runConsolidationPass()` (called from `runImprovePreparationStage()`) | merge/delete memories → proposals | pool-delta mtime gate, `minPoolSize` (default **500**), whole-run lock held |
 | session extract | prep 0.4 | preparation.ts `runSessionExtractPass()` (called from `runImprovePreparationStage()`) | candidate proposals from session logs | `extract` enabled, `minNewSessions` gate |
 | extract backlog drain | prep | preparation.ts `runSessionExtractPass()` (same function, backlog-drain block) | promote/fail extract proposals | `autoAccept!==undefined`, not dryRun |
 | validation + schema-repair | prep 1 | preparation.ts `runValidationAndRepairPass()` | `schemaRepairs` | LLM available |

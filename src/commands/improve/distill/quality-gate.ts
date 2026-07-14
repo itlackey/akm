@@ -18,7 +18,7 @@ import { type AkmConfig, getDefaultLlmConfig, type LlmConnectionConfig } from ".
 import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { withStateDb } from "../../../core/state-db";
-import { type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
+import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { akmSearch } from "../../read/search";
 import type { AkmDistillResult, DistillOutcome } from "../distill";
 import { scoreEncodingSalience } from "../encoding-salience";
@@ -117,6 +117,128 @@ export function buildJudgePrompt(
   return lines.join("\n");
 }
 
+function boundedDocument(content: string, maxChars = 6000): string {
+  if (content.length <= maxChars) return content;
+  const half = Math.floor((maxChars - 80) / 2);
+  return `${content.slice(0, half)}\n\n[... middle omitted for bounded judge context ...]\n\n${content.slice(-half)}`;
+}
+
+function buildChangedRegion(sourceContent: string, candidateContent: string): string {
+  const source = sourceContent.split("\n");
+  const candidate = candidateContent.split("\n");
+  let prefix = 0;
+  while (prefix < source.length && prefix < candidate.length && source[prefix] === candidate[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < source.length - prefix &&
+    suffix < candidate.length - prefix &&
+    source[source.length - 1 - suffix] === candidate[candidate.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+  const removed = source.slice(prefix, source.length - suffix).join("\n");
+  const added = candidate.slice(prefix, candidate.length - suffix).join("\n");
+  return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
+}
+
+/** Build quality criteria for revising an existing asset in place. */
+export function buildReflectJudgePrompt(candidateContent: string, sourceContent: string, feedback: string[]): string {
+  return [
+    "You are evaluating a proposed revision to an existing akm asset.",
+    "",
+    "Score this revision on each criterion from 1 (poor) to 5 (excellent):",
+    "1. FEEDBACK ALIGNMENT: Does the revision address the supplied feedback or improve retrieval and clarity?",
+    "2. PRESERVATION: Does it retain the source's concrete facts, code, commands, examples, and structure without truncation?",
+    "3. QUALITY: Is the revision coherent, actionable, complete, and free of unsupported claims?",
+    "",
+    "Overlap with the source is expected and must not lower the score by itself; this is an in-place revision, not a new lesson.",
+    "",
+    "Feedback:",
+    "```",
+    (feedback.length > 0 ? feedback.join("\n") : "No explicit feedback supplied.").slice(0, 1000),
+    "```",
+    "",
+    "Source asset content:",
+    "```",
+    boundedDocument(sourceContent),
+    "```",
+    "",
+    "Proposed revision:",
+    "```",
+    boundedDocument(candidateContent),
+    "```",
+    "",
+    "Changed region:",
+    "```",
+    buildChangedRegion(sourceContent, candidateContent),
+    "```",
+    "",
+    'Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}',
+  ].join("\n");
+}
+
+type QualityJudgeResult = { pass: boolean; score: number; reason: string; reviewNeeded?: boolean };
+type QualityJudgeChat = (
+  llmConfig: LlmConnectionConfig,
+  messages: ChatMessage[],
+  options?: ChatCompletionOptions,
+) => Promise<string>;
+
+export interface QualityJudgeOptions {
+  similarLessons?: Array<{ ref: string; content: string }>;
+  llmConfig?: LlmConnectionConfig;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+}
+
+async function runQualityJudge(
+  config: AkmConfig,
+  prompt: string,
+  chat: QualityJudgeChat,
+  options: QualityJudgeOptions = {},
+): Promise<QualityJudgeResult> {
+  const llmConfig = options.llmConfig ?? getDefaultLlmConfig(config);
+  if (!llmConfig) {
+    return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
+  }
+  try {
+    const raw = await chat(
+      llmConfig,
+      [
+        { role: "system", content: "Return only valid JSON. No prose." },
+        { role: "user", content: prompt },
+      ],
+      {
+        enableThinking: false,
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+    );
+    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
+    if (
+      !parsed ||
+      typeof parsed.score !== "number" ||
+      !Number.isFinite(parsed.score) ||
+      parsed.score < 1 ||
+      parsed.score > 5 ||
+      typeof parsed.reason !== "string"
+    ) {
+      return { pass: false, score: -1, reason: "judge parse failed — cannot judge, failing closed" };
+    }
+    // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
+    //   >= 3.5: auto-queue as pending (pass: true)
+    //   2.5–3.5: review-needed band — uncertain, escalate to human (reviewNeeded: true)
+    //   < 2.5: auto-reject (pass: false)
+    const score = parsed.score;
+    const reason = parsed.reason ?? "";
+    if (score >= 3.5) return { pass: true, score, reason };
+    if (score >= 2.5) return { pass: false, score, reason, reviewNeeded: true };
+    return { pass: false, score, reason };
+  } catch {
+    return { pass: false, score: -1, reason: "judge timeout/error — cannot judge, failing closed" };
+  }
+}
+
 /**
  * Run the LLM-as-judge quality gate on a proposal's content.
  *
@@ -133,46 +255,22 @@ export async function runLessonQualityJudge(
   config: AkmConfig,
   lessonContent: string,
   sourceContent: string,
-  chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
-  /** D-4 / #390: top-3 similar existing lessons for dedup check. */
-  similarLessons?: Array<{ ref: string; content: string }>,
-  llmConfigOverride?: LlmConnectionConfig,
-): Promise<{ pass: boolean; score: number; reason: string; reviewNeeded?: boolean }> {
-  const llmConfig = llmConfigOverride ?? getDefaultLlmConfig(config);
-  if (!llmConfig) {
-    return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
-  }
-  const judgeLlmConfig = llmConfig;
-  const JUDGE_TIMEOUT_MS = 8_000;
-  try {
-    const raw = await Promise.race([
-      chat(judgeLlmConfig, [
-        { role: "system", content: "Return only valid JSON. No prose." },
-        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent, similarLessons) },
-      ]),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("judge timeout")), JUDGE_TIMEOUT_MS)),
-    ]);
-    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
-    if (!parsed || typeof parsed.score !== "number") {
-      return { pass: false, score: -1, reason: "judge parse failed — cannot judge, failing closed" };
-    }
-    // D-5 / #388: Three-band system (MT-Bench arXiv:2306.05685 — ~±0.5 judge variance).
-    //   >= 3.5: auto-queue as pending (pass: true)
-    //   2.5–3.5: review-needed band — uncertain, escalate to human (reviewNeeded: true)
-    //   < 2.5: auto-reject (pass: false)
-    const score = parsed.score;
-    const reason = parsed.reason ?? "";
-    if (score >= 3.5) {
-      return { pass: true, score, reason };
-    }
-    if (score >= 2.5) {
-      // Uncertainty band: treat as failed for auto-queuing but flag for review.
-      return { pass: false, score, reason, reviewNeeded: true };
-    }
-    return { pass: false, score, reason };
-  } catch {
-    return { pass: false, score: -1, reason: "judge timeout/error — cannot judge, failing closed" };
-  }
+  chat: QualityJudgeChat,
+  options: QualityJudgeOptions = {},
+): Promise<QualityJudgeResult> {
+  return runQualityJudge(config, buildJudgePrompt(lessonContent, sourceContent, options.similarLessons), chat, options);
+}
+
+/** Judge an in-place reflect revision without applying new-lesson novelty criteria. */
+export async function runReflectQualityJudge(
+  config: AkmConfig,
+  candidateContent: string,
+  sourceContent: string,
+  feedback: string[],
+  chat: QualityJudgeChat,
+  options: QualityJudgeOptions = {},
+): Promise<QualityJudgeResult> {
+  return runQualityJudge(config, buildReflectJudgePrompt(candidateContent, sourceContent, feedback), chat, options);
 }
 
 // ── Quality-rejection helper ─────────────────────────────────────────────────

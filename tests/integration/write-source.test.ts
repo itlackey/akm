@@ -444,6 +444,7 @@ describe("resolveWriteTarget", () => {
       },
       "explicit",
     );
+    expect(result.selector).toBe("explicit");
     expect(result.source.name).toBe("explicit");
     expect(result.source.path).toBe(dir);
   });
@@ -506,6 +507,7 @@ describe("resolveWriteTarget", () => {
       sources: [{ type: "filesystem", path: dir, name: "default-one", writable: true }],
       defaultWriteTarget: "default-one",
     });
+    expect(result.selector).toBe("default-one");
     expect(result.source.name).toBe("default-one");
   });
 
@@ -513,6 +515,8 @@ describe("resolveWriteTarget", () => {
     const stashDir = makeTempDir("akm-target-stash-");
     process.env.AKM_STASH_DIR = stashDir;
     const result = resolveWriteTarget({ semanticSearchMode: "off" });
+    expect(result.selector).toBeUndefined();
+    expect(result.source.name).toBe("stash");
     expect(result.source.kind).toBe("filesystem");
     expect(result.source.path).toBe(stashDir);
   });

@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { runLessonQualityJudge } from "../../../src/commands/improve/distill/quality-gate";
+import { buildReflectJudgePrompt, runLessonQualityJudge } from "../../../src/commands/improve/distill/quality-gate";
 import type { AkmConfig } from "../../../src/core/config/config";
 
 function configWithLlm(): AkmConfig {
@@ -76,5 +76,65 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     );
     expect(result.pass).toBe(true);
     expect(result.score).toBeCloseTo(4.5, 9);
+  });
+
+  test("disables thinking for the JSON-only judge call", async () => {
+    let enableThinking: boolean | undefined;
+    const result = await runLessonQualityJudge(
+      configWithLlm(),
+      "some lesson body",
+      "some source body",
+      async (_config, _messages, options) => {
+        enableThinking = options?.enableThinking;
+        return JSON.stringify({ score: 4.5, reason: "adds new info" });
+      },
+    );
+
+    expect(result.pass).toBe(true);
+    expect(enableThinking).toBe(false);
+  });
+
+  test.each(["0", "5.1", "1e999"])("rejects an out-of-range or non-finite score: %s", async (score) => {
+    const result = await runLessonQualityJudge(
+      configWithLlm(),
+      "some lesson body",
+      "some source body",
+      async () => `{"score":${score},"reason":"invalid"}`,
+    );
+    expect(result.pass).toBe(false);
+    expect(result.score).toBe(-1);
+  });
+
+  test("forwards the shared signal and remaining timeout", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    let receivedTimeout: number | null | undefined;
+    const result = await runLessonQualityJudge(
+      configWithLlm(),
+      "some lesson body",
+      "some source body",
+      async (_config, _messages, options) => {
+        receivedSignal = options?.signal;
+        receivedTimeout = options?.timeoutMs;
+        return JSON.stringify({ score: 4.5, reason: "bounded" });
+      },
+      { signal: controller.signal, timeoutMs: 1234 },
+    );
+
+    expect(result.pass).toBe(true);
+    expect(receivedSignal).toBe(controller.signal);
+    expect(receivedTimeout).toBe(1234);
+  });
+});
+
+describe("buildReflectJudgePrompt", () => {
+  test("keeps late changed content in bounded diff context", () => {
+    const source = `${"source line\n".repeat(400)}old ending`;
+    const candidate = `${"source line\n".repeat(400)}LATE_CHANGED_MARKER`;
+    const prompt = buildReflectJudgePrompt(candidate, source, []);
+
+    expect(prompt).toContain("LATE_CHANGED_MARKER");
+    expect(prompt).toContain("Changed region:");
+    expect(prompt.length).toBeLessThan(25_000);
   });
 });

@@ -184,13 +184,11 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
 }
 
 /**
- * Post-lock re-filter for proactive refs.
+ * Pre-execution re-filter for proactive refs.
  *
- * Called INSIDE the reflect-distill.lock window with freshly-read timestamp
- * maps so that any `reflect_invoked` events committed by a concurrent run
- * while this run was waiting for the lock are visible. Refs that became
- * non-due (staleDays ≤ dueDays) since planning time are dropped before
- * execution, closing the SELECT-time cooldown race.
+ * Called under the whole-run lock with freshly-read timestamp maps. Refs that
+ * became non-due before this run acquired the lock are dropped before execution,
+ * closing the SELECT-time cooldown race.
  *
  * The logic mirrors the DUE gate in `selectProactiveMaintenanceRefs` — an
  * asset is due only when never touched OR last touched more than `dueDays`

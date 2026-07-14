@@ -52,6 +52,20 @@ export function withMaintenanceStartBarrier<T>(run: () => T): T {
   }
 }
 
+/** Run while holding the start barrier, or return undefined when it is busy. */
+export function tryWithMaintenanceStartBarrier<T>(run: () => T): T | undefined {
+  if (heldBarrierContext.getStore()?.active) return run();
+  const release = tryAcquireMaintenanceBarrier();
+  if (!release) return undefined;
+  const ownership = { active: true };
+  try {
+    return heldBarrierContext.run(ownership, run);
+  } finally {
+    ownership.active = false;
+    release();
+  }
+}
+
 async function acquireMaintenanceBarrierAsync(): Promise<() => void> {
   const deadline = Date.now() + 5_000;
   while (true) {

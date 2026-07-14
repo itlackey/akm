@@ -13,6 +13,7 @@
 | `--auto-accept` | `number \| "safe" \| false` (default: **off**) | Opt-in threshold for the shared auto-accept gate (`runAutoAcceptGate`). Flag absent or bare `--auto-accept` → OFF (`parseAutoAcceptFlag`; deliberate flip from the 0.8.0-RC default-ON-at-90 behaviour). `--auto-accept=<N>` → integer threshold 0-100. `--auto-accept=safe` → permanent alias for 90. `--auto-accept=false` → explicit disable. Until proposals expose per-operation confidence scores, an enabled gate accepts the consolidate batch whole (legacy behaviour). The drain tier never consults this threshold — it is deterministic-policy-gated. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
+| `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a config error. |
 | `--consolidate-recovery` | `"abort" \| "clean"` | Recovery mode for stale/incomplete consolidate journals. Default: `abort`. |
 | `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; disable retrieval fallback. |
 | `--min-retrieval-count` | `number` | Minimum retrieval count for zero-feedback fallback eligibility. Default: 5. |
@@ -25,23 +26,20 @@ Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`)
 flowchart TD
     A([akm improve invoked]) --> B[resolveImproveScope\nscope mode: all / type / ref]
     B --> C{dryRun?}
-    C -- no --> ENSURE[ensureIndex primaryStashDir]
+    C -- no --> E[Acquire whole-run lock\n.akm/improve.lock]
     C -- yes --> COLLECT[collectEligibleRefs\nquery existing SQLite index, filter to stashDir]
+    E --> E1{lock file or maintenance barrier held?}
+    E1 -- yes, skip-if-locked --> SKIP[Return exit-0 no-op\nno triage, index, events, or sync]
+    E1 -- yes, no flag --> ERR([throw ConfigError: already running])
+    E1 -- no / stale reclaimed --> TRIAGE[Triage pending proposal backlog]
+    TRIAGE --> ENSURE[ensureIndex primaryStashDir\nshared deadline signal]
     ENSURE --> COLLECT
     COLLECT --> CLEANUP_ANALYZE{memoryCleanup eligible?}
     CLEANUP_ANALYZE -- yes --> ANALYZE[analyzeMemoryCleanup\nscans .derived memories\nPRE-COMPUTED before dryRun check]
     CLEANUP_ANALYZE -- no --> D
     ANALYZE --> D{dryRun?}
     D -- yes --> DRY[Return dry-run result\nno lock, no events, no writes, no model calls\nincludes memoryCleanupPlan analysis]
-    D -- no --> E[Lock acquisition\n.akm/improve.lock]
-
-    E --> E1{lock file exists?}
-    E1 -- no --> E3
-    E1 -- yes --> E2{process still alive?}
-    E2 -- yes --> ERR([throw ConfigError: already running])
-    E2 -- no / stale --> E3[remove stale lock\nwrite new lock JSON with pid + startedAt]
-
-    E3 --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
+    D -- no --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
     J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
 
     K --> L[Signal filter\nkeep only refs with recent feedback events\nhaving metadata.signal or metadata.note]
@@ -170,7 +168,7 @@ flowchart TD
 
     GRAPH --> FINAL
 
-    FINAL[Assemble AkmImproveResult\nschemaVersion: 2] --> UNLOCK[release process locks\nfinally block]
+    FINAL[Assemble AkmImproveResult\nschemaVersion: 2 and sync stash] --> UNLOCK[release whole-run lock\nfinally block]
     UNLOCK --> RETURN([return AkmImproveResult])
 ```
 

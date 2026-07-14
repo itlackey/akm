@@ -361,6 +361,13 @@ async function chatCompletionAttempt(
           },
         }
       : {};
+  const resolvedEnableThinking = options?.enableThinking ?? config.enableThinking;
+  const thinkingParams =
+    resolvedEnableThinking === undefined
+      ? {}
+      : config.provider === "vllm"
+        ? { chat_template_kwargs: { enable_thinking: resolvedEnableThinking } }
+        : { enable_thinking: resolvedEnableThinking };
 
   // Wall-clock start for per-call usage telemetry (#576). Captured here so the
   // emitted duration covers the full request/response/parse cycle of a single
@@ -380,11 +387,7 @@ async function chatCompletionAttempt(
           temperature: options?.temperature ?? config.temperature ?? 0.3,
           ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
           ...responseFormat,
-          ...(options?.enableThinking !== undefined
-            ? { enable_thinking: options.enableThinking }
-            : config.enableThinking !== undefined
-              ? { enable_thinking: config.enableThinking }
-              : {}),
+          ...thinkingParams,
           ...config.extraParams,
         }),
       },

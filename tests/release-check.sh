@@ -93,7 +93,7 @@ validate_workflow_syntax() {
 }
 
 run_step "Workflow Syntax" validate_workflow_syntax
-run_step "Workflow Release Contract" bun test tests/workflow-release-gates.test.ts
+run_step "Workflow Release Contract" bun test tests/workflow-release.test.ts
 run_step "Lint" bunx biome check --write src/ tests/
 run_step "Type Check" bunx tsc --noEmit
 run_step "Build Package" bun run build

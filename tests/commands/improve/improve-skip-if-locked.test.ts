@@ -2,23 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * #607 per-process lock decomposition. The old single `improve.lock` is
- * replaced by three fine-grained locks (consolidate, reflect-distill, triage).
- * When a per-process lock is held:
- *   - With `skipIfLocked: true`: that process is skipped, the rest of the run continues.
- *   - Without `skipIfLocked`: throws ConfigError ("already running").
- *
- * These tests plant a triage.lock (the first lock acquired in the pipeline)
- * to verify the skip-if-locked behavior.
- */
+/** Whole-run improve lock behavior for scheduled overlap. */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmImprove, resetHeldProcessLocks } from "../../../src/commands/improve/improve";
+import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
+import { acquireMaintenanceBarrier } from "../../../src/core/maintenance-barrier";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -52,8 +44,8 @@ function quietConfig(): AkmConfig {
   } as unknown as AkmConfig;
 }
 
-function plantHeldTriageLock(): string {
-  const lockPath = path.join(stashDir, ".akm", "triage.lock");
+function plantHeldImproveLock(): string {
+  const lockPath = path.join(stashDir, ".akm", "improve.lock");
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
   return lockPath;
@@ -64,21 +56,62 @@ beforeEach(() => {
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
   saveConfig({ semanticSearchMode: "off" });
-  resetHeldProcessLocks();
 });
 
 afterEach(() => {
-  resetHeldProcessLocks();
   cleanup();
   cleanup = () => {};
   stashDir = "";
 });
 
-describe("akm improve — skip-if-locked (#607 per-process locks)", () => {
+describe("akm improve — skip-if-locked", () => {
+  test("returns a whole-run no-op without invoking planning", async () => {
+    const lockPath = plantHeldImproveLock();
+    let planningInvoked = false;
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      config: quietConfig(),
+      skipIfLocked: true,
+      collectEligibleRefsFn: (async () => {
+        planningInvoked = true;
+        throw new Error("planning must not run");
+      }) as never,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toEqual({ reason: "lock-held" });
+    expect(result.plannedRefs).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(planningInvoked).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  test("returns the same no-op when the maintenance barrier is held", async () => {
+    const lockPath = path.join(stashDir, ".akm", "improve.lock");
+    const releaseBarrier = acquireMaintenanceBarrier();
+
+    try {
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: quietConfig(),
+        skipIfLocked: true,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.skipped).toEqual({ reason: "lock-held" });
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      releaseBarrier();
+    }
+  });
+
   test(
-    "completes successfully when triage.lock is held and skipIfLocked is set (triage skipped)",
+    "preserves the existing owner when the run skips",
     async () => {
-      const lockPath = plantHeldTriageLock();
+      const lockPath = plantHeldImproveLock();
 
       const result = await akmImprove({
         scope: "memory",
@@ -88,7 +121,7 @@ describe("akm improve — skip-if-locked (#607 per-process locks)", () => {
       });
 
       expect(result.ok).toBe(true);
-      // The other run's lock is left exactly as we planted it — never released.
+      expect(result.skipped).toEqual({ reason: "lock-held" });
       expect(fs.existsSync(lockPath)).toBe(true);
       expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
     },
@@ -96,9 +129,9 @@ describe("akm improve — skip-if-locked (#607 per-process locks)", () => {
   );
 
   test(
-    "throws 'already running' when triage.lock is held and skipIfLocked is NOT set",
+    "throws 'already running' when the lock is held and skipIfLocked is not set",
     async () => {
-      plantHeldTriageLock();
+      plantHeldImproveLock();
       await expect(akmImprove({ scope: "memory", stashDir, config: quietConfig() })).rejects.toThrow(
         /already running/i,
       );

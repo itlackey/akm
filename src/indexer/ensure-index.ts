@@ -30,6 +30,7 @@ import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistin
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
+  signal?: AbortSignal;
 }
 
 function getIndexableFiles(root: string, spec: AssetSpec): string[] {
@@ -172,12 +173,13 @@ function indexCanServeStash(stashDir: string): boolean {
   }
 }
 
-async function runInlineReindex(stashDir: string): Promise<boolean> {
+async function runInlineReindex(stashDir: string, signal?: AbortSignal): Promise<boolean> {
   try {
     const { akmIndex } = await import("./indexer.js");
-    await akmIndex({ stashDir });
+    await akmIndex({ stashDir, signal });
     return true;
   } catch (error) {
+    if (signal?.aborted) throw error;
     warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
     return false;
   }
@@ -201,8 +203,8 @@ async function runInlineReindex(stashDir: string): Promise<boolean> {
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
   if (options.mode === "blocking") {
     if (!isIndexStale(stashDir)) return false;
-    return runInlineReindex(stashDir);
+    return runInlineReindex(stashDir, options.signal);
   }
   if (indexCanServeStash(stashDir)) return false;
-  return runInlineReindex(stashDir);
+  return runInlineReindex(stashDir, options.signal);
 }

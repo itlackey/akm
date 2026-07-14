@@ -23,6 +23,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { DrainResult } from "../../../src/commands/proposal/drain";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
+import { resolveWriteTarget } from "../../../src/core/write-source";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -140,6 +141,31 @@ describe("akm improve — triage pre-pass", () => {
 
       expect(captured?.target).toBe("team");
       expect(captured?.config?.defaultWriteTarget).toBe("team");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "does not convert the implicit stashDir fallback into a named triage target",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+      const config = { ...triageEnabledConfig(true), stashDir };
+      const writeTarget = resolveWriteTarget(config);
+      let captured: import("../../../src/commands/proposal/drain").DrainOptions | undefined;
+
+      await akmImprove({
+        writeTarget,
+        scope: "memory",
+        config,
+        drainProposalsFn: (async (opts: import("../../../src/commands/proposal/drain").DrainOptions) => {
+          captured = opts;
+          return emptyDrainResult();
+        }) as never,
+      });
+
+      expect(writeTarget.source.name).toBe("stash");
+      expect(captured?.target).toBeUndefined();
     },
     TIMEOUT_MS,
   );

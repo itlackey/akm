@@ -189,6 +189,10 @@ refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: explicit `--target` →
 `config.defaultWriteTarget` → working stash (`config.stashDir`) → `ConfigError`.
+The resolved target keeps the optional configured selector separate from the
+stable `source.name`: APIs that must re-resolve a destination use the selector,
+while durable refs and state rows always use `source.name`. The implicit working
+stash therefore has no selector but has durable identity `stash`.
 
 ### Improve durable-state transition
 
