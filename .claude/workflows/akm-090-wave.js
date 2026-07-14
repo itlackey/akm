@@ -550,6 +550,10 @@ Return verdict "approve" or "revise" with concrete blockers (claim / why / fix).
     return { chunk: chunk.id, status: 'blocked-grounding', detail: 'implementation brief failed adversarial verification after 2 revisions', briefPath: briefPathRel }
   }
   log(`Chunk ${chunk.id} brief approved: ${brief.workItems.length} work items`)
+  // Durability: push after every committed milestone — a container recycle
+  // must never be able to vaporize hours of unpushed wave work (it did once,
+  // 2026-07-14: chunk 7's brief + first item were lost mid-run).
+  await pushBranch(P('Ground'))
 
   // ---- Implement / Review / Escalate ----
   const itemResults = []
@@ -672,6 +676,10 @@ Write ${wt}/docs/design/execution/chunk-${chunk.id}/escalation-${item.id}.md: wh
       itemResults.push({ itemId: item.id, status: 'blocked', attempts: history.length, escalation: block || { summary: 'escalation reporter died; see review history in workflow result' } })
       log(`Chunk ${chunk.id} item ${item.id} BLOCKED — escalation report committed`)
     }
+
+    // Durability push: every concluded item (done or blocked) reaches the
+    // remote immediately.
+    await pushBranch(P('Implement'))
   }
 
   // ---- Finalize ----
