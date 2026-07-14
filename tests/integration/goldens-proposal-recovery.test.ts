@@ -83,7 +83,15 @@ async function crashProposalAt(
   operation: "accept" | "revert" | "reject" = "accept",
   target?: string,
 ): Promise<void> {
-  const marker = path.join(markers.dir, `${operation}-${phase}.ready`);
+  // proposalId (always a fresh randomUUID per seeded proposal) disambiguates
+  // marker filenames across multiple crashProposalAt calls at the same
+  // (operation, phase) pair within a single test -- e.g. the golden-capture
+  // test below crashes "accept" at "asset-published" both in its own loop
+  // AND again for the reject-recovers-pending-accept ordering scenario. A
+  // collision here would make the wait loop below see a STALE marker from
+  // the earlier call and return immediately without actually holding the
+  // new subprocess at its crash point.
+  const marker = path.join(markers.dir, `${operation}-${phase}-${proposalId}.ready`);
   const child = spawn("bun", [RUNNER, phase, marker, proposalId, operation, ...(target ? [target] : [])], {
     env: { ...process.env },
     stdio: "ignore",
