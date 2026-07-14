@@ -1,0 +1,11 @@
+{
+  "referenceCreatedAt": "<TS>",
+  "relativeDatesResolved": 1,
+  "rewrittenBody": "We shipped 2026-01-14. Discussed 2026-01-08, and the plan formed 2025-12-15; the project itself began 2025-01-15. Also 2026-01-12, 2026-01-01, and 2025-11-15.",
+  "rewrittenBodyContainsRawPhrase": {
+    "lastMonth": false,
+    "lastWeek": false,
+    "lastYear": false,
+    "yesterday": false
+  }
+}

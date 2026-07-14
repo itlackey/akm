@@ -1,0 +1,5 @@
+{
+  "code": "ASSET_NOT_FOUND",
+  "exitCode": 1,
+  "stderrKeys": ["code", "error", "hint", "ok"]
+}

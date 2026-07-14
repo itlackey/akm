@@ -1,0 +1,14 @@
+{
+  "exitCode": 0,
+  "stdoutKeys": [
+    "assetTypes",
+    "indexStats",
+    "registries",
+    "schemaVersion",
+    "searchModes",
+    "semanticSearch",
+    "shape",
+    "sourceProviders",
+    "version"
+  ]
+}

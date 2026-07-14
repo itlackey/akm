@@ -1,0 +1,11 @@
+{
+  "withActiveRun": {
+    "containsApplyDirective": false,
+    "containsWorkflowActiveBanner": true,
+    "exitCode": 0
+  },
+  "withoutActiveRun": {
+    "containsApplyDirective": true,
+    "exitCode": 0
+  }
+}
