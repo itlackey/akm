@@ -3,8 +3,8 @@
 ## From an OKF asset proposal to a format-neutral bundle workspace with verified improvement and bounded memory
 
 **Status:** Non-normative companion to the architecture specification  
-**Date:** 2026-07-13 (amended same day: §5.4/§5.5 updated to the reconciled DEV-1/DEV-2 grammar; D8 framing corrected; D27–D29 added after the design/plan review pass)  
-**Normative specification:** [AKM Format-Neutral Bundle Workspace Architecture Specification](./akm-format-neutral-bundle-workspace-spec.md) (v0.2, amended in place)  
+**Date:** 2026-07-14 (2026-07-13: §5.4/§5.5 updated to the reconciled DEV-1/DEV-2 grammar; D8 framing corrected; D27–D29 added after the design/plan review pass. 2026-07-14: D30 added — final release-scope decisions)  
+**Normative specification:** [AKM Format-Neutral Bundle Workspace Architecture Specification](./akm-format-neutral-bundle-workspace-spec.md) (v0.3, amended in place)  
 **Repository reviewed:** [`itlackey/akm`](https://github.com/itlackey/akm)  
 **Reference revision:** [`ddc0a1b417efc820ad73d76bfcbef65c9f87b243`](https://github.com/itlackey/akm/commit/ddc0a1b417efc820ad73d76bfcbef65c9f87b243)  
 **Original proposal under review:** [AKM PR #718](https://github.com/itlackey/akm/pull/718)
@@ -521,7 +521,7 @@ interface IndexDocument {
 
 **Consequence:** Runtime exports are explicitly bound; task schedules are explicitly enabled; secret and environment values are explicitly mapped.
 
-**Framing correction (2026-07-13 review pass):** code verification showed the *current* install path already grants nothing (`akm add` only syncs+indexes; task sync scans only the primary writable stash; env injection is explicit and already origin-gated; workflow runs are explicit). D8 stands as design — but bindings are a **portability/correctness** capability (distributable runnable exports, digest-pinned updates, tamper detection), not a fix for a present-day escalation. The security work that actually closes a live gap is the untrusted read-path clamp (normative §15.1/§15.4/§28.2): trust must be load-bearing where content meets agents.
+**Framing correction (2026-07-13 review pass; staging finalized 2026-07-14, D30):** code verification showed the *current* install path already grants nothing (`akm add` only syncs+indexes; task sync scans only the primary writable stash; env injection is explicit and already origin-gated; workflow runs are explicit). D8 stands as design — but bindings are a **portability/correctness** capability (distributable runnable exports, digest-pinned updates, tamper detection), not a fix for a present-day escalation. Accordingly, 0.9.0 ships only the Tier-A consolidation of the existing enforcement; the record/digest machinery is Tier B, and a review-pass proposal to add an untrusted read-path clamp was considered and **rejected** as false-confidence machinery (D30, deviation §4.3c).
 
 ### D9. Portable runtime definitions remain in bundles
 
@@ -697,6 +697,14 @@ logs.db   high-volume purgeable logs
 **Decision:** durable state always stores the fully-qualified `bundle//conceptId`; the short form is CLI input sugar only; short refs inside bundle content resolve to the containing bundle (portable by construction); prose body refs use only the anchored fully-qualified form; `akm bundle rename` is a first-class rekey transaction; conceptIds are NFC-normalized, `/`-separated, byte-wise case-sensitive with case-collision diagnostics. (Normative §11.1/§11.5.)
 
 **Why:** today's `rekeyStateDbForMove` probing three legacy spellings per ref is the measured cost of leaving canonical spelling open; installer-default resolution of in-content short refs would silently retarget shared bundles per consumer; a bundle rename without rekey orphans all ref-keyed durable state.
+
+### D30. Release staging: demand-driven machinery only (added 2026-07-14)
+
+**Decision:** 0.9.0 ships no machinery built ahead of demand. Concretely: **bindings at Tier A only** — the existing install≠activation enforcement consolidates into one workspace activation-policy point as ports with port-preservation tests; the persisted `Binding` record, export digests, rebind-on-update, and the bind CLI are Tier B, deferred indefinitely, revisited only on concrete demand. **The memory-lifecycle state model (§25) is deferred entirely** — 0.9.0 decomposes `consolidate.ts` with behavior preserved exactly; the lifecycle begins only when its load-bearing dependency (the claim extractor + benchmark) exists. **All new trust/approval machinery is dropped** — trusted labeling, action clamping, approval prompts, catch-all sensitive-content refusals: in practice these are not helpful, provide a false sense of security, and force maintenance of brittle code; only protections that exist in code today survive the port. **Net-LOC is a reported ledger, not a DoD gate** — deletion is gated by inventory (zero-count greps, per-chunk ledgers) and behavior tests, so the prove-or-delete tier is never pressured by a vanity number. **Sequencing is hygiene-first**: the code-quality half (decomposition, DI, one transaction, DRY) lands as Wave 1 before the identity-migration half, so its value banks independently.
+
+**Why:** the D8 framing correction showed install already grants nothing; the external code-quality review showed the lifecycle state model was feature work in a refactor's clothing with an unshippable central gate; and the accepted residual (installed-source refs re-read current content per invocation — crontab semantics) is a deliberate operator-responsibility model, not an oversight. Guard against regression: proposals to re-add approval/trust/lifecycle machinery must name the concrete consumer that demands it.
+
+**Consequence:** normative §18/§25 carry release-staging notes; the plan's Chunk 6.5 and §6 encode the Tier-A/deferred scopes; deviation-analysis §4.3a–3c are the decision record.
 
 ---
 

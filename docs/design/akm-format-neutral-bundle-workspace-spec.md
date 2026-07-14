@@ -1,15 +1,15 @@
 # AKM Format-Neutral Bundle Workspace Architecture Specification
 
 **Status:** Amended for implementation (reconciled)  
-**Specification version:** 0.2  
-**Date:** 2026-07-13 (amended after the maintainer reconciliation and the design/plan review pass)  
+**Specification version:** 0.3  
+**Date:** 2026-07-14 (v0.2 amended 2026-07-13 after the maintainer reconciliation and the design/plan review pass; v0.3 amended 2026-07-14 after the final scope decisions)  
 **Target:** Next major AKM architecture  
 **Reference implementation reviewed:** [`itlackey/akm`](https://github.com/itlackey/akm) at [`ddc0a1b417efc820ad73d76bfcbef65c9f87b243`](https://github.com/itlackey/akm/commit/ddc0a1b417efc820ad73d76bfcbef65c9f87b243)  
 **Related proposal:** [AKM PR #718](https://github.com/itlackey/akm/pull/718)
 
 This specification supersedes the prior directions that treated OKF as an AKM asset type, made OKF the hidden universal AKM file schema, introduced a semantic-view registry, or preserved the current asset system behind a permanent legacy adapter.
 
-**Amendment record (v0.2, 2026-07-13).** The maintainer reconciliation (DEV-1..DEV-7, `akm-plan-vs-spec-deviation-analysis.md` §4) and the review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) are applied **in place**: the ref grammar is `[<bundle>//]<concept-id>[#fragment]` (§7.8, §11); the normalized field is the open **`type`** (§14.1), which MAY drive presentation/ranking/filtering and MUST NOT drive execution, identity, or storage; adapter capabilities are optional methods on one interface (§12); nested component roots have a subtraction rule (§9.3); index persistence is a diff, not truncate-and-rewrite (§14.2); the `trusted` flag is load-bearing in the read path (§15, §28); and the memory-lifecycle claim-coverage gate is scoped to unattended retirement (§25.6). No section of this document is superseded by a banner elsewhere; this text is current.
+**Amendment record.** *(v0.2, 2026-07-13)* The maintainer reconciliation (DEV-1..DEV-7, `akm-plan-vs-spec-deviation-analysis.md` §4) and the review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) applied in place: the ref grammar is `[<bundle>//]<concept-id>[#fragment]` (§7.8, §11); the normalized field is the open **`type`** (§14.1), which MAY drive presentation/ranking/filtering and MUST NOT drive execution, identity, or storage; adapter capabilities are optional methods on one interface (§12); nested component roots have a subtraction rule (§9.3); index persistence is a diff, not truncate-and-rewrite (§14.2). *(v0.3, 2026-07-14 — final scope decisions, deviation §4.3a–3c)* This document remains the **target architecture**; release staging is explicit where target and 0.9.0 diverge: the persisted Binding record, export digests, rebind-on-update, and the bind CLI are **Tier B, deferred indefinitely** (staging note at §18); the **entire memory lifecycle (§25) is deferred** behind the claim extractor + benchmark (staging note at §25); and the v0.2 trust-clamp additions (trusted labeling in the read path, action clamping, catch-all sensitive-content refusal) are **withdrawn** — new trust/approval machinery is rejected as false-confidence machinery; only protections that exist in code today survive the port (env/secret redaction, the origin-scoped dangerous-key rule). No section of this document is superseded by a banner elsewhere; this text is current.
 
 ---
 
@@ -744,7 +744,7 @@ interface IndexDocument {
 }
 ```
 
-`type` is an open descriptive label (the OKF field, DEV-1). It MAY drive presentation, ranking, and filtering. It MUST NOT authorize execution, be part of identity, or select the core storage/write path. For untrusted content, presentation keyed on `type` is clamped (§15.4, §28.2). Sensitivity suppression (env/secret redaction) is keyed on the **adapter**, never on `type`, so frontmatter cannot opt out of it.
+`type` is an open descriptive label (the OKF field, DEV-1). It MAY drive presentation, ranking, and filtering. It MUST NOT authorize execution, be part of identity, or select the core storage/write path. Sensitivity suppression (env/secret redaction — existing behavior, ported) is keyed on the **adapter**, never on `type`, so frontmatter cannot opt out of it.
 
 The folding rules that map richer native metadata (examples, usage, intent, xrefs, when-to-use, outline, parameters, body opening) into the FTS `hints`/`content` columns are a **core-shared helper that adapters call** — one fold, not one per adapter — because the embedding-input hashes and frozen retrieval canaries are pinned to that exact surface.
 
@@ -832,7 +832,7 @@ Search MAY filter by:
 
 Unknown native `type`s MUST remain searchable.
 
-**Trust is load-bearing in the read path.** Results from installations with `trusted: false` MUST be clearly labeled as untrusted in search and show output, and MUST NOT carry executable-flavored agent `action` directives (they clamp to the neutral generic presentation, §15.4). Indexing untrusted content as text (§28.2) is permitted; presenting it to an agent as if it were operator-endorsed is not.
+*(A v0.2 clause making the `trusted` flag load-bearing in search/show output — untrusted labeling and action clamping — was withdrawn in v0.3: new trust machinery is rejected as false-confidence machinery, deviation §4.3c. `trusted` remains reserved vocabulary on `BundleInstallation` for a possible Tier-B future; nothing reads it.)*
 
 ### 15.2 Progressive disclosure
 
@@ -871,7 +871,7 @@ Adapters MAY provide specialized parsing only when a runtime or authoring operat
 
 It MUST NOT run global matchers, type-competition registries, graph extraction, or wiki/type special cases.
 
-**Presentation code home.** The `type → presentation` mapping is a data table (`TYPE_PRESENTATION`), but the renderer implementations it names remain a small static core module of named functions (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic). "No renderer registry" in the acceptance criteria means no per-type *competition* registry with dynamic registration — not that renderer code disappears. Agent-facing `action` strings take `(ref, ctx: {trusted, adapterId})` so directive-shaped actions respect provenance: untrusted or unbound content clamps to the generic `akm show <ref>` action regardless of declared `type`.
+**Presentation code home.** The `type → presentation` mapping is a data table (`TYPE_PRESENTATION`, typed over the `KNOWN_TYPES` const tuple so the compiler enforces exhaustiveness for AKM's own known set, with an open-string lookup falling back to the generic entry), but the renderer implementations it names remain a small static core module of named functions (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic). "No renderer registry" in the acceptance criteria means no per-type *competition* registry with dynamic registration — not that renderer code disappears.
 
 ### 15.5 Context selection
 
@@ -963,6 +963,8 @@ Because default-mounting arbitrary repositories is easy under this design, integ
 ---
 
 ## 18. Installation, exports, bindings, and activation
+
+**Release-staging note (2026-07-14, deviation §4.3a/§4.3c — mirrors the §25 staging pattern).** This section is target-state. What ships in 0.9.0 is **Tier A only**: §18.2's install-grants-nothing (already true in code, consolidated into one workspace activation-policy point and verified by port-preservation tests). The persisted Binding record (§18.3), digest-change detection and rebind (§18.5, §20 steps 1–5), one-shot approval checks (§18.4), and the bind CLI (§29) are **Tier B, deferred indefinitely — revisit only on concrete demand**. Deferral rationale: approval/trust machinery built ahead of demand provides false confidence and must be maintained as brittle code. The accepted Tier-A residual: enabled schedules and one-shot invocations that reference content in installed sources re-read current disk content per invocation (crontab semantics); §18.5/§20's update-review MUSTs therefore have no enforced trigger in 0.9.0 and bind (§18.1) reads as "explicit enable."
 
 ### 18.1 Lifecycle
 
@@ -1166,9 +1168,7 @@ A product such as Claude or OpenCode may implement all three, but they are disti
 
 ### 22.3 Execution authority
 
-An item carrying `type: script`, `type: skill`, or an executable export does not authorize execution. A workspace binding or explicit one-shot approval is required.
-
-Because `type` is author-controlled for native OKF content, an untrusted bundle can *declare* any type it likes; the read path therefore clamps executable-flavored presentation for untrusted content (§15.4), and runtime handlers never consult `type` for authority (§8.4).
+An item carrying `type: script`, `type: skill`, or an executable export does not authorize execution. Execution requires an explicit invocation or enablement; runtime handlers never consult `type` for authority (§8.4).
 
 This follows the useful distinction in [MCP](https://modelcontextprotocol.io/docs/learn/server-concepts) between passive resources and executable tools.
 
@@ -1363,6 +1363,8 @@ Any removed mechanism MAY return only after an ablation demonstrates positive ve
 
 ## 25. Bounded memory lifecycle
 
+**Release-staging note (2026-07-14, deviation §4.3b).** This entire section is **target-state; none of it is 0.9.0 scope**. 0.9.0 ships only the consolidate.ts decomposition with existing behavior preserved exactly (plan §6): the current merge/delete/promote/contradict ops through `archiveMemory`, journals, LOOK/CHANGE separation, hot-capture guard, and proposal-gating, all as today. The lifecycle state model below (operational states, water-marks/backpressure, claim coverage, sandbox evaluation, content-addressed archive, purge, overlay) begins only after the claim extractor and its benchmark exist — it is feature work, staged behind its load-bearing dependency, and gets its own design pass then.
+
 Memory lifecycle is a first-class product requirement and remains part of improve.
 
 ### 25.1 Adapter capability
@@ -1493,7 +1495,7 @@ A durable claim with no disposition blocks unattended retirement.
 - the `intentionally discarded` disposition is valid in unattended mode only when produced by a deterministic rule from an explicit policy allowlist; otherwise it forces proposal review;
 - pressure state MUST NOT be an input to disposition classification (§25.4).
 
-**Staging:** until the claim extractor exists and has passed its benchmark (§33), unattended semantic retirement is OFF; deterministic auto-retirement (§25.9 rows 1–4) and review-gated semantic proposals are the shipped lifecycle. This is an explicit, acceptable intermediate state — not a spec violation.
+**Staging:** the claim extractor and its benchmark (§33) are the load-bearing prerequisite for this entire section — nothing here is built before they exist (release-staging note at the top of §25). When the lifecycle is built, unattended semantic retirement stays OFF until the extractor passes its benchmark; deterministic auto-retirement (§25.9 rows 1–4) and review-gated semantic proposals come first.
 
 Temporal qualifiers and contradictions MUST NOT be flattened into a false single statement.
 
@@ -1681,11 +1683,11 @@ Untrusted bundle content MAY be indexed as text, subject to size and sensitivity
 - activate schedules;
 - inject environment or secret values;
 - execute scripts;
-- write outside its component root;
-- select executable-flavored presentation: search/show results from untrusted installations are labeled and clamp to the generic renderer and the plain `akm show <ref>` action regardless of declared `type` (§15.1, §15.4);
-- have its body content indexed when it is credential-shaped: any catch-all adapter (`generic-files`) MUST refuse to read the body of dotenv- and credential-shaped files (`.env`, key/PEM material) found outside a sensitivity-governed component, indexing at most the file name. Catch-all adapters are explicit-configuration-only and are never auto-selected (§9.4).
+- write outside its component root.
 
-The dangerous-environment-key policy keeps its origin asymmetry across the config migration: an env export from an untrusted installation containing process-hijacking keys MUST hard-error at bind/run time, while a first-party/trusted component warns. This maps today's registry-origin rule onto `BundleInstallation.trusted` and MUST be covered by a conformance test before `installed[]` is deleted.
+*(Two v0.2 clauses — untrusted presentation clamping and a catch-all sensitive-content refusal — were withdrawn in v0.3, deviation §4.3c. Catch-all adapters remain explicit-configuration-only and never auto-selected (§9.4): a user who mounts a root with `generic-files` indexes what they pointed it at, deliberately.)*
+
+The dangerous-environment-key policy keeps its origin asymmetry across the config migration **as a port of the existing rule** (today: `registryId`-bearing source → hard block; first-party → warn): an env export from a registry-installed source containing process-hijacking keys MUST still hard-error after `installed[]` is replaced, covered by a port-preservation conformance test. This is existing behavior surviving the migration, not new machinery.
 
 ### 28.3 Path safety
 
@@ -1729,7 +1731,7 @@ akm lint
 akm import
 akm ingest
 
-akm bind|unbind|bindings
+akm bind|unbind|bindings        # Tier B — deferred with the Binding record (§18 staging note)
 
 akm proposal list|show|diff|accept|reject|revert
 akm improve
@@ -1949,12 +1951,13 @@ Static or runtime architecture tests SHOULD prove:
 - execution cannot be granted by native `type` alone;
 - every semantic write originates from a proposal/change transaction;
 - every update/delete verifies its before hash;
-- unknown native `type`s remain searchable;
-- untrusted installations are labeled and carry no executable-flavored actions.
+- unknown native `type`s remain searchable.
 
 ---
 
 ## 32. Acceptance criteria
+
+**Staging:** these criteria describe the completed **target architecture**, not the 0.9.0 release. Criteria 11 and 13 (binding record/digests) are Tier B (§18 staging note); criteria 21–22 (memory lifecycle) are staged behind the claim extractor (§25 staging note); 0.9.0's own gates are the plan's §12.2 DoD.
 
 The target architecture is complete when:
 
@@ -1988,7 +1991,7 @@ The target architecture is complete when:
 28. The one-time old-layout migration is dry-runnable, checksummed, idempotent, recoverable, and fully tested — including an orphan-bearing fixture that completes with quarantine (§11.4).
 29. All temporary compatibility seams have named deletion milestones and are deleted.
 30. Production code is materially smaller and the net-complexity reduction is reported, with the restored bindings/memory-lifecycle additions accounted as a signed adds line.
-31. Untrusted installations are labeled in search/show, carry no executable-flavored actions, and cannot leak credential-shaped file bodies into the index (§15.1, §28.2).
+*(A v0.2 criterion 31 on untrusted-content labeling/clamping was withdrawn in v0.3 — deviation §4.3c.)*
 
 ---
 

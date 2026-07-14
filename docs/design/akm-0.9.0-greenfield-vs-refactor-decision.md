@@ -1,6 +1,6 @@
 # Greenfield vs In-Place: The Delivery Call for AKM 0.9.0
 
-> **Status (2026-07-13):** decision record — option B (in-place modular replacement) stands and was independently re-verified by the review pass (survivor math held up under fresh measurement). One caveat is superseded: the verdict's closing advice to "hold the plan's own new machinery (bindings / facets / second supersession path) to the scoped-down alternatives" was **overruled** by the maintainer reconciliation (DEV-3/4/5) — bindings and the memory-lifecycle state model ship in 0.9.0, budgeted as signed adds in the plan's §12.1 ledger, with one supersession/archive encoding per decision D27.
+> **Status (2026-07-14):** decision record — option B (in-place modular replacement) stands and was independently re-verified by the review pass (survivor math held up under fresh measurement). The verdict's closing advice to "hold the plan's own new machinery (bindings / facets / second supersession path) to the scoped-down alternatives" was briefly overruled by the 2026-07-13 reconciliation, then **effectively reinstated on 2026-07-14 (D30)**: bindings ship at Tier A only, the memory-lifecycle state model is deferred entirely, and the sequencing is hygiene-first (Wave 1 banks the pure-refactor value before the identity migration). The archive-encoding decision D27 stands as target-state.
 
 **Recommendation: B — in-place modular replacement (the current plan). Reject A (separate greenfield). Fold the useful half of C into B; do not build a parallel `src/` tree.**
 

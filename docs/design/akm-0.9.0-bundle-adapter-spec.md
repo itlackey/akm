@@ -1,12 +1,12 @@
 # AKM 0.9.0 — Bundle Adapter Specification
 
-**Status:** binding implementation spec, reconciled with `akm-format-neutral-bundle-workspace-spec.md` **v0.2** (the normative RFC, now amended in place — the two documents agree; where wording differs the normative spec governs) and `akm-architecture-decision-history.md` (decision register, D1–D29). This doc is the concrete *how* for the adapter/index/ref core; it **defers to the normative spec** for bindings (§18), improve (§24), and memory lifecycle (§25) rather than duplicate them. Grounded in code at HEAD as `file:line`, or **NEW** with the mandate. Amended 2026-07-13 after the design/plan review pass (`akm-target-design-review-2026-07.md`): adapter contract is recognize-required/index-optional over a core-owned walk; index persistence is a diff keyed on ref; query-time ranking/filter signals are first-class `IndexDocument` fields; `validate` receives a snapshot+overlay context; adapter selection has a deterministic probe order; native links do not feed the graph boost.
+**Status:** binding implementation spec, reconciled with `akm-format-neutral-bundle-workspace-spec.md` **v0.3** (the normative RFC, amended in place — the two documents agree; where wording differs the normative spec governs) and `akm-architecture-decision-history.md` (decision register, D1–D30). This doc is the concrete *how* for the adapter/index/ref core; it **defers to the normative spec** for activation (§18, Tier A staging), improve (§24), and memory (§25, deferred) rather than duplicate them. Grounded in code at HEAD as `file:line`, or **NEW** with the mandate. Amended 2026-07-13/14 after the review passes: adapter contract is recognize-required/index-optional over a core-owned walk; index persistence is a diff keyed on ref; query-time ranking/filter signals are first-class `IndexDocument` fields; `validate` receives a snapshot+overlay context; adapter selection has a deterministic probe order; native links do not feed the graph boost; `KNOWN_TYPES`-typed presentation tables; bindings Tier A / memory deferred / no new trust machinery (deviation §4.3a–3c).
 
 **Reconciliation decisions applied (maintainer, 2026-07-13)** — resolving the deviations in `akm-plan-vs-spec-deviation-analysis.md`:
 
 1. **OKF = HYBRID (DEV-1).** The kernel stays **format-neutral** (History D2): OKF is the **preferred interchange format and the reference/default adapter**, not a mandatory internal schema; Claude/OpenCode/Agent-Skills/workflow/task/env formats are native and are **not** forced through OKF. AKM adopts OKF's **field names** (`type`/`title`/`description`/`tags`/`timestamp`) and OKF's **path-based concept identity** as the shared vocabulary, so AKM is OKF-compatible by default. The field is **`type`** (open), which **MAY** drive presentation/ranking/filtering but **MUST NOT** authorize execution, grant runtime authority, be part of identity, or select the core storage/write path.
 2. **Ref = OKF concept ID + optional `bundle//` prefix (DEV-2).** Identity is the OKF concept ID (path within the bundle, minus `.md`); the workspace-qualified ref prepends an optional `<bundle>//`. Component is **absorbed into the path**, not a separate ref segment.
-3. **Bindings/activation, full memory lifecycle, and the third `consolidate` verb are IN SCOPE for 0.9.0 (DEV-3/4/5)** — reversing the earlier §13.3 scope-down. Retained simplifications: renderer/action as a **data table**, and adapter facets expressed as **optional methods** on one interface (History §8.3), not a rigid `extends` hierarchy.
+3. **Final scope (2026-07-14 refinements, deviation §4.3a–3c — supersede the earlier "DEV-3/4/5 restore full"):** the third `consolidate` verb is IN SCOPE as vocabulary (DEV-5); **bindings ship at Tier A only** (consolidation of existing install≠activation enforcement into one activation-policy point; the persisted `Binding` record, digests, rebind, and bind CLI are Tier B, deferred indefinitely); **the memory lifecycle is deferred entirely** (0.9.0 = consolidate decomposition with behavior preserved); **no new trust/approval machinery ships**. Retained simplifications: renderer/action as a **data table** typed over `KNOWN_TYPES`, and adapter facets expressed as **optional methods** on one interface (History §8.3), not a rigid `extends` hierarchy.
 4. **LLM Wiki adapter restored (DEV-7).** The `wiki` *asset type* dies; the **LLM Wiki adapter** is a first-class built-in owning `schema.md`/`index.md`/`log.md`/raw/pages/citations/xrefs/ingest.
 
 ---
@@ -74,7 +74,7 @@ export interface BundleComponent {
 }
 ```
 
-`BundleInstallation`, `BundleComponent`, `IndexDocument`, `FileChange`, `Proposal`, `Diagnostic`, and **`Binding`** are the minimal durable core set (History §5.2).
+`BundleInstallation`, `BundleComponent`, `IndexDocument`, `FileChange`, `Proposal`, and `Diagnostic` are the minimal durable core set for 0.9.0 (`Binding` is Tier-B target vocabulary — History §5.2, §10).
 
 ### 1.2 How a directory becomes a bundle
 
@@ -117,7 +117,7 @@ knowledge/http-caching               # default-bundle implied (bundle omitted)
     "personal": { "path": "~/knowledge", "components": { "main": { "root": ".", "adapter": "okf", "writable": true } } },
     "team-catalog": { "git": "https://github.com/acme/team-catalog.git", "manifest": "akm.bundle.yaml" }
   },
-  "bindings": { "release": { "export": "team-catalog//workflows/release", "enabled": true, "options": { "engine": "claude", "environment": "prod-release" } } }
+  // "bindings": { ... }  — Tier-B target shape; NOT emitted or read in 0.9.0 (normative §18 staging note)
 }
 ```
 
@@ -179,16 +179,18 @@ export interface BundleAdapter {
 }
 ```
 
-**Renderer/action = data table keyed on the open `type`, pointing at a named-function core module** (plan §2.3; normative §15.4). The *mapping* is data; the renderer *implementations* (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic) remain a small static core module — env/secret redaction is behavior, not a string. Sensitivity suppression is keyed on the **adapter**, never on `type`. Actions receive trust context so untrusted content clamps to the generic action:
+**Renderer/action = data table keyed on the open `type`, pointing at a named-function core module** (plan §2.3; normative §15.4). The *mapping* is data; the renderer *implementations* (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic) remain a small static core module — env/secret redaction is existing behavior ported as code, keyed on the **adapter**, never on `type`. The table is **typed over the `KNOWN_TYPES` const tuple** so the compiler enforces an entry for every type AKM itself knows (restoring the closed union's exhaustiveness for our own tables), while lookup stays open-string with a generic fallback:
 
 ```ts
-export const TYPE_PRESENTATION: Record<string, { renderer: string; action: (r: ItemRef, ctx: PresentationCtx) => string }> = {
-  "knowledge": { renderer: "knowledge-md", action: (r, ctx) => `akm show ${r} -> read reference material` },
+export const KNOWN_TYPES = ["knowledge", "workflow", /* … */] as const;
+export type KnownType = (typeof KNOWN_TYPES)[number];
+
+export const TYPE_PRESENTATION: Record<KnownType, { renderer: string; action: (r: ItemRef) => string }> = {
+  "knowledge": { renderer: "knowledge-md", action: (r) => `akm show ${r} -> read reference material` },
   "workflow":  { renderer: "workflow-md",  action: buildWorkflowAction },
-  // unknown type ⇒ generic renderer + `akm show <ref>` (third-party OKF types never dropped)
-  // ctx.trusted === false ⇒ generic renderer + plain `akm show <ref>` REGARDLESS of type (normative §15.4, §28.2)
+  // compiler enforces exhaustiveness over KNOWN_TYPES
 };
-// PresentationCtx = { trusted: boolean; adapterId: string }
+export function presentationFor(type: string | undefined) { /* open lookup; unknown type ⇒ generic renderer + `akm show <ref>` — third-party OKF types never dropped */ }
 ```
 
 The nine index-time metadata contributors currently registered by `output/renderers.ts` move into the owning adapters' `recognize` — they are index-time concerns and this part of the port is clean.
@@ -318,7 +320,7 @@ An **adapter is a format family**, one per component root, emitting one or more 
 | **agent-skills** | standalone `SKILL.md` packages — translator | skill | yes | SKILL.md codec shared with claude as functions |
 | **akm-workflow / akm-task / dotenv** | native workflow / task-YAML / dotenv formats | workflow / task / env | yes / yes / metadata-only | own executable/sensitive schemas; export facet (§ normative 18) |
 | **website-snapshot** | crawl snapshot (website-ingest.ts:180) — read-only | website | **no** (Mode A) | export (Mode B) routes `content` through the destination adapter + FileChange txn; all SSRF/redirect/byte/depth/wall-clock/stale protections preserved |
-| **generic-files** | any leftover file | document/script/file | yes | explicit-config ONLY (never auto-selected, §1.2); MUST refuse to read the body of dotenv/credential-shaped files outside a sensitivity-governed component — index the name at most (normative §28.2) |
+| **generic-files** | any leftover file | document/script/file | yes | explicit-config ONLY (never auto-selected, §1.2) — a user who mounts a root with it indexes what they pointed it at, deliberately (the v0.2 sensitive-content refusal was withdrawn, deviation §4.3c) |
 
 Instruction files (`CLAUDE.md`/`AGENTS.md`) are NEW; tool config files are runtime-config, never indexed. `sources/wiki-fetchers/`→`snapshot-fetchers/`; the one-element youtube registry inlines.
 
@@ -349,9 +351,9 @@ OKF bundle-relative links (`[x](/tables/customers.md)`, `[y](./other.md)` — bo
 
 ---
 
-## 10. Installation, bindings, activation (IN SCOPE — DEV-3)
+## 10. Installation and activation (Tier A in 0.9.0 — DEV-3 revised; record/digests/CLI are Tier B)
 
-Per **History D8** and normative **§18**, restored for 0.9.0 (reversing the earlier §13.3 deferral): **installation is not activation.** Framing (per the security review): today's install path already grants nothing — bindings are a **portability/correctness** design (distributable runnable exports, digest-pinned updates, tamper detection on update), not a fix for a present-day escalation; the actual security hardening in 0.9.0 is the untrusted read-path clamp (normative §15.1/§15.4/§28.2). A `Binding` stores only **references** to secrets, never resolved values (normative §28.4). Lifecycle: `discover → install/materialize → index → bind (or explicit one-shot approval) → enable`. Installation makes content searchable and grants **no** execution, scheduling, tools, environment values, or secrets. A `Binding` (durable state in `state.db`, never written to portable files) records export ref + digest, engine/harness, parameters, env/secret mappings, tool/fs policy, enabled state, and scheduler identity where applicable. Export kinds (`workflow`/`task`/`environment`/`agent`/`command`/`skill`/`script`) are activation contracts, not storage types or identity. Runtime handlers execute only approved bindings/one-shots and never infer authority from a `type` or frontmatter field (normative §8.4, §28). Full binding/update/one-shot rules: normative §18–§22.
+**Tier A in 0.9.0 (DEV-3 as revised 2026-07-14; normative §18 staging note).** **Installation is not activation** — already true in code; 0.9.0 consolidates the existing scattered enforcement (the `registryId` block/warn, the add-time dangerous-key scan, task `enabled:` state, `writable`) into one workspace activation-policy point, verified by port-preservation tests. **No new trust/approval machinery ships** (deviation §4.3c). env/secret handling is unchanged (whole-file assets in stashes/bundles, resolved from the stash). Everything else in this section is the **Tier-B target shape, deferred indefinitely**: the durable `Binding` record in `state.db` (export ref + digest, engine/harness, parameters, env/secret *references* — never resolved values, normative §28.4 — tool/fs policy, enabled state, scheduler identity), the `discover → install → index → bind → enable` lifecycle's explicit bind step, digest-pinned updates, and the bind CLI. Export kinds (`workflow`/`task`/`environment`/`agent`/`command`/`skill`/`script`) remain activation contracts, not storage types or identity; runtime handlers never infer authority from a `type` or frontmatter field (normative §8.4). Accepted Tier-A residual: refs into installed sources re-read current disk content per invocation (crontab semantics; plan Chunk 6.5). Target-state rules: normative §18–§22.
 
 ---
 
@@ -369,17 +371,11 @@ Evidence-driven (corrective evidence required for unattended semantic change; im
 
 ---
 
-## 12. Bounded memory lifecycle (IN SCOPE — DEV-4)
+## 12. Memory (DEFERRED — DEV-4 revised 2026-07-14; 0.9.0 = consolidate decomposition only)
 
-Per **History D21–D24** and normative **§25**, restored for 0.9.0 as a first-class capability (reversing the scope-down). Honest scoping: the consolidation **engine** (snapshot/narrowing, deterministic dedup, clustering, classify, successor generation + validation, journals, contradiction preserve-and-qualify — ~6,200 LOC across the consolidate/dedup/memory-improve cluster) is a refactor; the lifecycle **state model** (operational states, water-marks/backpressure, claim coverage, sandbox evaluation, content-addressed archive, overlay, two-phase) is new construction around it, budgeted as a signed adds line in the plan ledger. The 0.9.0 lifecycle ships per normative §25.6's staging rule — deterministic auto-retirement + pressure/health + review-gated semantic proposals + retirement records + FTS-only sandbox replay; unattended semantic retirement stays OFF until the claim extractor passes its benchmark:
-- **Adapter capability** via the optional memory methods (§2); core owns pressure/selection/evaluation/transactions/archive/purge.
-- **Operational states** `active → retired → purged` and `active → quarantined → restored|purged`, distinct from native semantic states (superseded/contradicted/historical).
-- **High/low-water + backpressure** — deterministic cleanup first, then non-destructive semantic consolidation to low-water; pressure never lowers preservation gates; if safe reduction fails, background intake **queues** evidence instead of publishing more memory files.
-- **Source-to-successor claim coverage** — every durable claim gets a disposition or retirement is blocked; temporal qualifiers/contradictions never flattened.
-- **Retrieval/task non-regression** in a sandbox index before retirement; successor-first, reversible.
-- **Workspace content-addressed archive** (`$DATA/archive/blobs/sha256/<digest>`, not bundle-local `.akm`), grace period, purge, read-only retirement overlay.
+**0.9.0 ships only the consolidate.ts decomposition with existing behavior preserved exactly** (plan §6, deviation §4.3b): the current merge/delete/promote/contradict ops through `archiveMemory`, journals, LOOK/CHANGE separation, hot-capture guard, contradiction preserve-and-qualify, proposal-gating — all as today, verified by goldens. The optional memory methods on `BundleAdapter` (§2) are the **Tier-B target shape** and are not implemented by any 0.9.0 adapter.
 
-Full states, water-marks, coverage map, evaluation, archive, purge, and cross-bundle two-phase protocol: normative §25 + History §10.
+The lifecycle state model — operational states, water-marks/backpressure, claim coverage, sandbox evaluation, the content-addressed archive, purge, overlay, two-phase — is **target-state feature work staged behind the claim extractor + benchmark** (normative §25 release-staging note; History D21–D24 record the target design). It gets its own design pass when its prerequisite exists.
 
 ---
 
@@ -394,7 +390,7 @@ Full states, water-marks, coverage map, evaluation, archive, purge, and cross-bu
 | adapter `recognize`/`index` + optional methods | `runMatchers`/`classifyBy*`/walker | file-context.ts:242-265; matchers.ts:151-305; walker.ts:73 |
 | `placeNew`/`directoryList` | `TYPE_DIRS`/`resolveAssetPathFromName` | asset-spec.ts:140-226; path-resolver.ts:27-38 |
 | `TYPE_PRESENTATION` (open `type`) | `TYPE_TO_RENDERER`/`ACTION_BUILDERS` + spec split-brain | asset-registry.ts:21-58 |
-| `Binding` + install≠activate | (implicit activation today) | tasks/workflows/env runtime |
+| Tier-A activation-policy point (install≠activate consolidation; `Binding` record is Tier B) | scattered existing enforcement: `registryId` block/warn, dangerous-key scan, task `enabled:`, `writable` | env-binding.ts:110-121; add-cli.ts:74-215; tasks.ts; search-source.ts:35 |
 | three-verb improve + memory lifecycle | improve god-modules + consolidate.ts | commands/improve/* |
 | OKF links → `links` | LLM graph extraction | indexer/graph/* |
 
