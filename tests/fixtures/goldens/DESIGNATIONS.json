@@ -74,6 +74,243 @@
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/improve/goldens-signal-delta-gate.test.ts"],
       "notes": "WI-06, plan §11 Chunk 0a / R5, §6 preserve list. The signal-delta gate SURVIVES Chunk 7's deletion of the P0-A high-retrieval lane and self-consistency voting (both pinned separately as re-baseline @ 7 by improve/self-consistency.json and improve/p0a-selection.json). Pins isSignalDeltaEligible's truth table (eligibility.ts:421-431, pure function), and the eligibleRefs/distillOnlyRefs/noFeedbackPool partition COUNTS from one full akmImprove preparation run with proactiveMaintenance disabled and zero retrievals/salience seeded so only the signal-delta gate can ever select a ref — P0-A lane membership and SC voting internals are deliberately out of scope (brief Risk 9); only the shared 'signal-delta' eligibilitySource tag (the gate's own vocabulary, not a P0-A-specific algorithm) is asserted. buildLatestFeedbackTsMap's signal/note filter and buildLatestProposalTsMap's reflect/distill cursor rules are exercised directly by the suite's assertion tests (state.db-backed) but are not separately serialized into this fixture beyond the truth-table/partition-count sections. Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), booleans, and counts — no production refs."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-config-list.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `config list` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-curate.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `curate <term>` JSON envelope key-set + shape tag. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-env-secret-list.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `env list` + `secret list` redacted-shape key-sets (baseline only; no redaction added). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-events.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `akm log list`/`log tail --max-events 1` (the \"events\" output-shape family) JSON envelope key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-history.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `history --ref <ref>` JSON envelope key-set, seeded via real usage events. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-info.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `info` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-list.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `list` (installed sources) JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-proposal.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `proposal list|show|diff` JSON envelope key-sets, seeded via a real proposal. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-search.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `search <term>` JSON envelope + hit key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-show-apply-branches.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show` formatShowPlain APPLY-directive branches (skill, with/without an active workflow run in scope) — booleans/exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-show-shapes.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show --shape=agent` / `--shape=summary` JSON key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-fail-warn-exit.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` exit 1 (fail, missing task log) and exit 4 (warn, stuck active run) fixtures. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-html.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --format=html` structural markers (chart ids, doctype/title presence) + the unit-level `buildHealthHtmlReplacements` key-set — never HTML bytes. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-json-text.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` json + text output on an empty state.db (status: pass) — key-set + non-emptiness only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-repeated-windows.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B repeated `--windows` flag (parseAllFlagValues, cli.ts:371) — window name order + key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/c-tasks-family.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks list|show|run|history|doctor` JSON envelope key-sets, driven against a command-type task running the `true` shell builtin. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/c-tasks-run-config-bypass.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks run <id>` config-bypass path (cli.ts:609-620) against a deliberately malformed config.json. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-help-migrate-format-collision.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate` argv-collision characterization: the SPACE-separated `--format json <version>` form collides and surfaces MISSING_REQUIRED_ARGUMENT even though a version was supplied, while the EQUALS form and version-before-flag ordering do not collide — exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-help-migrate-missing-version.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate --format=json` with no version → MISSING_REQUIRED_ARGUMENT envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-quiet-search.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--quiet search <term>` stderr-suppression flag — booleans/exit code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-setup-no-init.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `setup --yes --no-init --dir <tmp>` — JSON key-set + a boolean confirming the stash directory is not scaffolded. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-shape-summary-gate.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `proposal list --shape=summary` fail-fast INVALID_SHAPE_VALUE (shapes.ts:124, shape-registry gate as defense-in-depth since runCliCapture skips the startup-block pre-check) — exit code + error code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-version.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--version` — exit code + a semver-shape boolean, never the literal version string (which changes every release). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/f-config-error.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F broken config.json → ConfigError envelope key-set, exit 78. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/f-not-found.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `show <valid-type>:<unknown-name>` → NotFoundError envelope key-set, exit 1. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/f-raw-error-sites.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F two representative raw `throw new Error(...)` sites in src/commands/ (lessons coverage on a schema-less index.db; source-clone.ts's self-clone guard) surfacing as {ok:false} envelopes with NO `code` field, exit 70 (INTERNAL) — the typed-error sweep's oracle that these do not silently gain an AkmError `code`. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/e-events-since.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm log list --since`: the duration-shorthand form (`24h`) is REJECTED (INVALID_FLAG_VALUE) while `@offset:<id>` is accepted — a fourth, distinct --since grammar from health/extract/consolidate, captured as-is. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/e-extract-since.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm extract --since` duration/ISO/garbage/case-variant sweep, incl. the `5M` case-variant pin (extract.ts:416 `[mhd]/i` — 5 MINUTES here, diverging from core DURATION_UNITS' `M`=months). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/e-health-since.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm health --since 5m` (core DURATION_UNITS grammar) — exit code + status only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-search-text.json",
+      "designation": "re-baseline",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `search <term> --format=text` scrubbed text output; embeds the fixture-local ref `script:cli-a-deploy.sh`. Ref-serializing text output — designated re-baseline @ Chunk 5's §15.2 grammar codemod per brief §3.3's CLI-output-baseline policy row.",
+      "reBaselineChunk": "5"
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/a-show-per-type.json",
+      "designation": "re-baseline",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show` per-asset-type (script/command/skill/agent/knowledge) JSON key-sets, keyed by fixture-local ref string (object keys, not values). Ref-serializing text output — designated re-baseline @ Chunk 5's §15.2 grammar codemod per brief §3.3's CLI-output-baseline policy row.",
+      "reBaselineChunk": "5"
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-show-lines-view.json",
+      "designation": "re-baseline",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `show <ref> lines 1 2 --format=text` (normalizeShowArgv view-mode) scrubbed text output; embeds the fixture-local ref `knowledge:lines-fixture.md`. Ref-serializing text output — designated re-baseline @ Chunk 5's §15.2 grammar codemod per brief §3.3's CLI-output-baseline policy row.",
+      "reBaselineChunk": "5"
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-group-by-run-md.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --group-by run --format=md` TSV-table scrubbed text output — no ref literals (per-run improve metrics only). Chunk 9 oracle; no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/b-health-window-compare-md.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --window-compare 24h --format=md` window-compare TSV-table scrubbed text output — no ref literals. Chunk 9 oracle; no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-help-migrate.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate <version>` scrubbed text output — static bundled release-notes prose (docs/migration/release-notes), not derived from any fixture/sandbox ref, so unaffected by Chunk 5's ref-grammar codemod. Chunk 9 oracle; no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/d-help.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--help` output — booleans (usage/akm substring presence) only, never the full citty-rendered usage text. Chunk 9 oracle; no production ref literals."
+    },
+    {
+      "path": "tests/fixtures/goldens/improve/since-to-iso-identity-fallback.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins parseSinceToIso's (consolidate.ts:2824, module-private) identity-fallback behavior on unparseable --since input, exercised indirectly through the exported narrowToIncrementalCandidates: garbage input never selects any memory (lexicographic string-comparison artifact of the identity fallback), a valid duration/ISO input does. Config-driven only (incrementalSince) — not reachable from any CLI flag. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs."
+    },
+    {
+      "path": "tests/fixtures/goldens/improve/resolve-relative-dates.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins resolveRelativeDates' (memory-improve.ts:362-391, module-private) phrase grammar (yesterday / last week|month|year / N days|weeks|months ago) against a pinned frontmatter createdAt referenceDate, exercised indirectly through the exported applyMemoryCleanup. Memory-CONTENT phrase rewriting, NOT flag parsing — captured so it is not silently folded into the duration-flag grammar. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs."
+    },
+    {
+      "path": "tests/fixtures/goldens/cli/f-usage-error.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/goldens-cli-output.test.ts"],
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `--format bogus` → UsageError envelope key-set + code (INVALID_FORMAT_VALUE), exit 2. Chunk 9 oracle; no production ref literals."
     }
   ]
 }

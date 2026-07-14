@@ -1,0 +1,10 @@
+{
+  "fail": {
+    "exitCode": 1,
+    "status": "fail"
+  },
+  "warn": {
+    "exitCode": 4,
+    "status": "warn"
+  }
+}
