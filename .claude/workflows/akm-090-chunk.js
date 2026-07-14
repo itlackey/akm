@@ -1,9 +1,10 @@
 export const meta = {
   name: 'akm-090-chunk',
   description: 'Execute one akm 0.9.0 plan chunk: Fable-grounded implementation brief, Sonnet test-first development, Opus dual review gates, Fable escalation ladder',
-  whenToUse: 'One chunk per invocation, in manifest order (docs/design/akm-0.9.0-chunk-manifest.json). args: {chunk: "0a", baseBranch?: "akm-0.9.0", worktreeRoot?: "/home/user/akm-worktrees"}. Runbook: docs/design/akm-0.9.0-execution-workflow.md.',
+  whenToUse: 'One chunk per invocation, in manifest order (docs/design/akm-0.9.0-chunk-manifest.json). args: {chunk: "0a", baseBranch?: "claude/akm-architecture-refactor-fubvd7", worktreeRoot?: "/home/user/akm-worktrees"}. Runbook: docs/design/akm-0.9.0-execution-workflow.md.',
   phases: [
     { title: 'Load', detail: 'manifest entry + preflight' },
+    { title: 'Usage Gate', detail: 'Sonnet 5 measures the 5h/7d Claude Code usage windows; pauses until credits are available', model: 'sonnet' },
     { title: 'Setup', detail: 'chunk branch worktree + green baseline' },
     { title: 'Ground', detail: 'Fable 5: plan extraction + codebase grounding fan-out → implementation brief', model: 'fable' },
     { title: 'Verify Brief', detail: 'adversarial 3-lens verification of every brief claim', model: 'fable' },
@@ -19,8 +20,16 @@ export const meta = {
 // ---------------------------------------------------------------------------
 const chunkId = args && args.chunk
 if (!chunkId) throw new Error('args.chunk is required, e.g. {chunk: "0a"}')
-const baseBranch = (args && args.baseBranch) || 'akm-0.9.0'
+const baseBranch = (args && args.baseBranch) || 'claude/akm-architecture-refactor-fubvd7'
 const worktreeRoot = (args && args.worktreeRoot) || '/home/user/akm-worktrees'
+
+// Usage-window gate tuning. Ceilings are deliberately EARLY: overage-status is
+// "rejected" on this account, so at 100% utilization every request fails —
+// including the sleeper agent that implements the pause. Gating at 90%/97%
+// keeps enough headroom that pausing remains possible.
+const USAGE_CEILING_5H_PCT = (args && args.usageCeiling5hPct) || 90
+const USAGE_CEILING_7D_PCT = (args && args.usageCeiling7dPct) || 97
+const MAX_USAGE_PAUSE_SECONDS = (args && args.maxUsagePauseSeconds) || 21600 // 6h covers any 5h-window reset; a 7d wait exits instead
 
 const REPO = '/home/user/akm'
 const MANIFEST = 'docs/design/akm-0.9.0-chunk-manifest.json'
@@ -268,6 +277,34 @@ const PUSH_SCHEMA = {
   properties: { pushed: { type: 'boolean' }, remoteRef: { type: 'string' }, error: { type: 'string' } },
 }
 
+const USAGE_WINDOW = {
+  type: 'object',
+  required: ['utilizationPct', 'headroomPct', 'status', 'resetsAtEpoch', 'resetsAtIso'],
+  properties: {
+    utilizationPct: { type: 'number' }, headroomPct: { type: 'number' }, status: { type: 'string' },
+    resetsAtEpoch: { type: 'integer' }, resetsAtIso: { type: 'string' }, resetsInMinutes: { type: 'number' },
+  },
+}
+
+const USAGE_SCHEMA = {
+  type: 'object',
+  required: ['ok', 'probeWorked', 'unifiedStatus', 'fiveHour', 'sevenDay', 'waitSeconds', 'resumeAtEpoch', 'verdictReason'],
+  properties: {
+    ok: { type: 'boolean' },
+    probeWorked: { type: 'boolean' },
+    unifiedStatus: { type: 'string' },
+    fiveHour: USAGE_WINDOW,
+    sevenDay: USAGE_WINDOW,
+    representativeClaim: { type: 'string' },
+    overageStatus: { type: 'string' },
+    waitSeconds: { type: 'integer' },
+    resumeAtEpoch: { type: 'integer' },
+    resumeAtIso: { type: 'string' },
+    limitingWindow: { type: 'string' },
+    verdictReason: { type: 'string' },
+  },
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -319,6 +356,55 @@ async function runDev(promptText, label) {
 }
 
 // ---------------------------------------------------------------------------
+// Usage-window gate (spike-proven 2026-07-14): a tiny haiku probe run under
+// ANTHROPIC_LOG=debug exposes the account's unified rate-limit headers —
+// anthropic-ratelimit-unified-{5h,7d}-{status,utilization,reset} — which are
+// the authoritative account-level windows Claude Code enforces. Utilization is
+// a FRACTION 0.0–1.0 (0.42 = 42% used); reset values are unix epoch seconds.
+// ---------------------------------------------------------------------------
+function usageProbePrompt(stage) {
+  return `You are the USAGE GATE (Sonnet 5) for stage "${stage}" of an agent-team workflow. Measure the account's Claude Code usage windows and decide whether there is headroom to proceed, and if not, when more tokens will be available.
+
+PROCEDURE (follow exactly):
+1. Run the probe (a few tokens on the cheapest model):
+   d=$(mktemp -d) && ANTHROPIC_LOG=debug timeout 120 claude -p --model claude-haiku-4-5-20251001 "Reply with exactly: OK" > "$d/usage-probe.log" 2>&1
+2. Extract ONLY fields matching anthropic-ratelimit-* from the log (LAST occurrence of each). Do NOT print, quote, or return any other part of the log. Then rm -rf "$d".
+3. Header semantics: unified-status is the overall verdict (allowed | allowed_warning | rejected); unified-5h-utilization and unified-7d-utilization are FRACTIONS 0.0–1.0 of each rolling window consumed (a value > 1.0 is already a percent — do not double-convert); unified-5h-reset / unified-7d-reset are unix epoch seconds when each window resets; unified-representative-claim names the binding window; unified-overage-status "rejected" means requests hard-fail once a window is exhausted.
+4. Compute with date +%s / date -u: utilization and headroom of each window as PERCENTS; ISO-8601 UTC reset times and minutes until each; verdict ok=true iff unified-status is "allowed" AND 5h utilization <= ${USAGE_CEILING_5H_PCT}% AND 7d utilization <= ${USAGE_CEILING_7D_PCT}%; waitSeconds = 0 if ok, else seconds until the earliest reset of a window violating its ceiling; resumeAtEpoch = that reset epoch + 60 (0 if ok); limitingWindow.
+5. If the probe command itself fails or no rate-limit headers appear, set probeWorked=false, ok=false, waitSeconds=-1, resumeAtEpoch=-1 and explain in verdictReason — never invent values.
+Return the structured result; verdictReason is one honest sentence with the numbers.`
+}
+
+function sleeperPrompt(u, stage) {
+  return `You are pausing an agent workflow until Claude Code usage-window credits are available (stage "${stage}"; reason: ${u.verdictReason}). Target time: unix epoch ${u.resumeAtEpoch} (${u.resumeAtIso || 'see epoch'}). Loop: read the current time with date +%s; if now >= ${u.resumeAtEpoch}, stop; otherwise sleep for min(600, remaining) seconds and repeat. Hard cap: 45 iterations. Do NOTHING else — no files, no repo access, no network. When done reply with the output of date -u.`
+}
+
+// Returns { proceed: true, usage } or { proceed: false, usage?, reason }.
+// Pauses in-run (sleeper agent) for waits within MAX_USAGE_PAUSE_SECONDS;
+// longer waits (a 7-day window) exit the run as paused-usage instead.
+async function usageGate(stage) {
+  for (;;) {
+    let u = await agent(usageProbePrompt(stage), { model: 'sonnet', effort: 'low', schema: USAGE_SCHEMA, label: `usage-gate:${stage}`, phase: 'Usage Gate' })
+    if (!u) {
+      log(`usage probe (${stage}) died; retrying once`)
+      u = await agent(usageProbePrompt(stage), { model: 'sonnet', effort: 'low', schema: USAGE_SCHEMA, label: `usage-gate:${stage}-retry`, phase: 'Usage Gate' })
+    }
+    if (!u || (!u.ok && u.waitSeconds < 0)) {
+      // Probe died twice or couldn't read headers — plausibly the window is
+      // ALREADY exhausted, in which case no agent (sleeper included) can run.
+      return { proceed: false, usage: u || null, reason: 'usage probe failed — the window may already be exhausted; resume this chunk manually once credits are available' }
+    }
+    if (u.ok) return { proceed: true, usage: u }
+    if (u.waitSeconds > MAX_USAGE_PAUSE_SECONDS) {
+      return { proceed: false, usage: u, reason: `limiting window (${u.limitingWindow}) resets at ${u.resumeAtIso || u.resumeAtEpoch} — beyond the in-run pause bound of ${Math.round(MAX_USAGE_PAUSE_SECONDS / 3600)}h; resume this chunk after that reset` }
+    }
+    log(`usage gate (${stage}): pausing ~${Math.ceil(u.waitSeconds / 60)} min until ${u.resumeAtIso || u.resumeAtEpoch} — ${u.verdictReason}`)
+    await agent(sleeperPrompt(u, stage), { model: 'sonnet', effort: 'low', label: `usage-wait:${stage}`, phase: 'Usage Gate' })
+    // Loop re-probes after the wait rather than trusting the sleeper.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Phase: Load
 // ---------------------------------------------------------------------------
 phase('Load')
@@ -331,6 +417,12 @@ const chunk = loaded.chunk
 const globalGates = loaded.globalGates || []
 const grepGateScope = loaded.grepGateScope || ''
 log(`Chunk ${chunk.id} — ${chunk.title} (wave ${chunk.wave}, order ${chunk.order}) → branch ${chunk.branch} off ${baseBranch}`)
+
+// Usage gate before anything expensive starts.
+const startGate = await usageGate('chunk-start')
+if (!startGate.proceed) {
+  return { chunk: chunk.id, status: 'paused-usage', detail: startGate.reason, usage: startGate.usage, escalation: 'resume this chunk once the usage window has reset — nothing was started' }
+}
 
 // ---------------------------------------------------------------------------
 // Phase: Setup — persistent worktree for the whole chunk team
@@ -487,6 +579,7 @@ log(`Brief approved: ${brief.workItems.length} work items`)
 // ---------------------------------------------------------------------------
 const itemResults = []
 const blockedIds = []
+let usagePause = null
 
 for (let i = 0; i < brief.workItems.length; i++) {
   const item = brief.workItems[i]
@@ -498,6 +591,15 @@ for (let i = 0; i < brief.workItems.length; i++) {
   if (budget.total && budget.remaining() < BUDGET_FLOOR) {
     log(`Token budget floor reached; deferring remaining items from ${item.id} onward`)
     for (let j = i; j < brief.workItems.length; j++) itemResults.push({ itemId: brief.workItems[j].id, status: 'deferred-budget' })
+    break
+  }
+
+  // Usage gate before each work item: pauses in-run for a 5h-window reset,
+  // exits as paused-usage for anything longer.
+  const itemGate = await usageGate(`item:${item.id}`)
+  if (!itemGate.proceed) {
+    usagePause = itemGate
+    for (let j = i; j < brief.workItems.length; j++) itemResults.push({ itemId: brief.workItems[j].id, status: 'deferred-usage' })
     break
   }
 
@@ -605,6 +707,29 @@ Write ${wt}/docs/design/execution/chunk-${chunk.id}/escalation-${item.id}.md: wh
 // Phase: Finalize — chunk gates, audit, push, report
 // ---------------------------------------------------------------------------
 phase('Finalize')
+const pushBranch = () => agent(
+  `In ${wt}: git push -u origin ${chunk.branch}. On network failure retry up to 4 times with 2s/4s/8s/16s backoff. Do NOT create a pull request. Do NOT push any other branch. Report the result.`,
+  { model: 'sonnet', effort: 'low', schema: PUSH_SCHEMA, label: 'push-branch', phase: 'Finalize' },
+)
+
+// The audit/gate agents cost real tokens too — gate before Finalize unless we
+// already know we're pausing.
+if (!usagePause) {
+  const fg = await usageGate('finalize')
+  if (!fg.proceed) usagePause = fg
+}
+if (usagePause) {
+  // Best-effort push so completed work reaches the remote; it may fail if the
+  // window is already fully exhausted.
+  const pausePush = await pushBranch()
+  return {
+    chunk: chunk.id, title: chunk.title, status: 'paused-usage', detail: usagePause.reason,
+    usage: usagePause.usage, branch: chunk.branch, baseBranch, worktree: wt, briefPath: briefPathRel,
+    items: itemResults, pushed: pausePush ? pausePush.pushed : false,
+    escalation: `resume this chunk after the usage window resets — completed work is committed ${pausePush && pausePush.pushed ? 'and pushed' : 'locally in the worktree (push it or re-run to retry the push)'}`,
+  }
+}
+
 const doneCount = itemResults.filter((r) => r.status === 'done').length
 const anyBlocked = blockedIds.length > 0
 const anyDeferred = itemResults.some((r) => r.status === 'deferred-budget' || r.status === 'skipped-upstream-blocked')
@@ -674,10 +799,7 @@ Write ${wt}/docs/design/execution/chunk-${chunk.id}/report.md — status, per-it
 
 // Push regardless of status: the branch (with brief, work, escalation reports)
 // IS the human-review artifact. Never open a PR from the workflow.
-const push = await agent(
-  `In ${wt}: git push -u origin ${chunk.branch}. On network failure retry up to 4 times with 2s/4s/8s/16s backoff. Do NOT create a pull request. Do NOT push any other branch. Report the result.`,
-  { model: 'sonnet', effort: 'low', schema: PUSH_SCHEMA, label: 'push-branch', phase: 'Finalize' },
-)
+const push = await pushBranch()
 
 const status = anyBlocked ? 'blocked'
   : anyDeferred ? 'partial'

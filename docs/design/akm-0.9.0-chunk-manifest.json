@@ -3,7 +3,7 @@
   "authority": "docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md — the plan IS the authority. This manifest is a derived index of plan §11 (Execution Order — Two Waves) for machine consumption by the akm-090-chunk workflow. If §11 changes, regenerate this file; on any conflict the plan wins. Section references of the form §15.N mean numbered RULE N of plan §15 (the plan has no §15 sub-headings).",
   "generated": "2026-07-14",
   "planVersion": "final scope pass, commit 5555616 (Tier-A only, lifecycle deferred, no trust machinery, reported ledger, hygiene-first waves)",
-  "integrationBranch": "akm-0.9.0",
+  "integrationBranch": "claude/akm-architecture-refactor-fubvd7",
   "branchPrefix": "akm-090/chunk-",
   "grepGateScope": "src/ + scripts/ + src/assets/, EXCLUDING src/migrate/legacy/ (the frozen §3.4 copy retains dead identifiers by design — plan §11 gate note) — tests are driven to zero by the §15.2 ratchet on the same identifiers; docs by the Chunk 10 sweep",
   "globalGates": [

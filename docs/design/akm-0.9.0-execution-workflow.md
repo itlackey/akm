@@ -16,6 +16,7 @@ The 0.9.0 refactor (plan §11: 14 chunks in two waves) is executed by per-chunk 
 | **Reviewers** (two per item, parallel) | Opus 4.8 | **Adherence reviewer**: strict conformance to the brief (the brief is the contract) incl. test-first commit-order proof and scope discipline. **Quality reviewer**: established code-quality criteria (complexity/function length, DRY, SRP/coupling/dependency direction, naming/idiom, type safety, dead code, error handling, test quality, commit hygiene). Both re-run commands; neither trusts the dev report over the code. |
 | **Escalation architect** | Fable 5 | Called when review fails **twice** on an item: diagnoses root cause (dev misread vs brief defect vs reviewer error), issues guidance, may amend the brief. |
 | **Chunk auditor / gate runner** | Opus 4.8 / Sonnet 5 | Whole-chunk gate run (`bun run check` + the chunk's manifest gates + the global gates in effect for this chunk + safety suites) and final audit + committed chunk report. A red gate run triggers ONE repair pass — whose commits get the same dual Opus review before the gates re-run; a repair that fails review is left flagged for the human, never silently kept as accepted work. |
+| **Usage gate** | Sonnet 5 | Measures the account's Claude Code usage windows (current 5-hour + 7-day) before the chunk starts, before every work item, and before Finalize; pauses the workflow until credits are available. See §6. |
 | *Utility agents* | Haiku 4.5 / Sonnet 5 | Manifest load (Haiku); worktree setup and branch push (Sonnet). No development or review decisions. |
 
 ### The escalation ladder (per work item)
@@ -30,7 +31,8 @@ Review pass rule: `pass = zero blocker + zero major findings`. Blockers: plan-ga
 
 ```mermaid
 flowchart TD
-    A[Load: manifest entry for chunk] --> B[Setup: worktree + branch off akm-0.9.0<br/>bun install, baseline check:fast must be GREEN]
+    A[Load: manifest entry for chunk] --> U[Usage gate - Sonnet 5:<br/>5h/7d windows via rate-limit headers<br/>pause until credits available]
+    U --> B[Setup: worktree + branch off the integration branch<br/>bun install, baseline check:fast must be GREEN]
     B --> C[Ground - Fable 5:<br/>plan extractor → parallel codebase grounders<br/>→ implementation brief, committed]
     C --> D{Adversarial 3-lens verify:<br/>plan fidelity / code grounding / test adequacy}
     D -- blockers, ≤2 revisions --> C
@@ -47,10 +49,12 @@ flowchart TD
     G -- yes --> E
     G -- no --> I[Finalize: full gate run<br/>+ one review-gated repair pass, skipped if any item blocked<br/>+ Opus chunk audit + report.md]
     I --> J[Push branch - never auto-PR]
-    J --> K{Human gate:<br/>review report + diff, merge into akm-0.9.0}
+    J --> K{Human gate:<br/>review report + diff,<br/>merge into the integration branch}
 ```
 
 Baseline rule: if `check:fast` is red at the chunk base, the run stops immediately (`blocked-baseline`) — nothing can be review-gated against a red baseline.
+
+The usage gate re-runs before **every work item** and before **Finalize**, not just at chunk start — a chunk that begins with headroom can exhaust it mid-run.
 
 ## 3. Test-first protocol (enforced by commit order)
 
@@ -63,8 +67,8 @@ Each brief work item carries a `testMode`; the adherence reviewer verifies compl
 
 ## 4. Git conventions
 
-- Integration branch: **`akm-0.9.0`**. Prerequisite: create it once from the branch that carries the final plan (`claude/akm-architecture-refactor-fubvd7`, or from `main` after that PR merges).
-- Chunk branches: `akm-090/chunk-<id>` off `akm-0.9.0`, worked in a dedicated worktree (`/home/user/akm-worktrees/chunk-<id>`). Runs that reach Finalize (`complete | partial | blocked | needs-human`) push the branch — the branch (brief + commits + escalation reports + chunk report) is the human-review artifact. The three pre-Finalize aborts (`blocked-setup`, `blocked-baseline`, `blocked-grounding`) return **without pushing** — there is no report.md for them; the human reviews the structured workflow result directly (for `blocked-grounding`, the last-revision brief is committed in the local worktree). The workflow never opens PRs; the maintainer (or the supervising session, on request) does.
+- Integration branch: **`claude/akm-architecture-refactor-fubvd7`** — the branch that carries the plan and this machinery. All chunk work bases from it and merges back into it. No separate integration branch is created.
+- Chunk branches: `akm-090/chunk-<id>` off `claude/akm-architecture-refactor-fubvd7`, worked in a dedicated worktree (`/home/user/akm-worktrees/chunk-<id>`). Runs that reach Finalize (`complete | partial | blocked | needs-human`) push the branch — the branch (brief + commits + escalation reports + chunk report) is the human-review artifact. The three pre-Finalize aborts (`blocked-setup`, `blocked-baseline`, `blocked-grounding`) return **without pushing** — there is no report.md for them; the human reviews the structured workflow result directly (for `blocked-grounding`, the last-revision brief is committed in the local worktree). The workflow never opens PRs; the maintainer (or the supervising session, on request) does.
 - Commit prefixes: `test(chunk-N):` / `feat(chunk-N):` / `refactor(chunk-N):` / `docs(chunk-N):`.
 - Committed artifacts per chunk, on the chunk branch: `docs/design/execution/chunk-<id>/brief.md`, `report.md`, `escalation-*.md` (if any).
 - After merge: `git worktree remove /home/user/akm-worktrees/chunk-<id>` to reclaim disk.
@@ -74,18 +78,34 @@ Each brief work item carries a `testMode`; the adherence reviewer verifies compl
 One chunk per invocation, **in manifest order** (Wave 1: 0a → 7 → 6 → 9; Wave 2: 0b → 1 → 1.5 → 2 → 3 → 4 → 5 → 6.5 → 8 → 10). Chunks are sequential by design — each bases on the integration branch containing all predecessors ("in-branch chunks", plan §11).
 
 ```
-Workflow({ name: 'akm-090-chunk', args: { chunk: '0a', baseBranch: 'akm-0.9.0' } })
+Workflow({ name: 'akm-090-chunk', args: { chunk: '0a' } })
 ```
 
-or in chat: *"run the akm-090-chunk workflow for chunk 0a"*.
+(`baseBranch` defaults to `claude/akm-architecture-refactor-fubvd7`) — or in chat: *"run the akm-090-chunk workflow for chunk 0a"*.
 
 Per chunk, in order:
-1. Invoke the workflow. It returns a structured result: `status` ∈ `complete | blocked | partial | needs-human | blocked-baseline | blocked-grounding | blocked-setup`.
-2. **Human gate:** for `complete | partial | blocked | needs-human`, read `docs/design/execution/chunk-<id>/report.md` on the pushed branch (and any `escalation-*.md`). For `complete`: merge the chunk branch into `akm-0.9.0`. For `blocked-setup | blocked-baseline | blocked-grounding` nothing was pushed — read the workflow's returned `detail` instead (and, for `blocked-grounding`, the brief committed in the local worktree). In every non-complete case: resolve the escalation questions, then re-run the workflow for the same chunk — it resumes on the existing branch/worktree and re-briefs against the current state (the Workflow tool's `resumeFromRunId` can also replay an interrupted run).
+1. Invoke the workflow. It returns a structured result: `status` ∈ `complete | blocked | partial | needs-human | paused-usage | blocked-baseline | blocked-grounding | blocked-setup`.
+2. **Human gate:** for `complete | partial | blocked | needs-human`, read `docs/design/execution/chunk-<id>/report.md` on the pushed branch (and any `escalation-*.md`). For `complete`: merge the chunk branch into `claude/akm-architecture-refactor-fubvd7`. For `blocked-setup | blocked-baseline | blocked-grounding` nothing was pushed — read the workflow's returned `detail` instead (and, for `blocked-grounding`, the brief committed in the local worktree). For `paused-usage`: the run exited because a usage window won't reset within the in-run pause bound (see §6); re-run the same chunk after the reset time in `detail` — completed items are preserved on the branch/worktree. In every non-complete case: resolve the escalation questions, then re-run the workflow for the same chunk — it resumes on the existing branch/worktree and re-briefs against the current state (the Workflow tool's `resumeFromRunId` can also replay an interrupted run).
 3. Move to the next chunk only after the merge — the next chunk's baseline gate depends on it.
 
 Budget behavior: the workflow stops **starting** new work items when the session token budget runs low and returns `partial` with the remaining items marked `deferred-budget`; re-run the same chunk to continue.
 
-## 6. Scope guards baked into every prompt
+## 6. Usage-window gate (spike-proven 2026-07-14)
+
+**Mechanism.** A Sonnet 5 agent runs a minimal probe — `ANTHROPIC_LOG=debug claude -p --model claude-haiku-4-5-20251001 "Reply with exactly: OK"` — and parses the account-level unified rate-limit headers the API returns (the same windows Claude Code's `/usage` screen shows):
+
+| Header | Meaning |
+|---|---|
+| `anthropic-ratelimit-unified-status` | overall verdict: `allowed` / `allowed_warning` / `rejected` |
+| `anthropic-ratelimit-unified-5h-utilization` / `-5h-reset` | **current 5-hour window**: fraction consumed (0.0–1.0) and unix-epoch reset time |
+| `anthropic-ratelimit-unified-7d-utilization` / `-7d-reset` | 7-day window, same semantics |
+| `anthropic-ratelimit-unified-representative-claim` | which window is the binding constraint |
+| `anthropic-ratelimit-unified-overage-status` | `rejected` = requests hard-fail once a window is exhausted |
+
+**Spike record.** Proven end-to-end in this environment on 2026-07-14: a Sonnet agent ran the probe, extracted the headers, converted fractions to percentages correctly (5h = 40.0% used / 60.0% headroom; 7d = 24.0% used), and produced reset times byte-identical to independently measured ground truth (5h reset `1784021400` → `2026-07-14T09:30:00Z`; 7d reset `1784563200` → `2026-07-20T16:00:00Z`). The debug log redacts the auth header (`authorization: "***"`); gate agents extract only `anthropic-ratelimit-*` fields and delete the log. Caveats: the OAuth `/api/oauth/usage` endpoint is NOT reachable here (no token on disk in remote containers), and local transcript accounting is not authoritative (account-wide usage spans other sessions) — the header probe is the one source that is both available and authoritative.
+
+**Policy.** The gate runs at chunk start, before every work item, and before Finalize. Proceed requires `unified-status = allowed` AND 5h utilization ≤ 90% AND 7d utilization ≤ 97% (override via args `usageCeiling5hPct` / `usageCeiling7dPct`). The ceilings are deliberately early: with `overage-status: rejected`, a window at 100% fails *every* request — including the sleeper agent that implements the pause — so the gate must trip while pausing is still affordable. On a violation: if the limiting window resets within the pause bound (default 6h, covering any 5h-window reset; `maxUsagePauseSeconds` to override), a Sonnet sleeper agent waits it out in ≤10-minute sleeps and the gate re-probes; a longer wait (7-day window) exits the run as `paused-usage` with the reset time — re-run the chunk after it (pair with `send_later` for automatic resumption). A probe that fails twice is treated as possibly-already-exhausted and also exits as `paused-usage` rather than guessing.
+
+## 7. Scope guards baked into every prompt
 
 Every agent in the pipeline carries the plan's hard rules (§1.3) verbatim: no new trust/approval/security machinery; memory lifecycle deferred entirely; deletions gated by inventory + zero-count greps with net-LOC reported, never gated; safety suites green at every boundary; `tests/_helpers/sandbox.ts`, `tests/_preload.ts`, the mock.module ban, and the hand-rolled sharding untouched. The adherence reviewer treats any trust-shaped or lifecycle-shaped addition as an automatic blocker, and the Chunk 6.5 tripwire (>~150 LOC of context-threading → stop and re-scope, §12.4) is in that chunk's manifest gates.
