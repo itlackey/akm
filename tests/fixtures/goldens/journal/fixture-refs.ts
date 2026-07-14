@@ -64,3 +64,91 @@ export const RECOVERY_ACCEPT_PREFIX = "jnl-recovery-accept";
 export const RECOVERY_REVERT_PREFIX = "jnl-recovery-revert";
 export const RECOVERY_REJECT_PREFIX = "jnl-recovery-reject";
 export const RECOVERY_REJECT_RECOVERS_ACCEPT_NAME = "jnl-recovery-reject-recovers-accept";
+
+// ── goldens-mv-txn.test.ts / goldens-mv-recovery.test.ts (R3 — mv move engine,
+//    WI-04) ───────────────────────────────────────────────────────────────
+//
+// `akm mv` operates on `memory:`/`knowledge:` (and other flat-markdown) refs,
+// not `lesson:` proposal payloads, and does not validate frontmatter shape
+// the way `promoteProposal`'s validators do -- so these constants are plain
+// name strings plus small content builders for the source asset and its
+// citers (body prose, frontmatter `xrefs:` list, `tasks/*.yml`).
+
+/** Build a `memory:<name>` ref string from a bare fixture name. */
+export function memoryRef(name: string): string {
+  return `memory:${name}`;
+}
+
+/** Plain body content for a memory/knowledge asset moved by the mv-engine goldens. */
+export function mvSourceBody(label: string): string {
+  return `Fixture-local mv source body (${label}).\n`;
+}
+
+/** Body-prose citer content: one inline occurrence of `ref`. */
+export function mvBodyCiterContent(ref: string): string {
+  return `---\ndescription: Fixture-local mv body citer.\n---\n\nSee ${ref} for details.\n`;
+}
+
+/** Frontmatter `xrefs:` list citer content: one list-entry occurrence of `ref`. */
+export function mvFrontmatterCiterContent(ref: string): string {
+  return `---\ndescription: Fixture-local mv frontmatter citer.\nxrefs:\n  - ${ref}\n---\n\nDerived note body (no inline ref).\n`;
+}
+
+/** `tasks/*.yml` citer content: one `prompt:` occurrence of `ref` (mv-cli.ts scans tasks/*.yml|*.yaml). */
+export function mvTaskYamlContent(ref: string): string {
+  return `schedule: "0 9 * * *"\nprompt: ${ref}\n`;
+}
+
+// -- scenario 1: body + frontmatter + task-yaml citers + .derived.md twin --
+export const MV_MOVE_BASE_NAME = "mv-move-base";
+export const MV_MOVE_TARGET_REL = "projectA/mv-move-renamed";
+export const MV_MOVE_BODY_CITER_NAME = "mv-move-body-citer";
+export const MV_MOVE_FRONTMATTER_CITER_NAME = "mv-move-frontmatter-citer";
+export const MV_MOVE_TASK_YAML_NAME = "mv-move-nightly";
+export const MV_MOVE_READONLY_CITER_NAME = "mv-move-readonly-citer";
+
+// -- scenario 2a: divergent citer at the STAGE window (mv-cli.ts:576) --
+export const MV_STAGE_DIVERGENCE_NAME = "mv-stage-divergence";
+export const MV_STAGE_DIVERGENCE_TARGET_REL = "mv-stage-divergence-new";
+export const MV_STAGE_DIVERGENCE_CITER_NAME = "mv-stage-divergence-citer";
+
+// -- scenario 2b: divergent citer at the REPLACE window (mv-cli.ts:632) --
+export const MV_REPLACE_DIVERGENCE_NAME = "mv-replace-divergence";
+export const MV_REPLACE_DIVERGENCE_TARGET_REL = "mv-replace-divergence-new";
+export const MV_REPLACE_DIVERGENCE_CITER_NAME = "mv-replace-divergence-citer";
+
+// -- scenario 3: divergent-committed-target recovery refusal (validateCommittedMove) --
+export const MV_COMMITTED_DIVERGENCE_NAME = "mv-committed-divergence";
+export const MV_COMMITTED_DIVERGENCE_TARGET_REL = "mv-committed-divergence-new";
+export const MV_COMMITTED_DIVERGENCE_TRIGGER_NAME = "mv-committed-divergence-trigger";
+
+// -- scenario 4: transient re-key failure retains the journal, next mutation
+//    completes forward (behavior of tests/commands/mv.test.ts:353) --
+export const MV_TRANSIENT_REKEY_NAME = "mv-transient-rekey";
+export const MV_TRANSIENT_REKEY_TARGET_REL = "mv-transient-rekey-new";
+export const MV_TRANSIENT_REKEY_TRIGGER_NAME = "mv-transient-rekey-trigger";
+export const MV_TRANSIENT_REKEY_TRIGGER_TARGET_REL = "mv-transient-rekey-trigger-new";
+
+// ── tests/integration/goldens-mv-recovery.test.ts (R3 — SIGKILL crash recovery,
+//    WI-04) ───────────────────────────────────────────────────────────────
+
+/** SIGKILL at "applying" (before any citer/source rename) -> full rollback. */
+export const MV_RECOVERY_ROLLBACK_NAME = "mv-recovery-rollback";
+export const MV_RECOVERY_ROLLBACK_TARGET_REL = "mv-recovery-rollback-new";
+
+/** SIGKILL roll-forward phases: filesystem-committed / index-finalized / state-finalized / event-finalized. */
+export const MV_RECOVERY_FORWARD_PHASES = [
+  "filesystem-committed",
+  "index-finalized",
+  "state-finalized",
+  "event-finalized",
+] as const;
+export const MV_RECOVERY_FORWARD_PREFIX = "mv-recovery-forward";
+export const MV_RECOVERY_FORWARD_TRIGGER_PREFIX = "mv-recovery-forward-trigger";
+
+/** The four independent recovery entry points (brief §2.2 / WI-04 step 2). */
+export const MV_RECOVERY_ENTRY_MVRUN_NAME = "mv-recovery-entry-mvrun";
+export const MV_RECOVERY_ENTRY_MVRUN_TRIGGER_NAME = "mv-recovery-entry-mvrun-trigger";
+export const MV_RECOVERY_ENTRY_PROMOTE_NAME = "mv-recovery-entry-promote";
+export const MV_RECOVERY_ENTRY_INDEXER_FULL_NAME = "mv-recovery-entry-indexfull";
+export const MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME = "mv-recovery-entry-indextargeted";
