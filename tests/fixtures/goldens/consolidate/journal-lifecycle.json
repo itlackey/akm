@@ -1,0 +1,53 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "cases": {
+    "allHotZeroLlm": {
+      "chatCompletionCallCount": 0,
+      "deleted": 0,
+      "failedChunkMemories": 0,
+      "failedChunks": 0,
+      "judgedNoAction": 2,
+      "merged": 0,
+      "processed": 2
+    },
+    "fullRunLifecycle": {
+      "backupCopyBasenames": ["cj-lifecycle-delete.md"],
+      "backupDirExistsAfterRun": false,
+      "chatCompletionCallCount": 1,
+      "deleted": 1,
+      "firstJournalWrite": {
+        "backupTimestamp": "<TS>",
+        "completed": [],
+        "operations": [
+          {
+            "op": "delete",
+            "reason": "redundant",
+            "ref": "memory:cj-lifecycle-delete"
+          }
+        ],
+        "startedAt": "<TS>"
+      },
+      "journalExistsAfterRun": false,
+      "journalWriteCount": 2,
+      "lastJournalWrite": {
+        "backupTimestamp": "<TS>",
+        "completed": ["memory:cj-lifecycle-delete"],
+        "operations": [
+          {
+            "op": "delete",
+            "reason": "redundant",
+            "ref": "memory:cj-lifecycle-delete"
+          }
+        ],
+        "startedAt": "<TS>"
+      },
+      "ok": true
+    }
+  },
+  "notes": [
+    "Journal helpers (getJournalPath/writeJournal/markJournalCompleted/cleanupJournal/backupFile) are module-private to consolidate.ts -- their write-time shape is observed via spyOn(fs.writeFileSync/copyFileSync) interception around a REAL akmConsolidate run (src/-change-free technique, same as WI-04's goldens-mv-txn.test.ts).",
+    "journalPhasesObserved encoding (brief §3.2 rule 4): only the write COUNT and each write's parsed shape are recorded as informational data -- never asserted against raw journal bytes or directory layout.",
+    "fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only; the asset as a whole stays frozen-migration-input (same convention as the WI-03/04 fileTree-key caveats)."
+  ],
+  "scenario": "consolidate journal round-trip: full-run lifecycle + all-hot chunk early-exit (WI-06, R5)"
+}

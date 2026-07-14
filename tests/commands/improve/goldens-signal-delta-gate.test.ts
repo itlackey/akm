@@ -35,6 +35,19 @@
  *      vocabulary, not a P0-A-specific selection algorithm) but individual
  *      ref-to-lane membership beyond that single tag is never asserted.
  *
+ * Terminology note: the work-item acceptance criterion and the top-level plan
+ * (architecture plan §6 / bundle-adapter-spec.md :376) both name this surface
+ * "the LOOK/CHANGE separation and signal-delta corrective-evidence gate" --
+ * that phrase is never defined operationally anywhere in this chunk's brief
+ * (docs/design/execution/chunk-0a/brief.md), whose own WI-06 testsFirst/steps
+ * sections operationalize the SAME surface exclusively in terms of the
+ * `eligibleRefs`/`distillOnlyRefs`/`noFeedbackPool` partition pinned above.
+ * This suite follows the brief's concrete, actionable operationalization (the
+ * higher authority per this work's instructions where the plan is abstract
+ * and the brief is concrete); no separate "LOOK" vs "CHANGE" boolean/count
+ * exists anywhere in the codebase for this suite to pin in addition to the
+ * partition it already captures.
+ *
  * ## Code-organization note (see goldens-consolidate-journal.test.ts's header
  * for the same convention, adopted here too): `capture*` helpers are single,
  * self-contained, idempotent functions (fresh sandbox in, fresh sandbox torn

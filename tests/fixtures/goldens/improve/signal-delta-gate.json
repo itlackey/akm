@@ -1,0 +1,52 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "isSignalDeltaEligibleTruthTable": [
+    {
+      "eligible": false,
+      "lastProposal": null,
+      "latestFeedback": null
+    },
+    {
+      "eligible": false,
+      "lastProposal": "<TS>",
+      "latestFeedback": null
+    },
+    {
+      "eligible": true,
+      "lastProposal": null,
+      "latestFeedback": "<TS>"
+    },
+    {
+      "eligible": true,
+      "lastProposal": "<TS>",
+      "latestFeedback": "<TS>"
+    },
+    {
+      "eligible": false,
+      "lastProposal": "<TS>",
+      "latestFeedback": "<TS>"
+    },
+    {
+      "eligible": false,
+      "lastProposal": "<TS>",
+      "latestFeedback": "<TS>"
+    }
+  ],
+  "notes": [
+    "This gate SURVIVES Chunk 7's deletion of the P0-A high-retrieval lane and self-consistency voting -- it is the one piece of eligibility machinery this suite pins as frozen-migration-input rather than re-baseline @ 7.",
+    "The partition-counts scenario deliberately isolates the signal-delta gate from every other selection lane (proactiveMaintenance disabled; zero retrievals/salience seeded) and asserts COUNTS + the shared 'signal-delta' eligibilitySource tag only -- P0-A lane membership and SC voting internals are out of scope for this suite (brief Risk 9); see goldens-self-consistency.test.ts / goldens-p0a-selection.test.ts (WI-02, designated re-baseline @ 7) for those.",
+    "Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), booleans, and counts -- no production refs."
+  ],
+  "partitionCounts": {
+    "allPlannedRefsTaggedSignalDelta": true,
+    "distillOnlyRefsCount": 1,
+    "eligibleRefsAlsoInPlanned": true,
+    "eligibleRefsCount": 2,
+    "noFeedbackPoolCount": 2,
+    "noFeedbackRefsExcludedFromDistill": true,
+    "noFeedbackRefsExcludedFromPlanned": true,
+    "noFeedbackRefsExcludedFromReflect": true,
+    "plannedRefsCount": 3
+  },
+  "scenario": "signal-delta gate (§6 preserve list): truth table + feedback/proposal cursor maps + partition counts (WI-06, R5)"
+}

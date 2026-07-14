@@ -50,6 +50,30 @@
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/consolidate/goldens-merge-plans.test.ts"],
       "notes": "WI-05, plan §15.7 / R5. Pure-function preservation oracle for mergePlans (consolidate/merge.ts:35, precedence rules :80-110): hallucinated-ref drop (primary and secondary), merge-wins-over-delete (both chunk orders), promote-queued-before-merge (ops ARRAY ORDER, since applyConsolidationPlan processes ops in array order), and contradict pair-dedup by ref|contradictedByRef (keeping the first occurrence). Byte-for-byte JSON in/out — mergePlans has no fs/LLM/config/timestamp/id dependency, so no <TS>/<ID> placeholders apply; this is the one WI-05 asset with zero normalization surface. Contains fixture-local names only. Extends (does not duplicate) tests/commands/consolidate/consolidate-promote-dedup.test.ts's mergePlans promote-by-ref dedup coverage."
+    },
+    {
+      "path": "tests/fixtures/goldens/consolidate/journal-lifecycle.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for the consolidate journal's full-run write/complete/cleanup lifecycle (getJournalPath/writeJournal :737-747/markJournalCompleted :749-759/cleanupJournal :761-774/backupFile :776-783, all module-private — observed via spyOn(fs.writeFileSync/copyFileSync) around a REAL akmConsolidate run, same src/-change-free technique as WI-04's goldens-mv-txn.test.ts) and the all-hot chunk early-exit (:1617-1636: zero LLM calls, every memory bucketed judgedNoAction). Journal write shape/count is informational data only (brief §3.2 rule 4) — never asserted against raw journal bytes or directory layout, only observable outcomes (write count, parsed completed/operations arrays, end-state file/dir existence). Caveat (same class as the WI-03/04 fileTree-key caveats): fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) that would need re-keying alongside Chunk 5's §15.2 grammar codemod even though this asset is otherwise designated frozen; the outcome booleans/counts are not affected. No production refs anywhere in the fixture."
+    },
+    {
+      "path": "tests/fixtures/goldens/consolidate/journal-recovery.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for checkForIncompleteJournal's recovery-mode matrix (:692-735, invoked at akmConsolidate entry :1012): incomplete journal + recoveryMode 'abort' (default) throws ConfigError INVALID_CONFIG_FILE with a backup-dir hint and removes nothing; an unreadable (malformed JSON) journal throws the same code under abort; recoveryMode 'clean' on an incomplete journal calls removeStaleJournal (:665-690) and removes both the journal and its backup dir, for both the explicit backupTimestamp field and the startedAt-derived ([:.]->-) fallback; and a 'completed >= operations' journal is silently treated as NOT incomplete (no throw, no removal) — CHARACTERIZATION WARNING (plan §15.5, brief Risk 8): this is a genuinely surprising, previously-uncovered outcome — such a journal's own backup directory becomes a permanent orphan that no code path this suite can find ever reclaims; captured as-is, not fixed. No ref literals appear in this fixture (booleans, counts, and the ConfigError code string only) — no ref-grammar re-baseline caveat applies."
+    },
+    {
+      "path": "tests/fixtures/goldens/consolidate/journal-guard-verdicts.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for consolidateGuardStatus's four-way verdict (consolidate/eligibility.ts:60): hot (captureMode:hot frontmatter), safe (ordinary frontmatter), unparseable (zero-key/no-frontmatter body), and missing (file absent). Prompt-level hot-list annotation is a different concern already covered by tests/commands/consolidate/consolidate-chunks.test.ts — referenced, not duplicated here. No ref literals in this fixture (verdict strings only)."
+    },
+    {
+      "path": "tests/fixtures/goldens/improve/signal-delta-gate.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/improve/goldens-signal-delta-gate.test.ts"],
+      "notes": "WI-06, plan §11 Chunk 0a / R5, §6 preserve list. The signal-delta gate SURVIVES Chunk 7's deletion of the P0-A high-retrieval lane and self-consistency voting (both pinned separately as re-baseline @ 7 by improve/self-consistency.json and improve/p0a-selection.json). Pins isSignalDeltaEligible's truth table (eligibility.ts:421-431, pure function), and the eligibleRefs/distillOnlyRefs/noFeedbackPool partition COUNTS from one full akmImprove preparation run with proactiveMaintenance disabled and zero retrievals/salience seeded so only the signal-delta gate can ever select a ref — P0-A lane membership and SC voting internals are deliberately out of scope (brief Risk 9); only the shared 'signal-delta' eligibilitySource tag (the gate's own vocabulary, not a P0-A-specific algorithm) is asserted. buildLatestFeedbackTsMap's signal/note filter and buildLatestProposalTsMap's reflect/distill cursor rules are exercised directly by the suite's assertion tests (state.db-backed) but are not separately serialized into this fixture beyond the truth-table/partition-count sections. Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), booleans, and counts — no production refs."
     }
   ]
 }
