@@ -1,299 +1,124 @@
-# Chunk 0a — Hygiene goldens: chunk gate report (WI-08)
+# Chunk 0a — Hygiene goldens: chunk report
 
 - **Chunk**: 0a (order 1, Wave 1) — "Hygiene goldens"
 - **Branch**: `akm-090/chunk-0a` (worktree `/home/user/akm-worktrees/chunk-0a`)
-- **Base at capture**: `3d9ee7b1917e8c4872f135fe9993d94b61b36ed1` (== head of `claude/akm-architecture-refactor-fubvd7` at brief authoring time)
-- **Authority**: `docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md` §11 Chunk 0a, §5, §12.3, §12.4, §15 rules 1/3/5/7/9; `docs/design/execution/chunk-0a/brief.md`; `docs/design/execution/chunk-0a/anchors.md`.
-- **This item**: WI-08 — runs the full gate (no new src/tests of its own), audits WI-01..WI-07's landed work, and writes this report. Covers R7, R9, R10, R11, R13.
+- **Base / merge-base**: `3d9ee7b1917e8c4872f135fe9993d94b61b36ed1` (head of `claude/akm-architecture-refactor-fubvd7` at brief-authoring time)
+- **HEAD at audit**: `ea4bed66`
+- **Authority**: `docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md` §11 Chunk 0a, §5, §12.4, §15.5, §15.7; `docs/design/execution/chunk-0a/brief.md`; `docs/design/execution/chunk-0a/anchors.md`.
+- **Auditor**: whole-chunk audit (Opus 4.8). This report supersedes and consolidates the WI-08 gate report; the full WI-08 forensic detail remains in git history at `ea4bed66`.
 
-## 1. Deletion ledger — EMPTY
+## 0. Verdict
 
-This is a capture-only chunk (plan §11 Chunk 0a). No production code in `src/` was touched and nothing was deleted anywhere. The ledger is committed explicitly empty per the manifest's hard gate (plan §15 rule 9 / brief §1 "Out of scope BY DESIGN").
+**PASS.** All eight work items are `done` (single attempt each, no escalations). Every manifest chunk gate is green. `src/` and `scripts/` diffs are empty (0 production LOC, matching the manifest `netLoc: "0 (capture-only)"` estimate exactly). The chunk's §15.5 + §15.7 test bucket landed and is green. The one non-green mark in the gate ledger — a single-invocation `bun run check` flake — is a pre-existing, CPU-contention SIGKILL-timing flake in `tests/integration/workflow-crash-windows.test.ts`, a file this chunk never touches (empty diff vs base); the decomposed local-green gate (tsc + unit + standalone integration + safety replay) is independently green. Accounted for below (§4), not a chunk-0a regression.
 
-| Deleted item | LOC | Rationale |
+## 1. Per-item outcomes
+
+| Item | Title | Status | Attempts | Key commits | Escalation |
+|---|---|---|---|---|---|
+| WI-01 | Golden-fixture infra + designation registry | done | 1 | `0803a08`, `b01c254`, `c447492` | — |
+| WI-02 | improve-run goldens (self-consistency + P0-A) | done | 1 | `2d8889c`, `f7412ac` | — |
+| WI-03 | proposal accept/revert/reject journal goldens | done | 1 | `85d7600`, `30e39bb`, `376f3a3` | — |
+| WI-04 | mv move-transaction engine goldens | done | 1 | `6ccff8a`, `54facb8` | — |
+| WI-05 | consolidate op-outcome + mergePlans goldens | done | 1 | `a7550dd`, `c62c59d`, `4991071` | — |
+| WI-06 | consolidate journal round-trip + signal-delta gate goldens | done | 1 | `5d3e1aa`, `e2c241c` | — |
+| WI-07 | CLI output baseline goldens | done | 1 | `68b3549`, `1e93ff8` | — |
+| WI-08 | chunk gate report (green run, ledgers, designation audit) | done | 1 | `ea4bed66` | — |
+
+No item was blocked; there are **no escalation files** for this chunk. The gate-repair pass made **no commits** and is recorded as `DISPUTED` (see §4) — the only reported failure was the out-of-scope pre-existing flake, which correctly received no forced fix.
+
+Every item followed the test-first protocol (a `test(...)` commit that fails first, then a `feat(...)` capture commit). WI-01 additionally committed the anchor record (`c447492`) before any capture item ran, satisfying the §12.4 line-drift gate.
+
+## 2. Gate table
+
+| Gate | Result | Basis |
 |---|---|---|
-| — | — | — (no deletions in this chunk) |
+| **Manifest: Golden fixtures committed** | GREEN | 51 golden JSON assets + `DESIGNATIONS.json` + 4 `fixture-refs.ts` modules committed; working tree clean; designation meta-test green. |
+| **Manifest: Plan line anchors re-measured at HEAD before capture (§12.4)** | GREEN | `anchors.md` committed at `c447492` (before first capture `f7412ac`); spot-checks confirm HEAD source (e.g. `processSession` = 20 params). |
+| Global: Zero-count greps (§11), chunk-scoped | GREEN (n/a) | 0a is manifest order 1; every deletion grep targets a strictly-later chunk, so all are out of scope this run. |
+| Global: Safety suites port-first + green at boundary (§15.3); fixed points untouched | GREEN | Fixed-point diff empty; 38-file / 11,240-LOC boundary set replayed 428 pass / 0 fail standalone. |
+| Global: Named §15 bucket lands this chunk (§15.5 + §15.7) | GREEN | 15 golden suite files present + green within the 28,668-test unit run. |
+| Global: Per-chunk deletion ledger committed (HARD) | GREEN | Explicitly-empty ledger committed (capture-only chunk, no deletions). |
+| Global: Net-LOC reported, never gated | GREEN | `src/` + `scripts/` diff empty; reported below, not gated. |
+| Global: No new trust/approval/security machinery; memory lifecycle deferred | GREEN | `src/` untouched entirely; tests/docs diff contains only golden content-hashing (sha256 for fixture comparison), no trust/lifecycle machinery. |
+| Global: Local green gate (tsc + unit + affected integration + safety) | GREEN | tsc silent; unit 28,668/0; standalone integration 881 pass / 50 skip / 0 fail; safety replay 428/0. |
+| `bun run check` (single combined invocation) | FLAKED — accounted (§4) | Combined back-to-back run hit a CPU-contention flake in an untouched file; decomposed superset gate above is green. |
 
-## 2. Net-LOC (reported, not gated)
+Independently re-verified during this audit: `src/`+`scripts/` diff empty; only `tests/` (76 files) and `docs/` (3 files) touched; 52 `*.json` under `tests/fixtures/goldens/` (51 assets + `DESIGNATIONS.json`); designation registry parses to 51 entries (46 frozen-migration-input / 5 re-baseline: `improve/self-consistency.json` + `improve/p0a-selection.json` @ Chunk 7, `cli/a-search-text.json` + `cli/a-show-per-type.json` + `cli/d-show-lines-view.json` @ Chunk 5); golden meta-tests (`goldens-designations`, `golden-normalize`) re-run green here (30 pass / 0 fail).
 
-Per plan §15 rule 9 and the manifest's hard rules, net-LOC is **reported, not gated** — deletion (elsewhere, not in this chunk) is gated by inventory + zero-count greps, never by a LOC number.
+## 3. Net-LOC actuals vs estimate
 
-### 2.1 `src/` — verified zero
+- **Manifest estimate**: `netLoc: "0 (capture-only)"` — i.e. zero net production LOC.
+- **Actual `src/` + `scripts/`**: `git diff --shortstat 3d9ee7b..HEAD -- src/ scripts/` → empty. **Delta vs estimate: 0.** The estimate is met exactly.
+- **Total additive churn** (`git diff --shortstat 3d9ee7b..HEAD`, all paths): **79 files changed, +10,880 / −0** — purely additive, zero deletions anywhere.
+  - `tests/**/*.ts` (15 golden suite files + 5 helper/fixture-ref modules): ~8,262 LOC.
+  - `tests/fixtures/goldens/**/*.json` (51 assets + `DESIGNATIONS.json`): ~1,780 LOC.
+  - `docs/design/execution/chunk-0a/**` (`anchors.md`, `brief.md`, `report.md`): ~838 LOC.
 
-```
-git diff --stat 3d9ee7b1917e8c4872f135fe9993d94b61b36ed1..HEAD -- src/
-```
-produces **no output** (empty diff). Confirmed independently by the fixed-point/`src/` audit in §5 below. R10 satisfied.
+Net production LOC is the gated-adjacent number and it is **0**, on estimate. The ~10,880 additive test/fixture/doc LOC is reported per §15 rule 9 and is **not** gated — it gives later chunks (which do delete, gated by inventory + zero-count greps) a clean before/after baseline.
 
-### 2.2 Test-suite baseline denominators at `3d9ee7b` (verified exact, not stale)
+## 4. The one non-green gate — accounted for
 
-Two denominators are in play and must not be conflated (brief §2.5, WI-08 step 6):
+`bun run check` as a single invocation failed once on `tests/integration/workflow-crash-windows.test.ts > 'Window A'` (`expect 0, received 3`). This is **not** a chunk-0a regression:
 
-| Denominator | Basis | Files | LOC |
-|---|---|---|---|
-| All `tests/**/*.ts` | plan §15 header basis | 588 | 175,041 |
-| `*.test.ts`-only | narrower, suite-files-only cut | 564 | 172,155 |
+- The file is untouched by this chunk — `git diff --stat 3d9ee7b..HEAD -- tests/integration/workflow-crash-windows.test.ts` is empty; last real edit predates the base commit.
+- `src/` is untouched entirely, so a capture-only chunk cannot logically regress a real-subprocess SIGKILL crash-recovery test.
+- It is not one of the 38 §15.3 boundary files nor one of the 15 golden suites.
+- The flake reproduces on a *different* subtest each back-to-back run (Window A, then Window B) and clears on standalone rerun — the signature of real-`bun`-subprocess SIGKILL timing sensitivity under CPU contention (surfaced only when `test:integration` launched immediately after the 28,668-test unit run saturated all cores).
+- Standalone `bun run test:integration` (fresh process): **881 pass / 50 skip / 0 fail** — matches the committed figures.
+- CI (`.github/workflows/check.yml`) runs `bun run check` with no retry/quarantine, so this is a pre-existing repo-wide property, not introduced here.
 
-Both were re-measured directly against the `3d9ee7b` tree (`git ls-tree -r 3d9ee7b -- tests`, filtered by extension, summed with `wc -l` per blob) rather than trusted from the plan text. **Both match their respective brief/plan figures exactly** — the plan §15 header's `588/175,041` is correct at this HEAD and is *not* stale; it is the basis this chunk's added LOC is ledgered against below.
+The gate-repair pass correctly declined to touch it: a "fix" would edit `workflow-crash-windows.test.ts` / `workflow-crossproc.ts` — outside this chunk's brief — and would risk weakening a crash-recovery oracle that Chunks 6/9 depend on. Recommendation for downstream chunks running the full `check`: run `test:unit` and `test:integration` as separate gate steps, or rerun uncontended, to avoid the contention flake.
 
-### 2.3 This chunk's added test/fixture LOC, ledgered against the all-`tests/**/*.ts` denominator
+## 5. §15 test bucket — landed
 
-`git diff --shortstat 3d9ee7b..HEAD` (repo-wide, all paths): **78 files changed, 10,581 insertions(+), 0 deletions(-)**. Zero deletions anywhere confirms every change WI-01..07 made was purely additive (no rewrites of existing lines).
+- **§15.5 (goldens, capture-only; each asset designated frozen vs re-baseline)**: 15 golden suite files landed. improve self-consistency + P0-A goldens are designated `re-baseline @ Chunk 7` (the lanes the plan deletes); journal (3 engines) + consolidate + CLI goldens are `frozen-migration-input` preservation oracles (with 3 ref-serializing CLI fixtures `re-baseline @ Chunk 5`).
+- **§15.7 (consolidate behavior-preservation goldens captured here)**: consolidate op-outcome (`consolidate-ops.json`), mergePlans (`merge-plans.json`), journal round-trip (`journal-lifecycle` / `journal-recovery` / `journal-guard-verdicts`), and signal-delta gate goldens all present and green.
 
-Breakdown by category (measured by summing tracked-blob line counts before/after, cross-checked against the shortstat total — 8,262 + 1,780 + 539 = 10,581, reconciles exactly):
+Goldens are grammar-agnostic where possible per §12.4 — assertions pin counts/outcomes (`callCount`, `persistedProposalCount`, per-lane histograms, journal phase states), and the WI-01 normalizer scrubs ids/timestamps to `<ID>`/`<TXN>`/`<TS>` — minimizing Wave-1 rebase friction; ref-serializing fixtures are the ones flagged `re-baseline @ 5`.
 
-| Category | Files added/changed | LOC added | Notes |
-|---|---|---|---|
-| `tests/**/*.ts` (suite files + `_helpers/golden.ts` + `fixture-refs.ts` modules) | 20 | 8,262 | Directly extends the plan §15 basis denominator: 175,041 -> 183,303 (+4.72%), 588 -> 608 files. Of these 20, 15 are `*.test.ts` suite files (+7,533 LOC against the narrower 172,155 denominator: 564 -> 579 files) and 5 are non-`.test.ts` support modules (`tests/_helpers/golden.ts` + one `fixture-refs.ts` per area: `improve/`, `journal/`, `consolidate/`, `cli/`). |
-| `tests/fixtures/goldens/**/*.json` (golden fixtures + `DESIGNATIONS.json`) | 52 | 1,780 | Golden JSON is fixture data, not `.ts` source, so it sits outside the `tests/**/*.ts` glob denominator proper; ledgered here separately as the "fixture LOC" half of "test/fixture LOC" per WI-08 step 6's instruction. 51 golden assets + 1 `DESIGNATIONS.json` registry. |
-| `docs/design/execution/chunk-0a/**` (`anchors.md`, `brief.md`) | 2 | 539 | Design-doc-execution artifacts, not test/fixture LOC; listed for completeness. `report.md` (this file) adds further docs LOC on top, captured in the final commit's own diffstat. |
-| **Total** | **78** (incl. `.gitkeep`s) | **10,581** | Matches `git diff --shortstat` exactly. |
+## 6. Minors carried forward (non-blocking)
 
-**Reading**: this chunk added 8,262 lines of `.ts` test code (suites + helpers + fixture-ref constant modules) and 1,780 lines of JSON fixture data, against a starting `tests/**/*.ts` population of 175,041 LOC — i.e. roughly 5.7% combined growth (the fixture JSON lives alongside but outside the `.ts` glob). `src/` net-LOC is exactly 0. Nothing here is a gate; it is recorded so later chunks (which *do* delete, per plan §15 rule 9's inventory+grep gate) have a clean before/after baseline to diff against.
+None of these gate the chunk; recorded for downstream owners.
 
-## 3. Designation table (mirror of `DESIGNATIONS.json`)
+**WI-01 (golden infra):**
+1. `<TXN>` override in `golden.ts:104-106` reclassifies every `<ID>` under a transaction-named key — a key-name (not content) heuristic; WI-03/WI-04 authors own extending it if a real fixture co-locates proposal + transaction ids under one transaction-named key. (Handled by those items.)
+2. Module doc comment overstates coverage: `idempotencyMetadataKey` does not contain "transaction" and its value is a key-name string, never a UUID — actual coverage is via `mutationTransactionId`. Doc-comment wording nit.
+3. `fileTreeManifest` / `sha256File` (incl. `walkFileTree` symlink-follow branch) have no direct unit coverage; optionally add when WI-02+ first consumes them.
+4. Process: the pre-capture `── unit: N pass / 0 fail` line was not captured by the WI-01 developer (suite exceeded the time budget). Later confirmed green (28,668/0) by WI-08.
 
-51 entries, one per golden asset under `tests/fixtures/goldens/**` (excluding `fixture-refs.ts` modules and `DESIGNATIONS.json` itself, per the registry's own policy). Policed by `tests/goldens-designations.test.ts` (WI-01), confirmed green — see §8.
+**WI-02 (improve goldens):**
+1. Report claimed `improve-eligibility.test.ts` unaffected; on a loaded box one test hits its hardcoded 5000ms timeout in isolation — a pre-existing slow-box flake in a file byte-identical to base, not a WI-02 defect.
+2/3/4. DRY (4 harness helpers duplicated across the two suites), each scenario executed twice (capture kept independent of within-file order — deliberate), and the lane-attribution scenario is name-sort-dependent (documented; fixture is re-baseline @ 7). All optional.
 
-| Asset | Designation | reBaselineChunk | Consumer(s) |
-|---|---|---|---|
-| `improve/self-consistency.json` | re-baseline | 7 | `tests/commands/improve/goldens-self-consistency.test.ts` |
-| `improve/p0a-selection.json` | re-baseline | 7 | `tests/commands/improve/goldens-p0a-selection.test.ts` |
-| `journal/proposal-txn.json` | frozen-migration-input | - | `tests/commands/proposal/goldens-proposal-txn.test.ts` |
-| `journal/proposal-recovery.json` | frozen-migration-input | - | `tests/integration/goldens-proposal-recovery.test.ts` |
-| `journal/move-txn.json` | frozen-migration-input | - | `tests/commands/goldens-mv-txn.test.ts` |
-| `journal/move-recovery.json` | frozen-migration-input | - | `tests/integration/goldens-mv-recovery.test.ts` |
-| `consolidate/consolidate-ops.json` | frozen-migration-input | - | `tests/commands/consolidate/goldens-consolidate-ops.test.ts` |
-| `consolidate/merge-plans.json` | frozen-migration-input | - | `tests/commands/consolidate/goldens-merge-plans.test.ts` |
-| `consolidate/journal-lifecycle.json` | frozen-migration-input | - | `tests/commands/consolidate/goldens-consolidate-journal.test.ts` |
-| `consolidate/journal-recovery.json` | frozen-migration-input | - | `tests/commands/consolidate/goldens-consolidate-journal.test.ts` |
-| `consolidate/journal-guard-verdicts.json` | frozen-migration-input | - | `tests/commands/consolidate/goldens-consolidate-journal.test.ts` |
-| `improve/signal-delta-gate.json` | frozen-migration-input | - | `tests/commands/improve/goldens-signal-delta-gate.test.ts` |
-| `cli/a-config-list.json` .. `cli/a-show-shapes.json` (Family A, 11 assets, excl. the two re-baseline ones below) | frozen-migration-input | - | `tests/commands/goldens-cli-output.test.ts` |
-| `cli/a-search-text.json` | re-baseline | 5 | `tests/commands/goldens-cli-output.test.ts` |
-| `cli/a-show-per-type.json` | re-baseline | 5 | `tests/commands/goldens-cli-output.test.ts` |
-| `cli/b-health-*.json` (6 assets) | frozen-migration-input | - | `tests/commands/goldens-cli-health-tasks.test.ts` |
-| `cli/c-tasks-*.json` (2 assets) | frozen-migration-input | - | `tests/commands/goldens-cli-health-tasks.test.ts` |
-| `cli/d-help*.json`, `d-quiet-search.json`, `d-setup-no-init.json`, `d-shape-summary-gate.json`, `d-version.json` (7 assets, excl. the one re-baseline below) | frozen-migration-input | - | `tests/commands/goldens-cli-output.test.ts` |
-| `cli/d-show-lines-view.json` | re-baseline | 5 | `tests/commands/goldens-cli-output.test.ts` |
-| `cli/e-events-since.json`, `e-extract-since.json`, `e-health-since.json` | frozen-migration-input | - | `tests/commands/goldens-duration-flags.test.ts` |
-| `cli/f-config-error.json`, `f-not-found.json`, `f-raw-error-sites.json`, `f-usage-error.json` | frozen-migration-input | - | `tests/commands/goldens-cli-output.test.ts` |
-| `improve/since-to-iso-identity-fallback.json` | frozen-migration-input | - | `tests/commands/goldens-duration-flags.test.ts` |
-| `improve/resolve-relative-dates.json` | frozen-migration-input | - | `tests/commands/goldens-duration-flags.test.ts` |
+**WI-03 / WI-04 (journal goldens):** `proposal-txn.json` and `move-txn.json` are designated `frozen-migration-input` while carrying ref/path literals that Chunk 5's grammar codemod will re-key. Mitigated with explicit prose caveats in the fixture `notes[]` and `DESIGNATIONS.json` (schema permits one designation per path). Defensible (Chunk 5 changes ref spelling, not captured behavior). **Chunk 5 hand-off action**: either re-designate these ref-serializing journal goldens `re-baseline @ 5` so the codemod picks them up mechanically, or confirm the frozen+caveat convention with the maintainer. Plus per-item DRY nits (capture blocks re-implement assertion setup — deliberate, documented).
 
-Full per-asset notes (rationale, caveats, deviations) are in `tests/fixtures/goldens/DESIGNATIONS.json` itself — this table is a summary mirror, not a replacement. Designation split: **5 `re-baseline`** (2 @ Chunk 7 for the improve SC/P0-A lanes the plan deliberately deletes; 3 @ Chunk 5 for ref-serializing CLI text outputs the grammar codemod will re-key), **46 `frozen-migration-input`** (preservation oracles for Chunks 6/7/9 that must reproduce these outcomes exactly).
+**WI-05 (consolidate ops):** DESIGNATIONS note says hot fixtures write `captureMode:hot`/`beliefState:asserted` but the fixture writes only `captureMode:hot` (the field `consolidateGuardStatus` reads) — reword the note. Scenarios drive op-handlers directly rather than via a full `akmConsolidate()` run (justified; selection loop covered by mergePlans + pre-existing suite). Test-scaffold casts and narrative comments — nits.
 
-## 4. Anchor-drift record
+**WI-06 (consolidate journal + signal-delta):** Re-recording `journal-lifecycle.json` under `AKM_UPDATE_GOLDENS=1` yields a cosmetic biome-vs-serializer whitespace diff on short arrays (values byte-identical after parse; suite green either way) — optionally reconcile `saveGolden` array formatting with biome. Signal-delta truth-table rows 4/5/6 serialize identically after `<TS>` normalization but carry different `eligible` values; ordering semantics are pinned by the inline truth-table tests, so coverage is complete.
 
-`docs/design/execution/chunk-0a/anchors.md` (committed by WI-01, before any capture item) re-measures every plan line anchor at HEAD `3d9ee7b` and supersedes the plan's line numbers for this chunk and every chunk that consumes its goldens (Chunks 7, 6, 9 per plan §12.4). Link: [`anchors.md`](./anchors.md).
+**WI-07 (CLI goldens):** (a) `formatShowPlain` `isCommandOutputSkill` APPLY sub-branch not captured (only the YAML else path) — optional. (b) The `show <ref> lines` scenario hard-codes `knowledge:lines-fixture.md` instead of sourcing from `fixture-refs.ts`, so Chunk 5's re-key codemod cannot find it mechanically — asset is already flagged `re-baseline @ 5` for manual re-capture; optionally add a `D_LINES_KNOWLEDGE_NAME` constant. (c) `a-search.json` argv term derives from `A_SCRIPT_NAME`; a future fixture-refs rename would drift this frozen fixture — boundary call, optionally document.
 
-Known §5-ledger corrections carried into `anchors.md` §2.6, recorded here again for Chunk 7/6/9's diff review (brief §2.6 — do NOT act on them in this chunk):
+**WI-08 (gate):** `bun run check` single-invocation flake — see §4.
 
-1. **§5 bullet 2 is stale**: P0-A is not the only path improving never-rated assets. The proactive-maintenance lane ships `enabled:true` by default (`src/assets/improve-strategies/default.json`, selector `preparation.ts:1351-1369`) and the #608 high-salience lane also rescues zero-feedback refs. WI-02's `p0a-selection.json` isolates (proactive-OFF) and attributes (per-lane counts) accordingly.
-2. `processSession` takes **20** positional args, not 19 (`extract.ts:552`).
-3. Calibration auto-tune implementation lives in `preparation.ts:121-204`/`calibration.ts:204,269`/`config-schema.ts:814-820`, not `improve.ts:497` (which is now only a comment block at HEAD). Chunk 7's D9 deletion inventory must be re-pointed there.
-4. The SC deletion range must extend to `loop-stages.ts:335-365` (winner-persist tail), `reflect.ts:148/1537-1563` (`draftMode` option + branch), `improve.ts:203/208` (SC knobs), and the `reflect-sc-` sourceRun grammar — all outside the plan's original `loop-stages.ts:307-331` range.
-5. Chunk 6's collapse scope must include `repository.ts:1532-1619` (`prepareProposalTransaction`/`publishProposalAsset`, the fsync + before-hash half) and `mv-cli.ts:543-673` + `:999-1018` (`applyMoveFilesystem`/`persistMoveEvent`) or the mandated fsync/before-hash preservation is unverifiable — both ranges sit outside the plan's stated anchors and WI-03/WI-04 route their success-path goldens through the real command paths specifically to exercise them.
+## 7. Characterization surprises captured (frozen as oracle, not fixed)
 
-Additionally, `anchors.md` §2.5 documents the revised §15.3 boundary-set enumeration (basis, exclusions, reconciliation) — replayed in full in §7 below rather than restated here.
+Per the capture-only mandate, these real-but-surprising HEAD behaviors are goldened as-is and documented for the Chunk 6/7/9 diff reviews:
 
-## 5. Fixed-point + `src/` audit (R10)
+1. **Consolidate journal recovery** treats `completed.length >= operations.length` as not-incomplete → the journal's backup dir becomes a permanent orphan (`consolidate.ts:692-735`). Zero prior test coverage; now frozen.
+2. **Proposal accept target-mutated-during-displace abort** does not restore byte-identically and leaves two orphaned artifacts; `rollbackPreparedProposalTransaction` throws a shadowing `"...diverged."` error before the surfaced `"Proposal target changed..."` message propagates. Captured as a documented DEVIATION from the brief's expectation.
+3. **Mv REPLACE-window divergent-citer abort** surfaces a wrapped two-part error (`"Move failed (...) and rollback failed (...)."`), not a bare prefix; `_setMvMutationHookForTests` never fires mid-window (spyOn used).
+4. **P0-A once-per-asset gate is event-driven** (`buildLatestProposalTsMap` from `reflect_invoked` events), not proposal-record-driven — a persisted proposal without a matching event does not block re-rescue. Load-bearing for Chunk 7's deletion read.
+5. **§5 ledger bullet 2 is stale at HEAD**: P0-A is not the only lane rescuing never-rated assets — proactive-maintenance (default `enabled:true`) and the #608 high-salience lane also do. WI-02 goldens isolate/attribute per-lane. (Anchor-drift correction, carried in `anchors.md` §2.6; do **not** act on it in this chunk.)
 
-```
-$ git diff --stat 3d9ee7b1917e8c4872f135fe9993d94b61b36ed1..HEAD -- \
-    tests/_helpers/sandbox.ts tests/_preload.ts \
-    scripts/lint-tests-isolation.ts scripts/test-unit.sh scripts/run-test-shard.sh
-(no output -- empty diff)
+## 8. Anchor-drift corrections for downstream (from `anchors.md`)
 
-$ git diff --stat 3d9ee7b1917e8c4872f135fe9993d94b61b36ed1..HEAD -- src/
-(no output -- empty diff)
-```
+Recorded so Chunks 7/6/9 diff reviews use the re-measured anchors, not the stale plan line numbers (do not act in 0a):
 
-Both diffs are empty. None of the five fixed points (`tests/_helpers/sandbox.ts`, `tests/_preload.ts`, the mock.module-ban lint, `scripts/test-unit.sh`, `scripts/run-test-shard.sh`) were touched, and `src/` is untouched in full. R10 satisfied.
+- `processSession` takes **20** positional args (`extract.ts:552`), not 19.
+- Calibration auto-tune lives in `preparation.ts:121-204` / `calibration.ts:204,269` / `config-schema.ts:814-820`, not `improve.ts:497`.
+- The SC deletion range extends beyond the plan's `loop-stages.ts:307-331` to `loop-stages.ts:335-365`, `reflect.ts:148/1537-1563`, `improve.ts:203/208`, and the `reflect-sc-` sourceRun grammar.
+- Chunk 6's collapse scope must include `repository.ts:1532-1619` (fsync + before-hash half) and `mv-cli.ts:543-673` + `:999-1018`, or the fsync/before-hash preservation is unverifiable — WI-03/WI-04 route success-path goldens through the real command paths to exercise them.
 
-## 6. Fixture-commit audit (R7)
+## 9. Auditor conclusion
 
-- `git status --porcelain` — clean (verified before and during this work item; the only pending change before the final commit is `report.md` itself).
-- Designation meta-test (`tests/goldens-designations.test.ts`) — green, part of the `check:fast` unit run (§8).
-- Every fixture named by WI-02..WI-07's "Files" sections is present as a committed file — cross-checked directly (24 explicit non-glob paths + all golden-area glob contents): all present. 51 `tests/fixtures/goldens/**/*.json` assets, all with exactly one `DESIGNATIONS.json` entry (§3).
-- All 15 golden/meta suite files present: `tests/goldens-designations.test.ts`, `tests/golden-normalize.test.ts`, `tests/commands/improve/goldens-self-consistency.test.ts`, `tests/commands/improve/goldens-p0a-selection.test.ts`, `tests/commands/proposal/goldens-proposal-txn.test.ts`, `tests/integration/goldens-proposal-recovery.test.ts`, `tests/commands/goldens-mv-txn.test.ts`, `tests/integration/goldens-mv-recovery.test.ts`, `tests/commands/consolidate/goldens-consolidate-ops.test.ts`, `tests/commands/consolidate/goldens-merge-plans.test.ts`, `tests/commands/consolidate/goldens-consolidate-journal.test.ts`, `tests/commands/improve/goldens-signal-delta-gate.test.ts`, `tests/commands/goldens-cli-output.test.ts`, `tests/commands/goldens-cli-health-tasks.test.ts`, `tests/commands/goldens-duration-flags.test.ts`.
-
-R7 satisfied.
-
-## 7. §15.3 boundary replay -- the 38-file set (R9)
-
-### 7.1 Enumeration basis (reproducible)
-
-Filename grep over `tests/**/*.test.ts`, one pattern per category -- `traversal|escape|safety|scan`, `redact|dangerous`, `lock|busy|journal|contention`, `migration` -- then every hit confirmed in or excluded by content inspection; the symlink category has no dedicated filenames and is enumerated by content grep instead. Verified at `3d9ee7b` (brief §2.5, carried verbatim into `anchors.md` §2.5).
-
-### 7.2 Per-category file list (28 dedicated + 10 symlink carriers = 38 files / 11,240 LOC)
-
-**Traversal/escape (5 files, 782 LOC)** -- unit: `tests/env-traversal.test.ts` (134), `tests/workflow-path-escape.test.ts` (173), `tests/stash-dir-safety.test.ts` (117, ruled IN -- #473 regression, same catastrophic-path threat class); integration: `tests/integration/tar-utils-scan.test.ts` (80), `tests/integration/git-source-safety.test.ts` (278).
-
-**Redaction/dangerous-key (7 files, 866 LOC)** -- unit: `tests/redaction.test.ts` (149), `tests/config-cli-redaction.test.ts` (86), `tests/env-run-dangerous-key-block.test.ts` (57), `tests/vault-dangerous-key-install-gate.test.ts` (109), `tests/vault-dangerous-key-lint.test.ts` (344), `tests/commands/improve/improve-redaction.test.ts` (67 -- this is the redaction coverage for the improve surface Chunk 7 rewrites), `tests/commands/wiki-ingest-redaction.test.ts` (54).
-
-**SQLite journal/busy/lock/contention/cross-proc (10 files, 1,709 LOC)** -- unit: `tests/sqlite-journal-mode.test.ts` (326), `tests/db-busy-timeout.test.ts` (88), `tests/index-writer-lock.test.ts` (109), `tests/commands/improve/improve-lock-invariants.test.ts` (119), `tests/commands/improve/improve-db-locking.test.ts` (290), `tests/commands/improve/improve-skip-if-locked.test.ts` (141 -- the improve-lock trio covers the improve surface Chunk 7 rewrites); integration: `tests/integration/index-writer-lock-crossproc.test.ts` (46), `tests/integration/workflow-db-contention.test.ts` (185), `tests/integration/file-lock.test.ts` (350), `tests/integration/improve-lock-serialization.test.ts` (55).
-
-**Migration (6 files, 2,279 LOC)** -- unit: `tests/migration-lifecycle-regression.test.ts` (1,062), `tests/migration-backup.test.ts` (405), `tests/storage/engine-cutover-historical-migrations.test.ts` (84), `tests/workflows/migrations.test.ts` (251), `tests/storage/sqlite-migrations.characterization.test.ts` (273 -- dual-listed, also a §15 rule-5 characterization asset; replay-only here, never re-recorded in 0a); integration: `tests/integration/migration-apply-crash.test.ts` (204).
-
-**Symlink carriers (10 files, 5,604 LOC, embedded -- no dedicated filenames)** -- unit: `tests/commands/improve/improve-dry-run-side-effects.test.ts`, `tests/commands/mv.test.ts`, `tests/coverage-hardening/sources-resolution.test.ts`, `tests/source-providers/provider-utils.test.ts`, `tests/source-resolve.test.ts`, `tests/source.test.ts`; integration: `tests/integration/indexer.test.ts`, `tests/integration/package-launcher.test.ts`, `tests/integration/ripgrep-install.test.ts`, `tests/integration/walker.test.ts`. `tests/commands/mv.test.ts` and `tests/integration/walker.test.ts` carry the symlink-containment coverage for `mv-cli.ts` -- the surface Chunk 6 rewrites -- so their presence in the boundary record matters downstream.
-
-All five plan-named categories (traversal/escape, symlink, redaction/dangerous-key, SQLite lock/contention, migration) are represented.
-
-**Independently re-verified during this work item**: `wc -l` over all 38 file paths sums to exactly **11,240** -- matches the brief/`anchors.md` figure exactly. All 38 files confirmed present on disk before the replay ran.
-
-### 7.3 Explicit exclusions (grep hits ruled OUT, with rationale)
-
-- `tests/preload-safety.test.ts` (52 LOC) -- verifies the *test-harness* sandbox anchoring of `_preload.ts` itself (a fixed point); test-infra self-check, not a product safety surface -- it runs in every `check:fast` regardless.
-- `tests/lockfile.test.ts` (259 LOC) -- filename false positive: "lockfile" is the sources manifest `akm.lock`; tests `readLockfile`/`writeLockfile` JSON parsing and atomic write, not lock/contention.
-- `tests/frontmatter-block-scalar.test.ts` (92 LOC) -- grep false positive, "lock" inside "block-scalar"; YAML parsing.
-- `tests/migration-help.test.ts` (126 LOC) -- renders `akm help migrate` CLI guidance, a Chunk 9 argv/output surface baselined by WI-07 family D, not a data-migration suite.
-- `tests/contracts/migration-baseline.test.ts` (23 LOC) -- doc-contract test asserting design-doc sections exist, no runtime migration behavior.
-- `tests/file-context.test.ts` (720 LOC) -- NOT symlink coverage; grep shows only a variable named `realPath`.
-
-All six exclusion files independently confirmed present on disk with the stated LOC (`wc -l`): 52 / 259 / 92 / 126 / 23 / 720.
-
-### 7.4 Reconciliation vs plan §15 rule 3's "~22 files / ~4,700 LOC"
-
-The plan figure corresponds to a narrower cut: the previous 19-file enumeration (4,240 LOC) plus the three most obvious omissions (`improve-redaction` 67, `wiki-ingest-redaction` 54, `improve-lock-invariants` 119) is exactly 22 files / 4,480 LOC -- inside the plan's `~` tolerance. The strict basis-stated enumeration in `anchors.md` adds six more in-category files (`improve-db-locking` 290, `improve-skip-if-locked` 141, `stash-dir-safety` 117, `engine-cutover-historical-migrations` 84, `workflows/migrations` 251, `sqlite-migrations.characterization` 273 = +1,156 LOC), landing at 28/5,636. Union with the 10 symlink carriers (5,604 LOC, no overlap) gives the 38/11,240 replay set. This is a conservative replay list -- over-inclusion costs seconds of test time; silent under-inclusion is the review-blocker class this revision fixes.
-
-Note: `tests/sqlite-journal-mode.test.ts` is about SQLite PRAGMA `journal_mode` -- unrelated to the three FS journal engines (proposal/reject/mv); not conflated with the journal-engine goldens (WI-03/WI-04) anywhere in this chunk.
-
-### 7.5 Downstream-relevance notes
-
-- `tests/commands/mv.test.ts` and `tests/integration/walker.test.ts` cover the **Chunk 6 mv surface** (symlink-containment coverage for `mv-cli.ts`, the engine Chunk 6 collapses).
-- `tests/commands/improve/improve-redaction.test.ts` and the improve-lock trio (`improve-lock-invariants.test.ts`, `improve-db-locking.test.ts`, `improve-skip-if-locked.test.ts`) cover the **Chunk 7 improve surface** (the self-consistency/P0-A lanes Chunk 7 deletes).
-
-### 7.6 Replay command and result
-
-See §8.4 for the exact command line and captured pass/fail counts.
-
-## 8. Gate confirmation -- command outputs
-
-### 8.1 `bun install --frozen-lockfile`
-
-No-op, as expected (lockfile already satisfied):
-```
-$ bun install --frozen-lockfile
-bun install v1.3.11 (af24e281)
-Checked 111 installs across 144 packages (no changes) [346.00ms]
-```
-
-### 8.2 `bun run check:fast`
-
-Full, uninterrupted run (lint -> tsc --noEmit -> sharded unit suite):
-
-```
-$ bun run check:fast
-$ bunx biome check src/ tests/ && bun scripts/lint-tests-isolation.ts && bun scripts/lint-license-headers.ts && bun scripts/lint-runtime-boundary.ts && bun scripts/lint-repository-sql.ts && bun scripts/gen-config-schema.ts --check
-Checked 1162 files in 2s. No fixes applied.
-lint-tests-isolation: OK — no isolation / determinism violations found
-✓ MPL-2.0 header present in all 476 src/**/*.ts files.
-lint-runtime-boundary: OK — runtime primitives are confined to src/storage/database.ts and src/runtime.ts
-lint-repository-sql: OK — registry + workflow-runtime reach storage only through src/storage/repositories
-schemas/akm-config.json is up to date.
-$ bash scripts/test-unit.sh
-── unit: 28668 pass / 0 fail across 4 process-shards
-```
-
-Trailing line confirmed: **`── unit: 28668 pass / 0 fail across 4 process-shards`**, exit code 0. `tsc --noEmit` produced no output (silent success, as expected — no type errors). Lint (biome + the four repo lint scripts + config-schema regen check) all green. `tests/goldens-designations.test.ts` (the R12 designation meta-test) and all 13 WI-02..07 golden suites are part of this run and passed within the 28,668 total.
-
-### 8.3 `bun run check`
-
-First full end-to-end run (`lint && tsc --noEmit && test:unit && test:integration`) surfaced one **flaky, pre-existing, unrelated** failure in the integration suite:
-
-```
-$ bun run check
-[... lint/tsc/unit identical to §8.2 ...]
-$ bun run sweep:tmp && bun test --timeout=30000 ./tests/integration
-tests/integration/workflow-crash-windows.test.ts:
-(fail) multi-process crash windows > Window A: SIGKILL after the unit row is
-  running but before finish -> resume re-dispatches it exactly once and
-  completes [917.26ms]
-  expect(received).toBe(expected)
-  Expected: 0
-  Received: 3
-
- 880 pass
- 50 skip
- 1 fail
- 2984 expect() calls
-Ran 931 tests across 80 files. [162.78s]
-error: script "test:integration" exited with code 1
-error: script "check" exited with code 1
-```
-
-**Investigation (not hidden, not waved away):** `tests/integration/workflow-crash-windows.test.ts` is untouched by this chunk — `git diff --stat 3d9ee7b..HEAD -- tests/integration/workflow-crash-windows.test.ts` is empty, and the file's own history shows its last change predates the chunk-0a base commit entirely. It is not one of the 38 §15.3 boundary files, not one of the 13 WI-02..07 golden suites, and does not exercise any surface this chunk baselines (it is a real-`bun`-subprocess SIGKILL crash-window test for the *workflow/task-runner* engine, timing-synchronized on marker files + journal polling — see the file's own header comment). Re-running it in isolation immediately after the full 28,668-test unit run (which had just saturated all 4 cores) reproduced a *different* sub-test failing (Window B this time, not Window A):
-
-```
-$ bun test --timeout=30000 tests/integration/workflow-crash-windows.test.ts
-(fail) multi-process crash windows > Window B: SIGKILL after the unit
-  completes but before the step does -> resume reuses the unit, replaces
-  the dangling gate row, finalizes once [571.23ms]
- 1 pass
- 1 fail
-```
-
-A second immediate isolated re-run passed clean:
-
-```
-$ bun test --timeout=30000 tests/integration/workflow-crash-windows.test.ts
- 2 pass
- 0 fail
-Ran 2 tests across 1 file. [1.86s]
-```
-
-A different sub-test failing on each attempt, both timing-sensitive real-SIGKILL windows, both clearing on a clean-CPU retry, is the signature of **pre-existing CPU-contention flakiness** (the failure surfaced only when `test:integration` was launched back-to-back with the just-completed 28,668-test unit run on a 4-core box), not a regression this chunk introduced — consistent with `src/` being completely untouched (§5). To get an authoritative, uncontended confirmation, `test:integration` was re-run standalone (own `sweep:tmp` + fresh process, no concurrent unit suite):
-
-```
-$ bun run test:integration
-$ bun scripts/sweep-test-tmp.ts
-$ bun test --timeout=30000 ./tests/integration
- 881 pass
- 50 skip
- 0 fail
- 2985 expect() calls
-Ran 931 tests across 80 files. [163.67s]
-```
-
-**Result: green, 0 fail.** Combined with the already-green `lint` + `tsc --noEmit` + `test:unit` (§8.2, unaffected by `test:integration`'s outcome since they ran and passed first in the same pipeline), all four `check` stages are confirmed green — the flaky failure is recorded above rather than hidden, per this work item's honesty requirement, and diagnosed as pre-existing/unrelated rather than silently retried away.
-
-### 8.4 Targeted §15.3 boundary replay
-
-38-file set (28 dedicated + 10 symlink carriers), run standalone with the mandated explicit timeout:
-
-```
-$ bun test --timeout=30000 <38 files per §7.2>
-tests/vault-dangerous-key-install-gate.test.ts:
-{ "ok": false, "error": "Install blocked: stash \"evil/stash\" contains
-  dangerous env keys...", "code": "DANGEROUS_VAULT_KEY", ... }
-[improve] another improve run holds the lock (PID ..., started ...);
-  skipping (--skip-if-locked)
-
- 428 pass
- 0 fail
- 2 snapshots, 3413 expect() calls
-Ran 428 tests across 38 files. [52.29s]
-```
-
-**428 pass / 0 fail across all 38 files, exit code 0.** The two logged lines above (`"ok": false` dangerous-key-block JSON and the `[improve] ... skipping` message) are *expected* stdout/stderr emitted by the dangerous-key-gate and skip-if-locked tests themselves as part of asserting those behaviors — not failures or warnings about the run. All five plan-named §15.3 categories (traversal/escape, symlink, redaction/dangerous-key, SQLite lock/contention, migration) are exercised and green.
-
-## 9. Characterization surprises
-
-Per brief §1 ("Capture, not aspiration... surprising outcomes get a code comment + a note in `report.md`, not a 'fix'") and Risk 8, the following surprising-but-real behaviors were captured as-is during WI-01..WI-07 and are recorded here for the maintainer:
-
-1. **Consolidate journal recovery: "completed >= operations" leaves a permanent orphaned backup dir** (`tests/fixtures/goldens/consolidate/journal-recovery.json`, `tests/commands/consolidate/goldens-consolidate-journal.test.ts`). `checkForIncompleteJournal` (`consolidate.ts:692-735`) treats a journal whose `completed.length >= operations.length` as *not* incomplete -- no throw, no removal. This means such a journal's own `.akm/consolidate-backup/<TS>/` directory becomes a permanent orphan that no code path this suite could find ever reclaims. Journal-recovery paths had **zero existing test coverage** before WI-06; this latent behavior is now frozen as the oracle, not fixed, per the chunk's capture-only mandate.
-2. **Proposal accept target-mutated-during-displace abort does not restore the target byte-identically, and leaves two orphaned artifacts.** The brief's `testsFirst` description expected the surfaced abort message `"Proposal target changed while its backup was being acquired"` and a byte-identical restore. The real HEAD behavior (captured in `tests/fixtures/goldens/journal/proposal-txn.json`, documented in the suite's file-header DEVIATION comment) is: `publishProposalAsset`'s catch block calls `rollbackPreparedProposalTransaction`, which independently re-checks the asset's hash against `originalHash` and -- because the external mutation persists -- finds its own divergence and throws a *different*, shadowing error (`"Cannot roll back proposal transaction: <path> diverged."`) before the original "Proposal target changed..." message can propagate. The asset is left holding the externally-mutated content (not restored), and the transaction directory plus a stray `.akm-proposal-<txnId>.publish` file are orphaned (neither `cleanupProposalPublication` nor `cleanupProposalTransaction` runs, since the rollback call itself threw). Recorded as a DEVIATION from the brief, captured per the test-first protocol's "the brief turns out to be wrong about the code" clause -- the minimal faithful interpretation is to golden what actually happens.
-3. **Mv REPLACE-window divergent-citer abort surfaces a wrapped, two-part error string**, not a bare `"refusing to replace divergent citer"` prefix as the brief's `testsFirst` description implied: the real string is `"Move failed (refusing to replace divergent citer <path>) and rollback failed (cannot restore <path>: file diverged after exclusive ownership)."` (`tests/fixtures/goldens/journal/move-txn.json`, `tests/commands/goldens-mv-txn.test.ts` DEVIATION 2). Also, `_setMvMutationHookForTests` never fires between the stage and replace windows (only post-filesystem-commit) -- `spyOn` interception was used instead to reach this scenario.
-4. **P0-A once-per-asset gate is event-driven, not proposal-record-driven** (not a bug, but a non-obvious invariant worth flagging): `buildLatestProposalTsMap` sources exclusively from `reflect_invoked` events. A persisted reflect proposal with no corresponding event does **not** block re-rescue of the same asset. This is by design at HEAD, documented in `tests/fixtures/goldens/improve/p0a-selection.json`'s `notes` field and the owning suite, and is load-bearing for how Chunk 7's diff review must read the lane's deletion (a naive read of "did a proposal get created" would misjudge the gate).
-5. **§5 ledger bullet 2 is factually stale at this HEAD** (not a code surprise, but a plan-doc correction): P0-A is not the only lane rescuing never-rated assets -- proactive-maintenance (default `enabled:true`) and the #608 high-salience lane also do. WI-02's goldens isolate and attribute per-lane so Chunk 7's diff review doesn't misattribute removed selections.
-
-No other surprising outcomes were flagged by WI-01..07's suite comments beyond the above (searched via `DEVIATION`/`CHARACTERIZATION` markers across `DESIGNATIONS.json` and the golden suite files).
-
-## 10. Acceptance checklist (WI-08)
-
-- [x] [R7] All golden fixtures from R1-R5 exist as committed files on `akm-090/chunk-0a` -- audited in §6, all present.
-- [x] [R9] `check:fast` + `check` green at the boundary; the 38-file §15.3 boundary set replayed green -- outputs in §8, category list + basis + exclusions + reconciliation in §7.
-- [x] [R10] Fixed-point diff empty; `src/` diff empty -- confirmed in §5.
-- [x] [R11] `report.md` committed with empty deletion ledger + reported (not gated) net-LOC, test LOC ledgered separately -- §1, §2.
-- [x] [R13] The chunk's §15.5 + §15.7 bucket (consolidate preservation goldens, WI-05/WI-06) is landed and green in this same chunk, replayable by Chunks 7/6/9 as the preservation oracle -- confirmed via the designation table (§3) and the green suite run (§8).
+All work items done; all manifest and global chunk gates green; the sole red mark is a documented, out-of-scope, pre-existing environmental flake with the decomposed local-green gate independently green. Diff is purely additive and entirely within brief scope (only `tests/` + `docs/`, `src/`/`scripts/` untouched). Net production LOC = 0, on estimate. §15.5 + §15.7 buckets landed and green. No new trust/approval machinery; memory lifecycle untouched. **Chunk 0a accepted (PASS).**
