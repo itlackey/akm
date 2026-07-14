@@ -10,7 +10,8 @@
  * §15.2 grammar codemod can mechanically re-key these fixtures.
  *
  * Consumers: `tests/commands/consolidate/goldens-consolidate-ops.test.ts`,
- * `tests/commands/consolidate/goldens-merge-plans.test.ts`.
+ * `tests/commands/consolidate/goldens-merge-plans.test.ts`,
+ * `tests/commands/consolidate/goldens-consolidate-journal.test.ts` (WI-06).
  *
  * All names are memory-type (`memory:<name>`) or knowledge-type
  * (`knowledge:<name>`) — the two asset types the consolidate op-handlers
@@ -108,3 +109,34 @@ export const MP_PROMOTE_MERGE_KNOWLEDGE = "knowledge:mp-promote-merge-knowledge"
 
 export const MP_CONTRADICT_A = "memory:mp-contradict-a";
 export const MP_CONTRADICT_B = "memory:mp-contradict-b";
+
+// ── goldens-consolidate-journal.test.ts (R5, WI-06) ─────────────────────────
+
+/** Full-run journal lifecycle: one real (non-hot) memory the LLM stub deletes. */
+export const JOURNAL_LIFECYCLE_NAME = "cj-lifecycle-delete";
+
+/** All-hot chunk: both memories carry captureMode:hot so the LLM is never called. */
+export const JOURNAL_ALLHOT_A_NAME = "cj-allhot-a";
+export const JOURNAL_ALLHOT_B_NAME = "cj-allhot-b";
+
+/**
+ * `completed >= operations` silent-cleanup scenario: one real memory the
+ * fresh run deletes, alongside a hand-crafted STALE "completed" journal (see
+ * `JOURNAL_STALE_OP_REF_NAME`) whose own backup dir is never removed by
+ * `checkForIncompleteJournal` (characterization surprise — see suite notes).
+ */
+export const JOURNAL_SILENT_LEAK_NAME = "cj-silent-leak-delete";
+
+/**
+ * Referenced only INSIDE hand-crafted journal fixture files written directly
+ * to disk by the recovery-mode scenarios (abort/clean/silent-leak) — never
+ * backed by a real memory file on disk. Fixture-local so the crafted journal
+ * JSON never embeds a production ref.
+ */
+export const JOURNAL_STALE_OP_REF_NAME = "cj-stale-op-ref";
+
+/** consolidateGuardStatus verdict matrix (consolidate/eligibility.ts:60). */
+export const GUARD_HOT_NAME = "cj-guard-hot";
+export const GUARD_SAFE_NAME = "cj-guard-safe";
+export const GUARD_UNPARSEABLE_NAME = "cj-guard-unparseable";
+export const GUARD_MISSING_NAME = "cj-guard-missing";

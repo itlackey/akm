@@ -10,7 +10,8 @@
  * §15.2 grammar codemod can mechanically re-key these fixtures.
  *
  * Consumers: `tests/commands/improve/goldens-self-consistency.test.ts`,
- * `tests/commands/improve/goldens-p0a-selection.test.ts`.
+ * `tests/commands/improve/goldens-p0a-selection.test.ts`,
+ * `tests/commands/improve/goldens-signal-delta-gate.test.ts` (WI-06).
  *
  * All names are memory-type (`memory:<name>`) — the only asset type these two
  * suites index. Names double as sandboxed-stash filenames
@@ -64,3 +65,21 @@ export const P0A_ATTRIBUTION_HIGH_SALIENCE_NAME = "zzz-p0a-attr-high-salience";
 export const P0A_ATTRIBUTION_FILLER_PREFIX = "aaa-p0a-attr-filler-";
 /** Must equal the default profile's `proactiveMaintenance.maxPerRun` (src/assets/improve-strategies/default.json). */
 export const P0A_ATTRIBUTION_FILLER_COUNT = 15;
+
+// ── goldens-signal-delta-gate.test.ts (R5, WI-06 — §6 preserve list) ───────
+
+/** buildLatestFeedbackTsMap / buildLatestProposalTsMap direct unit fixtures. */
+export const SDG_FEEDBACK_MAP_NAME = "sdg-feedback-map-ref";
+export const SDG_PROPOSAL_MAP_NAME = "sdg-proposal-map-ref";
+
+/**
+ * Partition-count scenario, driven via a full `akmImprove` run with
+ * `proactiveMaintenance` disabled and zero retrievals/salience seeded so
+ * ONLY the signal-delta gate is exercised (P0-A/proactive/high-salience
+ * never fire) — lanes are not asserted, only the resulting bucket counts.
+ */
+export const SDG_ELIGIBLE_A_NAME = "sdg-eligible-a";
+export const SDG_ELIGIBLE_B_NAME = "sdg-eligible-b";
+export const SDG_DISTILL_ONLY_NAME = "sdg-distill-only";
+export const SDG_NO_FEEDBACK_A_NAME = "sdg-no-feedback-a";
+export const SDG_NO_FEEDBACK_B_NAME = "sdg-no-feedback-b";
