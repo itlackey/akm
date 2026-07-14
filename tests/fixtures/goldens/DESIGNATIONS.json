@@ -14,6 +14,18 @@
       "reBaselineChunk": "7",
       "consumers": ["tests/commands/improve/goldens-p0a-selection.test.ts"],
       "notes": "WI-02, plan §5 ledger bullet 2 / R2. Baselines the P0-A high-retrieval fallback lane's selection sets (threshold boundary, once-per-asset gate, per-lane attribution) that Chunk 7 deletes. Documents that the once-per-asset gate cursor (buildLatestProposalTsMap) is event-driven (reflect_invoked), not proposal-record-driven, and that P0-A is not the only lane rescuing never-rated assets (proactive-maintenance and high-salience also do — plan §5 ledger bullet 2 is stale). Re-captured in Chunk 7 with a reviewed diff. Contains only fixture-local ref names, counts, and booleans — no production refs."
+    },
+    {
+      "path": "tests/fixtures/goldens/journal/proposal-txn.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/commands/proposal/goldens-proposal-txn.test.ts"],
+      "notes": "WI-03, plan §11 Chunk 0a / R3 (engines 1+2 of 3: proposal accept/revert + reject). Preservation oracle through Chunk 6's collapse into one FileChange transaction. Pins accept (new-asset, overwrite-with-backup, idempotent re-accept short-circuit, target-mutated-during-displace abort), revert (success restore, refuse-clobber), reject (success, non-pending UsageError, concurrent-edit succeeds -- reject has NO before-hash), and createProposal dedup/cooldown/force skip-record shapes, as file-tree/DB-status/exactly-once-event outcomes only -- no journal bytes or paths (brief §3.2 rule 4). Contains fixture-local names only (tests/fixtures/goldens/journal/fixture-refs.ts) — no production refs. Caveat: the `fileTree` object's keys are relative asset paths (e.g. `lessons/<fixture-local-name>.md`) that embed the same fixture-local name a ref would carry; if Chunk 5's §15.2 ref-grammar codemod changes how names map to on-disk paths, these path keys (not the outcome booleans/counts) would need re-baselining alongside that migration even though this asset is otherwise designated frozen. Also records a captured DEVIATION from the brief's testsFirst description for the target-mutated-during-displace scenario (see the suite's file-header comment): the real surfaced abort error is 'Cannot roll back proposal transaction: <path> diverged.', not 'Proposal target changed while its backup was being acquired.', and the target is left holding the mutator's content rather than being byte-identically restored."
+    },
+    {
+      "path": "tests/fixtures/goldens/journal/proposal-recovery.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/integration/goldens-proposal-recovery.test.ts"],
+      "notes": "WI-03, plan §11 Chunk 0a / R3 (crash-recovery half of engines 1+2 of 3). Integration scope (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/proposal-crash-runner.ts subprocess harness. Pins SIGKILL recovery outcomes for accept (all 5 pre-commit phases: prepared rolls back, every later phase rolls forward), revert (exactly-once per phase), reject (exactly-one rejected event per phase incl. the prepared/state-persisted/event-finalized set), and the reject-recovers-a-pending-accept ordering (akmProposalReject recovers an interrupted accept transaction BEFORE evaluating its own pending-status guard). journalPhasesObserved is informational only (brief §3.2 rule 4) — the single phase name the runner was told to hold at, never journal bytes/paths. Same fileTree-key caveat as tests/fixtures/goldens/journal/proposal-txn.json does not apply here (this fixture serializes only booleans/status strings/event counts, no fileTree)."
     }
   ]
 }
