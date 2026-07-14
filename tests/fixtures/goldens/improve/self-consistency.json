@@ -1,0 +1,61 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "cases": {
+    "boundaryUtility0_7": {
+      "allCallsDraftModeTrue": true,
+      "callCount": 3,
+      "note": ">= comparison at loop-stages.ts:311 -- 0.7 triggers SC",
+      "persistedProposalCount": 1,
+      "persistedSourceRunPrefix": "reflect-sc-",
+      "utility": 0.7
+    },
+    "coldUtility0_3": {
+      "allCallsDraftModeTrue": false,
+      "callCount": 1,
+      "persistedProposalCount": 0,
+      "utility": 0.3
+    },
+    "hotUtility0_9": {
+      "allCallsDraftModeTrue": true,
+      "callCount": 3,
+      "persistedProposalCount": 1,
+      "persistedSourceRunPrefix": "reflect-sc-",
+      "utility": 0.9
+    },
+    "mixedRun": {
+      "refs": {
+        "coldA": {
+          "callCount": 1,
+          "name": "sc-mixed-cold-a",
+          "utility": 0.2
+        },
+        "coldB": {
+          "callCount": 1,
+          "name": "sc-mixed-cold-b",
+          "utility": 0.5
+        },
+        "hotA": {
+          "callCount": 3,
+          "name": "sc-mixed-hot-a",
+          "utility": 0.9
+        },
+        "hotB": {
+          "callCount": 3,
+          "name": "sc-mixed-hot-b",
+          "utility": 0.85
+        }
+      },
+      "totalPersistedProposalCount": 2
+    }
+  },
+  "config": {
+    "note": "programmatic defaults, not overridden",
+    "selfConsistencyN": 3,
+    "selfConsistencyThreshold": 0.7
+  },
+  "notes": [
+    "reflectFn is a recording stub that bypasses akmReflect entirely, so no reflect_invoked events are emitted by these captures -- call counts come from stub invocations only. Production telemetry sees exactly SC_N reflect_invoked events per hot ref (reflect.ts:953). Re-measured anchors: docs/design/execution/chunk-0a/anchors.md.",
+    "Designation: re-baseline @ Chunk 7 (DESIGNATIONS.json) -- Chunk 7 deletes the self-consistency lane (3x -> 1x single call) and this fixture is the reviewed before-state the diff review verifies against."
+  ],
+  "scenario": "improve self-consistency (SC) reflect call counts + winner persistence (WI-02, R1)"
+}
