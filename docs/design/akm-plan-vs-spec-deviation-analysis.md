@@ -1,5 +1,7 @@
 # Deviation Analysis — 0.9.0 plan vs the format-neutral spec + decision history
 
+> **Status (2026-07-13, closed):** the §4 resolutions below have been **applied in place** across all documents — the normative spec is amended to v0.2 (reconciled ref grammar, open `type`, optional-method adapter contract), the bundle-adapter spec and the 0.9.0 plan encode the restored scope in their operational sections (chunks/ledger/DoD), and the decision history gained D27–D29. A subsequent review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) drove further amendments, all applied. This document is retained as the decision record; it no longer describes open deviations.
+
 **Compared:**
 - **Spec** = `akm-format-neutral-bundle-workspace-spec.md` (normative RFC, MUST/SHOULD).
 - **History** = `akm-architecture-decision-history.md` (decision register D1–D26 + superseded-choices table).

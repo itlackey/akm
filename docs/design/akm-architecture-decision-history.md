@@ -3,8 +3,8 @@
 ## From an OKF asset proposal to a format-neutral bundle workspace with verified improvement and bounded memory
 
 **Status:** Non-normative companion to the architecture specification  
-**Date:** 2026-07-13  
-**Normative specification:** [AKM Format-Neutral Bundle Workspace Architecture Specification](./akm-format-neutral-bundle-workspace-spec.md)  
+**Date:** 2026-07-13 (amended same day: §5.4/§5.5 updated to the reconciled DEV-1/DEV-2 grammar; D8 framing corrected; D27–D29 added after the design/plan review pass)  
+**Normative specification:** [AKM Format-Neutral Bundle Workspace Architecture Specification](./akm-format-neutral-bundle-workspace-spec.md) (v0.2, amended in place)  
 **Repository reviewed:** [`itlackey/akm`](https://github.com/itlackey/akm)  
 **Reference revision:** [`ddc0a1b417efc820ad73d76bfcbef65c9f87b243`](https://github.com/itlackey/akm/commit/ddc0a1b417efc820ad73d76bfcbef65c9f87b243)  
 **Original proposal under review:** [AKM PR #718](https://github.com/itlackey/akm/pull/718)
@@ -402,29 +402,34 @@ The package manifest describes composition. It does not create a universal AKM f
 
 ### 5.4 Identity
 
+*(Amended 2026-07-13 by the maintainer reconciliation, DEV-2: the three-segment form originally recorded here is superseded. Current grammar: normative spec §7.8/§11.)*
+
 The canonical item ref is:
 
 ```text
-<bundle>/<component>/<adapter-local-id>
+[ <bundle> "//" ] <concept-id> [ "#" <fragment> ]
 ```
 
 Examples:
 
 ```text
-personal/main/engineering/http-caching
-release-automation/workflows/release
-project-claude/skills/pdf-processing
+personal//engineering/http-caching
+release-automation//workflows/release
+project-claude//.claude/skills/pdf-processing
 ```
 
-Identity excludes:
+Component is a derived provenance column (longest-prefix match of the concept-id against configured component roots), not a ref segment. Identity excludes:
 
 - source provider;
 - cache path;
 - semantic type;
+- component id;
 - file extension where the adapter does not treat it as meaningful;
 - embedded UUIDs.
 
 ### 5.5 Search document
+
+*(Amended 2026-07-13: the field is the open `type` (DEV-1), and the query-time ranking/filter signals are first-class fields — see normative §14.1 for the current shape. The sketch below is the historical minimal form.)*
 
 The normalized content projection stops at search needs:
 
@@ -433,10 +438,10 @@ interface IndexDocument {
   ref: string;
   bundle: string;
   component: string;
-  localId: string;
+  conceptId: string;
   path: string;
   hash: string;
-  kind?: string;
+  type?: string;
 
   name: string;
   description?: string;
@@ -444,10 +449,11 @@ interface IndexDocument {
   aliases?: string[];
   hints?: string[];
   content?: string;
+  // + the pinned query-time signal fields (normative §14.1)
 }
 ```
 
-`kind` is descriptive adapter metadata. It does not authorize execution or select storage, validation, rendering, or mutation behavior.
+`type` is an open descriptive label. It MAY drive presentation/ranking/filtering (trust-clamped for untrusted content) and never authorizes execution or selects storage, identity, or the write path.
 
 ---
 
@@ -514,6 +520,8 @@ interface IndexDocument {
 **Why:** Portable distribution and local authority are different trust decisions. A registry package must not gain execution rights simply because it is searchable.
 
 **Consequence:** Runtime exports are explicitly bound; task schedules are explicitly enabled; secret and environment values are explicitly mapped.
+
+**Framing correction (2026-07-13 review pass):** code verification showed the *current* install path already grants nothing (`akm add` only syncs+indexes; task sync scans only the primary writable stash; env injection is explicit and already origin-gated; workflow runs are explicit). D8 stands as design — but bindings are a **portability/correctness** capability (distributable runnable exports, digest-pinned updates, tamper detection), not a fix for a present-day escalation. The security work that actually closes a live gap is the untrusted read-path clamp (normative §15.1/§15.4/§28.2): trust must be load-bearing where content meets agents.
 
 ### D9. Portable runtime definitions remain in bundles
 
@@ -669,6 +677,26 @@ logs.db   high-volume purgeable logs
 ```
 
 **Why:** `workflow.db` is durable state with the same migration discipline and should merge into `state.db`; logs remain operationally distinct.
+
+### D27. The retirement archive supersedes the WS-3a git-only recovery decision (added 2026-07-13)
+
+**Decision:** the workspace content-addressed archive (`$DATA/archive/blobs/sha256/<digest>`, owner-only modes, grace + purge + holds; normative §25.8) is the retirement recovery mechanism. This **explicitly supersedes** the 2026-06-15 WS-3a signoff (`consolidate.ts:1921`) that retired the archive-retention machinery in favor of "git history is the recovery path."
+
+**Why WS-3a was right then and wrong now:** with a single git-backed writable stash, git history was a sufficient recovery path and the TTL archive scan was gold-plating. The bundle-workspace model breaks WS-3a's premise three ways: read-only installed components cannot be edited to mark retirement (the overlay needs workspace-side state), non-git-backed bundles (filesystem/npm/website materializations) have no history at all, and format-independent recovery cannot depend on one VCS. Git history remains an *additional* recovery path.
+
+**Consequence:** one retirement encoding at a time — the bundle-local `archiveMemory` move is a bounded stopgap only until the workspace store lands in the same chunk; there are never two coexisting encodings.
+
+### D28. The `type:name` ref contract is broken deliberately, once, with a written migration story (added 2026-07-13)
+
+**Decision:** dropping `[origin//]type:name` breaks the top item in STABILITY.md's Stable tier and the roadmap's planned 1.0 ref-format freeze. This is done deliberately in 0.9.0 (pre-1.0, the last window where it is cheap), with: STABILITY.md/roadmap/AGENTS.md rewritten to the new grammar in the same release; the CHANGELOG carrying the breaking-change migration note per STABILITY's own policy; no read-only compat resolver for old refs post-cutover (a permanent dual-parser is prohibited, normative §11.4); and the one-time migrator handling all durable state under the orphan taxonomy.
+
+**Why:** the ref grammar is the coupling spine the whole refactor exists to remove; carrying a compat parser would preserve the architecture the release deletes.
+
+### D29. Canonical ref spelling, short-ref resolution, and bundle rename (added 2026-07-13)
+
+**Decision:** durable state always stores the fully-qualified `bundle//conceptId`; the short form is CLI input sugar only; short refs inside bundle content resolve to the containing bundle (portable by construction); prose body refs use only the anchored fully-qualified form; `akm bundle rename` is a first-class rekey transaction; conceptIds are NFC-normalized, `/`-separated, byte-wise case-sensitive with case-collision diagnostics. (Normative §11.1/§11.5.)
+
+**Why:** today's `rekeyStateDbForMove` probing three legacy spellings per ref is the measured cost of leaving canonical spelling open; installer-default resolution of in-content short refs would silently retarget shared bundles per consumer; a bundle rename without rekey orphans all ref-keyed durable state.
 
 ---
 
