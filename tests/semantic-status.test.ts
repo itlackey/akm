@@ -516,33 +516,35 @@ describe("deriveSemanticProviderFingerprint", () => {
     expect(fp).toBe("local:Xenova/all-MiniLM-L6-v2");
   });
 
-  test("returns remote fingerprint with endpoint + model", () => {
+  test("returns remote fingerprint keyed on model only (endpoint excluded)", () => {
     const fp = deriveSemanticProviderFingerprint({
       endpoint: "http://localhost:11434/v1/embeddings",
       model: "nomic-embed-text",
     });
-    expect(fp).toBe("remote:http://localhost:11434/v1/embeddings|nomic-embed-text|default");
+    expect(fp).toBe("remote:nomic-embed-text|default");
   });
 
-  test("returns remote fingerprint with endpoint + model + dimension", () => {
+  test("returns remote fingerprint keyed on model + dimension (endpoint excluded)", () => {
     const fp = deriveSemanticProviderFingerprint({
       endpoint: "http://localhost:11434/v1/embeddings",
       model: "nomic-embed-text",
       dimension: 768,
     });
-    expect(fp).toBe("remote:http://localhost:11434/v1/embeddings|nomic-embed-text|768");
+    expect(fp).toBe("remote:nomic-embed-text|768");
   });
 
-  test("different endpoints produce different fingerprints", () => {
+  test("changing only the endpoint (same model+dimension) keeps the fingerprint unchanged", () => {
     const fp1 = deriveSemanticProviderFingerprint({
       endpoint: "http://server-a/v1/embeddings",
       model: "text-embedding-3-small",
+      dimension: 1536,
     });
     const fp2 = deriveSemanticProviderFingerprint({
       endpoint: "http://server-b/v1/embeddings",
       model: "text-embedding-3-small",
+      dimension: 1536,
     });
-    expect(fp1).not.toBe(fp2);
+    expect(fp2).toBe(fp1);
   });
 
   test("different models produce different fingerprints", () => {
