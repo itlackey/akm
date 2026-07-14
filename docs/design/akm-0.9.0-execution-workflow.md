@@ -56,6 +56,8 @@ Baseline rule: if `check:fast` is red at the chunk base, the run stops immediate
 
 The usage gate re-runs before **every work item** and before **Finalize**, not just at chunk start — a chunk that begins with headroom can exhaust it mid-run.
 
+**Suite discipline (added 2026-07-14 after the chunk-0a timing analysis):** the full unit suite (~28k tests, 10+ min per run in the sandboxed container) runs exactly **twice per chunk** — the Setup baseline and the Finalize gate. Dev and review agents verify item-scoped only (the item's test files, `bunx tsc --noEmit`, lint on touched files); running `check`/`check:fast`/`test:unit` inside the item loop is prohibited by their prompts. Chunk 0a's first run spent ~5 of its 7.5 hours on 36 in-loop suite runs before this rule existed. Brief authors are likewise directed to 3–5 work items per chunk (per-item fixed overhead is ~20–30 min), batching related captures rather than minting micro-items.
+
 ## 3. Test-first protocol (enforced by commit order)
 
 Each brief work item carries a `testMode`; the adherence reviewer verifies compliance from `git log`, not from the dev's claims:

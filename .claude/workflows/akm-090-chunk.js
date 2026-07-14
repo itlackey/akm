@@ -509,7 +509,7 @@ Verified codebase grounding (anchors here are re-measured truth; where they cont
 ${revisionNote || ''}
 
 Write the implementation brief:
-1. Decompose the chunk into ORDERED work items sized for one focused developer session each (roughly ≤600 changed LOC or one coherent deletion sweep per item; a chunk typically yields 3–8 items). Order = dependency order; use dependsOn between items.
+1. Decompose the chunk into ORDERED work items sized for one focused developer session each (roughly ≤600 changed LOC or one coherent deletion sweep per item). Prefer FEW, LARGER items: a chunk typically yields 3–5; never split one plan deliverable into micro-items, and batch related captures into one item for capture-only chunks. Every item costs ~20–30 minutes of fixed overhead (dev spin-up + dual review + usage gate) before any real work — item count is the main wall-clock driver. Order = dependency order; use dependsOn between items.
 2. Every work item: testMode (test-first | characterization-preserve | deletion-gate | docs-assets), testsFirst (the specific test files/cases to write or preserve BEFORE implementation — named paths, named behaviors), steps (concrete, file-anchored implementation steps), files, deletions (exact files/symbols to delete, from the inventory), acceptance (checkable criteria, each traceable to a requirement id or gate), estLoc.
 3. Every requirement id from the inventory must be covered by exactly the work items that implement it — no orphans, no inventions. The chunk gates (${JSON.stringify(chunk.gates)}) map into gateChecklist with the item(s) that satisfy each.
 4. Respect the hard rules verbatim; anything lifecycle-shaped or trust-shaped is out of scope BY DESIGN — say so in the brief so the dev doesn't "helpfully" add it.
@@ -619,7 +619,8 @@ Scope discipline: implement EXACTLY this work item — its steps, files, deletio
 Do not modify docs/design/** except docs/design/execution/chunk-${chunk.id}/** (Chunk 10 items may override this explicitly in their steps).
 ${history.length ? findingsDigest(history) : ''}
 ${guidance ? `ARCHITECT GUIDANCE (Fable 5 escalation — this clarifies/overrides ambiguous parts of the brief):\n${JSON.stringify(guidance)}` : ''}
-When done: all work committed with scoped messages (test(chunk-${chunk.id}):/refactor(chunk-${chunk.id}):/feat(chunk-${chunk.id}):/docs(chunk-${chunk.id}):), item tests run, bun run check:fast run. Report honestly — failing tests are reported as failing, never hidden. Include failingFirstEvidence (the recorded pre-implementation failure output) for test-first items.`
+SPEED DISCIPLINE: never run a full test suite (bun run check, check:fast, test, test:unit, test:integration) — one suite run costs 10+ minutes in this container and suite-level verification is the Finalize gate's job, run once per chunk. Verify with the item's own test files (bun test <paths>), bunx tsc --noEmit, and lint scoped to touched files (bunx biome check <files>). Batch related shell commands instead of issuing many small ones.
+When done: all work committed with scoped messages (test(chunk-${chunk.id}):/refactor(chunk-${chunk.id}):/feat(chunk-${chunk.id}):/docs(chunk-${chunk.id}):), item tests run (item-scoped, per above). Report honestly — failing tests are reported as failing, never hidden. Include failingFirstEvidence (the recorded pre-implementation failure output) for test-first items.`
 
   devReport = await runDev(devPrompt(1), `dev:${item.id}`)
 
@@ -629,7 +630,7 @@ When done: all work committed with scoped messages (test(chunk-${chunk.id}):/ref
     } else {
       const reviewCommon = `Work item (structured): ${itemJson}
 Full brief: ${wt}/${briefPathRel}. Developer report: ${JSON.stringify(devReport)}
-Inspect the ACTUAL work in the worktree ${wt} (branch ${chunk.branch}): git log --oneline origin/${baseBranch}..HEAD for commit order, git diff + git show for content, and run commands to verify claims (bun test <paths>, bun run lint, bunx tsc --noEmit) — never trust the report over the code. READ-ONLY: no commits, no file edits, no branch changes, no push.
+Inspect the ACTUAL work in the worktree ${wt} (branch ${chunk.branch}): git log --oneline origin/${baseBranch}..HEAD for commit order, git diff + git show for content, and run commands to verify claims (bun test <the item's test paths>, bunx tsc --noEmit, bunx biome check on the changed files) — never trust the report over the code. Do NOT run full suites (check, check:fast, test:unit, test:integration); suite-level verification belongs to the Finalize gate and costs 10+ minutes here. READ-ONLY: no commits, no file edits, no branch changes, no push.
 Verdict rule: pass=true ONLY with zero blocker and zero major findings. blocker = violates a plan gate or hard rule (incl. anything trust-shaped/lifecycle-shaped in the diff), wrong behavior, missing requirement, unjustified deviation, test weakened to pass. major = real quality defect (see criteria). minor = nit — record it, it does not block. Every finding needs evidence (file:line or command output) and a requiredFix.`
 
       const [adherence, quality] = await parallel([
@@ -756,7 +757,7 @@ if (gate && !gate.allGreen && !anyBlocked) {
   const repairPrompt = `${CONTEXT}
 
 ROLE: Developer (Sonnet 5) — chunk-gate repair for Chunk ${chunk.id} in ${wt} on ${chunk.branch}. The per-item reviews all passed but the whole-chunk gate run found failures: ${failedGates}
-Fix ONLY these failures, minimally, without weakening any test or gate. If a reported failure looks out of scope for this chunk (e.g. a grep for an identifier a LATER chunk deletes), do NOT "fix" it — make no commits for it and report it as disputed in your notes. Commit with scoped messages. Never push. Report honestly.`
+Fix ONLY these failures, minimally, without weakening any test or gate. If a reported failure looks out of scope for this chunk (e.g. a grep for an identifier a LATER chunk deletes), do NOT "fix" it — make no commits for it and report it as disputed in your notes. Verify with the specific failing tests/checks only — do not run full suites; the gate re-run does that. Commit with scoped messages. Never push. Report honestly.`
   repairReport = await runDev(repairPrompt, 'gate-repair')
   if (repairReport && repairReport.commits && repairReport.commits.length) {
     // The repair diff gets the same dual Opus review as every other change
