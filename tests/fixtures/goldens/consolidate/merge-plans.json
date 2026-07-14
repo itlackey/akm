@@ -41,9 +41,7 @@
           "mergeStrategy": "synthesize",
           "op": "merge",
           "primary": "memory:mp-real-primary",
-          "secondaries": [
-            "memory:mp-real-secondary"
-          ]
+          "secondaries": ["memory:mp-real-secondary"]
         }
       ],
       "warnings": [
@@ -56,9 +54,7 @@
           "mergeStrategy": "synthesize",
           "op": "merge",
           "primary": "memory:mp-merge-delete-target",
-          "secondaries": [
-            "memory:mp-merge-delete-secondary"
-          ]
+          "secondaries": ["memory:mp-merge-delete-secondary"]
         }
       ],
       "warnings": []
@@ -75,9 +71,7 @@
           "mergeStrategy": "synthesize",
           "op": "merge",
           "primary": "memory:mp-promote-merge-target",
-          "secondaries": [
-            "memory:mp-merge-delete-secondary"
-          ]
+          "secondaries": ["memory:mp-merge-delete-secondary"]
         }
       ],
       "warnings": []

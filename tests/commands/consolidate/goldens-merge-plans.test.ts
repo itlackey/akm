@@ -164,7 +164,10 @@ describe("mergePlans — contradict pair dedup", () => {
 // fixture — kept independent of the assertion tests so this capture never
 // depends on bun:test's within-file execution order.
 test("golden fixture: serialize the mergePlans precedence table byte-for-byte", () => {
-  const hallucinatedPrimary = mergePlans([[mergeOp(MP_HALLUCINATED_PRIMARY, [MP_REAL_SECONDARY])]], new Set([MP_REAL_PRIMARY, MP_REAL_SECONDARY]));
+  const hallucinatedPrimary = mergePlans(
+    [[mergeOp(MP_HALLUCINATED_PRIMARY, [MP_REAL_SECONDARY])]],
+    new Set([MP_REAL_PRIMARY, MP_REAL_SECONDARY]),
+  );
   const hallucinatedSecondary = mergePlans(
     [[mergeOp(MP_REAL_PRIMARY, [MP_REAL_SECONDARY, MP_HALLUCINATED_SECONDARY])]],
     new Set([MP_REAL_PRIMARY, MP_REAL_SECONDARY]),

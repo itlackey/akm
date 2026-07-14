@@ -82,12 +82,12 @@ import {
 import type { MemoryEntry } from "../../../src/commands/improve/consolidate/types";
 import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import { assembleAsset } from "../../../src/core/asset/asset-serialize";
-import type { AkmConfig } from "../../../src/core/config/config";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { _setChatCompletionForTests } from "../../../src/llm/client";
 import { expectGolden } from "../../_helpers/golden";
-import { overrideSeam } from "../../_helpers/seams";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { overrideSeam } from "../../_helpers/seams";
 import {
   CONTRADICT_ARCHIVED_BY_NAME,
   CONTRADICT_ARCHIVED_NAME,
@@ -101,11 +101,6 @@ import {
   DELETE_HOT_REFUSED_NAME,
   DELETE_NORMAL_NAME,
   knowledgeRef,
-  MERGE11_PRIMARY_NAME,
-  MERGE11_SECONDARY_NAME,
-  MERGE12_PRIMARY_NAME,
-  MERGE12_SECONDARY_A_NAME,
-  MERGE12_SECONDARY_B_NAME,
   MERGE_REFUSAL_GENERATION_PRIMARY_NAME,
   MERGE_REFUSAL_GENERATION_SECONDARY_NAME,
   MERGE_REFUSAL_HOT_PRIMARY_NAME,
@@ -116,6 +111,11 @@ import {
   MERGE_REFUSAL_TRUNCATED_DESC_SECONDARY_NAME,
   MERGE_REFUSAL_UNPARSEABLE_PRIMARY_NAME,
   MERGE_REFUSAL_UNPARSEABLE_SECONDARY_NAME,
+  MERGE11_PRIMARY_NAME,
+  MERGE11_SECONDARY_NAME,
+  MERGE12_PRIMARY_NAME,
+  MERGE12_SECONDARY_A_NAME,
+  MERGE12_SECONDARY_B_NAME,
   memoryRef,
   PROMOTE_GATE_ALREADY_EXISTS_KNOWLEDGE_NAME,
   PROMOTE_GATE_ALREADY_EXISTS_NAME,
@@ -149,10 +149,7 @@ function makeTarget(root: string): ConsolidateOpContext["target"] {
   } as ConsolidateOpContext["target"];
 }
 
-function makeCtx(
-  root: string,
-  overrides: Partial<ConsolidateOpContext> & { skips: SkipCall[] },
-): ConsolidateOpContext {
+function makeCtx(root: string, overrides: Partial<ConsolidateOpContext> & { skips: SkipCall[] }): ConsolidateOpContext {
   const { skips, ...rest } = overrides;
   return {
     config: {} as ConsolidateOpContext["config"],
@@ -360,7 +357,12 @@ describe("handleMergeOp — refusal matrix", () => {
         ]),
         generateMergedContentFn: stub.fn,
       });
-      const op: ConsolidateMergeOp = { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" };
+      const op: ConsolidateMergeOp = {
+        op: "merge",
+        primary: primary.ref,
+        secondaries: [secondary.ref],
+        mergeStrategy: "synthesize",
+      };
 
       await handleMergeOp(op, 0, ctx);
 
@@ -392,7 +394,12 @@ describe("handleMergeOp — refusal matrix", () => {
         ]),
         generateMergedContentFn: stub.fn,
       });
-      const op: ConsolidateMergeOp = { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" };
+      const op: ConsolidateMergeOp = {
+        op: "merge",
+        primary: primary.ref,
+        secondaries: [secondary.ref],
+        mergeStrategy: "synthesize",
+      };
 
       await handleMergeOp(op, 0, ctx);
 
@@ -422,7 +429,12 @@ describe("handleMergeOp — refusal matrix", () => {
         ]),
         generateMergedContentFn: stub.fn,
       });
-      const op: ConsolidateMergeOp = { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" };
+      const op: ConsolidateMergeOp = {
+        op: "merge",
+        primary: primary.ref,
+        secondaries: [secondary.ref],
+        mergeStrategy: "synthesize",
+      };
 
       await handleMergeOp(op, 0, ctx);
 
@@ -452,7 +464,12 @@ describe("handleMergeOp — refusal matrix", () => {
         ]),
         generateMergedContentFn: stub.fn,
       });
-      const op: ConsolidateMergeOp = { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" };
+      const op: ConsolidateMergeOp = {
+        op: "merge",
+        primary: primary.ref,
+        secondaries: [secondary.ref],
+        mergeStrategy: "synthesize",
+      };
 
       await handleMergeOp(op, 0, ctx);
 
@@ -472,7 +489,9 @@ describe("handleMergeOp — refusal matrix", () => {
       const primary = writeMemory(root, MERGE_REFUSAL_GENERATION_PRIMARY_NAME, { generation: 3 });
       const secondary = writeMemory(root, MERGE_REFUSAL_GENERATION_SECONDARY_NAME, { generation: 3 });
       const skips: SkipCall[] = [];
-      const stub = stubGenerateMergedContent(mergedContentWith({ description: "Merged content that is refused later" }));
+      const stub = stubGenerateMergedContent(
+        mergedContentWith({ description: "Merged content that is refused later" }),
+      );
       const ctx = makeCtx(root, {
         skips,
         memoryByRef: new Map([
@@ -481,7 +500,12 @@ describe("handleMergeOp — refusal matrix", () => {
         ]),
         generateMergedContentFn: stub.fn,
       });
-      const op: ConsolidateMergeOp = { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" };
+      const op: ConsolidateMergeOp = {
+        op: "merge",
+        primary: primary.ref,
+        secondaries: [secondary.ref],
+        mergeStrategy: "synthesize",
+      };
 
       await handleMergeOp(op, 0, ctx);
 
@@ -554,7 +578,13 @@ describe("handleDeleteOp", () => {
       const root = storage.stashDir;
       const ref = memoryRef(DELETE_ALREADY_GONE_NAME);
       const filePath = memoryPath(root, DELETE_ALREADY_GONE_NAME);
-      const entry: MemoryEntry = { name: DELETE_ALREADY_GONE_NAME, filePath, description: "", tags: [], stashDir: root };
+      const entry: MemoryEntry = {
+        name: DELETE_ALREADY_GONE_NAME,
+        filePath,
+        description: "",
+        tags: [],
+        stashDir: root,
+      };
       const skips: SkipCall[] = [];
       const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
       const op: ConsolidateDeleteOp = { op: "delete", ref, reason: "redundant" };
@@ -658,7 +688,12 @@ describe("handlePromoteOp — gate matrix (consolidate.ts:2477-2690 order)", () 
       const { entry, ref } = writeMemory(root, PROMOTE_GATE_SUPERSEDED_NAME, { status: "superseded" });
       const skips: SkipCall[] = [];
       const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
-      const op: ConsolidatePromoteOp = { op: "promote", ref, knowledgeRef: knowledgeRef("unused-superseded"), reason: "x" };
+      const op: ConsolidatePromoteOp = {
+        op: "promote",
+        ref,
+        knowledgeRef: knowledgeRef("unused-superseded"),
+        reason: "x",
+      };
 
       await handlePromoteOp(op, ctx);
 
@@ -676,7 +711,12 @@ describe("handlePromoteOp — gate matrix (consolidate.ts:2477-2690 order)", () 
       const { entry, ref } = writeMemory(root, PROMOTE_GATE_TOO_SMALL_NAME, {}, "too short");
       const skips: SkipCall[] = [];
       const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
-      const op: ConsolidatePromoteOp = { op: "promote", ref, knowledgeRef: knowledgeRef("unused-too-small"), reason: "x" };
+      const op: ConsolidatePromoteOp = {
+        op: "promote",
+        ref,
+        knowledgeRef: knowledgeRef("unused-too-small"),
+        reason: "x",
+      };
 
       await handlePromoteOp(op, ctx);
 
@@ -698,12 +738,20 @@ describe("handlePromoteOp — gate matrix (consolidate.ts:2477-2690 order)", () 
       const existing = createProposal(root, {
         ref: knowledgeRef(PROMOTE_GATE_BODY_DEDUP_EXISTING_KNOWLEDGE_NAME),
         source: "consolidate",
-        payload: { content: assembleAsset({ description: "pre-existing" }, SHARED_BODY), frontmatter: { description: "pre-existing" } },
+        payload: {
+          content: assembleAsset({ description: "pre-existing" }, SHARED_BODY),
+          frontmatter: { description: "pre-existing" },
+        },
       });
       expect("id" in existing).toBe(true);
       const skips: SkipCall[] = [];
       const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
-      const op: ConsolidatePromoteOp = { op: "promote", ref, knowledgeRef: knowledgeRef("unused-body-dedup"), reason: "x" };
+      const op: ConsolidatePromoteOp = {
+        op: "promote",
+        ref,
+        knowledgeRef: knowledgeRef("unused-body-dedup"),
+        reason: "x",
+      };
 
       await handlePromoteOp(op, ctx);
 
@@ -773,7 +821,13 @@ describe("handleContradictOp", () => {
           [b.ref, b.entry],
         ]),
       });
-      const op: ConsolidateContradictOp = { op: "contradict", ref: a.ref, contradictedByRef: b.ref, reason: "x", confidence: 0.95 };
+      const op: ConsolidateContradictOp = {
+        op: "contradict",
+        ref: a.ref,
+        contradictedByRef: b.ref,
+        reason: "x",
+        confidence: 0.95,
+      };
 
       await handleContradictOp(op, ctx);
 
@@ -808,7 +862,13 @@ describe("handleContradictOp", () => {
           [b.ref, b.entry],
         ]),
       });
-      const op: ConsolidateContradictOp = { op: "contradict", ref: a.ref, contradictedByRef: b.ref, reason: "x", confidence: 1.0 };
+      const op: ConsolidateContradictOp = {
+        op: "contradict",
+        ref: a.ref,
+        contradictedByRef: b.ref,
+        reason: "x",
+        confidence: 1.0,
+      };
 
       await handleContradictOp(op, ctx);
 
@@ -834,7 +894,13 @@ describe("handleContradictOp", () => {
           [b.ref, b.entry],
         ]),
       });
-      const op: ConsolidateContradictOp = { op: "contradict", ref: a.ref, contradictedByRef: b.ref, reason: "x", confidence: 0.5 };
+      const op: ConsolidateContradictOp = {
+        op: "contradict",
+        ref: a.ref,
+        contradictedByRef: b.ref,
+        reason: "x",
+        confidence: 0.5,
+      };
 
       await handleContradictOp(op, ctx);
 
@@ -900,7 +966,11 @@ async function captureMerge11(storage: IsolatedAkmStorage) {
     ]),
     generateMergedContentFn: stub.fn,
   });
-  await handleMergeOp({ op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" }, 0, ctx);
+  await handleMergeOp(
+    { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" },
+    0,
+    ctx,
+  );
   const archived = listArchiveFiles(root);
   return {
     generateMergedContentCallCount: stub.callCount(),
@@ -946,7 +1016,8 @@ async function captureMerge12(storage: IsolatedAkmStorage) {
   return {
     chatCompletionCallCount: chatCalls,
     merged: ctx.counts.merged,
-    bothSecondariesArchivedAndDeleted: !fs.existsSync(secA.filePath) && !fs.existsSync(secB.filePath) && listArchiveFiles(root).length === 2,
+    bothSecondariesArchivedAndDeleted:
+      !fs.existsSync(secA.filePath) && !fs.existsSync(secB.filePath) && listArchiveFiles(root).length === 2,
     primaryHasSecondaryAKeys: readAsset(primary.filePath).frontmatter.tagsA !== undefined,
     primaryHasSecondaryBKeys: readAsset(primary.filePath).frontmatter.tagsB !== undefined,
   };
@@ -962,7 +1033,10 @@ async function captureMergeRefusal(
 ) {
   const root = storage.stashDir;
   const primary = writeMemory(root, primaryName, {});
-  const secondary = secondaryRaw !== null ? writeRawMemory(root, secondaryName, secondaryRaw) : writeMemory(root, secondaryName, secondaryFm);
+  const secondary =
+    secondaryRaw !== null
+      ? writeRawMemory(root, secondaryName, secondaryRaw)
+      : writeMemory(root, secondaryName, secondaryFm);
   const skips: SkipCall[] = [];
   const stub = stubGenerateMergedContent(generatedContent ?? mergedContentWith({ description: "unused" }));
   const ctx = makeCtx(root, {
@@ -973,11 +1047,20 @@ async function captureMergeRefusal(
     ]),
     generateMergedContentFn: stub.fn,
   });
-  await handleMergeOp({ op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" }, 0, ctx);
+  await handleMergeOp(
+    { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" },
+    0,
+    ctx,
+  );
   return { generateMergedContentCallCount: stub.callCount(), merged: ctx.counts.merged, skips };
 }
 
-async function captureDelete(storage: IsolatedAkmStorage, name: string, fm: Record<string, unknown>, dropFile: boolean) {
+async function captureDelete(
+  storage: IsolatedAkmStorage,
+  name: string,
+  fm: Record<string, unknown>,
+  dropFile: boolean,
+) {
   const root = storage.stashDir;
   const { entry, ref, filePath } = writeMemory(root, name, fm);
   if (dropFile) fs.unlinkSync(filePath);
@@ -1016,7 +1099,11 @@ async function capturePromoteHappy(storage: IsolatedAkmStorage) {
 
 async function capturePromoteGate(
   storage: IsolatedAkmStorage,
-  setup: (root: string, ref: string, entry: MemoryEntry) => { op: ConsolidatePromoteOp; extraCtx?: Partial<ConsolidateOpContext> },
+  setup: (
+    root: string,
+    ref: string,
+    entry: MemoryEntry,
+  ) => { op: ConsolidatePromoteOp; extraCtx?: Partial<ConsolidateOpContext> },
   name: string,
   fm: Record<string, unknown>,
   body?: string,
@@ -1066,7 +1153,14 @@ test("golden fixture: serialize consolidate op-outcome scenarios", async () => {
   const merge11 = await withStash(captureMerge11);
   const merge12 = await withStash(captureMerge12);
   const refusalHot = await withStash((s) =>
-    captureMergeRefusal(s, MERGE_REFUSAL_HOT_PRIMARY_NAME, MERGE_REFUSAL_HOT_SECONDARY_NAME, null, { captureMode: "hot" }, null),
+    captureMergeRefusal(
+      s,
+      MERGE_REFUSAL_HOT_PRIMARY_NAME,
+      MERGE_REFUSAL_HOT_SECONDARY_NAME,
+      null,
+      { captureMode: "hot" },
+      null,
+    ),
   );
   const refusalUnparseable = await withStash((s) =>
     captureMergeRefusal(
@@ -1112,12 +1206,18 @@ test("golden fixture: serialize consolidate op-outcome scenarios", async () => {
       ]),
       generateMergedContentFn: stub.fn,
     });
-    await handleMergeOp({ op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" }, 0, ctx);
+    await handleMergeOp(
+      { op: "merge", primary: primary.ref, secondaries: [secondary.ref], mergeStrategy: "synthesize" },
+      0,
+      ctx,
+    );
     return { generateMergedContentCallCount: stub.callCount(), merged: ctx.counts.merged, skips };
   });
 
   const deleteNormal = await withStash((s) => captureDelete(s, DELETE_NORMAL_NAME, {}, false));
-  const deleteHotRefused = await withStash((s) => captureDelete(s, DELETE_HOT_REFUSED_NAME, { captureMode: "hot" }, false));
+  const deleteHotRefused = await withStash((s) =>
+    captureDelete(s, DELETE_HOT_REFUSED_NAME, { captureMode: "hot" }, false),
+  );
   const deleteAlreadyGone = await withStash(async (storage) => {
     const root = storage.stashDir;
     const ref = memoryRef(DELETE_ALREADY_GONE_NAME);
@@ -1180,7 +1280,10 @@ test("golden fixture: serialize consolidate op-outcome scenarios", async () => {
     createProposal(root, {
       ref: knowledgeRef(PROMOTE_GATE_BODY_DEDUP_EXISTING_KNOWLEDGE_NAME),
       source: "consolidate",
-      payload: { content: assembleAsset({ description: "pre-existing" }, SHARED_BODY), frontmatter: { description: "pre-existing" } },
+      payload: {
+        content: assembleAsset({ description: "pre-existing" }, SHARED_BODY),
+        frontmatter: { description: "pre-existing" },
+      },
     });
     return capturePromoteGate(
       storage,
@@ -1221,13 +1324,19 @@ test("golden fixture: serialize consolidate op-outcome scenarios", async () => {
     })),
   );
   const contradictArchivedPreserved = await withStash((s) =>
-    captureContradict(s, CONTRADICT_ARCHIVED_NAME, { beliefState: "archived" }, CONTRADICT_ARCHIVED_BY_NAME, (aRef, bRef) => ({
-      op: "contradict",
-      ref: aRef,
-      contradictedByRef: bRef,
-      reason: "x",
-      confidence: 1.0,
-    })),
+    captureContradict(
+      s,
+      CONTRADICT_ARCHIVED_NAME,
+      { beliefState: "archived" },
+      CONTRADICT_ARCHIVED_BY_NAME,
+      (aRef, bRef) => ({
+        op: "contradict",
+        ref: aRef,
+        contradictedByRef: bRef,
+        reason: "x",
+        confidence: 1.0,
+      }),
+    ),
   );
   const contradictLowConf = await withStash(async (storage) => {
     const root = storage.stashDir;
@@ -1245,7 +1354,11 @@ test("golden fixture: serialize consolidate op-outcome scenarios", async () => {
       { op: "contradict", ref: a.ref, contradictedByRef: b.ref, reason: "x", confidence: 0.5 },
       ctx,
     );
-    return { contradicted: ctx.counts.contradicted, skips, edgeWritten: readAsset(a.filePath).frontmatter.contradictedBy !== undefined };
+    return {
+      contradicted: ctx.counts.contradicted,
+      skips,
+      edgeWritten: readAsset(a.filePath).frontmatter.contradictedBy !== undefined,
+    };
   });
   const contradictMissingConfDefaultsHigh = await withStash(async (storage) => {
     const root = storage.stashDir;

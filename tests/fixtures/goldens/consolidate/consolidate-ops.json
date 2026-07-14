@@ -7,9 +7,7 @@
         "firstRunRawBytes": "---\ndescription: cop-contradict-archived description\nbeliefState: archived\ncontradictedBy:\n  - memory:cop-contradict-archived-by\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
         "frontmatter": {
           "beliefState": "archived",
-          "contradictedBy": [
-            "memory:cop-contradict-archived-by"
-          ],
+          "contradictedBy": ["memory:cop-contradict-archived-by"],
           "description": "cop-contradict-archived description"
         },
         "idempotentReRunByteIdentical": true,
@@ -20,9 +18,7 @@
         "firstRunRawBytes": "---\ndescription: cop-contradict-high-conf description\ncontradictedBy:\n  - memory:cop-contradict-high-conf-by\nbeliefState: contradicted\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
         "frontmatter": {
           "beliefState": "contradicted",
-          "contradictedBy": [
-            "memory:cop-contradict-high-conf-by"
-          ],
+          "contradictedBy": ["memory:cop-contradict-high-conf-by"],
           "description": "cop-contradict-high-conf description"
         },
         "idempotentReRunByteIdentical": true,
@@ -260,10 +256,7 @@
       },
       "happyPath": {
         "bodyDescription": "A promoted knowledge asset",
-        "bodyXrefs": [
-          "memory:cop-promote-happy",
-          "memory:promote-happy-existing"
-        ],
+        "bodyXrefs": ["memory:cop-promote-happy", "memory:promote-happy-existing"],
         "promotedCount": 1,
         "proposalDescription": "A promoted knowledge asset",
         "skips": []
