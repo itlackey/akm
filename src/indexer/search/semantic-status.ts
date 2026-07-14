@@ -43,7 +43,10 @@ export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectio
     return `deterministic:${DETERMINISTIC_EMBED_MODEL_ID}`;
   }
   if (embedding?.endpoint) {
-    return `remote:${embedding.endpoint}|${embedding.model}|${embedding.dimension ?? "default"}`;
+    // Fingerprint keys on vector identity only (model + dimension). The endpoint
+    // is transport/routing and has no bearing on vector compatibility, so moving
+    // the same model+dimension to a different host must not force a full re-embed.
+    return `remote:${embedding.model}|${embedding.dimension ?? "default"}`;
   }
   return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}`;
 }
