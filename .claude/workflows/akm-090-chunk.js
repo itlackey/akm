@@ -276,6 +276,13 @@ function trimFindings(review) {
   return review.findings.filter((f) => f.severity === 'blocker' || f.severity === 'major')
 }
 
+// Verdict is DERIVED, never trusted: pass requires both the reviewer's own
+// pass=true AND zero blocker/major findings, so a reviewer that returns
+// pass=true alongside a blocker cannot gate the item through.
+function ok(review) {
+  return !!review && review.pass === true && trimFindings(review).length === 0
+}
+
 function findingsDigest(history) {
   // Only the most recent round in full; earlier rounds as counts, to keep dev prompts bounded.
   if (!history.length) return ''
@@ -298,6 +305,17 @@ async function runReview(kind, prompt, label) {
     r = await agent(prompt, { model: 'opus', effort: 'high', schema: REVIEW_SCHEMA, label: `${label}-retry`, phase: 'Review' })
   }
   return r || { pass: false, findings: [{ severity: 'blocker', description: `${kind} review agent failed to produce a verdict twice; treating as failed review` }], summary: 'review agent unavailable' }
+}
+
+// Dev calls get the same one-retry-on-death treatment, so a transient agent
+// death consumes neither a ladder rung nor triggers escalation on infra noise.
+async function runDev(promptText, label) {
+  let r = await agent(promptText, { model: 'sonnet', schema: DEV_SCHEMA, label, phase: 'Implement' })
+  if (!r) {
+    log(`dev agent ${label} died; retrying once`)
+    r = await agent(promptText, { model: 'sonnet', schema: DEV_SCHEMA, label: `${label}-retry`, phase: 'Implement' })
+  }
+  return r
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +354,10 @@ if (!setup || !setup.ok) {
 }
 const wt = setup.worktreePath
 if (!setup.baselineGreen) {
-  return { chunk: chunk.id, status: 'blocked-baseline', detail: `Baseline check:fast is RED on ${baseBranch} — the chunk cannot be review-gated against a red baseline. ${setup.baselineSummary}`, escalation: 'human' }
+  const where = setup.resumedExisting
+    ? `in the RESUMED worktree on ${setup.branch} — the red may come from prior work-in-progress commits (blocked items deliberately leave WIP in place), not from the base branch`
+    : `in a fresh worktree off origin/${baseBranch} — the base itself is red`
+  return { chunk: chunk.id, status: 'blocked-baseline', detail: `Baseline check:fast is RED ${where}. The chunk cannot be review-gated against a red baseline. ${setup.baselineSummary}`, escalation: 'human' }
 }
 log(`Worktree ready at ${wt} (${setup.branch} @ ${setup.headSha}); baseline green`)
 
@@ -361,19 +382,27 @@ if (!extraction) throw new Error('Plan extraction failed')
 log(`${extraction.requirements.length} requirements → ${extraction.groundingTasks.length} grounding tasks`)
 
 // Barrier justified: the brief author needs ALL grounding results together.
-const groundings = (await parallel(
-  extraction.groundingTasks.map((t) => () => agent(
-    `${CONTEXT}
+const groundPrompt = (t) => `${CONTEXT}
 
 ROLE: Codebase grounder (Fable 5) for Chunk ${chunk.id}, area "${t.area}".
 Work read-only in the worktree ${wt} (branch ${chunk.branch} @ ${setup.headSha}) — this is the exact code state the implementation will start from.
 Requirements to ground (from the plan): ${JSON.stringify(extraction.requirements.filter((r) => t.requirementIds.includes(r.id)))}
 Instructions: ${t.instructions}
-For EACH requirement: verify the plan's claims against the actual code (read the files; run greps; re-measure any file:line anchors at this HEAD and report the true ones), state precisely what exists today (current behavior, current structure), list existing tests covering it, and flag any drift between what the plan assumed and what the code says (driftFromPlan). Anchors must be real file:line values you verified, not copied from the plan. Do not modify anything.`,
-    { model: 'fable', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${t.area}`, phase: 'Ground' },
-  )),
+For EACH requirement: verify the plan's claims against the actual code (read the files; run greps; re-measure any file:line anchors at this HEAD and report the true ones), state precisely what exists today (current behavior, current structure), list existing tests covering it, and flag any drift between what the plan assumed and what the code says (driftFromPlan). Anchors must be real file:line values you verified, not copied from the plan. Do not modify anything.`
+
+const groundings = (await parallel(
+  extraction.groundingTasks.map((t) => () => (async () => {
+    let g = await agent(groundPrompt(t), { model: 'fable', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${t.area}`, phase: 'Ground' })
+    if (!g) {
+      log(`grounding agent for area "${t.area}" died; retrying once`)
+      g = await agent(groundPrompt(t), { model: 'fable', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${t.area}-retry`, phase: 'Ground' })
+    }
+    // Fail loud, never silent: an ungrounded area reaches the brief author and
+    // the verification panel explicitly flagged, not dropped.
+    return g || { area: t.area, facts: [], risks: [`GROUNDING FAILED for area "${t.area}" — requirements ${t.requirementIds.join(', ')} are UNGROUNDED; the brief must not assert code facts about them without verifying in-line`] }
+  })()),
 )).filter(Boolean)
-if (!groundings.length) throw new Error('All grounding agents failed')
+if (!groundings.some((g) => g.facts && g.facts.length)) throw new Error('All grounding agents failed')
 
 const groundingJson = JSON.stringify(groundings)
 const briefPathRel = `docs/design/execution/chunk-${chunk.id}/brief.md`
@@ -410,20 +439,33 @@ const LENSES = [
 
 let briefApproved = false
 for (let round = 0; round <= 2; round++) {
-  const verdicts = (await parallel(
-    LENSES.map((l) => () => agent(
-      `${CONTEXT}
+  const lensPrompt = (l) => `${CONTEXT}
 
 ROLE: Adversarial brief verifier (Fable 5), lens = ${l.key}, for Chunk ${chunk.id}. Your default stance is REFUSE — approve only if you actively fail to find a defect through your lens.
 ${l.prompt}
 Brief (structured): ${JSON.stringify(brief)}
 Full brief text: read ${wt}/${briefPathRel}. Requirements inventory: ${JSON.stringify(extraction.requirements)}. Manifest entry: ${chunkJson}. Worktree for verification: ${wt}.
-Return verdict "approve" or "revise" with concrete blockers (claim / why / fix). Minor style notes go in minors and do not force revision.`,
-      { model: 'fable', effort: 'high', schema: REFUTE_SCHEMA, label: `verify-brief:${l.key}`, phase: 'Verify Brief' },
-    )),
+Return verdict "approve" or "revise" with concrete blockers (claim / why / fix). Minor style notes go in minors and do not force revision.`
+
+  // Fail CLOSED: a dead lens can never approve the brief — this is the step
+  // the whole process leans on, so it gets the strictest availability rule.
+  const verdicts = (await parallel(
+    LENSES.map((l) => () => (async () => {
+      let v = await agent(lensPrompt(l), { model: 'fable', effort: 'high', schema: REFUTE_SCHEMA, label: `verify-brief:${l.key}`, phase: 'Verify Brief' })
+      if (!v) {
+        log(`brief verifier lens ${l.key} died; retrying once`)
+        v = await agent(lensPrompt(l), { model: 'fable', effort: 'high', schema: REFUTE_SCHEMA, label: `verify-brief:${l.key}-retry`, phase: 'Verify Brief' })
+      }
+      return v || { lens: l.key, verdict: 'revise', blockers: [{ claim: `verification lens ${l.key} unavailable`, why: 'the lens agent died twice — this round cannot count as verified', fix: 'the brief must pass a complete 3-lens round' }] }
+    })()),
   )).filter(Boolean)
 
-  const allBlockers = verdicts.flatMap((v) => (v.verdict === 'revise' ? v.blockers : []))
+  const allBlockers = verdicts.flatMap((v) => (v.verdict === 'revise'
+    ? (v.blockers.length ? v.blockers : [{ claim: `lens ${v.lens} demanded revision without itemized blockers`, why: 'revise verdict with an empty blocker list', fix: `address the lens's notes: ${JSON.stringify(v.minors || [])}` }])
+    : []))
+  if (verdicts.length < LENSES.length) {
+    allBlockers.push({ claim: 'incomplete verification round', why: `${LENSES.length - verdicts.length} lens(es) did not run`, fix: 'the brief must pass a complete 3-lens round' })
+  }
   if (!allBlockers.length) { briefApproved = true; break }
   if (round === 2) break
   log(`Brief revision round ${round + 1}: ${allBlockers.length} blocker(s) from ${verdicts.filter((v) => v.verdict === 'revise').length} lens(es)`)
@@ -477,7 +519,7 @@ ${history.length ? findingsDigest(history) : ''}
 ${guidance ? `ARCHITECT GUIDANCE (Fable 5 escalation — this clarifies/overrides ambiguous parts of the brief):\n${JSON.stringify(guidance)}` : ''}
 When done: all work committed with scoped messages (test(chunk-${chunk.id}):/refactor(chunk-${chunk.id}):/feat(chunk-${chunk.id}):/docs(chunk-${chunk.id}):), item tests run, bun run check:fast run. Report honestly — failing tests are reported as failing, never hidden. Include failingFirstEvidence (the recorded pre-implementation failure output) for test-first items.`
 
-  devReport = await agent(devPrompt(1), { model: 'sonnet', schema: DEV_SCHEMA, label: `dev:${item.id}`, phase: 'Implement' })
+  devReport = await runDev(devPrompt(1), `dev:${item.id}`)
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     if (!devReport) {
@@ -501,7 +543,12 @@ ${reviewCommon}
 Criteria: cyclomatic complexity + length of touched functions (a new god fn >~200 LOC is a blocker in improve, a major elsewhere); duplication introduced (DRY); cohesion/coupling — SRP per module, dependency direction respected (no new layer-crossing imports, no new import cycles); naming + idiom consistency with the surrounding code (comment discipline: constraints only, no narration); type safety (no new any — repo is moving noExplicitAny to error — no unsafe casts, typed errors where the chunk mandates); dead code left behind after deletions (orphaned exports/helpers); error handling on new paths; TEST QUALITY — behavioral assertions not implementation-mirroring, edge cases covered, failing-first evidence present and plausible, isolation (sandbox helpers, no rogue mkdtemp, mock.module ban respected); commit hygiene (scoped messages, logical units).`, `review-quality:${item.id}#${attempt}`),
       ])
       history.push({ attempt, adherence, quality })
-      if (adherence.pass === true && quality.pass === true) {
+      for (const [kind, r] of [['adherence', adherence], ['quality', quality]]) {
+        if (r && r.pass === true && trimFindings(r).length > 0) {
+          log(`WARNING: ${kind} reviewer self-reported pass=true with ${trimFindings(r).length} blocker/major finding(s) on ${item.id} — verdict is derived from findings; treating as FAILED`)
+        }
+      }
+      if (ok(adherence) && ok(quality)) {
         status = 'done'
         const minors = [...(adherence.findings || []), ...(quality.findings || [])].filter((f) => f.severity === 'minor')
         itemResults.push({ itemId: item.id, status, attempts: attempt, commits: devReport.commits, minors })
@@ -532,15 +579,18 @@ Produce: diagnosis; concrete step-by-step guidance the developer can execute; br
       }
     }
 
-    devReport = await agent(devPrompt(attempt + 1), { model: 'sonnet', schema: DEV_SCHEMA, label: `dev:${item.id}#${attempt + 1}`, phase: 'Implement' })
+    devReport = await runDev(devPrompt(attempt + 1), `dev:${item.id}#${attempt + 1}`)
   }
 
   if (status !== 'done') {
     // Blocked: three failed reviews (or a recommendBlock) — escalate to a human.
+    const ladderPath = guidance && guidance.recommendBlock
+      ? `dev + dual review ×${history.length}; the Fable-5 escalation architect then recommended blocking WITHOUT a third attempt (item judged mis-scoped against the plan)`
+      : `the full ladder (${history.length} dev attempt(s) + dual review each, with Fable-5 assistance before the final attempt)`
     const block = await agent(
       `${CONTEXT}
 
-ROLE: Escalation reporter (Fable 5). Work item ${item.id} of Chunk ${chunk.id} is BLOCKED after the full ladder (dev → review ×2 → Fable assist → review). A human maintainer will pick this up — write the report that lets them decide in one sitting.
+ROLE: Escalation reporter (Fable 5). Work item ${item.id} of Chunk ${chunk.id} is BLOCKED after ${ladderPath}. A human maintainer will pick this up — write the report that lets them decide in one sitting; describe only what actually ran, per the history below.
 Work item: ${itemJson}. Review history: ${JSON.stringify(history)}. Fable guidance given: ${JSON.stringify(guidance)}. Last dev report: ${JSON.stringify(devReport)}
 Write ${wt}/docs/design/execution/chunk-${chunk.id}/escalation-${item.id}.md: what the item requires (with plan anchors), what was attempted (commits), exactly why review keeps failing (the unresolved findings, verbatim), the root-cause diagnosis, and SPECIFIC questions/decisions for the human. Commit it on ${chunk.branch} ("docs(chunk-${chunk.id}): escalation report for ${item.id}"). Leave the work-in-progress commits in place — do not revert anything. Never push.`,
       { model: 'fable', effort: 'high', schema: BLOCK_SCHEMA, label: `block:${item.id}`, phase: 'Escalate' },
@@ -565,28 +615,58 @@ ROLE: Chunk gate runner for Chunk ${chunk.id} in worktree ${wt} (branch ${chunk.
 Run and report every gate honestly:
 1. bun run check (full: lint + tsc + unit + integration). Any failure = that gate red.
 2. Each chunk gate: ${JSON.stringify(chunk.gates)} — grep-style gates run as rg counts at the declared scope (${grepGateScope}); artifact gates (ledgers, fixtures) verify the artifact exists in the tree; behavior gates run the named suites.
-3. Global gates that apply at every chunk boundary (safety suites; grammar greps only when this chunk's wave requires them): ${JSON.stringify(globalGates)}
+3. Global gates: ${JSON.stringify(globalGates)}. Safety suites and the deletion-ledger requirement apply at EVERY chunk boundary. Each zero-count grep applies ONLY if its "from Chunk N" annotation names this chunk or an earlier one in manifest order (0a, 7, 6, 9, 0b, 1, 1.5, 2, 3, 4, 5, 6.5, 8, 10 — this run is chunk "${chunk.id}", order ${chunk.order}); a grep whose effective chunk has not landed yet is out of scope — report it as skipped, NOT red. The grep scope excludes src/migrate/legacy/ (frozen legacy copy).
 4. Net-LOC actuals (REPORTED, never pass/fail): git diff --shortstat $(git merge-base HEAD origin/${baseBranch})..HEAD -- src/ scripts/ ; test churn separately for tests/.
 Do not fix anything; do not commit; never push. allGreen=true only if every pass/fail gate passed.`
 
 let gate = await agent(gatePrompt(), { model: 'sonnet', schema: GATE_SCHEMA, label: 'chunk-gates', phase: 'Finalize' })
 
+let repairReport = null
+let repairRejected = false
 if (gate && !gate.allGreen && !anyBlocked) {
-  // One repair pass for mechanical gate failures, then re-run the gates.
+  // One repair pass for mechanical gate failures — review-gated like all other
+  // development — then re-run the gates.
   log('Chunk gates red — one repair pass')
+  const failedGates = JSON.stringify(gate.results.filter((r) => !r.passed))
   const repairPrompt = `${CONTEXT}
 
-ROLE: Developer (Sonnet 5) — chunk-gate repair for Chunk ${chunk.id} in ${wt} on ${chunk.branch}. The per-item reviews all passed but the whole-chunk gate run found failures: ${JSON.stringify(gate.results.filter((r) => !r.passed))}
-Fix ONLY these failures, minimally, without weakening any test or gate. Commit with scoped messages. Never push. Report honestly.`
-  const repair = await agent(repairPrompt, { model: 'sonnet', schema: DEV_SCHEMA, label: 'gate-repair', phase: 'Implement' })
-  if (repair) gate = await agent(gatePrompt(), { model: 'sonnet', schema: GATE_SCHEMA, label: 'chunk-gates-rerun', phase: 'Finalize' })
+ROLE: Developer (Sonnet 5) — chunk-gate repair for Chunk ${chunk.id} in ${wt} on ${chunk.branch}. The per-item reviews all passed but the whole-chunk gate run found failures: ${failedGates}
+Fix ONLY these failures, minimally, without weakening any test or gate. If a reported failure looks out of scope for this chunk (e.g. a grep for an identifier a LATER chunk deletes), do NOT "fix" it — make no commits for it and report it as disputed in your notes. Commit with scoped messages. Never push. Report honestly.`
+  repairReport = await runDev(repairPrompt, 'gate-repair')
+  if (repairReport && repairReport.commits && repairReport.commits.length) {
+    // The repair diff gets the same dual Opus review as every other change
+    // before it can reach the pushed branch as accepted work.
+    const repairCommon = `The repair instruction was: fix ONLY these gate failures, minimally, no test/gate weakening, nothing outside chunk scope: ${failedGates}
+Repair dev report: ${JSON.stringify(repairReport)}
+Inspect the actual repair commits in ${wt} (branch ${chunk.branch}) with git show: ${JSON.stringify(repairReport.commits)}. Full brief for scope rules: ${wt}/${briefPathRel}. READ-ONLY.
+Verdict rule: pass=true ONLY with zero blocker and zero major findings. Anything beyond the minimal fix of the listed failures, any weakened test or gate, and anything trust-shaped or lifecycle-shaped is a blocker.`
+    const [ra, rq] = await parallel([
+      () => runReview('adherence', `${CONTEXT}
+
+ROLE: Adherence reviewer (Opus 4.8) — gate-repair review for Chunk ${chunk.id}.
+${repairCommon}`, 'review-repair-adherence'),
+      () => runReview('quality', `${CONTEXT}
+
+ROLE: Code-quality reviewer (Opus 4.8) — gate-repair review for Chunk ${chunk.id}. Apply the standard quality criteria to the repair diff.
+${repairCommon}`, 'review-repair-quality'),
+    ])
+    if (ok(ra) && ok(rq)) {
+      const rerun = await agent(gatePrompt(), { model: 'sonnet', schema: GATE_SCHEMA, label: 'chunk-gates-rerun', phase: 'Finalize' })
+      if (rerun) gate = rerun // a dead rerun agent must not destroy the red-gate diagnostics
+    } else {
+      repairRejected = true
+      log('gate-repair commits FAILED review — gates left as-is; the chunk goes to a human with the repair flagged')
+    }
+  } else if (repairReport) {
+    log('gate-repair made no commits (failures disputed or unfixable) — gates left as-is for the human')
+  }
 }
 
 const audit = await agent(
   `${CONTEXT}
 
 ROLE: Chunk auditor (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}) in ${wt}.
-Inputs: manifest entry ${chunkJson}; brief ${wt}/${briefPathRel}; item results ${JSON.stringify(itemResults)}; gate results ${JSON.stringify(gate)}; git log --oneline origin/${baseBranch}..HEAD.
+Inputs: manifest entry ${chunkJson}; brief ${wt}/${briefPathRel}; item results ${JSON.stringify(itemResults)}; gate results ${JSON.stringify(gate)}; gate-repair: ${JSON.stringify(repairReport)}${repairRejected ? ' — the repair commits FAILED review; flag them prominently in the report' : ''}; git log --oneline origin/${baseBranch}..HEAD.
 Audit the WHOLE chunk: every brief work item is done or has a committed escalation report; every manifest gate is green or explicitly accounted for; the diff contains nothing outside the brief (sample it); net-LOC actuals vs the plan estimate (${chunk.netLoc}) — report the delta, it is not a gate; the chunk's §15 test bucket landed.
 Write ${wt}/docs/design/execution/chunk-${chunk.id}/report.md — status, per-item outcomes, gate table, net-LOC actuals vs estimate, minors carried forward, blocked-item summaries with their escalation files — and commit it ("docs(chunk-${chunk.id}): chunk report"). Never push. pass=true only if all items done AND all gates green.`,
   { model: 'opus', effort: 'high', schema: AUDIT_SCHEMA, label: 'chunk-audit', phase: 'Finalize' },
@@ -616,6 +696,7 @@ return {
   briefPath: briefPathRel,
   items: itemResults,
   gates: gate,
+  repair: repairReport ? { rejected: repairRejected, commits: repairReport.commits, notes: repairReport.notes } : null,
   audit,
   pushed: push ? push.pushed : false,
   escalation: anyBlocked || status === 'needs-human' ? 'human — review the committed escalation report(s) and chunk report on the pushed branch' : null,

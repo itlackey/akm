@@ -15,7 +15,8 @@ The 0.9.0 refactor (plan §11: 14 chunks in two waves) is executed by per-chunk 
 | **Developer** | Sonnet 5 | Implements one work item at a time from the brief, test-first, in the chunk worktree. |
 | **Reviewers** (two per item, parallel) | Opus 4.8 | **Adherence reviewer**: strict conformance to the brief (the brief is the contract) incl. test-first commit-order proof and scope discipline. **Quality reviewer**: established code-quality criteria (complexity/function length, DRY, SRP/coupling/dependency direction, naming/idiom, type safety, dead code, error handling, test quality, commit hygiene). Both re-run commands; neither trusts the dev report over the code. |
 | **Escalation architect** | Fable 5 | Called when review fails **twice** on an item: diagnoses root cause (dev misread vs brief defect vs reviewer error), issues guidance, may amend the brief. |
-| **Chunk auditor / gate runner** | Opus 4.8 / Sonnet 5 | Whole-chunk gate run (`bun run check` + the chunk's manifest gates + safety suites) and final audit + committed chunk report. |
+| **Chunk auditor / gate runner** | Opus 4.8 / Sonnet 5 | Whole-chunk gate run (`bun run check` + the chunk's manifest gates + the global gates in effect for this chunk + safety suites) and final audit + committed chunk report. A red gate run triggers ONE repair pass — whose commits get the same dual Opus review before the gates re-run; a repair that fails review is left flagged for the human, never silently kept as accepted work. |
+| *Utility agents* | Haiku 4.5 / Sonnet 5 | Manifest load (Haiku); worktree setup and branch push (Sonnet). No development or review decisions. |
 
 ### The escalation ladder (per work item)
 
@@ -38,11 +39,13 @@ flowchart TD
     E --> F{Dual Opus review:<br/>adherence + quality}
     F -- pass --> G{More items?}
     F -- fail 1 --> E
-    F -- fail 2 --> X[Fable 5 assist:<br/>diagnose, guide, amend brief] --> E
+    F -- fail 2 --> X[Fable 5 assist:<br/>diagnose, guide, amend brief]
+    X --> E
+    X -- recommendBlock --> H2
     F -- fail 3 --> H2[Item BLOCKED:<br/>escalation report committed → human]
     H2 --> G
     G -- yes --> E
-    G -- no --> I[Finalize: full gate run + one repair pass<br/>+ Opus chunk audit + report.md]
+    G -- no --> I[Finalize: full gate run<br/>+ one review-gated repair pass, skipped if any item blocked<br/>+ Opus chunk audit + report.md]
     I --> J[Push branch - never auto-PR]
     J --> K{Human gate:<br/>review report + diff, merge into akm-0.9.0}
 ```
@@ -61,7 +64,7 @@ Each brief work item carries a `testMode`; the adherence reviewer verifies compl
 ## 4. Git conventions
 
 - Integration branch: **`akm-0.9.0`**. Prerequisite: create it once from the branch that carries the final plan (`claude/akm-architecture-refactor-fubvd7`, or from `main` after that PR merges).
-- Chunk branches: `akm-090/chunk-<id>` off `akm-0.9.0`, worked in a dedicated worktree (`/home/user/akm-worktrees/chunk-<id>`), pushed by the workflow **whatever the outcome** — the branch (brief + commits + escalation reports + chunk report) is the human-review artifact. The workflow never opens PRs; the maintainer (or the supervising session, on request) does.
+- Chunk branches: `akm-090/chunk-<id>` off `akm-0.9.0`, worked in a dedicated worktree (`/home/user/akm-worktrees/chunk-<id>`). Runs that reach Finalize (`complete | partial | blocked | needs-human`) push the branch — the branch (brief + commits + escalation reports + chunk report) is the human-review artifact. The three pre-Finalize aborts (`blocked-setup`, `blocked-baseline`, `blocked-grounding`) return **without pushing** — there is no report.md for them; the human reviews the structured workflow result directly (for `blocked-grounding`, the last-revision brief is committed in the local worktree). The workflow never opens PRs; the maintainer (or the supervising session, on request) does.
 - Commit prefixes: `test(chunk-N):` / `feat(chunk-N):` / `refactor(chunk-N):` / `docs(chunk-N):`.
 - Committed artifacts per chunk, on the chunk branch: `docs/design/execution/chunk-<id>/brief.md`, `report.md`, `escalation-*.md` (if any).
 - After merge: `git worktree remove /home/user/akm-worktrees/chunk-<id>` to reclaim disk.
@@ -78,7 +81,7 @@ or in chat: *"run the akm-090-chunk workflow for chunk 0a"*.
 
 Per chunk, in order:
 1. Invoke the workflow. It returns a structured result: `status` ∈ `complete | blocked | partial | needs-human | blocked-baseline | blocked-grounding | blocked-setup`.
-2. **Human gate:** read `docs/design/execution/chunk-<id>/report.md` on the pushed branch (and any `escalation-*.md`). For `complete`: merge the chunk branch into `akm-0.9.0`. For anything else: resolve the escalation questions, then re-run the workflow for the same chunk — it resumes on the existing branch/worktree and re-briefs against the current state (the Workflow tool's `resumeFromRunId` can also replay an interrupted run).
+2. **Human gate:** for `complete | partial | blocked | needs-human`, read `docs/design/execution/chunk-<id>/report.md` on the pushed branch (and any `escalation-*.md`). For `complete`: merge the chunk branch into `akm-0.9.0`. For `blocked-setup | blocked-baseline | blocked-grounding` nothing was pushed — read the workflow's returned `detail` instead (and, for `blocked-grounding`, the brief committed in the local worktree). In every non-complete case: resolve the escalation questions, then re-run the workflow for the same chunk — it resumes on the existing branch/worktree and re-briefs against the current state (the Workflow tool's `resumeFromRunId` can also replay an interrupted run).
 3. Move to the next chunk only after the merge — the next chunk's baseline gate depends on it.
 
 Budget behavior: the workflow stops **starting** new work items when the session token budget runs low and returns `partial` with the remaining items marked `deferred-budget`; re-run the same chunk to continue.

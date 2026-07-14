@@ -1,18 +1,19 @@
 {
   "docId": "akm-0.9.0-chunk-manifest",
-  "authority": "docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md — the plan IS the authority. This manifest is a derived index of plan §11 (Execution Order — Two Waves) for machine consumption by the akm-090-chunk workflow. If §11 changes, regenerate this file; on any conflict the plan wins.",
+  "authority": "docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md — the plan IS the authority. This manifest is a derived index of plan §11 (Execution Order — Two Waves) for machine consumption by the akm-090-chunk workflow. If §11 changes, regenerate this file; on any conflict the plan wins. Section references of the form §15.N mean numbered RULE N of plan §15 (the plan has no §15 sub-headings).",
   "generated": "2026-07-14",
   "planVersion": "final scope pass, commit 5555616 (Tier-A only, lifecycle deferred, no trust machinery, reported ledger, hygiene-first waves)",
   "integrationBranch": "akm-0.9.0",
   "branchPrefix": "akm-090/chunk-",
-  "grepGateScope": "src/ + scripts/ + src/assets/ — tests are driven to zero by the §15.2 ratchet on the same identifiers; docs by the Chunk 10 sweep",
+  "grepGateScope": "src/ + scripts/ + src/assets/, EXCLUDING src/migrate/legacy/ (the frozen §3.4 copy retains dead identifiers by design — plan §11 gate note) — tests are driven to zero by the §15.2 ratchet on the same identifiers; docs by the Chunk 10 sweep",
   "globalGates": [
-    "Zero-count greps at declared scope (plan §11): TYPE_DIRS, AkmAssetType, parseAssetRef, wikiName, StashEntry, resolveStashDir (outside RunContext builder), .stash.json, getAssetTypes, ASSET_SPECS, LINTER_MAP",
+    "Zero-count greps at declared scope (plan §11), each IN EFFECT ONLY FROM the chunk that deletes its referent onward — a gate runner applies a grep only if its effective chunk is this chunk or earlier in manifest order (order: 0a, 7, 6, 9, 0b, 1, 1.5, 2, 3, 4, 5, 6.5, 8, 10); before that it is out of scope, not red: AkmAssetType (from Chunk 1.5); TYPE_DIRS, resolveAssetPathFromName, runMatchers, getAssetTypes, ASSET_SPECS, LINTER_MAP (from Chunk 3); wikiName + the wiki type token (from Chunk 4); StashEntry, parseAssetRef, .stash.json/loadStashFile (from Chunk 5); resolveStashDir outside the RunContext builder (from Chunk 9)",
     "Safety suites port-first and green at EVERY chunk boundary (plan §15.3): traversal/escape, symlink, redaction/dangerous-key, SQLite journal/busy/lock/contention/cross-proc, migration suites. Fixed points not to touch: tests/_helpers/sandbox.ts, tests/_preload.ts, the mock.module-ban lint, hand-rolled sharding",
     "Every chunk lands its named §15 test bucket in the same chunk; chunk gate is not green until its bucket is (plan §15.1)",
-    "Net-LOC is REPORTED per chunk (deletion ledger + signed adds), never a pass/fail gate (plan §1.3, DoD 8)",
+    "Every chunk commits its per-chunk deletion ledger — a HARD gate (plan §1.3: 'the hard gates are the zero-count greps, the per-chunk deletion ledgers, and the parity/contract/behavior tests'; §11 preamble; DoD 8)",
+    "The net-LOC NUMBER (signed adds + deletions) is REPORTED per chunk, never a pass/fail threshold (plan §1.3, DoD 8)",
     "No new trust/approval/security machinery; memory lifecycle deferred entirely; anything lifecycle-shaped or trust-shaped in a diff is a scope-creep BLOCKER (plan §1.3, §12.4)",
-    "Local green gate per chunk: typecheck + unit + affected integration (bun run check) + safety suites (plan §11)"
+    "Local green gate per chunk: typecheck + unit + affected integration + safety suites (plan §11); bun run check is the full-suite superset used when no affected-only selection exists"
   ],
   "chunks": [
     {
@@ -36,7 +37,7 @@
       "wave": 1,
       "branch": "akm-090/chunk-7",
       "title": "improve decomposition + dead-lane deletions",
-      "scope": "Decompose the 4 improve god fns + the consolidate ops (planConsolidation/handleMergeOp/handlePromoteOp → named passes; existing behavior preserved EXACTLY per §6 — no lifecycle state model, deferred). Adopt three-verb naming (revise/learn/consolidate — vocabulary only). Delete self-consistency/exploration/calibration/procedural/autotune/review_pressure/ValenceScore.lane/P0-A/multi-cycle with the §5 behavior-change ledger attached. Trim promotion-policy literal. RunContext into processSession + appendEvent ctx adoption (§10.7). Finish-or-delete structured-call (§10.7). Serializer/resolveParentRef consolidation.",
+      "scope": "Decompose the 4 improve god fns + the consolidate ops (planConsolidation/handleMergeOp/handlePromoteOp → named passes; existing behavior preserved EXACTLY per §6 — no lifecycle state model, deferred). Adopt three-verb naming (revise/learn/consolidate — vocabulary only). Delete self-consistency/exploration/calibration/procedural/autotune/review_pressure/ValenceScore.lane/P0-A/multi-cycle with the §5 behavior-change ledger attached. Trim promotion-policy literal. RunContext into processSession + appendEvent ctx adoption (§10.7). Finish-or-delete structured-call (§10.7). Serializer/resolveParentRef consolidation. PLUS §13.1 fold-ins assigned to this chunk: delete the recombine/synthesis cross-episodic subsystem (recombine.ts ~1,009 LOC, recombine-repository.ts ~290, the migrations.ts:679 table — supersedes §5's earlier keep-as-learn-recipe wording; add to this chunk's deletion ledger and grep-gate) and, per §14.3 in the SAME chunk, the recombine-orphaned index-DB exports getEntitiesByEntryIds (db.ts:1109) and getNeighborsByEntryId (db.ts:896) — not left as dead index-DB APIs. The ~−1,300 for the fold-ins is ledgered under §12.1's residual row, outside this chunk's ~−3900.",
       "gates": [
         "§5 behavior-change ledger attached to the chunk",
         "Consolidate behavior preservation vs Chunk 0a goldens — merge/delete/promote/contradict outcomes, journal round-trip, hot-capture guard, contradiction preserve-and-qualify, byte-for-byte where deterministic (§12.3, DoD 5)",
@@ -45,7 +46,7 @@
       ],
       "netLoc": "~−3900",
       "testBucket": "§15.7 consolidate behavior-preservation (replay Chunk 0a goldens); §15.1 per-chunk pairing for deleted lanes",
-      "planRefs": ["plan §11 Chunk 7", "plan §5", "plan §6", "plan §9.2", "plan §10.7", "plan §12.3 (consolidate preservation)"]
+      "planRefs": ["plan §11 Chunk 7", "plan §5", "plan §6", "plan §9.2", "plan §10.7", "plan §12.3 (consolidate preservation)", "plan §13.1 (recombine fold-in)", "plan §14.3 (orphaned db.ts exports)"]
     },
     {
       "id": "6",
@@ -69,14 +70,14 @@
       "wave": 1,
       "branch": "akm-090/chunk-9",
       "title": "Cross-cutting sweep",
-      "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): Wave 1 kills the non-taxonomy cycles (improve-types, config↔integrations, harness/tasks barrels); CI gate lands as a RATCHET (no new cycles, count monotonically decreasing; hits 0 when Chunk 3 deletes the taxonomy cycles). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices.",
+      "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): Wave 1 kills the non-taxonomy cycles (improve-types, config↔integrations, harness/tasks barrels); CI gate lands as a RATCHET (no new cycles, count monotonically decreasing; hits 0 when Chunk 3 deletes the taxonomy cycles). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices. PLUS §13.1 fold-ins assigned to this chunk: vendored echarts.min.js → CDN default-flip and drop the vendored asset (−1 MB; a default flip of html-report.ts:41/:383, not an implementation — §14.1); deterministic-embedder relocation of TEST SCAFFOLDING ONLY (−60) — the AKM_EMBED_DETERMINISTIC env-gated switch STAYS in the production embedder facade (embedder.ts:120,154): scripts/akm-eval and the §13.2 measurement pass depend on it; core/eval/rank-metrics.ts → scripts/akm-eval (−180); the --format html generic template framework → health-only render (−160). PLUS §14.2 fold-ins: H1 AkmHarness capability-discriminated union (retire the load-time throw), H2 health-report view-model/HTML split (deeper than §4.7's line-count split), H3 scheduleKillLadder covering the in-file spawn.ts:527,545 copies, L1 text/registry.ts fold. PLUS §14.3: delete AkmHarness.resume + the *_RESUME_FLAG constants. Fold-ins are ledgered under §12.1's residual row, outside this chunk's ~−2000.",
       "gates": [
         "grep resolveStashDir → residual only in the RunContext builder",
         "Import-cycle ratchet armed in CI (no new cycles; count monotonically decreasing)"
       ],
       "netLoc": "~−2000",
       "testBucket": "§15.1 per-chunk pairing (seam-retirement test updates land with each seam); CLI output baselines from Chunk 0a stay green",
-      "planRefs": ["plan §11 Chunk 9", "plan §10 (all subsections)", "plan §10.7"]
+      "planRefs": ["plan §11 Chunk 9", "plan §10 (all subsections)", "plan §10.7", "plan §13.1 (echarts/embedder/rank-metrics/html fold-ins)", "plan §14.1", "plan §14.2 (H1/H2/H3/L1)", "plan §14.3 (resume-field deletion)"]
     },
     {
       "id": "0b",
@@ -109,7 +110,7 @@
       "netLoc": "~0",
       "testBucket": "§15.1 pairing: interface + scanComponent unit tests land here",
       "planRefs": ["plan §11 Chunk 1", "plan §2.3", "plan §3.4", "adapter spec §§1–4"],
-      "notes": "§15.8 choke-point lands here (before Chunk 2): consolidate the ~15 duplicated stash-builder helpers and 51 local runCli wrappers onto tests/_helpers; migrate the 108 rogue mkdtemp sites onto the sandbox helper so sweep:tmp can be demoted."
+      "notes": "§15.8 choke-point lands here (before Chunk 2): consolidate the ~15 duplicated stash-builder helpers and 51 local runCli wrappers onto tests/_helpers; migrate the 108 rogue mkdtemp sites onto the sandbox helper so sweep:tmp can be demoted. The frozen legacy copy INTENTIONALLY retains dead identifiers (per-type ASSET_SPECS, TYPE_DIRS walks — §3.4); src/migrate/legacy/ is therefore excluded from the zero-count grep scope (plan §11 gate note, amended 2026-07-14) — do NOT rename identifiers inside the frozen copy to appease greps."
     },
     {
       "id": "1.5",
@@ -136,7 +137,7 @@
       "gates": [
         "Adapter conformance suite green (§12.3): index() == fold(recognize) for adapters overriding index(); per-adapter looksLikeRoot fires on its own golden root and no sibling's",
         "Recognition/placement/renderer/lint parity vs Chunk 0b goldens for all 14 formats",
-        "env/secret redaction behavior byte-identical (port, not redesign)"
+        "env/secret redaction behavior-preserving vs the Chunk 0b renderer goldens (port, not redesign — §1.3)"
       ],
       "netLoc": "≈ net-zero-to-negative (replaces deleted globals)",
       "testBucket": "§15.7 adapter conformance suite; §15.5 format goldens replayed",
@@ -153,6 +154,7 @@
         "grep TYPE_DIRS → 0",
         "grep resolveAssetPathFromName → 0",
         "grep runMatchers → 0",
+        "grep getAssetTypes → 0, ASSET_SPECS → 0, LINTER_MAP → 0 (their registries are deleted in this chunk)",
         "Import-cycle count → 0 (taxonomy cycles die here; completes the Chunk 9 ratchet)",
         "git exact-path staging contract test green — pathspecs scope to adapter directoryList(), not nothing-staged (§12.3, §12.4)",
         "Install-time recognition still detects valid bundle roots (provider-utils/git-provider threaded — §12.4)"
@@ -176,7 +178,7 @@
       ],
       "netLoc": "smaller than the prior −1300 (adapter retained, not deleted)",
       "testBucket": "§15.4 wiki.test deletion minus the fetcher subset, same-commit with llm-wiki conformance tests",
-      "planRefs": ["plan §11 Chunk 4", "plan §7.4", "plan §12.4 (website snapshot machinery)", "decision D7/DEV-7"]
+      "planRefs": ["plan §11 Chunk 4", "plan §7.4", "plan §12.4 (website snapshot machinery)", "deviation DEV-7 (deviation analysis §1, resolution §4 item 5)"]
     },
     {
       "id": "5",
@@ -218,7 +220,7 @@
       "wave": 2,
       "branch": "akm-090/chunk-8",
       "title": "Three-DB merge + migration cutover + config/lockfile",
-      "scope": "The §3.3 journaled cutover-as-code: workflow DDL fold + usage_events rescue (it lives in index.db!) + full §3.2 re-key + orphan quarantine (expected orphans → legacy_state quarantine; integrity failures → fail-closed) + ATTACH sequence (ATTACH outside txn; verified empirically on bun:sqlite 3.51). NO bindings/lifecycle DDL (§3.2). Delete workflows/db.ts + workflowDb locations/paths (frozen WORKFLOW_MIGRATIONS copy retained, §8.2). index.db quarantine-rename + out-of-gate rebuild. Config migration stashDir/sources[]/installed[]/wikiName → bundles/defaultBundle + bundle lock state (normative §10.2); the bindings: config map is Tier B — NOT emitted. report.ts barrier-fn decomposition with the W2 finalize-lock split (§10.7). Throwaway migrator @removeIn next-minor.",
+      "scope": "The §3.3 journaled cutover-as-code: workflow DDL fold + usage_events rescue (it lives in index.db!) + full §3.2 re-key + orphan quarantine (expected orphans → legacy_state quarantine; integrity failures → fail-closed) + ATTACH sequence (ATTACH outside txn; verified empirically on bun:sqlite 3.51). NO bindings/lifecycle DDL (§3.2). Delete workflows/db.ts + workflowDb locations/paths (frozen WORKFLOW_MIGRATIONS copy retained, §8.2). index.db quarantine-rename + out-of-gate rebuild. Config migration stashDir/sources[]/installed[]/wikiName → bundles/defaultBundle + bundle lock state (normative §10.2) — SUPERSEDES the per-source integrations/lockfile.ts shape; the bindings: config map is Tier B — NOT emitted (mirrored in Chunk 10's schemas item). report.ts barrier-fn decomposition with the W2 finalize-lock split (§10.7). Throwaway migrator @removeIn next-minor.",
       "gates": [
         "4 → 3 DBs",
         "Backup-verified restore green INCLUDING a pre-cutover backup restored by the post-cutover binary",
