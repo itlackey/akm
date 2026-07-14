@@ -1,13 +1,15 @@
 # AKM Format-Neutral Bundle Workspace Architecture Specification
 
-**Status:** Draft for implementation review  
-**Specification version:** 0.1  
-**Date:** 2026-07-13  
+**Status:** Amended for implementation (reconciled)  
+**Specification version:** 0.2  
+**Date:** 2026-07-13 (amended after the maintainer reconciliation and the design/plan review pass)  
 **Target:** Next major AKM architecture  
 **Reference implementation reviewed:** [`itlackey/akm`](https://github.com/itlackey/akm) at [`ddc0a1b417efc820ad73d76bfcbef65c9f87b243`](https://github.com/itlackey/akm/commit/ddc0a1b417efc820ad73d76bfcbef65c9f87b243)  
 **Related proposal:** [AKM PR #718](https://github.com/itlackey/akm/pull/718)
 
 This specification supersedes the prior directions that treated OKF as an AKM asset type, made OKF the hidden universal AKM file schema, introduced a semantic-view registry, or preserved the current asset system behind a permanent legacy adapter.
+
+**Amendment record (v0.2, 2026-07-13).** The maintainer reconciliation (DEV-1..DEV-7, `akm-plan-vs-spec-deviation-analysis.md` §4) and the review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) are applied **in place**: the ref grammar is `[<bundle>//]<concept-id>[#fragment]` (§7.8, §11); the normalized field is the open **`type`** (§14.1), which MAY drive presentation/ranking/filtering and MUST NOT drive execution, identity, or storage; adapter capabilities are optional methods on one interface (§12); nested component roots have a subtraction rule (§9.3); index persistence is a diff, not truncate-and-rewrite (§14.2); the `trusted` flag is load-bearing in the read path (§15, §28); and the memory-lifecycle claim-coverage gate is scoped to unattended retirement (§25.6). No section of this document is superseded by a banner elsewhere; this text is current.
 
 ---
 
@@ -207,19 +209,25 @@ A native logical object discovered by an adapter and represented in the workspac
 
 ### 7.8 Item ref
 
-The workspace-unique, path-like identity of an indexed item:
+The workspace-unique, path-like identity of an indexed item (reconciled grammar, DEV-2):
 
 ```text
-<bundle-id>/<component-id>/<adapter-local-id>
+ref        := [ bundle "//" ] conceptId [ "#" fragment ]
+bundle     := slug            # workspace bundle name; no "/", ":", ".", or "#"
+conceptId  := path within the bundle with the adapter-recognized extension removed;
+              MAY contain "/"; MUST NOT contain "#"; opaque to the core below the "//"
 ```
 
 Example:
 
 ```text
-team-catalog/knowledge/tables/orders
-release-automation/workflows/release
-project-claude/skills/pdf-processing
+team-catalog//tables/orders
+release-automation//workflows/release
+project-claude//.claude/skills/pdf-processing
+knowledge/http-caching            # short form; CLI input sugar only (§11.1)
 ```
+
+The **component** is not a ref segment. It is a provenance column derived at index time by longest-prefix matching the conceptId's leading path segments against the bundle's configured component roots. Reclassifying a component or re-mounting a root never changes a ref; only moving the file does (§11.2).
 
 ### 7.9 Export
 
@@ -270,7 +278,7 @@ A materializer MAY support refresh, pull, checkout, cache expiration, conditiona
 An adapter MUST:
 
 - deterministically scan its configured component root;
-- emit stable adapter-local IDs for unchanged native items;
+- emit stable conceptIds for unchanged native items;
 - emit a normalized search projection;
 - validate proposed changes according to native rules;
 - preserve unknown native fields and formatting when safe round-tripping requires it;
@@ -371,9 +379,13 @@ exports:
 
 The manifest defines package composition and export declarations only. It MUST NOT redefine the native schemas inside component roots.
 
-### 9.3 Component overlap
+### 9.3 Component overlap and nested-root subtraction
 
-Component roots SHOULD NOT overlap. When overlap is required, ownership of each physical file MUST be deterministic and validated. A physical file MUST NOT be indexed as two independent writable items unless the duplication is intentional and explicitly declared.
+Component roots MUST NOT overlap except by strict nesting. When roots are nested, the parent component's file set is its tree **minus every other configured component root** (computed once at mount registration; §9.4 persists the result). A configured overlap that is not strict nesting is a configuration validation error.
+
+A physical file MUST be owned by exactly one component. Because refs are bundle-relative, a cross-component ref collision cannot be resolved by dedup: the core MUST treat an attempt by two components to emit the same ref as a component-scoped indexing error (last-known-good rows preserved, §14.3), never as a silent upsert. The persisted ref column is UNIQUE.
+
+Within one component, two files reducing to the same conceptId (for example `release.md` and `release.yaml` under a workflow root) are a `duplicate-concept-id` validation diagnostic naming both paths. The adapter MUST declare a deterministic extension priority to pick the indexed winner, and the loser's path MUST be recorded so that deleting the winner later resets, rather than inherits, the ref's durable state history.
 
 ### 9.4 Adapter detection
 
@@ -418,7 +430,7 @@ bundles:
 
 bindings:
   release:
-    export: team-catalog/workflows/release
+    export: team-catalog//workflows/release
     enabled: true
     options:
       engine: claude
@@ -446,32 +458,40 @@ Desired configuration MUST NOT duplicate resolved cache paths and revisions that
 
 ### 11.1 Canonical ref
 
-The canonical item ref is:
+The canonical item ref is (§7.8):
 
 ```text
-<bundle-id>/<component-id>/<adapter-local-id>
+ref := [ <bundle> "//" ] <concept-id> [ "#" <fragment> ]
 ```
 
-The bundle and component IDs MUST NOT contain `/`. The adapter-local ID MAY contain `/` and is otherwise opaque to the core.
+The bundle slug MUST NOT contain `/`, `:`, `.`, or `#` (this keeps `bundle//` lexically distinguishable from URLs and scheme-relative links in prose). The conceptId MAY contain `/`, MUST NOT contain `#`, and is otherwise opaque to the core below the `//`.
+
+**Canonical stored spelling.** All durable state keys, index rows, bindings, and proposal targets MUST store the fully-qualified `bundle//conceptId` form, always. The short (bundle-omitted) form is CLI input sugar resolved at parse time against the workspace `defaultBundle`; it MUST NOT be persisted as a key. (Today's `rekeyStateDbForMove` probing three legacy spellings per ref is the cost of leaving this open.)
+
+**Short refs in portable content.** A short ref appearing inside a file that ships in a bundle resolves to the **containing** bundle, never the installer's default bundle, so intra-bundle references stay portable by construction. Native bundle-relative links (OKF links, §26.3) are the preferred intra-bundle reference form.
+
+**Canonicalization.** conceptIds are normalized at index/parse time: path separators normalized to `/`; Unicode normalized to NFC; identity is byte-wise case-sensitive. Indexing MUST emit a `case-collision` diagnostic when two files in one component differ only under case folding or NFC/NFD normalization (they cannot round-trip through case-insensitive checkouts). The traversal, null-byte, and drive-letter guards of the current `validateName` are normative MUSTs for conceptId validation, together with a `#` rejection.
+
+**Body-ref grammar.** Refs embedded in prose MUST use the fully-qualified `bundle//conceptId` form (the bundle-slug charset above makes it lexically anchored), or a native link form owned by the adapter. Lint's missing-ref scan and `akm mv`'s inbound-xref rewriting operate only on these anchored forms; bare short refs in prose are not recognized as refs.
 
 ### 11.2 Ref invariants
 
 - Provider details MUST NOT appear in refs.
-- Native semantic kind MUST NOT appear in refs unless it is naturally part of the adapter-local ID.
+- Native semantic `type` MUST NOT appear in refs unless it is naturally part of the conceptId path.
 - Changing a Git remote, cache path, or materializer MUST NOT change item refs.
-- Reclassifying a native item without moving it SHOULD NOT change its ref.
+- Reclassifying a native item (changing its `type`, re-validating under another adapter, re-mounting a root) without moving it MUST NOT change its ref.
 - Moving or renaming a native item changes path-based identity and MUST use an explicit state-rekey transaction.
-- The core MUST NOT infer a file path by parsing an adapter-local ID.
+- The core resolves conceptId → path **only via the index**. Adapters own both stripping directions (`recognize` strips the extension; `placeNew` re-adds it, longest-match against the adapter's declared extension set so `foo.yaml.md` has one defined answer). The core MAY treat a conceptId as a `/`-segmented string for prefix matching (component derivation, ref-prefix search, derived-twin keys) but MUST NOT reconstruct filesystem paths from it.
 
 ### 11.3 Export refs
 
 An export normally uses the item ref that exposes it. If one item exposes multiple exports, the adapter MAY append a stable fragment:
 
 ```text
-team/tools/toolbox#deploy
+team//tools/toolbox#deploy
 ```
 
-The fragment is adapter-owned and opaque to the core.
+The fragment is adapter-owned and opaque to the core. Because `#` is forbidden inside conceptIds (§11.1), the fragment production is unambiguous.
 
 ### 11.4 Ref migration
 
@@ -488,36 +508,75 @@ The current `[origin//]type:name` namespace MUST be migrated once. Migration MUS
 
 A permanent dual-parser is prohibited.
 
+**Mapping and orphan policy.** The old-ref → new-id mapping MUST be computed by joining against the last-good index (entry key → file path → conceptId) or by walking the old on-disk layout with a frozen copy of the old resolver — never by reconstructing paths from `TYPE_DIRS` heuristics at migration time. Mature installations provably hold state rows for items with no file and no index row (deleted-asset salience/outcome rows, append-only usage history, retained judged-state keys), so a literal zero-orphan requirement is unsatisfiable. The migration MUST therefore classify rows:
+
+- **Expected orphans** — old refs that map to no live item — are carried into a quarantined `legacy_state` archive table (auditable, purgeable), with counts reported; they MUST NOT abort the migration.
+- **Integrity failures** — mapping collisions (two old refs → one new id without a defined merge), row-count mismatches after re-key, unparseable refs — MUST fail closed to restore.
+- Rows existing under multiple legacy spellings of one logical ref (bare, `origin//`, `.derived` twins) MUST be merged by a deterministic per-table function (e.g. event rows carried as-is under the new key; scalar salience fields merged by most-recently-updated).
+
+### 11.5 Bundle rename
+
+Renaming a workspace bundle id is a mass identity migration (every ref in the bundle changes without any file moving). It MUST be performed by an explicit `akm bundle rename <old> <new>` that runs the same rekey transaction family as an item move — index rows, all ref-keyed state tables, bindings, and configuration, atomically. Startup MUST detect a configured bundle id whose index/state rows exist only under a missing id and refuse or warn rather than silently re-minting fresh state. Refs are workspace-scoped: two workspaces installing the same package under different bundle names produce different refs. The lock state SHOULD record the upstream package name so tooling can offer it as a resolvable alias for cross-workspace exchange; absent that, documentation MUST state that refs are not portable across workspaces.
+
 ---
 
 ## 12. Adapter contracts
 
 ### 12.1 Base contract
 
+There is **one** adapter interface. Optional capabilities are optional methods on it (DEV-6, History §8.3) — not an `extends` hierarchy and not a semantic-view registry.
+
 ```ts
 interface BundleAdapter {
   readonly id: string;
-  readonly version: string;
+  readonly version: string;                 // feeds incrementality and fingerprints
+  readonly extensions: readonly string[];   // recognized extensions, longest-match stripped (§11.2)
 
-  index(
+  // REQUIRED — the single-file recognition primitive.
+  recognize(
+    component: BundleComponent,
+    file: FileContext,
+  ): IndexDocument | null;
+
+  // OPTIONAL — full-component scan for adapters whose layout is not per-file
+  // (website snapshots, multi-file wiki semantics). When absent, the core scans:
+  //   scanComponent(c, adapter) = core walk (git-aware, symlink-safe, skip-dirs,
+  //   nested-root subtraction per §9.3) × adapter.recognize per file.
+  // An adapter that overrides index() MUST either keep recognize() coherent with it
+  // (conformance: index() output equals the fold of recognize() over the walk) or
+  // declare component-level incrementality (§14.2).
+  index?(
     installation: BundleInstallation,
     component: BundleComponent,
   ): AsyncIterable<IndexDocument>;
 
+  // REQUIRED — native validation. The core supplies the context; the adapter never
+  // reads the live filesystem during validation.
   validate(
     component: BundleComponent,
     changes: readonly FileChange[],
+    ctx: ValidateContext,
   ): Promise<Diagnostic[]>;
+}
+
+interface ValidateContext {
+  // Reads served from the run's snapshot WITH the pending changes overlaid —
+  // one core overlay implementation, not one per adapter.
+  readFile(path: string): Promise<string | Uint8Array | null>;
+  list(dir: string): Promise<string[]>;
+  // Read-only index lookup for link/xref existence checks (not search).
+  resolveRef(ref: string): Promise<{ exists: boolean; path?: string }>;
 }
 ```
 
-### 12.2 Authoring facet
+The core walk is a single implementation carrying the security policy (symlink refusal, traversal containment, skip-dirs); adapters MUST NOT reimplement it. Native-shape rules belong to the adapter; **cross-component ref existence is a core base check** run on every transaction, since it belongs to no single adapter.
+
+### 12.2 Authoring methods (optional)
 
 ```ts
-interface AuthoringAdapter extends BundleAdapter {
-  getAuthoringContext(
+  getAuthoringContext?(
     component: BundleComponent,
-    target: { path?: string; localId?: string },
+    target: { path?: string; conceptId?: string },
     operation: "create" | "update" | "move" | "consolidate",
   ): Promise<AuthoringContext>;
 
@@ -525,38 +584,38 @@ interface AuthoringAdapter extends BundleAdapter {
     component: BundleComponent,
     request: CreateRequest,
   ): Promise<FileChange[]>;
-}
+
+  placeNew?(component: BundleComponent, conceptId: string): string;
+  directoryList?(component: BundleComponent): string[];   // feeds git exact-path staging
+  looksLikeRoot?(root: string): boolean;                   // install-time probe (§9.4 ordering)
 ```
 
 `AuthoringContext` MUST include hashes or versions for the rules and guidance used so proposal fingerprints are reproducible.
 
-### 12.3 Export facet
+### 12.3 Export methods (optional)
 
 ```ts
-interface ExportAdapter extends BundleAdapter {
-  listExports(
+  listExports?(
     installation: BundleInstallation,
     component: BundleComponent,
   ): AsyncIterable<BundleExport>;
 
-  planBinding(
+  planBinding?(
     component: BundleComponent,
     exported: BundleExport,
     request: BindingRequest,
   ): Promise<BindingPlan>;
-}
 ```
 
-### 12.4 Memory facet
+### 12.4 Memory lifecycle methods (optional)
 
 ```ts
-interface MemoryLifecycleAdapter extends BundleAdapter {
-  listMemories(
+  listMemories?(
     installation: BundleInstallation,
     component: BundleComponent,
   ): AsyncIterable<MemoryRecord>;
 
-  renderMemoryPlan(
+  renderMemoryPlan?(
     component: BundleComponent,
     plan: MemorySemanticPlan,
   ): Promise<FileChange[]>;
@@ -566,8 +625,9 @@ interface MemoryLifecycleAdapter extends BundleAdapter {
     plan: MemorySemanticPlan,
     changes: readonly FileChange[],
   ): Promise<Diagnostic[]>;
-}
 ```
+
+The method groups in §12.2–§12.4 are members of the single `BundleAdapter` interface of §12.1, shown separately for readability.
 
 ### 12.5 Excluded adapter responsibilities
 
@@ -580,7 +640,7 @@ Adapters MUST NOT:
 - authorize execution;
 - register arbitrary stages inside every improve run;
 - replace core refs, diagnostics, or file-change envelopes;
-- require core code to switch on native kinds.
+- require core code to switch on native `type`s.
 
 ### 12.6 Built-in registry first
 
@@ -644,40 +704,75 @@ The common content model ends at `IndexDocument`:
 
 ```ts
 interface IndexDocument {
-  ref: string;
+  ref: string;              // fully-qualified "bundle//conceptId" (§11.1)
   bundle: string;
-  component: string;
-  localId: string;
-  path: string;
+  component: string;        // provenance, derived (§7.8)
+  conceptId: string;
+  path: string;             // absolute local path (the read path)
   hash: string;
-  kind?: string;
+  adapterId: string;
+  type?: string;            // open; frontmatter (native) or adapter-derived (foreign)
 
-  name: string;
-  description?: string;
-  tags?: string[];
-  aliases?: string[];
-  hints?: string[];
-  content?: string;
+  // FTS columns (weights pinned, §14.4)
+  name: string;             // 10
+  description?: string;     // 5
+  tags?: string[];          // 3
+  hints?: string[];         // 2
+  content?: string;         // 1
+
+  // Core-parsed query-time signals. These fields are read by ranking contributors
+  // and result filters at query time and are therefore FIRST-CLASS, not folded
+  // into documentJson. This list is pinned by a lint; extending it is a
+  // deliberate schema change.
+  aliases?: string[];       // exact-alias boost is distinct from the tags signal
+  searchHints?: string[];
+  quality?: string;         // curated boost + proposed-by-default exclusion filter
+  confidence?: number;
+  beliefState?: string;     // + boosts, score ceilings, --belief filter
+  currentBeliefRefs?: string[];
+  supersededBy?: string;
+  scope?: Record<string, string>;   // scope_user/agent/run/channel filters
+  captureMode?: string;
+  lessonStrength?: number;
+  pinned?: boolean;
+  fileSize?: number;        // hit size + estimated tokens
+  derivedFrom?: string;     // derived-twin belief inheritance
+  links?: string[];         // resolved native links = relationships (§26.3)
+  updated?: string;
+
+  documentJson?: unknown;   // opaque adapter extras ONLY; not FTS; never parsed by core
 }
 ```
 
-`kind` is descriptive adapter metadata. It MUST NOT select storage, execution, rendering, or write behavior.
+`type` is an open descriptive label (the OKF field, DEV-1). It MAY drive presentation, ranking, and filtering. It MUST NOT authorize execution, be part of identity, or select the core storage/write path. For untrusted content, presentation keyed on `type` is clamped (§15.4, §28.2). Sensitivity suppression (env/secret redaction) is keyed on the **adapter**, never on `type`, so frontmatter cannot opt out of it.
 
-### 14.2 Scan flow
+The folding rules that map richer native metadata (examples, usage, intent, xrefs, when-to-use, outline, parameters, body opening) into the FTS `hints`/`content` columns are a **core-shared helper that adapters call** — one fold, not one per adapter — because the embedding-input hashes and frozen retrieval canaries are pinned to that exact surface.
+
+### 14.2 Scan flow and diff persistence
 
 ```text
 materialize bundle revision
 -> select persisted components and adapters
--> adapter.index(component)
--> persist IndexDocument records
--> build FTS/vector/native-link projections
+-> scanComponent (core walk × adapter.recognize, or adapter.index override)
+-> DRAIN the full document stream (any scan error aborts before the first write)
+-> one write transaction: DIFF persist against the component's existing rows
+-> build FTS/vector/native-link projections incrementally
 ```
+
+Persistence is a **diff, not truncate-and-rewrite**:
+
+- upsert by `ref` (ON CONFLICT DO UPDATE), preserving the integer row id so embeddings, FTS, vector joins, and utility state survive unchanged rows; re-embedding is skipped when `hash` is unchanged;
+- delete only rows whose ref disappeared, through the full related-row cascade with the usage-event detach-and-relink behavior;
+- durable behavioral state (utility, usage, feedback) keys on `ref`, not the row id, so even id churn cannot destroy it;
+- a scan that yields zero documents is only a legitimate mass-delete when the component root exists and is readable (a mandatory core preflight); a missing or unreadable root preserves last-known-good rows with a warning.
+
+**Incrementality is item-scoped, not file-scoped.** The mount manifest records `{scanGeneration, adapterVersion, items: {conceptId → fileSet+hashes}}`. A changed file re-recognizes every file belonging to the affected item(s); adapters MAY implement `affectedItems(component, changedPaths)` (default: identity for single-file items) and MAY declare coupling files (e.g. a wiki `schema.md`) whose change escalates to a component rescan. Directory-scoped items (a skill directory) are one item: sibling adds/edits/deletes invalidate the item, and deleting the primary file deletes the item. The incremental FTS dirty-queue and the zero-row dir-state classification carry forward into this manifest design.
 
 ### 14.3 Query isolation
 
 Adapters, materializers, registries, and network services MUST NOT execute during a normal search query.
 
-If one adapter scan fails, AKM SHOULD preserve the last-known-good index records for that component and continue serving unaffected bundles with a warning.
+If one adapter scan fails, AKM MUST preserve the last-known-good index records for that component (guaranteed by drain-before-transaction, §14.2) and continue serving unaffected bundles with a warning.
 
 ### 14.4 Search parity during migration
 
@@ -699,9 +794,13 @@ The cutover gate MUST compare:
 - deterministic top-k order;
 - top-k overlap;
 - MRR and nDCG;
+- **filter-behavior parity** — the proposed-by-default exclusion, `--belief`, and scope-filter result sets, which rank metrics alone do not catch;
+- **whyMatched parity**;
 - index size and build duration;
 - query p50/p95 latency;
 - incremental add/change/delete behavior.
+
+The retrieval-canary set is pinned to the old field-fold surface; the cutover MUST schedule an explicit canary re-mint as a named migration step.
 
 ### 14.5 Deterministic indexing by default
 
@@ -728,17 +827,19 @@ Search MAY filter by:
 - bundle;
 - component;
 - adapter;
-- opaque native kind;
+- open native `type`;
 - workspace scope or policy fields that are actually indexed.
 
-Unknown native kinds MUST remain searchable.
+Unknown native `type`s MUST remain searchable.
+
+**Trust is load-bearing in the read path.** Results from installations with `trusted: false` MUST be clearly labeled as untrusted in search and show output, and MUST NOT carry executable-flavored agent `action` directives (they clamp to the neutral generic presentation, §15.4). Indexing untrusted content as text (§28.2) is permitted; presenting it to an agent as if it were operator-endorsed is not.
 
 ### 15.2 Progressive disclosure
 
 AKM SHOULD expose three retrieval levels:
 
 ```text
-L0 card      name, description, kind, tags, hints
+L0 card      name, description, type, tags, hints
 L1 overview  outline, navigation, relationships, applicability
 L2 detail    full native file content and supporting resources
 ```
@@ -757,16 +858,20 @@ The core SHOULD NOT add `adapter.read()`, `repository.read()`, or content-provid
 
 Adapters MAY provide specialized parsing only when a runtime or authoring operation needs native structure.
 
+**Sensitivity exception.** The raw-read rule does not apply to items in sensitivity-suppressed components: for `dotenv`/secret components, `show` and search MUST present only the safe metadata surface (key names / file name, §21.2) and MUST NOT read or print the body. This suppression is keyed on the **adapter/component**, never on the open `type`, so a frontmatter `type:` cannot opt out of redaction and a generic fallback cannot dump a credential file.
+
 ### 15.4 `show`
 
 `show` SHOULD:
 
 1. resolve the item ref from the index;
-2. read the stored path;
-3. return native content plus indexed metadata;
+2. read the stored path (subject to the §15.3 sensitivity exception);
+3. return native content plus indexed metadata, rendered by the named presentation function for its `type`;
 4. record a usage event.
 
-It MUST NOT run global matchers, renderer registries, graph extraction, or wiki/type special cases.
+It MUST NOT run global matchers, type-competition registries, graph extraction, or wiki/type special cases.
+
+**Presentation code home.** The `type → presentation` mapping is a data table (`TYPE_PRESENTATION`), but the renderer implementations it names remain a small static core module of named functions (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic). "No renderer registry" in the acceptance criteria means no per-type *competition* registry with dynamic registration — not that renderer code disappears. Agent-facing `action` strings take `(ref, ctx: {trusted, adapterId})` so directive-shaped actions respect provenance: untrusted or unbound content clamps to the generic `akm show <ref>` action regardless of declared `type`.
 
 ### 15.5 Context selection
 
@@ -852,6 +957,8 @@ A registry entry SHOULD describe:
 Registry entries SHOULD NOT require per-item asset previews or an AKM-wide asset-type inventory.
 
 The registry discovers installable bundle packages. The local workspace index discovers installed content.
+
+Because default-mounting arbitrary repositories is easy under this design, integrity handling tightens for untrusted sources: installations MUST pin the resolved revision in lock state, and an unrecognized integrity format is a hard failure for an untrusted source rather than a warning. (Git commit-hash sources remain pin-by-revision; npm sources verify integrity as today.)
 
 ---
 
@@ -1059,7 +1166,9 @@ A product such as Claude or OpenCode may implement all three, but they are disti
 
 ### 22.3 Execution authority
 
-An adapter exposing `kind: script`, `kind: skill`, or an executable export does not authorize execution. A workspace binding or explicit one-shot approval is required.
+An item carrying `type: script`, `type: skill`, or an executable export does not authorize execution. A workspace binding or explicit one-shot approval is required.
+
+Because `type` is author-controlled for native OKF content, an untrusted bundle can *declare* any type it likes; the read path therefore clamps executable-flavored presentation for untrusted content (§15.4), and runtime handlers never consult `type` for authority (§8.4).
 
 This follows the useful distinction in [MCP](https://modelcontextprotocol.io/docs/learn/server-concepts) between passive resources and executable tools.
 
@@ -1326,7 +1435,7 @@ memory:
   retireGraceDays: 30
   archiveRetentionDays: 180
   archiveMaxBytes: 1073741824
-  backgroundIntakeWhenBlocked: queue
+  backgroundIntakeWhenBlocked: skip   # default; "queue" is allowed only as a bounded queue (§25.4)
 ```
 
 When a high-water threshold is exceeded:
@@ -1334,11 +1443,11 @@ When a high-water threshold is exceeded:
 1. deterministic cleanup runs first;
 2. semantic consolidation attempts to reach the low-water mark;
 3. unsafe deletion is prohibited;
-4. if safe consolidation cannot reduce pressure, background extraction queues evidence instead of publishing more memory files;
+4. if safe consolidation cannot reduce pressure, background extraction **stops publishing memory files** for that component;
 5. explicit user-authored memory remains allowed with a warning;
 6. health reports the unresolved pressure and blocked intake.
 
-Backpressure is the required fail-safe when safe deletion cannot be proven.
+Backpressure is the required fail-safe when safe deletion cannot be proven. **The default blocked-intake behavior is SKIP-with-warning, not a new queue tier:** sessions and captured evidence already persist durably in workspace state, so a blocked extraction simply defers — re-extraction picks the evidence up when pressure clears. An implementation MAY provide an explicit evidence queue instead, but only as a bounded one (item, byte, and age limits, a defined eviction policy with an event, and drain-on-pressure-clear semantics); an unbounded queue merely displaces the unboundedness this section exists to prevent. Pressure state MUST NOT be an input to per-item disposition classification (§25.6).
 
 ### 25.5 Consolidation pipeline
 
@@ -1358,9 +1467,14 @@ Backpressure is the required fail-safe when safe deletion cannot be proven.
 13. purge archive when eligible
 ```
 
+Two placement rules that implementations MUST NOT diverge on:
+
+- **The step-9 sandbox is constructed from the run snapshot plus the candidate FileChanges.** The live index is not read or mutated before step 10; a lazily-reindexed live store would violate the one-snapshot rule (§6.6) and make step-9 failures unrecoverable.
+- **Steps 12–13 are cross-run and do not belong to an improve run.** Grace monitoring and purge run as a deterministic lifecycle sweep at improve-run start plus an explicit `akm memory purge` command, consistent with §24.6's removal of improve-owned retention.
+
 ### 25.6 Claim coverage
 
-For semantic consolidation, every durable source claim MUST have one disposition:
+For **unattended** semantic consolidation, every durable source claim MUST have one disposition:
 
 ```text
 preserved in successor
@@ -1369,7 +1483,17 @@ explicitly superseded
 intentionally discarded with recorded reason
 ```
 
-A durable claim with no disposition blocks retirement.
+A durable claim with no disposition blocks unattended retirement.
+
+**Reviewed mode:** when a semantic consolidation is queued as a proposal (the default, §25.9), explicit human approval of the proposal satisfies the disposition requirement — the reviewer is the disposition authority. The coverage map is still produced when an extractor is available, as review evidence.
+
+**Authority rules:**
+
+- the coverage verifier MUST be independent of the model that generated the successor (deterministic sentence/heading anchoring cross-checked, or a separate verifier) — a self-reported coverage map from the generator is the self-assessment pattern §24.5 rejects;
+- the `intentionally discarded` disposition is valid in unattended mode only when produced by a deterministic rule from an explicit policy allowlist; otherwise it forces proposal review;
+- pressure state MUST NOT be an input to disposition classification (§25.4).
+
+**Staging:** until the claim extractor exists and has passed its benchmark (§33), unattended semantic retirement is OFF; deterministic auto-retirement (§25.9 rows 1–4) and review-gated semantic proposals are the shipped lifecycle. This is an explicit, acceptable intermediate state — not a spec violation.
 
 Temporal qualifiers and contradictions MUST NOT be flattened into a false single statement.
 
@@ -1386,6 +1510,8 @@ Before retiring semantic source memories:
 - destination-specific tests MUST pass;
 - destination publication MUST succeed before source retirement.
 
+**Scoping.** The first shipped retirement gate is an FTS-only sandbox replay (canaries plus the logged per-source queries, with successor-following), advisory-blocking for unattended retirement; full rank-parity replay (utility/salience/graph extras) is deferred until the §26.2 ranking ablations decide which extras survive. The retrieval-canary probe and its store are **preserved infrastructure** — they are this gate's harness and are explicitly excluded from any prove-or-delete measurement of the advisory collapse-alert loop. Usage-event retention for memory-tier entries MUST be long enough (or per-source query lists snapshotted at capture time) that the replay set does not silently starve.
+
 Cross-bundle or cross-repository formalization MUST use a recoverable two-phase protocol:
 
 1. publish and validate destination;
@@ -1395,11 +1521,15 @@ Cross-bundle or cross-repository formalization MUST use a recoverable two-phase 
 
 Retired bytes MUST NOT accumulate in an unbounded bundle-local archive.
 
+*(Decision note: this deliberately supersedes the 2026-06-15 WS-3a in-code retirement of archive-retention machinery, which relied on git history as the sole recovery path. The reversal is recorded as D27 in the decision history: read-only components, non-git-backed bundles, and format-independent recovery all require a workspace-owned archive; git history remains an additional recovery path, not the only one. The existing bundle-local `archiveMemory` move is an acceptable bounded stopgap only until this store ships — there is one retirement encoding at any given time, not two.)*
+
 The default archive is a workspace content-addressed store:
 
 ```text
 $DATA/archive/blobs/sha256/<digest>
 ```
+
+The blob store and its state records MUST use owner-only filesystem modes where the platform supports them (0600 files / 0700 directories) — retired and quarantined bytes can contain sensitive captures — and the same sensitive-content redaction and quarantine handling that applies to the live index applies to archive metadata.
 
 State records SHOULD include:
 
@@ -1456,7 +1586,7 @@ lexical/vector relevance
 
 Only features that materially improve nDCG, MRR, task-context success, verified-change yield, or user preference SHOULD remain.
 
-New adapter kinds receive no ranking boost by default.
+New `type`s receive no ranking boost by default.
 
 ### 26.3 Relationships
 
@@ -1551,7 +1681,11 @@ Untrusted bundle content MAY be indexed as text, subject to size and sensitivity
 - activate schedules;
 - inject environment or secret values;
 - execute scripts;
-- write outside its component root.
+- write outside its component root;
+- select executable-flavored presentation: search/show results from untrusted installations are labeled and clamp to the generic renderer and the plain `akm show <ref>` action regardless of declared `type` (§15.1, §15.4);
+- have its body content indexed when it is credential-shaped: any catch-all adapter (`generic-files`) MUST refuse to read the body of dotenv- and credential-shaped files (`.env`, key/PEM material) found outside a sensitivity-governed component, indexing at most the file name. Catch-all adapters are explicit-configuration-only and are never auto-selected (§9.4).
+
+The dangerous-environment-key policy keeps its origin asymmetry across the config migration: an env export from an untrusted installation containing process-hijacking keys MUST hard-error at bind/run time, while a first-party/trusted component warns. This maps today's registry-origin rule onto `BundleInstallation.trusted` and MUST be covered by a conformance test before `installed[]` is deleted.
 
 ### 28.3 Path safety
 
@@ -1572,7 +1706,8 @@ Secret values MUST NOT enter:
 - events;
 - logs;
 - model prompts unless explicitly required and permitted;
-- generated bundle indexes.
+- generated bundle indexes;
+- **`state.db` rows, including Binding records.** A Binding stores only references/handles to secrets (keychain id, secret-manager path, AKM secret ref) — never a resolved secret value; the "literal override" mapping (§21.3) is restricted to declared-non-secret values, enforced at bind time. state.db is durable and captured by backups, so a value stored there is a value exfiltrated by every backup.
 
 ---
 
@@ -1707,18 +1842,19 @@ No improve or mutation support is required in this slice.
 
 Migration MUST:
 
-1. inventory current files and durable state;
-2. create checksummed config/state and writable-content backups;
+1. inventory current files and durable state — **the FROM-state is the shipped rc-train layout** (state ledger already at its final pre-cutover migration, `workflow.db` present, vault already removed), not a pristine 0.8 tree; fixtures MUST cover that FROM-state;
+2. create checksummed config/state and writable-content backups — the backup set MUST include every durable table's home, including usage/feedback events wherever they physically live pre-cutover;
 3. propose destination bundles, components, and adapters;
-4. dry-run every file, ref, binding, and state mapping;
-5. write new configuration and lock state;
-6. move or convert files through adapter transactions;
-7. rekey durable refs;
-8. validate all destination components;
-9. rebuild the index;
-10. run search and runtime smoke tests;
-11. produce a migration report;
-12. leave the old source recoverable until verification succeeds.
+4. compute and persist the old-ref → new-id map **before any filesystem re-layout** (walk the old layout with the frozen legacy resolver; the cutover consumes only the persisted map);
+5. dry-run every file, ref, binding, and state mapping;
+6. write new configuration and lock state;
+7. move or convert files through adapter transactions;
+8. rekey durable refs under the §11.4 orphan taxonomy (expected orphans quarantined, integrity failures fail-closed);
+9. validate all destination components;
+10. rebuild the index — **outside the fail-closed gate**: the old index file is quarantine-renamed (never early-unlinked), durable feedback tables are migrated out of it first, and a rebuild failure does not roll back a committed state cutover (the indexer self-heals on the next run);
+11. run search and runtime smoke tests;
+12. produce a migration report;
+13. leave the old source recoverable until verification succeeds.
 
 ### Phase 11 — Delete compatibility code
 
@@ -1745,9 +1881,12 @@ The migration-only old-layout reader is then deleted.
 Every adapter MUST have tests for:
 
 - deterministic indexing;
-- stable local IDs;
+- stable conceptIds;
+- `index()`/`recognize()` coherence where `index()` is overridden (index output == fold of recognize over the walk);
+- `looksLikeRoot` fires on its own golden root and on no sibling adapter's golden root;
+- item-scoped incrementality for multi-file items (sibling edit updates the item; sibling delete does not delete it);
 - unknown-field preservation where applicable;
-- native validation;
+- native validation (through `ValidateContext`, never live filesystem reads);
 - authoring rule/validator consistency;
 - path traversal and symlink escape;
 - round-trip formatting or explicit loss reporting;
@@ -1807,10 +1946,11 @@ Static or runtime architecture tests SHOULD prove:
 - adapters do not import transaction, Git, proposal, or state repositories;
 - indexing writes nothing under bundle roots;
 - workspace state paths cannot resolve under bundle roots;
-- execution cannot be granted by native kind alone;
+- execution cannot be granted by native `type` alone;
 - every semantic write originates from a proposal/change transaction;
 - every update/delete verifies its before hash;
-- unknown native kinds remain searchable.
+- unknown native `type`s remain searchable;
+- untrusted installations are labeled and carry no executable-flavored actions.
 
 ---
 
@@ -1821,14 +1961,14 @@ The target architecture is complete when:
 1. AKM installs bundles containing one or multiple native components.
 2. OKF, LLM Wiki, Claude, OpenCode, Agent Skills, website snapshots, workflows, tasks, and environment definitions are supported without core asset types.
 3. Search uses one local index and performs no adapter, provider, registry, or network calls.
-4. Search quality meets the frozen parity gates.
-5. `show` reads the indexed absolute path directly.
+4. Search quality meets the frozen parity gates, including filter-behavior and whyMatched parity (§14.4).
+5. `show` reads the indexed absolute path directly (subject to the §15.3 sensitivity exception).
 6. Indexing never mutates bundle content.
 7. Conventions and authoring rules are adapter-owned.
 8. Hard-rule prompt text and validation derive from one adapter rule source.
 9. Installation alone grants no execution, scheduling, tools, environment values, or secrets.
 10. Workflows, tasks, environments, agents, commands, skills, and scripts can be distributed as bundle exports.
-11. Bindings pin export digest and local runtime policy.
+11. Bindings pin export digest and local runtime policy, and store secret references only (§28.4).
 12. In-flight workflows remain stable across bundle updates.
 13. Enabled tasks do not silently change when package definitions update.
 14. Environment and secret values never enter the index or output.
@@ -1839,15 +1979,16 @@ The target architecture is complete when:
 19. Improve implements evidence-driven revise, learn, and consolidate operations.
 20. Same-run semantic self-feeding is absent.
 21. Memory-capable components enforce high-water, retirement, archive, purge, and backpressure policies.
-22. Semantic memory retirement requires claim coverage and retrieval/task non-regression.
+22. Unattended semantic memory retirement requires claim coverage and retrieval/task non-regression; reviewed retirement requires proposal approval (§25.6). Until the claim extractor passes its benchmark, unattended semantic retirement is off.
 23. Workspace state is confined to config/data/cache locations.
 24. `state.db`, `index.db`, and `logs.db` are the only databases.
 25. Registry discovery is separate from installed-content search.
-26. Wiki-specific core commands and `wikiName` are removed.
-27. `AssetSpec`, `AkmAssetType`, `TYPE_DIRS`, global matchers, renderer/action registries, and `StashEntry` are removed.
-28. The one-time old-layout migration is dry-runnable, checksummed, idempotent, recoverable, and fully tested.
+26. Wiki-specific core commands and `wikiName` are removed; the LLM Wiki adapter is a first-class built-in.
+27. `AssetSpec`, `AkmAssetType`, `TYPE_DIRS`, global matchers, type-competition renderer/action registries, and `StashEntry` are removed.
+28. The one-time old-layout migration is dry-runnable, checksummed, idempotent, recoverable, and fully tested — including an orphan-bearing fixture that completes with quarantine (§11.4).
 29. All temporary compatibility seams have named deletion milestones and are deleted.
-30. Production code is materially smaller and the net-complexity reduction is reported.
+30. Production code is materially smaller and the net-complexity reduction is reported, with the restored bindings/memory-lifecycle additions accounted as a signed adds line.
+31. Untrusted installations are labeled in search/show, carry no executable-flavored actions, and cannot leak credential-shaped file bodies into the index (§15.1, §28.2).
 
 ---
 
@@ -1861,7 +2002,7 @@ The following are intentionally deferred until implementation evidence is availa
 - which current ranking extras survive ablation;
 - whether LLM graph extraction survives ablation;
 - exact effect-size thresholds for semantic auto-application;
-- the default claim-extraction implementation for memory coverage;
+- the default claim-extraction implementation for memory coverage — deferring it does **not** block the lifecycle, because §25.6 scopes the coverage MUST to unattended retirement and ships review-gated semantic retirement in the interim;
 - whether portable archives are supported by individual adapters in addition to the workspace archive;
 - exact UI and approval flows for one-shot executable exports.
 

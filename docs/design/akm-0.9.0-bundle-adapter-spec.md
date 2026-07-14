@@ -1,6 +1,6 @@
 # AKM 0.9.0 — Bundle Adapter Specification
 
-**Status:** binding implementation spec, reconciled with `akm-format-neutral-bundle-workspace-spec.md` (the normative RFC) and `akm-architecture-decision-history.md` (decision register). This doc is the concrete *how* for the adapter/index/ref core; it **defers to the normative spec** for bindings (§18), improve (§24), and memory lifecycle (§25) rather than duplicate them. Grounded in code at HEAD as `file:line`, or **NEW** with the mandate.
+**Status:** binding implementation spec, reconciled with `akm-format-neutral-bundle-workspace-spec.md` **v0.2** (the normative RFC, now amended in place — the two documents agree; where wording differs the normative spec governs) and `akm-architecture-decision-history.md` (decision register, D1–D29). This doc is the concrete *how* for the adapter/index/ref core; it **defers to the normative spec** for bindings (§18), improve (§24), and memory lifecycle (§25) rather than duplicate them. Grounded in code at HEAD as `file:line`, or **NEW** with the mandate. Amended 2026-07-13 after the design/plan review pass (`akm-target-design-review-2026-07.md`): adapter contract is recognize-required/index-optional over a core-owned walk; index persistence is a diff keyed on ref; query-time ranking/filter signals are first-class `IndexDocument` fields; `validate` receives a snapshot+overlay context; adapter selection has a deterministic probe order; native links do not feed the graph boost.
 
 **Reconciliation decisions applied (maintainer, 2026-07-13)** — resolving the deviations in `akm-plan-vs-spec-deviation-analysis.md`:
 
@@ -78,22 +78,25 @@ export interface BundleComponent {
 
 ### 1.2 How a directory becomes a bundle
 
-1. **Root `index.md` with `okf_version`** ⇒ OKF bundle; the `okf` adapter governs its markdown concepts; tool sub-trees (`.claude/`, `workflows/`) are additional components.
-2. **Optional manifest** `akm.bundle.yaml` (`schemaVersion: 1`) — declares heterogeneous component roots + adapters + optional `exports:` (normative §9.2). Optional; the only new file format.
-3. **Workspace config `bundles` map** (normative §10.1).
-4. **Single-component default** — no manifest/override ⇒ one component `{ id:"main", root:".", adapter:<selected> }`, defaulting to **`okf`**.
+1. **Optional manifest** `akm.bundle.yaml` (`schemaVersion: 1`) — declares heterogeneous component roots + adapters + optional `exports:` (normative §9.2). Optional; the only new file format. Always wins when present.
+2. **Workspace config `bundles` map** (normative §10.1).
+3. **Deterministic install-time probe** (no manifest/config): `looksLikeRoot` probes run in a fixed, most-specific-first order — `okf` (root `index.md`; `okf_version` strengthens the match but is NOT required — even the OKF reference bundles omit it) → `llm-wiki` (`schema.md` + `pages/`) → `claude` (the root IS `.claude`) → `opencode` → `agent-skills` (root `SKILL.md`) → fallback **`okf`**. First match wins; probes MUST be pure (stat/read only); the result is persisted per normative §9.4 and never re-guessed. `generic-files` is **never auto-selected** — explicit configuration only.
+4. **Sub-mount proposal** — the no-manifest scan also probes well-known tool subtrees (`.claude/`, `.opencode/`, `workflows/`, `tasks/`, `env/`, `secrets/`) and registers them as additional components (deterministic, recorded in lock state), so the okf default does not swallow tool dirs and mis-type their contents.
+5. **Single-component default** — nothing else matched ⇒ one component `{ id:"main", root:".", adapter:"okf" }`.
 
-Component roots SHOULD NOT overlap; overlap requires deterministic, validated ownership (normative §9.3).
+Component roots MUST NOT overlap except by strict nesting, with the parent's file set computed as its tree **minus** every other configured component root (normative §9.3). Cross-component ref collisions are indexing errors, never silent upserts; intra-component conceptId collisions are `duplicate-concept-id` diagnostics with a deterministic extension-priority winner.
 
 ### 1.3 Ref grammar — OKF concept ID + optional `bundle//` prefix
 
 **Identity = the OKF concept ID** = path within the bundle with the recognized extension removed. The workspace-qualified ref prepends an optional `<bundle>//` (the `//` echoes the old `origin//`, and disambiguates the bundle prefix from the `/`-separated path):
 
 ```
-ref        := [ bundle "//" ] conceptId
-bundle     := slug                      # no "/" ; workspace bundle name (not the upstream package name)
-conceptId  := path-within-bundle − ext  # OKF concept ID; MAY contain "/" ; opaque to the core below the first "//"
+ref        := [ bundle "//" ] conceptId [ "#" fragment ]
+bundle     := slug                      # no "/", ":", ".", "#" ; workspace bundle name (not the upstream package name)
+conceptId  := path-within-bundle − ext  # OKF concept ID; MAY contain "/" ; MUST NOT contain "#" ; opaque to the core below the first "//"
 ```
+
+Normative §11.1 rules apply verbatim: **all durable state keys store the fully-qualified `bundle//conceptId` form** (the short form is CLI sugar only); **short refs inside bundle content resolve to the containing bundle**; conceptIds are NFC-normalized, `/`-separated, byte-wise case-sensitive, with `case-collision` diagnostics; body refs in prose use only the fully-qualified anchored form. `akm bundle rename` is a first-class rekey transaction (normative §11.5).
 
 ```
 personal//knowledge/http-caching     # bundle-qualified; component "knowledge" is the leading path segment
@@ -130,18 +133,36 @@ Per History §8.3 / the reconciliation, the adapter is **one interface with opti
 export interface BundleAdapter {
   readonly id: string;
   readonly version: string;                                  // feeds incrementality (§4) + fingerprints
+  readonly extensions: readonly string[];                    // recognized extensions; longest-match stripping + collision priority
 
-  // REQUIRED — recognition + indexing (read-only over user content)
-  index(inst: BundleInstallation, c: BundleComponent): AsyncIterable<IndexDocument>;
-  recognize(c: BundleComponent, file: FileContext): IndexDocument | null;  // single-file primitive; replaces the matcher stack (matchers.ts:151-305; file-context.ts:242-265)
+  // REQUIRED — the single-file recognition primitive; replaces the matcher stack
+  // (matchers.ts:151-305; file-context.ts:242-265)
+  recognize(c: BundleComponent, file: FileContext): IndexDocument | null;
 
-  // REQUIRED — native validation (change-transaction pre-commit + lint --fix); adapter MUST NOT write
-  validate(c: BundleComponent, changes: FileChange[]): Promise<Diagnostic[]>;
+  // OPTIONAL — full-component scan for non-per-file layouts (website snapshots,
+  // llm-wiki multi-file semantics). When absent, the CORE scans:
+  //   scanComponent(c, adapter) = core walk (git-aware, symlink-safe, skip-dirs,
+  //   nested-root subtraction §1.2) × adapter.recognize per file.
+  // The core walk is ONE implementation carrying the security policy; adapters never
+  // reimplement it. An adapter overriding index() MUST keep recognize() coherent
+  // (conformance: index() == fold of recognize() over the walk) or declare
+  // component-level incrementality (§4).
+  index?(inst: BundleInstallation, c: BundleComponent): AsyncIterable<IndexDocument>;
+
+  // OPTIONAL — item-scoped incrementality (§4). Default: identity (one file = one item).
+  affectedItems?(c: BundleComponent, changedPaths: string[]): string[];
+
+  // REQUIRED — native validation (change-transaction pre-commit + lint --fix); adapter
+  // MUST NOT write and MUST NOT read the live filesystem: ctx serves the run snapshot
+  // WITH the pending changes overlaid (one core overlay implementation), plus a
+  // read-only resolveRef for link/xref existence (normative §12.1). Cross-component
+  // ref existence is a CORE base check, not an adapter concern.
+  validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   // OPTIONAL — placement / discovery
   placeNew?(c: BundleComponent, conceptId: string): string;  // replaces TYPE_DIRS + resolveAssetPathFromName
   directoryList?(c: BundleComponent): string[];              // owned dirs; feeds git exact-path staging (git-stash.ts:241)
-  looksLikeRoot?(root: string): boolean;                     // install-time default-adapter probe
+  looksLikeRoot?(root: string): boolean;                     // install-time probe; ordered per §1.2
 
   // OPTIONAL — authoring facet (normative §12.2)
   getAuthoringContext?(c: BundleComponent, target: AuthoringTarget, op: "create"|"update"|"move"|"consolidate"): Promise<AuthoringContext>;
@@ -158,15 +179,19 @@ export interface BundleAdapter {
 }
 ```
 
-**Renderer/action = data table keyed on the open `type`** (plan §2.3):
+**Renderer/action = data table keyed on the open `type`, pointing at a named-function core module** (plan §2.3; normative §15.4). The *mapping* is data; the renderer *implementations* (env-keys-only, secret-name-only, script-exec-hints, markdown view modes, generic) remain a small static core module — env/secret redaction is behavior, not a string. Sensitivity suppression is keyed on the **adapter**, never on `type`. Actions receive trust context so untrusted content clamps to the generic action:
 
 ```ts
-export const TYPE_PRESENTATION: Record<string, { renderer: string; action: (r: ItemRef) => string }> = {
-  "knowledge": { renderer: "knowledge-md", action: (r) => `akm show ${r} -> read reference material` },
+export const TYPE_PRESENTATION: Record<string, { renderer: string; action: (r: ItemRef, ctx: PresentationCtx) => string }> = {
+  "knowledge": { renderer: "knowledge-md", action: (r, ctx) => `akm show ${r} -> read reference material` },
   "workflow":  { renderer: "workflow-md",  action: buildWorkflowAction },
   // unknown type ⇒ generic renderer + `akm show <ref>` (third-party OKF types never dropped)
+  // ctx.trusted === false ⇒ generic renderer + plain `akm show <ref>` REGARDLESS of type (normative §15.4, §28.2)
 };
+// PresentationCtx = { trusted: boolean; adapterId: string }
 ```
+
+The nine index-time metadata contributors currently registered by `output/renderers.ts` move into the owning adapters' `recognize` — they are index-time concerns and this part of the port is clean.
 
 **Forbidden (normative §12.5):** adapters MUST NOT implement search, own proposal/outcome stores, apply writes or Git, **authorize execution**, register arbitrary improve stages, or replace core refs/diagnostics/change envelopes. The authoring/export/memory methods are **targeted ports, not semantic views** (History §8.3).
 
@@ -176,9 +201,9 @@ export const TYPE_PRESENTATION: Record<string, { renderer: string; action: (r: I
 
 ```ts
 export interface IndexDocument {
-  ref: ItemRef;             // "[<bundle>//]<concept-id>"
+  ref: ItemRef;             // fully-qualified "<bundle>//<concept-id>" (canonical stored spelling, §1.3)
   bundle: BundleId;
-  component: ComponentId;   // PROVENANCE (derived from the concept-id path prefix), not a ref segment
+  component: ComponentId;   // PROVENANCE (derived: longest-prefix match of the concept-id against component roots), not a ref segment
   conceptId: string;        // OKF concept ID = path within bundle − ext; opaque to the core
   path: string;             // absolute local path (the read path)
   hash: string;
@@ -187,39 +212,66 @@ export interface IndexDocument {
 
   name: string;             // FTS 10 ← OKF `title` (fallback filename)
   description?: string;     // FTS 5  ← OKF `description`
-  tags?: string[];          // FTS 3  ← OKF `tags` (+aliases)
+  tags?: string[];          // FTS 3  ← OKF `tags`
   hints?: string[];         // FTS 2
   content?: string;         // FTS 1 (bounded)
+
+  // FIRST-CLASS query-time signals — read by ranking contributors and result
+  // filters at query time, therefore NOT foldable into documentJson (the parity
+  // gate fails or the filters silently vanish otherwise). Pinned by a lint.
+  aliases?: string[];       // exact-alias 1.5 boost is distinct from the tags signal — NOT folded into tags
+  searchHints?: string[];
+  quality?: string;         // curated boost + proposed-by-default exclusion filter
+  confidence?: number;
+  beliefState?: string;     // + currentBeliefRefs/supersededBy: boosts, ceilings, --belief filter
+  currentBeliefRefs?: string[];
+  supersededBy?: string;
+  scope?: Record<string, string>;
+  captureMode?: string;
+  lessonStrength?: number;
+  pinned?: boolean;
+  fileSize?: number;        // hit size + estimatedTokens
+  derivedFrom?: string;     // derived-twin belief inheritance
   updated?: string;         // ← OKF `timestamp`
-  links?: string[];         // resolved bundle-relative OKF links = relationships (§9)
-  documentJson?: unknown;   // opaque adapter extras (incl. arbitrary OKF frontmatter keys); not FTS, not parsed by core
+  links?: string[];         // resolved native links = relationships (§9); navigation/lint, NOT graph boost
+  documentJson?: unknown;   // opaque adapter extras ONLY (arbitrary OKF frontmatter keys); not FTS, never parsed by core
 }
 ```
 
-Persisted index columns migrate `entry_key/stash_dir/entry_type/entry_json` → `item_ref/bundle_id/component_id/concept_id/adapter_id/type/file_path/content_hash/document_json` (normative §14.4), keeping the integer row id for FTS/vector joins.
+Persisted index columns migrate `entry_key/stash_dir/entry_type/entry_json` → `item_ref/bundle_id/component_id/concept_id/adapter_id/type/file_path/content_hash/document_json` plus the pinned signal columns (normative §14.4), keeping the integer row id for FTS/vector joins — and durable behavioral state (utility, usage, feedback) re-keys onto `item_ref` so row-id churn can never destroy it (§4).
 
-**FTS5 schema + bm25 weights UNCHANGED and load-bearing** (schema.ts:159; db.ts:1024 `bm25(entries_fts,0,10,5,3,2,1)`). `buildSearchFields(IndexDocument)` is a direct OKF map (name←title 10, description←description 5, tags←tags 3, hints 2, content 1). The deterministic nDCG/MRR/recall/banned-hit parity gate governs the cutover; weights/columns do not move (normative §14.4, D12).
+**FTS5 schema + bm25 weights UNCHANGED and load-bearing** (schema.ts:159; db.ts:1024 `bm25(entries_fts,0,10,5,3,2,1)`). The fold of richer native metadata (examples/usage/intent/xrefs/whenToUse/toc/parameters/bodyOpening) into `hints`/`content` is a **core-shared helper adapters call** — one fold, not ten — because embedding-input hashes and the frozen retrieval canaries are pinned to that exact surface (search-fields.ts:28-33). The deterministic nDCG/MRR/recall/banned-hit parity gate governs the cutover **and additionally checks filter-behavior parity (proposed/belief/scope result sets) and whyMatched parity**; weights/columns do not move (normative §14.4, D12). The canary re-mint (`akm improve canary --refresh`) is a named migration step.
 
 ### 3.4 Known-`type` presentation set (not a closed union)
-No closed set replaces `AkmAssetType`. AKM keeps `TYPE_PRESENTATION` + ranking rules for the `type`s it renders/ranks; any other `type` renders generically and stays searchable (normative §15.1). A lint keeps the *spelling* of the known set consistent across the presentation/ranking tables + `parseRefPrefixQuery` + base-linter `REF_RE`; it never constrains what `type`s may exist.
+No closed set replaces `AkmAssetType`. AKM keeps `TYPE_PRESENTATION` + ranking rules for the `type`s it renders/ranks; any other `type` renders generically and stays searchable (normative §15.1). A lint keeps the *spelling* of the known set consistent across the presentation/ranking tables, the search `--type` filter tokens, and the shipped assets/hints (plan §7.3); it never constrains what `type`s may exist. Body-ref recognition no longer keys on types at all: lint's missing-ref scan, `akm mv` xref rewriting, and search ref-prefix queries anchor on the fully-qualified `bundle//conceptId` grammar (normative §11.1), whose bundle-slug charset (no `:`/`.`/`#`) keeps it lexically distinguishable from URLs in prose.
 
 ---
 
 ## 4. Indexing loop, incrementality, registry
 
-Scan loop (replaces `akmIndex` walk + wiki branch): for each installation → each component → `adapter.index` → `persistComponent` (one txn, truncate-and-rewrite the component's rows, fixing the `utility_scores_scoped` gap; dedup by `ItemRef`). Adapters/materializers/registry/network **never run at query time** (normative §14.3, D11). A failed component scan preserves last-known-good rows and keeps other bundles searchable.
+Scan loop (replaces `akmIndex` walk + wiki branch): for each installation → each component → `scanComponent` (core walk × `recognize`, or the adapter's `index()` override) → **drain the full document stream** (any scan error aborts before the first write — this makes last-known-good true by construction, and respects the async-scan/sync-transaction split the current indexer already enforces, indexer.ts:718-723) → one write transaction that **diff-persists**:
 
-Incrementality is mount-scoped: `{ scanGeneration, adapterVersion, files: {path → {hash, mtimeMs}} }`; re-index on adapterVersion change / newer mtime / hash mismatch / new-or-deleted path; a single changed file calls `recognize` and upserts one row.
+- upsert by `item_ref` (ON CONFLICT DO UPDATE), preserving `entries.id` so embeddings/FTS/vector joins survive and re-embedding is skipped when `content_hash` is unchanged;
+- delete only rows whose ref disappeared, via the full `deleteRelatedRows` cascade including the usage-event detach-and-relink behavior (never the #624-P1 cascade-wipe);
+- the wipe-set includes `utility_scores_scoped` (fixing the B4 gap) — but utility/usage state re-keys onto `item_ref` in the schema migration so even id churn cannot destroy it;
+- a zero-document scan is a legitimate mass-delete only when a core preflight confirms the component root exists and is readable; otherwise last-known-good rows are preserved with a warning.
 
-Registry is a **static frozen `BUILTIN_ADAPTERS`** map (normative §12.6): `okf`, `llm-wiki`, `claude`, `opencode`, `agent-skills`, `akm-workflow`, `akm-task`, `dotenv`, `website-snapshot`, `generic-files`. One adapter per component root, selected once; install-time default via `looksLikeRoot`, defaulting to `okf`. Unknown `type` ⇒ searchable + generic renderer; unknown adapter id ⇒ component skipped with a warning.
+**NOT truncate-and-rewrite** — truncation would mint new row ids and cascade-destroy embeddings/utility/usage, contradicting the row-id-preservation promise above.
+
+Adapters/materializers/registry/network **never run at query time** (normative §14.3, D11). A failed component scan preserves last-known-good rows and keeps other bundles searchable.
+
+**Incrementality is ITEM-scoped, not file-scoped**: the mount manifest is `{ scanGeneration, adapterVersion, items: {conceptId → {files: {path → hash,mtimeMs}}} }`. A changed path maps to affected item(s) via `affectedItems` (default: identity); every file of an affected item re-recognizes together, so directory-scoped items (skill = the dir; llm-wiki pages under `schema.md`) stay coherent — a sibling edit updates the item, deleting the primary file deletes the item, deleting a sibling does not. Adapters MAY declare coupling files (wiki `schema.md`) whose change escalates to a component rescan. The FTS dirty-queue (schema.ts:352) and zero-row dir-state classification (dir-staleness.ts) carry forward into this manifest.
+
+Registry is a **static frozen `BUILTIN_ADAPTERS`** map (normative §12.6): `okf`, `llm-wiki`, `claude`, `opencode`, `agent-skills`, `akm-workflow`, `akm-task`, `dotenv`, `website-snapshot`, `generic-files`. One adapter per component root, selected once via the **ordered probe list of §1.2** (deterministic winner, persisted; `generic-files` config-only, never probed). Unknown `type` ⇒ searchable + generic renderer; unknown adapter id ⇒ component skipped with a warning. Conformance: each adapter's `looksLikeRoot` fires on its own golden root and on **no** sibling adapter's golden root.
 
 ---
 
 ## 5. The reference `okf` adapter (default)
 
 Pure OKF: **`type` from frontmatter, identity from path, no directory routing.**
-- **recognize:** any `.md` not named `index.md`/`log.md` → one concept; `type` = frontmatter `type` (default `knowledge` + a `missing-type` info hint if absent). No directory gate (OKF §1).
-- **conceptId/localId:** path within the bundle − `.md` (markdownSpec.toCanonicalName, asset-spec.ts:91-95).
+- **recognize:** any `.md` not named `index.md`/`log.md` → one concept; `type` = frontmatter `type` (default `knowledge` + a `missing-type` info hint if absent). No directory gate (OKF §1). Files under a sibling nested component root are excluded by the core subtraction rule (§1.2), not by the adapter.
+- **links:** BOTH legal OKF link forms resolve — `/`-rooted bundle-relative (recommended by OKF §5.1) *and* standard relative paths (OKF §5.2). Links resolve against the **component root**, then re-prefix with the component root to form the stored bundle-relative conceptId in `links` (so okf mounted at `root: knowledge` produces correct targets). OKF round-trip fidelity ("an AKM knowledge bundle *is* an OKF bundle") holds exactly when the okf component root is `.`.
+- **conceptId:** path within the bundle − `.md` (markdownSpec.toCanonicalName, asset-spec.ts:91-95).
 - **placeNew:** `<conceptId>.md`; new files carry OKF frontmatter (`type`,`title`,`description`,`tags`,`timestamp`).
 - **directoryList:** the component root (OKF concepts live anywhere).
 - **renderer/action:** `TYPE_PRESENTATION` keyed on the file's `type` (default `knowledge-md`).
@@ -237,14 +289,14 @@ These are **`type` values, not adapters**. For AKM-native content they are **aut
 | knowledge | yes | default when `type` absent | base only |
 | command | yes | `.md` under `commands/` + `$ARGUMENTS`/`agent`-fm probe | `missing-name-or-type`; type∈{command} |
 | agent | yes | `.md` under `agents/` + `tools`/`toolPolicy`/`model` probe | `missing-name-or-type`; type∈{agent} |
-| skill | yes | `SKILL.md`; item = the dir | `missing-skill-md` **+ NEW** Anthropic contract (name≤64/desc≤1024/body<~500) |
+| skill | yes | `SKILL.md`; item = the dir (item-scoped incrementality, §4) | `missing-skill-md` **+ NEW** Agent Skills contract — hard: name 1–64 (`^[a-z0-9]+(-[a-z0-9]+)*$`, NFKC, == parent dir name), description 1–1024, `compatibility` ≤500, `metadata` string→string map, YAML-mapping frontmatter; soft (warnings): body <500 lines / instructions <5k tokens, lowercase `skill.md` filename, `allowed-tools` portability. Strictness is per-adapter: `agent-skills` errors on unknown frontmatter (skills-ref behavior); `claude` allows Claude Code's documented extension fields |
 | memory | yes | `.md` under `memories/` | `orphaned-stub` (delete fix); memory-lifecycle (§ normative 25) |
 | lesson/fact/session/instruction | yes | `lessons/`/`facts/`/`sessions/`/`CLAUDE.md`·`AGENTS.md` | base (+`missing-category` for fact) |
 | workflow | ext | `.md`/`.yaml`/`.yml` workflow; markdown≈OKF, YAML program is an AKM extension | `placeholder-stub`, `invalid-workflow-structure` |
 | task | AKM ext | `.yml` under `tasks/` (not OKF markdown) | `invalid-task-yaml`: schedule+enabled+one target |
 | env | AKM ext | `.env`/`*.env` under `env/` — **key NAMES only, values never indexed** | dangerous-key warn scan |
 | secret | AKM ext | any file under `secrets/` minus `.lock`/`.sensitive` — **filename only** | dangerous-key scan; `classifyBySmartMd` bails on `secrets/` |
-| script | AKM ext | 17 `SCRIPT_EXTENSIONS`; localId keeps extension | none |
+| script | AKM ext | 16 `SCRIPT_EXTENSIONS`; conceptId keeps extension | none |
 | website | derived | website crawl snapshot (§7) | base (read-only) |
 | wiki page | **LLM Wiki adapter** | `.md` under an LLM Wiki root (§7) — its own `type` values | native wiki validation (§7) |
 
@@ -262,11 +314,11 @@ An **adapter is a format family**, one per component root, emitting one or more 
 | **akm** | AKM workspace: OKF markdown + AKM extensions (workflow/task/env/secret/script) under AKM subdirs | full §6 profile | yes (markdown/workflow/task); env/secret metadata-only | AKM's own workspace bundle |
 | **llm-wiki** (**restored, DEV-7**) | LLM Wiki: `schema.md`, `index.md`, `log.md`, `raw/`, `pages/`, xrefs, citations, native ingest | wiki page kinds (adapter-owned) | yes | owns its native multi-file semantics + authoring/validation; `wiki` asset-*type* is gone but the **adapter** is first-class (normative §13.3) |
 | **claude** | `.claude` tool dir — translator; derives `type` from dir | command, agent, skill, instruction | yes | AKM workspace layout **is** `.claude` minus the prefix |
-| **opencode** | `.opencode` tool dir — translator (NEW) | command, agent, instruction | yes | `AGENTS.md`=instruction; `config.json` not indexed |
+| **opencode** | `.opencode` tool dir — translator (NEW) | command, agent, **skill**, instruction | yes | `AGENTS.md`=instruction; `config.json` not indexed; OpenCode has first-class skills (`.opencode/skills/<name>/SKILL.md`) and reads `.claude/skills/` — plural `commands/`/`agents/` dirs |
 | **agent-skills** | standalone `SKILL.md` packages — translator | skill | yes | SKILL.md codec shared with claude as functions |
 | **akm-workflow / akm-task / dotenv** | native workflow / task-YAML / dotenv formats | workflow / task / env | yes / yes / metadata-only | own executable/sensitive schemas; export facet (§ normative 18) |
 | **website-snapshot** | crawl snapshot (website-ingest.ts:180) — read-only | website | **no** (Mode A) | export (Mode B) routes `content` through the destination adapter + FileChange txn; all SSRF/redirect/byte/depth/wall-clock/stale protections preserved |
-| **generic-files** | any leftover file | document/script/file | yes | unknown-format-stays-searchable |
+| **generic-files** | any leftover file | document/script/file | yes | explicit-config ONLY (never auto-selected, §1.2); MUST refuse to read the body of dotenv/credential-shaped files outside a sensitivity-governed component — index the name at most (normative §28.2) |
 
 Instruction files (`CLAUDE.md`/`AGENTS.md`) are NEW; tool config files are runtime-config, never indexed. `sources/wiki-fetchers/`→`snapshot-fetchers/`; the one-element youtube registry inlines.
 
@@ -285,17 +337,21 @@ bundle "team-catalog" (OKF)
 └── component { root: ".claude",   adapter: "claude" }       → command|agent|skill  → team-catalog//.claude/<...>
 ```
 
+**Nested-root subtraction applies (§1.2 / normative §9.3):** the okf component at `root: "."` owns its tree **minus** `workflows/`, `wiki/`, and `.claude/` — so `workflows/release.md` is indexed once, by `akm-workflow`, never twice under one ref. This subtraction is computed by the core at mount registration; adapters never see files outside their effective set.
+
 ---
 
 ## 9. Relationships: OKF links (deterministic; replaces LLM graph extraction for OKF content)
 
-OKF bundle-relative links (`[x](/tables/customers.md)`, `[y](./other.md)`) **are relationships** (OKF §4). The `okf`/`llm-wiki` adapters resolve them at `index` time into `IndexDocument.links` (target concept IDs). This is the deterministic native link graph the plan wants first; LLM graph extraction survives only as an optional index processor over non-OKF formats, gated on measured nDCG lift (normative §26.3). Broken links are tolerated (warning), so relationship extraction never blocks indexing.
+OKF bundle-relative links (`[x](/tables/customers.md)`, `[y](./other.md)` — both legal forms, §5) **are relationships** (OKF §5.3). The `okf`/`llm-wiki` adapters resolve them at `index` time into `IndexDocument.links` (target concept IDs, component-root-resolved then bundle-prefixed, §5). They persist to a dedicated `item_links(src_ref, dst_concept_id)` table with three consumers: the L1 overview (progressive disclosure), `related`-item output, and the base-linter broken-link check. Broken links are tolerated (warning), so relationship extraction never blocks indexing.
+
+**Links do NOT feed `computeGraphBoost`.** The existing graph signal is entity-lexical (query tokens matched against extracted entity strings expanded over a confidence-weighted entity adjacency, graph-boost.ts:212-301); doc-level link edges carry no entity strings and cannot substitute for it. LLM graph extraction and its ranking boost remain a separate, measured concern resolved by the 0.9.1 ablation pass (plan §13.2, normative §26.3) — native links are navigation/lint/overview data, not a ranking contributor. If a native link-boost is ever wanted, it is a new contributor with its own nDCG gate.
 
 ---
 
 ## 10. Installation, bindings, activation (IN SCOPE — DEV-3)
 
-Per **History D8** and normative **§18**, restored for 0.9.0 (reversing the earlier §13.3 deferral): **installation is not activation.** Lifecycle: `discover → install/materialize → index → bind (or explicit one-shot approval) → enable`. Installation makes content searchable and grants **no** execution, scheduling, tools, environment values, or secrets. A `Binding` (durable state in `state.db`, never written to portable files) records export ref + digest, engine/harness, parameters, env/secret mappings, tool/fs policy, enabled state, and scheduler identity where applicable. Export kinds (`workflow`/`task`/`environment`/`agent`/`command`/`skill`/`script`) are activation contracts, not storage types or identity. Runtime handlers execute only approved bindings/one-shots and never infer authority from a `type` or frontmatter field (normative §8.4, §28). Full binding/update/one-shot rules: normative §18–§22.
+Per **History D8** and normative **§18**, restored for 0.9.0 (reversing the earlier §13.3 deferral): **installation is not activation.** Framing (per the security review): today's install path already grants nothing — bindings are a **portability/correctness** design (distributable runnable exports, digest-pinned updates, tamper detection on update), not a fix for a present-day escalation; the actual security hardening in 0.9.0 is the untrusted read-path clamp (normative §15.1/§15.4/§28.2). A `Binding` stores only **references** to secrets, never resolved values (normative §28.4). Lifecycle: `discover → install/materialize → index → bind (or explicit one-shot approval) → enable`. Installation makes content searchable and grants **no** execution, scheduling, tools, environment values, or secrets. A `Binding` (durable state in `state.db`, never written to portable files) records export ref + digest, engine/harness, parameters, env/secret mappings, tool/fs policy, enabled state, and scheduler identity where applicable. Export kinds (`workflow`/`task`/`environment`/`agent`/`command`/`skill`/`script`) are activation contracts, not storage types or identity. Runtime handlers execute only approved bindings/one-shots and never infer authority from a `type` or frontmatter field (normative §8.4, §28). Full binding/update/one-shot rules: normative §18–§22.
 
 ---
 
@@ -315,7 +371,7 @@ Evidence-driven (corrective evidence required for unattended semantic change; im
 
 ## 12. Bounded memory lifecycle (IN SCOPE — DEV-4)
 
-Per **History D21–D24** and normative **§25**, restored for 0.9.0 as a first-class capability (reversing the scope-down). It is a **refactor of the existing `consolidate.ts` (~3,100 LOC)** into a proper bounded lifecycle, not a new subsystem:
+Per **History D21–D24** and normative **§25**, restored for 0.9.0 as a first-class capability (reversing the scope-down). Honest scoping: the consolidation **engine** (snapshot/narrowing, deterministic dedup, clustering, classify, successor generation + validation, journals, contradiction preserve-and-qualify — ~6,200 LOC across the consolidate/dedup/memory-improve cluster) is a refactor; the lifecycle **state model** (operational states, water-marks/backpressure, claim coverage, sandbox evaluation, content-addressed archive, overlay, two-phase) is new construction around it, budgeted as a signed adds line in the plan ledger. The 0.9.0 lifecycle ships per normative §25.6's staging rule — deterministic auto-retirement + pressure/health + review-gated semantic proposals + retirement records + FTS-only sandbox replay; unattended semantic retirement stays OFF until the claim extractor passes its benchmark:
 - **Adapter capability** via the optional memory methods (§2); core owns pressure/selection/evaluation/transactions/archive/purge.
 - **Operational states** `active → retired → purged` and `active → quarantined → restored|purged`, distinct from native semantic states (superseded/contradicted/historical).
 - **High/low-water + backpressure** — deterministic cleanup first, then non-destructive semantic consolidation to low-water; pressure never lowers preservation gates; if safe reduction fails, background intake **queues** evidence instead of publishing more memory files.
@@ -346,6 +402,6 @@ Full states, water-marks, coverage map, evaluation, archive, purge, and cross-bu
 
 ## References / Citations
 
-- **OKF v0.1** — [`GoogleCloudPlatform/knowledge-catalog` `okf/SPEC.md`](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md); [Google Cloud announcement (2026-06-12)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/); [annotated guide](https://okf.md/spec/). Concept identity = path − `.md`; required open `type`; recommended `title`/`description`/`resource`/`tags`/`timestamp`; reserved `index.md`/`log.md`; links = relationships; `okf_version`; tolerate unknown fields + broken links.
-- **Anthropic Agent Skills** — the `SKILL.md` L1 contract (name ≤64, description ≤1024 what+when, body <~500 lines, progressive disclosure): [Agent Skills specification](https://agentskills.io/specification); docs.anthropic.com Agent Skills.
+- **OKF v0.1** — [`GoogleCloudPlatform/knowledge-catalog` `okf/SPEC.md`](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md); [Google Cloud announcement (2026-06-12)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/). Concept identity = path − `.md`; required open `type`; recommended `title`/`description`/`resource`/`tags`/`timestamp`; reserved `index.md`/`log.md` at every level (both optional); TWO link forms (`/`-rooted and relative, §5); `okf_version` optional, root-index only (even Google's reference bundles omit it — probes must not require it); consumers MUST NOT reject on unknown types/fields/broken links (the `okf` adapter's leniency is a conformance requirement, not a courtesy). Caveats absorbed into this spec: OKF is a month-old single-vendor **Draft** with no governance body — AKM **vendors a frozen copy of the spec rules it implements** and treats `okf_version` handling as best-effort; manifests, versioning, dependencies, integrity, and components are AKM extensions layered around OKF, not OKF features.
+- **Agent Skills** — the `SKILL.md` contract: hard limits name 1–64 (charset `^[a-z0-9]+(-[a-z0-9]+)*$`, must equal the parent dir name) and description 1–1024; `compatibility` ≤500; body <500 lines is *guidance*, not a rule; progressive disclosure = metadata / instructions / resources (akm's L0/L1/L2 retrieval levels are akm-internal naming, not the upstream terms). Spec: [agentskills.io/specification](https://agentskills.io/specification) (Anthropic-originated open standard; **unversioned, no tags/changelog — pin behavior by vendoring the `skills-ref` validator rules**, currently 0.1.0); Anthropic docs now live at platform.claude.com (API) and code.claude.com (Claude Code). Claude Code *extends* the standard (~13 extra frontmatter fields, all-optional metadata), so `.claude/skills` compatibility is one-way: validation strictness is per-adapter (§6).
 - **AKM normative** — `akm-format-neutral-bundle-workspace-spec.md` (bindings §18, improve §24, memory §25), `akm-architecture-decision-history.md` (D1–D26), and the `akm-0.9.0-*` companions in this directory; `file:line` refs are to the current tree.
