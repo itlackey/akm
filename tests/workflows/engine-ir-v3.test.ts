@@ -713,5 +713,8 @@ describe("workflow engine v3 contracts", () => {
       });
     expect(input(WORKFLOW_MAX_MAP_EXPANSION).ok).toBe(true);
     expect(input(WORKFLOW_MAX_MAP_EXPANSION + 1).ok).toBe(false);
-  }, 15_000);
+    // 10k-item expansion is CPU-heavy (~8s alone, ~18s under 4-way shard
+    // contention in sandboxed CI containers); the timeout guards against a
+    // hang, not a performance contract — keep it clear of contended runs.
+  }, 60_000);
 });
