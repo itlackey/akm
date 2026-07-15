@@ -53,12 +53,6 @@ export const PERSONAL_STASH: DrainPolicy = {
     { generator: "reflect", maxDiffLines: 80 },
     // Consolidate within the diff band; mid-band lands in `defer` below.
     { generator: "consolidate", maxDiffLines: 200 },
-    // Recombine: accept only confirmed type:lesson proposals (promoted by the
-    // recombine confidence gate) within the diff band. type:hypothesis proposals
-    // have no matching rule here and stay pending on the audited-autonomous
-    // queue until recombine supersedes them or the 90-day TTL sweeps them —
-    // there is no manual-review rung (06-M3).
-    { generator: "recombine", requireType: "lesson", maxDiffLines: 200 },
   ],
   rejectEmpty: true,
   // Mid-band consolidate, distill duplicates, and contradiction escalations are

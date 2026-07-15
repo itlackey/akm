@@ -49,8 +49,8 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
 
 /**
  * Dedupe a list of eligible refs by `ref`, preserving first-seen order. Used to
- * merge the three eligibility sources (feedback-signal, P0-A high-retrieval,
- * Layer-2 proactive-maintenance) without admitting a ref into the loop twice.
+ * merge the eligibility sources (feedback-signal, Layer-2 proactive-maintenance,
+ * high-salience) without admitting a ref into the loop twice.
  */
 export function dedupeRefs(refs: ImproveEligibleRef[]): ImproveEligibleRef[] {
   const seen = new Set<string>();
@@ -415,8 +415,9 @@ export function buildLatestProposalTsMap(
  * exists for this (ref, source) OR `latestFeedback[ref] > lastProposal[ref]`.
  *
  * Refs with no feedback signal at all are ineligible by definition — the
- * high-retrieval fallback path (see `noFeedbackCandidates` later in the
- * planner) handles never-touched-but-frequently-read assets separately.
+ * proactive-maintenance and high-salience fallback lanes (see
+ * `noFeedbackCandidates` later in the planner) handle never-rated assets
+ * separately.
  */
 export function isSignalDeltaEligible(
   ref: string,

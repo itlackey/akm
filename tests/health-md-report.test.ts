@@ -5,7 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderRunsDetailMd, renderWindowCompareMd } from "../src/commands/health/md-report";
 import type { DeltaEntry, ImproveHealthMetrics, ImproveRunSummary, WindowResult } from "../src/commands/health/types";
-import { summarizeCalibration } from "../src/commands/improve/calibration";
 
 /** A fully-zeroed ImproveHealthMetrics sufficient for the MD renderers. */
 function zeroImprove(): ImproveHealthMetrics {
@@ -36,7 +35,6 @@ function zeroImprove(): ImproveHealthMetrics {
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
-    calibration: summarizeCalibration([]),
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
     evalCasesWritten: 0,
@@ -124,7 +122,6 @@ function zeroImprove(): ImproveHealthMetrics {
     perfTelemetry: {
       dedupPoolSize: 0,
       llmPoolSize: 0,
-      judgedCacheSkipped: 0,
       embedMs: 0,
       embedCacheHits: 0,
       embedCacheMisses: 0,

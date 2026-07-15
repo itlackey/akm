@@ -4,7 +4,7 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, parseAutoAcceptFlag, parseNonNegativeIntFlag, parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, parseAutoAcceptFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -126,13 +126,9 @@ export const improveCommand = defineCommand({
     },
     "require-feedback-signal": {
       type: "boolean",
-      description: "Only process assets with recent feedback signals (disables retrieval fallback)",
-      default: false,
-    },
-    "min-retrieval-count": {
-      type: "string",
       description:
-        "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
+        "Only process assets with recent feedback signals (disables the proactive/high-salience fallback lanes)",
+      default: false,
     },
     "json-to-stdout": {
       type: "boolean",
@@ -198,8 +194,6 @@ export const improveCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const minRetrievalCountRaw = args["min-retrieval-count"];
-      const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
@@ -289,7 +283,6 @@ export const improveCommand = defineCommand({
                 ...(runId !== undefined ? { runId } : {}),
                 ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
                 ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-                ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),

@@ -140,13 +140,6 @@ export interface AkmReflectOptions {
    */
   maxRefineIters?: number;
   /**
-   * When true, run the full LLM pipeline but skip persisting the proposal.
-   * Used by the self-consistency sampling loop in `akm improve` to collect
-   * N candidate proposals before voting — only the winner is persisted by
-   * the caller (R-2 / #389, arXiv:2203.11171).
-   */
-  draftMode?: boolean;
-  /**
    * v2 test seam: pre-resolved RunnerSpec injected by tests to exercise the
    * llm/sdk/agent dispatch paths without real config. When set, skips
    * config-based runner resolution entirely.
@@ -162,7 +155,7 @@ export interface AkmReflectOptions {
    */
   assetContent?: string;
   /**
-   * Attribution tagging: which eligibility lane (`signal-delta`, `high-retrieval`,
+   * Attribution tagging: which eligibility lane (`signal-delta`, `high-salience`,
    * `proactive`, `scope`) selected this asset for the current improve run. Set by
    * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
    * in `reflect_invoked` event metadata and persisted on the created proposal so
@@ -1430,10 +1423,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // 7c. Noise gate (#580): never queue a proposal whose sanitized content is
   // identical to the current asset (empty diff) or differs only cosmetically
   // (whitespace reflow, code-fence language hints, YAML scalar re-folding).
-  // Pure deterministic text comparison — see `reflect-noise.ts`. Runs before
-  // the draftMode branch so self-consistency sampling never votes a no-op
-  // candidate into the queue either. Skipped when there is no source asset
-  // (new-asset proposals have nothing to diff against).
+  // Pure deterministic text comparison — see `reflect-noise.ts`. Skipped when
+  // there is no source asset (new-asset proposals have nothing to diff against).
   if (assetContent !== undefined) {
     const changeKind = classifyReflectChange(assetContent, payload.content);
     // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
@@ -1530,37 +1521,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const payloadFrontmatterWithProvenance: Record<string, unknown> = isLessonProposal
     ? { ...basePayloadFrontmatter, derived_from_reflect: true }
     : basePayloadFrontmatter;
-
-  // Draft mode: skip DB persistence — the SC sampling loop in improve.ts persists
-  // only the majority-vote winner (R-2 / #389). Return a synthetic proposal so
-  // pickMajorityVote can compare content via Jaccard similarity.
-  if (options.draftMode) {
-    const draftProposal: Proposal = {
-      id: `sc-draft-${Date.now()}`,
-      ref: payload.ref,
-      source: "reflect",
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      payload: {
-        content: payload.content,
-        ...(Object.keys(payloadFrontmatterWithProvenance).length > 0
-          ? { frontmatter: payloadFrontmatterWithProvenance }
-          : {}),
-      },
-      // Phase 6A: preserve confidence on the synthetic draft so the SC majority
-      // winner carries the score through to the persisted proposal.
-      ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
-    };
-    return {
-      schemaVersion: 2,
-      ok: true,
-      proposal: draftProposal,
-      ref: draftProposal.ref,
-      engine: engineName,
-      durationMs: result.durationMs,
-    };
-  }
 
   const createInput: CreateProposalInput = {
     ref: payload.ref,

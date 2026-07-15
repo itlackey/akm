@@ -17,7 +17,7 @@
  * Hard invariants: deterministic only (FTS BM25 + hashing — never an LLM,
  * never an embedding model); bounded storage (< 2 KB per qualifying cycle,
  * 365-day retention); fail-open (an error warns and skips, never breaks an
- * improve run); runs only on cycles where consolidate/recombine did work.
+ * improve run); runs only on cycles where consolidate did work.
  *
  * Observe-only in v1: alerts land in `improve_cycle_metrics.alerts_json`, the
  * events log (`collapse_detector_alert`), and the `akm health` advisory —
@@ -267,7 +267,7 @@ export function computeCycleMetrics(
   indexDb: IndexDatabase,
   args: {
     runId: string;
-    pass: "consolidate" | "recombine" | "both";
+    pass: "consolidate";
     acceptedActions: number;
     mergeFloorViolations: number;
     cfg: CollapseDetectorConfig;
@@ -461,7 +461,7 @@ export function evaluateCollapseAlerts(
  */
 export function runCollapseDetector(args: {
   runId: string;
-  pass: "consolidate" | "recombine" | "both";
+  pass: "consolidate";
   acceptedActions: number;
   mergeFloorViolations: number;
   config: AkmConfig;

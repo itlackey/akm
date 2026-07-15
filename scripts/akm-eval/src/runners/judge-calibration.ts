@@ -270,7 +270,6 @@ export function resolveJudgeCalibrationSandboxConfig(
                 extract: { enabled: false },
                 proactiveMaintenance: { enabled: false },
                 triage: { enabled: false },
-                recombine: { enabled: false },
                 procedural: { enabled: false },
               },
               sync: { enabled: false, push: false },

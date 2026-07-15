@@ -28,8 +28,6 @@ import { assertNever } from "./assert";
  *
  *   - `"signal-delta"`   — asset had fresh feedback since its last proposal
  *                          (the reactive feedback-signal lane).
- *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
- *                          retrieved (the reactive retrieval-spike lane).
  *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
  *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
  *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
@@ -50,7 +48,7 @@ import { assertNever } from "./assert";
  *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
+ * reactive signal): `scope` > `signal-delta` > `proactive` >
  * `high-salience` > `forgetting-safety` > `replay`. Replay is weakest so it never
  * relabels a ref another lane already chose.
  * A ref with real feedback is attributed to feedback even if it was also due
@@ -58,15 +56,11 @@ import { assertNever } from "./assert";
  */
 export type EligibilitySource =
   | "signal-delta"
-  | "high-retrieval"
   | "high-salience"
   | "proactive"
   | "scope"
   | "forgetting-safety"
   | "replay"
-  | "exploration"
-  | "recombine"
-  | "procedural"
   | "unknown";
 
 export interface ImproveEligibleRef {
@@ -250,55 +244,6 @@ export interface ImproveMemoryCleanupResult {
   warnings?: string[];
 }
 
-/**
- * #609 — outcome of the recombine / synthesize pass. Emitted on
- * {@link AkmImproveResult.recombination} when the (opt-in) pass runs.
- */
-export interface RecombineResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of relatedness clusters that reached the LLM induction step. */
-  clustersFormed: number;
-  /** Number of `type: hypothesis` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /**
-   * #625 — number of generalizations promoted to a `type: lesson` proposal this
-   * run because their confirmation count reached `confirmThreshold`. Promotion
-   * goes through the SAME proposal queue + quality gate (never a direct stash
-   * write); a promoted run emits a lesson proposal INSTEAD of the hypothesis one.
-   */
-  lessonsPromoted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
-/**
- * #615 — outcome of the procedural-compilation pass. Emitted on
- * {@link AkmImproveResult.proceduralCompilation} when the (opt-in) pass runs.
- */
-export interface ProceduralCompilationResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of indexed entries scanned for an `orderedActions` sequence. */
-  sequencesScanned: number;
-  /** Number of recurring-sequence clusters that reached the LLM compilation step. */
-  clustersFormed: number;
-  /** Number of `type: workflow` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
 export interface AkmImproveResult {
   schemaVersion: 2;
   ok: boolean;
@@ -320,14 +265,6 @@ export interface AkmImproveResult {
     derived: number;
   };
   memoryCleanup?: ImproveMemoryCleanupResult;
-  /**
-   * #616 — number of prep->loop->post-loop cycles executed this run (>=1).
-   * Omitted-or-1 for the default single-pass run; >1 when multi-cycle phasing
-   * ran additional cycles. The loop stops at maxCycles OR at the first
-   * fixed-point cycle (zero gate-accepted proposals) OR when remainingBudgetMs
-   * is exhausted.
-   */
-  cyclesRun?: number;
   plannedRefs: ImproveEligibleRef[];
   /**
    * Refs the planner considered but excluded because every per-ref pass on
@@ -442,21 +379,9 @@ export interface AkmImproveResult {
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
   /**
-   * #609 — recombine / synthesize pass outcome. Present only when the opt-in
-   * `recombine` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  recombination?: RecombineResult;
-  /**
-   * #615 — procedural-compilation pass outcome. Present only when the opt-in
-   * `procedural` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  proceduralCompilation?: ProceduralCompilationResult;
-  /**
    * R5 — the collapse/churn detector's cycle snapshot (mirrors one
    * improve_cycle_metrics row), present when this run qualified (consolidate
-   * processed work or recombine formed clusters) and the detector is enabled.
+   * processed work) and the detector is enabled.
    */
   cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**

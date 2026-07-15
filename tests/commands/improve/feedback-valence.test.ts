@@ -7,17 +7,20 @@
  * sort. Pure scoring; no storage. Covers:
  *   - symmetry: equal-magnitude strong-positive vs strong-negative rank
  *     comparably (neither is ignored),
- *   - lane routing (high-negative → fix, high-positive → reinforce),
  *   - deterministic score.
+ *
+ * ValenceScore.lane / STRONG_VALENCE_THRESHOLD / FeedbackLane (the fix/reinforce
+ * attention-lane routing) were deleted in Chunk 7 (WI-7.2, R22) — no consumer
+ * read `.lane` outside this module.
  */
 
 import { describe, expect, test } from "bun:test";
-import { computeValenceScore, STRONG_VALENCE_THRESHOLD } from "../../../src/commands/improve/feedback-valence";
+import { computeValenceScore } from "../../../src/commands/improve/feedback-valence";
 
 describe("computeValenceScore — symmetric magnitude", () => {
-  test("no feedback => zero attention, no lane", () => {
+  test("no feedback => zero attention", () => {
     const s = computeValenceScore({ positive: 0, negative: 0 });
-    expect(s).toEqual({ valence: 0, magnitude: 0, attention: 0, lane: null });
+    expect(s).toEqual({ valence: 0, magnitude: 0, attention: 0 });
   });
 
   test("equal-magnitude strong positive and strong negative produce equal attention", () => {
@@ -26,9 +29,6 @@ describe("computeValenceScore — symmetric magnitude", () => {
     // |valence| is symmetric: both fully one-sided → magnitude 1 → equal attention.
     expect(pos.attention).toBe(neg.attention);
     expect(pos.attention).toBe(1);
-    // ...but the SIGN differs, so they route to opposite lanes.
-    expect(pos.lane).toBe("reinforce");
-    expect(neg.lane).toBe("fix");
   });
 
   test("net valence and magnitude computed from counts", () => {
@@ -38,23 +38,8 @@ describe("computeValenceScore — symmetric magnitude", () => {
     expect(s.attention).toBeCloseTo(0.5, 10);
   });
 
-  test("weak / mixed feedback below threshold gets no lane", () => {
-    // valence = (2-3)/5 = -0.2, |0.2| < 0.5 threshold
-    const s = computeValenceScore({ positive: 2, negative: 3 });
-    expect(s.magnitude).toBeLessThan(STRONG_VALENCE_THRESHOLD);
-    expect(s.lane).toBeNull();
-  });
-
-  test("lane routing exactly at the strong threshold", () => {
-    // valence = (3-1)/4 = 0.5 == threshold → reinforce
-    const s = computeValenceScore({ positive: 3, negative: 1 });
-    expect(s.magnitude).toBeCloseTo(STRONG_VALENCE_THRESHOLD, 10);
-    expect(s.lane).toBe("reinforce");
-  });
-
   test("negative counts are clamped (no negative attention)", () => {
     const s = computeValenceScore({ positive: -5, negative: -5 });
     expect(s.attention).toBe(0);
-    expect(s.lane).toBeNull();
   });
 });

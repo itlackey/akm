@@ -480,7 +480,6 @@ describe("watch-mode — AC4 default unchanged", () => {
         enabled: true,
         indexSessions: false,
         minContentChars: 0,
-        schemaSimilarity: { enabled: false },
         triage: { enabled: false },
       }),
       runner: Object.freeze({

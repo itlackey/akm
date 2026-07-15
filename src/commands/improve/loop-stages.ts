@@ -8,12 +8,7 @@ import { daysToMs } from "../../core/common";
 import { DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import type {
-  ImproveActionResult,
-  ImproveEligibleRef,
-  ProceduralCompilationResult,
-  RecombineResult,
-} from "../../core/improve-types";
+import type { ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
@@ -38,13 +33,7 @@ import type { Database } from "../../storage/database";
 import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import {
-  createProposal,
-  expireStaleProposals,
-  isProposalSkipped,
-  listProposals,
-  purgeOrphanProposals,
-} from "../proposal/repository";
+import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { type AkmDistillResult, deriveLessonRef } from "./distill";
@@ -63,10 +52,6 @@ import type {
 import { makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-// The pre-loop preparation pipeline lives in ./preparation.
-import { maybeAutoTuneThreshold } from "./preparation";
-import { akmProcedural } from "./procedural";
-import { akmRecombine } from "./recombine";
 import type { AkmReflectResult } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage, refSlug } from "./shared";
@@ -89,7 +74,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     distillOnlyRefs,
     recentErrors,
     rejectedProposalsByRef,
-    utilityMap,
     startMs,
     budgetMs,
     eventsCtx,
@@ -112,65 +96,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
   const _distillOnlyRefNames = new Set(distillOnlyRefs.map((r) => r.ref));
   const hasReflectEligibleRefs = loopRefs.some((r) => !_distillOnlyRefNames.has(r.ref));
   const skipDistillDueToRequirePlannedRefs = requirePlannedRefs && !hasReflectEligibleRefs;
-
-  // R-2 / #389: Self-Consistency multi-sample voting helpers.
-  // Wang et al. arXiv:2203.11171 — N=3 samples beat single-shot on reasoning tasks.
-  const SC_THRESHOLD = options.selfConsistencyThreshold ?? 0.7;
-  const SC_N = Math.min(Math.max(2, options.selfConsistencyN ?? 3), 5);
-
-  /**
-   * Compute Jaccard token overlap between two strings.
-   * Tokenizes by whitespace; returns 0 when both are empty.
-   */
-  function jaccardSimilarity(a: string, b: string): number {
-    const tokensA = new Set(a.split(/\s+/).filter(Boolean));
-    const tokensB = new Set(b.split(/\s+/).filter(Boolean));
-    if (tokensA.size === 0 && tokensB.size === 0) return 1;
-    let intersection = 0;
-    for (const t of tokensA) {
-      if (tokensB.has(t)) intersection++;
-    }
-    const union = tokensA.size + tokensB.size - intersection;
-    return union > 0 ? intersection / union : 0;
-  }
-
-  /**
-   * Given N reflect results, return the one with the highest average Jaccard
-   * similarity to all other successful results (majority-vote winner).
-   * Falls back to the first successful result when N < 2.
-   */
-  function pickMajorityVote(results: AkmReflectResult[]): AkmReflectResult {
-    const successful = results.filter((r): r is Extract<AkmReflectResult, { ok: true }> => r.ok);
-    if (successful.length === 0)
-      return (
-        results[0] ?? {
-          schemaVersion: 1,
-          ok: false,
-          reason: "non_zero_exit",
-          error: "all samples failed",
-          exitCode: null,
-        }
-      );
-    if (successful.length === 1) return successful[0];
-    let bestIdx = 0;
-    let bestScore = -1;
-    for (let i = 0; i < successful.length; i++) {
-      let totalSim = 0;
-      for (let j = 0; j < successful.length; j++) {
-        if (i === j) continue;
-        totalSim += jaccardSimilarity(
-          successful[i].proposal.payload.content ?? "",
-          successful[j].proposal.payload.content ?? "",
-        );
-      }
-      const avgSim = totalSim / (successful.length - 1);
-      if (avgSim > bestScore) {
-        bestScore = avgSim;
-        bestIdx = i;
-      }
-    }
-    return successful[bestIdx] ?? successful[0];
-  }
 
   // O-5 / #378: helper to push per-originator errors into the rolling window.
   function pushRecentError(originator: string, msg: string): void {
@@ -202,9 +127,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     eventsCtx,
     targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
-    // candidateCount drives the exploration budget. loopRefs is the per-phase
-    // set for reflect/distill; pass it so exploration budget is proportional.
-    candidateCount: loopRefs.length,
   });
 
   const distillGateCfg = makeGateConfig("distill", {
@@ -215,7 +137,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     eventsCtx,
     targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
-    candidateCount: loopRefs.length,
   });
 
   for (const planned of loopRefs) {
@@ -305,64 +226,10 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             // the reflect_invoked event and the persisted proposal.
             ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
           };
-          // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
-          // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
-          const refUtility = utilityMap.get(planned.ref) ?? 0;
-          const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
-          let reflectResult: AkmReflectResult;
-          if (useConsistency) {
-            const samples: AkmReflectResult[] = [];
-            for (let s = 0; s < SC_N; s++) {
-              if (remainingBudgetMs() <= 0) break;
-              // draftMode: skip DB write so each sample doesn't create a proposal.
-              samples.push(
-                await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                  engine: resolvedPlan.processes.reflect.runner?.engine,
-                  process: "reflect",
-                }),
-              );
-            }
-            const winner = pickMajorityVote(
-              samples.length > 0
-                ? samples
-                : [
-                    await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                      engine: resolvedPlan.processes.reflect.runner?.engine,
-                      process: "reflect",
-                    }),
-                  ],
-            );
-            // Persist only the majority-vote winner as a single real proposal.
-            if (winner.ok && primaryStashDir) {
-              const persistResult = createProposal(primaryStashDir, {
-                ref: winner.proposal.ref,
-                source: "reflect",
-                sourceRun: `reflect-sc-${Date.now()}`,
-                payload: winner.proposal.payload,
-                // Attribution: the self-consistency path persists the winner here
-                // (draftMode skips reflect's own createProposal), so stamp the lane.
-                ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-              });
-              reflectResult = isProposalSkipped(persistResult)
-                ? {
-                    schemaVersion: 2,
-                    ok: false,
-                    reason: "cooldown" as const,
-                    error: `SC proposal skipped: ${persistResult.message}`,
-                    ref: winner.ref,
-                    engine: winner.engine,
-                    exitCode: null,
-                  }
-                : { ...winner, proposal: persistResult };
-            } else {
-              reflectResult = winner;
-            }
-          } else {
-            reflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-              engine: resolvedPlan.processes.reflect.runner?.engine,
-              process: "reflect",
-            });
-          }
+          const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
+            engine: resolvedPlan.processes.reflect.runner?.engine,
+            process: "reflect",
+          });
           const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
           // Content-policy guard hits (reflect size-rail rejections) are NOT
           // LLM faults — the agent responded fine, the downstream guard
@@ -691,32 +558,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
 
-  // WS-4: Per-phase threshold auto-tune — runs AFTER the loop so the gate
-  // has processed all candidates for this run. Persists each phase's tuned
-  // threshold to state.db for the NEXT run's makeGateConfig to read.
-  // Best-effort: a tune failure must never fail the improve run.
-  const stateDbPathForTune = eventsCtx?.dbPath;
-  if (options.autoAccept !== undefined && stateDbPathForTune) {
-    const phaseGateCfgMap: Record<string, typeof reflectGateCfg> = {
-      reflect: reflectGateCfg,
-      distill: distillGateCfg,
-    };
-    for (const phase of ["reflect", "distill"] as const) {
-      const phaseCfg = phaseGateCfgMap[phase];
-      try {
-        maybeAutoTuneThreshold(
-          phaseCfg.phaseThreshold ?? options.autoAccept,
-          options.config ?? loadConfig(),
-          stateDbPathForTune,
-          undefined,
-          phase,
-        );
-      } catch (err) {
-        warn(`[improve] calibration auto-tune (${phase}) skipped: ${errMessage(err)}`);
-      }
-    }
-  }
-
   return { reflectsWithErrorContext, memoryRefsForInference, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }
 
@@ -802,105 +643,18 @@ export async function runImprovePostLoopStage(args: {
     }
   }
 
-  // #609 — recombine / synthesize pass. Whole-corpus cross-episodic
-  // generalization. Runs in the post-loop stage under the whole-run lock. Opt-in: gated on the
-  // `recombine` process being enabled, whole-stash / type scope (never `ref`),
-  // and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
-  let recombination: RecombineResult | undefined;
-  if (
-    primaryStashDir &&
-    improveProfile &&
-    resolvedPlan?.processes.recombine.enabled === true &&
-    scope.mode !== "ref" &&
-    !options.dryRun
-  ) {
-    const recombineFn = options.recombineFn ?? akmRecombine;
-    try {
-      recombination = await withLlmStage(
-        "recombine",
-        () =>
-          recombineFn({
-            stashDir: primaryStashDir,
-            config: options.config ?? loadConfig(),
-            improveProfile,
-            llmConfig: resolvedPlan?.processes.recombine.runner
-              ? materializeLlmRunnerConnection(resolvedPlan.processes.recombine.runner)
-              : null,
-            ...(options.runId ? { sourceRun: options.runId } : {}),
-            ...(budgetSignal ? { signal: budgetSignal } : {}),
-            eligibilitySource: "recombine",
-            ...(eventsCtx ? { ctx: eventsCtx } : {}),
-            minClusterSize: improveProfile.processes?.recombine?.minClusterSize,
-            maxClustersPerRun: improveProfile.processes?.recombine?.maxClustersPerRun,
-            relatednessSource: improveProfile.processes?.recombine?.relatednessSource,
-            confirmThreshold: improveProfile.processes?.recombine?.confirmThreshold,
-            // #632 — clustering-tuning knobs. UNSET = pre-#632 behaviour.
-            maxClusterSize: improveProfile.processes?.recombine?.maxClusterSize,
-            excludeTags: improveProfile.processes?.recombine?.excludeTags,
-            excludeEntities: improveProfile.processes?.recombine?.excludeEntities,
-          }),
-        { engine: resolvedPlan?.processes.recombine.runner?.engine, process: "recombine" },
-      );
-    } catch (e) {
-      allWarnings.push(`recombine: ${String(e)}`);
-    }
-  }
-
-  // #615 — procedural-compilation pass. Detects recurring successful ordered
-  // action sequences and compiles them into workflow proposals. Opt-in: gated
-  // on the `procedural` process being enabled, whole-stash / type scope (never
-  // `ref`), and not a dry run. Mirrors the recombine opt-in wiring.
-  let proceduralCompilation: ProceduralCompilationResult | undefined;
-  if (
-    primaryStashDir &&
-    improveProfile &&
-    resolvedPlan?.processes.procedural.enabled === true &&
-    scope.mode !== "ref" &&
-    !options.dryRun
-  ) {
-    const proceduralFn = options.proceduralFn ?? akmProcedural;
-    try {
-      proceduralCompilation = await withLlmStage(
-        "procedural",
-        () =>
-          proceduralFn({
-            stashDir: primaryStashDir,
-            config: options.config ?? loadConfig(),
-            ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan?.processes.procedural.runner
-              ? materializeLlmRunnerConnection(resolvedPlan.processes.procedural.runner)
-              : null,
-            ...(options.runId ? { sourceRun: options.runId } : {}),
-            ...(budgetSignal ? { signal: budgetSignal } : {}),
-            eligibilitySource: "procedural",
-            ...(eventsCtx ? { ctx: eventsCtx } : {}),
-            minRecurrence: improveProfile.processes?.procedural?.minRecurrence,
-            maxProposalsPerRun: improveProfile.processes?.procedural?.maxProposalsPerRun,
-          }),
-        { engine: resolvedPlan?.processes.procedural.runner?.engine, process: "procedural" },
-      );
-    } catch (e) {
-      allWarnings.push(`procedural: ${String(e)}`);
-    }
-  }
-
   // ── R5: collapse/churn detector ────────────────────────────────────────────
-  // One snapshot per QUALIFYING cycle: consolidate processed work and/or
-  // recombine formed clusters. Runs AFTER the maintenance reindex so FTS sees
-  // the post-merge index; one call site covers both passes. Deterministic,
+  // One snapshot per QUALIFYING cycle: consolidate processed work. Runs AFTER
+  // the maintenance reindex so FTS sees the post-merge index. Deterministic,
   // observe-only, fail-open (the orchestrator catches everything) — and inert
   // on the ~9-in-10 default-profile runs that touch no merges.
   let cycleMetrics: CycleMetricsRow | undefined;
-  const recombineWorked = (recombination?.clustersFormed ?? 0) > 0;
-  if (!options.dryRun && (consolidationRan || recombineWorked)) {
+  if (!options.dryRun && consolidationRan) {
     cycleMetrics = runCollapseDetector({
       runId: options.runId ?? "improve-adhoc",
       ...(improveProfile ? { improveProfile } : {}),
-      pass: consolidationRan && recombineWorked ? "both" : consolidationRan ? "consolidate" : "recombine",
-      // prep+loop gate accepts, PLUS recombine's confirmed-lesson promotions —
-      // recombine churn is the historically observed failure mode and its
-      // promotions never flow through the prep/loop gates.
-      acceptedActions: (args.acceptedActions ?? 0) + (recombination?.lessonsPromoted ?? 0),
+      pass: "consolidate",
+      acceptedActions: args.acceptedActions ?? 0,
       mergeFloorViolations: args.consolidationMergeFloorViolations ?? 0,
       config: options.config ?? loadConfig(),
       ...(eventsCtx ? { eventsCtx } : {}),
@@ -911,8 +665,6 @@ export async function runImprovePostLoopStage(args: {
     allWarnings,
     deadUrls,
     ...(cycleMetrics ? { cycleMetrics } : {}),
-    ...(recombination ? { recombination } : {}),
-    ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
     ...(maintenanceResult.actions && maintenanceResult.actions.length > 0

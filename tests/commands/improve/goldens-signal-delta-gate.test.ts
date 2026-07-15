@@ -354,7 +354,6 @@ async function capturePartitionCounts(): Promise<Record<string, unknown>> {
       scope: "memory",
       stashDir: stash,
       config: cfg,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref, eligibilitySource }) => {

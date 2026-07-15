@@ -7,9 +7,9 @@
  * `akm improve` eligibility flow:
  *  - DISABLED by default (no selection when the process flag is off).
  *  - When enabled, a never-reflected asset with NO feedback and NO retrieval
- *    signal (so neither the signal-delta gate nor P0-A would pick it) is folded
- *    into the reflect candidate set and the proactive_selected event + result
- *    summary are emitted.
+ *    signal (so the signal-delta gate would not pick it) is folded into the
+ *    reflect candidate set and the proactive_selected event + result summary
+ *    are emitted.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -106,7 +106,6 @@ describe("proactive maintenance — explicitly disabled", () => {
       // The `default` profile now ships proactiveMaintenance ON (the sustaining
       // lane), so this test must disable it explicitly to pin the "off" behaviour.
       config: enabledConfig({ enabled: false }),
-      minRetrievalCount: 5, // P0-A would also not pick (no retrievals)
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -133,7 +132,6 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
       scope: "skill",
       stashDir: stash,
       config: enabledConfig(),
-      minRetrievalCount: 5, // ensure P0-A is NOT the path (no retrievals at all)
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -165,7 +163,6 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
       scope: "skill",
       stashDir: stash,
       config: enabledConfig({ maxPerRun: 2 }),
-      minRetrievalCount: 5,
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);

@@ -599,101 +599,6 @@ describe("akmExtract — candidate → proposal routing", () => {
     expect(result.candidatesCreated).toBe(0);
     expect(result.sessions[0]?.rationaleIfEmpty).toContain("durable-insight");
   });
-
-  // ── #615 WS-0: orderedActions + outcomeData preserved in proposal ──────────
-
-  test("#615 WS-0: orderedActions and outcomeData are preserved in the proposal content and frontmatter", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("ses_ordered", Date.now() - 60_000);
-
-    const result = await akmExtract({
-      type: "claude-code",
-      sessionId: "ses_ordered",
-      stashDir: stash,
-      config: configEnabled(stash),
-      harnesses: [makeFakeHarness([session])],
-      chat: async () =>
-        JSON.stringify({
-          candidates: [
-            {
-              type: "lesson",
-              name: "vpn-deploy-sequence",
-              description: "Connecting to VPN before running deploy.sh prevents silent hangs at the stage-push step.",
-              when_to_use: "When initiating a production deploy from a fresh shell or after a laptop reboot.",
-              body: "Deploy.sh hangs at the 'pushing to stage' step when VPN is not active. The fix: check VPN, connect if needed, then run deploy.sh.",
-              confidence: 0.9,
-              evidence: "tool failure at session midpoint",
-              orderedActions: ["check vpn status", "connect to corporate vpn", "run deploy.sh"],
-              outcomeData: "deploy succeeded after VPN reconnect",
-            },
-          ],
-        }),
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.candidatesCreated).toBe(1);
-
-    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
-    const prop = pending.find((p) => p.ref === "lesson:vpn-deploy-sequence");
-    expect(prop).toBeDefined();
-
-    // orderedActions must appear in the proposal content body (YAML frontmatter)
-    expect(prop?.payload.content).toMatch(/orderedActions:/);
-    expect(prop?.payload.content).toMatch(/check vpn status/);
-    expect(prop?.payload.content).toMatch(/connect to corporate vpn/);
-    expect(prop?.payload.content).toMatch(/run deploy\.sh/);
-
-    // outcomeData must appear in the proposal content
-    expect(prop?.payload.content).toMatch(/outcomeData:/);
-    expect(prop?.payload.content).toMatch(/deploy succeeded after VPN reconnect/);
-
-    // The proposal frontmatter mirror must carry the structured data
-    const fm = prop?.payload.frontmatter as Record<string, unknown> | undefined;
-    expect(Array.isArray(fm?.orderedActions)).toBe(true);
-    expect(fm?.orderedActions).toEqual(["check vpn status", "connect to corporate vpn", "run deploy.sh"]);
-    expect(fm?.outcomeData).toBe("deploy succeeded after VPN reconnect");
-  });
-
-  test("#615 WS-0: candidates without orderedActions produce proposals without those fields", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("ses_no_actions", Date.now() - 60_000);
-
-    const result = await akmExtract({
-      type: "claude-code",
-      sessionId: "ses_no_actions",
-      stashDir: stash,
-      config: configEnabled(stash),
-      harnesses: [makeFakeHarness([session])],
-      chat: async () =>
-        JSON.stringify({
-          candidates: [
-            {
-              type: "memory",
-              name: "auth-uses-jwt-24h",
-              description: "Auth pipeline uses JWT tokens with 24h TTL switched from session cookies in May.",
-              body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.",
-              confidence: 0.85,
-              evidence: "user correction mid-session",
-              // No orderedActions or outcomeData
-            },
-          ],
-        }),
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.candidatesCreated).toBe(1);
-
-    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
-    const prop = pending.find((p) => p.ref === "memory:auth-uses-jwt-24h");
-    expect(prop).toBeDefined();
-
-    // orderedActions/outcomeData must NOT appear when not provided
-    expect(prop?.payload.content).not.toMatch(/orderedActions:/);
-    expect(prop?.payload.content).not.toMatch(/outcomeData:/);
-    const fm = prop?.payload.frontmatter as Record<string, unknown> | undefined;
-    expect(fm?.orderedActions).toBeUndefined();
-    expect(fm?.outcomeData).toBeUndefined();
-  });
 });
 
 describe("akmExtract — LLM call wiring", () => {
@@ -873,8 +778,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       timeoutMs: 55_000,
       llm: { temperature: 0.2, maxTokens: 321 },
       maxTotalChars: 1234,
-      hotProbation: { enabled: true },
-      schemaSimilarity: { enabled: false },
+      triage: { enabled: true, minScore: 3 },
     });
     const strategy = config.improve?.strategies?.extract;
     if (strategy) {
@@ -886,7 +790,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
-    expect(Object.isFrozen(plan.process.hotProbation)).toBe(true);
+    expect(Object.isFrozen(plan.process.triage)).toBe(true);
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
     expect(plan.runner?.connection).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
@@ -910,7 +814,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const process = config.improve?.strategies?.extract?.processes?.extract;
     if (process) {
       process.maxTotalChars = 9999;
-      if (process.hotProbation) process.hotProbation.enabled = false;
+      if (process.triage) process.triage.enabled = false;
     }
 
     let receivedModel = "";
@@ -927,7 +831,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
           candidates: [
             {
               type: "memory",
-              name: "frozen-hot-probation",
+              name: "frozen-triage",
               description: "Frozen extract settings remain stable throughout a long-running watch invocation.",
               body: "The invocation plan captures nested extract behavior before watch triggers begin.",
               confidence: 0.9,
@@ -939,11 +843,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     expect(receivedModel).toBe("process-model");
     expect(plan.engine).toBe("extract-special");
-    expect(plan.process.hotProbation?.enabled).toBe(true);
-    const proposal = listProposals(stash, { status: "pending" }).find(
-      (item) => item.ref === "memory:frozen-hot-probation",
-    );
-    expect(proposal?.payload.frontmatter?.captureMode).toBe("hot-probation");
+    expect(plan.process.triage?.enabled).toBe(true);
+    const proposal = listProposals(stash, { status: "pending" }).find((item) => item.ref === "memory:frozen-triage");
+    expect(proposal).toBeDefined();
   });
 
   test("a resolved null runner never falls back to live config at the extract leaf", async () => {

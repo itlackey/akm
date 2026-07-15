@@ -59,7 +59,6 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import { type ChatMessage, chatCompletion } from "../../llm/client";
-import { embed } from "../../llm/embedder";
 import { tryLlmFeature } from "../../llm/feature-gate";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
@@ -72,13 +71,7 @@ import {
 } from "../../storage/repositories/extract-sessions-repository";
 import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/repository";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
-import { buildHotProbationFrontmatter } from "./hot-probation";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import {
-  applySchemaSimilarityPenalty,
-  loadDerivedLayerEmbeddings,
-  type SchemaSimilarityConfig,
-} from "./schema-similarity-gate";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -272,19 +265,6 @@ export interface AkmExtractOptions {
    * LLM/network call. When session indexing is disabled this is never invoked.
    */
   generateSessionSummary?: SessionSummaryGenerator;
-  /**
-   * WS-3b Step-0b test seam: pre-loaded derived-layer embeddings to use in
-   * place of opening index.db. When provided with `schemaSimilarity.enabled`,
-   * the gate checks these vectors without any I/O. Tests inject synthetic
-   * vectors here to exercise the penalty path without a real index.
-   */
-  schemaSimilarityEmbeddings?: Array<{ ref: string; embedding: number[] }>;
-  /**
-   * Test seam: inject the candidate-body embedding function used by the
-   * schema-similarity gate, so the penalty branch is exercisable without a live
-   * embedding model. Production leaves this undefined and uses the real `embed`.
-   */
-  schemaSimilarityEmbedFn?: (text: string) => Promise<number[]>;
 }
 
 export interface ResolvedExtractPlan {
@@ -469,15 +449,6 @@ function buildCandidateProposal(
   if (candidate.type === "lesson" && candidate.when_to_use) {
     fm.when_to_use = candidate.when_to_use;
   }
-  // #615 WS-0: preserve ordered-action + outcome data in frontmatter so the data
-  // survives even if source transcripts are not re-extractable later. The
-  // procedural-compilation feature (detection/compilation) is deferred to 0.10+.
-  if (candidate.orderedActions && candidate.orderedActions.length > 0) {
-    fm.orderedActions = candidate.orderedActions;
-    if (candidate.outcomeData) {
-      fm.outcomeData = candidate.outcomeData;
-    }
-  }
   const content = assembleAsset(fm, candidate.body);
   return { ref, content, description };
 }
@@ -564,20 +535,12 @@ async function processSession(
   minContentChars: number,
   // #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
   // exact pre-change path (no scorer call, no new skipReason).
-  // #641 — proceduralAwareFloor is opt-in, DEFAULT OFF.
-  triage: { enabled: boolean; minScore: number; proceduralAwareFloor: boolean },
+  triage: { enabled: boolean; minScore: number },
   sessionIndexing: {
     enabled: boolean;
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
   },
-  schemaSimilarityCtx: {
-    config: SchemaSimilarityConfig;
-    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
-    embeddingConfig: AkmConfig["embedding"];
-    embedFn?: (text: string) => Promise<number[]>;
-  } | null,
-  hotProbationEnabled: boolean,
   // #602 — already-extracted skip moved INSIDE processSession: the content hash
   // can only be computed after readSession, so the skip decision lives here. The
   // prior row + bypass flags are threaded in from the caller. Skipping here still
@@ -667,9 +630,7 @@ async function processSession(
   // the configured threshold we triage it out: no chat() call, no session asset,
   // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
   if (triage.enabled) {
-    const t = scoreSessionTriage(data, triage.minScore, {
-      proceduralAwareFloor: triage.proceduralAwareFloor,
-    });
+    const t = scoreSessionTriage(data, triage.minScore);
     if (!t.pass) {
       return {
         sessionId: sessionRef.sessionId,
@@ -795,12 +756,6 @@ async function processSession(
     };
   }
 
-  // WS-3b step 0c: hot-probation intake buffer (#604).
-  // When enabled, system-generated extractions enter captureMode: hot-probation
-  // so they spend ONE consolidation cycle in probation before the deterministic
-  // dedup+quality pass promotes them. Default OFF.
-  // The invocation boundary resolves this from the frozen extract process.
-
   for (const candidate of payload.candidates) {
     const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
     if (dryRun) {
@@ -808,19 +763,6 @@ async function processSession(
       continue;
     }
     try {
-      // WS-3b Step-0b: schema-similarity intake gate. When enabled and the
-      // candidate is a lesson/knowledge whose body embedding is within ε of an
-      // existing derived-layer node, down-prioritize by multiplying confidence by
-      // the penalty. PARITY: schemaSimilarityCtx is null when the flag is off →
-      // applySchemaSimilarityPenalty returns the original confidence untouched and
-      // never embeds. (Logic lives in schema-similarity-gate.ts so it is unit-testable.)
-      const gateResult = await applySchemaSimilarityPenalty(candidate, schemaSimilarityCtx, (text) =>
-        schemaSimilarityCtx?.embedFn
-          ? schemaSimilarityCtx.embedFn(text)
-          : embed(text, schemaSimilarityCtx?.embeddingConfig),
-      );
-      const effectiveConfidence = gateResult.effectiveConfidence;
-      if (gateResult.warning) warn(gateResult.warning);
       const { ref, content, description } = built;
       const result = createProposal(
         stashDir,
@@ -833,22 +775,9 @@ async function processSession(
             frontmatter: {
               description,
               ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
-              ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
+              confidence: candidate.confidence,
               ...(sessionAsset.sessionAssetRef ? { xrefs: [sessionAsset.sessionAssetRef] } : {}),
               evidence: candidate.evidence,
-              // #615 WS-0: mirror ordered-action + outcome data in the proposal
-              // frontmatter record so downstream tooling can read it without
-              // re-parsing the content body. Omitted when not present.
-              ...(candidate.orderedActions && candidate.orderedActions.length > 0
-                ? { orderedActions: candidate.orderedActions }
-                : {}),
-              ...(candidate.outcomeData ? { outcomeData: candidate.outcomeData } : {}),
-              // WS-3b step 0c: tag system-generated extractions as hot-probation
-              // when the feature is enabled. The consolidation pass will exclude
-              // them from the LLM merge pool until the intake dedup+quality pass
-              // runs against them. User-explicit `akm remember` (captureMode: hot)
-              // is unaffected — this only applies to extract-generated proposals.
-              ...(hotProbationEnabled ? buildHotProbationFrontmatter() : {}),
             },
           },
         },
@@ -1141,31 +1070,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     }
   }
 
-  // WS-3b Step-0b: schema-similarity intake gate.
-  // DEFAULT ON since R3 (docs/design/improve-self-learning-analysis.md G5):
-  // extract is the highest-volume acquisition path with no LLM judge, so the
-  // cheap embedding-dedup check (one embed per lesson/knowledge candidate,
-  // fail-open) is the intake quality gate. Opt out via
-  // processes.extract.schemaSimilarity.enabled: false. The gate is inert in
-  // practice when no derived-layer embeddings exist (empty ctx → no penalty).
-  const schemaSimilarityCfg = extractProcess?.schemaSimilarity as SchemaSimilarityConfig | undefined;
-  const hotProbationEnabled = (extractProcess?.hotProbation as { enabled?: boolean } | undefined)?.enabled === true;
-  let schemaSimilarityCtx: {
-    config: SchemaSimilarityConfig;
-    derivedEmbeddings: Array<{ ref: string; embedding: number[] }>;
-    embeddingConfig: AkmConfig["embedding"];
-    embedFn?: (text: string) => Promise<number[]>;
-  } | null = null;
-  if (schemaSimilarityCfg?.enabled !== false) {
-    const derivedEmbeddings = options.schemaSimilarityEmbeddings ?? loadDerivedLayerEmbeddings();
-    schemaSimilarityCtx = {
-      config: { ...schemaSimilarityCfg, enabled: true },
-      derivedEmbeddings,
-      embeddingConfig: options.resolvedPlan?.embeddingConfig ?? config.embedding,
-      embedFn: options.schemaSimilarityEmbedFn,
-    };
-  }
-
   // Stash authoring standards (convention/meta fact bodies) for non-wiki
   // extract output. Resolved ONCE per run and threaded into each session's
   // prompt so facts are not re-read per session.
@@ -1237,8 +1141,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         minContentChars,
         triage,
         sessionIndexing,
-        schemaSimilarityCtx,
-        hotProbationEnabled,
         prior,
         options.force === true,
         options.signal,

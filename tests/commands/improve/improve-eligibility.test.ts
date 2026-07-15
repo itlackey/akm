@@ -30,11 +30,8 @@ import {
 import { shouldReadLegacyBareImproveState } from "../../../src/commands/improve/source-identity";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
-import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 
 // Deterministic, strictly-ordered timestamps for signal-delta ordering.
@@ -85,8 +82,8 @@ async function buildIndex(stashDir: string): Promise<void> {
 // guard. (A dedicated suite covers the minPoolSize guard itself.)
 //
 // proactiveMaintenance is ALSO disabled here: the `default` profile now ships it
-// ON (the sustaining lane), but these tests pin the signal-delta / high-retrieval
-// / high-salience SELECTION gates in isolation. The proactive lane deliberately
+// ON (the sustaining lane), but these tests pin the signal-delta /
+// high-salience SELECTION gates in isolation. The proactive lane deliberately
 // selects never-reflected refs regardless of signal, which is a separate
 // behaviour covered by proactive-maintenance-flow.test.ts; leaving it on here
 // would mask the gate each test is asserting.
@@ -226,7 +223,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -259,7 +255,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -286,7 +281,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -309,7 +303,6 @@ describe("reflect signal-delta eligibility", () => {
       scope: "memory",
       stashDir: stash,
       config: configWithoutPoolGuard(), // isolate the signal-delta gate from the now-default-on proactive lane
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -352,7 +345,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -391,7 +383,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -418,7 +409,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -440,7 +430,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -479,7 +468,6 @@ describe("consolidate pool-delta eligibility", () => {
       scope: "memory",
       config: configWithoutPoolGuard(),
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -509,7 +497,6 @@ describe("consolidate pool-delta eligibility", () => {
       scope: "memory",
       config: configWithoutPoolGuard(),
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -547,7 +534,6 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
       scope: "memory",
       config: configWithoutPoolGuard(),
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -600,7 +586,6 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
       scope: "memory",
       config: configWithoutPoolGuard(),
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -630,7 +615,6 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
       scope: "memory",
       config: configWithoutPoolGuard(),
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -639,135 +623,6 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
 
     const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
-  });
-});
-
-// ── P0-A high-retrieval fallback revival ─────────────────────────────────────
-
-/**
- * Seed `count` `search` usage events (with a populated entry_ref) into the
- * freshly-built index.db so getRetrievalCounts sees the ref as high-retrieval.
- * Must run AFTER buildIndex() (the DB has to exist).
- */
-function seedRetrievals(ref: string, count: number): void {
-  const db = openExistingDatabase(getDbPath());
-  try {
-    for (let i = 0; i < count; i++) {
-      insertUsageEvent(db, { event_type: "search", entry_ref: ref, query: "q", source: "user" });
-    }
-  } finally {
-    closeDatabase(db);
-  }
-}
-
-describe("P0-A high-retrieval fallback (zero-feedback assets)", () => {
-  test("zero-feedback ref above retrieval threshold → reflected (revived P0-A)", async () => {
-    const stash = makeTempDir("akm-p0a-rescue-");
-    writeMemory(stash, "popular", "Frequently retrieved, never rated.");
-    await buildIndex(stash);
-    // No feedback events at all — previously this fell into the fullySkipped
-    // bucket and never reached the high-retrieval fallback. Seed retrievals so
-    // it clears the threshold.
-    seedRetrievals("memory:popular", 6);
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      minRetrievalCount: 5,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(reflected).toContain("memory:popular");
-  });
-
-  test("zero-feedback ref below retrieval threshold → not reflected", async () => {
-    const stash = makeTempDir("akm-p0a-below-");
-    writeMemory(stash, "rarely", "Retrieved once, never rated.");
-    await buildIndex(stash);
-    seedRetrievals("memory:rarely", 1); // below threshold of 5
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      config: configWithoutPoolGuard(), // isolate the high-retrieval gate from the now-default-on proactive lane
-      minRetrievalCount: 5,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(reflected).not.toContain("memory:rarely");
-  });
-
-  test("duplicate retrieval signals qualify only the selected source", async () => {
-    const historicalStash = makeTempDir("akm-p0a-historical-");
-    const teamStash = makeTempDir("akm-p0a-team-");
-    writeMemory(teamStash, "duplicate", "Team-owned duplicate.");
-    await buildIndex(teamStash);
-    seedRetrievals("readonly//memory:duplicate", 6);
-    const config = configWithoutPoolGuard();
-    config.stashDir = historicalStash;
-    config.sources = [{ type: "filesystem", name: "team", path: teamStash, writable: true }];
-    config.defaultWriteTarget = "team";
-    const reflected: string[] = [];
-    const run = () =>
-      akmImprove({
-        scope: "memory",
-        target: "team",
-        config,
-        minRetrievalCount: 1,
-        ensureIndexFn: async () => false,
-        reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-        reflectFn: async ({ ref }) => {
-          if (ref) reflected.push(ref);
-          return okReflect(ref ?? "");
-        },
-        distillFn: async ({ ref }) => okDistill(ref ?? ""),
-      });
-
-    await run();
-    expect(reflected).not.toContain("memory:duplicate");
-
-    seedRetrievals("team//memory:duplicate", 1);
-    await run();
-    expect(reflected).toContain("memory:duplicate");
-  });
-
-  test("P0-A fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {
-    const stash = makeTempDir("akm-p0a-once-");
-    writeMemory(stash, "already", "High retrieval but already reflected once.");
-    await buildIndex(stash);
-    seedRetrievals("memory:already", 10);
-    // A reflect proposal already exists for this ref → P0-A must not re-fire.
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:already" });
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      minRetrievalCount: 5,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(reflected).not.toContain("memory:already");
   });
 });
 
@@ -825,7 +680,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -853,7 +707,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -883,7 +736,6 @@ describe("high-salience admission gate (#608)", () => {
       scope: "memory",
       stashDir: stash,
       config: configWithoutPoolGuard(), // isolate the high-salience gate from the now-default-on proactive lane
-      minRetrievalCount: 5,
       limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -917,7 +769,6 @@ describe("high-salience admission gate (#608)", () => {
       scope: "memory",
       stashDir: stash,
       config: configWithoutPoolGuard(), // isolate the high-salience gate from the now-default-on proactive lane
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -944,7 +795,6 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -1002,7 +852,6 @@ describe("aggregated no_new_signal skip event", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
@@ -1043,7 +892,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref, eligibilitySource }) => {
@@ -1056,29 +904,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     expect(seen.get("memory:rated")).toBe("signal-delta");
   });
 
-  test("high-retrieval lane stamps eligibilitySource='high-retrieval'", async () => {
-    const stash = makeTempDir("akm-attr-highret-");
-    writeMemory(stash, "popular", "Frequently retrieved, never rated.");
-    await buildIndex(stash);
-    seedRetrievals("memory:popular", 6);
-
-    const seen = new Map<string, string | undefined>();
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      minRetrievalCount: 5,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref, eligibilitySource }) => {
-        if (ref) seen.set(ref, eligibilitySource);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(seen.get("memory:popular")).toBe("high-retrieval");
-  });
-
   test("explicit --scope <ref> bypass stamps eligibilitySource='scope'", async () => {
     const stash = makeTempDir("akm-attr-scope-");
     writeMemory(stash, "targeted", "Explicitly targeted, no feedback at all.");
@@ -1088,7 +913,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     await akmImprove({
       scope: "memory:targeted",
       stashDir: stash,
-      minRetrievalCount: 5,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref, eligibilitySource }) => {
@@ -1099,37 +923,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     });
 
     expect(seen.get("memory:targeted")).toBe("scope");
-  });
-
-  test("precedence: a ref with BOTH fresh feedback and high retrieval is attributed to signal-delta", async () => {
-    const stash = makeTempDir("akm-attr-prec-");
-    writeMemory(stash, "both", "Rated AND frequently retrieved.");
-    await buildIndex(stash);
-    // Fresh feedback signal (reactive feedback lane).
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:both" }, { now: () => OLDER_MS });
-    appendEvent(
-      { eventType: "feedback", ref: "memory:both", metadata: { signal: "negative" } },
-      { now: () => NEWER_MS },
-    );
-    // Also above the retrieval threshold (would qualify for high-retrieval too).
-    seedRetrievals("memory:both", 10);
-
-    const seen = new Map<string, string | undefined>();
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      minRetrievalCount: 5,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref, eligibilitySource }) => {
-        if (ref) seen.set(ref, eligibilitySource);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    // signal-delta > high-retrieval: feedback wins.
-    expect(seen.get("memory:both")).toBe("signal-delta");
   });
 });
 

@@ -6,12 +6,17 @@
  * WS-2 outcome loop — unit tests.
  *
  * Covers:
- *   - `updateAssetOutcome`: warm-start, differential update, review_pressure.
+ *   - `updateAssetOutcome`: warm-start, differential update.
  *   - `getAssetOutcome`: round-trip read.
  *   - `getOutcomeScoresByRef`: bulk read.
  *   - `outcomeScoreToSalience`: normalisation + diversity floor.
  *   - `computeProxyAdequacy`: correlation tripwire.
  *   - Migration 010 creates asset_outcome table.
+ *
+ * `review_pressure` (#613) code/type was deleted in Chunk 7 (WI-7.2, R21) —
+ * the DB column itself survives until Chunk 7's migration 018 (DEFAULT 0
+ * tolerates omission from INSERT/UPDATE), so this suite's raw-SQL seed
+ * helpers drop it from their column lists too.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -25,8 +30,6 @@ import {
   getOutcomeScoresByRef,
   OUTCOME_SCORE_MAX,
   outcomeScoreToSalience,
-  REVIEW_PRESSURE_DECAY,
-  REVIEW_PRESSURE_INCREMENT,
   updateAssetOutcome,
   WARM_START_CAP,
 } from "../../../src/commands/improve/outcome-loop";
@@ -66,10 +69,10 @@ describe("Migration 010 — asset_outcome table", () => {
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run("lesson:test", 0, 0, 0.0, 0, 0, 0, 0.0, NOW);
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("lesson:test", 0, 0, 0.0, 0, 0, 0.0, NOW);
 
       const row = getAssetOutcome(db, "lesson:test");
       expect(row).toBeDefined();
@@ -217,9 +220,9 @@ describe("updateAssetOutcome — differential update (second call)", () => {
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('lesson:zeta', 0, 20, 20.0, 0, 0, 0, 0.2, ?)`,
+         VALUES ('lesson:zeta', 0, 20, 20.0, 0, 0, 0.2, ?)`,
       ).run(NOW);
 
       // Only 21 retrievals vs. expected 20 → small delta (1), small penalty.
@@ -250,9 +253,9 @@ describe("updateAssetOutcome — differential update (second call)", () => {
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('lesson:eta', 0, 100, 100.0, 10, 0, 3, -0.9, ?)`,
+         VALUES ('lesson:eta', 0, 100, 100.0, 10, 0, -0.9, ?)`,
       ).run(NOW);
 
       // Extreme penalty: large retrieval_delta, zero acceptance, negative valence.
@@ -280,9 +283,9 @@ describe("updateAssetOutcome — differential update (second call)", () => {
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('lesson:theta', 0, 100, 0.0, 0, 100, 0, 3.13, ?)`,
+         VALUES ('lesson:theta', 0, 100, 0.0, 0, 100, 3.13, ?)`,
       ).run(NOW);
 
       // Strongly positive cycle: big surprise delta, full acceptance, +1 valence.
@@ -298,94 +301,6 @@ describe("updateAssetOutcome — differential update (second call)", () => {
 
       // Even from a legacy 3.13 seed, the update converges under the ceiling.
       expect(result.outcomeScore).toBeLessThanOrEqual(OUTCOME_SCORE_MAX);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-// ── review_pressure (#613) ────────────────────────────────────────────────────
-
-describe("updateAssetOutcome — review_pressure (#613)", () => {
-  test("new negatives increment review_pressure", () => {
-    const { db } = openTestDb();
-    try {
-      // Seed row with 0 negatives.
-      db.prepare(
-        `INSERT INTO asset_outcome
-           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
-            outcome_score, updated_at)
-         VALUES ('memory:theta', 0, 5, 5.0, 0, 0, 0, 0.1, ?)`,
-      ).run(NOW);
-
-      // 3 new negative feedbacks.
-      const result = updateAssetOutcome(db, {
-        ref: "memory:theta",
-        currentRetrievalCount: 5,
-        lastRetrievedAt: NOW,
-        acceptedChangeCount: 0,
-        negativeFeedbackCount: 3,
-        now: NOW + 1000,
-      });
-
-      // review_pressure should have increased by REVIEW_PRESSURE_INCREMENT × 3.
-      expect(result.reviewPressure).toBe(REVIEW_PRESSURE_INCREMENT * 3);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("no new negatives decay review_pressure", () => {
-    const { db } = openTestDb();
-    try {
-      // Seed row with pressure = 4.
-      db.prepare(
-        `INSERT INTO asset_outcome
-           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
-            outcome_score, updated_at)
-         VALUES ('memory:iota', 0, 5, 5.0, 3, 0, 4, 0.1, ?)`,
-      ).run(NOW);
-
-      // No new negatives (negativeFeedbackCount still 3).
-      const result = updateAssetOutcome(db, {
-        ref: "memory:iota",
-        currentRetrievalCount: 6,
-        lastRetrievedAt: NOW,
-        acceptedChangeCount: 0,
-        negativeFeedbackCount: 3,
-        now: NOW + 1000,
-      });
-
-      // review_pressure should decay by REVIEW_PRESSURE_DECAY.
-      expect(result.reviewPressure).toBe(4 - REVIEW_PRESSURE_DECAY);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("review_pressure does not go below 0", () => {
-    const { db } = openTestDb();
-    try {
-      db.prepare(
-        `INSERT INTO asset_outcome
-           (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
-            outcome_score, updated_at)
-         VALUES ('memory:kappa', 0, 5, 5.0, 0, 0, 0, 0.1, ?)`,
-      ).run(NOW);
-
-      const result = updateAssetOutcome(db, {
-        ref: "memory:kappa",
-        currentRetrievalCount: 6,
-        lastRetrievedAt: NOW,
-        acceptedChangeCount: 0,
-        negativeFeedbackCount: 0,
-        now: NOW + 1000,
-      });
-
-      expect(result.reviewPressure).toBe(0);
     } finally {
       db.close();
     }
@@ -511,9 +426,9 @@ describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", (
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('skill:two-sided', 0, 100, 5.0, 0, 0, 0, 0.2, ?)`,
+         VALUES ('skill:two-sided', 0, 100, 5.0, 0, 0, 0.2, ?)`,
       ).run(NOW);
 
       // Only delta=1 this cycle vs. expected=5 → predictionError = 1 - 5 = -4 (negative).
@@ -543,9 +458,9 @@ describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", (
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('skill:above-expected', 0, 100, 2.0, 0, 5, 0, 0.1, ?)`,
+         VALUES ('skill:above-expected', 0, 100, 2.0, 0, 5, 0.1, ?)`,
       ).run(NOW);
 
       // delta=10 this cycle vs. expected=2 → predictionError = 10 - 2 = +8 (positive).
@@ -574,13 +489,13 @@ describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", (
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('skill:sustained-low', 0, 100, 10.0, 0, 0, 0, 0.5, ?)`,
+         VALUES ('skill:sustained-low', 0, 100, 10.0, 0, 0, 0.5, ?)`,
       ).run(NOW);
 
       let base = 100;
-      let lastResult = { outcomeScore: 0.5, reviewPressure: 0, isNewRow: false };
+      let lastResult = { outcomeScore: 0.5, isNewRow: false };
       for (let i = 1; i <= 10; i++) {
         base += 1; // only delta=1 per cycle vs. expected≈10
         lastResult = updateAssetOutcome(db, {
@@ -609,9 +524,9 @@ describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", (
       db.prepare(
         `INSERT INTO asset_outcome
            (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-            negative_feedback_count, accepted_change_count, review_pressure,
+            negative_feedback_count, accepted_change_count,
             outcome_score, updated_at)
-         VALUES ('skill:ema-delta', 0, 100, 5.0, 0, 0, 0, 0.0, ?)`,
+         VALUES ('skill:ema-delta', 0, 100, 5.0, 0, 0, 0.0, ?)`,
       ).run(NOW);
 
       // delta=8 this cycle; new EMA = 0.3×8 + 0.7×5 = 2.4 + 3.5 = 5.9
@@ -667,7 +582,6 @@ describe("computeProxyAdequacy — correlation tripwire", () => {
         expected_retrieval_rate: 5,
         negative_feedback_count: 0,
         accepted_change_count: 1,
-        review_pressure: 0,
         outcome_score: 0.5,
         updated_at: NOW,
       },
@@ -686,7 +600,6 @@ describe("computeProxyAdequacy — correlation tripwire", () => {
       expected_retrieval_rate: 10,
       negative_feedback_count: 0,
       accepted_change_count: Math.round(score * 10), // proportional to score
-      review_pressure: 0,
       outcome_score: score,
       updated_at: NOW,
     }));
@@ -710,7 +623,6 @@ describe("computeProxyAdequacy — correlation tripwire", () => {
         expected_retrieval_rate: 10,
         negative_feedback_count: 0,
         accepted_change_count: acceptedChangeCount,
-        review_pressure: 0,
         outcome_score: outcomeScore,
         updated_at: NOW,
       };
@@ -728,7 +640,6 @@ describe("computeProxyAdequacy — correlation tripwire", () => {
       expected_retrieval_rate: 5,
       negative_feedback_count: 0,
       accepted_change_count: i,
-      review_pressure: 0,
       outcome_score: i * 0.1,
       updated_at: NOW,
     }));

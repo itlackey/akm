@@ -60,8 +60,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
     expect(profile.processes?.validation?.enabled).toBe(false);
     expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
-    expect(profile.processes?.recombine?.enabled).toBe(false);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
     // Sync is enabled (consistent with every built-in): reflect can auto-accept
     // and write, so the run must commit rather than leave a silent backlog.
     // saveGitStash no-ops a clean tree, so this is free when nothing is written.
@@ -73,8 +71,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.graphExtraction).toMatchObject({ enabled: true, fullScan: true });
     expect(profile.processes?.validation?.enabled).toBe(false);
     expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
-    expect(profile.processes?.recombine?.enabled).toBe(false);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -102,10 +98,8 @@ describe("resolveImproveStrategy", () => {
       "frequent",
       "consolidate",
       "catchup",
-      "synthesize",
       "reflect-distill",
       "proactive-maintenance",
-      "recombine-only",
     ]) {
       expect(Object.keys(resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes ?? {}).sort()).toEqual(
         expectedProcesses,
@@ -152,7 +146,7 @@ describe("resolveImproveStrategy", () => {
   // Previously these existed ONLY in the owner's ~/.config/akm/config.json, so
   // a fresh machine running `--profile reflect-distill` would silently fall
   // back to default (proactive-off). They must now resolve without any config.
-  for (const name of ["reflect-distill", "proactive-maintenance", "recombine-only"] as const) {
+  for (const name of ["reflect-distill", "proactive-maintenance"] as const) {
     test(`built-in '${name}' resolves from empty config and validates against the schema`, () => {
       const profile = resolveImproveStrategy(name, MINIMAL_CONFIG).config;
       // Loads and is a valid ImproveProfileConfig.
@@ -169,14 +163,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.consolidate?.enabled).toBe(false);
     // Sync off — interrupted runs would leave an uncommitted backlog (#662).
     expect(profile.sync?.enabled).toBe(false);
-  });
-
-  test("built-in 'recombine-only' enables only the recombine pass", () => {
-    const profile = resolveImproveStrategy("recombine-only", MINIMAL_CONFIG).config;
-    expect(resolveProcessEnabled("recombine", profile)).toBe(true);
-    expect(profile.processes?.reflect?.enabled).toBe(false);
-    expect(profile.processes?.distill?.enabled).toBe(false);
-    expect(profile.processes?.consolidate?.enabled).toBe(false);
   });
 
   test("user config deep-merges on top of built-in", () => {
@@ -225,8 +211,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.distill?.enabled).toBe(true);
     expect(profile.processes?.consolidate?.enabled).toBe(true);
     expect(profile.processes?.extract?.enabled).toBe(true);
-    expect(profile.processes?.recombine?.enabled).toBe(false);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
   });
 
   test("defaults.improveStrategy sets the default strategy name", () => {

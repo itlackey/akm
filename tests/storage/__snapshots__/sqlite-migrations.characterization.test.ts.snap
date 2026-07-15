@@ -20,16 +20,9 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "015-asset-salience-encoding-source",
     "016-collapse-churn-detector",
     "017-improve-run-strategy",
+    "018-drop-dead-lane-schema",
   ],
   "schema": [
-    {
-      "name": "idx_asset_outcome_review_pressure",
-      "sql": 
-"CREATE INDEX idx_asset_outcome_review_pressure
-        ON asset_outcome(review_pressure DESC)"
-,
-      "type": "index",
-    },
     {
       "name": "idx_asset_outcome_score",
       "sql": 
@@ -147,14 +140,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "type": "index",
     },
     {
-      "name": "idx_recombine_hypotheses_last_seen",
-      "sql": 
-"CREATE INDEX idx_recombine_hypotheses_last_seen
-        ON recombine_hypotheses(last_seen_at)"
-,
-      "type": "index",
-    },
-    {
       "name": "idx_task_history_run",
       "sql": 
 "CREATE UNIQUE INDEX idx_task_history_run
@@ -204,7 +189,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
         negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
         accepted_change_count    INTEGER NOT NULL DEFAULT 0,
-        review_pressure          INTEGER NOT NULL DEFAULT 0,
         outcome_score            REAL    NOT NULL DEFAULT 0.0,
         updated_at               INTEGER NOT NULL DEFAULT 0
       )"
@@ -249,18 +233,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         source        TEXT    NOT NULL DEFAULT 'auto',
         active        INTEGER NOT NULL DEFAULT 1,
         created_at    TEXT    NOT NULL
-      )"
-,
-      "type": "table",
-    },
-    {
-      "name": "consolidation_judged",
-      "sql": 
-"CREATE TABLE consolidation_judged (
-        entry_key    TEXT    PRIMARY KEY,
-        content_hash TEXT    NOT NULL,
-        judged_at    TEXT    NOT NULL,
-        outcome      TEXT    NOT NULL
       )"
 ,
       "type": "table",
@@ -379,23 +351,6 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         content          TEXT    NOT NULL DEFAULT '',
         frontmatter_json TEXT,
         metadata_json    TEXT    NOT NULL DEFAULT '{}'
-      )"
-,
-      "type": "table",
-    },
-    {
-      "name": "recombine_hypotheses",
-      "sql": 
-"CREATE TABLE recombine_hypotheses (
-        hypothesis_ref    TEXT PRIMARY KEY,
-        signature         TEXT NOT NULL,
-        member_key        TEXT NOT NULL,
-        consecutive_count INTEGER NOT NULL DEFAULT 0,
-        first_seen_at     TEXT NOT NULL,
-        last_seen_at      TEXT NOT NULL,
-        last_run          TEXT,
-        promoted_at       TEXT,
-        metadata_json     TEXT NOT NULL DEFAULT '{}'
       )"
 ,
       "type": "table",

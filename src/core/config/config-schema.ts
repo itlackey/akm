@@ -320,34 +320,6 @@ export const ImproveProcessConfigSchema = z
     // consolidation pass skips entirely (emits `pool_below_min_size`). 0 disables
     // the guard. Only meaningful on the `consolidate` process. Default 500.
     minPoolSize: z.number().int().min(0).optional(),
-    // Consolidate process: deterministic near-duplicate dedup pre-pass (#617).
-    // A cheap, no-LLM fast path that collapses obvious duplicates (`.derived`
-    // origin pairs + content twins) before the LLM consolidation. Default OFF
-    // — when absent the consolidate pass behaves byte-identically to today.
-    // `cosineThreshold` is a strict floor in [0, 1] (default 0.97) for the
-    // optional embedding-similarity match; exact normalized content-hash
-    // equality always collapses regardless of the threshold. Only meaningful
-    // on the `consolidate` process.
-    dedup: z
-      .object({
-        enabled: z.boolean().optional(),
-        cosineThreshold: z.number().min(0).max(1).optional(),
-        // WS-3a: maximum pool size for the O(n²) cosine-similarity twin compare.
-        // Only the first `cosineCandidateLimit` memories are cosine-compared;
-        // exact-hash matches still run over the full pool. Default 500. Raise
-        // with care — cost is O(n²).
-        cosineCandidateLimit: z.number().int().positive().optional(),
-      })
-      .passthrough()
-      .optional(),
-    // Consolidate process: judged-state cache (#581). When enabled, a memory
-    // whose current content hash equals its cached judged hash is SKIPPED from
-    // the LLM pool (judged-unchanged → no re-judge), letting one run sweep the
-    // whole corpus at O(changed/new) cost instead of narrowing to a recent
-    // time-window slice. Default OFF — when absent the consolidate pass behaves
-    // byte-identically to today (the incrementalSince path is unaffected). Only
-    // meaningful on the `consolidate` process.
-    judgedCache: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
     // Distill process: LLM-as-judge lesson quality gate. Default ON (R3);
     // fail-open — judge failure/timeout/parse errors pass through. Set
     // `enabled: false` on the distill process to opt out.
@@ -437,34 +409,6 @@ export const ImproveProcessConfigSchema = z
     // (WS-3b step 0a `homeostaticDemotion` was removed — R4. The key is
     // tolerated via passthrough if an old config still carries it; continuous
     // decay is now part of the always-applied salience recency term.)
-    // WS-3b: Schema-similarity gate (step 0b). At intake, if a new candidate's
-    // body embedding is within epsilon of an existing derived-layer lesson/knowledge
-    // node, mark it schema-consistent and lower its priority. Default ON for
-    // the `extract` process since R3 (fail-open; set `enabled: false` to opt out).
-    // Only meaningful on the `consolidate` and `extract` processes.
-    schemaSimilarity: z
-      .object({
-        enabled: z.boolean().optional(),
-        // Epsilon: cosine similarity threshold above which a candidate is schema-consistent
-        // (default 0.85 — looser than dedup's 0.97 since we want to catch conceptual overlap).
-        epsilon: z.number().min(0).max(1).optional(),
-        // Multiplicative factor applied to candidate confidence when schema-consistent.
-        // Default 0.5 — halves the confidence so schema-consistent candidates are less likely
-        // to pass the quality gate and create redundant stash entries.
-        confidencePenalty: z.number().min(0).max(1).optional(),
-      })
-      .passthrough()
-      .optional(),
-    // WS-3b: Hot-probation intake buffer (step 0c, #604). New system-generated
-    // extractions enter captureMode: hot-probation and spend ONE consolidation
-    // cycle in probation. Dedup + quality second-pass runs before promotion.
-    // Default OFF. Only meaningful on the `extract` process.
-    hotProbation: z
-      .object({
-        enabled: z.boolean().optional(),
-      })
-      .passthrough()
-      .optional(),
     // WS-3b: Anti-collapse guards (step 8). Prevents the consolidation pipeline
     // from collapsing too aggressively and losing diversity.
     //   - maxGeneration: refuse to merge two assets both above this generation (default 2).
@@ -507,53 +451,11 @@ export const ImproveProcessConfigSchema = z
       })
       .passthrough()
       .optional(),
-    // #609 — recombine process: minimum related-memory cluster size before an
-    // LLM generalization call. Default 3. Only meaningful on `recombine`.
-    minClusterSize: z.number().int().min(2).optional(),
-    // #609 — recombine process: hard cap on clusters processed per run (one
-    // bounded LLM call each). Default 5. Only meaningful on `recombine`.
-    maxClustersPerRun: positiveInt.optional(),
-    // #632 — recombine process: max members a cluster may contain before it is
-    // SKIPPED (drops bland over-broad buckets). When set, largest-first ranking
-    // no longer starves tighter clusters. Default UNSET = no cap. Only
-    // meaningful on `recombine`.
-    maxClusterSize: positiveInt.optional(),
-    // #632 — recombine process: tag values that must never form a tag cluster
-    // (generic project-wide tags). Default UNSET/[]. Only meaningful on
-    // `recombine`.
-    excludeTags: z.array(z.string().min(1)).optional(),
-    // #632 — recombine process: entity_norm values that must never form an
-    // entity cluster (user counterpart to the built-in generic-entity filter).
-    // Default UNSET/[]. Only meaningful on `recombine`.
-    excludeEntities: z.array(z.string().min(1)).optional(),
-    // #609 — recombine process: relatedness signal used to form clusters
-    // (tags | graph | both). Clustering is by relatedness, never embedding
-    // similarity. Default "both" (#632). Only meaningful on `recombine`.
-    relatednessSource: z.enum(["tags", "graph", "both"]).optional(),
-    // #609 — recombine process: consecutive re-inductions required before a
-    // hypothesis is promoted to a lesson. Default 2. Only meaningful on
-    // `recombine`.
-    confirmThreshold: z.number().int().min(1).optional(),
-    // #615 — procedural process: minimum number of distinct assets sharing the
-    // same successful normalized ordered-action sequence before it is compiled
-    // into a workflow proposal. Default 3. Only meaningful on `procedural`.
-    minRecurrence: z.number().int().min(2).optional(),
-    // #615 — procedural process: hard cap on workflow proposals emitted per run
-    // (one bounded LLM call each). Default 3. Only meaningful on `procedural`.
-    maxProposalsPerRun: positiveInt.optional(),
-    // #615 — procedural process: asset type a compiled sequence is emitted as.
-    // Reserved; v1 always emits "workflow". Only meaningful on `procedural`.
-    emitAs: z.enum(["workflow", "skill"]).optional(),
     // #639 — semantic value-floor filter for the `reflect` process. When
     // enabled, proposals classified as "low-value" by the deterministic noise
     // gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
     // byte-identical behaviour). Only meaningful on the `reflect` process.
     lowValueFilter: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
-    // #641 — procedural-aware floor for the `extract` process triage gate.
-    // When true, a session must have markers>=1 OR editCommit>=0.5 to pass, even
-    // if score>=minScore. DEFAULT OFF (absent/false = pre-#641 byte-identical).
-    // Only meaningful on the `extract` process when triage is also enabled.
-    proceduralAwareFloor: z.boolean().optional(),
     // Triage process config (only meaningful for the `triage` process)
     applyMode: z.enum(["queue", "promote"]).optional(),
     policy: z.string().min(1).optional(),
@@ -602,8 +504,6 @@ const ImproveProfileProcessesSchema = z
     validation: ImproveProcessConfigSchema.optional(),
     triage: ImproveProcessConfigSchema.optional(),
     proactiveMaintenance: ImproveProcessConfigSchema.optional(),
-    recombine: ImproveProcessConfigSchema.optional(),
-    procedural: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
   .superRefine((val, ctx) => {
@@ -647,10 +547,6 @@ export const ImproveProfileConfigSchema = z
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
-    // #616 — bounded multi-cycle phasing. Number of prep->loop->post-loop
-    // cycles per run. positiveInt forbids 0/negative. DEFAULT 1 => byte-identical
-    // single-pass behavior.
-    maxCycles: positiveInt.optional(),
     // #614 — symmetric valence weighting in the eligibility sort. When true,
     // the attention term becomes |valence| MAGNITUDE so BOTH strong positive
     // and strong negative feedback drive attention (utility stays dominant) and
@@ -810,47 +706,6 @@ const ImproveUtilityDecaySchema = z
   })
   .passthrough();
 
-// #612 / WS-4 — auto-accept gate calibration + bounded, opt-in per-phase
-// threshold auto-tune. DEFAULT OFF: when absent (or `autoTune: false`) no
-// tuning occurs, so the gate behaves byte-identically to today.
-// WS-4 adds: per-phase persistence (state.db) + auto-tune ceiling default 85.
-const ImproveCalibrationSchema = z
-  .object({
-    /** Master switch for the bounded threshold auto-tune. Default false (parity). */
-    autoTune: z.boolean().optional(),
-    /** Lower bound (0-100) the tuned threshold may never drop below. */
-    minThreshold: z.number().int().min(0).max(100).optional(),
-    /**
-     * Upper bound (0-100) the tuned threshold may never rise above.
-     * WS-4 default: 85 (prevents gate converging to pure exploitation).
-     */
-    maxThreshold: z.number().int().min(0).max(100).optional(),
-    /** Maximum adjustment magnitude (points) applied in one tune step. */
-    maxStep: positiveInt.optional(),
-    /** Minimum acted-on sample count required before any adjustment. */
-    minSamples: nonNegativeNumber.optional(),
-    /** Target realized accept rate in [0, 1]. Default 0.9. */
-    targetAcceptRate: z.number().finite().min(0).max(1).optional(),
-  })
-  .passthrough();
-
-// WS-4 — exploration budget: a fixed fraction of proposals accepted per run
-// regardless of confidence. DEFAULT OFF.
-const ImproveExplorationSchema = z
-  .object({
-    /**
-     * Enable the exploration budget lane. Default false (parity).
-     * When true, a fraction of proposals are accepted regardless of confidence.
-     */
-    enabled: z.boolean().optional(),
-    /**
-     * Fraction of proposals per run to accept as exploration [0, 1].
-     * Default 0.05 (5%). Clamped to [0, 1] at read time.
-     */
-    budgetFraction: z.number().finite().min(0).max(1).optional(),
-  })
-  .passthrough();
-
 const ImproveSalienceSchema = z
   .object({
     /**
@@ -875,7 +730,7 @@ const ImproveSalienceSchema = z
   .passthrough();
 
 // R5 — longitudinal collapse/churn detector (observe-only in v1; deterministic,
-// fail-open, runs only on cycles where consolidate/recombine did work).
+// fail-open, runs only on cycles where consolidate did work).
 // Default ON; opt out via `improve.collapseDetector.enabled: false`.
 // See docs/design/improve-collapse-churn-detector-design.md.
 const ImproveCollapseDetectorSchema = z
@@ -903,8 +758,6 @@ export const ImproveConfigSchema = z
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
-    calibration: ImproveCalibrationSchema.optional(),
-    exploration: ImproveExplorationSchema.optional(),
     salience: ImproveSalienceSchema.optional(),
     collapseDetector: ImproveCollapseDetectorSchema.optional(),
   })

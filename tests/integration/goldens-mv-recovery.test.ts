@@ -131,9 +131,9 @@ function seedStateRows(ref: string): void {
   ).run(ref, 0.8, 0, 0, 0.7, 0, Date.now(), "content");
   db.prepare(
     `INSERT INTO asset_outcome
-     (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(ref, Date.now(), 7, 1, 0, 2, 0, 0.5, Date.now());
+     (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(ref, Date.now(), 7, 1, 0, 2, 0.5, Date.now());
   db.close();
 }
 

@@ -85,6 +85,7 @@ describe("SQLite migration runner characterization", () => {
         "015-asset-salience-encoding-source",
         "016-collapse-churn-detector",
         "017-improve-run-strategy",
+        "018-drop-dead-lane-schema",
       ]);
 
       // The set of durable objects the migrations create.
@@ -93,9 +94,13 @@ describe("SQLite migration runner characterization", () => {
       expect(names).toContain("table:proposals");
       expect(names).toContain("table:task_history");
       expect(names).toContain("table:schema_migrations");
-      expect(names).toContain("table:consolidation_judged");
       expect(names).toContain("table:body_embeddings");
-      expect(names).toContain("table:recombine_hypotheses");
+      // consolidation_judged (migration 007) and recombine_hypotheses (migration
+      // 014) are created and then DROPPED by migration 018 (Chunk 7, WI-7.3) —
+      // the ledger records both migration ids (append-only), but neither table
+      // survives to the final schema.
+      expect(names).not.toContain("table:consolidation_judged");
+      expect(names).not.toContain("table:recombine_hypotheses");
 
       // Lock the exact DDL snapshot so any drift in the produced schema fails.
       expect(snap).toMatchSnapshot();

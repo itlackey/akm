@@ -13,7 +13,7 @@
  * test proves the new self-keyed shape keeps them.
  *
  * These tests cover the self-keyed shape: composite key, hasGraphData,
- * re-keyed getEntitiesByEntryIds, and graph-data survival across a reindex.
+ * and graph-data survival across a reindex.
  *
  * Isolation: no host state. A temp .db file per test; XDG sandboxed so any
  * config read inside openIndexDatabase cannot touch the developer's real config.
@@ -25,7 +25,6 @@ import path from "node:path";
 import {
   closeDatabase,
   deleteEntriesByIds,
-  getEntitiesByEntryIds,
   getEntryIdByFilePath,
   getMeta,
   openIndexDatabase,
@@ -465,25 +464,6 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
       expect(snap?.relations[0]?.to).toBe("Beta");
       // hasGraphData reports true post-migration (no re-extraction needed).
       expect(hasGraphData(db, STASH, file)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  // Regression — getEntitiesByEntryIds keeps the entry_id -> entities contract.
-  test("regression: getEntitiesByEntryIds returns entry_id->entities after re-key", () => {
-    const db = openIndexDatabase(tmpDbPath());
-    try {
-      const fileA = path.join(STASH, "ra.md");
-      const fileB = path.join(STASH, "rb.md");
-      const idA = seedEntry(db, fileA, "ra");
-      const idB = seedEntry(db, fileB, "rb");
-
-      replaceStoredGraph(db, graphFor([fileNode(fileA, "ha", ["Alpha", "Beta"]), fileNode(fileB, "hb", ["Gamma"])]));
-
-      const map = getEntitiesByEntryIds(db, [idA, idB]);
-      expect(map.get(idA)?.sort()).toEqual(["alpha", "beta"]);
-      expect(map.get(idB)).toEqual(["gamma"]);
     } finally {
       closeDatabase(db);
     }

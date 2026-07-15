@@ -2,20 +2,6 @@
   "$policy": "See docs/design/execution/chunk-0a/anchors.md §3.3 and docs/design/execution/chunk-0a/brief.md §3.3 (R12 / plan §15 rule 5). Every file under tests/fixtures/goldens/** (excluding this registry itself and fixture-refs.ts modules) must have exactly one entry below. designation is one of: \"frozen-migration-input\" (the asset is a preservation oracle — a chunk that touches its surface must reproduce it byte-for-byte/outcome-for-outcome; never re-recorded outside its owning chunk) or \"re-baseline\" (the asset deliberately baselines behavior a later chunk is going to change on purpose; reBaselineChunk names the manifest chunk id — see docs/design/akm-0.9.0-chunk-manifest.json — where it is reviewed and re-captured). reBaselineChunk is required iff designation is \"re-baseline\" and must be absent otherwise. consumers[] lists the suite(s) that load the fixture via tests/_helpers/golden.ts's expectGolden/loadGolden. Policed by tests/goldens-designations.test.ts.",
   "entries": [
     {
-      "path": "tests/fixtures/goldens/improve/self-consistency.json",
-      "designation": "re-baseline",
-      "reBaselineChunk": "7",
-      "consumers": ["tests/commands/improve/goldens-self-consistency.test.ts"],
-      "notes": "WI-02, plan §5 ledger bullet 1 / R1. Baselines the self-consistency (SC) reflect call-count behavior (3x draftMode samples for utility >= 0.7, else 1x; winner persisted as a single reflect-sc- proposal) that Chunk 7 deletes (3x -> 1x). Re-captured in Chunk 7 with a reviewed diff as the §5 ledger verification. Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), counts, and booleans — no production refs."
-    },
-    {
-      "path": "tests/fixtures/goldens/improve/p0a-selection.json",
-      "designation": "re-baseline",
-      "reBaselineChunk": "7",
-      "consumers": ["tests/commands/improve/goldens-p0a-selection.test.ts"],
-      "notes": "WI-02, plan §5 ledger bullet 2 / R2. Baselines the P0-A high-retrieval fallback lane's selection sets (threshold boundary, once-per-asset gate, per-lane attribution) that Chunk 7 deletes. Documents that the once-per-asset gate cursor (buildLatestProposalTsMap) is event-driven (reflect_invoked), not proposal-record-driven, and that P0-A is not the only lane rescuing never-rated assets (proactive-maintenance and high-salience also do — plan §5 ledger bullet 2 is stale). Re-captured in Chunk 7 with a reviewed diff. Contains only fixture-local ref names, counts, and booleans — no production refs."
-    },
-    {
       "path": "tests/fixtures/goldens/journal/proposal-txn.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/proposal/goldens-proposal-txn.test.ts"],

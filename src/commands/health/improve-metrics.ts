@@ -13,7 +13,6 @@ import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
 import { type ImproveRunSummaryRow, queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
-import { summarizeCalibration } from "../improve/calibration";
 import type { ImproveHealthMetrics, ImproveRunSummary } from "./types";
 
 export function roundRate(value: number): number {
@@ -66,7 +65,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
-    calibration: summarizeCalibration([]),
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
     evalCasesWritten: 0,
@@ -154,7 +152,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
     perfTelemetry: {
       dedupPoolSize: 0,
       llmPoolSize: 0,
-      judgedCacheSkipped: 0,
       embedMs: 0,
       embedCacheHits: 0,
       embedCacheMisses: 0,
@@ -397,7 +394,6 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       metrics.perfTelemetry.runsWithTelemetry += 1;
       metrics.perfTelemetry.dedupPoolSize += toFiniteNumber(perf.dedupPoolSize);
       metrics.perfTelemetry.llmPoolSize += toFiniteNumber(perf.llmPoolSize);
-      metrics.perfTelemetry.judgedCacheSkipped += toFiniteNumber(perf.judgedCacheSkipped);
       metrics.perfTelemetry.embedMs += toFiniteNumber(perf.embedMs);
       metrics.perfTelemetry.embedCacheHits += toFiniteNumber(perf.embedCacheHits);
       metrics.perfTelemetry.embedCacheMisses += toFiniteNumber(perf.embedCacheMisses);
@@ -617,7 +613,6 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   // WS-5: merge perf telemetry (additive sums).
   dst.perfTelemetry.dedupPoolSize += src.perfTelemetry.dedupPoolSize;
   dst.perfTelemetry.llmPoolSize += src.perfTelemetry.llmPoolSize;
-  dst.perfTelemetry.judgedCacheSkipped += src.perfTelemetry.judgedCacheSkipped;
   dst.perfTelemetry.embedMs += src.perfTelemetry.embedMs;
   dst.perfTelemetry.embedCacheHits += src.perfTelemetry.embedCacheHits;
   dst.perfTelemetry.embedCacheMisses += src.perfTelemetry.embedCacheMisses;

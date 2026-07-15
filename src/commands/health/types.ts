@@ -9,8 +9,6 @@
  * registry, so they live here rather than in any single concern module.
  */
 
-import type { CalibrationSummary } from "../improve/calibration";
-
 export interface HealthCheckResult {
   name: string;
   kind: "deterministic" | "heuristic";
@@ -205,15 +203,6 @@ export interface ImproveHealthMetrics {
      */
     validationFailed: number;
   };
-  /**
-   * Auto-accept gate calibration (#612). Joins predicted confidence (from the
-   * gate's per-proposal `gateDecision` records) to the realized accept/reject
-   * outcome over the window, producing a reliability table + an aggregate
-   * calibration gap (predicted vs realized acceptance). Empty (zeros) when no
-   * acted-on gate decisions fall in the window — so the default, ungated
-   * install reports a parity-preserving empty summary.
-   */
-  calibration: CalibrationSummary;
   reflectsWithErrorContext: number;
   coverageGapCount: number;
   evalCasesWritten: number;
@@ -503,9 +492,9 @@ export interface ImproveHealthMetrics {
  * Lanes ratified as ENRICHMENT-ONLY: they may propose edits to existing
  * assets (metadata, relations, content refresh) but must not mint new ones.
  * New-asset generation belongs to the signal-gated minting lanes
- * (extract/distill/memory-inference/recombine).
+ * (extract/distill/memory-inference).
  */
-export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "high-retrieval", "signal-delta"];
+export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "signal-delta"];
 
 /** Minted share of enrichment-lane accepts that triggers a WARN advisory. */
 export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;
@@ -549,8 +538,6 @@ export interface ImprovePerfTelemetry {
   dedupPoolSize: number;
   /** Sum of llmPoolSize across consolidation runs in the window. */
   llmPoolSize: number;
-  /** Sum of judgedCacheSkipped across consolidation runs. */
-  judgedCacheSkipped: number;
   /** Total embedding wall-clock time across consolidation runs (ms). */
   embedMs: number;
   /** Total body-embedding cache hits across consolidation runs. */

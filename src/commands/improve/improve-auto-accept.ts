@@ -74,16 +74,6 @@ export interface AutoAcceptGateConfig {
   eventsCtx: EventsContext | undefined;
   /** Configured source selector used for proposal promotion. */
   targetSelector?: string;
-  /**
-   * WS-4 exploration budget: when set, at most this many candidates per run
-   * are promoted regardless of confidence (logged eligibilitySource="exploration",
-   * NOT counted toward auto-tune calibration). Prevents the gate converging to
-   * pure exploitation and shutting down novelty / Gap-3/4 throughput.
-   *
-   * Computed from `config.improve.exploration.budgetFraction × candidates.length`
-   * by `makeGateConfig`; callers may also set it directly for testing.
-   */
-  explorationBudgetCount?: number;
 }
 
 export interface ProposalCandidate {
@@ -175,15 +165,6 @@ export async function runAutoAcceptGate(
   const resolvedThreshold = cfg.phaseThreshold ?? cfg.globalThreshold;
   const effectiveThreshold = Math.max(resolvedThreshold, cfg.minimumThreshold ?? 0) / 100;
 
-  // WS-4: Exploration budget — promote at most N candidates regardless of
-  // confidence to prevent the gate converging to pure exploitation.
-  // Exploration candidates are chosen from the LOWEST-confidence eligible set
-  // (i.e. those that would be deferred) so the budget truly samples the low-
-  // confidence tail and is meaningfully distinct from normal auto-accept.
-  // Promoted exploration proposals are logged with eligibilitySource="exploration".
-  const explorationBudget = cfg.explorationBudgetCount ?? 0;
-  let explorationRemaining = explorationBudget;
-
   const resolvedConfig: AkmConfig = typeof cfg.config === "function" ? cfg.config() : cfg.config;
   const gateLabel = `improve:${cfg.phase}`;
 
@@ -212,13 +193,9 @@ export async function runAutoAcceptGate(
     }
     const currentContentHash = currentProposal ? await sha256Hex(currentProposal.payload.content) : undefined;
 
-    // Determine if this candidate is exploration-eligible: below-threshold
-    // (would normally be deferred) but with a valid confidence score and budget
-    // remaining. No-confidence candidates are never exploration-promoted.
     const belowThreshold = confidence === undefined || confidence < effectiveThreshold;
-    const isExploration = belowThreshold && confidence !== undefined && explorationRemaining > 0;
 
-    if (belowThreshold && !isExploration) {
+    if (belowThreshold) {
       stamp(proposalId, {
         outcome: "deferred",
         reason: confidence === undefined ? "no-confidence" : "below-threshold",
@@ -230,9 +207,7 @@ export async function runAutoAcceptGate(
       continue;
     }
 
-    // Either above-threshold (normal auto-accept) or exploration-budget promoted.
-    if (isExploration) explorationRemaining -= 1;
-    const promoteReason = isExploration ? "exploration-budget" : "above-threshold";
+    const promoteReason = "above-threshold";
 
     if (
       currentProposal?.gateDecision?.outcome === "auto-rejected" &&
@@ -244,9 +219,7 @@ export async function runAutoAcceptGate(
     }
 
     try {
-      const resolvedEligibilitySource: string | undefined = isExploration
-        ? "exploration"
-        : currentProposal?.eligibilitySource;
+      const resolvedEligibilitySource = currentProposal?.eligibilitySource;
       const promotion = await promoteFn(
         cfg.stashDir,
         resolvedConfig,
@@ -259,7 +232,6 @@ export async function runAutoAcceptGate(
             threshold: effectiveThreshold,
             phase: cfg.phase,
             ...(resolvedEligibilitySource !== undefined ? { eligibilitySource: resolvedEligibilitySource } : {}),
-            ...(isExploration ? { explorationBudget: true } : {}),
           },
         },
         undefined,
@@ -272,15 +244,9 @@ export async function runAutoAcceptGate(
         ...(currentContentHash !== undefined ? { contentHash: currentContentHash } : {}),
         gate: gateLabel,
       });
-      if (isExploration) {
-        info(
-          `[improve] exploration-accepted ${promotion.ref} (${cfg.phase}; confidence=${(confidence as number).toFixed(2)}; budgetRemaining=${explorationRemaining})`,
-        );
-      } else {
-        info(
-          `[improve] auto-accepted ${promotion.ref} (${cfg.phase}; confidence=${(confidence as number).toFixed(2)} >= threshold=${effectiveThreshold.toFixed(2)})`,
-        );
-      }
+      info(
+        `[improve] auto-accepted ${promotion.ref} (${cfg.phase}; confidence=${(confidence as number).toFixed(2)} >= threshold=${effectiveThreshold.toFixed(2)})`,
+      );
       result.promoted.push(proposalId);
     } catch (err) {
       const reason = classifyPromoteFailure(err);
@@ -322,9 +288,6 @@ export async function runAutoAcceptGate(
           );
         }
       }
-      // If exploration budget was consumed but promotion failed, restore the slot
-      // so the budget isn't exhausted on errors.
-      if (isExploration) explorationRemaining += 1;
     }
   }
 
@@ -365,9 +328,6 @@ export function resolveExtractConfidence(proposal: {
  *   threshold from `improve_gate_thresholds` (Migration 012). The phase
  *   value overrides `globalThreshold` but is still floored by
  *   `minimumThreshold`. Falls back to `globalThreshold` when no row exists.
- * - Computes `explorationBudgetCount` from
- *   `config.improve.exploration.budgetFraction × candidateCount` when the
- *   exploration budget is enabled. Defaults to 0 (no exploration).
  */
 export function makeGateConfig(
   phase: string,
@@ -380,11 +340,6 @@ export function makeGateConfig(
     targetSelector?: string;
     /** WS-4: path to state.db for reading per-phase threshold. */
     stateDbPath?: string;
-    /**
-     * WS-4: number of candidates this gate will evaluate (used to compute the
-     * exploration budget count from the configured fraction).
-     */
-    candidateCount?: number;
   },
   overrides: { minimumThreshold?: number } = {},
 ): AutoAcceptGateConfig {
@@ -400,15 +355,6 @@ export function makeGateConfig(
     }
   }
 
-  // WS-4: compute exploration budget count from config fraction × candidateCount.
-  let explorationBudgetCount: number | undefined;
-  const resolvedConfig: AkmConfig = typeof shared.config === "function" ? shared.config() : shared.config;
-  const explorationCfg = resolvedConfig.improve?.exploration;
-  if (explorationCfg?.enabled && shared.candidateCount !== undefined && shared.candidateCount > 0) {
-    const fraction = Math.min(1, Math.max(0, explorationCfg.budgetFraction ?? 0.05));
-    explorationBudgetCount = Math.max(0, Math.floor(fraction * shared.candidateCount));
-  }
-
   return {
     phase,
     globalThreshold: shared.globalThreshold,
@@ -418,7 +364,6 @@ export function makeGateConfig(
     config: shared.config,
     eventsCtx: shared.eventsCtx,
     ...(shared.targetSelector ? { targetSelector: shared.targetSelector } : {}),
-    ...(explorationBudgetCount !== undefined && explorationBudgetCount > 0 ? { explorationBudgetCount } : {}),
     ...overrides,
   };
 }

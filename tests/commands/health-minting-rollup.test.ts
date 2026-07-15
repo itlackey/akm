@@ -87,9 +87,23 @@ describe("computeEnrichmentMintingRollup", () => {
   });
 
   test("an explicit null backupContent classifies as minted (absence semantics)", () => {
+    seedProposal({ lane: "high-salience", backupContent: null });
+    const rollup = computeEnrichmentMintingRollup(db, SINCE, UNTIL);
+    expect(rollup?.byLane["high-salience"]).toEqual({ minted: 1, updated: 0 });
+  });
+
+  test("a historical 'high-retrieval' lane (retired in Chunk 7) still rolls up in byLane but no longer counts toward the enrichment share", () => {
+    // Chunk 7 (WI-7.2, R18/D13) deleted the P0-A high-retrieval fallback lane and
+    // removed 'high-retrieval' from ENRICHMENT_LANES. Pre-existing proposal rows
+    // persisted with that lane string still roll up per-lane (byLane covers every
+    // lane seen in the data, unconditionally) but no longer contribute to the
+    // top-level minted/updated/share aggregation, which sums ENRICHMENT_LANES only.
     seedProposal({ lane: "high-retrieval", backupContent: null });
     const rollup = computeEnrichmentMintingRollup(db, SINCE, UNTIL);
     expect(rollup?.byLane["high-retrieval"]).toEqual({ minted: 1, updated: 0 });
+    expect(rollup?.minted).toBe(0);
+    expect(rollup?.updated).toBe(0);
+    expect(Number.isNaN(rollup?.share)).toBe(true);
   });
 
   test("excludes unattributed rows, non-accepted rows, and rows outside the window", () => {
@@ -118,6 +132,6 @@ describe("computeEnrichmentMintingRollup", () => {
   });
 
   test("the ratified enrichment lane set is pinned", () => {
-    expect([...ENRICHMENT_LANES].sort()).toEqual(["high-retrieval", "high-salience", "proactive", "signal-delta"]);
+    expect([...ENRICHMENT_LANES].sort()).toEqual(["high-salience", "proactive", "signal-delta"]);
   });
 });

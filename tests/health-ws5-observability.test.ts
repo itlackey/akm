@@ -100,7 +100,6 @@ describe("WS-5 perfTelemetry aggregation", () => {
             perfTelemetry: {
               dedupPoolSize: 50,
               llmPoolSize: 45,
-              judgedCacheSkipped: 5,
               embedMs: 120,
               embedCacheHits: 40,
               embedCacheMisses: 5,
@@ -120,7 +119,6 @@ describe("WS-5 perfTelemetry aggregation", () => {
     expect(perf.runsWithTelemetry).toBe(1);
     expect(perf.dedupPoolSize).toBe(50);
     expect(perf.llmPoolSize).toBe(45);
-    expect(perf.judgedCacheSkipped).toBe(5);
     expect(perf.embedMs).toBe(120);
     expect(perf.embedCacheHits).toBe(40);
     expect(perf.embedCacheMisses).toBe(5);
@@ -170,7 +168,6 @@ describe("WS-5 perfTelemetry aggregation", () => {
             perfTelemetry: {
               dedupPoolSize: 10,
               llmPoolSize: 10,
-              judgedCacheSkipped: 0,
               embedMs: 50,
               embedCacheHits: 8,
               embedCacheMisses: 2,
@@ -234,7 +231,6 @@ describe("WS-5 perfTelemetry aggregation", () => {
               perfTelemetry: {
                 dedupPoolSize: 10,
                 llmPoolSize: 8,
-                judgedCacheSkipped: 2,
                 embedMs: 30,
                 embedCacheHits: 6,
                 embedCacheMisses: 2,
@@ -256,7 +252,6 @@ describe("WS-5 perfTelemetry aggregation", () => {
     expect(perf.embedMs).toBe(90); // 30 * 3
     expect(perf.embedCacheHits).toBe(18); // 6 * 3
     expect(perf.embedCacheMisses).toBe(6); // 2 * 3
-    expect(perf.judgedCacheSkipped).toBe(6); // 2 * 3
     expect(perf.overBudgetRuns).toBe(0);
   });
 

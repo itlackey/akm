@@ -130,7 +130,6 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     const result = await akmImprove({
       stashDir: stash,
       scope: "lesson",
-      minRetrievalCount: 0,
       ensureIndexFn: async () => undefined,
       reindexFn: async () => undefined,
       reflectFn: async (options) => {

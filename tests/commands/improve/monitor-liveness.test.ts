@@ -32,7 +32,6 @@ function outcomeRow(ref: string, outcomeScore: number, acceptedCount: number, re
     expected_retrieval_rate: 0,
     negative_feedback_count: 0,
     accepted_change_count: acceptedCount,
-    review_pressure: 0,
     outcome_score: outcomeScore,
     updated_at: 0,
   };

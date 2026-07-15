@@ -183,7 +183,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -901,7 +900,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -965,7 +963,6 @@ describe("akm improve memory cleanup", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
@@ -1009,7 +1006,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,

@@ -46,9 +46,9 @@ function seedRow(db: Database, ref: string, retrievalCount: number, expectedRate
   db.prepare(
     `INSERT INTO asset_outcome
        (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-        negative_feedback_count, accepted_change_count, review_pressure,
+        negative_feedback_count, accepted_change_count,
         outcome_score, updated_at)
-     VALUES (?, 0, ?, ?, 0, 0, 0, ?, ?)`,
+     VALUES (?, 0, ?, ?, 0, 0, ?, ?)`,
   ).run(ref, retrievalCount, expectedRate, outcomeScore, NOW);
 }
 

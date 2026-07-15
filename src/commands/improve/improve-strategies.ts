@@ -10,9 +10,7 @@ import graphRefresh from "../../assets/improve-strategies/graph-refresh.json" wi
 import memoryFocus from "../../assets/improve-strategies/memory-focus.json" with { type: "json" };
 import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
-import recombineOnly from "../../assets/improve-strategies/recombine-only.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
-import synthesize from "../../assets/improve-strategies/synthesize.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -79,10 +77,8 @@ const BUILTIN_STRATEGIES: Record<string, ImproveStrategyConfig> = {
   frequent: frequent as ImproveStrategyConfig,
   consolidate: consolidate as ImproveStrategyConfig,
   catchup: catchup as ImproveStrategyConfig,
-  synthesize: synthesize as ImproveStrategyConfig,
   "reflect-distill": reflectDistill as ImproveStrategyConfig,
   "proactive-maintenance": proactiveMaintenance as ImproveStrategyConfig,
-  "recombine-only": recombineOnly as ImproveStrategyConfig,
 };
 
 if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {

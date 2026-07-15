@@ -13,7 +13,6 @@ import { describe, expect, test } from "bun:test";
 import profileCatchup from "../../src/assets/improve-strategies/catchup.json";
 import profileConsolidate from "../../src/assets/improve-strategies/consolidate.json";
 import profileFrequent from "../../src/assets/improve-strategies/frequent.json";
-import profileSynthesize from "../../src/assets/improve-strategies/synthesize.json";
 import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
@@ -28,10 +27,8 @@ const BUILTIN_STRATEGIES = [
   "frequent",
   "consolidate",
   "catchup",
-  "synthesize",
   "reflect-distill",
   "proactive-maintenance",
-  "recombine-only",
 ] as const;
 
 describe("default improve strategies (#552)", () => {
@@ -114,24 +111,6 @@ describe("default improve strategies (#552)", () => {
     expect(JSON.stringify(profileFrequent)).not.toContain("minPoolSize");
     expect(JSON.stringify(profileConsolidate)).toContain("minPoolSize");
     expect(JSON.stringify(profileCatchup)).toContain("minPoolSize");
-  });
-
-  test("synthesize: validates against the live schema", () => {
-    expect(() => ImproveProfileConfigSchema.parse(profileSynthesize)).not.toThrow();
-  });
-
-  test("synthesize resolves to recombine ON, procedural OFF (held until cross-project scoping), all generative/extract passes OFF", () => {
-    const p = resolveImproveStrategy("synthesize", MINIMAL_CONFIG).config;
-    expect(p.processes?.recombine?.enabled).toBe(true);
-    // #615 procedural is held OFF everywhere — it over-fits one-off sequences (0% accept, deep-tuning analysis 2026-06-29).
-    expect(p.processes?.procedural?.enabled).toBe(false);
-    expect(p.processes?.reflect?.enabled).toBe(false);
-    expect(p.processes?.distill?.enabled).toBe(false);
-    expect(p.processes?.consolidate?.enabled).toBe(false);
-    expect(p.processes?.memoryInference?.enabled).toBe(false);
-    expect(p.processes?.graphExtraction?.enabled).toBe(false);
-    expect(p.processes?.extract?.enabled).toBe(false);
-    expect(p.sync?.push).toBe(true);
   });
 
   test("minNewSessions (#554) lives only on the frequent profile's extract process", () => {

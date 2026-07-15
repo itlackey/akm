@@ -21,6 +21,23 @@ describe("engine cutover historical migrations", () => {
       const db = new Database(`${sandbox.dir}/state.db`);
       db.exec("CREATE TABLE improve_runs(id TEXT PRIMARY KEY, profile TEXT, started_at TEXT)");
       db.exec("INSERT INTO improve_runs VALUES ('old', 'thorough', '2026-01-01T00:00:00Z')");
+      // Migration 018 (Chunk 7, WI-7.3) ALTERs asset_outcome to drop
+      // review_pressure — this pre-017 historical DB must carry the real
+      // migration-010 shape (incl. review_pressure) so applying every pending
+      // migration through 018 in one call succeeds, matching a genuine upgrade.
+      db.exec(`
+        CREATE TABLE asset_outcome (
+          asset_ref                TEXT    PRIMARY KEY,
+          last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+          retrieval_count          INTEGER NOT NULL DEFAULT 0,
+          expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+          negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+          accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+          review_pressure          INTEGER NOT NULL DEFAULT 0,
+          outcome_score            REAL    NOT NULL DEFAULT 0.0,
+          updated_at               INTEGER NOT NULL DEFAULT 0
+        )
+      `);
       seedLedger(db, [
         "001-initial-schema",
         "002-task-history-per-run",
