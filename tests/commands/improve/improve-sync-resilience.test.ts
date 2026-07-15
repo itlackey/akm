@@ -6,24 +6,24 @@
  * #662 — incremental + crash-safe stash sync for `akmImprove`.
  *
  * The end-of-run BATCH commit only ran on the happy path, so a run interrupted
- * AFTER writing but BEFORE finishing (mid-cycle crash, budget abort, external
- * SIGTERM) left every write uncommitted until a LATER clean run swept the
- * backlog up. The fix calls the shared `commitStashBatch` from three places:
+ * AFTER writing but BEFORE finishing (a budget abort or external SIGTERM) left
+ * every write uncommitted until a LATER clean run swept the backlog up. The
+ * fix calls the shared `commitStashBatch` from two places:
  *
- *   - between cycles (bank each completed cycle's writes),
- *   - at end-of-run (the converged commit — unchanged behavior),
+ *   - at end-of-run (the normal commit),
  *   - from the catch path (commit what was written before a crash/abort).
  *
+ * Chunk 7 (WI-7.2, D12) deleted the #616 bounded multi-cycle loop — there is
+ * no longer an "inter-cycle" commit site; every run is now a single
+ * prep→loop→post-loop pass.
+ *
  * Contract under test:
- *   - DEFAULT maxCycles=1 ⇒ sync fires EXACTLY once (byte-identical: the single
- *     end-of-run commit is still the only sync for a one-cycle run).
- *   - maxCycles=2 (both cycles do work) ⇒ sync fires TWICE: once between the
- *     cycles, once at end-of-run.
+ *   - a normal run ⇒ sync fires EXACTLY once (the single end-of-run commit).
  *   - a mid-run throw ⇒ the run still commits (catch-path sync) AND the original
  *     error is rethrown (the safety net never swallows the failure).
  *
  * Driven against the REAL `akmImprove` with the same deterministic stage seams
- * as improve-multi-cycle.test.ts plus an injected `saveGitStashFn`.
+ * as improve-single-pass.test.ts plus an injected `saveGitStashFn`.
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -180,7 +180,7 @@ function seams(over: Partial<AkmImproveOptions>): AkmImproveOptions {
 
 describe("akm improve — incremental + crash-safe sync (#662)", () => {
   test(
-    "default (maxCycles=1) commits exactly once — byte-identical single pass",
+    "a normal run commits exactly once (single prep→loop→post-loop pass)",
     async () => {
       makeGitBacked();
       const saveGitStashFn = mock(() => committed());
@@ -189,27 +189,6 @@ describe("akm improve — incremental + crash-safe sync (#662)", () => {
 
       expect(result.ok).toBe(true);
       expect(saveGitStashFn).toHaveBeenCalledTimes(1);
-      expect(result.sync).toEqual({ committed: true, pushed: true, skipped: false });
-    },
-    TIMEOUT_MS,
-  );
-
-  test(
-    "maxCycles=2 banks the first cycle: commits between cycles AND at end-of-run",
-    async () => {
-      makeGitBacked();
-      const saveGitStashFn = mock(() => committed());
-
-      const result = await akmImprove(
-        seams({
-          maxCycles: 2,
-          saveGitStashFn: saveGitStashFn as never,
-        }),
-      );
-
-      expect(result.ok).toBe(true);
-      // One inter-cycle commit (before cycle 2) + one end-of-run commit.
-      expect(saveGitStashFn).toHaveBeenCalledTimes(2);
       expect(result.sync).toEqual({ committed: true, pushed: true, skipped: false });
     },
     TIMEOUT_MS,

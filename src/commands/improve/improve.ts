@@ -117,22 +117,13 @@ export interface AkmImproveOptions {
   skipIfLocked?: boolean;
   /** Named improve strategy from improve.strategies or built-in strategy names. */
   strategy?: string;
-  /**
-   * #616 — bounded multi-cycle phasing override (CLI/programmatic). Takes
-   * precedence over `profile.maxCycles`. Number of prep->loop->post-loop cycles
-   * per run; each cycle re-runs ensureIndex + collectEligibleRefs. DEFAULT 1 =>
-   * byte-identical single-pass behavior. A cycle accepting ZERO new
-   * gate-accepted proposals ends the loop (fixed-point); a cycle is not started
-   * when remainingBudgetMs is exhausted.
-   */
-  maxCycles?: number;
-  /** #616 test seam: override collectEligibleRefs (re-run each cycle). */
+  /** Test seam: override collectEligibleRefs. */
   collectEligibleRefsFn?: typeof collectEligibleRefs;
-  /** #616 test seam: override runImprovePreparationStage (re-run each cycle). */
+  /** Test seam: override runImprovePreparationStage. */
   runImprovePreparationStageFn?: typeof runImprovePreparationStage;
-  /** #616 test seam: override runImproveLoopStage (re-run each cycle). */
+  /** Test seam: override runImproveLoopStage. */
   runImproveLoopStageFn?: typeof runImproveLoopStage;
-  /** #616 test seam: override runImprovePostLoopStage (re-run each cycle). */
+  /** Test seam: override runImprovePostLoopStage. */
   runImprovePostLoopStageFn?: typeof runImprovePostLoopStage;
   consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
   /** Number of eligible memory assets above which consolidation is forced even if the memory_consolidation feature flag is not set. Defaults to 100. */
@@ -168,14 +159,9 @@ export interface AkmImproveOptions {
   repairValidationFailures?: boolean;
   /**
    * When true, only assets with recent feedback signals are eligible.
-   * Disables the high-retrieval fallback path for type/all scope runs.
+   * Disables the proactive/high-salience fallback lanes for type/all scope runs.
    */
   requireFeedbackSignal?: boolean;
-  /**
-   * Minimum retrieval count required for the zero-feedback fallback path.
-   * Defaults to 5.
-   */
-  minRetrievalCount?: number;
   /**
    * Named process key forwarded to `akmReflect` so the improve loop picks up
    * per-process agent config (e.g. `agent.processes["reflect"]`).
@@ -183,21 +169,6 @@ export interface AkmImproveOptions {
    * reflect calls through a different profile.
    */
   agentProcess?: string;
-  /**
-   * Self-consistency multi-sample voting for high-utility refs (R-2 / #389).
-   * When a ref's utility score is at or above this threshold, the improve loop
-   * runs N reflect samples and picks the majority-vote winner by Jaccard token
-   * overlap. Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot
-   * quality on reasoning tasks.
-   *
-   * Default: 0.7. Set to 1.0 to disable (no refs qualify).
-   */
-  selfConsistencyThreshold?: number;
-  /**
-   * Number of reflect samples to generate for high-utility refs (R-2 / #389).
-   * Must be >= 2 for voting to make sense. Default: 3. Capped at 5.
-   */
-  selfConsistencyN?: number;
   /**
    * Phase 4: injectable triage drain seam for tests. When omitted, the real
    * `drainProposals` runs as the improve pre-pass (gated on the `triage`
@@ -459,9 +430,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // CLI --limit takes precedence over both.
     limit: options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit,
   };
-  // #616 — bounded multi-cycle phasing. CLI/programmatic override wins over
-  // profile.maxCycles; default 1 => single pass (byte-identical to pre-#616).
-  const maxCycles = Math.max(1, Math.trunc(options.maxCycles ?? improveProfile.maxCycles ?? 1));
   let primaryStashDir: string | undefined;
   try {
     primaryStashDir = resolveSourceEntries(options.stashDir)[0]?.path;
@@ -506,9 +474,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const lockStaleAfterMs = Math.max(MIN_IMPROVE_LOCK_STALE_MS, budgetMs + 10 * 60 * 1000);
 
   const preEnsureCleanupWarnings: string[] = [];
-  // #616: assigned by runIndexAndCollect() (closure) so TS cannot prove definite
-  // assignment — seed with empty values; the first runIndexAndCollect() call
-  // (cycle 1, in the first try) always overwrites them before any read.
+  // Assigned by runIndexAndCollect() (closure) so TS cannot prove definite
+  // assignment — seed with empty values; the runIndexAndCollect() call below
+  // always overwrites them before any read.
   let plannedRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["plannedRefs"] = [];
   let memorySummary: Awaited<ReturnType<typeof collectEligibleRefs>>["memorySummary"] = { eligible: 0, derived: 0 };
   let strategyFilteredRefs: Awaited<ReturnType<typeof collectEligibleRefs>>["strategyFilteredRefs"] = [];
@@ -516,13 +484,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   let guidance: string | undefined;
   let triageDrain: DrainResult | undefined;
 
-  // #616 — ensureIndex + collectEligibleRefs + memory-cleanup recompute, lifted
-  // into a helper so the SAME sequence runs once for cycle 1 (below, in the
-  // first try) and is re-run at the top of each subsequent multi-cycle cycle.
-  // Re-running ensureIndex between cycles makes cycle N's gate-promoted
-  // proposals visible to cycle N+1's collectEligibleRefs. Mutates the
-  // outer-scope plannedRefs/memorySummary/strategyFilteredRefs/memoryCleanupPlan/
-  // guidance so for maxCycles:1 the body is byte-identical to pre-#616.
+  // ensureIndex + collectEligibleRefs + memory-cleanup recompute, lifted into a
+  // helper. Mutates the outer-scope
+  // plannedRefs/memorySummary/strategyFilteredRefs/memoryCleanupPlan/guidance.
   const runIndexAndCollect = async (): Promise<void> => {
     // #339 fix: ensureIndex MUST run BEFORE collectEligibleRefs. The eligible-ref
     // query reads the `entries` table; if a DB version upgrade just dropped that
@@ -748,13 +712,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // (write-source.ts case-3); those writes become a git commit only when this
   // closure runs. Historically the only call site was a single BATCH commit at
   // the very end of the happy path, so a run interrupted AFTER writing but
-  // BEFORE finishing — a mid-cycle crash, a budget abort, or an external
-  // SIGTERM/`process.exit` — left every write uncommitted until some LATER run
-  // happened to finish cleanly and swept the whole backlog up. We now call this
-  // from THREE places: between cycles (bank each completed cycle), at end-of-run
-  // (the converged commit), and from the catch path (commit what was written
-  // before the crash). That shrinks the worst-case loss from "the entire run" to
-  // "the in-flight cycle".
+  // BEFORE finishing — a budget abort or an external SIGTERM/`process.exit` —
+  // left every write uncommitted until some LATER run happened to finish
+  // cleanly and swept the whole backlog up. We call this from TWO places:
+  // at end-of-run (the normal commit) and from the catch path (commit what
+  // was written before the crash).
   //
   // Declared in the OUTER scope (not inside the try) so the catch block can reach
   // it. Idempotent + NON-FATAL: `saveGitStash` short-circuits a clean working
@@ -863,19 +825,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       );
     }
 
-    // #616 — bounded multi-cycle phasing. The prep->loop->post-loop sequence is
-    // wrapped in an N-cycle loop. Each cycle re-runs ensureIndex +
-    // collectEligibleRefs (via runIndexAndCollect) so gate-accepted output of
-    // cycle N becomes selectable input to cycle N+1. The whole sequence runs
-    // under the invocation's single lock. For maxCycles:1 the loop runs once and
-    // every accumulator below collapses to the single-cycle value (sum-of-one,
-    // concat-of-one, last==only) => BYTE-IDENTICAL to pre-#616.
+    // Single prep->loop->post-loop pass, run under the invocation's lock.
     //
-    // Accumulators (see CONSTRAINTS / aggregation plan in #616): SUM the count
-    // fields and durations; CONCAT the array fields; LAST-WINS for point-in-time
-    // objects (the final cycle's value reflects the converged state).
-    let cyclesRun = 0;
-    // Last-wins point-in-time values (assigned every cycle; the final cycle wins).
+    // Accumulators below are direct assignments from the single pass's
+    // results (kept as +=/push accumulators for minimal diff against the
+    // still-typed post-pass result construction further down).
     let preparation!: ImprovePreparationResult;
     let memoryRefsForInference: Set<string> = new Set();
     let consolidation!: ConsolidateResult;
@@ -900,50 +854,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let deadUrls: ImprovePostLoopResult["deadUrls"];
     const finalActions: ImproveActionResult[] = [];
 
-    for (let cycleIndex = 0; cycleIndex < maxCycles; cycleIndex++) {
-      // #616 budget gate: never start a NEW cycle once the run's wall-clock
-      // budget is exhausted (or the run was aborted). Cycle 0 ALWAYS runs so
-      // maxCycles:1 is byte-identical regardless of budget.
-      if (cycleIndex > 0) {
-        const remaining = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
-        if (budgetAbortController.signal.aborted || (remaining !== undefined && remaining <= 0)) {
-          break;
-        }
-      }
-
-      // #662 incremental sync: bank the PREVIOUS cycle's writes before starting a
-      // new one, so a crash/abort/timeout mid-run loses at most the in-flight
-      // cycle rather than the whole run. Guarded on `cycleIndex > 0`, so the
-      // common maxCycles:1 path never calls this — its single end-of-run commit
-      // below stays the only sync and the serialized envelope is byte-identical
-      // to pre-#662. `saveGitStash` no-ops a clean tree, so a cycle that wrote
-      // nothing costs only a `git status`.
-      if (cycleIndex > 0) {
-        commitStashBatch({ scope, plannedRefs, runId: options.runId });
-      }
-
-      // Re-run ensureIndex + collectEligibleRefs + memory-cleanup recompute for
-      // cycles 2+ (cycle 1 already ran them in the first try above). This makes
-      // cycle N's gate-promoted proposals visible to this cycle's ref selection.
-      if (cycleIndex > 0) {
-        await runIndexAndCollect();
-        // Re-emit the profile-filtered audit summary for this cycle's selection.
-        if (strategyFilteredRefs.length > 0) {
-          appendEvent(
-            {
-              eventType: "improve_skipped",
-              ref: undefined,
-              metadata: {
-                strategy: selectedStrategy.name,
-                reason: "strategy_filtered_all_passes",
-                count: strategyFilteredRefs.length,
-              },
-            },
-            eventsCtx,
-          );
-        }
-      }
-
+    {
       const runPreparation = () =>
         runImprovePreparationStageImpl({
           scope,
@@ -1082,13 +993,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
         });
       }
-      const postLoopGateCountThisCycle = postLoopResult.gateAutoAcceptedCount;
-      // Last-wins point-in-time objects.
+      // Result objects (single pass — no cycle accumulation).
       memoryInference = postLoopResult.memoryInference;
       graphExtraction = postLoopResult.graphExtraction;
       proceduralCompilation = postLoopResult.proceduralCompilation;
-      // Keep the last QUALIFYING cycle's snapshot — a later non-qualifying
-      // cycle in a maxCycles>1 run must not clobber it with undefined.
       if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
       // Summed counters/durations.
       postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
@@ -1112,15 +1020,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       } else {
         finalActions.push(...preparation.actions);
       }
-
-      cyclesRun++;
-
-      // #616 fixed-point stop: a cycle that produced ZERO gate-accepted proposals
-      // (summed across prep + loop + post-loop) would feed cycle N+1 an identical
-      // ref set, so end the loop here rather than spin a pointless next cycle.
-      const gateAcceptedThisCycle =
-        preparation.gateAutoAcceptedCount + loopGateCountThisCycle + postLoopGateCountThisCycle;
-      if (gateAcceptedThisCycle === 0) break;
     }
 
     // C1 (13-bus-factor): fold the per-ref `distill-skipped` rows (~13k/run,
@@ -1215,9 +1114,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       ...(preparation.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
-      // #616 — report cycles run only when >1 so the default single-pass
-      // serialized envelope stays byte-identical to pre-#616 (AC1).
-      ...(cyclesRun > 1 ? { cyclesRun } : {}),
       ...(options.runId !== undefined ? { runId: options.runId } : {}),
     };
     if (!result.dryRun)

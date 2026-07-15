@@ -18,8 +18,8 @@
  * Metrics:
  *   (a) retrieval-quality delta — rerun (or load latest) of the real-query
  *       suite vs the stored T0 baseline (no regression required).
- *   (b) accept-rate-by-source — proactive vs reactive (reflect signal-delta /
- *       high-retrieval) from the proposals table.
+ *   (b) accept-rate-by-source — proactive vs reactive (reflect signal-delta)
+ *       from the proposals table.
  *   (c) proactive reversion / reject rate.
  *   (d) downstream lift — post-touch positive-feedback rate + retrieval count
  *       on treatment vs control since each was touched.
@@ -52,7 +52,7 @@ import { normalizeRef } from "./lib/ref-normalize";
 //
 //  ACCEPT_RATIO (0.9): the proactive lane is allowed to be slightly worse
 //    than the reactive lane (reactive reflect is triggered by a concrete
-//    signal-delta / high-retrieval event, so it has a structural quality
+//    signal-delta event, so it has a structural quality
 //    edge). But if proactive proposals are accepted at < 90% of the reactive
 //    rate, the lane is mostly producing noise the curator rejects — that is
 //    the "burning cycles" failure mode and should fail.
@@ -79,7 +79,7 @@ const DEFAULT_MIN_RETRIEVAL_DELTA = 0.0;
 const DEFAULT_MIN_DECIDED = 30;
 
 /** Reactive reflect eligibility sources (the comparison cohort for (b)). */
-const REACTIVE_SOURCES = new Set(["signal-delta", "high-retrieval"]);
+const REACTIVE_SOURCES = new Set(["signal-delta"]);
 
 interface CliOptions {
   stash: string;

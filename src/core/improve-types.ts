@@ -28,8 +28,6 @@ import { assertNever } from "./assert";
  *
  *   - `"signal-delta"`   — asset had fresh feedback since its last proposal
  *                          (the reactive feedback-signal lane).
- *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
- *                          retrieved (the reactive retrieval-spike lane).
  *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
  *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
  *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
@@ -50,7 +48,7 @@ import { assertNever } from "./assert";
  *                              genuinely cannot be attributed.
  *
  * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
+ * reactive signal): `scope` > `signal-delta` > `proactive` >
  * `high-salience` > `forgetting-safety` > `replay`. Replay is weakest so it never
  * relabels a ref another lane already chose.
  * A ref with real feedback is attributed to feedback even if it was also due
@@ -58,13 +56,11 @@ import { assertNever } from "./assert";
  */
 export type EligibilitySource =
   | "signal-delta"
-  | "high-retrieval"
   | "high-salience"
   | "proactive"
   | "scope"
   | "forgetting-safety"
   | "replay"
-  | "exploration"
   | "procedural"
   | "unknown";
 
@@ -292,14 +288,6 @@ export interface AkmImproveResult {
     derived: number;
   };
   memoryCleanup?: ImproveMemoryCleanupResult;
-  /**
-   * #616 — number of prep->loop->post-loop cycles executed this run (>=1).
-   * Omitted-or-1 for the default single-pass run; >1 when multi-cycle phasing
-   * ran additional cycles. The loop stops at maxCycles OR at the first
-   * fixed-point cycle (zero gate-accepted proposals) OR when remainingBudgetMs
-   * is exhausted.
-   */
-  cyclesRun?: number;
   plannedRefs: ImproveEligibleRef[];
   /**
    * Refs the planner considered but excluded because every per-ref pass on

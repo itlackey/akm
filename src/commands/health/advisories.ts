@@ -101,7 +101,7 @@ export function collectImproveAdvisories(
       message:
         `Enrichment lanes minted ${minting.minted} NEW asset(s) vs ${minting.updated} update(s) ` +
         `(${Math.round(minting.share * 100)}% minted, threshold ${Math.round(ENRICHMENT_MINTED_WARN_SHARE * 100)}%). ` +
-        "Enrichment-classed lanes (proactive/high-salience/high-retrieval/signal-delta) are ratified to edit " +
+        "Enrichment-classed lanes (proactive/high-salience/signal-delta) are ratified to edit " +
         "existing assets only — new-asset generation belongs to the signal-gated minting lanes.",
     });
   }

@@ -33,13 +33,7 @@ import type { Database } from "../../storage/database";
 import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import {
-  createProposal,
-  expireStaleProposals,
-  isProposalSkipped,
-  listProposals,
-  purgeOrphanProposals,
-} from "../proposal/repository";
+import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";
 import { type AkmDistillResult, deriveLessonRef } from "./distill";
@@ -83,7 +77,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     distillOnlyRefs,
     recentErrors,
     rejectedProposalsByRef,
-    utilityMap,
     startMs,
     budgetMs,
     eventsCtx,
@@ -106,65 +99,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
   const _distillOnlyRefNames = new Set(distillOnlyRefs.map((r) => r.ref));
   const hasReflectEligibleRefs = loopRefs.some((r) => !_distillOnlyRefNames.has(r.ref));
   const skipDistillDueToRequirePlannedRefs = requirePlannedRefs && !hasReflectEligibleRefs;
-
-  // R-2 / #389: Self-Consistency multi-sample voting helpers.
-  // Wang et al. arXiv:2203.11171 — N=3 samples beat single-shot on reasoning tasks.
-  const SC_THRESHOLD = options.selfConsistencyThreshold ?? 0.7;
-  const SC_N = Math.min(Math.max(2, options.selfConsistencyN ?? 3), 5);
-
-  /**
-   * Compute Jaccard token overlap between two strings.
-   * Tokenizes by whitespace; returns 0 when both are empty.
-   */
-  function jaccardSimilarity(a: string, b: string): number {
-    const tokensA = new Set(a.split(/\s+/).filter(Boolean));
-    const tokensB = new Set(b.split(/\s+/).filter(Boolean));
-    if (tokensA.size === 0 && tokensB.size === 0) return 1;
-    let intersection = 0;
-    for (const t of tokensA) {
-      if (tokensB.has(t)) intersection++;
-    }
-    const union = tokensA.size + tokensB.size - intersection;
-    return union > 0 ? intersection / union : 0;
-  }
-
-  /**
-   * Given N reflect results, return the one with the highest average Jaccard
-   * similarity to all other successful results (majority-vote winner).
-   * Falls back to the first successful result when N < 2.
-   */
-  function pickMajorityVote(results: AkmReflectResult[]): AkmReflectResult {
-    const successful = results.filter((r): r is Extract<AkmReflectResult, { ok: true }> => r.ok);
-    if (successful.length === 0)
-      return (
-        results[0] ?? {
-          schemaVersion: 1,
-          ok: false,
-          reason: "non_zero_exit",
-          error: "all samples failed",
-          exitCode: null,
-        }
-      );
-    if (successful.length === 1) return successful[0];
-    let bestIdx = 0;
-    let bestScore = -1;
-    for (let i = 0; i < successful.length; i++) {
-      let totalSim = 0;
-      for (let j = 0; j < successful.length; j++) {
-        if (i === j) continue;
-        totalSim += jaccardSimilarity(
-          successful[i].proposal.payload.content ?? "",
-          successful[j].proposal.payload.content ?? "",
-        );
-      }
-      const avgSim = totalSim / (successful.length - 1);
-      if (avgSim > bestScore) {
-        bestScore = avgSim;
-        bestIdx = i;
-      }
-    }
-    return successful[bestIdx] ?? successful[0];
-  }
 
   // O-5 / #378: helper to push per-originator errors into the rolling window.
   function pushRecentError(originator: string, msg: string): void {
@@ -196,9 +130,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     eventsCtx,
     targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
-    // candidateCount drives the exploration budget. loopRefs is the per-phase
-    // set for reflect/distill; pass it so exploration budget is proportional.
-    candidateCount: loopRefs.length,
   });
 
   const distillGateCfg = makeGateConfig("distill", {
@@ -209,7 +140,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     eventsCtx,
     targetSelector: options.target,
     stateDbPath: eventsCtx?.dbPath,
-    candidateCount: loopRefs.length,
   });
 
   for (const planned of loopRefs) {
@@ -299,64 +229,10 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
             // the reflect_invoked event and the persisted proposal.
             ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
           };
-          // R-2 / #389: Self-consistency multi-sample voting for high-utility refs.
-          // Self-Consistency arXiv:2203.11171 — N=3 samples beat single-shot quality.
-          const refUtility = utilityMap.get(planned.ref) ?? 0;
-          const useConsistency = refUtility >= SC_THRESHOLD && SC_N >= 2;
-          let reflectResult: AkmReflectResult;
-          if (useConsistency) {
-            const samples: AkmReflectResult[] = [];
-            for (let s = 0; s < SC_N; s++) {
-              if (remainingBudgetMs() <= 0) break;
-              // draftMode: skip DB write so each sample doesn't create a proposal.
-              samples.push(
-                await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                  engine: resolvedPlan.processes.reflect.runner?.engine,
-                  process: "reflect",
-                }),
-              );
-            }
-            const winner = pickMajorityVote(
-              samples.length > 0
-                ? samples
-                : [
-                    await withLlmStage("reflect", () => reflectFn({ ...reflectCallArgs, draftMode: true }), {
-                      engine: resolvedPlan.processes.reflect.runner?.engine,
-                      process: "reflect",
-                    }),
-                  ],
-            );
-            // Persist only the majority-vote winner as a single real proposal.
-            if (winner.ok && primaryStashDir) {
-              const persistResult = createProposal(primaryStashDir, {
-                ref: winner.proposal.ref,
-                source: "reflect",
-                sourceRun: `reflect-sc-${Date.now()}`,
-                payload: winner.proposal.payload,
-                // Attribution: the self-consistency path persists the winner here
-                // (draftMode skips reflect's own createProposal), so stamp the lane.
-                ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-              });
-              reflectResult = isProposalSkipped(persistResult)
-                ? {
-                    schemaVersion: 2,
-                    ok: false,
-                    reason: "cooldown" as const,
-                    error: `SC proposal skipped: ${persistResult.message}`,
-                    ref: winner.ref,
-                    engine: winner.engine,
-                    exitCode: null,
-                  }
-                : { ...winner, proposal: persistResult };
-            } else {
-              reflectResult = winner;
-            }
-          } else {
-            reflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-              engine: resolvedPlan.processes.reflect.runner?.engine,
-              process: "reflect",
-            });
-          }
+          const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
+            engine: resolvedPlan.processes.reflect.runner?.engine,
+            process: "reflect",
+          });
           const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
           // Content-policy guard hits (reflect size-rail rejections) are NOT
           // LLM faults — the agent responded fine, the downstream guard

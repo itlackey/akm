@@ -361,7 +361,7 @@ export interface Proposal {
   legacyAcceptedAssetWasAbsent?: boolean;
   /**
    * Attribution tagging: which eligibility lane selected the source asset for the
-   * improve run that produced this proposal (`signal-delta`, `high-retrieval`,
+   * improve run that produced this proposal (`signal-delta`, `high-salience`,
    * `proactive`, `scope`, or `unknown`). Persisted in `metadata_json` so the lane
    * survives to accept/reject/revert time even across runs, letting downstream
    * analysis measure whether the PROACTIVE lane produces value vs the reactive

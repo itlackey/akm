@@ -668,19 +668,19 @@ describe("akmDistill — queued proposal", () => {
       chat: async () => VALID_LESSON,
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
-      eligibilitySource: "high-retrieval",
+      eligibilitySource: "high-salience",
     });
     expect(result.outcome).toBe("queued");
 
     // (a) distill_invoked event carries the lane.
     const { events } = readEvents({ type: "distill_invoked" });
     const queued = events.find((e) => e.metadata?.outcome === "queued");
-    expect(queued?.metadata?.eligibilitySource).toBe("high-retrieval");
+    expect(queued?.metadata?.eligibilitySource).toBe("high-salience");
 
     // (b) the persisted proposal record carries the lane.
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].eligibilitySource).toBe("high-retrieval");
+    expect(proposals[0].eligibilitySource).toBe("high-salience");
   });
 
   test("attribution: omitted eligibilitySource leaves distill_invoked + proposal unstamped", async () => {

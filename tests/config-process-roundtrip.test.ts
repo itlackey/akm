@@ -232,18 +232,23 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(consolidate?.dedup?.enabled).toBe(true);
   });
 
-  test("WS-4 improve.exploration: enabled + budgetFraction survive a load→save→load round trip", () => {
-    const config: AkmConfig = {
+  test("Chunk 7 (WI-7.2, D16): orphaned improve.exploration block survives a load→save→load round trip (passthrough, unvalidated)", () => {
+    // ImproveExplorationSchema was deleted in Chunk 7 (WI-7.2) alongside the
+    // exploration-budget lane it configured — `improve.exploration` is no
+    // longer a typed/validated field, but ImproveConfigSchema's `.passthrough()`
+    // still preserves it opaquely across save→load so pre-Chunk-7 configs never
+    // hard-error at load.
+    const config = {
       semanticSearchMode: "off",
       improve: {
         exploration: { enabled: true, budgetFraction: 0.08 },
       },
-    };
+    } as unknown as AkmConfig;
     saveConfig(config);
     resetConfigCache();
-    const reloaded = loadConfig();
-    expect(reloaded.improve?.exploration?.enabled).toBe(true);
-    expect(reloaded.improve?.exploration?.budgetFraction).toBeCloseTo(0.08);
+    const reloaded = loadConfig().improve?.exploration as Record<string, unknown> | undefined;
+    expect(reloaded?.enabled).toBe(true);
+    expect(reloaded?.budgetFraction).toBeCloseTo(0.08);
   });
 
   test("WS-4 improve.exploration: absent default is undefined (no block required)", () => {
@@ -348,12 +353,12 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(exploration.bogus).toBe("tolerated");
   });
 
-  test("#616 improve.strategies.<strategy>.maxCycles survives a load→save→load round trip (positiveInt)", () => {
-    // RED (#616 bounded multi-cycle phasing): maxCycles is not yet declared on
-    // ImproveProfileConfig (config-types.ts) nor ImproveProfileConfigSchema
-    // (config-schema.ts, .strict()), so a config carrying it currently
-    // HARD-ERRORS at load. This locks that the new per-profile field is
-    // registered in BOTH places and round-trips cleanly.
+  test("Chunk 7 (WI-7.2, D12/D16): orphaned improve.strategies.<strategy>.maxCycles survives a load→save→load round trip (passthrough, unvalidated)", () => {
+    // #616 bounded multi-cycle phasing (and its `maxCycles` per-profile knob)
+    // was deleted in Chunk 7 (WI-7.2, D12) — `maxCycles` is no longer declared
+    // on ImproveProfileConfigSchema, but ImproveProfileConfigSchema's
+    // `.passthrough()` still preserves it opaquely across save→load so
+    // pre-Chunk-7 configs never hard-error at load.
     const config = {
       semanticSearchMode: "off",
       improve: {
@@ -371,7 +376,10 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect((reloaded.improve?.strategies?.default as { maxCycles?: number } | undefined)?.maxCycles).toBe(3);
   });
 
-  test("#616 maxCycles=0 is rejected by the schema at load (positiveInt forbids 0/negative)", () => {
+  test("Chunk 7 (WI-7.2, D12): maxCycles=0 is no longer rejected — the field is unvalidated passthrough data now", () => {
+    // Before Chunk 7, positiveInt validation forbade 0/negative maxCycles.
+    // Now that the field is orphaned passthrough data (no schema, no reader),
+    // any value — including 0 — loads without error.
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -383,7 +391,9 @@ describe("#598 process-level config fields survive a load→save→load round tr
       }),
     );
     resetConfigCache();
-    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).not.toThrow();
+    const reloaded = loadConfig();
+    expect((reloaded.improve?.strategies?.default as { maxCycles?: number } | undefined)?.maxCycles).toBe(0);
   });
 });
 

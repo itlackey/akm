@@ -236,7 +236,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
@@ -618,7 +617,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     // per-item schema-repair "error" outcome, not as a thrown exception).
     const result = await akmImprove({
       scope: "lesson",
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reindexFn,
       reflectFn,
@@ -833,7 +831,6 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      minRetrievalCount: 0,
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
@@ -913,7 +910,6 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       autoAccept: 90, // explicit threshold (default is now OFF / undefined); conversion = 0.9
-      minRetrievalCount: 0,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -981,7 +977,6 @@ describe("new 0.8.0 improve metrics", () => {
       stashDir,
       ensureIndexFn: async () => false,
       autoAccept: 90,
-      minRetrievalCount: 0,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -1064,7 +1059,6 @@ describe("new 0.8.0 improve metrics", () => {
       scope: "memory:live-asset",
       stashDir,
       ensureIndexFn: async () => false,
-      minRetrievalCount: 0,
       // Disable auto-accept so the seed proposal doesn't get auto-promoted by
       // a fresh reflect run before the expiration pass observes it. (The
       // seeded proposal has no confidence anyway — defence in depth.)

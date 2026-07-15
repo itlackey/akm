@@ -241,7 +241,7 @@ export interface AkmDistillOptions {
    */
   fetchSimilarLessonsFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   /**
-   * Attribution tagging: which eligibility lane (`signal-delta`, `high-retrieval`,
+   * Attribution tagging: which eligibility lane (`signal-delta`, `high-salience`,
    * `proactive`, `scope`) selected this asset for the current improve run. Set by
    * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
    * in `distill_invoked` event metadata and persisted on the created proposal so

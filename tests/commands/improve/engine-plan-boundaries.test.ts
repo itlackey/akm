@@ -226,7 +226,7 @@ describe("improve engine-plan boundaries", () => {
       let distillOptions: Record<string, unknown> | undefined;
       await runImproveLoopStage({
         scope: { mode: "ref", value: "memory:source" },
-        options: { config, stashDir: stash.dir, selfConsistencyThreshold: 1 },
+        options: { config, stashDir: stash.dir },
         primaryStashDir: stash.dir,
         reflectFn: async (options) => {
           reflectOptions = options as unknown as Record<string, unknown>;

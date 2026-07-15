@@ -45,7 +45,7 @@
  *
  * The converted `outcomeSalience` (used in the salience projection) is capped
  * at DIVERSITY_FLOOR_FRACTION of the maximum observed score, so rare-but-correct
- * assets cannot be permanently outcompeted by high-retrieval ones.
+ * assets cannot be permanently outcompeted by frequently-retrieved ones.
  *
  * ## Proxy-adequacy tripwire (health) — two-tailed
  *
@@ -55,15 +55,6 @@
  * If |corr| < 0.1 at n ≥ 500, the proxy is DEAD — outcome_score carries no
  * information about improvement need at all (the live 2026-07 state: +0.0104
  * at n=5,706 rendered as healthy under the old one-tailed check).
- *
- * ## #613 review_pressure
- *
- * Repeated low-satisfaction (negative-feedback) retrievals raise `review_pressure`.
- * The column is computed and persisted per asset in `asset_outcome`, but it is
- * **not yet wired into the salience ranking or consolidation-admission policy** —
- * that wiring is deferred to the follow-on work stream (plan §Part-VI #613).
- * The index `idx_asset_outcome_review_pressure` exists for future queries.
- * Content is never mutated directly by this column.
  *
  * Note: there is no `outcomeLoop.enabled` config flag. The WS-2 outcome-loop block
  * in `improve.ts` runs on every improve pass. Profile-level disabling of specific
@@ -123,19 +114,6 @@ export const OUTCOME_SCORE_MAX = 1.5;
  */
 export const DIVERSITY_FLOOR_FRACTION = 0.1;
 
-/**
- * Default review_pressure increment per negative-feedback retrieval cycle.
- * Each cycle where negative_feedback_count > 0, pressure increases by this
- * much (and decreases by REVIEW_PRESSURE_DECAY if no new negatives).
- */
-export const REVIEW_PRESSURE_INCREMENT = 1;
-
-/**
- * Decay per non-negative cycle. Keeps review_pressure from accumulating forever
- * when an asset's quality problems are addressed and feedback turns positive.
- */
-export const REVIEW_PRESSURE_DECAY = 1;
-
 // ── Row shape ─────────────────────────────────────────────────────────────────
 
 export interface AssetOutcomeRow {
@@ -145,7 +123,6 @@ export interface AssetOutcomeRow {
   expected_retrieval_rate: number;
   negative_feedback_count: number;
   accepted_change_count: number;
-  review_pressure: number;
   outcome_score: number;
   updated_at: number;
 }
@@ -194,7 +171,6 @@ export interface OutcomeUpdateInputs {
  */
 export interface OutcomeUpdateResult {
   outcomeScore: number;
-  reviewPressure: number;
   isNewRow: boolean;
 }
 
@@ -204,8 +180,8 @@ export interface OutcomeUpdateResult {
  * On first call for a ref (no prior row): warm-starts from `utilityScore`.
  * On subsequent calls: applies the differential update formula.
  *
- * Returns the resulting `outcome_score` and `review_pressure` so the caller
- * can pass them to `computeSalience` without a second read.
+ * Returns the resulting `outcome_score` so the caller can pass it to
+ * `computeSalience` without a second read.
  */
 export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): OutcomeUpdateResult {
   const now = inputs.now ?? Date.now();
@@ -216,7 +192,6 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
   const isNewRow = existing === undefined;
 
   let outcomeScore: number;
-  let reviewPressure: number;
   let expectedRetrievalRate: number;
 
   if (isNewRow) {
@@ -226,7 +201,6 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     // will adjust it up or down from there.
     const seedScore = Math.min(WARM_START_CAP, Math.max(0, inputs.utilityScore ?? 0));
     outcomeScore = seedScore;
-    reviewPressure = 0;
     // Seed expected_retrieval_rate = 0 (no delta history yet).
     // Seeding with currentRetrievalCount would produce a large spurious negative
     // prediction error on the first real cycle (delta ≪ cumulative count).
@@ -262,32 +236,25 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     // the moment the outcome weight is enabled. Stored legacy scores above the
     // ceiling converge back under it on their next differential update.
     outcomeScore = Math.min(OUTCOME_SCORE_MAX, Math.max(OUTCOME_SCORE_MIN, newScore));
-
-    // ── review_pressure (#613) ─────────────────────────────────────────────
-    // New negatives this cycle.
-    const newNegatives = Math.max(0, inputs.negativeFeedbackCount - existing.negative_feedback_count);
-    if (newNegatives > 0) {
-      reviewPressure = Math.min(10, existing.review_pressure + REVIEW_PRESSURE_INCREMENT * newNegatives);
-    } else {
-      // Decay when no new negatives.
-      reviewPressure = Math.max(0, existing.review_pressure - REVIEW_PRESSURE_DECAY);
-    }
   }
 
-  // Upsert the row.
+  // Upsert the row. `review_pressure` is intentionally omitted from both the
+  // INSERT column list and the ON CONFLICT SET clause: the column's DEFAULT 0
+  // seeds fresh rows, and omitting it from SET leaves an existing row's value
+  // untouched on update (never written going forward). The column itself is
+  // dropped in migration 018.
   db.prepare(
     `INSERT INTO asset_outcome
        (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-        negative_feedback_count, accepted_change_count, review_pressure,
+        negative_feedback_count, accepted_change_count,
         outcome_score, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(asset_ref) DO UPDATE SET
        last_retrieved_at      = excluded.last_retrieved_at,
        retrieval_count        = excluded.retrieval_count,
        expected_retrieval_rate= excluded.expected_retrieval_rate,
        negative_feedback_count= excluded.negative_feedback_count,
        accepted_change_count  = excluded.accepted_change_count,
-       review_pressure        = excluded.review_pressure,
        outcome_score          = excluded.outcome_score,
        updated_at             = excluded.updated_at`,
   ).run(
@@ -297,12 +264,11 @@ export function updateAssetOutcome(db: Database, inputs: OutcomeUpdateInputs): O
     expectedRetrievalRate,
     inputs.negativeFeedbackCount,
     inputs.acceptedChangeCount,
-    reviewPressure,
     outcomeScore,
     now,
   );
 
-  return { outcomeScore, reviewPressure, isNewRow };
+  return { outcomeScore, isNewRow };
 }
 
 // ── Reader ────────────────────────────────────────────────────────────────────
@@ -314,7 +280,7 @@ export function getAssetOutcome(db: Database, ref: string): AssetOutcomeRow | un
   const row = db
     .prepare(
       `SELECT asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-              negative_feedback_count, accepted_change_count, review_pressure,
+              negative_feedback_count, accepted_change_count,
               outcome_score, updated_at
        FROM asset_outcome WHERE asset_ref = ?`,
     )
@@ -329,7 +295,7 @@ export function getAllAssetOutcomes(db: Database): AssetOutcomeRow[] {
   return db
     .prepare(
       `SELECT asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
-              negative_feedback_count, accepted_change_count, review_pressure,
+              negative_feedback_count, accepted_change_count,
               outcome_score, updated_at
        FROM asset_outcome ORDER BY asset_ref`,
     )

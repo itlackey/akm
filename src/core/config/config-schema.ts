@@ -619,10 +619,6 @@ export const ImproveProfileConfigSchema = z
     processes: ImproveProfileProcessesSchema.optional(),
     autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
-    // #616 — bounded multi-cycle phasing. Number of prep->loop->post-loop
-    // cycles per run. positiveInt forbids 0/negative. DEFAULT 1 => byte-identical
-    // single-pass behavior.
-    maxCycles: positiveInt.optional(),
     // #614 — symmetric valence weighting in the eligibility sort. When true,
     // the attention term becomes |valence| MAGNITUDE so BOTH strong positive
     // and strong negative feedback drive attention (utility stays dominant) and
@@ -806,23 +802,6 @@ const ImproveCalibrationSchema = z
   })
   .passthrough();
 
-// WS-4 — exploration budget: a fixed fraction of proposals accepted per run
-// regardless of confidence. DEFAULT OFF.
-const ImproveExplorationSchema = z
-  .object({
-    /**
-     * Enable the exploration budget lane. Default false (parity).
-     * When true, a fraction of proposals are accepted regardless of confidence.
-     */
-    enabled: z.boolean().optional(),
-    /**
-     * Fraction of proposals per run to accept as exploration [0, 1].
-     * Default 0.05 (5%). Clamped to [0, 1] at read time.
-     */
-    budgetFraction: z.number().finite().min(0).max(1).optional(),
-  })
-  .passthrough();
-
 const ImproveSalienceSchema = z
   .object({
     /**
@@ -876,7 +855,6 @@ export const ImproveConfigSchema = z
     utilityDecay: ImproveUtilityDecaySchema.optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     calibration: ImproveCalibrationSchema.optional(),
-    exploration: ImproveExplorationSchema.optional(),
     salience: ImproveSalienceSchema.optional(),
     collapseDetector: ImproveCollapseDetectorSchema.optional(),
   })

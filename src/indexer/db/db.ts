@@ -1544,8 +1544,9 @@ function bareRef(ref: string): string {
  *
  * Counts `search`, `show`, and `curate` usage events. Returns a
  * Map<inputRef, count> keyed by the *input* ref strings (only those with at
- * least one matching event appear). Used by the improve loop to find
- * high-retrieval assets without feedback.
+ * least one matching event appear). Used by the improve loop's
+ * proactive-maintenance selector to rank zero-feedback assets by retrieval
+ * frequency.
  *
  * Unscoped callers retain normalization-aware legacy matching. Source-scoped
  * callers instead require either an event linked to an entry in the selected

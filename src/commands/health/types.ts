@@ -505,7 +505,7 @@ export interface ImproveHealthMetrics {
  * New-asset generation belongs to the signal-gated minting lanes
  * (extract/distill/memory-inference).
  */
-export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "high-retrieval", "signal-delta"];
+export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "signal-delta"];
 
 /** Minted share of enrichment-lane accepts that triggers a WARN advisory. */
 export const ENRICHMENT_MINTED_WARN_SHARE = 0.05;

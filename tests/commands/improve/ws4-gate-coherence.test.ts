@@ -10,20 +10,22 @@
  *      persistPhaseThreshold round-trip.
  *   2. makeGateConfig reads the stored per-phase threshold when stateDbPath is
  *      provided; falls back to globalThreshold when no row exists.
- *   3. Exploration budget: proposals below threshold are promoted up to the
- *      budget count, logged eligibilitySource="exploration".
- *   4. Exploration budget exhausted: further below-threshold proposals are
- *      deferred (not promoted).
- *   5. Auto-tune ceiling: maybeAutoTuneThreshold respects maxThreshold default
+ *   3. Auto-tune ceiling: maybeAutoTuneThreshold respects maxThreshold default
  *      of 85 (WS-4 change — was 100).
- *   6. Per-phase auto-tune persists per-phase to state.db.
- *   7. Exploration candidates get eligibilitySource="exploration" on the event.
- *   8. No-confidence candidates are never exploration-promoted.
+ *   4. Per-phase auto-tune persists per-phase to state.db.
+ *   5. Per-phase calibration isolation: distinct histories → distinct thresholds.
+ *
+ * The exploration-budget describes (below-threshold promotion,
+ * budget-exhaustion deferral, no-confidence-never-exploration,
+ * makeGateConfig's config-driven budget computation, and
+ * budget-restoration-on-failure) were deleted in Chunk 7 (WI-7.2, R14)
+ * alongside the exploration lane itself — see
+ * `docs/design/execution/chunk-7/ledger.md`.
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { maybeAutoTuneThreshold } from "../../../src/commands/improve/improve";
-import type { AutoAcceptGateConfig, ProposalCandidate } from "../../../src/commands/improve/improve-auto-accept";
+import type { ProposalCandidate } from "../../../src/commands/improve/improve-auto-accept";
 import { makeGateConfig, runAutoAcceptGate } from "../../../src/commands/improve/improve-auto-accept";
 import { createProposal, recordGateDecision } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
@@ -180,119 +182,6 @@ describe("makeGateConfig per-phase threshold resolution", () => {
   });
 });
 
-// ── 3. Exploration budget promotes below-threshold candidates ─────────────────
-
-describe("exploration budget", () => {
-  test("below-threshold candidates with budget remaining are promoted as exploration", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => makePromotion(id));
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      explorationBudgetCount: 2, // allow up to 2 exploration promotions
-    };
-
-    const result = await runAutoAcceptGate(
-      [
-        candidate("high", 0.95), // above threshold → normal promote
-        candidate("low1", 0.5), // below threshold → exploration budget
-        candidate("low2", 0.6), // below threshold → exploration budget
-        candidate("low3", 0.4), // below threshold → budget exhausted, deferred
-      ],
-      cfg,
-      promoteFn as never,
-    );
-
-    expect(result.promoted.sort()).toEqual(["high", "low1", "low2"]);
-    expect(result.skipped).toEqual(["low3"]);
-    expect(result.failed).toEqual([]);
-  });
-
-  test("exploration budget = 0 means no exploration promotions (parity)", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => makePromotion(id));
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      explorationBudgetCount: 0,
-    };
-
-    const result = await runAutoAcceptGate([candidate("low", 0.5)], cfg, promoteFn as never);
-    expect(result.promoted).toEqual([]);
-    expect(result.skipped).toEqual(["low"]);
-  });
-
-  test("explorationBudgetCount not set → no exploration (parity, default)", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => makePromotion(id));
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      // no explorationBudgetCount → defaults to 0 inside runAutoAcceptGate
-    };
-
-    const result = await runAutoAcceptGate([candidate("low", 0.5)], cfg, promoteFn as never);
-    expect(result.promoted).toEqual([]);
-    expect(result.skipped).toEqual(["low"]);
-  });
-});
-
-// ── 4. Budget exhausted ───────────────────────────────────────────────────────
-
-describe("exploration budget exhaustion", () => {
-  test("budget is consumed in order; once exhausted, remaining below-threshold are deferred", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => makePromotion(id));
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      explorationBudgetCount: 1,
-    };
-
-    // 4 below-threshold candidates; only the first should be exploration-promoted
-    const result = await runAutoAcceptGate(
-      [candidate("low1", 0.5), candidate("low2", 0.6), candidate("low3", 0.55), candidate("low4", 0.45)],
-      cfg,
-      promoteFn as never,
-    );
-    expect(result.promoted).toEqual(["low1"]); // only first
-    expect(result.skipped.sort()).toEqual(["low2", "low3", "low4"]);
-  });
-});
-
-// ── 5. No-confidence candidates are never exploration-promoted ─────────────────
-
-describe("no-confidence candidates and exploration", () => {
-  test("undefined confidence → never exploration-promoted, always deferred", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => makePromotion(id));
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      explorationBudgetCount: 5, // large budget
-    };
-
-    const result = await runAutoAcceptGate([candidate("no-conf", undefined)], cfg, promoteFn as never);
-    expect(result.promoted).toEqual([]);
-    expect(result.skipped).toEqual(["no-conf"]);
-  });
-});
-
 // ── 6. Auto-tune ceiling at 85 (WS-4 default maxThreshold) ───────────────────
 
 describe("auto-tune ceiling", () => {
@@ -438,78 +327,6 @@ describe("per-phase auto-tune persistence", () => {
   });
 });
 
-// ── 8. makeGateConfig exploration budget from config ─────────────────────────
-
-describe("makeGateConfig exploration budget from config", () => {
-  test("exploration.enabled=true and candidateCount > 0 → explorationBudgetCount computed", () => {
-    const config: AkmConfig = {
-      semanticSearchMode: "off",
-      improve: {
-        exploration: { enabled: true, budgetFraction: 0.1 }, // 10% of candidates
-      },
-    };
-    const cfg = makeGateConfig("reflect", {
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config,
-      eventsCtx: undefined,
-      candidateCount: 20,
-    });
-    // 10% of 20 = 2
-    expect(cfg.explorationBudgetCount).toBe(2);
-  });
-
-  test("exploration.enabled=false → no exploration budget", () => {
-    const config: AkmConfig = {
-      semanticSearchMode: "off",
-      improve: {
-        exploration: { enabled: false, budgetFraction: 0.1 },
-      },
-    };
-    const cfg = makeGateConfig("reflect", {
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config,
-      eventsCtx: undefined,
-      candidateCount: 20,
-    });
-    expect(cfg.explorationBudgetCount).toBeUndefined();
-  });
-
-  test("no exploration config → no exploration budget (parity default)", () => {
-    const cfg = makeGateConfig("reflect", {
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      candidateCount: 20,
-    });
-    expect(cfg.explorationBudgetCount).toBeUndefined();
-  });
-
-  test("default budgetFraction=0.05 applied when fraction not specified", () => {
-    const config: AkmConfig = {
-      semanticSearchMode: "off",
-      improve: {
-        exploration: { enabled: true }, // fraction omitted → uses default 0.05
-      },
-    };
-    const cfg = makeGateConfig("reflect", {
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config,
-      eventsCtx: undefined,
-      candidateCount: 100,
-    });
-    // 5% of 100 = 5
-    expect(cfg.explorationBudgetCount).toBe(5);
-  });
-});
-
 // ── 9. Per-phase calibration isolation: distinct histories → distinct thresholds ──
 
 describe("per-phase calibration isolation", () => {
@@ -589,39 +406,5 @@ describe("per-phase calibration isolation", () => {
     // More precise: reflect should be ABOVE the start (raised) and extract BELOW (lowered)
     expect(reflectTuned as number).toBeGreaterThan(startThreshold);
     expect(extractTuned as number).toBeLessThan(startThreshold);
-  });
-});
-
-// ── 11. Exploration promotion restores budget on failure ───────────────────────
-
-describe("exploration budget restoration on failure", () => {
-  test("failed exploration promotion restores budget so next candidate can use it", async () => {
-    const promoteFn = mock(async (_stash: string, _cfg: AkmConfig, id: string) => {
-      if (id === "fail") throw new Error("promote failed");
-      return makePromotion(id);
-    });
-
-    const cfg: AutoAcceptGateConfig = {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: "/tmp/test-stash",
-      config: STUB_CONFIG,
-      eventsCtx: undefined,
-      explorationBudgetCount: 1,
-    };
-
-    const result = await runAutoAcceptGate(
-      [
-        candidate("fail", 0.5), // budget consumed, fails → budget restored
-        candidate("ok", 0.6), // next below-threshold: budget available again
-      ],
-      cfg,
-      promoteFn as never,
-    );
-
-    // "fail" errors out, "ok" should succeed because budget was restored
-    expect(result.failed).toEqual(["fail"]);
-    expect(result.promoted).toEqual(["ok"]);
   });
 });

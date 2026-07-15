@@ -4625,10 +4625,6 @@
                 "type": "integer",
                 "exclusiveMinimum": 0
               },
-              "maxCycles": {
-                "type": "integer",
-                "exclusiveMinimum": 0
-              },
               "symmetricValence": {
                 "type": "boolean"
               },
@@ -4699,20 +4695,6 @@
               "minimum": 0
             },
             "targetAcceptRate": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
-          "additionalProperties": true
-        },
-        "exploration": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "budgetFraction": {
               "type": "number",
               "minimum": 0,
               "maximum": 1
@@ -9442,10 +9424,6 @@
                     "type": "integer",
                     "exclusiveMinimum": 0
                   },
-                  "maxCycles": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0
-                  },
                   "symmetricValence": {
                     "type": "boolean"
                   },
@@ -9516,20 +9494,6 @@
                   "minimum": 0
                 },
                 "targetAcceptRate": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                }
-              },
-              "additionalProperties": true
-            },
-            "exploration": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "budgetFraction": {
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1
@@ -14078,10 +14042,6 @@
           "minimum": 0
         },
         "limit": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "maxCycles": {
           "type": "integer",
           "exclusiveMinimum": 0
         },
