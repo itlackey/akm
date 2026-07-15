@@ -12,7 +12,7 @@ import type { ImproveActionResult, ImproveEligibleRef } from "../../core/improve
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
-import { info, warn } from "../../core/warn";
+import { info } from "../../core/warn";
 import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import {
   DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,

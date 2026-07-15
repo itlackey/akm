@@ -65,7 +65,6 @@ import { tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { durableImproveRef } from "./source-identity";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1161,7 +1160,7 @@ async function planConsolidation(
   opts: AkmConsolidateOptions,
   config: AkmConfig,
   stashDir: string,
-  startMs: number,
+  _startMs: number,
   memories: MemoryEntry[],
   warnings: string[],
   sharedStateDb: Database | undefined,

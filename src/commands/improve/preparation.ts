@@ -7,7 +7,6 @@ import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { daysToMs } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";

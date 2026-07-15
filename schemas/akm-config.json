@@ -808,33 +808,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -947,34 +920,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -1026,21 +971,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -1049,9 +979,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -1195,33 +1122,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -1334,34 +1234,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -1413,21 +1285,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -1436,9 +1293,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -1582,33 +1436,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -1721,34 +1548,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -1800,21 +1599,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -1823,9 +1607,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -1969,33 +1750,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -2108,34 +1862,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -2187,21 +1913,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -2210,9 +1921,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -2356,33 +2064,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -2495,34 +2176,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -2574,21 +2227,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -2597,9 +2235,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -2743,33 +2378,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -2882,34 +2490,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -2961,21 +2541,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -2984,9 +2549,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -3130,33 +2692,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -3269,34 +2804,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -3348,21 +2855,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -3371,9 +2863,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -3517,33 +3006,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -3656,34 +3118,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -3735,21 +3169,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -3758,9 +3177,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -3904,33 +3320,6 @@
                         "type": "integer",
                         "minimum": 0
                       },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -4043,34 +3432,6 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "antiCollapse": {
                         "type": "object",
                         "properties": {
@@ -4122,21 +3483,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
                       "lowValueFilter": {
                         "type": "object",
                         "properties": {
@@ -4145,396 +3491,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
-                      },
-                      "applyMode": {
-                        "type": "string",
-                        "enum": [
-                          "queue",
-                          "promote"
-                        ]
-                      },
-                      "policy": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "maxAcceptsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "maxDiffLines": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "rejectEmpty": {
-                        "type": "boolean"
-                      },
-                      "judgment": {
-                        "type": "object",
-                        "properties": {
-                          "engine": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          }
-                        },
-                        "additionalProperties": true
-                      }
-                    },
-                    "additionalProperties": true
-                  },
-                  "procedural": {
-                    "type": "object",
-                    "properties": {
-                      "engine": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "enabled": {
-                        "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "allowedTypes": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "minPoolSize": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "dedup": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "cosineThreshold": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "cosineCandidateLimit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "judgedCache": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "qualityGate": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "contradictionDetection": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "defaultSince": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "maxTotalChars": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "minContentChars": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "maxChunkSize": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 50
-                      },
-                      "incrementalSince": {
-                        "type": "string"
-                      },
-                      "limit": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "neighborsPerChanged": {
-                        "type": "integer",
-                        "minimum": 1
-                      },
-                      "requirePlannedRefs": {
-                        "type": "boolean"
-                      },
-                      "dueDays": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "maxPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "topN": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "includeTypes": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "minItems": 1
-                      },
-                      "batchSize": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "fullScan": {
-                        "type": "boolean"
-                      },
-                      "triage": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "minScore": {
-                            "type": "number",
-                            "minimum": 0
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "minPendingCount": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "minNewSessions": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "maxSessionsPerRun": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "indexSessions": {
-                        "type": "boolean"
-                      },
-                      "minSessionDuration": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "p90ChunkSecondsDefault": {
-                        "type": "number",
-                        "exclusiveMinimum": 0
-                      },
-                      "schemaSimilarity": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "epsilon": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "confidencePenalty": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "hotProbation": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "antiCollapse": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "maxGeneration": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
-                          "lexicalDiversityCheck": {
-                            "type": "boolean"
-                          },
-                          "randomClusterFraction": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          },
-                          "mergeInformationFloor": {
-                            "type": "boolean"
-                          },
-                          "minSpecificityRetention": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "cls": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "adjacentCount": {
-                            "type": "integer",
-                            "minimum": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "fidelityCheck": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "minRecurrence": {
-                        "type": "integer",
-                        "minimum": 2
-                      },
-                      "maxProposalsPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "emitAs": {
-                        "type": "string",
-                        "enum": [
-                          "workflow",
-                          "skill"
-                        ]
-                      },
-                      "lowValueFilter": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "proceduralAwareFloor": {
-                        "type": "boolean"
                       },
                       "applyMode": {
                         "type": "string",
@@ -4669,38 +3625,6 @@
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
-        },
-        "calibration": {
-          "type": "object",
-          "properties": {
-            "autoTune": {
-              "type": "boolean"
-            },
-            "minThreshold": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 100
-            },
-            "maxThreshold": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 100
-            },
-            "maxStep": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "minSamples": {
-              "type": "number",
-              "minimum": 0
-            },
-            "targetAcceptRate": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
-          "additionalProperties": true
         },
         "salience": {
           "type": "object",
@@ -5607,33 +4531,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -5746,34 +4643,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -5825,21 +4694,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -5848,9 +4702,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -5994,33 +4845,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -6133,34 +4957,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -6212,21 +5008,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -6235,9 +5016,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -6381,33 +5159,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -6520,34 +5271,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -6599,21 +5322,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -6622,9 +5330,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -6768,33 +5473,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -6907,34 +5585,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -6986,21 +5636,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -7009,9 +5644,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -7155,33 +5787,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -7294,34 +5899,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -7373,21 +5950,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -7396,9 +5958,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -7542,33 +6101,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -7681,34 +6213,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -7760,21 +6264,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -7783,9 +6272,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -7929,33 +6415,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -8068,34 +6527,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -8147,21 +6578,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -8170,9 +6586,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -8316,33 +6729,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -8455,34 +6841,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -8534,21 +6892,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -8557,9 +6900,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -8703,33 +7043,6 @@
                             "type": "integer",
                             "minimum": 0
                           },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -8842,34 +7155,6 @@
                             "type": "number",
                             "exclusiveMinimum": 0
                           },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "antiCollapse": {
                             "type": "object",
                             "properties": {
@@ -8921,21 +7206,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
                           "lowValueFilter": {
                             "type": "object",
                             "properties": {
@@ -8944,396 +7214,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
-                          },
-                          "applyMode": {
-                            "type": "string",
-                            "enum": [
-                              "queue",
-                              "promote"
-                            ]
-                          },
-                          "policy": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "maxAcceptsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "maxDiffLines": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "rejectEmpty": {
-                            "type": "boolean"
-                          },
-                          "judgment": {
-                            "type": "object",
-                            "properties": {
-                              "engine": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "model": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "timeoutMs": {
-                                "anyOf": [
-                                  {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "llm": {
-                                "type": "object",
-                                "properties": {
-                                  "temperature": {
-                                    "type": "number"
-                                  },
-                                  "maxTokens": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "supportsJsonSchema": {
-                                    "type": "boolean"
-                                  },
-                                  "extraParams": {
-                                    "type": "object",
-                                    "additionalProperties": {}
-                                  },
-                                  "contextLength": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "enableThinking": {
-                                    "type": "boolean"
-                                  }
-                                },
-                                "additionalProperties": true
-                              }
-                            },
-                            "additionalProperties": true
-                          }
-                        },
-                        "additionalProperties": true
-                      },
-                      "procedural": {
-                        "type": "object",
-                        "properties": {
-                          "engine": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "allowedTypes": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "minPoolSize": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "dedup": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "cosineThreshold": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "cosineCandidateLimit": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "judgedCache": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "qualityGate": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "contradictionDetection": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "defaultSince": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "maxTotalChars": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "minContentChars": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "maxChunkSize": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 50
-                          },
-                          "incrementalSince": {
-                            "type": "string"
-                          },
-                          "limit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "neighborsPerChanged": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
-                          "requirePlannedRefs": {
-                            "type": "boolean"
-                          },
-                          "dueDays": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "maxPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "topN": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "includeTypes": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "minItems": 1
-                          },
-                          "batchSize": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "fullScan": {
-                            "type": "boolean"
-                          },
-                          "triage": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "minScore": {
-                                "type": "number",
-                                "minimum": 0
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "minPendingCount": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "minNewSessions": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "maxSessionsPerRun": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "indexSessions": {
-                            "type": "boolean"
-                          },
-                          "minSessionDuration": {
-                            "type": "number",
-                            "minimum": 0
-                          },
-                          "p90ChunkSecondsDefault": {
-                            "type": "number",
-                            "exclusiveMinimum": 0
-                          },
-                          "schemaSimilarity": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "epsilon": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "confidencePenalty": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "hotProbation": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "antiCollapse": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "maxGeneration": {
-                                "type": "integer",
-                                "minimum": 1
-                              },
-                              "lexicalDiversityCheck": {
-                                "type": "boolean"
-                              },
-                              "randomClusterFraction": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              },
-                              "mergeInformationFloor": {
-                                "type": "boolean"
-                              },
-                              "minSpecificityRetention": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "cls": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "adjacentCount": {
-                                "type": "integer",
-                                "minimum": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "fidelityCheck": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "minRecurrence": {
-                            "type": "integer",
-                            "minimum": 2
-                          },
-                          "maxProposalsPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "emitAs": {
-                            "type": "string",
-                            "enum": [
-                              "workflow",
-                              "skill"
-                            ]
-                          },
-                          "lowValueFilter": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
-                          "proceduralAwareFloor": {
-                            "type": "boolean"
                           },
                           "applyMode": {
                             "type": "string",
@@ -9468,38 +7348,6 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
-            },
-            "calibration": {
-              "type": "object",
-              "properties": {
-                "autoTune": {
-                  "type": "boolean"
-                },
-                "minThreshold": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100
-                },
-                "maxThreshold": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100
-                },
-                "maxStep": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "minSamples": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "targetAcceptRate": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                }
-              },
-              "additionalProperties": true
             },
             "salience": {
               "type": "object",
@@ -9784,33 +7632,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "dedup": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "cosineThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "cosineCandidateLimit": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            }
-          },
-          "additionalProperties": true
-        },
-        "judgedCache": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
-        },
         "qualityGate": {
           "type": "object",
           "properties": {
@@ -9923,34 +7744,6 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
-        "schemaSimilarity": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "epsilon": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "confidencePenalty": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
-          "additionalProperties": true
-        },
-        "hotProbation": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
-        },
         "antiCollapse": {
           "type": "object",
           "properties": {
@@ -10002,21 +7795,6 @@
           },
           "additionalProperties": true
         },
-        "minRecurrence": {
-          "type": "integer",
-          "minimum": 2
-        },
-        "maxProposalsPerRun": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "emitAs": {
-          "type": "string",
-          "enum": [
-            "workflow",
-            "skill"
-          ]
-        },
         "lowValueFilter": {
           "type": "object",
           "properties": {
@@ -10025,9 +7803,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "proceduralAwareFloor": {
-          "type": "boolean"
         },
         "applyMode": {
           "type": "string",
@@ -10228,33 +8003,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -10367,34 +8115,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -10446,21 +8166,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -10469,9 +8174,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -10615,33 +8317,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -10754,34 +8429,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -10833,21 +8480,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -10856,9 +8488,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -11002,33 +8631,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -11141,34 +8743,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -11220,21 +8794,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -11243,9 +8802,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -11389,33 +8945,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -11528,34 +9057,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -11607,21 +9108,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -11630,9 +9116,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -11776,33 +9259,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -11915,34 +9371,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -11994,21 +9422,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -12017,9 +9430,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -12163,33 +9573,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -12302,34 +9685,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -12381,21 +9736,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -12404,9 +9744,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -12550,33 +9887,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -12689,34 +9999,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -12768,21 +10050,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -12791,9 +10058,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -12937,33 +10201,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -13076,34 +10313,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -13155,21 +10364,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -13178,9 +10372,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
@@ -13324,33 +10515,6 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -13463,34 +10627,6 @@
                   "type": "number",
                   "exclusiveMinimum": 0
                 },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "antiCollapse": {
                   "type": "object",
                   "properties": {
@@ -13542,21 +10678,6 @@
                   },
                   "additionalProperties": true
                 },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
                 "lowValueFilter": {
                   "type": "object",
                   "properties": {
@@ -13565,396 +10686,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
-                },
-                "applyMode": {
-                  "type": "string",
-                  "enum": [
-                    "queue",
-                    "promote"
-                  ]
-                },
-                "policy": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "maxAcceptsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "maxDiffLines": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "rejectEmpty": {
-                  "type": "boolean"
-                },
-                "judgment": {
-                  "type": "object",
-                  "properties": {
-                    "engine": {
-                      "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "timeoutMs": {
-                      "anyOf": [
-                        {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        }
-                      },
-                      "additionalProperties": true
-                    }
-                  },
-                  "additionalProperties": true
-                }
-              },
-              "additionalProperties": true
-            },
-            "procedural": {
-              "type": "object",
-              "properties": {
-                "engine": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "enabled": {
-                  "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "allowedTypes": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "minPoolSize": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "dedup": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "cosineThreshold": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "cosineCandidateLimit": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "judgedCache": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "qualityGate": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "contradictionDetection": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "defaultSince": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "maxTotalChars": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "minContentChars": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "maxChunkSize": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 50
-                },
-                "incrementalSince": {
-                  "type": "string"
-                },
-                "limit": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "neighborsPerChanged": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "requirePlannedRefs": {
-                  "type": "boolean"
-                },
-                "dueDays": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "maxPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "topN": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "includeTypes": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "minItems": 1
-                },
-                "batchSize": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "fullScan": {
-                  "type": "boolean"
-                },
-                "triage": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "minScore": {
-                      "type": "number",
-                      "minimum": 0
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "minPendingCount": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "minNewSessions": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "maxSessionsPerRun": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "indexSessions": {
-                  "type": "boolean"
-                },
-                "minSessionDuration": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "p90ChunkSecondsDefault": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
-                },
-                "schemaSimilarity": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "epsilon": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "confidencePenalty": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "hotProbation": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "antiCollapse": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "maxGeneration": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "lexicalDiversityCheck": {
-                      "type": "boolean"
-                    },
-                    "randomClusterFraction": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    },
-                    "mergeInformationFloor": {
-                      "type": "boolean"
-                    },
-                    "minSpecificityRetention": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "cls": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "adjacentCount": {
-                      "type": "integer",
-                      "minimum": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "fidelityCheck": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "minRecurrence": {
-                  "type": "integer",
-                  "minimum": 2
-                },
-                "maxProposalsPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "emitAs": {
-                  "type": "string",
-                  "enum": [
-                    "workflow",
-                    "skill"
-                  ]
-                },
-                "lowValueFilter": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
-                "proceduralAwareFloor": {
-                  "type": "boolean"
                 },
                 "applyMode": {
                   "type": "string",
