@@ -604,10 +604,10 @@ describe("resolveAkmInvocation", () => {
       env: {},
       runtime: "bun",
       execPath: "/usr/bin/bun",
-      mainPath: path.resolve(import.meta.dir, "../src/cli.ts"),
-      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+      mainPath: path.resolve(import.meta.dir, "../../src/cli.ts"),
+      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
-    expect(r.argv).toEqual(["/usr/bin/bun", path.resolve(import.meta.dir, "../src/cli.ts")]);
+    expect(r.argv).toEqual(["/usr/bin/bun", path.resolve(import.meta.dir, "../../src/cli.ts")]);
   });
 
   test("uses only the executable for a Bun standalone build", () => {
@@ -616,7 +616,7 @@ describe("resolveAkmInvocation", () => {
       runtime: "bun",
       execPath: "/opt/akm",
       mainPath: "/$bunfs/root/src/cli.ts",
-      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
     expect(r).toEqual({ argv: ["/opt/akm"], via: "execPath" });
   });
@@ -627,7 +627,7 @@ describe("resolveAkmInvocation", () => {
       runtime: "bun",
       execPath: "D:\\akm\\akm.exe",
       mainPath: "B:\\~BUN\\root\\src\\cli.ts",
-      cliEntryUrl: new URL("../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
+      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
     expect(r).toEqual({ argv: ["D:\\akm\\akm.exe"], via: "execPath" });
   });

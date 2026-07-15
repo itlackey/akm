@@ -179,7 +179,7 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
 }
 
 function proposalsModuleHref(): string {
-  return pathToFileURL(path.join(import.meta.dir, "../src/commands/proposal/repository.ts")).href;
+  return pathToFileURL(path.join(import.meta.dir, "../../src/commands/proposal/repository.ts")).href;
 }
 
 // ── canonical store ──────────────────────────────────────────────────────────

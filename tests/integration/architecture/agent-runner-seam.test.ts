@@ -18,7 +18,7 @@ const profile: AgentProfile = {
 
 const result = (stdout: string) => ({ ok: true, exitCode: 0, stdout, stderr: "", durationMs: 1 });
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const srcRoot = path.join(repoRoot, "src");
 const dispatchAuthority = path.join("integrations", "agent", "runner-dispatch.ts");
 

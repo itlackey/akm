@@ -51,7 +51,7 @@ import {
 } from "../_helpers/sandbox";
 
 /** The shipped skeleton convention facts — the exact files `akm init` installs. */
-const SKELETON_FACTS_DIR = path.join(import.meta.dir, "..", "src", "assets", "stash-skeleton", "facts");
+const SKELETON_FACTS_DIR = path.join(import.meta.dir, "..", "..", "src", "assets", "stash-skeleton", "facts");
 
 const KNOWLEDGE_REF = "knowledge:auth/oauth-refresh-races";
 

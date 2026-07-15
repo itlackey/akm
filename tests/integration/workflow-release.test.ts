@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
-const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
+const source = fs.readFileSync(path.resolve(import.meta.dir, "../../.github/workflows/release.yml"), "utf8");
 const VERSION_INPUT = "$" + "{{ inputs.version }}";
 
 describe("release workflow", () => {
@@ -22,7 +22,7 @@ describe("release workflow", () => {
 
   test("publishes the exact version already committed in package.json", () => {
     expect(source).toContain(`CANDIDATE_VERSION: ${VERSION_INPUT}`);
-    expect(source).toContain("require('../package.json').version");
+    expect(source).toContain("require('./package.json').version");
     expect(source).toContain('"$PACKAGE_VERSION" != "$CANDIDATE_VERSION"');
     expect(source).not.toContain("npm version");
   });

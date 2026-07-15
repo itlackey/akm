@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStorageLocations } from "../../../src/storage/locations";
-import { WorkflowRunsRepository, withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
+import {
+  WorkflowRunsRepository,
+  withWorkflowRunsRepo,
+} from "../../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { reportWorkflowUnit } from "../../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";

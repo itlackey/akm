@@ -8,7 +8,7 @@ import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { buildDbHit } from "../../src/indexer/search/db-search";
 
 // Trigger source-provider self-registration
-import "../src/sources/providers/index";
+import "../../src/sources/providers/index";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.

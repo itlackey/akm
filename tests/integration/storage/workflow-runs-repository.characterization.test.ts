@@ -7,7 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Database } from "../../../src/storage/database";
-import { WorkflowRunsRepository, withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
+import {
+  WorkflowRunsRepository,
+  withWorkflowRunsRepo,
+} from "../../../src/storage/repositories/workflow-runs-repository";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 
 /**

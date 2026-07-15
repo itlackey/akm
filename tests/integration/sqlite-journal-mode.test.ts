@@ -318,8 +318,8 @@ describe("#628 AC-e: applyStandardPragmas() network-FS fallback wiring", () => {
 // ── AC-f: docs carry the env-var row (assert on disk content) ────────────────
 describe("#628 AC-f: docs document AKM_SQLITE_JOURNAL_MODE", () => {
   test("data-and-telemetry.md and configuration.md mention the env var", () => {
-    const telemetry = fs.readFileSync(path.join(import.meta.dir, "..", "docs", "data-and-telemetry.md"), "utf8");
-    const config = fs.readFileSync(path.join(import.meta.dir, "..", "docs", "configuration.md"), "utf8");
+    const telemetry = fs.readFileSync(path.join(import.meta.dir, "..", "..", "docs", "data-and-telemetry.md"), "utf8");
+    const config = fs.readFileSync(path.join(import.meta.dir, "..", "..", "docs", "configuration.md"), "utf8");
     expect(telemetry).toContain("AKM_SQLITE_JOURNAL_MODE");
     expect(config).toContain("AKM_SQLITE_JOURNAL_MODE");
   });

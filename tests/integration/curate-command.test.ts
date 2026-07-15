@@ -82,7 +82,7 @@ afterEach(() => {
 });
 
 describe("curate command", () => {
-  const rankingBaselineFixture = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+  const rankingBaselineFixture = path.join(__dirname, "..", "fixtures", "stashes", "ranking-baseline");
 
   function makeRankingBaselineStash(): string {
     const stashDir = makeTempDir("akm-curate-ranking-baseline-");

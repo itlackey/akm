@@ -764,7 +764,7 @@ describe("looksLikeWorkflowProgram", () => {
 });
 
 describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () => {
-  const schemaPath = path.resolve(import.meta.dir, "../../schemas/akm-workflow.json");
+  const schemaPath = path.resolve(import.meta.dir, "../../../schemas/akm-workflow.json");
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8")) as {
     definitions: Record<string, { enum?: string[]; pattern?: string; properties?: Record<string, unknown> }>;
     properties: Record<string, { propertyNames?: { pattern?: string } }>;
@@ -789,7 +789,7 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
 
   test("extra_params documents top-level protection and recursive credential semantics", () => {
     const schema = JSON.parse(
-      fs.readFileSync(path.resolve(import.meta.dir, "../../schemas/akm-workflow.json"), "utf8"),
+      fs.readFileSync(path.resolve(import.meta.dir, "../../../schemas/akm-workflow.json"), "utf8"),
     );
     const extraParams = schema.definitions.extraParams;
     expect(extraParams["x-akm-protectedTopLevelNormalizedKeys"]).toEqual(EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS);

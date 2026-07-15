@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-const REPO_ROOT = path.resolve(import.meta.dir, "..");
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const NPM_SHEBANG = /^#!\s*(?:\/usr\/bin\/env\s+(?:-S\s+)?((?:[^ \t=]+=[^ \t=]+\s+)*))?([^ \t]+)(.*)$/;
 const RUNTIME_DOCS = [
   "README.md",
@@ -78,7 +78,7 @@ describe("npm bin contract", () => {
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
     expect(akmLauncher).toContain("requires Node.js >= 20.12 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
-    expect(akmLauncher).toContain('await import("../cli-node.mjs")');
+    expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
     const migrateLauncher = fs.readFileSync(
       path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate-storage"),
@@ -87,7 +87,7 @@ describe("npm bin contract", () => {
     expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
     expect(migrateLauncher).toContain("requires Node.js >= 20.12 to bootstrap");
     expect(migrateLauncher).toContain('new URL("./scripts/migrate-storage.js", import.meta.url)');
-    expect(migrateLauncher).toContain('await import("../migrate-storage-node.mjs")');
+    expect(migrateLauncher).toContain('await import("./migrate-storage-node.mjs")');
 
     for (const sourceFile of ["cli-node.mjs", "migrate-storage-node.mjs"]) {
       const wrapper = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", sourceFile), "utf8");

@@ -238,7 +238,7 @@ describe("akm init", () => {
   test("source convention templates ship under src/assets and are picked up by copy-assets", () => {
     // Build sanity: the embedded source files exist (copy-assets mirrors
     // src/assets/**/* into dist/assets/ verbatim, so shipping follows).
-    const repoRoot = path.resolve(import.meta.dir, "..");
+    const repoRoot = path.resolve(import.meta.dir, "..", "..");
     for (const type of CONVENTION_TYPES) {
       const srcPath = path.join(
         repoRoot,

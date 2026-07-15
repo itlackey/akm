@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../../../src/core/config/engine-semantics";
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const schemaPath = path.join(repoRoot, "schemas", "akm-config.json");
 
 function readSchema(): Record<string, unknown> {

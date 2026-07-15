@@ -21,7 +21,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { listExistingTableNames, openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { queryImproveRuns, recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
-import { queryCompletedTaskIntervals, upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
+import {
+  queryCompletedTaskIntervals,
+  upsertTaskHistory,
+} from "../../../src/storage/repositories/task-history-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

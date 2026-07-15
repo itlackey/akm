@@ -896,7 +896,9 @@ describe("new 0.8.0 improve metrics", () => {
   // ── Phase 6A — Confidence-driven auto-accept ──────────────────────────────
 
   test("auto-accept promotes a high-confidence reflect proposal when threshold met", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import("../../../src/commands/proposal/repository");
+    const { createProposal, getProposal, isProposalSkipped } = await import(
+      "../../../src/commands/proposal/repository"
+    );
     const stashDir = makeTempDir("akm-6a-auto-accept-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
@@ -967,7 +969,9 @@ describe("new 0.8.0 improve metrics", () => {
   });
 
   test("auto-accept skips proposals below the threshold (left pending)", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import("../../../src/commands/proposal/repository");
+    const { createProposal, getProposal, isProposalSkipped } = await import(
+      "../../../src/commands/proposal/repository"
+    );
     const stashDir = makeTempDir("akm-6a-below-threshold-");
     writeMemory(stashDir, "target-low", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);

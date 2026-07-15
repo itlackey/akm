@@ -6,7 +6,7 @@ import { akmShowUnified as akmShow } from "../../../src/commands/read/show";
 import { saveConfig } from "../../../src/core/config/config";
 
 // Trigger source-provider self-registration
-import "../../src/sources/providers/index";
+import "../../../src/sources/providers/index";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];

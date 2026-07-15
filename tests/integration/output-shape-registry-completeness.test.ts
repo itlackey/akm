@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { shapeForCommand } from "../../src/output/shapes";
 
-const SRC_ROOT = path.join(__dirname, "..", "src");
+const SRC_ROOT = path.join(__dirname, "..", "..", "src");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

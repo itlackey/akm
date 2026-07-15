@@ -18,7 +18,7 @@ const BASELINE = {
   howDocker: [] as string[],
 } as const;
 
-const RANKING_BASELINE_FIXTURE = path.join(__dirname, "fixtures", "stashes", "ranking-baseline");
+const RANKING_BASELINE_FIXTURE = path.join(__dirname, "..", "fixtures", "stashes", "ranking-baseline");
 
 async function curateRefs(query: string): Promise<string[]> {
   const result = await akmCurate({ query, limit: 4 });

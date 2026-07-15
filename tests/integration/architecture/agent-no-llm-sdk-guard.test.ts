@@ -30,7 +30,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const AGENT_DIR = path.join(REPO_ROOT, "src", "integrations", "agent");
 
 /**

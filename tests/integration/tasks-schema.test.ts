@@ -4,7 +4,7 @@ import path from "node:path";
 import { EXTRA_PARAMS_CREDENTIAL_KEYS, EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS } from "../../src/core/extra-params";
 
 test("task schema and package contents pin the strict v2 public artifact", () => {
-  const root = path.resolve(import.meta.dir, "..");
+  const root = path.resolve(import.meta.dir, "..", "..");
   const schema = JSON.parse(fs.readFileSync(path.join(root, "schemas", "akm-task.json"), "utf8"));
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 

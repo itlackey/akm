@@ -33,7 +33,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-const FIXTURE = path.join(__dirname, "fixtures", "stashes", "curate-golden");
+const FIXTURE = path.join(__dirname, "..", "fixtures", "stashes", "curate-golden");
 
 interface JudgmentsFile {
   schemaVersion: number;

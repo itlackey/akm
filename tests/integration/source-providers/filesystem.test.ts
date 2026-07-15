@@ -6,7 +6,7 @@ import { resolveSourceProviderFactory } from "../../../src/sources/provider-fact
 import { type Cleanup, sandboxStashDir } from "../../_helpers/sandbox";
 
 // Trigger self-registration
-import "../../src/sources/providers/filesystem";
+import "../../../src/sources/providers/filesystem";
 
 const createdTmpDirs: string[] = [];
 
