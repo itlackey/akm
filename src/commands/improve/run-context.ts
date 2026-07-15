@@ -64,6 +64,8 @@ export interface AssetIoSeams {
 }
 
 export interface RunContext {
+  /** Primary stash directory the run operates on (proposal/asset root). */
+  readonly stashDir: string;
   /** Loaded, resolved AKM config for this run. */
   readonly config: AkmConfig;
   /**
@@ -116,6 +118,7 @@ export interface RunContext {
 
 /** Constructor input for {@link createRunContext}. */
 export interface RunContextInit {
+  stashDir: string;
   config: AkmConfig;
   eventsCtx: EventsContext;
   proposalsCtx: ProposalsContext;
@@ -133,6 +136,7 @@ export interface RunContextInit {
 
 /** The run-scoped carriers shared by every sibling context minted from one run. */
 interface RunContextCarriers {
+  stashDir: string;
   config: AkmConfig;
   eventsCtx: EventsContext;
   proposalsCtx: ProposalsContext;
@@ -154,6 +158,7 @@ interface RunContextCarriers {
 function buildRunContext(carriers: RunContextCarriers, memo: Map<string, string> | null): RunContext {
   const memoKey = (filePath: string): string => path.resolve(filePath);
   return {
+    stashDir: carriers.stashDir,
     config: carriers.config,
     eventsCtx: carriers.eventsCtx,
     proposalsCtx: carriers.proposalsCtx,
@@ -192,6 +197,7 @@ function buildRunContext(carriers: RunContextCarriers, memo: Map<string, string>
  */
 export function createRunContext(init: RunContextInit): RunContext {
   const carriers: RunContextCarriers = {
+    stashDir: init.stashDir,
     config: init.config,
     eventsCtx: init.eventsCtx,
     proposalsCtx: init.proposalsCtx,

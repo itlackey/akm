@@ -55,6 +55,7 @@ function makeStore(initial: Record<string, string> = {}): {
 
 function makeCtx(io: RunContextInit["io"], overrides: Partial<RunContextInit> = {}) {
   const init: RunContextInit = {
+    stashDir: "/tmp/stash",
     config: {} as AkmConfig,
     eventsCtx: {} as EventsContext,
     proposalsCtx: {} as ProposalsContext,
@@ -162,6 +163,7 @@ describe("RunContext carrier threading", () => {
     const ctx = makeCtx(store.io, { eventsCtx, proposalsCtx, signal, getLlmConfig });
 
     const forked = ctx.withFreshAssetMemo();
+    expect(forked.stashDir).toBe("/tmp/stash");
     expect(forked.eventsCtx).toBe(eventsCtx);
     expect(forked.proposalsCtx).toBe(proposalsCtx);
     expect(forked.signal).toBe(signal);
