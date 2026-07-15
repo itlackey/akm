@@ -105,7 +105,7 @@ const EXTRACT_SCHEMA = {
       },
     },
     groundingTasks: {
-      type: 'array', minItems: 1, maxItems: 8,
+      type: 'array', minItems: 1, maxItems: 4,
       items: {
         type: 'object', required: ['area', 'requirementIds', 'instructions'],
         properties: {
@@ -455,7 +455,7 @@ ROLE: Plan extractor (Fable 5) for Chunk ${chunk.id} (${chunk.title}).
 Manifest entry (derived from plan §11 — verify against the plan itself, the plan wins): ${chunkJson}
 Read the plan's §11 paragraph for this chunk AND every section its planRefs cite, in the worktree at ${wt} (fallback ${REPO}). Also read the adapter/normative spec sections the plan cites for this chunk.
 Produce the complete requirements inventory for this chunk: every distinct thing the plan requires (behavior changes, deletions, structural moves, gates, test buckets, docs). Each requirement gets a stable id (R1, R2, ...), the exact plan anchor (section + phrase), and a kind. Do NOT invent requirements the plan doesn't state; do NOT drop any it does — completeness will be adversarially verified.
-Then group the requirements into 3-8 groundingTasks by code area, each with precise instructions for a codebase-grounding agent (which files/symbols to verify, which anchors to re-measure at HEAD, which existing tests to inventory).
+Then group the requirements into 3-4 groundingTasks by code area (fewer, larger areas — this container runs at most ~2 grounding agents concurrently, so task count is wall-clock), each with precise instructions for a codebase-grounding agent (which files/symbols to verify, which anchors to re-measure at HEAD, which existing tests to inventory).
 List dependenciesOnPriorChunks (what this chunk assumes already landed — note that chunks ${CHUNK_IDS.join(', ')} land sequentially on this same branch, so earlier wave chunks' work IS present at HEAD) and any openQuestions the plan leaves genuinely underspecified.`,
     { model: 'fable', effort: 'high', schema: EXTRACT_SCHEMA, label: `extract:${chunk.id}`, phase: P('Ground') },
   )
@@ -464,7 +464,7 @@ List dependenciesOnPriorChunks (what this chunk assumes already landed — note 
 
   const groundPrompt = (t) => `${CONTEXT}
 
-ROLE: Codebase grounder (Fable 5) for Chunk ${chunk.id}, area "${t.area}".
+ROLE: Codebase grounder (Sonnet 5) for Chunk ${chunk.id}, area "${t.area}". You collect VERIFIED facts; the Fable-5 brief author and its adversarial code-grounding lens sit downstream of you and re-verify — but they rely on your anchors, so measure, never guess.
 Work read-only in the worktree ${wt} (branch ${WAVE_BRANCH} @ ${chunkStartSha}) — this is the exact code state the implementation will start from (it already contains earlier wave chunks' work).
 Requirements to ground (from the plan): ${JSON.stringify(extraction.requirements.filter((r) => t.requirementIds.includes(r.id)))}
 Instructions: ${t.instructions}
@@ -472,10 +472,10 @@ For EACH requirement: verify the plan's claims against the actual code (read the
 
   const groundings = (await parallel(
     extraction.groundingTasks.map((t) => () => (async () => {
-      let g = await agent(groundPrompt(t), { model: 'fable', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}`, phase: P('Ground') })
+      let g = await agent(groundPrompt(t), { model: 'sonnet', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}`, phase: P('Ground') })
       if (!g) {
         log(`grounding agent for ${chunk.id}/"${t.area}" died; retrying once`)
-        g = await agent(groundPrompt(t), { model: 'fable', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}-retry`, phase: P('Ground') })
+        g = await agent(groundPrompt(t), { model: 'sonnet', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}-retry`, phase: P('Ground') })
       }
       return g || { area: t.area, facts: [], risks: [`GROUNDING FAILED for area "${t.area}" — requirements ${t.requirementIds.join(', ')} are UNGROUNDED; the brief must not assert code facts about them without verifying in-line`] }
     })()),
@@ -511,8 +511,9 @@ Return the structured brief (briefPath = "${briefPathRel}").`
   ]
 
   let briefApproved = false
+  const lensApproved = new Set() // lenses that approved the previous revision get a cheap delta re-check, not a full re-run
   for (let round = 0; round <= 2; round++) {
-    const lensPrompt = (l) => `${CONTEXT}
+    const fullLensPrompt = (l) => `${CONTEXT}
 
 ROLE: Adversarial brief verifier (Fable 5), lens = ${l.key}, for Chunk ${chunk.id}. Your default stance is REFUSE — approve only if you actively fail to find a defect through your lens.
 ${l.prompt}
@@ -520,16 +521,30 @@ Brief (structured): ${JSON.stringify(brief)}
 Full brief text: read ${wt}/${briefPathRel}. Requirements inventory: ${JSON.stringify(extraction.requirements)}. Manifest entry: ${chunkJson}. Worktree for verification: ${wt}.
 Return verdict "approve" or "revise" with concrete blockers (claim / why / fix). Minor style notes go in minors and do not force revision.`
 
-    const verdicts = (await parallel(
+    const deltaLensPrompt = (l) => `${CONTEXT}
+
+ROLE: Adversarial brief verifier (Fable 5), lens = ${l.key}, for Chunk ${chunk.id} — DELTA RE-CHECK. You approved the previous revision of this brief through your lens; it was then minimally revised to address OTHER lenses' blockers. Verify ONLY that the revision did not introduce a violation of your lens: in ${wt}, use git log/git diff on ${briefPathRel} to see exactly what changed, and read the changed sections. Your lens: ${l.prompt}
+Return "approve" unless the DELTA introduces a defect visible through your lens (then "revise" with concrete blockers).`
+
+    const raw = await parallel(
       LENSES.map((l) => () => (async () => {
-        let v = await agent(lensPrompt(l), { model: 'fable', effort: 'high', schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}`, phase: P('Verify Brief') })
+        const delta = round > 0 && lensApproved.has(l.key)
+        const p = delta ? deltaLensPrompt(l) : fullLensPrompt(l)
+        const eff = delta ? 'low' : 'high'
+        let v = await agent(p, { model: 'fable', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}${delta ? '-delta' : ''}${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
         if (!v) {
           log(`brief verifier lens ${chunk.id}/${l.key} died; retrying once`)
-          v = await agent(lensPrompt(l), { model: 'fable', effort: 'high', schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}-retry`, phase: P('Verify Brief') })
+          v = await agent(p, { model: 'fable', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}-retry${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
         }
-        return v || { lens: l.key, verdict: 'revise', blockers: [{ claim: `verification lens ${l.key} unavailable`, why: 'the lens agent died twice — this round cannot count as verified', fix: 'the brief must pass a complete 3-lens round' }] }
+        return v
       })()),
-    )).filter(Boolean)
+    )
+    const verdicts = raw.map((v, i) => v || { lens: LENSES[i].key, verdict: 'revise', blockers: [{ claim: `verification lens ${LENSES[i].key} unavailable`, why: 'the lens agent died twice — this round cannot count as verified', fix: 'the brief must pass a complete 3-lens round' }] })
+    verdicts.forEach((v, i) => {
+      const key = LENSES[i].key
+      if (v.verdict === 'approve') lensApproved.add(key)
+      else lensApproved.delete(key)
+    })
 
     const allBlockers = verdicts.flatMap((v) => (v.verdict === 'revise'
       ? (v.blockers.length ? v.blockers : [{ claim: `lens ${v.lens} demanded revision without itemized blockers`, why: 'revise verdict with an empty blocker list', fix: `address the lens's notes: ${JSON.stringify(v.minors || [])}` }])

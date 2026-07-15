@@ -1,7 +1,7 @@
 export const meta = {
   name: 'akm-090-chunk',
   description: 'Execute one akm 0.9.0 plan chunk: Fable-grounded implementation brief, Sonnet test-first development, Opus dual review gates, Fable escalation ladder',
-  whenToUse: 'One chunk per invocation, in manifest order (docs/design/akm-0.9.0-chunk-manifest.json). args: {chunk: "0a", baseBranch?: "claude/akm-architecture-refactor-fubvd7", worktreeRoot?: "/home/user/akm-worktrees"}. Runbook: docs/design/akm-0.9.0-execution-workflow.md.',
+  whenToUse: 'One chunk per invocation, in manifest order (docs/design/akm-0.9.0-chunk-manifest.json). args: {chunk: "0a", baseBranch?: "claude/akm-architecture-refactor-fubvd7", worktreeRoot?: "/home/user/akm-worktrees"}. NOTE 2026-07-15: prefer akm-090-wave.js for batches — it carries the Fable-burn reductions (Sonnet grounders, ≤4 grounding tasks, delta lens re-checks, per-item durability pushes) not yet mirrored here. Runbook: docs/design/akm-0.9.0-execution-workflow.md.',
   phases: [
     { title: 'Load', detail: 'manifest entry + preflight' },
     { title: 'Usage Gate', detail: 'Sonnet 5 measures the 5h/7d Claude Code usage windows; pauses until credits are available', model: 'sonnet' },
