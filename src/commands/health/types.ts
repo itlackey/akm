@@ -503,7 +503,7 @@ export interface ImproveHealthMetrics {
  * Lanes ratified as ENRICHMENT-ONLY: they may propose edits to existing
  * assets (metadata, relations, content refresh) but must not mint new ones.
  * New-asset generation belongs to the signal-gated minting lanes
- * (extract/distill/memory-inference/recombine).
+ * (extract/distill/memory-inference).
  */
 export const ENRICHMENT_LANES: readonly string[] = ["proactive", "high-salience", "high-retrieval", "signal-delta"];
 

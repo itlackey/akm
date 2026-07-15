@@ -9,8 +9,8 @@
  * the managed-db open/loan wrappers, the `BEGIN IMMEDIATE` transaction helper,
  * and schema introspection. The table-specific query helpers live by domain in
  * `src/storage/repositories/*-repository.ts` (events, proposals, task-history,
- * improve-runs, extract-sessions, consolidation, recombine, embeddings,
- * canaries); importers reference those modules directly. The migration engine
+ * improve-runs, extract-sessions, consolidation, embeddings, canaries);
+ * importers reference those modules directly. The migration engine
  * lives in `./state/migrations`.
  *
  * The state DB replaces flat-file storage for data that is NON-REGENERABLE —

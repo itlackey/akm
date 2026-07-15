@@ -507,33 +507,6 @@ export const ImproveProcessConfigSchema = z
       })
       .passthrough()
       .optional(),
-    // #609 — recombine process: minimum related-memory cluster size before an
-    // LLM generalization call. Default 3. Only meaningful on `recombine`.
-    minClusterSize: z.number().int().min(2).optional(),
-    // #609 — recombine process: hard cap on clusters processed per run (one
-    // bounded LLM call each). Default 5. Only meaningful on `recombine`.
-    maxClustersPerRun: positiveInt.optional(),
-    // #632 — recombine process: max members a cluster may contain before it is
-    // SKIPPED (drops bland over-broad buckets). When set, largest-first ranking
-    // no longer starves tighter clusters. Default UNSET = no cap. Only
-    // meaningful on `recombine`.
-    maxClusterSize: positiveInt.optional(),
-    // #632 — recombine process: tag values that must never form a tag cluster
-    // (generic project-wide tags). Default UNSET/[]. Only meaningful on
-    // `recombine`.
-    excludeTags: z.array(z.string().min(1)).optional(),
-    // #632 — recombine process: entity_norm values that must never form an
-    // entity cluster (user counterpart to the built-in generic-entity filter).
-    // Default UNSET/[]. Only meaningful on `recombine`.
-    excludeEntities: z.array(z.string().min(1)).optional(),
-    // #609 — recombine process: relatedness signal used to form clusters
-    // (tags | graph | both). Clustering is by relatedness, never embedding
-    // similarity. Default "both" (#632). Only meaningful on `recombine`.
-    relatednessSource: z.enum(["tags", "graph", "both"]).optional(),
-    // #609 — recombine process: consecutive re-inductions required before a
-    // hypothesis is promoted to a lesson. Default 2. Only meaningful on
-    // `recombine`.
-    confirmThreshold: z.number().int().min(1).optional(),
     // #615 — procedural process: minimum number of distinct assets sharing the
     // same successful normalized ordered-action sequence before it is compiled
     // into a workflow proposal. Default 3. Only meaningful on `procedural`.
@@ -602,7 +575,6 @@ const ImproveProfileProcessesSchema = z
     validation: ImproveProcessConfigSchema.optional(),
     triage: ImproveProcessConfigSchema.optional(),
     proactiveMaintenance: ImproveProcessConfigSchema.optional(),
-    recombine: ImproveProcessConfigSchema.optional(),
     procedural: ImproveProcessConfigSchema.optional(),
   })
   .passthrough()
@@ -875,7 +847,7 @@ const ImproveSalienceSchema = z
   .passthrough();
 
 // R5 — longitudinal collapse/churn detector (observe-only in v1; deterministic,
-// fail-open, runs only on cycles where consolidate/recombine did work).
+// fail-open, runs only on cycles where consolidate did work).
 // Default ON; opt out via `improve.collapseDetector.enabled: false`.
 // See docs/design/improve-collapse-churn-detector-design.md.
 const ImproveCollapseDetectorSchema = z

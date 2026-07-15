@@ -112,7 +112,7 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(procs.bogusKey).toBe(1); // preserved, not dropped
   });
 
-  test("#609 recombine + #615 procedural are RECOGNIZED process keys (load does not throw; fields round-trip)", () => {
+  test("#615 procedural is a RECOGNIZED process key (load does not throw; fields round-trip)", () => {
     // Regression guard: each new opt-in improve process must be added to the
     // recognized-process-key allowlist in config-schema.ts. #615 procedural was
     // shipped without it, so enabling it in a real config hard-errored at load.
@@ -122,7 +122,6 @@ describe("#598 process-level config fields survive a load→save→load round tr
         strategies: {
           default: {
             processes: {
-              recombine: { enabled: true, minClusterSize: 3, maxClustersPerRun: 5, relatednessSource: "tags" },
               procedural: { enabled: true, minRecurrence: 2, maxProposalsPerRun: 5 },
             },
           },
@@ -136,37 +135,9 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(() => loadConfig()).not.toThrow();
 
     const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
-    expect(processes.recombine?.enabled).toBe(true);
-    expect(processes.recombine?.maxClustersPerRun).toBe(5);
     expect(processes.procedural?.enabled).toBe(true);
     expect(processes.procedural?.minRecurrence).toBe(2);
     expect(processes.procedural?.maxProposalsPerRun).toBe(5);
-  });
-
-  test("#625 recombine.confirmThreshold survives a load→save→load round trip (locks second-pass consumption)", () => {
-    // No NEW config key: confirmThreshold is already in config-types + the
-    // config-schema allowlist/zod. This locks that the #625 second pass actually
-    // CONSUMES it — a profile setting it must load without throwing and survive
-    // a save→load round trip.
-    const config = {
-      semanticSearchMode: "off",
-      improve: {
-        strategies: {
-          default: {
-            processes: {
-              recombine: { enabled: true, minClusterSize: 3, confirmThreshold: 2 },
-            },
-          },
-        },
-      },
-    } as unknown as AkmConfig;
-
-    saveConfig(config);
-    resetConfigCache();
-    expect(() => loadConfig()).not.toThrow();
-
-    const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
-    expect(processes.recombine?.confirmThreshold).toBe(2);
   });
 
   test("WS-2 salience.outcomeWeightEnabled: true survives a load→save→load round trip", () => {

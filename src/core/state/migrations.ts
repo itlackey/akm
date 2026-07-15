@@ -730,7 +730,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //     rows stay interpretable. Tens of rows; never purged.
   //
   //   improve_cycle_metrics — one row per qualifying improve cycle (a run where
-  //     consolidate processed ≥1 op or recombine evaluated ≥1 cluster). Every
+  //     consolidate processed ≥1 op). Every
   //     column is a scalar or a size-capped JSON blob (< 2 KB/row by
   //     construction — the result_json lesson applied). Retention: 365 days via
   //     purgeOldCycleMetrics. Trend queries drive the collapse/churn alert

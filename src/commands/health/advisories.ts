@@ -125,7 +125,7 @@ export function collectImproveAdvisories(
   // R5 collapse/churn detector: surface any collapse_detector_alert events
   // in the health window, plus the latest cycle row's headline numbers so
   // the operator can act without opening the DB. `unknown` when the detector
-  // has never produced a cycle row (no consolidate/recombine work yet).
+  // has never produced a cycle row (no consolidate work yet).
   try {
     // Reuse the already-open state.db handle (readEvents supports a
     // borrowed connection) — no extra open/migrate/close per health call.
@@ -169,7 +169,7 @@ export function collectImproveAdvisories(
         confidence: "high",
         message:
           "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles " +
-          "where consolidate/recombine did work (synthesis lanes may be idle).",
+          "where consolidate did work.",
       });
     }
   } catch {

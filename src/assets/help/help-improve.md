@@ -43,8 +43,8 @@ Options:
                         value behaves like the legacy "safe" mode (whole-batch auto-accept).
   --strategy <name>    Improve strategy to apply. Built-ins: default, quick,
                         thorough, memory-focus, frequent, catchup, consolidate,
-                        graph-refresh, synthesize, reflect-distill,
-                         proactive-maintenance, recombine-only. User-defined
+                        graph-refresh, reflect-distill,
+                         proactive-maintenance. User-defined
                          strategies under `improve.strategies.<name>` in config are
                          also accepted. Strategies bundle process gating, type
                         filters, and run-level autoAccept/limit defaults. Falls

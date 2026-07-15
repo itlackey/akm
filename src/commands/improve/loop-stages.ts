@@ -8,12 +8,7 @@ import { daysToMs } from "../../core/common";
 import { DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import type {
-  ImproveActionResult,
-  ImproveEligibleRef,
-  ProceduralCompilationResult,
-  RecombineResult,
-} from "../../core/improve-types";
+import type { ImproveActionResult, ImproveEligibleRef, ProceduralCompilationResult } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
@@ -66,7 +61,6 @@ import type { applyMemoryCleanup } from "./memory/memory-improve";
 // The pre-loop preparation pipeline lives in ./preparation.
 import { maybeAutoTuneThreshold } from "./preparation";
 import { akmProcedural } from "./procedural";
-import { akmRecombine } from "./recombine";
 import type { AkmReflectResult } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage, refSlug } from "./shared";
@@ -802,54 +796,10 @@ export async function runImprovePostLoopStage(args: {
     }
   }
 
-  // #609 — recombine / synthesize pass. Whole-corpus cross-episodic
-  // generalization. Runs in the post-loop stage under the whole-run lock. Opt-in: gated on the
-  // `recombine` process being enabled, whole-stash / type scope (never `ref`),
-  // and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
-  let recombination: RecombineResult | undefined;
-  if (
-    primaryStashDir &&
-    improveProfile &&
-    resolvedPlan?.processes.recombine.enabled === true &&
-    scope.mode !== "ref" &&
-    !options.dryRun
-  ) {
-    const recombineFn = options.recombineFn ?? akmRecombine;
-    try {
-      recombination = await withLlmStage(
-        "recombine",
-        () =>
-          recombineFn({
-            stashDir: primaryStashDir,
-            config: options.config ?? loadConfig(),
-            improveProfile,
-            llmConfig: resolvedPlan?.processes.recombine.runner
-              ? materializeLlmRunnerConnection(resolvedPlan.processes.recombine.runner)
-              : null,
-            ...(options.runId ? { sourceRun: options.runId } : {}),
-            ...(budgetSignal ? { signal: budgetSignal } : {}),
-            eligibilitySource: "recombine",
-            ...(eventsCtx ? { ctx: eventsCtx } : {}),
-            minClusterSize: improveProfile.processes?.recombine?.minClusterSize,
-            maxClustersPerRun: improveProfile.processes?.recombine?.maxClustersPerRun,
-            relatednessSource: improveProfile.processes?.recombine?.relatednessSource,
-            confirmThreshold: improveProfile.processes?.recombine?.confirmThreshold,
-            // #632 — clustering-tuning knobs. UNSET = pre-#632 behaviour.
-            maxClusterSize: improveProfile.processes?.recombine?.maxClusterSize,
-            excludeTags: improveProfile.processes?.recombine?.excludeTags,
-            excludeEntities: improveProfile.processes?.recombine?.excludeEntities,
-          }),
-        { engine: resolvedPlan?.processes.recombine.runner?.engine, process: "recombine" },
-      );
-    } catch (e) {
-      allWarnings.push(`recombine: ${String(e)}`);
-    }
-  }
-
   // #615 — procedural-compilation pass. Detects recurring successful ordered
   // action sequences and compiles them into workflow proposals. Opt-in: gated
   // on the `procedural` process being enabled, whole-stash / type scope (never
-  // `ref`), and not a dry run. Mirrors the recombine opt-in wiring.
+  // `ref`), and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
   let proceduralCompilation: ProceduralCompilationResult | undefined;
   if (
     primaryStashDir &&
@@ -885,22 +835,17 @@ export async function runImprovePostLoopStage(args: {
   }
 
   // ── R5: collapse/churn detector ────────────────────────────────────────────
-  // One snapshot per QUALIFYING cycle: consolidate processed work and/or
-  // recombine formed clusters. Runs AFTER the maintenance reindex so FTS sees
-  // the post-merge index; one call site covers both passes. Deterministic,
+  // One snapshot per QUALIFYING cycle: consolidate processed work. Runs AFTER
+  // the maintenance reindex so FTS sees the post-merge index. Deterministic,
   // observe-only, fail-open (the orchestrator catches everything) — and inert
   // on the ~9-in-10 default-profile runs that touch no merges.
   let cycleMetrics: CycleMetricsRow | undefined;
-  const recombineWorked = (recombination?.clustersFormed ?? 0) > 0;
-  if (!options.dryRun && (consolidationRan || recombineWorked)) {
+  if (!options.dryRun && consolidationRan) {
     cycleMetrics = runCollapseDetector({
       runId: options.runId ?? "improve-adhoc",
       ...(improveProfile ? { improveProfile } : {}),
-      pass: consolidationRan && recombineWorked ? "both" : consolidationRan ? "consolidate" : "recombine",
-      // prep+loop gate accepts, PLUS recombine's confirmed-lesson promotions —
-      // recombine churn is the historically observed failure mode and its
-      // promotions never flow through the prep/loop gates.
-      acceptedActions: (args.acceptedActions ?? 0) + (recombination?.lessonsPromoted ?? 0),
+      pass: "consolidate",
+      acceptedActions: args.acceptedActions ?? 0,
       mergeFloorViolations: args.consolidationMergeFloorViolations ?? 0,
       config: options.config ?? loadConfig(),
       ...(eventsCtx ? { eventsCtx } : {}),
@@ -911,7 +856,6 @@ export async function runImprovePostLoopStage(args: {
     allWarnings,
     deadUrls,
     ...(cycleMetrics ? { cycleMetrics } : {}),
-    ...(recombination ? { recombination } : {}),
     ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),

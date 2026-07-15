@@ -13,10 +13,8 @@ export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
   "frequent",
   "consolidate",
   "catchup",
-  "synthesize",
   "reflect-distill",
   "proactive-maintenance",
-  "recombine-only",
 ] as const;
 
 /** Engine capability required by each configured improve process. `null` means engine-free. */
@@ -30,6 +28,5 @@ export const IMPROVE_PROCESS_ENGINE_CAPABILITIES = {
   validation: "llm",
   triage: "runner",
   proactiveMaintenance: null,
-  recombine: "llm",
   procedural: "llm",
 } as const;

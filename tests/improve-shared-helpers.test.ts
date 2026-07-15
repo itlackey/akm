@@ -46,9 +46,9 @@ describe("resolveImproveLlmFn", () => {
   test("returns undefined when no LLM is configured", () => {
     const config = {} as AkmConfig;
     const fn = resolveImproveLlmFn(config, {
-      processKey: "recombine",
+      processKey: "procedural",
       systemPrompt: "sys",
-      tag: "[recombine]",
+      tag: "[procedural]",
     });
     expect(fn).toBeUndefined();
   });

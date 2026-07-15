@@ -171,7 +171,6 @@ export async function runMemorySafetyCase(c: EvalCase, ctx: EvalContext): Promis
                   validation: { enabled: false },
                   proactiveMaintenance: { enabled: false },
                   triage: { enabled: false },
-                  recombine: { enabled: false },
                   procedural: { enabled: false },
                 },
                 sync: { enabled: false },

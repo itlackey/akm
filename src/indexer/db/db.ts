@@ -1098,47 +1098,6 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
   return parseEntryRows(rows, "getAllEntries");
 }
 
-/**
- * #609 — read graph entities (normalized) for a set of entry ids. Used by the
- * recombine pass to cluster memories by shared graph entity ("graph"
- * relatedness source). Returns a map of `entry_id -> entity_norm[]`. Entries
- * with no graph entities (graph extraction has not run, or the file produced
- * no entities) are simply absent from the map — callers must fail open
- * (fall back to tag relatedness) when the map is empty.
- */
-export function getEntitiesByEntryIds(db: Database, entryIds: number[]): Map<number, string[]> {
-  const result = new Map<number, string[]>();
-  if (entryIds.length === 0) return result;
-  // #624-P1: graph_file_entities no longer carries entry_id. Re-derive the
-  // entry_id -> entity_norm[] contract by JOINing through entries on
-  // (stash_dir, file_path) -> graph_files. Chunk the IN(?) list because the
-  // recombine pass can pass 10k+ entry ids (well over the SQLite param limit).
-  for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(", ");
-    const rows = db
-      .prepare(
-        `SELECT e.id AS entry_id, gfe.entity_norm AS entity_norm
-           FROM entries e
-           JOIN graph_files gf
-             ON gf.stash_root = e.stash_dir AND gf.file_path = e.file_path
-           JOIN graph_file_entities gfe
-             ON gfe.stash_root = gf.stash_root
-            AND gfe.file_path = gf.file_path
-            AND gfe.body_hash = gf.body_hash
-          WHERE e.id IN (${placeholders})
-          ORDER BY e.id, gfe.entity_order`,
-      )
-      .all(...(chunk as SqlValue[])) as Array<{ entry_id: number; entity_norm: string }>;
-    for (const row of rows) {
-      const list = result.get(row.entry_id);
-      if (list) list.push(row.entity_norm);
-      else result.set(row.entry_id, [row.entity_norm]);
-    }
-  }
-  return result;
-}
-
 export function findEntryIdByRef(db: Database, ref: string, stashDir?: string): number | undefined {
   const parsed = parseAssetRef(ref);
   const nameVariants = [parsed.name];

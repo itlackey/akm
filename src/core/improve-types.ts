@@ -65,7 +65,6 @@ export type EligibilitySource =
   | "forgetting-safety"
   | "replay"
   | "exploration"
-  | "recombine"
   | "procedural"
   | "unknown";
 
@@ -251,33 +250,6 @@ export interface ImproveMemoryCleanupResult {
 }
 
 /**
- * #609 — outcome of the recombine / synthesize pass. Emitted on
- * {@link AkmImproveResult.recombination} when the (opt-in) pass runs.
- */
-export interface RecombineResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of relatedness clusters that reached the LLM induction step. */
-  clustersFormed: number;
-  /** Number of `type: hypothesis` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /**
-   * #625 — number of generalizations promoted to a `type: lesson` proposal this
-   * run because their confirmation count reached `confirmThreshold`. Promotion
-   * goes through the SAME proposal queue + quality gate (never a direct stash
-   * write); a promoted run emits a lesson proposal INSTEAD of the hypothesis one.
-   */
-  lessonsPromoted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
-/**
  * #615 — outcome of the procedural-compilation pass. Emitted on
  * {@link AkmImproveResult.proceduralCompilation} when the (opt-in) pass runs.
  */
@@ -442,12 +414,6 @@ export interface AkmImproveResult {
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
   /**
-   * #609 — recombine / synthesize pass outcome. Present only when the opt-in
-   * `recombine` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  recombination?: RecombineResult;
-  /**
    * #615 — procedural-compilation pass outcome. Present only when the opt-in
    * `procedural` process is enabled and the run was whole-stash / type scope;
    * omitted entirely otherwise to keep the envelope tidy.
@@ -456,7 +422,7 @@ export interface AkmImproveResult {
   /**
    * R5 — the collapse/churn detector's cycle snapshot (mirrors one
    * improve_cycle_metrics row), present when this run qualified (consolidate
-   * processed work or recombine formed clusters) and the detector is enabled.
+   * processed work) and the detector is enabled.
    */
   cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**

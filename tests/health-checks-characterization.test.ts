@@ -129,7 +129,7 @@ describe("health checks characterization (WS9)", () => {
         status: "unknown",
         confidence: "high",
         message:
-          "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles where consolidate/recombine did work (synthesis lanes may be idle).",
+          "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles where consolidate did work.",
       },
       {
         // 08 surfaces: the default config ships one enabled registry, so the

@@ -98,7 +98,6 @@ export const PROPOSAL_SOURCES = [
   "consolidate",
   "extract",
   "improve",
-  "recombine",
   "procedural",
   // Semi-automated / tool-driven.
   "feedback",
@@ -118,7 +117,6 @@ export const AUTOMATED_PROPOSAL_SOURCES = [
   "consolidate",
   "extract",
   "improve",
-  "recombine",
   "procedural",
   "schema-repair",
 ] as const satisfies ReadonlyArray<(typeof PROPOSAL_SOURCES)[number]>;

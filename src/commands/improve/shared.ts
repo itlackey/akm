@@ -4,9 +4,10 @@
 
 /**
  * Small pure helpers shared across the improve command family. Extracted to
- * delete byte-identical duplication that previously lived inline in
- * recombine/procedural/loop-stages/improve. Keep this file free of I/O and
- * of any improve-specific state — these are leaf utilities.
+ * delete byte-identical duplication that previously lived inline in the
+ * per-process passes (procedural/loop-stages/improve, and the whole-corpus
+ * synthesis pass removed in 0.9.0). Keep this file free of I/O and of any
+ * improve-specific state — these are leaf utilities.
  */
 
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
@@ -32,10 +33,11 @@ export function refSlug(ref: string): string {
 }
 
 /**
- * Resolve the production LLM seam for an improve process (`recombine` /
- * `procedural`). Returns a function that issues one bounded chatCompletion per
- * call, or `undefined` when no LLM is configured (the pass then makes no
- * calls). Previously copied verbatim in recombine.ts and procedural.ts.
+ * Resolve the production LLM seam for an improve process (`procedural`).
+ * Returns a function that issues one bounded chatCompletion per call, or
+ * `undefined` when no LLM is configured (the pass then makes no calls).
+ * Previously copied verbatim across procedural.ts and the whole-corpus
+ * synthesis pass removed in 0.9.0.
  *
  * When `opts.activeProfile` is supplied, its per-process runner override wins
  * over the `default` profile so `akm improve --profile <name>` selects the
@@ -44,7 +46,7 @@ export function refSlug(ref: string): string {
 export function resolveImproveLlmFn(
   config: AkmConfig,
   opts: {
-    processKey: "recombine" | "procedural";
+    processKey: "procedural";
     systemPrompt: string;
     tag: string;
     signal?: AbortSignal;

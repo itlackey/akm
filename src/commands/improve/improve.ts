@@ -18,7 +18,6 @@ import type {
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
   ProceduralCompilationResult,
-  RecombineResult,
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
@@ -69,7 +68,6 @@ import { analyzeMemoryCleanup, type applyMemoryCleanup, type MemoryCleanupPlan }
 import { runImprovePreparationStage } from "./preparation";
 import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
 import type { akmProcedural } from "./procedural";
-import type { akmRecombine } from "./recombine";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { errMessage } from "./shared";
 import { shouldReadLegacyBareImproveState } from "./source-identity";
@@ -142,12 +140,6 @@ export interface AkmImproveOptions {
   reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   memoryInferenceFn?: typeof runMemoryInferencePass;
-  /**
-   * #609: injectable recombine / synthesize pass seam for tests. When omitted,
-   * the real {@link akmRecombine} runs (gated on the opt-in `recombine` process
-   * being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
-   */
-  recombineFn?: typeof akmRecombine;
   /**
    * #615: injectable procedural-compilation pass seam for tests. When omitted,
    * the real {@link akmProcedural} runs (gated on the opt-in `procedural` process
@@ -316,8 +308,6 @@ export interface ImprovePostLoopResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
-  /** #609: result of the opt-in recombine / synthesize pass, when it ran. */
-  recombination?: RecombineResult;
   /** #615: result of the opt-in procedural-compilation pass, when it ran. */
   proceduralCompilation?: ProceduralCompilationResult;
   /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
@@ -891,7 +881,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let consolidation!: ConsolidateResult;
     let memoryInference: ImprovePostLoopResult["memoryInference"];
     let graphExtraction: ImprovePostLoopResult["graphExtraction"];
-    let recombination: ImprovePostLoopResult["recombination"];
     let proceduralCompilation: ImprovePostLoopResult["proceduralCompilation"];
     let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
     // Summed counters/durations.
@@ -1097,7 +1086,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Last-wins point-in-time objects.
       memoryInference = postLoopResult.memoryInference;
       graphExtraction = postLoopResult.graphExtraction;
-      recombination = postLoopResult.recombination;
       proceduralCompilation = postLoopResult.proceduralCompilation;
       // Keep the last QUALIFYING cycle's snapshot — a later non-qualifying
       // cycle in a maxCycles>1 run must not clobber it with undefined.
@@ -1201,7 +1189,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k / §3.
       ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
       ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
-      ...(recombination ? { recombination } : {}),
       ...(proceduralCompilation ? { proceduralCompilation } : {}),
       ...(cycleMetrics ? { cycleMetrics } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),

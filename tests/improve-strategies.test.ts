@@ -70,7 +70,6 @@ describe("resolveImprovePlan", () => {
       "memoryInference",
       "proactiveMaintenance",
       "procedural",
-      "recombine",
       "reflect",
       "triage",
       "validation",
@@ -96,7 +95,6 @@ describe("resolveImprovePlan", () => {
               graphExtraction: { enabled: true },
               extract: { enabled: true, hotProbation: { enabled: true } },
               validation: { enabled: true },
-              recombine: { enabled: true },
               procedural: { enabled: true },
             },
           },
@@ -112,7 +110,6 @@ describe("resolveImprovePlan", () => {
       "graphExtraction",
       "extract",
       "validation",
-      "recombine",
       "procedural",
     ] as const) {
       expect(plan.processes[name].runner?.engine).toBe("default");

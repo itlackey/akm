@@ -59,8 +59,7 @@ export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfig
  * which process each knob applies to and its default (e.g.
  * `dedup`/`judgedCache`/`minPoolSize` = consolidate;
  * `minNewSessions`/`indexSessions`/`triage` = extract; `fullScan`/`topN` =
- * graphExtraction; `minClusterSize`/`relatednessSource` = recombine;
- * `minRecurrence`/`emitAs` = procedural).
+ * graphExtraction; `minRecurrence`/`emitAs` = procedural).
  */
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
