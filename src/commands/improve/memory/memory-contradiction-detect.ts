@@ -44,6 +44,7 @@ import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/co
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { tryLlmFeature } from "../../../llm/feature-gate";
+import { isDerivedMemory, resolveParentRef } from "./derived-ref";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -122,35 +123,6 @@ function toMemoryRef(memoriesDir: string, filePath: string): string | undefined 
   if (!rel || rel.startsWith("..")) return undefined;
   const name = rel.replace(/\\/g, "/").replace(/\.md$/i, "");
   return `memory:${name}`;
-}
-
-function isDerivedMemory(filePath: string, frontmatter: Record<string, unknown>): boolean {
-  // Name-based guard (M-2): the .derived suffix is structural and immutable.
-  const base = path.basename(filePath, ".md");
-  if (base.endsWith(".derived")) return true;
-  // Frontmatter-based guard: inferred: true marks explicit child memories.
-  return frontmatter.inferred === true;
-}
-
-function resolveParentRef(
-  filePath: string,
-  frontmatter: Record<string, unknown>,
-  memoriesRootDir?: string,
-): string | undefined {
-  // Prefer the explicit source: frontmatter.
-  const source = frontmatter.source;
-  if (typeof source === "string" && source.startsWith("memory:")) return source;
-  // Fall back to deriving parent from the file name (strip .derived suffix).
-  const base = path.basename(filePath, ".md");
-  if (base.endsWith(".derived")) {
-    const parentName = base.slice(0, -".derived".length);
-    // Use the stash memories root so nested paths (e.g. memories/nested/foo.derived.md)
-    // resolve to the correct relative ref (memory:nested/foo, not memory:foo).
-    const rootDir = memoriesRootDir ?? path.dirname(filePath);
-    const rel = path.relative(rootDir, path.join(path.dirname(filePath), parentName));
-    return `memory:${rel.replace(/\\/g, "/")}`;
-  }
-  return undefined;
 }
 
 // ── Edge writing ─────────────────────────────────────────────────────────────
@@ -252,11 +224,17 @@ export async function detectAndWriteContradictions(
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    if (!isDerivedMemory(filePath, parsed.data)) continue;
-    const parentRef = resolveParentRef(filePath, parsed.data, memoriesDir);
-    if (!parentRef) continue;
     const ref = toMemoryRef(memoriesDir, filePath);
     if (!ref) continue;
+    // Key the shared derived-ref helpers on the memory NAME (stash-relative, no
+    // extension) — the same key the consumer uses — so producer and consumer
+    // resolve the identical parent (R12). This intentionally widens the producer
+    // to honour `derivedFrom` and normalised `source:` values it previously
+    // dropped (pinned by derived-ref.test.ts).
+    const name = ref.slice("memory:".length);
+    if (!isDerivedMemory(name, parsed.data)) continue;
+    const parentRef = resolveParentRef(name, parsed.data);
+    if (!parentRef) continue;
 
     const entry: DerivedMemoryEntry = {
       filePath,

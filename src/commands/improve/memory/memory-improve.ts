@@ -4,10 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
+import { makeAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { DERIVED_SUFFIX, isDerivedMemory, parseMemoryRef, resolveParentRef } from "./derived-ref";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
@@ -121,8 +122,6 @@ interface FamilyContradictionResolution {
   contradictionCandidates: MemoryContradictionCandidate[];
   transitions: MemoryBeliefStateTransition[];
 }
-
-const DERIVED_SUFFIX = ".derived";
 
 export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOptions = {}): MemoryCleanupPlan {
   const records = collectDerivedMemories(stashDir, options.parentRef);
@@ -813,24 +812,6 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
   return "active";
 }
 
-function isDerivedMemory(name: string, frontmatter: Record<string, unknown>): boolean {
-  return frontmatter.inferred === true || name.endsWith(DERIVED_SUFFIX);
-}
-
-function resolveParentRef(name: string, frontmatter: Record<string, unknown>): string | undefined {
-  const fromSource = parseMemoryRef(asNonEmptyString(frontmatter.source));
-  if (fromSource) return fromSource;
-
-  const derivedFrom = asNonEmptyString(frontmatter.derivedFrom);
-  if (derivedFrom) return makeAssetRef("memory", derivedFrom);
-
-  if (name.endsWith(DERIVED_SUFFIX)) {
-    return makeAssetRef("memory", name.slice(0, -DERIVED_SUFFIX.length));
-  }
-
-  return undefined;
-}
-
 function refArray(value: unknown): string[] {
   if (typeof value === "string") {
     const parsed = parseMemoryRef(value);
@@ -844,17 +825,6 @@ function refArray(value: unknown): string[] {
     if (parsed) refs.add(parsed);
   }
   return [...refs].sort();
-}
-
-function parseMemoryRef(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = parseAssetRef(value.trim());
-    if (parsed.type !== "memory") return undefined;
-    return makeAssetRef(parsed.type, parsed.name);
-  } catch {
-    return undefined;
-  }
 }
 
 function buildFingerprint(
