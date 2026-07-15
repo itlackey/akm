@@ -80,7 +80,9 @@ describe("serializeFrontmatterQuoted — guaranteed-quoted scalars, array-aware"
   it("is byte-identical to the distill inline serializer it replaces", () => {
     const fm = { description: "Multi: line breaks: like this", tags: ["a", "b"], updated: "2026-07-15" };
     const inline = Object.entries(fm)
-      .map(([k, v]) => (Array.isArray(v) ? `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]` : `${k}: ${JSON.stringify(v)}`))
+      .map(([k, v]) =>
+        Array.isArray(v) ? `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]` : `${k}: ${JSON.stringify(v)}`,
+      )
       .join("\n");
     expect(serializeFrontmatterQuoted(fm)).toBe(inline);
   });
