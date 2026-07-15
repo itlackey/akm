@@ -72,6 +72,7 @@ import { deriveLessonRef } from "./distill";
 import { runReflectQualityJudge } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { classifyReflectChange } from "./reflect-noise";
+import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 export interface AkmReflectOptions {
@@ -220,8 +221,6 @@ function readRecentFeedback(ref?: string, legacyRef?: string): string[] {
     return [];
   }
 }
-
-const MAX_REJECTED_PROPOSALS = 3;
 
 /**
  * Asset types that reflect is allowed to operate on.

@@ -99,6 +99,7 @@ import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { computeSalience, upsertAssetSalience } from "./salience";
+import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 // Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
@@ -899,7 +900,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   // Inject last 1–3 rejected proposals for this ref as Reflexion-style
   // verbal-RL context so the LLM avoids regenerating refused proposals.
-  const MAX_REJECTED_PROPOSALS = 3;
   const rejectedForRef = listProposals(stash, { ref: inputRef, status: "rejected", includeArchive: true })
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)

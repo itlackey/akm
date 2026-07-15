@@ -10,6 +10,14 @@
  * I/O and of any improve-specific state — these are leaf utilities.
  */
 
+/**
+ * Cap on how many prior rejected proposals for a ref are injected as
+ * Reflexion-style verbal-RL context so the LLM avoids regenerating refusals.
+ * Shared by both the revise (reflect) and learn (distill) verbs, which
+ * previously declared this constant independently.
+ */
+export const MAX_REJECTED_PROPOSALS = 3;
+
 /** Normalize an unknown thrown value to a human-readable message string. */
 export function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
