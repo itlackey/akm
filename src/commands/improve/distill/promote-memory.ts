@@ -65,6 +65,127 @@ export interface PromoteMemoryContext {
 }
 
 /**
+ * Outcome of the destination-conflict resolution pass: either an early terminal
+ * result (the LLM judged the existing content authoritative — NOOP) or the
+ * content to carry forward into the quality gate + proposal.
+ */
+type KnowledgePromotionContent = { earlyResult: AkmDistillResult } | { resolvedContent: string };
+
+/**
+ * Resolve the knowledge content to propose when a memory promotes to knowledge,
+ * reconciling it with any existing knowledge file at the destination (D-1 / #369).
+ *
+ * When the destination already exists and an LLM is configured, follows the
+ * mem0 ADD/UPDATE/NOOP pattern (arXiv:2504.19413 §3.2): ADD/UPDATE swap in the
+ * merged content, NOOP short-circuits with a terminal "skipped" result. Without
+ * an LLM the existing content is appended as reviewer-reference context so the
+ * merge can be done by hand. Logic is byte-identical to the prior inline block.
+ */
+async function resolveKnowledgePromotionContent(
+  ctx: PromoteMemoryContext,
+  baseContent: string,
+  knowledgeRef: string,
+): Promise<KnowledgePromotionContent> {
+  const durableInputRef = ctx.durableInputRef ?? ctx.inputRef;
+  let resolvedPromotionContent = baseContent;
+  const existingKnowledgePath = await ctx.lookup(durableImproveRef(knowledgeRef, ctx.sourceName));
+  const existingKnowledgeContent =
+    existingKnowledgePath && fs.existsSync(existingKnowledgePath)
+      ? (() => {
+          try {
+            return fs.readFileSync(existingKnowledgePath, "utf8");
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+
+  if (existingKnowledgeContent && ctx.llmConfig) {
+    // Existing content found: call LLM for contradiction-resolution merge.
+    const mergePrompt = [
+      "You are merging two versions of a knowledge document.",
+      "Existing content is already committed; new content comes from a memory distillation run.",
+      "Choose one of: ADD (combine both), UPDATE (replace existing with new), NOOP (keep existing unchanged).",
+      'Return ONLY valid JSON: {"action": "ADD"|"UPDATE"|"NOOP", "content": "<merged markdown if ADD/UPDATE, empty string if NOOP>"}',
+      "",
+      "## Existing knowledge content",
+      "```",
+      existingKnowledgeContent.slice(0, 3000),
+      "```",
+      "",
+      "## New content from distillation",
+      "```",
+      baseContent.slice(0, 3000),
+      "```",
+    ].join("\n");
+
+    try {
+      const mergeResponse = await ctx.chat(
+        ctx.llmConfig,
+        [
+          { role: "system", content: "Return only valid JSON. No prose." },
+          { role: "user", content: mergePrompt },
+        ],
+        ctx.signal ? { signal: ctx.signal } : undefined,
+      );
+      const mergeResult = parseEmbeddedJsonResponse<{
+        action: "ADD" | "UPDATE" | "NOOP";
+        content?: string;
+      }>(mergeResponse);
+
+      if (mergeResult?.action === "NOOP") {
+        // Existing content is authoritative — no update needed.
+        appendEvent({
+          eventType: "distill_invoked",
+          ref: durableInputRef,
+          metadata: {
+            outcome: "skipped" as const,
+            lessonRef: knowledgeRef,
+            message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
+            ...ctx.eligMeta,
+          },
+        });
+        return {
+          earlyResult: {
+            schemaVersion: 1,
+            ok: true,
+            outcome: "skipped",
+            inputRef: ctx.inputRef,
+            lessonRef: knowledgeRef,
+            message: "Existing knowledge content unchanged (contradiction resolution: NOOP)",
+          },
+        };
+      }
+
+      if (mergeResult?.action && (mergeResult.action === "ADD" || mergeResult.action === "UPDATE")) {
+        if (mergeResult.content?.trim()) {
+          resolvedPromotionContent = mergeResult.content;
+        }
+      }
+    } catch {
+      // LLM merge failed — fall through with the original promotion content.
+      // The reviewer will see both versions in the proposal diff.
+    }
+  } else if (existingKnowledgeContent) {
+    // No LLM configured: include existing content as context in the proposal
+    // so the reviewer can do the contradiction resolution manually.
+    resolvedPromotionContent = [
+      baseContent,
+      "",
+      "---",
+      "<!-- D-1 / #369: Existing knowledge content is shown below for reviewer reference. -->",
+      "<!-- Review: decide whether to ADD (merge), UPDATE (replace), or NOOP (keep existing). -->",
+      "",
+      "## Existing content (for reviewer reference)",
+      "",
+      existingKnowledgeContent,
+    ].join("\n");
+  }
+
+  return { resolvedContent: resolvedPromotionContent };
+}
+
+/**
  * Run the memory→knowledge promotion branch. Returns the finished distill
  * result when promotion fired (all paths terminal), or `null` when the ref is
  * not a promotion candidate and the caller should continue to the ordinary
@@ -78,7 +199,6 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     config,
     chat,
     stash,
-    lookup,
     fetchSimilarLessonsFn,
     existingRefVocabulary,
     outcomeWeightEnabled,
@@ -108,98 +228,9 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   // through the LLM for contradiction resolution instead of silently
   // overwriting. Follows mem0 ADD/UPDATE/DELETE/NOOP pattern (arXiv:2504.19413 §3.2)
   // and A-MEM dynamic linking (arXiv:2502.12110).
-  let resolvedPromotionContent = promotion.content;
-  const existingKnowledgePath = await lookup(durableImproveRef(promotion.knowledgeRef, ctx.sourceName));
-  const existingKnowledgeContent =
-    existingKnowledgePath && fs.existsSync(existingKnowledgePath)
-      ? (() => {
-          try {
-            return fs.readFileSync(existingKnowledgePath, "utf8");
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-
-  if (existingKnowledgeContent && ctx.llmConfig) {
-    // Existing content found: call LLM for contradiction-resolution merge.
-    const mergePrompt = [
-      "You are merging two versions of a knowledge document.",
-      "Existing content is already committed; new content comes from a memory distillation run.",
-      "Choose one of: ADD (combine both), UPDATE (replace existing with new), NOOP (keep existing unchanged).",
-      'Return ONLY valid JSON: {"action": "ADD"|"UPDATE"|"NOOP", "content": "<merged markdown if ADD/UPDATE, empty string if NOOP>"}',
-      "",
-      "## Existing knowledge content",
-      "```",
-      existingKnowledgeContent.slice(0, 3000),
-      "```",
-      "",
-      "## New content from distillation",
-      "```",
-      promotion.content.slice(0, 3000),
-      "```",
-    ].join("\n");
-
-    try {
-      const mergeResponse = await chat(
-        ctx.llmConfig,
-        [
-          { role: "system", content: "Return only valid JSON. No prose." },
-          { role: "user", content: mergePrompt },
-        ],
-        ctx.signal ? { signal: ctx.signal } : undefined,
-      );
-      const mergeResult = parseEmbeddedJsonResponse<{
-        action: "ADD" | "UPDATE" | "NOOP";
-        content?: string;
-      }>(mergeResponse);
-
-      if (mergeResult?.action === "NOOP") {
-        // Existing content is authoritative — no update needed.
-        appendEvent({
-          eventType: "distill_invoked",
-          ref: durableInputRef,
-          metadata: {
-            outcome: "skipped" as const,
-            lessonRef: promotion.knowledgeRef,
-            message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
-            ...eligMeta,
-          },
-        });
-        return {
-          schemaVersion: 1,
-          ok: true,
-          outcome: "skipped",
-          inputRef,
-          lessonRef: promotion.knowledgeRef,
-          message: "Existing knowledge content unchanged (contradiction resolution: NOOP)",
-        };
-      }
-
-      if (mergeResult?.action && (mergeResult.action === "ADD" || mergeResult.action === "UPDATE")) {
-        if (mergeResult.content?.trim()) {
-          resolvedPromotionContent = mergeResult.content;
-        }
-      }
-    } catch {
-      // LLM merge failed — fall through with the original promotion content.
-      // The reviewer will see both versions in the proposal diff.
-    }
-  } else if (existingKnowledgeContent) {
-    // No LLM configured: include existing content as context in the proposal
-    // so the reviewer can do the contradiction resolution manually.
-    resolvedPromotionContent = [
-      promotion.content,
-      "",
-      "---",
-      "<!-- D-1 / #369: Existing knowledge content is shown below for reviewer reference. -->",
-      "<!-- Review: decide whether to ADD (merge), UPDATE (replace), or NOOP (keep existing). -->",
-      "",
-      "## Existing content (for reviewer reference)",
-      "",
-      existingKnowledgeContent,
-    ].join("\n");
-  }
+  const merged = await resolveKnowledgePromotionContent(ctx, promotion.content, promotion.knowledgeRef);
+  if ("earlyResult" in merged) return merged.earlyResult;
+  const resolvedPromotionContent = merged.resolvedContent;
 
   // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
   // D-5 / #388: Three-band system — review_needed band queues to proposal

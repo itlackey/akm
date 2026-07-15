@@ -150,5 +150,4 @@ export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
   { id: "src/commands/improve/extract.ts :: processSession", lines: 308 },
   { id: "src/commands/improve/consolidate.ts :: handleMergeOp", lines: 297 },
   { id: "src/commands/improve/preparation.ts :: runConsolidationPass", lines: 265 },
-  { id: "src/commands/improve/distill/promote-memory.ts :: promoteMemoryToKnowledge", lines: 254 },
 ];
