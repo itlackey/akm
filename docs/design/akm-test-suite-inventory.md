@@ -1,0 +1,635 @@
+# akm Test Suite — Exhaustive Inventory & Aggressive Triage
+
+**Generated:** 2026-07-15 (static analysis of all 579 `*.test.ts` files).  
+**Scale:** 180,267 test LOC across 579 files / 7,722 cases — vs ~135,000 src LOC. **The test suite is larger than the app it tests.**
+
+**Triage bias (per instruction):** prove value or drop. A file is only KEEP-firm with a concrete, checkable value signal.
+
+**Honest limit:** static signals reliably identify *droppable* and *mechanically-fixable* files, but they CANNOT prove the value of a file that imports real `src/` code and makes assertions — that requires reading its assertions. Those are quarantined as **NEEDS-READ**, not assumed valuable.
+
+
+## Summary
+
+| Tier | Files | LOC | % test LOC | Meaning |
+|---|---|---|---|---|
+| **DROP-firm** | 146 | 47,222 | 26% | Remove — provably low/no value |
+| **MODIFY-firm** | 44 | 13,010 | 7% | Mechanical fix (subprocess→in-process, mocks→behavioral) |
+| **KEEP-firm** | 26 | 5,383 | 2% | Provably valuable (security / data-integrity) |
+| **NEEDS-READ** | 363 | 114,652 | 63% | Unprovable statically — read to finalize keep/drop |
+
+**Immediately actionable:** 146 files / 47,222 LOC droppable now (26% of test LOC); 44 files mechanically fixable. The 363-file NEEDS-READ tier (63%) is the real decision and needs a read pass.
+
+## DROP-firm — reasons
+
+- **59 files / 28,908 LOC** — Tests code the plan DELETES
+- **49 files / 7,967 LOC** — No src import — pins docs/schema strings
+- **23 files / 7,596 LOC** — Golden/characterization — pins output
+- **15 files / 2,751 LOC** — Coverage filler
+
+
+## DROP-firm — full list (146 files)
+
+<details><summary>expand</summary>
+
+- `tests/coverage-hardening/walk-dir-staleness.test.ts` (400 LOC, 43exp/25t) — Coverage filler
+- `tests/coverage-hardening/workflows-parser-edge.test.ts` (392 LOC, 34exp/28t) — Coverage filler
+- `tests/coverage-hardening/db-ref-resolution.test.ts` (244 LOC, 24exp/12t) — Coverage filler
+- `tests/coverage-hardening/db-utility-usage.test.ts` (238 LOC, 22exp/10t) — Coverage filler
+- `tests/coverage-hardening/sources-resolution.test.ts` (238 LOC, 31exp/20t) — Coverage filler
+- `tests/coverage-hardening/read-usage-event-recording.test.ts` (202 LOC, 17exp/7t) — Coverage filler
+- `tests/coverage-hardening/read-find-entry-id-by-ref.test.ts` (192 LOC, 20exp/11t) — Coverage filler
+- `tests/coverage-hardening/registry-ref-parse.test.ts` (190 LOC, 43exp/25t) — Coverage filler
+- `tests/coverage-hardening/search-ranking.test.ts` (122 LOC, 20exp/11t) — Coverage filler
+- `tests/coverage-hardening/core-asset-ref-branches.test.ts` (110 LOC, 21exp/13t) — Coverage filler
+- `tests/coverage-hardening/llm-embed-cache.test.ts` (108 LOC, 16exp/10t) — Coverage filler
+- `tests/coverage-hardening/improve-fold-distill-skipped.test.ts` (103 LOC, 13exp/5t) — Coverage filler
+- `tests/coverage-hardening/improve-classify-action.test.ts` (101 LOC, 8exp/7t) — Coverage filler
+- `tests/coverage-hardening/read-search-flag-parsers.test.ts` (74 LOC, 15exp/10t) — Coverage filler
+- `tests/coverage-hardening/tasks-parser-classification.test.ts` (37 LOC, 8exp/3t) — Coverage filler
+- `tests/commands/proposal/goldens-proposal-txn.test.ts` (1000 LOC, 58exp/15t) — Golden/characterization — pins output
+- `tests/commands/goldens-mv-txn.test.ts` (723 LOC, 48exp/6t) — Golden/characterization — pins output
+- `tests/commands/consolidate/goldens-consolidate-journal.test.ts` (620 LOC, 45exp/13t) — Golden/characterization — pins output
+- `tests/commands/goldens-cli-output.test.ts` (563 LOC, 63exp/27t) — Golden/characterization — pins output
+- `tests/integration/goldens-mv-recovery.test.ts` (548 LOC, 31exp/7t) — Golden/characterization — pins output
+- `tests/commands/improve/goldens-p0a-selection.test.ts` (375 LOC, 12exp/6t) — Golden/characterization — pins output
+- `tests/integration/output-baseline-graph.test.ts` (363 LOC, 17exp/6t) — Golden/characterization — pins output
+- `tests/health-checks-characterization.test.ts` (330 LOC, 20exp/4t) — Golden/characterization — pins output
+- `tests/integration/goldens-proposal-recovery.test.ts` (325 LOC, 18exp/6t) — Golden/characterization — pins output
+- `tests/commands/goldens-cli-health-tasks.test.ts` (318 LOC, 23exp/9t) — Golden/characterization — pins output
+- `tests/integration/graph-extract-single-characterization.test.ts` (283 LOC, 30exp/6t) — Golden/characterization — pins output
+- `tests/storage/sqlite-migrations.characterization.test.ts` (274 LOC, 24exp/8t) — Golden/characterization — pins output
+- `tests/commands/goldens-duration-flags.test.ts` (257 LOC, 12exp/5t) — Golden/characterization — pins output
+- `tests/storage/workflow-runs-repository.characterization.test.ts` (244 LOC, 27exp/12t) — Golden/characterization — pins output
+- `tests/commands/consolidate/goldens-merge-plans.test.ts` (214 LOC, 9exp/8t) — Golden/characterization — pins output
+- `tests/integration/output-baseline.test.ts` (208 LOC, 23exp/8t) — Golden/characterization — pins output
+- `tests/golden-normalize.test.ts` (190 LOC, 24exp/23t) — Golden/characterization — pins output
+- `tests/goldens-designations.test.ts` (168 LOC, 11exp/7t) — Golden/characterization — pins output
+- `tests/integration/install-ref-characterization.test.ts` (160 LOC, 5exp/5t) — Golden/characterization — pins output
+- `tests/curate-golden-eval.test.ts` (146 LOC, 6exp/2t) — Golden/characterization — pins output
+- `tests/storage/usage-events-queries.characterization.test.ts` (136 LOC, 14exp/4t) — Golden/characterization — pins output
+- `tests/storage/index-db-loan.characterization.test.ts` (127 LOC, 12exp/7t) — Golden/characterization — pins output
+- `tests/contracts/migration-baseline.test.ts` (24 LOC, 9exp/2t) — Golden/characterization — pins output
+- `tests/integration/node-compat.test.ts` (1008 LOC, 106exp/1t) — No src import — pins docs/schema strings
+- `tests/integration/published-task-upgrade.test.ts` (588 LOC, 77exp/1t) — No src import — pins docs/schema strings
+- `tests/integration/improve-cli-result-storage.test.ts` (350 LOC, 45exp/7t) — No src import — pins docs/schema strings
+- `tests/integration/native-scheduler.test.ts` (340 LOC, 45exp/1t) — No src import — pins docs/schema strings
+- `tests/integration/install-script.test.ts` (314 LOC, 29exp/10t) — No src import — pins docs/schema strings
+- `tests/migrate-storage-differential.test.ts` (307 LOC, 27exp/5t) — No src import — pins docs/schema strings
+- `tests/integration/agent-output.test.ts` (273 LOC, 46exp/10t) — No src import — pins docs/schema strings
+- `tests/integration/capture-cli.test.ts` (265 LOC, 36exp/10t) — No src import — pins docs/schema strings
+- `tests/integration/ripgrep-install.test.ts` (249 LOC, 15exp/7t) — No src import — pins docs/schema strings
+- `tests/migrate-storage.test.ts` (243 LOC, 40exp/9t) — No src import — pins docs/schema strings
+- `tests/integration/env-run.test.ts` (220 LOC, 20exp/9t) — No src import — pins docs/schema strings
+- `tests/integration/package-launcher.test.ts` (209 LOC, 14exp/4t) — No src import — pins docs/schema strings
+- `tests/commands/config-cli-envelope.test.ts` (201 LOC, 36exp/13t) — No src import — pins docs/schema strings
+- `tests/setup.test.ts` (197 LOC, 22exp/13t) — No src import — pins docs/schema strings
+- `tests/commands/remember.test.ts` (188 LOC, 25exp/7t) — No src import — pins docs/schema strings
+- `tests/config-cli-silent-layer.test.ts` (180 LOC, 27exp/9t) — No src import — pins docs/schema strings
+- `tests/integration/linux-standalone-scheduler.test.ts` (162 LOC, 15exp/1t) — No src import — pins docs/schema strings
+- `tests/integration/docker-install.test.ts` (160 LOC, 3exp/3t) — No src import — pins docs/schema strings
+- `tests/completions.test.ts` (153 LOC, 18exp/10t) — No src import — pins docs/schema strings
+- `tests/commands/workflow-cli-envelope.test.ts` (149 LOC, 19exp/6t) — No src import — pins docs/schema strings
+- `tests/commands/env-cli-envelope.test.ts` (127 LOC, 27exp/6t) — No src import — pins docs/schema strings
+- `tests/with-isolated-akm-storage.test.ts` (126 LOC, 23exp/9t) — No src import — pins docs/schema strings
+- `tests/toggle-components.test.ts` (117 LOC, 11exp/4t) — No src import — pins docs/schema strings
+- `tests/commands/stash-cli-envelope.test.ts` (115 LOC, 20exp/5t) — No src import — pins docs/schema strings
+- `tests/architecture/agent-no-llm-sdk-guard.test.ts` (108 LOC, 3exp/2t) — No src import — pins docs/schema strings
+- `tests/npm-bin-contract.test.ts` (103 LOC, 29exp/4t) — No src import — pins docs/schema strings
+- `tests/commands/secret-cli-envelope.test.ts` (101 LOC, 18exp/5t) — No src import — pins docs/schema strings
+- `tests/fixtures/stashes/load.test.ts` (101 LOC, 16exp/5t) — No src import — pins docs/schema strings
+- `tests/commands/observability-cli-envelope.test.ts` (99 LOC, 18exp/4t) — No src import — pins docs/schema strings
+- `tests/cli-harness.test.ts` (97 LOC, 15exp/6t) — No src import — pins docs/schema strings
+- `tests/integration/import-stdin-xref-slug.test.ts` (95 LOC, 8exp/2t) — No src import — pins docs/schema strings
+- `tests/commands/contribute-cli-envelope.test.ts` (91 LOC, 18exp/4t) — No src import — pins docs/schema strings
+- `tests/integration/improve-cli-flags.test.ts` (87 LOC, 2exp/1t) — No src import — pins docs/schema strings
+- `tests/commands/sources-cli-envelope.test.ts` (82 LOC, 15exp/4t) — No src import — pins docs/schema strings
+- `tests/integration/harness-registry-load-order.test.ts` (79 LOC, 6exp/2t) — No src import — pins docs/schema strings
+- `tests/integration/secret-stdin.test.ts` (70 LOC, 4exp/2t) — No src import — pins docs/schema strings
+- `tests/integration/completions-install.test.ts` (63 LOC, 5exp/1t) — No src import — pins docs/schema strings
+- `tests/lint-repository-sql.test.ts` (63 LOC, 6exp/6t) — No src import — pins docs/schema strings
+- `tests/agent/agent-config-loader.test.ts` (62 LOC, 5exp/2t) — No src import — pins docs/schema strings
+- `tests/integration/show-argv-entrypoint.test.ts` (62 LOC, 3exp/1t) — No src import — pins docs/schema strings
+- `tests/commands/improve-cli-flags.test.ts` (56 LOC, 14exp/3t) — No src import — pins docs/schema strings
+- `tests/preload-safety.test.ts` (53 LOC, 5exp/4t) — No src import — pins docs/schema strings
+- `tests/workflow-release.test.ts` (52 LOC, 12exp/4t) — No src import — pins docs/schema strings
+- `tests/contracts/improve-cli-surface.test.ts` (47 LOC, 14exp/5t) — No src import — pins docs/schema strings
+- `tests/contracts/runtime-boundaries.test.ts` (40 LOC, 10exp/4t) — No src import — pins docs/schema strings
+- `tests/contracts/module-boundaries.test.ts` (39 LOC, 4exp/3t) — No src import — pins docs/schema strings
+- `tests/lint-isolation-ratchet.test.ts` (39 LOC, 2exp/2t) — No src import — pins docs/schema strings
+- `tests/contracts/extension-points.test.ts` (22 LOC, 7exp/2t) — No src import — pins docs/schema strings
+- `tests/contracts/improve-knowledge-authority.test.ts` (15 LOC, 4exp/1t) — No src import — pins docs/schema strings
+- `tests/health-command.test.ts` (2102 LOC, 176exp/45t) — Tests code the plan DELETES
+- `tests/integration/e2e.test.ts` (1932 LOC, 300exp/91t) — Tests code the plan DELETES
+- `tests/commands/mv.test.ts` (1830 LOC, 331exp/61t) — Tests code the plan DELETES
+- `tests/integration/indexer.test.ts` (1695 LOC, 193exp/47t) — Tests code the plan DELETES
+- `tests/commands/consolidate/goldens-consolidate-ops.test.ts` (1438 LOC, 81exp/22t) — Tests code the plan DELETES
+- `tests/lint.test.ts` (1248 LOC, 164exp/68t) — Tests code the plan DELETES
+- `tests/commands/improve/improve-eligibility.test.ts` (1139 LOC, 43exp/31t) — Tests code the plan DELETES
+- `tests/integration/search.test.ts` (954 LOC, 77exp/26t) — Tests code the plan DELETES
+- `tests/commands/improve-recombine.test.ts` (817 LOC, 73exp/20t) — Tests code the plan DELETES
+- `tests/source-providers/website.test.ts` (817 LOC, 90exp/27t) — Tests code the plan DELETES
+- `tests/commands/improve-recombine-promote.test.ts` (742 LOC, 63exp/11t) — Tests code the plan DELETES
+- `tests/commands/improve/outcome-loop.test.ts` (739 LOC, 55exp/30t) — Tests code the plan DELETES
+- `tests/commands/improve-procedural.test.ts` (698 LOC, 57exp/16t) — Tests code the plan DELETES
+- `tests/integration/registry-install.test.ts` (674 LOC, 71exp/31t) — Tests code the plan DELETES
+- `tests/wiki.test.ts` (644 LOC, 110exp/41t) — Tests code the plan DELETES
+- `tests/recombine-tuning.test.ts` (642 LOC, 39exp/22t) — Tests code the plan DELETES
+- `tests/commands/improve/ws4-gate-coherence.test.ts` (628 LOC, 41exp/23t) — Tests code the plan DELETES
+- `tests/commands/improve/extract-triage-gate.test.ts` (595 LOC, 56exp/18t) — Tests code the plan DELETES
+- `tests/config-process-roundtrip.test.ts` (519 LOC, 55exp/23t) — Tests code the plan DELETES
+- `tests/commands/improve/goldens-signal-delta-gate.test.ts` (448 LOC, 25exp/17t) — Tests code the plan DELETES
+- `tests/workflows/program-assets.test.ts` (443 LOC, 78exp/18t) — Tests code the plan DELETES
+- `tests/commands/improve-strategy-selection.test.ts` (440 LOC, 111exp/36t) — Tests code the plan DELETES
+- `tests/commands/improve/improve-multi-cycle.test.ts` (415 LOC, 30exp/6t) — Tests code the plan DELETES
+- `tests/source-registry.test.ts` (393 LOC, 38exp/16t) — Tests code the plan DELETES
+- `tests/issue-641.test.ts` (381 LOC, 22exp/8t) — Tests code the plan DELETES
+- `tests/commands/improve/engine-plan-boundaries.test.ts` (377 LOC, 18exp/7t) — Tests code the plan DELETES
+- `tests/commands/improve/goldens-self-consistency.test.ts` (361 LOC, 16exp/5t) — Tests code the plan DELETES
+- `tests/health-md-report.test.ts` (333 LOC, 22exp/6t) — Tests code the plan DELETES
+- `tests/improve-strategies.test.ts` (321 LOC, 36exp/13t) — Tests code the plan DELETES
+- `tests/asset-spec.test.ts` (311 LOC, 80exp/33t) — Tests code the plan DELETES
+- `tests/wiki-qa-fixes.test.ts` (311 LOC, 24exp/14t) — Tests code the plan DELETES
+- `tests/improve-calibration.test.ts` (310 LOC, 54exp/18t) — Tests code the plan DELETES
+- `tests/integration/mv-durable-recovery.test.ts` (310 LOC, 28exp/10t) — Tests code the plan DELETES
+- `tests/matchers-unit.test.ts` (308 LOC, 41exp/37t) — Tests code the plan DELETES
+- `tests/recombine-drain-accept.test.ts` (294 LOC, 17exp/9t) — Tests code the plan DELETES
+- `tests/commands/improve-planner-profile-prefilter.test.ts` (278 LOC, 14exp/5t) — Tests code the plan DELETES
+- `tests/commands/improve/improve-sync-resilience.test.ts` (267 LOC, 10exp/4t) — Tests code the plan DELETES
+- `tests/coverage-hardening/core-config-walker.test.ts` (239 LOC, 39exp/32t) — Tests code the plan DELETES
+- `tests/core/db-exclude-types.test.ts` (224 LOC, 20exp/7t) — Tests code the plan DELETES
+- `tests/issue-636-reflect-synthesize-description.test.ts` (192 LOC, 21exp/10t) — Tests code the plan DELETES
+- `tests/session-asset.test.ts` (180 LOC, 47exp/17t) — Tests code the plan DELETES
+- `tests/fact-asset.test.ts` (173 LOC, 21exp/8t) — Tests code the plan DELETES
+- `tests/standards-type-conventions.test.ts` (160 LOC, 26exp/12t) — Tests code the plan DELETES
+- `tests/fts-query.test.ts` (157 LOC, 34exp/19t) — Tests code the plan DELETES
+- `tests/standards-resolvers.test.ts` (149 LOC, 21exp/10t) — Tests code the plan DELETES
+- `tests/commands/default-improve-strategies.test.ts` (148 LOC, 53exp/12t) — Tests code the plan DELETES
+- `tests/akm-eval-judge-calibration.test.ts` (146 LOC, 20exp/2t) — Tests code the plan DELETES
+- `tests/standards-dispatch.test.ts` (139 LOC, 23exp/10t) — Tests code the plan DELETES
+- `tests/asset-registry.test.ts` (131 LOC, 24exp/9t) — Tests code the plan DELETES
+- `tests/commands/search-exclude-sessions-vector.test.ts` (127 LOC, 9exp/4t) — Tests code the plan DELETES
+- `tests/lesson-lint.test.ts` (127 LOC, 29exp/11t) — Tests code the plan DELETES
+- `tests/commands/wiki-cli-envelope.test.ts` (98 LOC, 21exp/5t) — Tests code the plan DELETES
+- `tests/asset-type-union-source.test.ts` (73 LOC, 5exp/3t) — Tests code the plan DELETES
+- `tests/improve-shared-helpers.test.ts` (69 LOC, 11exp/8t) — Tests code the plan DELETES
+- `tests/exhaustive-registry-coverage.test.ts` (66 LOC, 5exp/5t) — Tests code the plan DELETES
+- `tests/commands/improve/feedback-valence.test.ts` (61 LOC, 14exp/6t) — Tests code the plan DELETES
+- `tests/source-providers/wiki-fetchers.test.ts` (46 LOC, 3exp/2t) — Tests code the plan DELETES
+- `tests/contracts/asset-types.test.ts` (25 LOC, 4exp/3t) — Tests code the plan DELETES
+- `tests/contracts/lesson-type.test.ts` (24 LOC, 4exp/2t) — Tests code the plan DELETES
+
+</details>
+
+## MODIFY-firm — full list (44 files)
+
+<details><summary>expand</summary>
+
+- `tests/proposal-drain.test.ts` (576 LOC, 74exp/31t) — Mock-heavy — rewrite behavioral
+- `tests/commands/improve/improve-auto-accept.test.ts` (420 LOC, 50exp/25t) — Mock-heavy — rewrite behavioral
+- `tests/workflow-cli.test.ts` (1171 LOC, 211exp/42t) — Spawns CLI subprocess — make in-process
+- `tests/integration/self-update.test.ts` (885 LOC, 116exp/47t) — Spawns CLI subprocess — make in-process
+- `tests/integration/write-source.test.ts` (634 LOC, 81exp/46t) — Spawns CLI subprocess — make in-process
+- `tests/commands/history.test.ts` (628 LOC, 85exp/25t) — Spawns CLI subprocess — make in-process
+- `tests/extract-watch.test.ts` (562 LOC, 38exp/14t) — Spawns CLI subprocess — make in-process
+- `tests/integration/registry-build-index.test.ts` (524 LOC, 39exp/6t) — Spawns CLI subprocess — make in-process
+- `tests/integration/worktree-isolation.test.ts` (466 LOC, 38exp/8t) — Spawns CLI subprocess — make in-process
+- `tests/integration/git.test.ts` (405 LOC, 37exp/15t) — Spawns CLI subprocess — make in-process
+- `tests/commands/events.test.ts` (384 LOC, 60exp/17t) — Spawns CLI subprocess — make in-process
+- `tests/integration/cli-errors.test.ts` (365 LOC, 69exp/20t) — Spawns CLI subprocess — make in-process
+- `tests/commands/proposal-cli.test.ts` (355 LOC, 62exp/23t) — Spawns CLI subprocess — make in-process
+- `tests/integration/file-lock.test.ts` (351 LOC, 37exp/11t) — Spawns CLI subprocess — make in-process
+- `tests/integration/save-command.test.ts` (351 LOC, 37exp/8t) — Spawns CLI subprocess — make in-process
+- `tests/commands/scope-flags.test.ts` (322 LOC, 49exp/18t) — Spawns CLI subprocess — make in-process
+- `tests/integration/walker.test.ts` (317 LOC, 51exp/18t) — Spawns CLI subprocess — make in-process
+- `tests/integration/proposal-durable-recovery.test.ts` (293 LOC, 33exp/8t) — Spawns CLI subprocess — make in-process
+- `tests/curate-command.test.ts` (285 LOC, 34exp/11t) — Spawns CLI subprocess — make in-process
+- `tests/setup/setup-from-file.test.ts` (266 LOC, 33exp/14t) — Spawns CLI subprocess — make in-process
+- `tests/commands/import.test.ts` (255 LOC, 35exp/8t) — Spawns CLI subprocess — make in-process
+- `tests/feedback-command.test.ts` (252 LOC, 35exp/7t) — Spawns CLI subprocess — make in-process
+- `tests/issues-191-194.test.ts` (233 LOC, 17exp/5t) — Spawns CLI subprocess — make in-process
+- `tests/health-engine-probe.test.ts` (222 LOC, 30exp/8t) — Spawns CLI subprocess — make in-process
+- `tests/issue-639.test.ts` (219 LOC, 7exp/7t) — Spawns CLI subprocess — make in-process
+- `tests/integration/migration-apply-crash.test.ts` (205 LOC, 25exp/4t) — Spawns CLI subprocess — make in-process
+- `tests/github.test.ts` (203 LOC, 31exp/28t) — Spawns CLI subprocess — make in-process
+- `tests/integration/workflow-worktree-leftovers.test.ts` (200 LOC, 25exp/6t) — Spawns CLI subprocess — make in-process
+- `tests/integration/config-recovery-concurrency.test.ts` (184 LOC, 23exp/7t) — Spawns CLI subprocess — make in-process
+- `tests/integration/add-website-source.test.ts` (159 LOC, 11exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/lessons-coverage.test.ts` (153 LOC, 8exp/3t) — Spawns CLI subprocess — make in-process
+- `tests/search-source-filter.test.ts` (147 LOC, 9exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/improve-git-exact-paths.test.ts` (127 LOC, 4exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/supersedes-git-target.test.ts` (115 LOC, 10exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/commands/graph-cli-negative.test.ts` (112 LOC, 21exp/6t) — Spawns CLI subprocess — make in-process
+- `tests/integration/events-offset-crossproc.test.ts` (112 LOC, 5exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/search-include-proposed-cli.test.ts` (108 LOC, 6exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/remember-stdin.test.ts` (88 LOC, 8exp/2t) — Spawns CLI subprocess — make in-process
+- `tests/integration/proposal-git-commit.test.ts` (65 LOC, 5exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/secret-run.test.ts` (65 LOC, 2exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/tasks-run-startup.test.ts` (64 LOC, 5exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/env-export-bash.test.ts` (59 LOC, 4exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/workflow-db-maintenance.test.ts` (56 LOC, 5exp/1t) — Spawns CLI subprocess — make in-process
+- `tests/integration/index-writer-lock-crossproc.test.ts` (47 LOC, 1exp/1t) — Spawns CLI subprocess — make in-process
+
+</details>
+
+## KEEP-firm — full list (26 files)
+
+<details><summary>expand</summary>
+
+- `tests/migration-lifecycle-regression.test.ts` (1063 LOC, 156exp/32t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/improve-runs.test.ts` (583 LOC, 65exp/15t) — Data-integrity: migration/backup/cutover
+- `tests/migration-backup.test.ts` (406 LOC, 47exp/18t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/recombine-hypotheses.test.ts` (253 LOC, 37exp/17t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/state-read-helpers.test.ts` (195 LOC, 12exp/8t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/improve-cycle-metrics.test.ts` (163 LOC, 20exp/8t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/with-immediate-transaction.test.ts` (146 LOC, 19exp/5t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/body-embeddings.test.ts` (113 LOC, 15exp/7t) — Data-integrity: migration/backup/cutover
+- `tests/state-db-events-purge.test.ts` (106 LOC, 11exp/4t) — Data-integrity: migration/backup/cutover
+- `tests/state-db/repository-modules.test.ts` (88 LOC, 9exp/6t) — Data-integrity: migration/backup/cutover
+- `tests/storage/engine-cutover-historical-migrations.test.ts` (85 LOC, 3exp/2t) — Data-integrity: migration/backup/cutover
+- `tests/vault-dangerous-key-lint.test.ts` (345 LOC, 76exp/34t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/integration/git-source-safety.test.ts` (279 LOC, 37exp/9t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/standards-prompt-injection.test.ts` (186 LOC, 8exp/4t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/workflow-path-escape.test.ts` (174 LOC, 18exp/8t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/authoring-rules-injection.test.ts` (165 LOC, 18exp/18t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/config-sanitize-secrets.test.ts` (165 LOC, 8exp/5t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/redaction.test.ts` (150 LOC, 12exp/9t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/env-traversal.test.ts` (135 LOC, 18exp/8t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/secret-path-run.test.ts` (124 LOC, 12exp/6t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/vault-dangerous-key-install-gate.test.ts` (110 LOC, 5exp/4t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/config-cli-redaction.test.ts` (87 LOC, 9exp/1t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/integration/tar-utils-scan.test.ts` (81 LOC, 6exp/2t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/commands/improve/improve-redaction.test.ts` (68 LOC, 4exp/1t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/env-run-dangerous-key-block.test.ts` (58 LOC, 6exp/1t) — Security: traversal/escape/redaction/dangerous-key
+- `tests/commands/wiki-ingest-redaction.test.ts` (55 LOC, 3exp/1t) — Security: traversal/escape/redaction/dangerous-key
+
+</details>
+
+## NEEDS-READ — full list (363 files)
+
+<details><summary>expand</summary>
+
+- `tests/workflows/native-executor.test.ts` (2463 LOC, 286exp/66t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/report.test.ts` (1820 LOC, 196exp/50t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/distill.test.ts` (1751 LOC, 233exp/64t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-memory.test.ts` (1547 LOC, 97exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/metadata.test.ts` (1418 LOC, 207exp/95t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposals.test.ts` (1354 LOC, 162exp/50t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/conformance/driver-parity.test.ts` (1259 LOC, 77exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/extract-command.test.ts` (1242 LOC, 138exp/44t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/salience-wiring.test.ts` (1171 LOC, 68exp/24t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-memory-misc.test.ts` (1096 LOC, 66exp/22t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/chaos.test.ts` (1090 LOC, 113exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/step-work.test.ts` (1085 LOC, 121exp/48t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/config.test.ts` (1071 LOC, 145exp/75t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/db.test.ts` (1050 LOC, 121exp/51t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/gate-artifacts.test.ts` (1033 LOC, 130exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/llm-client.test.ts` (1003 LOC, 107exp/53t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/registry-search.test.ts` (994 LOC, 97exp/40t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/extract-session-tracking.test.ts` (933 LOC, 81exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/salience.test.ts` (920 LOC, 104exp/55t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-pipeline-fixes.test.ts` (896 LOC, 117exp/68t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/opencode-sdk-runner.test.ts` (888 LOC, 112exp/39t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/remember-import-supersedes.test.ts` (857 LOC, 155exp/26t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-schtasks-backend.test.ts` (845 LOC, 90exp/37t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/scoring-pipeline.test.ts` (838 LOC, 31exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/brief.test.ts` (812 LOC, 106exp/24t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/graph-extraction.test.ts` (800 LOC, 88exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/program-parser.test.ts` (800 LOC, 144exp/51t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/graph.test.ts` (775 LOC, 72exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/tasks-lifecycle.test.ts` (751 LOC, 119exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/file-context.test.ts` (721 LOC, 136exp/45t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/engine-ir-v3.test.ts` (721 LOC, 76exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/run-lease.test.ts` (719 LOC, 78exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/vector-search.test.ts` (705 LOC, 64exp/26t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-boost-ranking.test.ts` (673 LOC, 44exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/remember-import-xref.test.ts` (669 LOC, 114exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/akm-eval-planner-waste.test.ts` (668 LOC, 69exp/28t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-ws5-observability.test.ts` (667 LOC, 47exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/ir-compile.test.ts` (648 LOC, 58exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-launchd-backend.test.ts` (645 LOC, 97exp/27t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/semantic-search-e2e.test.ts` (644 LOC, 37exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-runner.test.ts` (635 LOC, 56exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-propose.test.ts` (630 LOC, 86exp/22t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/utility-scoring.test.ts` (630 LOC, 41exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source.test.ts` (614 LOC, 86exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/output-shapes-unit.test.ts` (607 LOC, 103exp/44t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/agent-builders.test.ts` (593 LOC, 80exp/55t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-pipeline-fixes.test.ts` (592 LOC, 58exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/budget.test.ts` (591 LOC, 65exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/memory-inference.test.ts` (590 LOC, 90exp/26t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/env.test.ts` (588 LOC, 96exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/semantic-status.test.ts` (587 LOC, 91exp/78t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-regression.test.ts` (579 LOC, 65exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/session-logs-providers.test.ts` (571 LOC, 62exp/22t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-chunks.test.ts` (570 LOC, 66exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/akm-eval-reflect-quality.test.ts` (565 LOC, 64exp/22t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposal-storage-sqlite.test.ts` (542 LOC, 53exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup-wizard.test.ts` (528 LOC, 50exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-run-attempt-observability.test.ts` (521 LOC, 64exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/show.test.ts` (511 LOC, 76exp/24t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/embedder.test.ts` (510 LOC, 59exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/agent-spawn.test.ts` (509 LOC, 65exp/22t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/remember-frontmatter.test.ts` (499 LOC, 75exp/28t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/paths.test.ts` (498 LOC, 61exp/59t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-db-rekey.test.ts` (492 LOC, 53exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/extract-prompt.test.ts` (486 LOC, 57exp/32t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/setup-run.test.ts` (470 LOC, 27exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/source-qa-fixes.test.ts` (469 LOC, 41exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/collapse-detector.test.ts` (467 LOC, 46exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/schema-similarity-gate.test.ts` (467 LOC, 45exp/23t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/parameter-metadata.test.ts` (462 LOC, 86exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/registry-index-v2.test.ts` (451 LOC, 53exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposal-stuck-repair.test.ts` (449 LOC, 37exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup/detect-environment.test.ts` (449 LOC, 61exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/graph-extraction-batch.test.ts` (442 LOC, 41exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-manage.test.ts` (441 LOC, 92exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-source.test.ts` (441 LOC, 40exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/conformance/conformance.test.ts` (441 LOC, 19exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposal-gate-decision.test.ts` (440 LOC, 52exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/llm-enrichment-cache.test.ts` (437 LOC, 30exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/program-expressions.test.ts` (435 LOC, 102exp/54t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/markdown-insertion.test.ts` (433 LOC, 79exp/46t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/fts-field-weighting.test.ts` (429 LOC, 48exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-parser.test.ts` (411 LOC, 66exp/21t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-codex.test.ts` (399 LOC, 62exp/39t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/embedding-model-config.test.ts` (399 LOC, 38exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/registry-cli.test.ts` (398 LOC, 45exp/17t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-html-report.test.ts` (397 LOC, 86exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-reflect-unsupported-type-skip.test.ts` (394 LOC, 17exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-cron-backend.test.ts` (392 LOC, 59exp/27t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/issue-36-repro.test.ts` (382 LOC, 29exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/dispatch-disposal.test.ts` (380 LOC, 24exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-copilot.test.ts` (378 LOC, 49exp/38t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/proactive-maintenance.test.ts` (378 LOC, 34exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/workflow-driver-cli.test.ts` (367 LOC, 56exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/curate-logic.test.ts` (367 LOC, 25exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/watch.test.ts` (367 LOC, 37exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/search-ref-prefix.test.ts` (364 LOC, 31exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/asset-serialize.test.ts` (363 LOC, 46exp/33t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-gemini.test.ts` (362 LOC, 46exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup/setup-safe-config.test.ts` (359 LOC, 45exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/akm-eval-proposal-quality.test.ts` (355 LOC, 42exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect-propose-cli.test.ts` (353 LOC, 27exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm-feature-gate.test.ts` (351 LOC, 41exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-openhands.test.ts` (350 LOC, 48exp/34t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/skills-sh.test.ts` (350 LOC, 40exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/parallel-search.test.ts` (350 LOC, 15exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-amazonq.test.ts` (347 LOC, 55exp/39t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-triage-prepass.test.ts` (346 LOC, 27exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/graph-extract-batch.test.ts` (346 LOC, 56exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/config-cli.test.ts` (345 LOC, 54exp/35t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/dedup.test.ts` (343 LOC, 42exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/belief-state-phase1a.test.ts` (340 LOC, 19exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-noise-gate.test.ts` (340 LOC, 51exp/28t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-pi.test.ts` (338 LOC, 42exp/33t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/distill-response-schema.test.ts` (338 LOC, 44exp/15t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/frontmatter.test.ts` (336 LOC, 83exp/40t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/fuzz/workflow-program-fuzz.test.ts` (330 LOC, 9exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-sync.test.ts` (328 LOC, 25exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/sqlite-journal-mode.test.ts` (327 LOC, 48exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/graph-lazy-show-curate.test.ts` (326 LOC, 15exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/scoped-utility.test.ts` (325 LOC, 21exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-clone.test.ts` (318 LOC, 55exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/frozen-plan.test.ts` (316 LOC, 42exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/asset-ref.test.ts` (313 LOC, 74exp/54t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/progressive-disclosure.test.ts` (307 LOC, 40exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/encoding-salience.test.ts` (306 LOC, 30exp/21t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-size-gate.test.ts` (306 LOC, 54exp/37t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-promote-dedup.test.ts` (305 LOC, 22exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-aider.test.ts` (304 LOC, 43exp/32t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/fuzz/replay-fuzz.test.ts` (303 LOC, 24exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/session-indexing.test.ts` (302 LOC, 21exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-wave2-bc.test.ts` (297 LOC, 46exp/33t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/run-units.test.ts` (297 LOC, 27exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/usage-telemetry.test.ts` (296 LOC, 37exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/program-warnings.test.ts` (296 LOC, 26exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/akm-eval-workflow-compliance.test.ts` (295 LOC, 16exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-db-locking.test.ts` (291 LOC, 17exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect-response-schema.test.ts` (290 LOC, 34exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/index-pass-llm.test.ts` (290 LOC, 38exp/21t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm/metadata-enhance.test.ts` (289 LOC, 44exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/common.test.ts` (287 LOC, 41exp/34t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integrations/agent/runner-dispatch.test.ts` (287 LOC, 23exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-extraction-queue.test.ts` (286 LOC, 26exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-dry-run-side-effects.test.ts` (275 LOC, 12exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/fuzzy-search.test.ts` (269 LOC, 19exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup-tmp-stash-guard.test.ts` (267 LOC, 12exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/architecture/agent-spawn-seam.test.ts` (266 LOC, 35exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposals-validation.test.ts` (266 LOC, 25exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/graph-update.test.ts` (264 LOC, 31exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-distill-planner-skip-lessons.test.ts` (264 LOC, 14exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-incremental.test.ts` (262 LOC, 18exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/lockfile.test.ts` (260 LOC, 41exp/24t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/init.test.ts` (257 LOC, 51exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm-usage-telemetry.test.ts` (256 LOC, 42exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-completed-on-failure.test.ts` (255 LOC, 39exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/search-exclude-sessions.test.ts` (255 LOC, 15exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm/memory-infer.test.ts` (255 LOC, 28exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposed-quality.test.ts` (254 LOC, 31exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/outcome-loop-wiring.test.ts` (253 LOC, 15exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/db-scoring.test.ts` (253 LOC, 36exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/migrations.test.ts` (252 LOC, 25exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/harnesses-registry.test.ts` (250 LOC, 53exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-op-handlers.test.ts` (248 LOC, 24exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-result-to-file.test.ts` (248 LOC, 26exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/search-convention-fact-demotion.test.ts` (246 LOC, 15exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/info-command.test.ts` (241 LOC, 39exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-budget-watchdog.test.ts` (238 LOC, 19exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-contributor-ablation.test.ts` (237 LOC, 34exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/status-units.test.ts` (237 LOC, 23exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/indexer-rejection.test.ts` (236 LOC, 27exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/agent-identity.test.ts` (234 LOC, 34exp/17t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflow-markdown.test.ts` (231 LOC, 45exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-path-exists-guard.test.ts` (230 LOC, 12exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/test-isolation-no-swallow.test.ts` (230 LOC, 16exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/manifest.test.ts` (229 LOC, 31exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/project-context.test.ts` (229 LOC, 32exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/session-logs-pre-filter.test.ts` (227 LOC, 40exp/20t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/cooldown-select-fix.test.ts` (224 LOC, 14exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/anti-collapse.test.ts` (223 LOC, 48exp/26t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-judged-cache.test.ts` (222 LOC, 26exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-legacy-md-warning.test.ts` (222 LOC, 22exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-no-hang.test.ts` (221 LOC, 7exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/extract-min-new-sessions.test.ts` (218 LOC, 10exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-utility-decay.test.ts` (218 LOC, 14exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/ref-resolver-contract.test.ts` (217 LOC, 3exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-deduplication.test.ts` (215 LOC, 30exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/index-clean.test.ts` (214 LOC, 20exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/nested-asset-name.test.ts` (213 LOC, 54exp/17t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/fuzz/json-schema-fuzz.test.ts` (212 LOC, 12exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/engine-resolution.test.ts` (211 LOC, 34exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/config-v09.test.ts` (209 LOC, 22exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-extraction-topn.test.ts` (207 LOC, 15exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/search-derived-memory.test.ts` (207 LOC, 11exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/registry-resolve.test.ts` (205 LOC, 38exp/29t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/complete-summary.test.ts` (205 LOC, 26exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/fuzz/expression-fuzz.test.ts` (205 LOC, 14exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup/detected-engines.test.ts` (204 LOC, 21exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-sync.test.ts` (202 LOC, 28exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-wave2-d.test.ts` (200 LOC, 42exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm/structured-call.test.ts` (200 LOC, 14exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/secret.test.ts` (200 LOC, 27exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/distill-cli-flag.test.ts` (198 LOC, 6exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/index-written-assets.test.ts` (195 LOC, 13exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/extract-strategy-gate.test.ts` (194 LOC, 6exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/logs-db.test.ts` (193 LOC, 31exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/remember-unit.test.ts` (192 LOC, 47exp/25t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/fuzz/reducer-fuzz.test.ts` (192 LOC, 22exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-writer-fixes.test.ts` (190 LOC, 21exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/opencode-sdk-managed-server.test.ts` (189 LOC, 17exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/output-passthrough-envelope.test.ts` (188 LOC, 33exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/scheduler.test.ts` (188 LOC, 31exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ripgrep.test.ts` (187 LOC, 7exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup/setup-extracted-units.test.ts` (187 LOC, 36exp/19t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/workflow-db-contention.test.ts` (186 LOC, 17exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/reflect/reflect-unattended-pin.test.ts` (184 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/show-indexer-parity.test.ts` (184 LOC, 14exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/workflow-crash-windows.test.ts` (184 LOC, 20exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/proactive-maintenance-flow.test.ts` (182 LOC, 12exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-improve-result-accounting.test.ts` (180 LOC, 5exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/env-path-run.test.ts` (179 LOC, 23exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-boost-cache-reset.test.ts` (179 LOC, 9exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/setup-scheduled-tasks.test.ts` (179 LOC, 27exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve-ensure-index-first.test.ts` (176 LOC, 8exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/markdown.test.ts` (175 LOC, 46exp/18t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/create-yaml-roundtrip.test.ts` (175 LOC, 33exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/graph-cli-envelope.test.ts` (174 LOC, 17exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/get-retrieval-counts.test.ts` (173 LOC, 11exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integrations/agent/runner.test.ts` (173 LOC, 20exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/text-truncation.test.ts` (172 LOC, 27exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/default-tasks.test.ts` (171 LOC, 26exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-target-integration.test.ts` (171 LOC, 10exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/architecture/agent-runner-seam.test.ts` (170 LOC, 8exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/static-index.test.ts` (170 LOC, 10exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-schedule.test.ts` (169 LOC, 39exp/31t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/workflow-lease-crossproc.test.ts` (168 LOC, 21exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/import-events-jsonl-idempotent.test.ts` (167 LOC, 20exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/llm-usage-persist.test.ts` (166 LOC, 27exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/merge-scoring.test.ts` (166 LOC, 43exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/dedup-cache-wiring.test.ts` (165 LOC, 11exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/consolidate-min-pool-size.test.ts` (164 LOC, 9exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/health/surfaces.test.ts` (163 LOC, 28exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-response-schema.test.ts` (162 LOC, 30exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/llm.test.ts` (160 LOC, 11exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-wave2-e.test.ts` (158 LOC, 27exp/14t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/monitor-liveness.test.ts` (155 LOC, 18exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/reflect-propose-envelope.test.ts` (155 LOC, 26exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/outcome-invariance.test.ts` (154 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/relink-usage-events.test.ts` (152 LOC, 9exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/secret-indexing.test.ts` (151 LOC, 16exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-planned-filepath.test.ts` (149 LOC, 13exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/origin-resolve.test.ts` (149 LOC, 21exp/16t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/params-validation.test.ts` (149 LOC, 11exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/structured.test.ts` (145 LOC, 20exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/search-cli-envelope.test.ts` (143 LOC, 21exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-skip-if-locked.test.ts` (142 LOC, 14exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/quality-gate-fail-closed.test.ts` (141 LOC, 19exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-resolve.test.ts` (137 LOC, 10exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/tasks-write-target.test.ts` (135 LOC, 9exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/html-output-cli.test.ts` (135 LOC, 30exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/env-set-unset.test.ts` (134 LOC, 20exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/agent-detect.test.ts` (131 LOC, 16exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/spawn-onevent.test.ts` (131 LOC, 15exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/cli/auto-accept.test.ts` (131 LOC, 25exp/17t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/configuration.test.ts` (128 LOC, 19exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/migration-help.test.ts` (127 LOC, 27exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ripgrep-resolve.test.ts` (127 LOC, 7exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-registry.test.ts` (124 LOC, 38exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/health-minting-rollup.test.ts` (124 LOC, 11exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/html-render.test.ts` (124 LOC, 20exp/13t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/session-logs.test.ts` (124 LOC, 15exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/architecture/llm-stateless-seam.test.ts` (121 LOC, 23exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/improve-result-decoder.test.ts` (121 LOC, 20exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/reflect-propose-http-timeout.test.ts` (121 LOC, 7exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-lock-invariants.test.ts` (120 LOC, 7exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-salience-boost.test.ts` (120 LOC, 12exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/config-schema-drift.test.ts` (119 LOC, 26exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/show-argv.test.ts` (118 LOC, 11exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/stash-dir-safety.test.ts` (118 LOC, 18exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/harness-claude.test.ts` (117 LOC, 19exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/tasks-cli-envelope.test.ts` (117 LOC, 15exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/output-registry.test.ts` (114 LOC, 16exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/distill-content-repair.test.ts` (112 LOC, 15exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/index-writer-lock.test.ts` (110 LOC, 17exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/validate-summary.test.ts` (110 LOC, 28exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tty.test.ts` (108 LOC, 17exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/ensure-index-serve.test.ts` (105 LOC, 9exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/relink-source-identity.test.ts` (105 LOC, 6exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/proposal-cli-envelope.test.ts` (103 LOC, 17exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/checkin-surfacing.test.ts` (103 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/config-triage-process.test.ts` (102 LOC, 14exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/distill-guards.test.ts` (101 LOC, 16exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/curate-search-for-curation.test.ts` (101 LOC, 7exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-lesson-strength.test.ts` (101 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/cli/exit-code-classification.test.ts` (100 LOC, 14exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-task-fail-rate.test.ts` (100 LOC, 8exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/agent-config.test.ts` (99 LOC, 18exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/agent-real-profile.test.ts` (99 LOC, 4exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/stash-meta.test.ts` (99 LOC, 16exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/write-source-home-path-advisory.test.ts` (98 LOC, 8exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-all-hot-skip.test.ts` (96 LOC, 12exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-session-lifecycle.test.ts` (96 LOC, 4exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/json-schema-subset.test.ts` (96 LOC, 22exp/11t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/atomic-write-unify.test.ts` (95 LOC, 6exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/frontmatter/write-salience.test.ts` (95 LOC, 15exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/storage-locations.test.ts` (95 LOC, 16exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/frontmatter-block-scalar.test.ts` (93 LOC, 17exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/body-opening-index-state.test.ts` (93 LOC, 24exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/unit-checkin.test.ts` (92 LOC, 11exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/authoring-rules.test.ts` (90 LOC, 20exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/search-stale-index-hint.test.ts` (90 LOC, 4exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/ranking-capture-mode.test.ts` (90 LOC, 4exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-providers/filesystem.test.ts` (90 LOC, 14exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/spawn-path-supplement.test.ts` (89 LOC, 7exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/improve-sync-message.test.ts` (89 LOC, 10exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/db-busy-timeout.test.ts` (89 LOC, 4exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/concurrent.test.ts` (88 LOC, 9exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/distill-promotion-policy.test.ts` (87 LOC, 35exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/best-effort.test.ts` (86 LOC, 11exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/deterministic-embedder.test.ts` (86 LOC, 10exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/git-provider-clone.test.ts` (86 LOC, 11exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/consolidate/consolidate-eligibility.test.ts` (85 LOC, 10exp/10t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/unmigrated-vaults-guard.test.ts` (85 LOC, 9exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/time.test.ts` (84 LOC, 27exp/9t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/fts-query-error-warn.test.ts` (83 LOC, 3exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integrations/agent/prompts-confidence.test.ts` (83 LOC, 18exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-task-id.test.ts` (83 LOC, 17exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-pure-fns.test.ts` (82 LOC, 13exp/12t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposal-show-severity-render.test.ts` (80 LOC, 14exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/init.test.ts` (79 LOC, 10exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/utility-policy.test.ts` (79 LOC, 15exp/8t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/curate-metrics.test.ts` (78 LOC, 18exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-pool-saturation.test.ts` (74 LOC, 17exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-scheduler-invocation.test.ts` (73 LOC, 8exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/curate-relevance-eval.test.ts` (71 LOC, 7exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/env-secret-tokens.test.ts` (71 LOC, 16exp/7t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/output-shape-registry-completeness.test.ts` (71 LOC, 2exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-embedded.test.ts` (70 LOC, 11exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/read-preflight.test.ts` (69 LOC, 6exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/promote-memory.test.ts` (64 LOC, 2exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/improve/hot-probation.test.ts` (60 LOC, 13exp/6t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/checkin.test.ts` (60 LOC, 10exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/agent-dispatch-engine.test.ts` (56 LOC, 2exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/integration/improve-lock-serialization.test.ts` (56 LOC, 5exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/embed-cache.test.ts` (55 LOC, 9exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/workflows/param-secrets.test.ts` (53 LOC, 8exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/agent/agent-process-config.test.ts` (51 LOC, 7exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/health/stash-exposure.test.ts` (51 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/confirm-destructive.test.ts` (51 LOC, 6exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/engine-boundary.test.ts` (51 LOC, 14exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/indexer/index-db-version-preserve.test.ts` (51 LOC, 4exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-providers/provider-utils.test.ts` (50 LOC, 4exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/proposal-repository-pure.test.ts` (49 LOC, 15exp/4t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/health-legacy-profile-metrics.test.ts` (48 LOC, 1exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/graph-extract-context-error.test.ts` (38 LOC, 9exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/provider-registry.test.ts` (38 LOC, 5exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/core/assert.test.ts` (37 LOC, 5exp/5t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/task-history-metadata.test.ts` (37 LOC, 6exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-command-executable.test.ts` (33 LOC, 2exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/output-text-env-formatters.test.ts` (27 LOC, 1exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/tasks-schema.test.ts` (23 LOC, 10exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/contracts/quality-rules.test.ts` (20 LOC, 4exp/3t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/commands/distill/distill-promotion-policy.bench.test.ts` (18 LOC, 1exp/1t) — Imports src + asserts — value unprovable by static analysis; must read
+- `tests/source-add.test.ts` (14 LOC, 3exp/2t) — Imports src + asserts — value unprovable by static analysis; must read
+
+</details>
