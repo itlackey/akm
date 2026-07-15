@@ -1156,174 +1156,71 @@ async function narrowConsolidationPool(
  * per-chunk op arrays via {@link mergePlans}. Populates `accounting` in place.
  * Behavior-identical to the former inlined plan-generation block.
  */
-async function planConsolidation(
-  opts: AkmConsolidateOptions,
-  config: AkmConfig,
-  stashDir: string,
-  _startMs: number,
-  memories: MemoryEntry[],
-  warnings: string[],
-  sharedStateDb: Database | undefined,
+/**
+ * Per-chunk judgedNoAction accounting: count memories the LLM saw inside a chunk
+ * but proposed no op for. Membership is by `memory:<name>` ref against the
+ * targets of each op (primary + secondaries for merge; ref otherwise). 2026-05-26:
+ * pre-fix this was a 78/119 (66%) silent drop in the cron run — no warning,
+ * event, or counter. See tuning investigation §Q2. Moved verbatim.
+ */
+function recordChunkJudgedNoAction(
+  chunk: MemoryEntry[],
+  ops: ConsolidateOperation[],
   accounting: ConsolidateAccounting,
-): Promise<{
-  allOps: ConsolidateOperation[];
-  totalChunks: number;
-  llmPoolSize: number;
-  embedTelemetry: ClusterEmbedTelemetry;
-  isHttpPath: boolean;
+): void {
+  const targetRefs = new Set<string>();
+  for (const op of ops) {
+    if (op.op === "merge") {
+      targetRefs.add(op.primary);
+      for (const s of op.secondaries) targetRefs.add(s);
+    } else {
+      targetRefs.add(op.ref);
+    }
+  }
+  let chunkNoAction = 0;
+  for (const m of chunk) {
+    const memRef = `memory:${m.name}`;
+    if (!targetRefs.has(memRef)) {
+      chunkNoAction++;
+      accounting.judgedNoActionRefs.add(memRef);
+    }
+  }
+  accounting.judgedNoAction += chunkNoAction;
+}
+
+/**
+ * Per-chunk LLM judge loop — the heart of plan generation. Iterates the sized
+ * chunks, applies the budget-abort/failure-rate/all-hot guards, calls the model
+ * (with one retry), validates the returned ops, and accumulates the per-chunk
+ * judgedNoAction accounting. Extracted verbatim from `planConsolidation`: the
+ * abort-rate policy, all-hot early-exit, and the 2026-05-26 accounting invariant
+ * (`processed == actioned + judgedNoAction + Σ(skipReasons) + failedChunkMemories`)
+ * are byte-identical, and every counter-increment point is unmoved.
+ */
+async function judgeConsolidationChunks(args: {
+  chunks: MemoryEntry[][];
+  opts: AkmConsolidateOptions;
+  config: AkmConfig;
+  llmConfig: import("../../core/config/config").LlmConnectionConfig | undefined;
   sourceName: string;
-}> {
-  // Consolidation always uses the HTTP LLM client directly — never the agent
-  // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
-  // structured JSON generation works better and faster via HTTP.
-  //
-  // Improve supplies a frozen connection; standalone consolidate resolves its
-  // selected strategy/default engine here.
-  const llmConfig = Object.hasOwn(opts, "llmConfig")
-    ? (opts.llmConfig ?? undefined)
-    : resolveConsolidateLlmConfig(config, opts.improveProfile);
-  const isHttpPath = !!llmConfig;
-
-  // Chunk sizing: derive a safe chunk size from the configured model context
-  // window so that the full prompt (system prompt + chunk user prompt) never
-  // exceeds the model's n_ctx limit.  When no context length is configured we
-  // fall back to DEFAULT_CONTEXT_LENGTH_TOKENS (8 000) which is conservative
-  // enough for most 8K–16K local models.
-  //
-  // bodyTruncation caps the body excerpt included per memory in the prompt.
-  // Reducing it further than 500 chars degrades consolidation quality, so we
-  // keep it fixed and let computeSafeChunkSize vary the number of memories
-  // per chunk instead.
-  const bodyTruncation = 500;
-  const modelContextLength = llmConfig?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
-  const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation, opts.maxChunkSize);
-
-  // -- Phase A: plan generation -----------------------------------------------
-  const sourceName = opts.target ?? stashDir;
-
-  // WS-5: capture llmPoolSize = memories entering the LLM (after all filtering).
-  const llmPoolSize = memories.length;
-
-  // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
-  // This ensures that semantically similar memories land in the same LLM
-  // context window, allowing the model to detect and merge duplicates that
-  // would otherwise be split across chunks and survive indefinitely.
-  // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
-  // Fails open: if embeddings are unavailable or fail, original order is used.
-  const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
-    memories,
+  bodyTruncation: number;
+  pendingProposalBodyHashes: Set<string>;
+  standardsContext: string;
+  warnings: string[];
+  accounting: ConsolidateAccounting;
+}): Promise<ConsolidateOperation[][]> {
+  const {
+    chunks,
+    opts,
     config,
-    sharedStateDb,
-  );
-
-  // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
-  // A small fraction (default 5%) of the pool is shuffled into random positions
-  // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
-  // entrenchment where only the most-retrieved assets ever get consolidated.
-  // DEFAULT ON since R5 — opt out via antiCollapse.enabled: false.
-  let finalClusteredMemories = clusteredMemories;
-  {
-    const antiCollapseForCluster: AntiCollapseConfig =
-      (getImproveProcessConfig(config, "consolidate", opts.improveProfile)?.antiCollapse as
-        | AntiCollapseConfig
-        | undefined) ?? {};
-    if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
-      const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
-      const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
-      // Pick `randomCount` positions to inject random (un-clustered) members.
-      // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
-      // per run but not strictly similarity-driven.
-      const shuffled = [...clusteredMemories].sort((a, b) => {
-        // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
-        const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
-        const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
-        return ha - hb;
-      });
-      const randomSlice = shuffled.slice(0, randomCount);
-      const randomSet = new Set(randomSlice.map((m) => m.name));
-      // Insert random members at intervals through the clustered sequence.
-      const withRandom: MemoryEntry[] = [];
-      const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
-      let randomIdx = 0;
-      for (let i = 0; i < clusteredMemories.length; i++) {
-        const m = clusteredMemories[i];
-        if (m && !randomSet.has(m.name)) withRandom.push(m);
-        if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
-          const r = randomSlice[randomIdx++];
-          if (r) withRandom.push(r);
-        }
-      }
-      // Append any remaining random members not yet inserted.
-      while (randomIdx < randomSlice.length) {
-        const r = randomSlice[randomIdx++];
-        if (r) withRandom.push(r);
-      }
-      finalClusteredMemories = withRandom;
-      warnings.push(
-        `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
-      );
-    }
-  }
-
-  const chunks: MemoryEntry[][] = [];
-  for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
-    chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
-  }
-
-  // 2026-05-27 prompt-context fix: precompute body-hashes of pending
-  // consolidate proposals once, so the per-chunk prompt can annotate
-  // memories whose body would just produce a deterministic
-  // `dedup_pending_proposal` skip. Cuts ~110 wasted LLM proposals per
-  // 4h on this user's stack. See
-  // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
-  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
-
-  // ── Cold-start budget estimation ─────────────────────────────────────────────
-  // Estimate wall-clock cost BEFORE issuing any LLM calls. When a signal is
-  // provided and the estimated cost exceeds ~60% of the remaining budget we
-  // auto-reduce the pool and log the reduction so the run never starts work
-  // it cannot finish (avoiding SIGTERM mid-LLM-call).
-  //
-  // Formula: chunks.length × p90_chunk_seconds. The p90 comes from
-  // `opts.p90ChunkSecondsDefault` (caller-supplied, typically from the profile
-  // config); absent = 30 s (conservative default matching a medium local LLM).
-  //
-  // "Remaining budget" is read from a custom property on the AbortSignal if
-  // the caller (improve.ts) has attached one. Without it no auto-reduction
-  // fires but the check is still cheap to run.
-  if (chunks.length > 10 && opts.signal) {
-    const p90Chunk = opts.p90ChunkSecondsDefault ?? 30;
-    const estimatedSeconds = chunks.length * p90Chunk;
-    // remainingBudgetMs is a non-standard extension set by improve.ts when it
-    // creates the budget AbortController. Undefined = no budget information.
-    const budgetMs = (opts.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
-    if (budgetMs !== undefined && budgetMs > 0) {
-      const remainingSeconds = budgetMs / 1000;
-      if (estimatedSeconds > remainingSeconds * 0.6) {
-        const safeCaps = Math.max(1, Math.floor((remainingSeconds * 0.6) / p90Chunk));
-        const removedChunks = chunks.length - safeCaps;
-        if (removedChunks > 0) {
-          const msg =
-            `[consolidate] cold-start budget: estimated ${estimatedSeconds.toFixed(0)}s > 60% of remaining ${remainingSeconds.toFixed(0)}s; ` +
-            `reducing pool from ${chunks.length} to ${safeCaps} chunks (${removedChunks} deferred to next run).`;
-          warn(msg);
-          warnings.push(msg);
-          chunks.splice(safeCaps);
-        }
-      }
-    }
-  }
-
-  warn(
-    `[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
-      ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
-  );
-
-  // Consolidate output merges memories (non-wiki) → stash authoring standards.
-  // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
-  // per chunk).
-  const standardsContext = resolveStandardsContext("memory:_consolidated", stashDir);
-
+    llmConfig,
+    sourceName,
+    bodyTruncation,
+    pendingProposalBodyHashes,
+    standardsContext,
+    warnings,
+    accounting,
+  } = args;
   const chunkOpsArrays: ConsolidateOperation[][] = [];
   // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
   // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
@@ -1494,32 +1391,194 @@ async function planConsolidation(
       }
     }
 
-    // Per-chunk judgedNoAction: count memories the LLM saw but proposed no
-    // op for. Membership is by `memory:<name>` ref against the targets of
-    // each op (primary + secondaries for merge; ref otherwise). 2026-05-26:
-    // pre-fix this was a 78/119 (66%) silent drop in the cron run — no
-    // warning, event, or counter. See tuning investigation §Q2.
-    const targetRefs = new Set<string>();
-    for (const op of ops) {
-      if (op.op === "merge") {
-        targetRefs.add(op.primary);
-        for (const s of op.secondaries) targetRefs.add(s);
-      } else {
-        targetRefs.add(op.ref);
-      }
-    }
-    let chunkNoAction = 0;
-    for (const m of chunk) {
-      const memRef = `memory:${m.name}`;
-      if (!targetRefs.has(memRef)) {
-        chunkNoAction++;
-        accounting.judgedNoActionRefs.add(memRef);
-      }
-    }
-    accounting.judgedNoAction += chunkNoAction;
+    recordChunkJudgedNoAction(chunk, ops, accounting);
 
     chunkOpsArrays.push(ops);
   }
+
+  return chunkOpsArrays;
+}
+
+async function planConsolidation(
+  opts: AkmConsolidateOptions,
+  config: AkmConfig,
+  stashDir: string,
+  _startMs: number,
+  memories: MemoryEntry[],
+  warnings: string[],
+  sharedStateDb: Database | undefined,
+  accounting: ConsolidateAccounting,
+): Promise<{
+  allOps: ConsolidateOperation[];
+  totalChunks: number;
+  llmPoolSize: number;
+  embedTelemetry: ClusterEmbedTelemetry;
+  isHttpPath: boolean;
+  sourceName: string;
+}> {
+  // Consolidation always uses the HTTP LLM client directly — never the agent
+  // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
+  // structured JSON generation works better and faster via HTTP.
+  //
+  // Improve supplies a frozen connection; standalone consolidate resolves its
+  // selected strategy/default engine here.
+  const llmConfig = Object.hasOwn(opts, "llmConfig")
+    ? (opts.llmConfig ?? undefined)
+    : resolveConsolidateLlmConfig(config, opts.improveProfile);
+  const isHttpPath = !!llmConfig;
+
+  // Chunk sizing: derive a safe chunk size from the configured model context
+  // window so that the full prompt (system prompt + chunk user prompt) never
+  // exceeds the model's n_ctx limit.  When no context length is configured we
+  // fall back to DEFAULT_CONTEXT_LENGTH_TOKENS (8 000) which is conservative
+  // enough for most 8K–16K local models.
+  //
+  // bodyTruncation caps the body excerpt included per memory in the prompt.
+  // Reducing it further than 500 chars degrades consolidation quality, so we
+  // keep it fixed and let computeSafeChunkSize vary the number of memories
+  // per chunk instead.
+  const bodyTruncation = 500;
+  const modelContextLength = llmConfig?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
+  const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation, opts.maxChunkSize);
+
+  // -- Phase A: plan generation -----------------------------------------------
+  const sourceName = opts.target ?? stashDir;
+
+  // WS-5: capture llmPoolSize = memories entering the LLM (after all filtering).
+  const llmPoolSize = memories.length;
+
+  // C-1 / #380: Pre-cluster memories by embedding similarity before chunking.
+  // This ensures that semantically similar memories land in the same LLM
+  // context window, allowing the model to detect and merge duplicates that
+  // would otherwise be split across chunks and survive indefinitely.
+  // mem0 arXiv:2504.19413, A-MEM arXiv:2502.12110.
+  // Fails open: if embeddings are unavailable or fail, original order is used.
+  const { ordered: clusteredMemories, embedTelemetry } = await clusterMemoriesBySimilarity(
+    memories,
+    config,
+    sharedStateDb,
+  );
+
+  // WS-3b Anti-collapse step 8c: inject random (non-similar) clusters.
+  // A small fraction (default 5%) of the pool is shuffled into random positions
+  // so the pipeline isn't PURELY similarity-driven. This prevents rich-get-richer
+  // entrenchment where only the most-retrieved assets ever get consolidated.
+  // DEFAULT ON since R5 — opt out via antiCollapse.enabled: false.
+  let finalClusteredMemories = clusteredMemories;
+  {
+    const antiCollapseForCluster: AntiCollapseConfig =
+      (getImproveProcessConfig(config, "consolidate", opts.improveProfile)?.antiCollapse as
+        | AntiCollapseConfig
+        | undefined) ?? {};
+    if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
+      const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
+      const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
+      // Pick `randomCount` positions to inject random (un-clustered) members.
+      // Use a seeded-ish shuffle: sort by hash of the name so it's deterministic
+      // per run but not strictly similarity-driven.
+      const shuffled = [...clusteredMemories].sort((a, b) => {
+        // Deterministic shuffle: compare sha256-ish (use name hash as proxy).
+        const ha = a.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        const hb = b.name.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+        return ha - hb;
+      });
+      const randomSlice = shuffled.slice(0, randomCount);
+      const randomSet = new Set(randomSlice.map((m) => m.name));
+      // Insert random members at intervals through the clustered sequence.
+      const withRandom: MemoryEntry[] = [];
+      const interval = Math.max(2, Math.floor(clusteredMemories.length / randomCount));
+      let randomIdx = 0;
+      for (let i = 0; i < clusteredMemories.length; i++) {
+        const m = clusteredMemories[i];
+        if (m && !randomSet.has(m.name)) withRandom.push(m);
+        if (i > 0 && i % interval === 0 && randomIdx < randomSlice.length) {
+          const r = randomSlice[randomIdx++];
+          if (r) withRandom.push(r);
+        }
+      }
+      // Append any remaining random members not yet inserted.
+      while (randomIdx < randomSlice.length) {
+        const r = randomSlice[randomIdx++];
+        if (r) withRandom.push(r);
+      }
+      finalClusteredMemories = withRandom;
+      warnings.push(
+        `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
+      );
+    }
+  }
+
+  const chunks: MemoryEntry[][] = [];
+  for (let i = 0; i < finalClusteredMemories.length; i += chunkSize) {
+    chunks.push(finalClusteredMemories.slice(i, i + chunkSize));
+  }
+
+  // 2026-05-27 prompt-context fix: precompute body-hashes of pending
+  // consolidate proposals once, so the per-chunk prompt can annotate
+  // memories whose body would just produce a deterministic
+  // `dedup_pending_proposal` skip. Cuts ~110 wasted LLM proposals per
+  // 4h on this user's stack. See
+  // /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
+
+  // ── Cold-start budget estimation ─────────────────────────────────────────────
+  // Estimate wall-clock cost BEFORE issuing any LLM calls. When a signal is
+  // provided and the estimated cost exceeds ~60% of the remaining budget we
+  // auto-reduce the pool and log the reduction so the run never starts work
+  // it cannot finish (avoiding SIGTERM mid-LLM-call).
+  //
+  // Formula: chunks.length × p90_chunk_seconds. The p90 comes from
+  // `opts.p90ChunkSecondsDefault` (caller-supplied, typically from the profile
+  // config); absent = 30 s (conservative default matching a medium local LLM).
+  //
+  // "Remaining budget" is read from a custom property on the AbortSignal if
+  // the caller (improve.ts) has attached one. Without it no auto-reduction
+  // fires but the check is still cheap to run.
+  if (chunks.length > 10 && opts.signal) {
+    const p90Chunk = opts.p90ChunkSecondsDefault ?? 30;
+    const estimatedSeconds = chunks.length * p90Chunk;
+    // remainingBudgetMs is a non-standard extension set by improve.ts when it
+    // creates the budget AbortController. Undefined = no budget information.
+    const budgetMs = (opts.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
+    if (budgetMs !== undefined && budgetMs > 0) {
+      const remainingSeconds = budgetMs / 1000;
+      if (estimatedSeconds > remainingSeconds * 0.6) {
+        const safeCaps = Math.max(1, Math.floor((remainingSeconds * 0.6) / p90Chunk));
+        const removedChunks = chunks.length - safeCaps;
+        if (removedChunks > 0) {
+          const msg =
+            `[consolidate] cold-start budget: estimated ${estimatedSeconds.toFixed(0)}s > 60% of remaining ${remainingSeconds.toFixed(0)}s; ` +
+            `reducing pool from ${chunks.length} to ${safeCaps} chunks (${removedChunks} deferred to next run).`;
+          warn(msg);
+          warnings.push(msg);
+          chunks.splice(safeCaps);
+        }
+      }
+    }
+  }
+
+  warn(
+    `[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
+      ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,
+  );
+
+  // Consolidate output merges memories (non-wiki) → stash authoring standards.
+  // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
+  // per chunk).
+  const standardsContext = resolveStandardsContext("memory:_consolidated", stashDir);
+
+  const chunkOpsArrays = await judgeConsolidationChunks({
+    chunks,
+    opts,
+    config,
+    llmConfig,
+    sourceName,
+    bodyTruncation,
+    pendingProposalBodyHashes,
+    standardsContext,
+    warnings,
+    accounting,
+  });
 
   // Build the known-refs set from the already-filtered memory pool so
   // mergePlans() can reject LLM-hallucinated primary refs before execution.
