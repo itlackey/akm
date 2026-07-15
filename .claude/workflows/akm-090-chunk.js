@@ -436,7 +436,7 @@ ROLE: Setup engineer for Chunk ${chunk.id} (${chunk.title}).
 2. If a worktree already exists at ${worktreeRoot}/chunk-${chunk.id}, REUSE it (this is a resume): git -C <path> status must be clean; report resumedExisting=true. Otherwise create it: mkdir -p ${worktreeRoot} && git -C ${REPO} worktree add ${worktreeRoot}/chunk-${chunk.id} -B ${chunk.branch} origin/${baseBranch} (if the branch already exists on the remote, base on origin/${chunk.branch} instead to preserve prior work — report which you did).
 3. In the worktree: bun install --frozen-lockfile.
 4. Verify the design docs exist in the worktree at docs/design/ (the plan + specs + manifest). Report docsPresent accordingly.
-5. Baseline gate: run bun run check:fast in the worktree. baselineGreen=true only if it fully passes. Include a short failure summary otherwise. Do NOT attempt to fix baseline failures — report them.
+5. Baseline gate: run ONLY 'bun run lint && bunx tsc --noEmit' in the worktree (compile + lint sanity, ~2 min). Do NOT run check:fast / test:unit / the full suite here — the base is the integration-branch tip that already passed a full 'bun run check' at the prior chunk's Finalize (full-suite green is inherited), and this chunk re-verifies the whole suite at its OWN Finalize gate; re-running 28k unit tests at every baseline is redundant and is the #1 wall-clock waste. baselineGreen=true only if BOTH lint and tsc pass. Include a short failure summary otherwise. Do NOT attempt to fix baseline failures — report them.
 6. mkdir -p <worktree>/docs/design/execution/chunk-${chunk.id}
 Return worktreePath, branch, headSha (git rev-parse HEAD), and the fields in the schema. Never push. Never touch ${REPO}'s checked-out branch.`,
   { model: 'sonnet', schema: SETUP_SCHEMA, label: 'setup-worktree' },
@@ -449,7 +449,7 @@ if (!setup.baselineGreen) {
   const where = setup.resumedExisting
     ? `in the RESUMED worktree on ${setup.branch} — the red may come from prior work-in-progress commits (blocked items deliberately leave WIP in place), not from the base branch`
     : `in a fresh worktree off origin/${baseBranch} — the base itself is red`
-  return { chunk: chunk.id, status: 'blocked-baseline', detail: `Baseline check:fast is RED ${where}. The chunk cannot be review-gated against a red baseline. ${setup.baselineSummary}`, escalation: 'human' }
+  return { chunk: chunk.id, status: 'blocked-baseline', detail: `Baseline lint/tsc is RED ${where}. The chunk cannot be review-gated against a red baseline. ${setup.baselineSummary}`, escalation: 'human' }
 }
 log(`Worktree ready at ${wt} (${setup.branch} @ ${setup.headSha}); baseline green`)
 
