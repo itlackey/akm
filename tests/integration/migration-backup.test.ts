@@ -328,9 +328,24 @@ describe("0.9 migration backup", () => {
     seedLegacyConfig();
     fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
     const state = new Database(getStateDbPathInDataDir());
+    // This fixture marks 010-asset-outcome applied, so it must materialize the
+    // table migration 010 creates — migration 018's DROP COLUMN needs it to exist.
     state.exec(`
       CREATE TABLE improve_runs(id TEXT PRIMARY KEY, profile TEXT, started_at TEXT);
       CREATE TABLE schema_migrations(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+      CREATE TABLE asset_outcome (
+        asset_ref                TEXT    PRIMARY KEY,
+        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+        retrieval_count          INTEGER NOT NULL DEFAULT 0,
+        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+        accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+        review_pressure          INTEGER NOT NULL DEFAULT 0,
+        outcome_score            REAL    NOT NULL DEFAULT 0.0,
+        updated_at               INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_asset_outcome_review_pressure ON asset_outcome(review_pressure DESC);
+      CREATE INDEX idx_asset_outcome_score ON asset_outcome(outcome_score DESC);
     `);
     const stateInsert = state.prepare("INSERT INTO schema_migrations(id) VALUES (?)");
     for (const id of [

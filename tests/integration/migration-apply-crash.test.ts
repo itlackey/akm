@@ -49,6 +49,26 @@ const WORKFLOW_IDS = [
   "009-unit-claim",
 ] as const;
 
+// The physical schema migration 010 installs. Synthetic fixtures below mark
+// 010-asset-outcome as applied, so they must materialize the table it creates —
+// otherwise migration 018's `ALTER TABLE asset_outcome DROP COLUMN review_pressure`
+// (the first-ever DROP COLUMN migration) fails with "no such table".
+const ASSET_OUTCOME_010_DDL = `
+  CREATE TABLE asset_outcome (
+    asset_ref                TEXT    PRIMARY KEY,
+    last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
+    retrieval_count          INTEGER NOT NULL DEFAULT 0,
+    expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
+    negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
+    accepted_change_count    INTEGER NOT NULL DEFAULT 0,
+    review_pressure          INTEGER NOT NULL DEFAULT 0,
+    outcome_score            REAL    NOT NULL DEFAULT 0.0,
+    updated_at               INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX idx_asset_outcome_review_pressure ON asset_outcome(review_pressure DESC);
+  CREATE INDEX idx_asset_outcome_score ON asset_outcome(outcome_score DESC);
+`;
+
 let cleanup: Cleanup | undefined;
 
 beforeEach(() => {
@@ -73,7 +93,10 @@ function seed(options?: { failingWorkflow?: boolean }): string {
   fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0"}\n', { mode: 0o600 });
   fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
   const state = new Database(getStateDbPathInDataDir());
-  state.exec("CREATE TABLE improve_runs(id TEXT PRIMARY KEY, profile TEXT, started_at TEXT)");
+  state.exec(`
+    CREATE TABLE improve_runs(id TEXT PRIMARY KEY, profile TEXT, started_at TEXT);
+    ${ASSET_OUTCOME_010_DDL}
+  `);
   ledger(state, STATE_IDS);
   state.close();
   const workflow = new Database(getWorkflowDbPath());
