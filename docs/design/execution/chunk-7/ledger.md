@@ -558,3 +558,51 @@ No change to `EventsContext` shape (D14/R25); no db handle threaded into
 `ProposalsContext` (D14); no change to `core/asset/frontmatter.ts` (D8). The
 RunContext memo is structurally never run-wide (top-risk #7): the base context is
 non-memoizing and memoization is opt-in per `withFreshAssetMemo()` scope.
+
+## WI-7.5–7.8 — god-function decomposition progress (R31 ratchet)
+
+The WI-7.4 god-fn size ratchet (`scripts/lint-improve-fn-size.ts`, 220-line bar
+over `src/commands/improve/**`) started at **13 offenders**. Each decomposition
+below is a pure, byte-identical code-motion extraction verified against the
+relevant characterization suites; the ratchet baseline shrinks by exactly the
+functions brought under the bar (equality-asserted, shrink-only).
+
+| Item | Function | Before | After | Extracted pass(es) | Oracle (green) |
+|---|---|---:|---:|---|---|
+| WI-7.5 | `promoteMemoryToKnowledge` | 254 | ~165 | `resolveKnowledgePromotionContent` | 145 distill tests |
+| WI-7.6 | `runConsolidationPass` | 265 | ~175 | `evaluateConsolidationEligibility` | consolidate-min-pool-size + eligibility/salience (66) |
+| WI-7.8 | `handleMergeOp` | 297 | ~165 | `finalizeMerge` | 138 consolidate-suite tests |
+| WI-7.8 | `planConsolidation` | 373 | ~178 | `judgeConsolidationChunks`, `recordChunkJudgedNoAction` | 142 consolidate-suite tests |
+| WI-7.7 | `processSession` | 308 | ~213 | `runPreLlmSessionGates` | 136 extract tests |
+
+Ratchet: **13 → 8 offenders**. `consolidate.ts` is now fully under the bar
+(R9 op-family decomposition core landed). Full `bun run check` green at this
+point: unit **8568/0**, integration **4456/0**.
+
+**Remaining ratchet baseline (WI-7.5–7.8 worklist, 8 offenders):**
+`runImprovePreparationStage` (1493), `akmImprove` (810), `akmReflect` (643),
+`akmDistill` (632), `runImproveLoopStage` (500), `runImproveMaintenancePasses`
+(470), `akmExtract` (452), `loop-stages.ts withIndexWriterLease#arg1` (389).
+
+**Still outstanding for full WI-7.5–7.8 DoD** (beyond emptying the ratchet):
+the RunContext.readAsset / emitProposal facade *adoption* at the verb call
+sites (the mints exist and are pinned but are not yet threaded in); the
+promotion-policy literal trim (R24 — intricate `CANDIDATE_MODELS` /
+`selectPromotionPolicy` / bench-recompute interplay); the structured-call
+migration (R26, ~10 sites); the events-ctx threading (R25, 14+ sites) and the
+appendEvent hot-path test (WI-7.7); processSession's full 18→2-arg RunContext
+signature collapse; and the final grep-gate / net-LOC / audit finalize (WI-7.8).
+
+### Divergences from the brief found this session (anchors drift)
+
+- The brief's "Chunk 0a golden suites" and `tests/fixtures/goldens/` +
+  `DESIGNATIONS.json` infrastructure **do not exist in this worktree**. The
+  consolidate characterization oracle is `consolidate-op-handlers.test.ts` +
+  the sibling `tests/integration/commands/consolidate/*` suites (which drive the
+  four op handlers directly and end-to-end). "Byte-identical fixture" is moot
+  here; behavior preservation is enforced by those suites staying green.
+- Architecture AST tests live under `tests/integration/architecture/`
+  (disk-reading precedent: `agent-runner-seam.test.ts`); the god-fn ratchet
+  meta-test was placed at `tests/architecture/improve-fn-size-ratchet.test.ts`
+  (unit shard, matching the disk-reading `lint-isolation-ratchet.test.ts`
+  precedent) so it runs in `check:fast`.
