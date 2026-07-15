@@ -146,5 +146,4 @@ export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
   { id: "src/commands/improve/loop-stages.ts :: runImproveMaintenancePasses", lines: 470 },
   { id: "src/commands/improve/extract.ts :: akmExtract", lines: 452 },
   { id: "src/commands/improve/loop-stages.ts :: withIndexWriterLease#arg1", lines: 389 },
-  { id: "src/commands/improve/extract.ts :: processSession", lines: 308 },
 ];

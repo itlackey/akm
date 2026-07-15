@@ -520,6 +520,136 @@ export function hashSessionContent(data: SessionData): string {
  * proposal validation failure) the session result records a warning and
  * keeps going — one session's bad luck never aborts a multi-session run.
  */
+/**
+ * The zero-LLM pre-flight gates for one session: read, the #602 content-hash
+ * already-extracted skip, the #595/#596 minContentChars floor, and the #626
+ * heuristic triage gate. Returns a terminal skip result, or the read `data` +
+ * pre-filtered events + content hash to carry into the extraction prompt.
+ * Extracted verbatim from `processSession` — every skip shape/reason is
+ * byte-identical.
+ */
+function runPreLlmSessionGates(args: {
+  harness: SessionLogHarness;
+  sessionRef: SessionRef;
+  prior: ExtractedSessionRow | undefined;
+  force: boolean;
+  maxTotalChars: number | undefined;
+  minContentChars: number;
+  triage: { enabled: boolean; minScore: number };
+}):
+  | { skip: ExtractedSessionResult }
+  | {
+      data: ReturnType<SessionLogHarness["readSession"]>;
+      filtered: ReturnType<typeof preFilterSession>;
+      contentHash: string;
+    } {
+  const { harness, sessionRef, prior, force, maxTotalChars, minContentChars, triage } = args;
+  let data: ReturnType<SessionLogHarness["readSession"]>;
+  try {
+    data = harness.readSession(sessionRef);
+  } catch (err) {
+    return {
+      skip: {
+        sessionId: sessionRef.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+        warnings: [`readSession failed: ${err instanceof Error ? err.message : String(err)}`],
+        skipped: true,
+        skipReason: "read_failed",
+      },
+    };
+  }
+
+  // #602 — content-hash skip. Computed on the RAW event stream immediately after
+  // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
+  // an unchanged session never reaches the LLM. Hash-based ⇒ clock-independent
+  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). The skip
+  // applies UNIFORMLY — including explicit `--session-id` targeting (so a
+  // session-end hook firing `extract --session-id <id>` is idempotent). ONLY
+  // `--force` overrides it to re-extract a previously-extracted session.
+  const contentHash = hashSessionContent(data);
+  if (!force && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
+    return {
+      skip: {
+        sessionId: sessionRef.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
+        warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
+        skipped: true,
+        skipReason: "already_extracted",
+        contentHash,
+      },
+    };
+  }
+
+  const filtered = preFilterSession(data, {
+    ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
+  });
+
+  // #595/#596 — minContentChars gate: skip the LLM call for sessions whose RAW
+  // size is below threshold. Measured on the raw event text BEFORE the noise
+  // pre-filter, NOT on post-filter output — the pre-filter strips boilerplate
+  // so aggressively that even signal-bearing sessions can have tiny output
+  // (#596: gating post-filter filtered out 100% of sessions). Note: the 0.8.x
+  // fix gated on `filtered.stats.inputCount`, which is an EVENT count, not a
+  // char count — this port measures actual raw chars so the threshold matches
+  // the config key's documented unit.
+  const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
+  if (minContentChars > 0 && rawContentChars < minContentChars) {
+    return {
+      skip: {
+        sessionId: sessionRef.sessionId,
+        harness: harness.name,
+        candidateCount: 0,
+        proposalIds: [],
+        preFilter: {
+          inputCount: filtered.stats.inputCount,
+          outputCount: filtered.stats.outputCount,
+          truncatedCount: filtered.stats.truncatedCount,
+        },
+        warnings: [],
+        skipped: true,
+        skipReason: "too_short",
+        contentHash,
+      },
+    };
+  }
+
+  // #626 — pre-LLM heuristic triage gate. Runs AFTER minContentChars + the
+  // already-extracted skip check (both in the caller / above), BEFORE the
+  // extraction prompt and the session-asset write. When the session scores below
+  // the configured threshold we triage it out: no chat() call, no session asset,
+  // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
+  if (triage.enabled) {
+    const t = scoreSessionTriage(data, triage.minScore);
+    if (!t.pass) {
+      return {
+        skip: {
+          sessionId: sessionRef.sessionId,
+          harness: harness.name,
+          candidateCount: 0,
+          proposalIds: [],
+          preFilter: {
+            inputCount: filtered.stats.inputCount,
+            outputCount: filtered.stats.outputCount,
+            truncatedCount: filtered.stats.truncatedCount,
+          },
+          warnings: [],
+          skipped: true,
+          skipReason: "triaged_out",
+          contentHash,
+        },
+      };
+    }
+  }
+
+  return { data, filtered, contentHash };
+}
+
 async function processSession(
   harness: SessionLogHarness,
   sessionRef: SessionRef,
@@ -555,100 +685,9 @@ async function processSession(
   standardsContext: string,
 ): Promise<ExtractedSessionResult> {
   const warnings: string[] = [];
-  let data: ReturnType<SessionLogHarness["readSession"]>;
-  try {
-    data = harness.readSession(sessionRef);
-  } catch (err) {
-    return {
-      sessionId: sessionRef.sessionId,
-      harness: harness.name,
-      candidateCount: 0,
-      proposalIds: [],
-      preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-      warnings: [`readSession failed: ${err instanceof Error ? err.message : String(err)}`],
-      skipped: true,
-      skipReason: "read_failed",
-    };
-  }
-
-  // #602 — content-hash skip. Computed on the RAW event stream immediately after
-  // a successful read, BEFORE the pre-filter / minContentChars / triage gates, so
-  // an unchanged session never reaches the LLM. Hash-based ⇒ clock-independent
-  // (immune to the Jun 11-12 timestamp double-extract/over-throttle bug). The skip
-  // applies UNIFORMLY — including explicit `--session-id` targeting (so a
-  // session-end hook firing `extract --session-id <id>` is idempotent). ONLY
-  // `--force` overrides it to re-extract a previously-extracted session.
-  const contentHash = hashSessionContent(data);
-  if (!force && shouldSkipAlreadyExtractedSession(prior, contentHash)) {
-    return {
-      sessionId: sessionRef.sessionId,
-      harness: harness.name,
-      candidateCount: 0,
-      proposalIds: [],
-      preFilter: { inputCount: 0, outputCount: 0, truncatedCount: 0 },
-      warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
-      skipped: true,
-      skipReason: "already_extracted",
-      contentHash,
-    };
-  }
-
-  const filtered = preFilterSession(data, {
-    ...(typeof maxTotalChars === "number" ? { maxTotalChars } : {}),
-  });
-
-  // #595/#596 — minContentChars gate: skip the LLM call for sessions whose RAW
-  // size is below threshold. Measured on the raw event text BEFORE the noise
-  // pre-filter, NOT on post-filter output — the pre-filter strips boilerplate
-  // so aggressively that even signal-bearing sessions can have tiny output
-  // (#596: gating post-filter filtered out 100% of sessions). Note: the 0.8.x
-  // fix gated on `filtered.stats.inputCount`, which is an EVENT count, not a
-  // char count — this port measures actual raw chars so the threshold matches
-  // the config key's documented unit.
-  const rawContentChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
-  if (minContentChars > 0 && rawContentChars < minContentChars) {
-    return {
-      sessionId: sessionRef.sessionId,
-      harness: harness.name,
-      candidateCount: 0,
-      proposalIds: [],
-      preFilter: {
-        inputCount: filtered.stats.inputCount,
-        outputCount: filtered.stats.outputCount,
-        truncatedCount: filtered.stats.truncatedCount,
-      },
-      warnings: [],
-      skipped: true,
-      skipReason: "too_short",
-      contentHash,
-    };
-  }
-
-  // #626 — pre-LLM heuristic triage gate. Runs AFTER minContentChars + the
-  // already-extracted skip check (both in the caller / above), BEFORE the
-  // extraction prompt and the session-asset write. When the session scores below
-  // the configured threshold we triage it out: no chat() call, no session asset,
-  // no proposals. Pure-heuristic — zero added LLM cost. Default-off → skipped.
-  if (triage.enabled) {
-    const t = scoreSessionTriage(data, triage.minScore);
-    if (!t.pass) {
-      return {
-        sessionId: sessionRef.sessionId,
-        harness: harness.name,
-        candidateCount: 0,
-        proposalIds: [],
-        preFilter: {
-          inputCount: filtered.stats.inputCount,
-          outputCount: filtered.stats.outputCount,
-          truncatedCount: filtered.stats.truncatedCount,
-        },
-        warnings: [],
-        skipped: true,
-        skipReason: "triaged_out",
-        contentHash,
-      };
-    }
-  }
+  const gate = runPreLlmSessionGates({ harness, sessionRef, prior, force, maxTotalChars, minContentChars, triage });
+  if ("skip" in gate) return gate.skip;
+  const { data, filtered, contentHash } = gate;
 
   const prompt = buildExtractPrompt({
     data,
