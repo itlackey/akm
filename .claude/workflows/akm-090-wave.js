@@ -1,6 +1,6 @@
 export const meta = {
   name: 'akm-090-wave',
-  description: 'Execute several 0.9.0 plan chunks sequentially on one wave branch: per chunk, Fable-grounded brief, Sonnet test-first dev, Opus dual review gates, Fable escalation ladder',
+  description: 'Execute several 0.9.0 plan chunks sequentially on one wave branch: per chunk, Opus-grounded brief, Sonnet test-first dev, Opus dual review gates, Opus escalation ladder',
   whenToUse: 'Batch runner for consecutive chunks sharing one branch/worktree (plan §11 "in-branch chunks"). Defaults to Wave-1 remainder (7, 6, 9) on akm-090/wave-1; for other batches, dispatch a launch copy with CHUNK_IDS/WAVE_BRANCH defaults edited (args are not forwarded in this runtime). Runbook: docs/design/akm-0.9.0-execution-workflow.md.',
   phases: [
     { title: 'Load', detail: 'manifest entries + preflight' },
@@ -451,20 +451,20 @@ async function runChunk(chunk, isFirst) {
   const extraction = await agent(
     `${CONTEXT}
 
-ROLE: Plan extractor (Fable 5) for Chunk ${chunk.id} (${chunk.title}).
+ROLE: Plan extractor (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}).
 Manifest entry (derived from plan §11 — verify against the plan itself, the plan wins): ${chunkJson}
 Read the plan's §11 paragraph for this chunk AND every section its planRefs cite, in the worktree at ${wt} (fallback ${REPO}). Also read the adapter/normative spec sections the plan cites for this chunk.
 Produce the complete requirements inventory for this chunk: every distinct thing the plan requires (behavior changes, deletions, structural moves, gates, test buckets, docs). Each requirement gets a stable id (R1, R2, ...), the exact plan anchor (section + phrase), and a kind. Do NOT invent requirements the plan doesn't state; do NOT drop any it does — completeness will be adversarially verified.
 Then group the requirements into 3-4 groundingTasks by code area (fewer, larger areas — this container runs at most ~2 grounding agents concurrently, so task count is wall-clock), each with precise instructions for a codebase-grounding agent (which files/symbols to verify, which anchors to re-measure at HEAD, which existing tests to inventory).
 List dependenciesOnPriorChunks (what this chunk assumes already landed — note that chunks ${CHUNK_IDS.join(', ')} land sequentially on this same branch, so earlier wave chunks' work IS present at HEAD) and any openQuestions the plan leaves genuinely underspecified.`,
-    { model: 'fable', effort: 'high', schema: EXTRACT_SCHEMA, label: `extract:${chunk.id}`, phase: P('Ground') },
+    { model: 'opus', effort: 'high', schema: EXTRACT_SCHEMA, label: `extract:${chunk.id}`, phase: P('Ground') },
   )
   if (!extraction) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'plan extraction failed' }
   log(`Chunk ${chunk.id}: ${extraction.requirements.length} requirements → ${extraction.groundingTasks.length} grounding tasks`)
 
   const groundPrompt = (t) => `${CONTEXT}
 
-ROLE: Codebase grounder (Sonnet 5) for Chunk ${chunk.id}, area "${t.area}". You collect VERIFIED facts; the Fable-5 brief author and its adversarial code-grounding lens sit downstream of you and re-verify — but they rely on your anchors, so measure, never guess.
+ROLE: Codebase grounder (Sonnet 5) for Chunk ${chunk.id}, area "${t.area}". You collect VERIFIED facts; the Opus-4.8 brief author and its adversarial code-grounding lens sit downstream of you and re-verify — but they rely on your anchors, so measure, never guess.
 Work read-only in the worktree ${wt} (branch ${WAVE_BRANCH} @ ${chunkStartSha}) — this is the exact code state the implementation will start from (it already contains earlier wave chunks' work).
 Requirements to ground (from the plan): ${JSON.stringify(extraction.requirements.filter((r) => t.requirementIds.includes(r.id)))}
 Instructions: ${t.instructions}
@@ -486,7 +486,7 @@ For EACH requirement: verify the plan's claims against the actual code (read the
 
   const briefAuthorPrompt = (revisionNote) => `${CONTEXT}
 
-ROLE: Implementation-brief author (Fable 5) for Chunk ${chunk.id} (${chunk.title}). This brief is what the implementation team builds from — it is the single most important artifact of the chunk. It must be grounded in the plan AND the code, complete, and unambiguous.
+ROLE: Implementation-brief author (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}). This brief is what the implementation team builds from — it is the single most important artifact of the chunk. It must be grounded in the plan AND the code, complete, and unambiguous.
 Manifest entry: ${chunkJson}
 Requirements inventory: ${JSON.stringify(extraction.requirements)}
 Verified codebase grounding (anchors here are re-measured truth; where they contradict the plan's line numbers, these win): ${groundingJson}
@@ -500,7 +500,7 @@ Write the implementation brief:
 5. Write the full human-readable brief to ${wt}/${briefPathRel} (markdown: overview, ground-truth facts with verified anchors, the work items, gate checklist, risks) and commit it on ${WAVE_BRANCH} with message "docs(chunk-${chunk.id}): implementation brief". Never push.
 Return the structured brief (briefPath = "${briefPathRel}").`
 
-  let brief = await agent(briefAuthorPrompt(''), { model: 'fable', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}`, phase: P('Ground') })
+  let brief = await agent(briefAuthorPrompt(''), { model: 'opus', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}`, phase: P('Ground') })
   if (!brief) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'brief author failed' }
 
   // ---- Verify Brief (fail closed) ----
@@ -515,7 +515,7 @@ Return the structured brief (briefPath = "${briefPathRel}").`
   for (let round = 0; round <= 2; round++) {
     const fullLensPrompt = (l) => `${CONTEXT}
 
-ROLE: Adversarial brief verifier (Fable 5), lens = ${l.key}, for Chunk ${chunk.id}. Your default stance is REFUSE — approve only if you actively fail to find a defect through your lens.
+ROLE: Adversarial brief verifier (Opus 4.8), lens = ${l.key}, for Chunk ${chunk.id}. Your default stance is REFUSE — approve only if you actively fail to find a defect through your lens.
 ${l.prompt}
 Brief (structured): ${JSON.stringify(brief)}
 Full brief text: read ${wt}/${briefPathRel}. Requirements inventory: ${JSON.stringify(extraction.requirements)}. Manifest entry: ${chunkJson}. Worktree for verification: ${wt}.
@@ -523,7 +523,7 @@ Return verdict "approve" or "revise" with concrete blockers (claim / why / fix).
 
     const deltaLensPrompt = (l) => `${CONTEXT}
 
-ROLE: Adversarial brief verifier (Fable 5), lens = ${l.key}, for Chunk ${chunk.id} — DELTA RE-CHECK. You approved the previous revision of this brief through your lens; it was then minimally revised to address OTHER lenses' blockers. Verify ONLY that the revision did not introduce a violation of your lens: in ${wt}, use git log/git diff on ${briefPathRel} to see exactly what changed, and read the changed sections. Your lens: ${l.prompt}
+ROLE: Adversarial brief verifier (Opus 4.8), lens = ${l.key}, for Chunk ${chunk.id} — DELTA RE-CHECK. You approved the previous revision of this brief through your lens; it was then minimally revised to address OTHER lenses' blockers. Verify ONLY that the revision did not introduce a violation of your lens: in ${wt}, use git log/git diff on ${briefPathRel} to see exactly what changed, and read the changed sections. Your lens: ${l.prompt}
 Return "approve" unless the DELTA introduces a defect visible through your lens (then "revise" with concrete blockers).`
 
     const raw = await parallel(
@@ -531,10 +531,10 @@ Return "approve" unless the DELTA introduces a defect visible through your lens 
         const delta = round > 0 && lensApproved.has(l.key)
         const p = delta ? deltaLensPrompt(l) : fullLensPrompt(l)
         const eff = delta ? 'low' : 'high'
-        let v = await agent(p, { model: 'fable', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}${delta ? '-delta' : ''}${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
+        let v = await agent(p, { model: 'opus', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}${delta ? '-delta' : ''}${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
         if (!v) {
           log(`brief verifier lens ${chunk.id}/${l.key} died; retrying once`)
-          v = await agent(p, { model: 'fable', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}-retry${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
+          v = await agent(p, { model: 'opus', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}-retry${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
         }
         return v
       })()),
@@ -557,7 +557,7 @@ Return "approve" unless the DELTA introduces a defect visible through your lens 
     log(`Chunk ${chunk.id} brief revision round ${round + 1}: ${allBlockers.length} blocker(s)`)
     brief = await agent(
       briefAuthorPrompt(`REVISION REQUIRED — an adversarial verification panel found these blockers in your previous brief (read the committed version at ${wt}/${briefPathRel}, fix every one, rewrite the file, and commit the revision):\n${JSON.stringify(allBlockers)}`),
-      { model: 'fable', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}-rev${round + 1}`, phase: P('Ground') },
+      { model: 'opus', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}-rev${round + 1}`, phase: P('Ground') },
     )
     if (!brief) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'brief revision failed' }
   }
@@ -609,7 +609,7 @@ ${tfp(chunk.id)}
 Scope discipline: implement EXACTLY this work item — its steps, files, deletions, acceptance. Nothing beyond it (other items handle the rest); nothing trust-shaped or lifecycle-shaped ever. If the brief turns out to be wrong about the code, do the minimal faithful interpretation and record it in deviations — reviewers check deviations against the brief.
 Do not modify docs/design/** except docs/design/execution/chunk-${chunk.id}/** (Chunk 10 items may override this explicitly in their steps).
 ${history.length ? findingsDigest(history) : ''}
-${guidance ? `ARCHITECT GUIDANCE (Fable 5 escalation — this clarifies/overrides ambiguous parts of the brief):\n${JSON.stringify(guidance)}` : ''}
+${guidance ? `ARCHITECT GUIDANCE (Opus 4.8 escalation — this clarifies/overrides ambiguous parts of the brief):\n${JSON.stringify(guidance)}` : ''}
 SPEED DISCIPLINE: never run a full test suite (bun run check, check:fast, test, test:unit, test:integration) — one suite run costs 10+ minutes in this container and suite-level verification is the Finalize gate's job, run once per chunk. Verify with the item's own test files (bun test <paths>), bunx tsc --noEmit, and lint scoped to touched files (bunx biome check <files>). Batch related shell commands instead of issuing many small ones.
 When done: all work committed with scoped messages (test(chunk-${chunk.id}):/refactor(chunk-${chunk.id}):/feat(chunk-${chunk.id}):/docs(chunk-${chunk.id}):), item tests run (item-scoped, per above). Report honestly — failing tests are reported as failing, never hidden. Include failingFirstEvidence (the recorded pre-implementation failure output) for test-first items.`
 
@@ -658,16 +658,16 @@ Criteria: cyclomatic complexity + length of touched functions (a new god fn >~20
         guidance = await agent(
           `${CONTEXT}
 
-ROLE: Escalation architect (Fable 5). Work item ${item.id} of Chunk ${chunk.id} has FAILED Opus review twice. The Opus reviewers escalate to you for assistance and clarification before the final attempt.
+ROLE: Escalation architect (Opus 4.8). Work item ${item.id} of Chunk ${chunk.id} has FAILED Opus review twice. The Opus reviewers escalate to you for assistance and clarification before the final attempt.
 Work item: ${itemJson}
 Brief: ${wt}/${briefPathRel}. Review history (both rounds, both reviewers): ${JSON.stringify(history)}
 Latest developer report: ${JSON.stringify(devReport)}
 Examine the actual code in ${wt} (read-only). Diagnose the ROOT CAUSE: is the developer misreading the brief, is the brief ambiguous or wrong about the code, or are the reviewers applying a criterion incorrectly? Ground your judgment in the plan (${PLAN}) — it is the authority.
 Produce: diagnosis; concrete step-by-step guidance the developer can execute; briefAmendments if the brief itself needs correction (also EDIT ${wt}/${briefPathRel} accordingly and commit "docs(chunk-${chunk.id}): brief amendment for ${item.id}" — this is the one write you may make); recommendBlock=true with questionsForHuman if the item is genuinely mis-scoped against the plan and no third attempt can succeed.`,
-          { model: 'fable', effort: 'xhigh', schema: ASSIST_SCHEMA, label: `assist:${chunk.id}:${item.id}`, phase: P('Escalate') },
+          { model: 'opus', effort: 'xhigh', schema: ASSIST_SCHEMA, label: `assist:${chunk.id}:${item.id}`, phase: P('Escalate') },
         )
         if (guidance && guidance.recommendBlock) {
-          log(`Fable escalation recommends blocking ${chunk.id}/${item.id} without a third attempt`)
+          log(`Opus escalation architect recommends blocking ${chunk.id}/${item.id} without a third attempt`)
           break
         }
       }
@@ -677,15 +677,15 @@ Produce: diagnosis; concrete step-by-step guidance the developer can execute; br
 
     if (status !== 'done') {
       const ladderPath = guidance && guidance.recommendBlock
-        ? `dev + dual review ×${history.length}; the Fable-5 escalation architect then recommended blocking WITHOUT a third attempt (item judged mis-scoped against the plan)`
-        : `the full ladder (${history.length} dev attempt(s) + dual review each, with Fable-5 assistance before the final attempt)`
+        ? `dev + dual review ×${history.length}; the Opus-4.8 escalation architect then recommended blocking WITHOUT a third attempt (item judged mis-scoped against the plan)`
+        : `the full ladder (${history.length} dev attempt(s) + dual review each, with Opus-4.8 assistance before the final attempt)`
       const block = await agent(
         `${CONTEXT}
 
-ROLE: Escalation reporter (Fable 5). Work item ${item.id} of Chunk ${chunk.id} is BLOCKED after ${ladderPath}. A human maintainer will pick this up — write the report that lets them decide in one sitting; describe only what actually ran, per the history below.
-Work item: ${itemJson}. Review history: ${JSON.stringify(history)}. Fable guidance given: ${JSON.stringify(guidance)}. Last dev report: ${JSON.stringify(devReport)}
+ROLE: Escalation reporter (Opus 4.8). Work item ${item.id} of Chunk ${chunk.id} is BLOCKED after ${ladderPath}. A human maintainer will pick this up — write the report that lets them decide in one sitting; describe only what actually ran, per the history below.
+Work item: ${itemJson}. Review history: ${JSON.stringify(history)}. Opus escalation guidance given: ${JSON.stringify(guidance)}. Last dev report: ${JSON.stringify(devReport)}
 Write ${wt}/docs/design/execution/chunk-${chunk.id}/escalation-${item.id}.md: what the item requires (with plan anchors), what was attempted (commits), exactly why review keeps failing (the unresolved findings, verbatim), the root-cause diagnosis, and SPECIFIC questions/decisions for the human. Commit it on ${WAVE_BRANCH} ("docs(chunk-${chunk.id}): escalation report for ${item.id}"). Leave the work-in-progress commits in place — do not revert anything. Never push.`,
-        { model: 'fable', effort: 'high', schema: BLOCK_SCHEMA, label: `block:${chunk.id}:${item.id}`, phase: P('Escalate') },
+        { model: 'opus', effort: 'high', schema: BLOCK_SCHEMA, label: `block:${chunk.id}:${item.id}`, phase: P('Escalate') },
       )
       blockedIds.push(item.id)
       itemResults.push({ itemId: item.id, status: 'blocked', attempts: history.length, escalation: block || { summary: 'escalation reporter died; see review history in workflow result' } })
