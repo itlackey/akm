@@ -447,127 +447,28 @@ async function runChunk(chunk, isFirst) {
   )
   const chunkStartSha = anchor ? anchor.headSha : setup.headSha
 
-  // ---- Ground ----
-  const extraction = await agent(
+  // ---- Plan -> brief, ONE pass (Lean grounding, user-approved 2026-07-15) ----
+  // The plan document IS the detailed implementation design and the manifest
+  // already decomposes each chunk (scope, gates, deletions, test bucket). One
+  // Opus agent reads the relevant plan sections + the SPECIFIC files this chunk
+  // touches and writes the brief. No separate extractor, no grounder fan-out, no
+  // adversarial lens panel + revision rounds: those re-derived what the plan
+  // already contains and cost ~60 min / tens of M tokens per chunk (measured on
+  // chunk 7). The dual per-item review at implementation time is the real quality
+  // gate; a wrong anchor in the brief surfaces there, cheaply.
+  const brief = await agent(
     `${CONTEXT}
 
-ROLE: Plan extractor (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}).
-Manifest entry (derived from plan §11 — verify against the plan itself, the plan wins): ${chunkJson}
-Read the plan's §11 paragraph for this chunk AND every section its planRefs cite, in the worktree at ${wt} (fallback ${REPO}). Also read the adapter/normative spec sections the plan cites for this chunk.
-Produce the complete requirements inventory for this chunk: every distinct thing the plan requires (behavior changes, deletions, structural moves, gates, test buckets, docs). Each requirement gets a stable id (R1, R2, ...), the exact plan anchor (section + phrase), and a kind. Do NOT invent requirements the plan doesn't state; do NOT drop any it does — completeness will be adversarially verified.
-Then group the requirements into 3-4 groundingTasks by code area (fewer, larger areas — this container runs at most ~2 grounding agents concurrently, so task count is wall-clock), each with precise instructions for a codebase-grounding agent (which files/symbols to verify, which anchors to re-measure at HEAD, which existing tests to inventory).
-List dependenciesOnPriorChunks (what this chunk assumes already landed — note that chunks ${CHUNK_IDS.join(', ')} land sequentially on this same branch, so earlier wave chunks' work IS present at HEAD) and any openQuestions the plan leaves genuinely underspecified.`,
-    { model: 'opus', effort: 'high', schema: EXTRACT_SCHEMA, label: `extract:${chunk.id}`, phase: P('Ground') },
+ROLE: Implementation planner (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}). Turn the plan into an executable brief FAST. The plan is ALREADY the detailed design and the manifest already decomposes this chunk — do NOT re-derive them, do NOT survey the whole codebase.
+Manifest entry (scope, gates, deletions, test bucket, plan refs): ${chunkJson}
+Read, in the worktree ${wt}: only the plan's §11 paragraph for this chunk and the specific sections its planRefs name (not the whole plan), plus the adapter/normative spec sections it cites. Then read ONLY the specific source/test files this chunk names or obviously touches — grep to locate the symbols, read the relevant spans, spot-check just the few file:line anchors your work items depend on. Reading the entire codebase or re-verifying every anchor is exactly the waste this role exists to avoid.
+Produce an ORDERED list of 3-5 work items (dependency order; dependsOn between them; prefer FEW LARGE items — each costs ~20-30 min of dev+review overhead, so item count drives wall-clock). Each work item: testMode (test-first | characterization-preserve | deletion-gate | docs-assets), testsFirst (specific test files/cases to write or preserve first), steps (concrete, file-anchored), files, deletions (exact files/symbols), acceptance (checkable, each traceable to a manifest gate or plan requirement), estLoc. Map every manifest gate into gateChecklist with the item(s) that satisfy it. Cover everything the manifest scope names; add NOTHING beyond plan scope — anything trust-shaped or lifecycle-shaped is out of scope by design (plan §1.3), say so explicitly so the dev does not add it.
+Write the brief to ${wt}/${briefPathRel} (markdown: overview, key ground-truth facts with the anchors you actually verified, the work items, gate checklist, risks) and commit it on ${WAVE_BRANCH} ("docs(chunk-${chunk.id}): implementation brief"). Never push. Return the structured brief (briefPath = "${briefPathRel}").`,
+    { model: 'opus', effort: 'high', schema: BRIEF_SCHEMA, label: `brief:${chunk.id}`, phase: P('Ground') },
   )
-  if (!extraction) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'plan extraction failed' }
-  log(`Chunk ${chunk.id}: ${extraction.requirements.length} requirements → ${extraction.groundingTasks.length} grounding tasks`)
-
-  const groundPrompt = (t) => `${CONTEXT}
-
-ROLE: Codebase grounder (Sonnet 5) for Chunk ${chunk.id}, area "${t.area}". You collect VERIFIED facts; the Opus-4.8 brief author and its adversarial code-grounding lens sit downstream of you and re-verify — but they rely on your anchors, so measure, never guess.
-Work read-only in the worktree ${wt} (branch ${WAVE_BRANCH} @ ${chunkStartSha}) — this is the exact code state the implementation will start from (it already contains earlier wave chunks' work).
-Requirements to ground (from the plan): ${JSON.stringify(extraction.requirements.filter((r) => t.requirementIds.includes(r.id)))}
-Instructions: ${t.instructions}
-For EACH requirement: verify the plan's claims against the actual code (read the files; run greps; re-measure any file:line anchors at this HEAD and report the true ones), state precisely what exists today (current behavior, current structure), list existing tests covering it, and flag any drift between what the plan assumed and what the code says (driftFromPlan). Anchors must be real file:line values you verified, not copied from the plan. Do not modify anything.`
-
-  const groundings = (await parallel(
-    extraction.groundingTasks.map((t) => () => (async () => {
-      let g = await agent(groundPrompt(t), { model: 'sonnet', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}`, phase: P('Ground') })
-      if (!g) {
-        log(`grounding agent for ${chunk.id}/"${t.area}" died; retrying once`)
-        g = await agent(groundPrompt(t), { model: 'sonnet', effort: 'high', schema: GROUNDING_SCHEMA, label: `ground:${chunk.id}:${t.area}-retry`, phase: P('Ground') })
-      }
-      return g || { area: t.area, facts: [], risks: [`GROUNDING FAILED for area "${t.area}" — requirements ${t.requirementIds.join(', ')} are UNGROUNDED; the brief must not assert code facts about them without verifying in-line`] }
-    })()),
-  )).filter(Boolean)
-  if (!groundings.some((g) => g.facts && g.facts.length)) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'all grounding agents failed' }
-
-  const groundingJson = JSON.stringify(groundings)
-
-  const briefAuthorPrompt = (revisionNote) => `${CONTEXT}
-
-ROLE: Implementation-brief author (Opus 4.8) for Chunk ${chunk.id} (${chunk.title}). This brief is what the implementation team builds from — it is the single most important artifact of the chunk. It must be grounded in the plan AND the code, complete, and unambiguous.
-Manifest entry: ${chunkJson}
-Requirements inventory: ${JSON.stringify(extraction.requirements)}
-Verified codebase grounding (anchors here are re-measured truth; where they contradict the plan's line numbers, these win): ${groundingJson}
-${revisionNote || ''}
-
-Write the implementation brief:
-1. Decompose the chunk into ORDERED work items sized for one focused developer session each (roughly ≤600 changed LOC or one coherent deletion sweep per item). Prefer FEW, LARGER items: a chunk typically yields 3-5; never split one plan deliverable into micro-items, and batch related captures into one item for capture-only chunks. Every item costs ~20-30 minutes of fixed overhead (dev spin-up + dual review + usage gate) before any real work — item count is the main wall-clock driver. Order = dependency order; use dependsOn between items.
-2. Every work item: testMode (test-first | characterization-preserve | deletion-gate | docs-assets), testsFirst (the specific test files/cases to write or preserve BEFORE implementation — named paths, named behaviors), steps (concrete, file-anchored implementation steps), files, deletions (exact files/symbols to delete, from the inventory), acceptance (checkable criteria, each traceable to a requirement id or gate), estLoc.
-3. Every requirement id from the inventory must be covered by exactly the work items that implement it — no orphans, no inventions. The chunk gates (${JSON.stringify(chunk.gates)}) map into gateChecklist with the item(s) that satisfy each.
-4. Respect the hard rules verbatim; anything lifecycle-shaped or trust-shaped is out of scope BY DESIGN — say so in the brief so the dev doesn't "helpfully" add it.
-5. Write the full human-readable brief to ${wt}/${briefPathRel} (markdown: overview, ground-truth facts with verified anchors, the work items, gate checklist, risks) and commit it on ${WAVE_BRANCH} with message "docs(chunk-${chunk.id}): implementation brief". Never push.
-Return the structured brief (briefPath = "${briefPathRel}").`
-
-  let brief = await agent(briefAuthorPrompt(''), { model: 'opus', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}`, phase: P('Ground') })
   if (!brief) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'brief author failed' }
-
-  // ---- Verify Brief (fail closed) ----
-  const LENSES = [
-    { key: 'plan-fidelity', prompt: 'PLAN FIDELITY: does the brief cover EVERY requirement in the inventory and add NOTHING beyond plan scope? Check each requirement id → work item mapping. Scope creep (especially anything trust-shaped or lifecycle-shaped, plan §1.3/§12.4) and silent omissions are blockers. Verify the gateChecklist covers every manifest gate.' },
-    { key: 'code-grounding', prompt: 'CODE GROUNDING: is every factual claim in the brief (file:line anchors, current-behavior statements, symbol names, "X is used by Y" claims) TRUE at the worktree HEAD? Spot-verify by reading the actual files — every anchor you check must resolve. A wrong anchor or false behavior claim is a blocker.' },
-    { key: 'test-adequacy', prompt: 'TEST-FIRST ADEQUACY: for each work item, are testsFirst sufficient to gate the implementation (would they actually fail without it / catch a wrong implementation)? Is each testMode correct for the item? Do deletion items land replacement contract tests in the same commit (plan §15.4)? Are acceptance criteria mechanically checkable? Vague or missing test specs are blockers.' },
-  ]
-
-  let briefApproved = false
-  const lensApproved = new Set() // lenses that approved the previous revision get a cheap delta re-check, not a full re-run
-  for (let round = 0; round <= 2; round++) {
-    const fullLensPrompt = (l) => `${CONTEXT}
-
-ROLE: Adversarial brief verifier (Opus 4.8), lens = ${l.key}, for Chunk ${chunk.id}. Your default stance is REFUSE — approve only if you actively fail to find a defect through your lens.
-${l.prompt}
-Brief (structured): ${JSON.stringify(brief)}
-Full brief text: read ${wt}/${briefPathRel}. Requirements inventory: ${JSON.stringify(extraction.requirements)}. Manifest entry: ${chunkJson}. Worktree for verification: ${wt}.
-Return verdict "approve" or "revise" with concrete blockers (claim / why / fix). Minor style notes go in minors and do not force revision.`
-
-    const deltaLensPrompt = (l) => `${CONTEXT}
-
-ROLE: Adversarial brief verifier (Opus 4.8), lens = ${l.key}, for Chunk ${chunk.id} — DELTA RE-CHECK. You approved the previous revision of this brief through your lens; it was then minimally revised to address OTHER lenses' blockers. Verify ONLY that the revision did not introduce a violation of your lens: in ${wt}, use git log/git diff on ${briefPathRel} to see exactly what changed, and read the changed sections. Your lens: ${l.prompt}
-Return "approve" unless the DELTA introduces a defect visible through your lens (then "revise" with concrete blockers).`
-
-    const raw = await parallel(
-      LENSES.map((l) => () => (async () => {
-        const delta = round > 0 && lensApproved.has(l.key)
-        const p = delta ? deltaLensPrompt(l) : fullLensPrompt(l)
-        const eff = delta ? 'low' : 'high'
-        let v = await agent(p, { model: 'opus', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}${delta ? '-delta' : ''}${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
-        if (!v) {
-          log(`brief verifier lens ${chunk.id}/${l.key} died; retrying once`)
-          v = await agent(p, { model: 'opus', effort: eff, schema: REFUTE_SCHEMA, label: `verify-brief:${chunk.id}:${l.key}-retry${round ? `-r${round}` : ''}`, phase: P('Verify Brief') })
-        }
-        return v
-      })()),
-    )
-    const verdicts = raw.map((v, i) => v || { lens: LENSES[i].key, verdict: 'revise', blockers: [{ claim: `verification lens ${LENSES[i].key} unavailable`, why: 'the lens agent died twice — this round cannot count as verified', fix: 'the brief must pass a complete 3-lens round' }] })
-    verdicts.forEach((v, i) => {
-      const key = LENSES[i].key
-      if (v.verdict === 'approve') lensApproved.add(key)
-      else lensApproved.delete(key)
-    })
-
-    const allBlockers = verdicts.flatMap((v) => (v.verdict === 'revise'
-      ? (v.blockers.length ? v.blockers : [{ claim: `lens ${v.lens} demanded revision without itemized blockers`, why: 'revise verdict with an empty blocker list', fix: `address the lens's notes: ${JSON.stringify(v.minors || [])}` }])
-      : []))
-    if (verdicts.length < LENSES.length) {
-      allBlockers.push({ claim: 'incomplete verification round', why: `${LENSES.length - verdicts.length} lens(es) did not run`, fix: 'the brief must pass a complete 3-lens round' })
-    }
-    if (!allBlockers.length) { briefApproved = true; break }
-    if (round === 2) break
-    log(`Chunk ${chunk.id} brief revision round ${round + 1}: ${allBlockers.length} blocker(s)`)
-    brief = await agent(
-      briefAuthorPrompt(`REVISION REQUIRED — an adversarial verification panel found these blockers in your previous brief (read the committed version at ${wt}/${briefPathRel}, fix every one, rewrite the file, and commit the revision):\n${JSON.stringify(allBlockers)}`),
-      { model: 'opus', effort: 'xhigh', schema: BRIEF_SCHEMA, label: `author-brief:${chunk.id}-rev${round + 1}`, phase: P('Ground') },
-    )
-    if (!brief) return { chunk: chunk.id, status: 'blocked-grounding', detail: 'brief revision failed' }
-  }
-  if (!briefApproved) {
-    return { chunk: chunk.id, status: 'blocked-grounding', detail: 'implementation brief failed adversarial verification after 2 revisions', briefPath: briefPathRel }
-  }
-  log(`Chunk ${chunk.id} brief approved: ${brief.workItems.length} work items`)
-  // Durability: push after every committed milestone — a container recycle
-  // must never be able to vaporize hours of unpushed wave work (it did once,
-  // 2026-07-14: chunk 7's brief + first item were lost mid-run).
+  log(`Chunk ${chunk.id} brief: ${brief.workItems.length} work items`)
+  // Durability: push the committed brief immediately (a recycle must not lose it).
   await pushBranch(P('Ground'))
 
   // ---- Implement / Review / Escalate ----
