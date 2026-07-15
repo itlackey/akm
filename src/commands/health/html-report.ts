@@ -426,7 +426,6 @@ export function buildHealthHtmlReplacements(
   const perf: ImprovePerfTelemetry = improve.perfTelemetry ?? {
     dedupPoolSize: 0,
     llmPoolSize: 0,
-    judgedCacheSkipped: 0,
     embedMs: 0,
     embedCacheHits: 0,
     embedCacheMisses: 0,
@@ -746,32 +745,6 @@ export function buildHealthHtmlReplacements(
     ["LLM wall time", fmtMs(llm.totalDurationMs), trend.latency],
   ];
 
-  // #612 — auto-accept gate calibration. Only surface when the gate actually
-  // acted on proposals in the window (samples > 0); a default ungated install
-  // reports an empty summary and we omit the rows to keep the table parity-clean.
-  const calibration = improve.calibration;
-  if (calibration && calibration.samples > 0) {
-    summaryRows.push(
-      [
-        "Calibration samples",
-        num(calibration.samples),
-        "flat",
-        "Auto-accept gate decisions (auto-accepted + auto-rejected) the calibration join measured this window.",
-      ],
-      [
-        "Calibration accept rate",
-        String(calibration.overallAcceptRate),
-        "flat",
-        "Realized accept rate of acted-on gate decisions (auto-accepted / total acted-on).",
-      ],
-      [
-        "Calibration gap",
-        String(calibration.calibrationGap),
-        "flat",
-        "Mean predicted confidence minus realized accept rate. Positive = the gate is over-confident.",
-      ],
-    );
-  }
   // WS-5: denominator-fixed coverage rows (only when we have real data).
   if (coverage && !Number.isNaN(coverage.rate)) {
     summaryRows.push(
@@ -830,16 +803,10 @@ export function buildHealthHtmlReplacements(
         "Cumulative embedding wall-clock time across consolidation runs in the window.",
       ],
       [
-        "Judged-cache skipped",
-        num(perf.judgedCacheSkipped),
-        "flat",
-        "Candidates skipped by the judged-cache (not sent to LLM). Higher = more efficient reuse of prior judgments.",
-      ],
-      [
         "Dedup pool size",
         num(perf.dedupPoolSize),
         "flat",
-        "Average memory pool size after deduplication (before judged-cache narrowing). WS-5 perf telemetry.",
+        "Memory pool size after incremental narrowing, before the limit cap. WS-5 perf telemetry.",
       ],
       [
         "Over-budget consolidation runs",

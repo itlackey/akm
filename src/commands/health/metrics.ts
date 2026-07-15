@@ -4,16 +4,15 @@
 
 /**
  * State.db-backed health metrics for `akm health`: the round-trip probe,
- * auto-accept calibration, denominator-fixed coverage, the enrichment-vs-
- * minting rollup, and the WS-5 per-run degradation metrics.
+ * denominator-fixed coverage, the enrichment-vs-minting rollup, and the WS-5
+ * per-run degradation metrics.
  */
 
 import { appendEvent, readEvents } from "../../core/events";
 import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
 import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import { listProposalGateDecisions, listStateProposals } from "../../storage/repositories/proposals-repository";
-import { type CalibrationSummary, gateDecisionsToSamples, summarizeCalibration } from "../improve/calibration";
+import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { roundRate, toFiniteNumber } from "./improve-metrics";
 import {
   ENRICHMENT_LANES,
@@ -42,18 +41,6 @@ export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durat
     return { ok: false, durationMs, error: "probe event was not readable after append" };
   }
   return { ok: true, durationMs };
-}
-
-/**
- * Read the auto-accept gate calibration summary (#612) over `[since, until)`.
- * Reads every proposal's `gateDecision` from the open state.db, projects the
- * acted-on (auto-accepted / auto-rejected) decisions into calibration samples
- * within the window, and aggregates them deterministically.
- */
-export function readCalibration(db: Database, since: string, until?: string): CalibrationSummary {
-  const decisions = listProposalGateDecisions(db);
-  const samples = gateDecisionsToSamples(decisions, { since, ...(until !== undefined ? { until } : {}) });
-  return summarizeCalibration(samples);
 }
 
 // ── WS-5 Observability helpers ───────────────────────────────────────────────

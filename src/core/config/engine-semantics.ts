@@ -28,5 +28,4 @@ export const IMPROVE_PROCESS_ENGINE_CAPABILITIES = {
   validation: "llm",
   triage: "runner",
   proactiveMaintenance: null,
-  procedural: "llm",
 } as const;

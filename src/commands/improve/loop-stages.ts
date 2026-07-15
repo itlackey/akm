@@ -8,7 +8,7 @@ import { daysToMs } from "../../core/common";
 import { DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import type { ImproveActionResult, ImproveEligibleRef, ProceduralCompilationResult } from "../../core/improve-types";
+import type { ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
@@ -52,9 +52,6 @@ import type {
 import { makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-// The pre-loop preparation pipeline lives in ./preparation.
-import { maybeAutoTuneThreshold } from "./preparation";
-import { akmProcedural } from "./procedural";
 import type { AkmReflectResult } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { errMessage, refSlug } from "./shared";
@@ -561,32 +558,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
 
-  // WS-4: Per-phase threshold auto-tune — runs AFTER the loop so the gate
-  // has processed all candidates for this run. Persists each phase's tuned
-  // threshold to state.db for the NEXT run's makeGateConfig to read.
-  // Best-effort: a tune failure must never fail the improve run.
-  const stateDbPathForTune = eventsCtx?.dbPath;
-  if (options.autoAccept !== undefined && stateDbPathForTune) {
-    const phaseGateCfgMap: Record<string, typeof reflectGateCfg> = {
-      reflect: reflectGateCfg,
-      distill: distillGateCfg,
-    };
-    for (const phase of ["reflect", "distill"] as const) {
-      const phaseCfg = phaseGateCfgMap[phase];
-      try {
-        maybeAutoTuneThreshold(
-          phaseCfg.phaseThreshold ?? options.autoAccept,
-          options.config ?? loadConfig(),
-          stateDbPathForTune,
-          undefined,
-          phase,
-        );
-      } catch (err) {
-        warn(`[improve] calibration auto-tune (${phase}) skipped: ${errMessage(err)}`);
-      }
-    }
-  }
-
   return { reflectsWithErrorContext, memoryRefsForInference, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }
 
@@ -672,44 +643,6 @@ export async function runImprovePostLoopStage(args: {
     }
   }
 
-  // #615 — procedural-compilation pass. Detects recurring successful ordered
-  // action sequences and compiles them into workflow proposals. Opt-in: gated
-  // on the `procedural` process being enabled, whole-stash / type scope (never
-  // `ref`), and not a dry run. Mirrors the proactiveMaintenance opt-in wiring.
-  let proceduralCompilation: ProceduralCompilationResult | undefined;
-  if (
-    primaryStashDir &&
-    improveProfile &&
-    resolvedPlan?.processes.procedural.enabled === true &&
-    scope.mode !== "ref" &&
-    !options.dryRun
-  ) {
-    const proceduralFn = options.proceduralFn ?? akmProcedural;
-    try {
-      proceduralCompilation = await withLlmStage(
-        "procedural",
-        () =>
-          proceduralFn({
-            stashDir: primaryStashDir,
-            config: options.config ?? loadConfig(),
-            ...(improveProfile ? { improveProfile } : {}),
-            llmConfig: resolvedPlan?.processes.procedural.runner
-              ? materializeLlmRunnerConnection(resolvedPlan.processes.procedural.runner)
-              : null,
-            ...(options.runId ? { sourceRun: options.runId } : {}),
-            ...(budgetSignal ? { signal: budgetSignal } : {}),
-            eligibilitySource: "procedural",
-            ...(eventsCtx ? { ctx: eventsCtx } : {}),
-            minRecurrence: improveProfile.processes?.procedural?.minRecurrence,
-            maxProposalsPerRun: improveProfile.processes?.procedural?.maxProposalsPerRun,
-          }),
-        { engine: resolvedPlan?.processes.procedural.runner?.engine, process: "procedural" },
-      );
-    } catch (e) {
-      allWarnings.push(`procedural: ${String(e)}`);
-    }
-  }
-
   // ── R5: collapse/churn detector ────────────────────────────────────────────
   // One snapshot per QUALIFYING cycle: consolidate processed work. Runs AFTER
   // the maintenance reindex so FTS sees the post-merge index. Deterministic,
@@ -732,7 +665,6 @@ export async function runImprovePostLoopStage(args: {
     allWarnings,
     deadUrls,
     ...(cycleMetrics ? { cycleMetrics } : {}),
-    ...(proceduralCompilation ? { proceduralCompilation } : {}),
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
     ...(maintenanceResult.actions && maintenanceResult.actions.length > 0

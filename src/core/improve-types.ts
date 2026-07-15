@@ -61,7 +61,6 @@ export type EligibilitySource =
   | "scope"
   | "forgetting-safety"
   | "replay"
-  | "procedural"
   | "unknown";
 
 export interface ImproveEligibleRef {
@@ -245,28 +244,6 @@ export interface ImproveMemoryCleanupResult {
   warnings?: string[];
 }
 
-/**
- * #615 — outcome of the procedural-compilation pass. Emitted on
- * {@link AkmImproveResult.proceduralCompilation} when the (opt-in) pass runs.
- */
-export interface ProceduralCompilationResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of indexed entries scanned for an `orderedActions` sequence. */
-  sequencesScanned: number;
-  /** Number of recurring-sequence clusters that reached the LLM compilation step. */
-  clustersFormed: number;
-  /** Number of `type: workflow` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
 export interface AkmImproveResult {
   schemaVersion: 2;
   ok: boolean;
@@ -401,12 +378,6 @@ export interface AkmImproveResult {
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
-  /**
-   * #615 — procedural-compilation pass outcome. Present only when the opt-in
-   * `procedural` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  proceduralCompilation?: ProceduralCompilationResult;
   /**
    * R5 — the collapse/churn detector's cycle snapshot (mirrors one
    * improve_cycle_metrics row), present when this run qualified (consolidate

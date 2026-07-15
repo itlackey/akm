@@ -8,7 +8,7 @@
 
 import fs from "node:fs";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { cacheHash } from "../dedup";
+import { cacheHash } from "../content-hash";
 import type { MemoryEntry } from "./types";
 
 /**

@@ -60,7 +60,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.graphExtraction?.enabled).toBe(false);
     expect(profile.processes?.validation?.enabled).toBe(false);
     expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
     // Sync is enabled (consistent with every built-in): reflect can auto-accept
     // and write, so the run must commit rather than leave a silent backlog.
     // saveGitStash no-ops a clean tree, so this is free when nothing is written.
@@ -72,7 +71,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.graphExtraction).toMatchObject({ enabled: true, fullScan: true });
     expect(profile.processes?.validation?.enabled).toBe(false);
     expect(profile.processes?.proactiveMaintenance?.enabled).toBe(false);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
   });
 
   test("resolves named built-in 'thorough'", () => {
@@ -213,7 +211,6 @@ describe("resolveImproveStrategy", () => {
     expect(profile.processes?.distill?.enabled).toBe(true);
     expect(profile.processes?.consolidate?.enabled).toBe(true);
     expect(profile.processes?.extract?.enabled).toBe(true);
-    expect(profile.processes?.procedural?.enabled).toBe(false);
   });
 
   test("defaults.improveStrategy sets the default strategy name", () => {

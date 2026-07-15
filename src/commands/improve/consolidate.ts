@@ -34,14 +34,13 @@ import {
   computeMergedGeneration,
   readAssetGeneration,
 } from "./anti-collapse";
-import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
-import { shouldSkipHotProbationInLlm } from "./hot-probation";
+import { cacheHash, stripFrontmatterBody } from "./content-hash";
 import { writeContradictEdge } from "./memory/memory-belief";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
 
-import { openStateDatabase, withStateDb } from "../../core/state-db";
+import { openStateDatabase } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -64,11 +63,6 @@ import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { tryLlmFeature } from "../../llm/feature-gate";
 import type { Database } from "../../storage/database";
-import {
-  type ConsolidationJudgedRow,
-  getConsolidationJudgedMap,
-  upsertConsolidationJudged,
-} from "../../storage/repositories/consolidation-repository";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { durableImproveRef } from "./source-identity";
@@ -222,26 +216,19 @@ export interface ConsolidateResult {
  */
 export interface ConsolidatePerfTelemetry {
   /**
-   * Pool size BEFORE the judged-state cache narrowing step.
+   * Pool size BEFORE incremental/limit narrowing.
    * Measures the raw candidate set loaded from disk this run.
    */
   dedupPoolSize?: number;
   /**
-   * Pool size AFTER judged-cache and limit filtering — the memories actually
-   * sent to the LLM for a fresh judgment. `dedupPoolSize − llmPoolSize` is
-   * the effective judgedCacheSkipped + limit-capped count.
+   * Pool size AFTER incremental and limit filtering — the memories actually
+   * sent to the LLM for a fresh judgment.
    */
   llmPoolSize?: number;
   /**
-   * Memories skipped because the judged-state cache recorded them as
-   * unchanged since the last LLM judgment. 0 when judgedCache is disabled.
-   * Health threshold: >95% hits on an incremental run (warm cache).
-   */
-  judgedCacheSkipped?: number;
-  /**
-   * Wall-clock milliseconds spent in the embedding stage (both cluster
-   * reordering and dedup cosine path). Extracted from timing around embedBatch
-   * calls so the LLM wall-clock accounts only for LLM calls.
+   * Wall-clock milliseconds spent in the embedding stage (cluster
+   * reordering). Extracted from timing around embedBatch calls so the LLM
+   * wall-clock accounts only for LLM calls.
    */
   embedMs?: number;
   /**
@@ -310,24 +297,6 @@ export interface AkmConsolidateOptions {
   /** Number of graph neighbours per changed memory during incremental consolidation. Default 5. */
   neighborsPerChanged?: number;
   /**
-   * Deterministic near-duplicate dedup pre-pass (#617). DEFAULT OFF. When
-   * `enabled`, a cheap no-LLM fast path collapses obvious duplicates
-   * (`.derived` ↔ origin pairs + content twins) before the LLM consolidation.
-   * Absent / disabled = byte-identical legacy behaviour.
-   */
-  dedup?: DedupConfig;
-  /**
-   * Judged-state cache (#581). DEFAULT OFF. When `enabled`, memories whose
-   * current frontmatter-stripped content hash equals the hash recorded the last
-   * time the consolidate LLM judged them are SKIPPED from the LLM pool
-   * (judged-unchanged → no re-judge), and every memory the LLM saw in a
-   * successfully-judged chunk has its judged state upserted afterwards. This
-   * lets a single run sweep the FULL corpus at O(changed/new) cost instead of
-   * narrowing to a recent time-window slice. Absent / disabled = byte-identical
-   * legacy behaviour (the `incrementalSince` path is unaffected).
-   */
-  judgedCache?: { enabled?: boolean };
-  /**
    * PROV-DM traceability token for proposals created by this run. When set,
    * every `createProposal` call includes it so accept-rate-per-run aggregation
    * works. When absent, a `consolidate-<timestamp>` token is generated at the
@@ -342,8 +311,8 @@ export interface AkmConsolidateOptions {
    * `budgetAbortController`). When aborted the consolidation loop breaks cleanly
    * after completing the current chunk, commits work done, and returns with a
    * `partial_timeout` outcome note in `warnings`. The signal is also forwarded
-   * to `embedBatch` and `runDeterministicDedup` so mid-embedding aborts are
-   * handled gracefully. Absent = run without a budget limit.
+   * to `embedBatch` so mid-embedding aborts are handled gracefully. Absent =
+   * run without a budget limit.
    */
   signal?: AbortSignal;
   /**
@@ -625,8 +594,8 @@ async function clusterMemoriesBySimilarity(
  * the per-chunk prompt can annotate memories whose body would just produce
  * a deterministic `dedup_pending_proposal` skip. Uses `cacheHash` (case-
  * preserving stripped body) — the same domain used by the body-embedding
- * cache and `computeMemoryContentHash`. Empty set on any read/parse error
- * — fail-safe to "annotate nothing" so the LLM still proposes.
+ * cache. Empty set on any read/parse error — fail-safe to "annotate nothing"
+ * so the LLM still proposes.
  */
 function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   const hashes = new Set<string>();
@@ -905,34 +874,6 @@ function resolveConsolidateLlmConfig(config: AkmConfig, activeProfile?: ImproveP
   return getDefaultLlmConfig(config);
 }
 
-// ── Judged-state cache (#581) ────────────────────────────────────────────────
-
-/**
- * Stable content hash for a memory file used by the judged-state cache (#581)
- * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts
- * (sha256 of the case-preserving stripped body) plus the sorted `tags` list,
- * so semantic-metadata drift re-enters the judge while cosmetic frontmatter
- * touches (`updated:`, `inferenceProcessed:`) still hash identically and never
- * force a needless re-judge. Returns `undefined` on any read/parse error so
- * callers fail open (treat the memory as un-cached → it stays in the LLM pool).
- */
-function computeMemoryContentHash(filePath: string): string | undefined {
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    let tagSuffix = "";
-    try {
-      const { data } = parseFrontmatter(raw);
-      const tags = Array.isArray(data?.tags) ? data.tags.map(String).sort() : [];
-      if (tags.length > 0) tagSuffix = `\n\u0000tags:${tags.join(",")}`;
-    } catch {
-      // Unparseable frontmatter → body-only hash (prior behaviour).
-    }
-    return cacheHash(raw + tagSuffix);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Build a {@link ConsolidateResult} from partial overrides, filling the envelope
  * defaults (schemaVersion / ok / shape + the zeroed counters). Collapses the
@@ -1098,37 +1039,30 @@ function createConsolidateAccounting(): ConsolidateAccounting {
 
 /**
  * Result of the narrowing pass. Either the run is already decided (an early
- * envelope — empty pool, no incremental candidates, or judged-cache emptied the
- * pool) and `done` carries the finished {@link ConsolidateResult}, or the pool
- * survived narrowing and the pass hands back the filtered memories plus the
- * state the later passes need.
+ * envelope — empty pool or no incremental candidates) and `done` carries the
+ * finished {@link ConsolidateResult}, or the pool survived narrowing and the
+ * pass hands back the filtered memories plus the state the later passes need.
  */
 type NarrowPoolResult =
   | { done: true; result: ConsolidateResult }
   | {
       done: false;
       memories: MemoryEntry[];
-      dedupCollapsed: number;
-      perfMs: { dedupPoolSize: number; judgedCacheSkipped: number };
-      judgedCacheEnabled: boolean;
-      currentHashByName: Map<string, string>;
+      dedupPoolSize: number;
     };
 
 /**
  * Pass 1 — narrow the memory pool before any LLM work: drop stale DB entries,
- * partition hot-probation assets, run the deterministic dedup pre-pass, apply
- * incremental-since and judged-state-cache narrowing, and cap to `opts.limit`
- * (oldest-modified first). Returns an early envelope when the pool empties at
- * any stage; otherwise returns the narrowed pool and the state the plan/apply
- * passes consume. Behavior-identical to the former inlined narrowing block.
+ * apply incremental-since narrowing, and cap to `opts.limit` (oldest-modified
+ * first). Returns an early envelope when the pool empties at any stage;
+ * otherwise returns the narrowed pool and the state the plan/apply passes
+ * consume. Behavior-identical to the former inlined narrowing block.
  */
 async function narrowConsolidationPool(
   opts: AkmConsolidateOptions,
-  config: AkmConfig,
   stashDir: string,
   startMs: number,
   warnings: string[],
-  sharedStateDb: Database | undefined,
 ): Promise<NarrowPoolResult> {
   let memories = loadMemoriesForSource(opts.writeTarget?.source.path, stashDir, warnings);
 
@@ -1150,97 +1084,12 @@ async function narrowConsolidationPool(
   // unconditionally overwrote the demoted values). Continuous decay now lives
   // in computeSalience's recency term, whose floor decays on a long half-life.)
 
-  // ── WS-3b Step 0c: Filter hot-probation assets from LLM merge pool ─────────
-  // Hot-probation assets (system-generated, not yet graduated from intake pass)
-  // are processed by the dedup pre-pass but excluded from the LLM clustering.
-  // This prevents noisy extractions from polluting LLM context. The dedup pass
-  // below still runs against them so they're cleaned up deterministically.
-  // DEFAULT OFF — only active when `processes.extract.hotProbation.enabled === true`
-  // (the flag that causes extract to tag new extractions as hot-probation).
-  // Without that flag no assets will ever carry the hot-probation marker, so
-  // running the filter loop would be pure unnecessary I/O over the full corpus.
-  const hotProbationEnabled =
-    (getImproveProcessConfig(config, "extract", opts.improveProfile)?.hotProbation as { enabled?: boolean } | undefined)
-      ?.enabled === true;
-  let hotProbationCount = 0;
-  if (hotProbationEnabled) {
-    const hotProbationMemories: typeof memories = [];
-    const nonProbationMemories: typeof memories = [];
-    for (const m of memories) {
-      try {
-        const raw = fs.readFileSync(m.filePath, "utf8");
-        const parsed = parseFrontmatter(raw);
-        if (shouldSkipHotProbationInLlm(parsed.data as Record<string, unknown>)) {
-          hotProbationMemories.push(m);
-          hotProbationCount++;
-        } else {
-          nonProbationMemories.push(m);
-        }
-      } catch {
-        nonProbationMemories.push(m); // fail open
-      }
-    }
-    if (hotProbationCount > 0) {
-      warnings.push(
-        `Hot-probation: ${hotProbationCount} hot-probation asset(s) routed to dedup-only pass (excluded from LLM merge pool).`,
-      );
-      memories = nonProbationMemories;
-    }
-  }
-
-  // ── Deterministic dedup pre-pass (#617) ─────────────────────────────────────
-  // Cheap, no-LLM fast path that collapses the obvious near-duplicates
-  // (`.derived` ↔ origin pairs + content twins) BEFORE the embedding-clustered
-  // LLM consolidation. DEFAULT OFF — when `dedup.enabled !== true` this is a
-  // no-op and the pass behaves byte-identically to today. Collapsed variants
-  // are pruned from the LLM pool so the model only ever sees genuinely
-  // distinct-but-related memories. Each dropped variant is archived (soft
-  // invalidation) before deletion, matching the LLM merge path.
-  // Dry-run never mutates the filesystem, so the dedup pre-pass is skipped
-  // entirely under `--dry-run` (the LLM plan preview below is unaffected).
-  let dedupCollapsed = 0;
-  if (opts.dedup?.enabled && !opts.dryRun) {
-    const dedupTimestamp = timestampForFilename();
-    const dedupResult = await runDeterministicDedup(
-      stashDir,
-      opts.dedup,
-      config,
-      (variantFilePath, variantName) => {
-        archiveMemory(
-          variantFilePath,
-          stashDir,
-          `memory:${variantName}`,
-          "collapsed by deterministic dedup pre-pass",
-          -1,
-          undefined,
-          warnings,
-        );
-        backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
-      },
-      opts.signal,
-      sharedStateDb,
-    );
-    dedupCollapsed = dedupResult.collapsed;
-    warnings.push(...dedupResult.warnings);
-    if (dedupResult.consumedRefs.length > 0) {
-      const consumed = new Set(dedupResult.consumedRefs);
-      memories = memories.filter((m) => !consumed.has(`memory:${m.name}`));
-      warnings.push(
-        `Deterministic dedup: collapsed ${dedupResult.collapsed} near-duplicate memor${dedupResult.collapsed === 1 ? "y" : "ies"} (no LLM) before chunking.`,
-      );
-    }
-  }
-
   if (memories.length === 0) {
     return {
       done: true,
       result: makeConsolidateResult({
         dryRun: opts.dryRun ?? false,
         target: opts.target ?? stashDir,
-        // #617: the deterministic dedup pre-pass may have emptied the pool by
-        // collapsing every remaining memory into a canonical. Surface those
-        // collapses in `deleted` so the run reports the work it actually did.
-        deleted: dedupCollapsed,
         warnings,
         durationMs: Date.now() - startMs,
       }),
@@ -1262,86 +1111,11 @@ async function narrowConsolidationPool(
     }
   }
 
-  // WS-5 perf telemetry accumulators. These are collected throughout the run and
-  // merged into `perfTelemetry` on the final ConsolidateResult.
-  // `dedupPoolSize` = memories entering judgedCache narrowing (after dedup+incremental+limit).
-  // `judgedCacheSkipped` = memories skipped by the cache.
-  // `llmPoolSize` = memories actually sent to the LLM.
-  // `embedMs/cacheHits/cacheMisses` = accumulated from clusterMemoriesBySimilarity.
-  const perfMs = { dedupPoolSize: memories.length, judgedCacheSkipped: 0 };
-
-  // ── Judged-state cache narrowing (#581) ─────────────────────────────────────
-  // DEFAULT OFF. When enabled, skip every memory whose current content hash
-  // equals the hash recorded the last time the consolidate LLM judged it
-  // (judged-unchanged → no re-judge). This converts coverage from O(window) to
-  // O(changed/new) so one run can sweep the whole corpus while the LLM only
-  // sees genuinely new/changed memories. `currentHashByName` is populated for
-  // EVERY surviving memory (whether or not the cache is on) so the post-LLM
-  // recording step can upsert judged state without re-reading the files; when
-  // the cache is off it stays empty and the recording step is a no-op.
-  const judgedCacheEnabled = opts.judgedCache?.enabled !== false;
-  const currentHashByName = new Map<string, string>();
-  if (judgedCacheEnabled) {
-    for (const m of memories) {
-      const h = computeMemoryContentHash(m.filePath);
-      if (h !== undefined) currentHashByName.set(m.name, h);
-    }
-    let cachedMap = new Map<string, ConsolidationJudgedRow>();
-    {
-      // Use the shared state.db handle if available; open a local one otherwise.
-      const dbForJudged = sharedStateDb;
-      if (dbForJudged) {
-        try {
-          cachedMap = getConsolidationJudgedMap(
-            dbForJudged,
-            memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
-          );
-        } catch {
-          cachedMap = new Map();
-        }
-      } else {
-        try {
-          cachedMap = withStateDb((localDb) =>
-            getConsolidationJudgedMap(
-              localDb,
-              memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
-            ),
-          );
-        } catch {
-          // State DB unavailable → fail open: judge the full pool this run.
-          cachedMap = new Map();
-        }
-      }
-    }
-    const beforeCount = memories.length;
-    memories = memories.filter((m) => {
-      const cur = currentHashByName.get(m.name);
-      // No readable hash → keep (fail open; let the LLM judge it).
-      if (cur === undefined) return true;
-      const cached = cachedMap.get(durableImproveRef(`memory:${m.name}`, opts.target));
-      // Skip only when previously judged AND content is byte-identical since.
-      return !(cached !== undefined && cached.content_hash === cur);
-    });
-    const skipped = beforeCount - memories.length;
-    perfMs.judgedCacheSkipped = skipped; // WS-5 perf telemetry
-    if (skipped > 0) {
-      warnings.push(
-        `Judged-state cache: skipped ${skipped} memor${skipped === 1 ? "y" : "ies"} judged-unchanged (no LLM); ${memories.length} remain for judging.`,
-      );
-    }
-    if (memories.length === 0) {
-      return {
-        done: true,
-        result: makeConsolidateResult({
-          dryRun: opts.dryRun ?? false,
-          target: opts.target ?? stashDir,
-          deleted: dedupCollapsed,
-          warnings,
-          durationMs: Date.now() - startMs,
-        }),
-      };
-    }
-  }
+  // WS-5 perf telemetry: `dedupPoolSize` = memories entering the LLM pool
+  // (after incremental narrowing, before the limit cap). `llmPoolSize` =
+  // memories actually sent to the LLM. `embedMs/cacheHits/cacheMisses` =
+  // accumulated from clusterMemoriesBySimilarity.
+  const dedupPoolSize = memories.length;
 
   if (opts.limit === undefined && memories.length > 150) {
     warnings.push(
@@ -1372,17 +1146,16 @@ async function narrowConsolidationPool(
     memories = memories.slice(0, opts.limit);
   }
 
-  return { done: false, memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName };
+  return { done: false, memories, dedupPoolSize };
 }
 
 /**
  * Pass 2 — turn the narrowed pool into an executable plan. Sizes chunks to the
  * model context window, clusters by embedding similarity, injects the
  * anti-collapse random fraction, applies the cold-start budget cap, runs the
- * per-chunk LLM calls (with retry + failure-rate abort), records judged-state
- * cache outcomes, and reconciles the per-chunk op arrays via {@link mergePlans}.
- * Populates `accounting` in place. Behavior-identical to the former inlined
- * plan-generation block.
+ * per-chunk LLM calls (with retry + failure-rate abort), and reconciles the
+ * per-chunk op arrays via {@link mergePlans}. Populates `accounting` in place.
+ * Behavior-identical to the former inlined plan-generation block.
  */
 async function planConsolidation(
   opts: AkmConsolidateOptions,
@@ -1392,8 +1165,6 @@ async function planConsolidation(
   memories: MemoryEntry[],
   warnings: string[],
   sharedStateDb: Database | undefined,
-  judgedCacheEnabled: boolean,
-  currentHashByName: Map<string, string>,
   accounting: ConsolidateAccounting,
 ): Promise<{
   allOps: ConsolidateOperation[];
@@ -1561,14 +1332,6 @@ async function planConsolidation(
   // double-count fixes now live on `accounting`; every deterministic post-LLM
   // op rejection site calls `accounting.pushSkipReason`. See
   // `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-  //
-  // Judged-state cache (#581): coarse outcome per memory NAME the LLM actually
-  // judged in a successfully-parsed chunk this run. "actioned" = an op targeted
-  // it; "no_action" = the LLM saw it and proposed nothing. Populated only when
-  // the cache is enabled (otherwise it stays empty and the post-loop recording
-  // step is a no-op). Memories in failed/aborted chunks are NOT recorded, so a
-  // transient LLM failure never poisons the cache into skipping them next run.
-  const judgedOutcomeByName = new Map<string, "actioned" | "no_action">();
   // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
   // Consecutive-count policies are brittle against transient LM Studio reloads:
   // two transient failures abort the run even though the next chunk would succeed.
@@ -1752,54 +1515,11 @@ async function planConsolidation(
       if (!targetRefs.has(memRef)) {
         chunkNoAction++;
         accounting.judgedNoActionRefs.add(memRef);
-        // Judged-state cache (#581): the LLM saw this memory and proposed
-        // nothing → record judged-unchanged so the next run can skip it.
-        if (judgedCacheEnabled) judgedOutcomeByName.set(m.name, "no_action");
-      } else if (judgedCacheEnabled) {
-        // An op targeted this memory → it was judged + actioned.
-        judgedOutcomeByName.set(m.name, "actioned");
       }
     }
     accounting.judgedNoAction += chunkNoAction;
 
     chunkOpsArrays.push(ops);
-  }
-
-  // ── Judged-state cache recording (#581) ─────────────────────────────────────
-  // Persist judged state for every memory the LLM actually judged this run so
-  // the next run can skip the unchanged ones. Keyed by current content hash so
-  // a later body edit (different hash) re-enters the LLM pool. DEFAULT OFF and
-  // skipped under --dry-run (dry-run mutates nothing). Failed/aborted chunks
-  // contributed no entries to `judgedOutcomeByName`, so a transient LLM outage
-  // never caches a memory as judged.
-  if (judgedCacheEnabled && !opts.dryRun && judgedOutcomeByName.size > 0) {
-    // Use the shared state.db handle; open a local one as fallback.
-    const doRecord = (db: ReturnType<typeof openStateDatabase>) => {
-      const judgedAt = new Date(startMs).toISOString();
-      for (const [name, outcome] of judgedOutcomeByName) {
-        const hash = currentHashByName.get(name);
-        if (hash === undefined) continue;
-        upsertConsolidationJudged(db, {
-          entryKey: durableImproveRef(`memory:${name}`, opts.target),
-          contentHash: hash,
-          judgedAt,
-          outcome,
-        });
-      }
-    };
-    if (sharedStateDb) {
-      try {
-        doRecord(sharedStateDb);
-      } catch (e) {
-        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-      }
-    } else {
-      try {
-        withStateDb((localDb) => doRecord(localDb));
-      } catch (e) {
-        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-      }
-    }
   }
 
   // Build the known-refs set from the already-filtered memory pool so
@@ -1827,7 +1547,6 @@ async function applyConsolidationPlan(
   warnings: string[],
   allOps: ConsolidateOperation[],
   accounting: ConsolidateAccounting,
-  dedupCollapsed: number,
   activeProfile?: ImproveProfileConfig,
   llmConfig?: import("../../core/config/config").LlmConnectionConfig | null,
 ): Promise<{
@@ -1925,8 +1644,8 @@ async function applyConsolidationPlan(
   // .akm/archive/ will stay there harmlessly until the operator prunes them with
   // `git rm` or `find .akm/archive -mtime +90 -delete`. Changed N files this
   // run; recover any via `git show <sha>:<path>` or `git restore <path>`.
-  if (merged > 0 || deleted > 0 || dedupCollapsed > 0) {
-    const totalChanged = merged + deleted + dedupCollapsed;
+  if (merged > 0 || deleted > 0) {
+    const totalChanged = merged + deleted;
     warnings.push(
       `Changed ${totalChanged} file(s) this run. Recover any via git if needed (git history is the backstop).`,
     );
@@ -1945,9 +1664,9 @@ async function akmConsolidateInner(
   sharedStateDb: Database | undefined,
 ): Promise<ConsolidateResult> {
   // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
-  const narrowed = await narrowConsolidationPool(opts, config, stashDir, startMs, warnings, sharedStateDb);
+  const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings);
   if (narrowed.done) return narrowed.result;
-  const { memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName } = narrowed;
+  const { memories, dedupPoolSize } = narrowed;
 
   // -- Pass 2: build the LLM plan (populates the shared accounting counters) ---
   const accounting = createConsolidateAccounting();
@@ -1959,8 +1678,6 @@ async function akmConsolidateInner(
     memories,
     warnings,
     sharedStateDb,
-    judgedCacheEnabled,
-    currentHashByName,
     accounting,
   );
 
@@ -2035,7 +1752,6 @@ async function akmConsolidateInner(
       warnings,
       allOps,
       accounting,
-      dedupCollapsed,
       opts.improveProfile,
       Object.hasOwn(opts, "llmConfig")
         ? (opts.llmConfig ?? null)
@@ -2055,10 +1771,7 @@ async function akmConsolidateInner(
     target: sourceName,
     processed: memories.length,
     merged,
-    // #617: fold the deterministic dedup pre-pass collapses into the reported
-    // deleted count. Each collapse removed exactly one variant file with NO
-    // LLM call before the LLM pass ran on the pruned pool.
-    deleted: deleted + dedupCollapsed,
+    deleted,
     promoted,
     contradicted,
     mergeFloorViolations,
@@ -2071,9 +1784,8 @@ async function akmConsolidateInner(
     warnings,
     durationMs: runDurationMs,
     perfTelemetry: {
-      dedupPoolSize: perfMs.dedupPoolSize,
+      dedupPoolSize,
       llmPoolSize,
-      judgedCacheSkipped: perfMs.judgedCacheSkipped,
       embedMs: embedTelemetry.embedMs,
       embedCacheHits: embedTelemetry.cacheHits,
       embedCacheMisses: embedTelemetry.cacheMisses,

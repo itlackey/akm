@@ -33,7 +33,6 @@ import {
   computeDenominatorFixedCoverage,
   computeEnrichmentMintingRollup,
   probeStateDbRoundTrip,
-  readCalibration,
 } from "./health/metrics";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
@@ -210,7 +209,6 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const perRunSummaries = buildPerRunSummaries(db, since);
     const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
     improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
-    improveSummary.calibration = readCalibration(db, since);
 
     // WS-5: Compute denominator-fixed coverage and per-run degradation metrics
     // for the main health path (not just window-compare mode).

@@ -17,7 +17,6 @@ import type {
   ImproveActionResult,
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
-  ProceduralCompilationResult,
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
@@ -67,15 +66,12 @@ import { analyzeMemoryCleanup, type applyMemoryCleanup, type MemoryCleanupPlan }
 // The pre-loop preparation pipeline lives in ./preparation.
 import { runImprovePreparationStage } from "./preparation";
 import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
-import type { akmProcedural } from "./procedural";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { errMessage } from "./shared";
 import { shouldReadLegacyBareImproveState } from "./source-identity";
 
 // Re-exported from ./loop-stages for test importers (improve-db-locking).
 export { runImproveMaintenancePasses } from "./loop-stages";
-// Re-exported from ./preparation so existing importers (tests, callers) resolve.
-export { maybeAutoTuneThreshold } from "./preparation";
 
 export interface AkmImproveOptions {
   scope?: string;
@@ -131,12 +127,6 @@ export interface AkmImproveOptions {
   reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   memoryInferenceFn?: typeof runMemoryInferencePass;
-  /**
-   * #615: injectable procedural-compilation pass seam for tests. When omitted,
-   * the real {@link akmProcedural} runs (gated on the opt-in `procedural` process
-   * being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
-   */
-  proceduralFn?: typeof akmProcedural;
   graphExtractionFn?: typeof runGraphExtractionPass;
   /** Injectable contradiction-detection seam for invocation-plan boundary tests. */
   contradictionDetectionFn?: typeof detectAndWriteContradictions;
@@ -279,8 +269,6 @@ export interface ImprovePostLoopResult {
   orphansPurged?: number;
   /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
   proposalsExpired?: number;
-  /** #615: result of the opt-in procedural-compilation pass, when it ran. */
-  proceduralCompilation?: ProceduralCompilationResult;
   /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
   cycleMetrics?: import("../../storage/repositories/canaries-repository").CycleMetricsRow;
 }
@@ -448,24 +436,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // timeout root cause). Because beforeEach runs synchronously, env is still the
   // calling test's own at this point; we capture it before yielding the loop.
   const resolvedStateDbPath = getStateDbPathInDataDir();
-
-  // #612 / WS-4 — bounded, OPT-IN per-phase auto-accept threshold auto-tune.
-  // DEFAULT OFF: `autoTune: false` (or absent) is a complete no-op.
-  //
-  // WS-4 change: thresholds are now PER PHASE. The old single global mutation
-  // of `options.autoAccept` is retired — it caused every phase to share one
-  // calibration signal, so a reflect-dominated run could tighten the consolidate
-  // gate (or vice-versa). Instead:
-  //   - Each `makeGateConfig` call reads the phase's stored threshold from
-  //     state.db (Migration 012) and uses it as `phaseThreshold`, overriding
-  //     the `globalThreshold` (= options.autoAccept) for that phase.
-  //   - Per-phase `maybeAutoTuneThreshold` calls fire AFTER each phase's gate
-  //     has run and persist the new threshold to state.db for the NEXT run.
-  //   - `options.autoAccept` stays unchanged (it is the operator-supplied
-  //     baseline, not a mutable run-time state).
-  //
-  // The global tune call is intentionally removed here. See per-phase calls
-  // below (near each makeGateConfig / runAutoAcceptGate block).
 
   // One conservative run lock protects the complete mutation window, including
   // triage, indexing, proposal work, maintenance, and final stash sync.
@@ -835,7 +805,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     let consolidation!: ConsolidateResult;
     let memoryInference: ImprovePostLoopResult["memoryInference"];
     let graphExtraction: ImprovePostLoopResult["graphExtraction"];
-    let proceduralCompilation: ImprovePostLoopResult["proceduralCompilation"];
     let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
     // Summed counters/durations.
     let prepGateCount = 0;
@@ -996,7 +965,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Result objects (single pass — no cycle accumulation).
       memoryInference = postLoopResult.memoryInference;
       graphExtraction = postLoopResult.graphExtraction;
-      proceduralCompilation = postLoopResult.proceduralCompilation;
       if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
       // Summed counters/durations.
       postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
@@ -1088,7 +1056,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1k / §3.
       ...(memoryInferenceDurationMs > 0 ? { memoryInferenceDurationMs } : {}),
       ...(graphExtractionDurationMs > 0 ? { graphExtractionDurationMs } : {}),
-      ...(proceduralCompilation ? { proceduralCompilation } : {}),
       ...(cycleMetrics ? { cycleMetrics } : {}),
       ...(orphansPurged !== undefined ? { orphansPurged } : {}),
       ...(proposalsExpired !== undefined && proposalsExpired > 0 ? { proposalsExpired } : {}),

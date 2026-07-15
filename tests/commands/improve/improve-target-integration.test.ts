@@ -79,7 +79,7 @@ describe("improve named target integration", () => {
     }
 
     const profile = {
-      processes: { consolidate: { enabled: true }, extract: { hotProbation: { enabled: false } } },
+      processes: { consolidate: { enabled: true } },
     } as ImproveProfileConfig;
     const result = await akmConsolidate({
       target: "team",
@@ -114,7 +114,7 @@ describe("improve named target integration", () => {
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(vendor));
   });
 
-  test("judged cache does not suppress the same bare ref in another source", async () => {
+  test("judgedNoAction accounting does not suppress the same bare ref in another source", async () => {
     const primary = stash();
     const team = stash();
     const vendor = stash();
@@ -126,7 +126,7 @@ describe("improve named target integration", () => {
     }
     const config = targetConfig(primary, team, vendor);
     const profile = {
-      processes: { consolidate: { enabled: true }, extract: { hotProbation: { enabled: false } } },
+      processes: { consolidate: { enabled: true } },
     } as ImproveProfileConfig;
 
     const first = await akmConsolidate({ target: "primary", config, improveProfile: profile });
@@ -134,7 +134,6 @@ describe("improve named target integration", () => {
 
     expect(first.judgedNoAction).toBe(1);
     expect(second.judgedNoAction).toBe(1);
-    expect(second.perfTelemetry?.judgedCacheSkipped ?? 0).toBe(0);
   });
 
   test("improve reads the git content root in both supported repository layouts", async () => {

@@ -69,7 +69,6 @@ describe("resolveImprovePlan", () => {
       "graphExtraction",
       "memoryInference",
       "proactiveMaintenance",
-      "procedural",
       "reflect",
       "triage",
       "validation",
@@ -93,9 +92,8 @@ describe("resolveImprovePlan", () => {
               consolidate: { enabled: true },
               memoryInference: { enabled: true },
               graphExtraction: { enabled: true },
-              extract: { enabled: true, hotProbation: { enabled: true } },
+              extract: { enabled: true, triage: { enabled: true } },
               validation: { enabled: true },
-              procedural: { enabled: true },
             },
           },
         },
@@ -110,14 +108,13 @@ describe("resolveImprovePlan", () => {
       "graphExtraction",
       "extract",
       "validation",
-      "procedural",
     ] as const) {
       expect(plan.processes[name].runner?.engine).toBe("default");
     }
-    expect(Object.isFrozen(plan.processes.extract.config.hotProbation)).toBe(true);
+    expect(Object.isFrozen(plan.processes.extract.config.triage)).toBe(true);
     const sourceExtract = config.improve?.strategies?.all?.processes?.extract;
-    if (sourceExtract?.hotProbation) sourceExtract.hotProbation.enabled = false;
-    expect(plan.processes.extract.config.hotProbation?.enabled).toBe(true);
+    if (sourceExtract?.triage) sourceExtract.triage.enabled = false;
+    expect(plan.processes.extract.config.triage?.enabled).toBe(true);
   });
 
   test("retains symbolic credentials in the frozen improve plan", () => {

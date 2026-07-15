@@ -19,17 +19,10 @@ import { countUsageEventsByType } from "../../indexer/usage/usage-events";
 import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { withLlmStage } from "../../llm/usage-telemetry";
-import { persistPhaseThreshold } from "../../storage/repositories/improve-runs-repository";
-import { listProposalGateDecisions, listStateProposals } from "../../storage/repositories/proposals-repository";
+import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { akmLint } from "../lint/index";
 import { getProposal, listProposals } from "../proposal/repository";
 import { runSchemaRepairPass } from "../sources/schema-repair";
-import {
-  type CalibrationTuneConfig,
-  computeThresholdAutoTune,
-  gateDecisionsToSamples,
-  summarizeCalibration,
-} from "./calibration";
 import { akmConsolidate, type ConsolidateResult } from "./consolidate";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
@@ -95,113 +88,6 @@ function readConsecutiveNoOpsForImproveRef(
 // ── improve preparation stage ───────────────────────
 // The pre-loop preparation pipeline (consolidation, session-extract, validation/
 // repair, eligibility partitioning, selectors) extracted from improve.ts.
-
-/**
- * #612 / WS-4 — bounded, opt-in per-phase auto-accept threshold auto-tune.
- *
- * Reads `improve.calibration` from config. When `autoTune` is enabled, computes
- * the calibration of recent gate decisions, derives a bounded threshold
- * adjustment (clamped into the configured band, capped per step), logs it, and
- * records a `calibration_autotune` event. Returns the new threshold (integer
- * 0-100) when an adjustment was made, or `undefined` to leave the caller's
- * threshold unchanged.
- *
- * WS-4 change: accepts an optional `phase` parameter. When provided, the tuned
- * threshold is persisted to `improve_gate_thresholds` (state.db Migration 012)
- * keyed by phase so `makeGateConfig` can read it back on the next run and each
- * phase maintains its own calibrated threshold rather than a shared global.
- *
- * WS-4 ceiling: `maxThreshold` defaults to 85 (not 100) to prevent the gate
- * converging to pure exploitation and shutting down Gap-3/4 novelty throughput.
- *
- * DEFAULT OFF: with no `improve.calibration` block (or `autoTune: false`) this
- * returns `undefined` immediately, so the gate threshold is unchanged and
- * behaviour is byte-identical to today.
- */
-export function maybeAutoTuneThreshold(
-  currentThreshold: number,
-  config: AkmConfig,
-  stateDbPath: string,
-  ctx?: { now?: () => number; appendEventFn?: typeof appendEvent },
-  phase?: string,
-): number | undefined {
-  const cal = config.improve?.calibration;
-  if (!cal?.autoTune) return undefined;
-
-  // WS-4: default maxThreshold is now 85 (ceiling to prevent pure exploitation).
-  // Callers that explicitly set maxThreshold in config override this default.
-  const tuneConfig: CalibrationTuneConfig = {
-    autoTune: true,
-    minThreshold: cal.minThreshold ?? 0,
-    maxThreshold: cal.maxThreshold ?? 85,
-    maxStep: cal.maxStep ?? 5,
-    minSamples: cal.minSamples ?? 20,
-    targetAcceptRate: cal.targetAcceptRate ?? 0.9,
-  };
-  // Defensive: an inverted band disables tuning rather than clamping to nonsense.
-  if (tuneConfig.minThreshold > tuneConfig.maxThreshold) return undefined;
-
-  const summary = withStateDb(
-    (db) => {
-      const allDecisions = listProposalGateDecisions(db);
-      // WS-4 fix: when called with a phase label, restrict calibration to that
-      // phase's decision pool so a reflect-dominated run cannot tighten the
-      // consolidate gate (or vice-versa). The gate field is `improve:<phase>`,
-      // matching what improve-auto-accept.ts stamps at line ~163.
-      const gateLabel = phase ? `improve:${phase}` : undefined;
-      const decisions = gateLabel ? allDecisions.filter((d) => d.gate === gateLabel) : allDecisions;
-      return summarizeCalibration(gateDecisionsToSamples(decisions));
-    },
-    { path: stateDbPath },
-  );
-
-  const result = computeThresholdAutoTune(currentThreshold, summary, tuneConfig);
-  if (!result.adjusted) return undefined;
-
-  const appendEventFn = ctx?.appendEventFn ?? appendEvent;
-  const phaseLabel = phase ?? "global";
-  info(
-    `[improve] calibration auto-tune (${phaseLabel}): threshold ${result.previousThreshold} -> ${result.newThreshold} ` +
-      `(${result.reason}; samples=${summary.samples}, acceptRate=${summary.overallAcceptRate}, ` +
-      `gap=${summary.calibrationGap}, band=[${tuneConfig.minThreshold},${tuneConfig.maxThreshold}])`,
-  );
-  try {
-    appendEventFn({
-      eventType: "calibration_autotune",
-      ref: "improve:calibration",
-      metadata: {
-        phase: phaseLabel,
-        previousThreshold: result.previousThreshold,
-        newThreshold: result.newThreshold,
-        delta: result.delta,
-        reason: result.reason,
-        samples: summary.samples,
-        overallAcceptRate: summary.overallAcceptRate,
-        calibrationGap: summary.calibrationGap,
-        minThreshold: tuneConfig.minThreshold,
-        maxThreshold: tuneConfig.maxThreshold,
-      },
-    });
-  } catch (err) {
-    warn(`[improve] calibration auto-tune event not recorded: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // WS-4: Persist the per-phase threshold so makeGateConfig reads it on the
-  // next run. Best-effort — a write failure must not abort the improve run.
-  if (phase) {
-    try {
-      withStateDb((persistDb) => persistPhaseThreshold(persistDb, phase, result.newThreshold), {
-        path: stateDbPath,
-      });
-    } catch (err) {
-      warn(
-        `[improve] calibration auto-tune: failed to persist phase threshold for ${phase}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-
-  return result.newThreshold;
-}
 
 /**
  * Run (or gate-skip) the memory consolidation pass.
@@ -420,14 +306,6 @@ export async function runConsolidationPass(args: {
           limit: improveProfile?.processes?.consolidate?.limit,
           neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
           maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
-          // #617 — deterministic near-duplicate dedup pre-pass. DEFAULT OFF; only
-          // runs when the profile explicitly sets `consolidate.dedup.enabled`.
-          dedup: improveProfile?.processes?.consolidate?.dedup,
-          // #581 — judged-state cache. DEFAULT OFF; only engages when the profile
-          // explicitly sets `consolidate.judgedCache.enabled`. Skips memories
-          // judged-unchanged since their last judge so one run sweeps the full
-          // corpus instead of narrowing to a time-window slice.
-          judgedCache: improveProfile?.processes?.consolidate?.judgedCache,
           // Honor profile.autoAccept (already merged into options.autoAccept at the
           // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
           // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
@@ -496,25 +374,6 @@ export async function runConsolidationPass(args: {
   // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
   const consolidationRan =
     !consolidateDisabledByProfile && !poolBelowMinSize && !consolidationOnCooldown && consolidation.processed > 0;
-
-  // WS-4: Per-phase threshold auto-tune for the consolidate phase.
-  // Persists result for the NEXT run's makeGateConfig to read.
-  const consolidateTuneDbPath = eventsCtx?.dbPath;
-  if (options.autoAccept !== undefined && consolidateTuneDbPath) {
-    try {
-      maybeAutoTuneThreshold(
-        consolidateGateCfg.phaseThreshold ?? options.autoAccept,
-        consolidationConfig,
-        consolidateTuneDbPath,
-        undefined,
-        "consolidate",
-      );
-    } catch (err) {
-      warn(
-        `[improve] calibration auto-tune (consolidate) skipped: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
 
   return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
 }
@@ -2303,23 +2162,6 @@ export async function runImprovePreparationStage(args: {
     `[improve] ${actionableRefs.length} actionable; ${loopRefs.length} will be processed` +
       (options.limit && deferredCount > 0 ? ` (--limit ${options.limit} applied; ${deferredCount} deferred)` : ""),
   );
-
-  // WS-4: Per-phase threshold auto-tune for the extract phase.
-  // Persists result for the NEXT run's makeGateConfig to read.
-  const extractTuneDbPath = eventsCtx?.dbPath;
-  if (options.autoAccept !== undefined && extractTuneDbPath) {
-    try {
-      maybeAutoTuneThreshold(
-        extractPass.extractGateCfg.phaseThreshold ?? options.autoAccept,
-        options.config ?? loadConfig(),
-        extractTuneDbPath,
-        undefined,
-        "extract",
-      );
-    } catch (err) {
-      warn(`[improve] calibration auto-tune (extract) skipped: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
 
   return {
     actions,

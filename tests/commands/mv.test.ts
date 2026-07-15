@@ -1226,24 +1226,24 @@ describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
       stateDb
         .prepare(
           `INSERT INTO asset_outcome
-             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run("memory:salient-note", now, 7, 1.5, 2, 1, 3, 0.4, now);
+        .run("memory:salient-note", now, 7, 1.5, 2, 1, 0.4, now);
       stateDb
         .prepare(
           `INSERT INTO asset_outcome
-             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run("stash//memory:salient-note", now, 5, 1.5, 0, 1, 2, 0.3, now);
+        .run("stash//memory:salient-note", now, 5, 1.5, 0, 1, 0.3, now);
       stateDb
         .prepare(
           `INSERT INTO asset_outcome
-             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run("team//memory:salient-note", now, 11, 1.5, 0, 1, 4, 0.7, now);
+        .run("team//memory:salient-note", now, 11, 1.5, 0, 1, 0.7, now);
     } finally {
       stateDb.close();
     }
@@ -1273,15 +1273,18 @@ describe("akm mv — state.db asset_salience / asset_outcome re-key", () => {
         },
         { asset_ref: "team//memory:salient-note", encoding_salience: 0.4, rank_score: 0.3, encoding_source: "content" },
       ]);
+      // review_pressure (#613) was dropped in migration 018 (Chunk 7, WI-7.3);
+      // retrieval_count/outcome_score remain the surviving outcome-carry-on-
+      // rename pin.
       const outcome = after
         .prepare(
-          "SELECT asset_ref, retrieval_count, review_pressure FROM asset_outcome WHERE asset_ref LIKE '%salient%'",
+          "SELECT asset_ref, retrieval_count, outcome_score FROM asset_outcome WHERE asset_ref LIKE '%salient%'",
         )
-        .all() as Array<{ asset_ref: string; retrieval_count: number; review_pressure: number }>;
+        .all() as Array<{ asset_ref: string; retrieval_count: number; outcome_score: number }>;
       expect(outcome).toEqual([
-        { asset_ref: "memory:salient-renamed", retrieval_count: 7, review_pressure: 3 },
-        { asset_ref: "stash//memory:salient-renamed", retrieval_count: 5, review_pressure: 2 },
-        { asset_ref: "team//memory:salient-note", retrieval_count: 11, review_pressure: 4 },
+        { asset_ref: "memory:salient-renamed", retrieval_count: 7, outcome_score: 0.4 },
+        { asset_ref: "stash//memory:salient-renamed", retrieval_count: 5, outcome_score: 0.3 },
+        { asset_ref: "team//memory:salient-note", retrieval_count: 11, outcome_score: 0.7 },
       ]);
     } finally {
       after.close();

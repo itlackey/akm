@@ -15,10 +15,10 @@
  * AFTER the minContentChars + already-extracted skip checks and BEFORE the
  * extraction prompt / session-asset write.
  *
- * DESIGN-COHERENCE (#615 procedural compilation): a high-action session (dense
- * tool-use / edits / commits) with NO narrative-lesson markers must still PASS.
- * The procedural sub-scores (`toolDensity` + `editCommit`) alone clear the bar
- * so ordered-action data is never dropped before #615 can compile it.
+ * DESIGN-COHERENCE: a high-action session (dense tool-use / edits / commits)
+ * with NO narrative-lesson markers must still PASS. The `toolDensity` +
+ * `editCommit` sub-scores alone clear the bar so those sessions are never
+ * dropped.
  */
 
 import type { SessionData } from "../../integrations/session-logs/types";
@@ -27,21 +27,6 @@ import type { SessionData } from "../../integrations/session-logs/types";
 export interface TriageConfig {
   enabled?: boolean;
   minScore?: number;
-  /**
-   * #641 — procedural-aware floor (opt-in, DEFAULT OFF).
-   *
-   * When `true`, a session PASSES only when:
-   *   score >= minScore AND (markers >= 1 OR editCommit >= 0.5)
-   *
-   * Sessions that clear the score gate via toolDensity + substantiveRatio alone
-   * (read-only Q&A with no narrative markers and no file edits) are rejected as
-   * low-signal. Sessions with real edit/commit signal or narrative markers always
-   * pass (protects #615 procedural compilation sessions).
-   *
-   * Recommended ON in production; left DEFAULT OFF to preserve byte-identical
-   * behaviour for existing users who have not opted in.
-   */
-  proceduralAwareFloor?: boolean;
 }
 
 /**
@@ -82,28 +67,15 @@ const SUBSTANTIVE_MIN_CHARS = 40;
  * Sub-signals:
  *   - markers: presence of decision/outcome/error keywords across event text
  *     (capped, narrative-lesson signal).
- *   - toolDensity: bounded contribution from tool-use events (procedural).
- *   - editCommit: bounded contribution from edit/write/commit events (procedural).
+ *   - toolDensity: bounded contribution from tool-use events.
+ *   - editCommit: bounded contribution from edit/write/commit events.
  *   - substantiveRatio: scaled fraction of non-trivial assistant+tool turns,
  *     filtering pure short Q&A.
  *
- * The procedural sub-signals (toolDensity + editCommit) alone can clear
- * DEFAULT_TRIAGE_MIN_SCORE so high-action / no-narrative sessions are KEPT (#615).
+ * toolDensity + editCommit alone can clear DEFAULT_TRIAGE_MIN_SCORE so
+ * high-action / no-narrative sessions are KEPT.
  */
-/**
- * Optional config for {@link scoreSessionTriage}. All fields are opt-in and
- * default-preserving: omitting this argument reproduces the pre-#641 behaviour.
- */
-export interface ScoreSessionTriageOptions {
-  /** Enable the #641 procedural-aware floor. DEFAULT OFF. */
-  proceduralAwareFloor?: boolean;
-}
-
-export function scoreSessionTriage(
-  data: SessionData,
-  minScore: number,
-  options?: ScoreSessionTriageOptions,
-): TriageScore {
+export function scoreSessionTriage(data: SessionData, minScore: number): TriageScore {
   const events = data.events;
   const total = events.length;
 
@@ -149,19 +121,7 @@ export function scoreSessionTriage(
   const score = markers + toolDensity + editCommit + substantiveRatio;
 
   // Base gate: score must clear the floor.
-  let pass = score >= minScore;
-
-  // #641 procedural-aware floor (opt-in, DEFAULT OFF).
-  // When enabled, a session that clears the score gate must ALSO have at least
-  // one narrative marker (markers >= 1) OR meaningful edit/commit signal
-  // (editCommit >= 0.5). Pure read-only Q&A sessions that pass only via
-  // toolDensity + substantiveRatio are rejected as low-signal.
-  if (pass && options?.proceduralAwareFloor === true) {
-    const hasProceduralSignal = markers >= 1 || editCommit >= 0.5;
-    if (!hasProceduralSignal) {
-      pass = false;
-    }
-  }
+  const pass = score >= minScore;
 
   return {
     pass,
@@ -173,7 +133,7 @@ export function scoreSessionTriage(
 
 /**
  * Resolve the effective triage config from the extract process config. Mirrors
- * the minContentChars / schemaSimilarity resolution style in akmExtract.
+ * the minContentChars resolution style in akmExtract.
  *
  * Default-off: `enabled` is FALSE unless `triage.enabled === true`. `minScore`
  * defaults to {@link DEFAULT_TRIAGE_MIN_SCORE}.
@@ -181,12 +141,9 @@ export function scoreSessionTriage(
 export function resolveTriageConfig(extractProcess: unknown): {
   enabled: boolean;
   minScore: number;
-  proceduralAwareFloor: boolean;
 } {
   const triage = (extractProcess as { triage?: TriageConfig } | undefined)?.triage;
   const enabled = triage?.enabled === true;
   const minScore = typeof triage?.minScore === "number" ? triage.minScore : DEFAULT_TRIAGE_MIN_SCORE;
-  // #641: default-off — only true when explicitly set to true.
-  const proceduralAwareFloor = triage?.proceduralAwareFloor === true;
-  return { enabled, minScore, proceduralAwareFloor };
+  return { enabled, minScore };
 }

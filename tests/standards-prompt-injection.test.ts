@@ -19,7 +19,6 @@
  *   - buildDistillPrompt        (distill — lesson/knowledge)
  *   - buildExtractPrompt        (extract — lessons/memories from a session)
  *   - buildChunkPrompt          (consolidate — merge memories)
- *   - buildProceduralPrompt     (procedural — workflow from a sequence)
  *
  * Plus one tie-through test: the REAL `resolveStashStandards` output (from an
  * on-disk convention fact) reaches a builder's rendered prompt.
@@ -34,7 +33,6 @@ import path from "node:path";
 import { buildChunkPrompt } from "../src/commands/improve/consolidate";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
 import { buildExtractPrompt } from "../src/commands/improve/extract-prompt";
-import { buildProceduralPrompt } from "../src/commands/improve/procedural";
 import { resolveStashStandards } from "../src/core/standards/resolve-stash-standards";
 import { buildProposePrompt, buildReflectPrompt, buildSchemaRepairPrompt } from "../src/integrations/agent/prompts";
 
@@ -70,7 +68,7 @@ const sessionData = () =>
 
 /**
  * Each builder: a thunk producing the rendered prompt string, given an optional
- * standardsContext. Keeps the present/absent assertions uniform across all 8.
+ * standardsContext. Keeps the present/absent assertions uniform across all 6.
  */
 const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => string }> = [
   {
@@ -107,21 +105,6 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
   {
     name: "buildChunkPrompt",
     render: (s) => buildChunkPrompt("source", [memoryEntry("m1"), memoryEntry("m2")], 0, 1, 3000, new Set(), s),
-  },
-  {
-    name: "buildProceduralPrompt",
-    render: (s) =>
-      buildProceduralPrompt(
-        {
-          groupKey: "k",
-          normalized: ["step one", "step two"],
-          members: [
-            { ref: "workflow:x", entryKey: "e1", outcome: "ok" },
-            { ref: "workflow:y", entryKey: "e2", outcome: "ok" },
-          ],
-        },
-        s,
-      ),
   },
 ];
 

@@ -79,7 +79,7 @@ import {
   type Proposal,
   type ProposalsContext,
 } from "../proposal/repository";
-import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
+import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
   autoSwapDescriptionWhenToUse,

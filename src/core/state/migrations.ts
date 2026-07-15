@@ -783,6 +783,35 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
     `,
   },
+  // ── Migration 018 — drop dead-lane schema (Chunk 7, WI-7.3) ──────────────────
+  //
+  // Drops the on-disk schema for three lanes deleted by the 0.9.0 bundle-adapter
+  // refactor. Append-only: migrations 007/010/014 above are left verbatim; this
+  // migration only removes what they created.
+  //
+  //   - recombine_hypotheses (+ its last-seen index) — the whole-corpus
+  //     cross-episodic synthesis pass (migration 014) was deleted in Chunk 7
+  //     WI-7.1 (R28).
+  //   - consolidation_judged — the judged-state cache (#581, migration 007) was
+  //     deleted in Chunk 7 WI-7.3 (plan §5). This is a LIVE behavior change:
+  //     every consolidate run now re-judges unchanged memories (more LLM calls)
+  //     instead of skipping them — see the chunk-7 ledger.
+  //   - asset_outcome.review_pressure (+ its DESC index) — the review-pressure
+  //     lane (#613, migration 010) was deleted in Chunk 7 WI-7.2 (R21); this
+  //     migration finishes the column/index drop the code-side deletion left
+  //     pending. `retrieval_count`/`outcome_score` and their index are untouched.
+  {
+    id: "018-drop-dead-lane-schema",
+    up: `
+      DROP INDEX IF EXISTS idx_recombine_hypotheses_last_seen;
+      DROP TABLE IF EXISTS recombine_hypotheses;
+
+      DROP TABLE IF EXISTS consolidation_judged;
+
+      DROP INDEX IF EXISTS idx_asset_outcome_review_pressure;
+      ALTER TABLE asset_outcome DROP COLUMN review_pressure;
+    `,
+  },
 ];
 
 /**

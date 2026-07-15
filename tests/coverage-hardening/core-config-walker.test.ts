@@ -113,39 +113,39 @@ describe("configSet — z.record descent (engines.<name>)", () => {
 
 describe("configSet — boolean coercion is strictly 'true' | 'false'", () => {
   test("'true' and 'false' coerce to real booleans", () => {
-    expect(configSet({}, "improve.exploration.enabled", "true")).toEqual({
-      improve: { exploration: { enabled: true } },
+    expect(configSet({}, "improve.collapseDetector.enabled", "true")).toEqual({
+      improve: { collapseDetector: { enabled: true } },
     });
-    expect(configSet({}, "improve.exploration.enabled", "false")).toEqual({
-      improve: { exploration: { enabled: false } },
+    expect(configSet({}, "improve.collapseDetector.enabled", "false")).toEqual({
+      improve: { collapseDetector: { enabled: false } },
     });
   });
 
   test("'True' (wrong case) is rejected — no silent truthiness coercion", () => {
-    expect(() => configSet({}, "improve.exploration.enabled", "True")).toThrow(/expected true or false/);
+    expect(() => configSet({}, "improve.collapseDetector.enabled", "True")).toThrow(/expected true or false/);
   });
 
   test("'1' is rejected — numbers are not truthy booleans here", () => {
-    expect(() => configSet({}, "improve.exploration.enabled", "1")).toThrow(/expected true or false/);
+    expect(() => configSet({}, "improve.collapseDetector.enabled", "1")).toThrow(/expected true or false/);
   });
 });
 
 describe("configSet — number coercion + range validation", () => {
   test("a valid in-range number is accepted", () => {
-    expect(configSet({}, "improve.calibration.targetAcceptRate", "0.4")).toEqual({
-      improve: { calibration: { targetAcceptRate: 0.4 } },
+    expect(configSet({}, "improve.salience.salienceThreshold", "0.4")).toEqual({
+      improve: { salience: { salienceThreshold: 0.4 } },
     });
   });
 
   test("a non-numeric string is rejected at coercion time", () => {
-    expect(() => configSet({}, "improve.calibration.targetAcceptRate", "abc")).toThrow(/expected a number/);
+    expect(() => configSet({}, "improve.salience.salienceThreshold", "abc")).toThrow(/expected a number/);
   });
 
   test("an out-of-range number is rejected by safeParse (not just finiteness)", () => {
-    // targetAcceptRate is .min(0).max(1); 5 coerces to a finite number but must
+    // salienceThreshold is .min(0).max(1); 5 coerces to a finite number but must
     // fail the leaf schema validation. This is the branch that catches a value
     // that is a valid number yet an invalid config value.
-    expect(() => configSet({}, "improve.calibration.targetAcceptRate", "5")).toThrow(/Invalid value/);
+    expect(() => configSet({}, "improve.salience.salienceThreshold", "5")).toThrow(/Invalid value/);
   });
 });
 

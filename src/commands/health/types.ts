@@ -9,8 +9,6 @@
  * registry, so they live here rather than in any single concern module.
  */
 
-import type { CalibrationSummary } from "../improve/calibration";
-
 export interface HealthCheckResult {
   name: string;
   kind: "deterministic" | "heuristic";
@@ -205,15 +203,6 @@ export interface ImproveHealthMetrics {
      */
     validationFailed: number;
   };
-  /**
-   * Auto-accept gate calibration (#612). Joins predicted confidence (from the
-   * gate's per-proposal `gateDecision` records) to the realized accept/reject
-   * outcome over the window, producing a reliability table + an aggregate
-   * calibration gap (predicted vs realized acceptance). Empty (zeros) when no
-   * acted-on gate decisions fall in the window — so the default, ungated
-   * install reports a parity-preserving empty summary.
-   */
-  calibration: CalibrationSummary;
   reflectsWithErrorContext: number;
   coverageGapCount: number;
   evalCasesWritten: number;
@@ -549,8 +538,6 @@ export interface ImprovePerfTelemetry {
   dedupPoolSize: number;
   /** Sum of llmPoolSize across consolidation runs in the window. */
   llmPoolSize: number;
-  /** Sum of judgedCacheSkipped across consolidation runs. */
-  judgedCacheSkipped: number;
   /** Total embedding wall-clock time across consolidation runs (ms). */
   embedMs: number;
   /** Total body-embedding cache hits across consolidation runs. */

@@ -112,17 +112,37 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(procs.bogusKey).toBe(1); // preserved, not dropped
   });
 
-  test("#615 procedural is a RECOGNIZED process key (load does not throw; fields round-trip)", () => {
-    // Regression guard: each new opt-in improve process must be added to the
-    // recognized-process-key allowlist in config-schema.ts. #615 procedural was
-    // shipped without it, so enabling it in a real config hard-errored at load.
+  test("Chunk 7 (WI-7.3, D11): procedural is now an UNRECOGNIZED process key — enabling it hard-errors", () => {
+    // The procedural-compilation pass (#615) was deleted in Chunk 7 (WI-7.3)
+    // alongside its `IMPROVE_PROCESS_ENGINE_CAPABILITIES` entry — no compatibility
+    // shim (mirrors D11's recombine precedent). A pre-Chunk-7 config that
+    // explicitly enables `processes.procedural` must now hard-error at load
+    // rather than silently riding passthrough with a dead `enabled: true`.
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        improve: { strategies: { default: { processes: { procedural: { enabled: true } } } } },
+      }),
+    );
+    resetConfigCache();
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  test("Chunk 7 (WI-7.3): orphaned processes.procedural block survives a load→save→load round trip when disabled (passthrough, unvalidated)", () => {
+    // A disabled/absent-enabled procedural block never trips the "unknown
+    // enabled process" guard, so it rides passthrough like any other orphaned
+    // config block (mirrors D16's improve.exploration precedent).
     const config = {
       semanticSearchMode: "off",
       improve: {
         strategies: {
           default: {
             processes: {
-              procedural: { enabled: true, minRecurrence: 2, maxProposalsPerRun: 5 },
+              procedural: { enabled: false, minRecurrence: 2, maxProposalsPerRun: 5 },
             },
           },
         },
@@ -131,11 +151,10 @@ describe("#598 process-level config fields survive a load→save→load round tr
 
     saveConfig(config);
     resetConfigCache();
-    // The bug surfaced as a ConfigError thrown here for the unrecognized key.
     expect(() => loadConfig()).not.toThrow();
 
     const processes = loadConfig().improve?.strategies?.default?.processes as Record<string, Record<string, unknown>>;
-    expect(processes.procedural?.enabled).toBe(true);
+    expect(processes.procedural?.enabled).toBe(false);
     expect(processes.procedural?.minRecurrence).toBe(2);
     expect(processes.procedural?.maxProposalsPerRun).toBe(5);
   });
@@ -195,11 +214,11 @@ describe("#598 process-level config fields survive a load→save→load round tr
     expect(salience.bogus).toBe("tolerated");
   });
 
-  test("WS-3a: cosineCandidateLimit and p90ChunkSecondsDefault survive a round trip and are not rejected", () => {
-    // Regression guard: both fields were added to the TS types but NOT to the
-    // Zod schema initially (WS-3a review blocker). Any user who set them in a
-    // config file got a hard config-validation error. This test ensures both
-    // fields round-trip cleanly through load → save → reload.
+  test("WS-3a: p90ChunkSecondsDefault survives a round trip and is not rejected", () => {
+    // Regression guard: this field was added to the TS types but NOT to the
+    // Zod schema initially (WS-3a review blocker). Any user who set it in a
+    // config file got a hard config-validation error. This test ensures the
+    // field round-trips cleanly through load → save → reload.
     const config = {
       semanticSearchMode: "off",
       improve: {
@@ -209,11 +228,6 @@ describe("#598 process-level config fields survive a load→save→load round tr
               consolidate: {
                 enabled: true,
                 p90ChunkSecondsDefault: 45,
-                dedup: {
-                  enabled: true,
-                  cosineThreshold: 0.95,
-                  cosineCandidateLimit: 300,
-                },
               },
             },
           },
@@ -227,9 +241,37 @@ describe("#598 process-level config fields survive a load→save→load round tr
 
     const consolidate = reloaded.improve?.strategies?.default?.processes?.consolidate;
     expect(consolidate?.p90ChunkSecondsDefault).toBe(45);
-    expect(consolidate?.dedup?.cosineCandidateLimit).toBe(300);
-    expect(consolidate?.dedup?.cosineThreshold).toBeCloseTo(0.95);
-    expect(consolidate?.dedup?.enabled).toBe(true);
+  });
+
+  test("Chunk 7 (WI-7.3): orphaned consolidate.dedup block survives a load→save→load round trip (passthrough, unvalidated)", () => {
+    // The dedup pre-pass (#617) was deleted in Chunk 7 (WI-7.3) — `dedup` is no
+    // longer a typed/validated field on the consolidate process config, but
+    // ImproveProcessConfigSchema's `.passthrough()` still preserves it opaquely
+    // across save→load so a pre-Chunk-7 config never hard-errors at load.
+    const config = {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              consolidate: {
+                enabled: true,
+                dedup: { enabled: true, cosineThreshold: 0.95, cosineCandidateLimit: 300 },
+              },
+            },
+          },
+        },
+      },
+    } as unknown as AkmConfig;
+
+    saveConfig(config);
+    resetConfigCache();
+    const reloaded = loadConfig().improve?.strategies?.default?.processes?.consolidate?.dedup as
+      | Record<string, unknown>
+      | undefined;
+    expect(reloaded?.enabled).toBe(true);
+    expect(reloaded?.cosineThreshold).toBeCloseTo(0.95);
+    expect(reloaded?.cosineCandidateLimit).toBe(300);
   });
 
   test("Chunk 7 (WI-7.2, D16): orphaned improve.exploration block survives a load→save→load round trip (passthrough, unvalidated)", () => {

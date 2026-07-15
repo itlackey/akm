@@ -113,10 +113,10 @@ describe("mv durable journal crash recovery", () => {
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-after-state", Date.now(), 9, 1, 0, 2, 1, 0.4, Date.now());
+      .run("memory:crash-after-state", Date.now(), 9, 1, 0, 2, 0.4, Date.now());
     state.close();
 
     await crashAt("state-finalized", "memory:crash-after-state", "crash-after-state-new");
@@ -163,10 +163,10 @@ describe("mv durable journal crash recovery", () => {
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-before-proposal", Date.now(), 4, 1, 0, 1, 0, 0.3, Date.now());
+      .run("memory:crash-before-proposal", Date.now(), 4, 1, 0, 1, 0.3, Date.now());
     state.close();
     await crashAt("filesystem-committed", "memory:crash-before-proposal", "crash-before-proposal-new");
 
@@ -283,10 +283,10 @@ describe("mv durable journal crash recovery", () => {
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-between-state", now, 6, 1, 0, 2, 0, 0.5, now);
+      .run("memory:crash-between-state", now, 6, 1, 0, 2, 0.5, now);
     state.close();
 
     await crashAt("state-asset_salience-rekeyed", "memory:crash-between-state", "crash-between-state-new");
