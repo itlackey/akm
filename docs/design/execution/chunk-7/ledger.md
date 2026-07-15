@@ -461,3 +461,100 @@ the brief's explicit token list but implied by the deletions).
   `improve-auto-accept.test.ts` discovered and root-caused during
   verification (see above) — not fixed (out of scope), flagged for the
   chunk-level Finalize gate.
+
+## WI-7.4 — Shared helpers: RunContext, proposal-envelope facade, single derived-ref, god-fn ratchet; DRY fixes + rename
+
+This item MINTS shared machinery (no lane deletions). Net-LOC is reported, not
+gated (plan §15.4). Adoption of RunContext / the envelope facade at the verb
+call sites is WI-7.5–7.8 work; here they exist with one implementation each.
+
+### Files added
+
+| File | LOC | Purpose |
+|---|---:|---|
+| `src/commands/improve/run-context.ts` | 215 | `RunContext` carrier + the D6 read-once seam (memo scope, write-through invalidation). (R6) |
+| `src/commands/improve/proposal-envelope.ts` | 54 | `emitProposal(ctx, input)` facade over `createProposal` — the single seam Chunk 6 extends. (R7/D10) |
+| `src/commands/improve/memory/derived-ref.ts` | 83 | The single keyed-on-ref `isDerivedMemory`/`resolveParentRef`/`parseMemoryRef`. (R12) |
+| `scripts/lint-improve-fn-size.ts` | 154 | TS-AST god-fn size ratchet: scanner + shrink-only baseline. (R31) |
+| `tests/commands/improve/run-context.test.ts` | — | Pins the D6 memo contract (7 tests). |
+| `tests/commands/improve/proposal-envelope.test.ts` | — | Pins direct-vs-facade equivalence (3 tests). |
+| `tests/commands/improve/derived-ref.test.ts` | — | Pins producer/consumer agreement + the intended widening (10 tests). |
+| `tests/architecture/improve-fn-size-ratchet.test.ts` | — | Asserts the live over-bar set equals the baseline (shrink-only). |
+
+Net src/scripts diff for this item: **+529 / −74 ≈ +455** (within the plan §5
+~+500 helper budget; reported). Already-landed earlier in the branch and folded
+under WI-7.4: `serializeFrontmatterQuoted` (R27) and the single
+`MAX_REJECTED_PROPOSALS` (plan §5 dedup).
+
+### Duplicate implementations collapsed (R12 / R27 / plan §5)
+
+- `isDerivedMemory` + `resolveParentRef`: two divergent copies (consumer
+  `memory-improve.ts`, producer `memory-contradiction-detect.ts`) → one in
+  `derived-ref.ts`. `parseMemoryRef` folded onto the same module (was a private
+  copy in `memory-improve.ts`; the now-unused `parseAssetRef` import was
+  dropped there). Local `DERIVED_SUFFIX` in `memory-improve.ts` removed in favour
+  of the shared export.
+- `serializeFrontmatterQuoted` (R27) and `MAX_REJECTED_PROPOSALS` (plan §5) —
+  single implementations already landed earlier on the branch.
+
+### Behavior change (intended, ledgered) — derived-ref producer widening
+
+Sharing one keyed-on-ref impl WIDENS the producer
+(`detectAndWriteContradictions`), which previously used a strictly narrower
+copy that (a) ignored `derivedFrom` entirely and (b) matched `source:` only via
+a raw `startsWith("memory:")`. Post-change the producer resolves a parent for
+`derivedFrom`-keyed families (so they now participate in contradiction
+detection) and normalises `source:` through `parseAssetRef` (trim + origin) —
+aligning it with the consumer so the two can no longer disagree (plan §6). All
+existing producer suites set `source:` and are unaffected (86 memory tests
+green); the widening is pinned by `derived-ref.test.ts`.
+
+### Rename (plan §5 RENAME row)
+
+`relativeImproveResultPath → improveRunLocator`, `writeImproveResultFile →
+recordImproveRunResult` (the names lied about writing a file; the 0.8.0 storage
+swap moved the record into the `improve_runs` state.db table). Mechanical —
+signatures/return types unchanged; `improve-cli.ts` call sites + the test file
+updated. File name kept (rename optional per the brief).
+
+### D8 — mutateFrontmatter row (plan §5 CONSOLIDATE row): MIS-GROUNDED, no code change
+
+The plan §5 row "`memory-improve.ts:315-328,730-735` raw fs read/parse/write →
+`mutateFrontmatter`" is not cleanly executable and is recorded here as
+descoped:
+- the `:728-735`-region block is a read-only collector — there is no write to
+  convert; and
+- the `:313-333`-region block mutates the memory BODY (`resolveRelativeDates`),
+  which `mutateFrontmatter`'s frontmatter-only contract cannot express.
+
+`core/asset/frontmatter.ts` is deliberately NOT extended (wide blast radius; the
+frozen `improve/resolve-relative-dates.json` golden pins the block's bytes). The
+~−20 LOC the row anticipated is therefore not realized. Carries no inventory id.
+
+### God-fn ratchet baseline (R31) — the WI-7.5–7.8 worklist
+
+Measured at chunk-7 HEAD (post 7.1/7.2/7.3 deletions), 13 function-like nodes in
+`src/commands/improve/**` exceed the 220-line bar. Emptied by WI-7.8.
+
+| Lines | Node |
+|---:|---|
+| 1493 | `preparation.ts :: runImprovePreparationStage` |
+| 810 | `improve.ts :: akmImprove` |
+| 643 | `reflect.ts :: akmReflect` |
+| 632 | `distill.ts :: akmDistill` |
+| 500 | `loop-stages.ts :: runImproveLoopStage` |
+| 470 | `loop-stages.ts :: runImproveMaintenancePasses` |
+| 452 | `extract.ts :: akmExtract` |
+| 389 | `loop-stages.ts :: withIndexWriterLease#arg1` (the maintenance anon) |
+| 373 | `consolidate.ts :: planConsolidation` |
+| 308 | `extract.ts :: processSession` |
+| 297 | `consolidate.ts :: handleMergeOp` |
+| 265 | `preparation.ts :: runConsolidationPass` |
+| 254 | `distill/promote-memory.ts :: promoteMemoryToKnowledge` |
+
+### Scope discipline held
+
+No change to `EventsContext` shape (D14/R25); no db handle threaded into
+`ProposalsContext` (D14); no change to `core/asset/frontmatter.ts` (D8). The
+RunContext memo is structurally never run-wide (top-risk #7): the base context is
+non-memoizing and memoization is opt-in per `withFreshAssetMemo()` scope.
