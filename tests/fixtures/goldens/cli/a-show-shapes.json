@@ -1,4 +1,0 @@
-{
-  "agentKeys": ["action", "description", "name", "parameters", "related", "template", "type"],
-  "summaryKeys": ["action", "description", "name", "origin", "parameters", "type"]
-}

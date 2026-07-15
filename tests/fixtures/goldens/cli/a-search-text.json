@@ -1,5 +1,0 @@
-{
-  "argv": ["search", "…", "--format=text"],
-  "exitCode": 0,
-  "stdoutScrubbed": "script: cli-a-deploy.sh\n  ref: script:cli-a-deploy.sh\n  action: akm show script:cli-a-deploy.sh -> execute the run command\n\nNext: akm show 'script:cli-a-deploy.sh'\nAfter reading the asset: check whether a workflow applies before editing — if so, use `akm workflow next` instead.\n"
-}

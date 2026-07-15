@@ -1,5 +1,0 @@
-{
-  "code": "INVALID_FORMAT_VALUE",
-  "exitCode": 2,
-  "stderrKeys": ["code", "error", "hint", "ok"]
-}

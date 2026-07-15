@@ -1,5 +1,0 @@
-{
-  "code": "INVALID_CONFIG_FILE",
-  "exitCode": 78,
-  "stderrKeys": ["code", "error", "hint", "ok"]
-}
