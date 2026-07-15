@@ -111,35 +111,39 @@ function readConsecutiveNoOpsForImproveRef(
  *      `promoted` events with `assetPath` already carry exactly the signal we
  *      need, so the fix is non-invasive and provably correct.
  */
-export async function runConsolidationPass(args: {
+/** Whether/why the consolidation pass should run, computed with zero LLM calls. */
+interface ConsolidationEligibility {
+  /** Memory volume exceeded the threshold with an LLM available — forces the run. */
+  volumeTriggered: boolean;
+  /** Pool-delta gate: no memory changed since the last successful consolidate. */
+  consolidationOnCooldown: boolean;
+  /** Profile explicitly disables consolidate. */
+  consolidateDisabledByProfile: boolean;
+  /** #553: eligible pool below the configured minimum size. */
+  poolBelowMinSize: boolean;
+  eligiblePoolSize: number;
+  minPoolSize: number;
+  /** Timestamp of the most recent successful consolidate_completed event. */
+  lastConsolidationTs?: string;
+}
+
+/**
+ * Evaluate the consolidation gate flags (volume trigger, #551 pool-delta
+ * cooldown, profile disable, #553 min-pool-size) up front, before any LLM call.
+ * Extracted verbatim from `runConsolidationPass` — logic is byte-identical.
+ */
+function evaluateConsolidationEligibility(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
   improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
-  eventsCtx?: EventsContext;
-  /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
-  budgetSignal?: AbortSignal;
-  /** Total run budget in ms, forwarded to akmConsolidate for WS-5 perf telemetry. */
-  runBudgetMs?: number;
-}): Promise<ConsolidationPassResult> {
-  const {
-    options,
-    primaryStashDir,
-    memorySummary,
-    improveProfile,
-    resolvedPlan,
-    eventsCtx,
-    budgetSignal,
-    runBudgetMs,
-  } = args;
-
-  const baseConfig = options.config ?? loadConfig();
+}): ConsolidationEligibility {
+  const { options, primaryStashDir, memorySummary, improveProfile, resolvedPlan } = args;
   const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
   const hasLlm = resolvedPlan.processes.consolidate.runner !== null;
   const volumeTriggered =
     typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
-  const consolidationConfig = baseConfig;
 
   // 0.8.0 pool-delta gate for consolidate: re-eligible iff at least one
   // memory file has been updated since the most recent successful
@@ -228,6 +232,53 @@ export async function runConsolidationPass(args: {
   // so a force-triggered run never trips the pool-size guard. The guard only
   // engages when minPoolSize > 0 and the eligible pool is strictly below it.
   const poolBelowMinSize = !volumeTriggered && minPoolSize > 0 && eligiblePoolSize < minPoolSize;
+
+  return {
+    volumeTriggered,
+    consolidationOnCooldown,
+    consolidateDisabledByProfile,
+    poolBelowMinSize,
+    eligiblePoolSize,
+    minPoolSize,
+    ...(lastConsolidateTs ? { lastConsolidationTs: lastConsolidateTs } : {}),
+  };
+}
+
+export async function runConsolidationPass(args: {
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  memorySummary: { eligible: number; derived: number };
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
+  eventsCtx?: EventsContext;
+  /** Budget signal forwarded to akmConsolidate for graceful drain on timeout. */
+  budgetSignal?: AbortSignal;
+  /** Total run budget in ms, forwarded to akmConsolidate for WS-5 perf telemetry. */
+  runBudgetMs?: number;
+}): Promise<ConsolidationPassResult> {
+  const {
+    options,
+    primaryStashDir,
+    memorySummary,
+    improveProfile,
+    resolvedPlan,
+    eventsCtx,
+    budgetSignal,
+    runBudgetMs,
+  } = args;
+
+  const baseConfig = options.config ?? loadConfig();
+  const consolidationConfig = baseConfig;
+
+  const {
+    volumeTriggered,
+    consolidationOnCooldown,
+    consolidateDisabledByProfile,
+    poolBelowMinSize,
+    eligiblePoolSize,
+    minPoolSize,
+    lastConsolidationTs,
+  } = evaluateConsolidationEligibility({ options, primaryStashDir, memorySummary, improveProfile, resolvedPlan });
 
   let consolidation: ConsolidateResult = {
     schemaVersion: 1,
@@ -362,7 +413,7 @@ export async function runConsolidationPass(args: {
         ref: "memory:_consolidation",
         metadata: {
           reason: "consolidation_no_memory_updates",
-          lastEventTs: lastConsolidation?.ts ?? null,
+          lastEventTs: lastConsolidationTs ?? null,
         },
       },
       eventsCtx,
