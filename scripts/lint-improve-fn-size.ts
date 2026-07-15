@@ -148,5 +148,4 @@ export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
   { id: "src/commands/improve/loop-stages.ts :: withIndexWriterLease#arg1", lines: 389 },
   { id: "src/commands/improve/consolidate.ts :: planConsolidation", lines: 373 },
   { id: "src/commands/improve/extract.ts :: processSession", lines: 308 },
-  { id: "src/commands/improve/consolidate.ts :: handleMergeOp", lines: 297 },
 ];

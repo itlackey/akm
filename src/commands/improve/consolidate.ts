@@ -1825,164 +1825,24 @@ export interface ConsolidateOpContext {
 }
 
 /** Execute one `merge` op (behavior-identical to the former inlined branch). */
-export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx: ConsolidateOpContext): Promise<void> {
-  const { config, stashDir, target, backupDir, memoryByRef, warnings, pushSkipReason, counts } = ctx;
-  // Accounting helper: emit a per-participant skipReason for failed
-  // merges so primary + every loaded-memory secondary land in the
-  // structured skip histogram. Pre-2026-05-26 only the primary was
-  // counted (1 skipReason per failed merge), leaving N secondaries
-  // unaccounted for in the `processed == actioned + noAction + Σskips`
-  // invariant — the source of the 4–11 silent leaks per run.
-  const emitMergeFailureSkips = (reason: string): void => {
-    if (memoryByRef.has(op.primary)) pushSkipReason("merge", op.primary, reason);
-    for (const secRef of op.secondaries) {
-      if (memoryByRef.has(secRef)) pushSkipReason("merge", secRef, reason);
-    }
-  };
-
-  const primaryEntry = memoryByRef.get(op.primary);
-  if (!primaryEntry) {
-    // This fires when a prior op in the same run consumed this ref as a
-    // secondary and Fix-A pruned it from memoryByRef. It should NOT fire
-    // for hallucinated primaries (those are dropped by mergePlans() before
-    // reaching here). If this counter is non-zero, suspect an intra-run
-    // cross-chunk race, not a filter regression.
-    warnings.push(
-      `Merge: primary ${op.primary} not found in loaded memories (pruned by prior op this run) — skipping.`,
-    );
-    emitMergeFailureSkips("merge_primary_missing");
-    return;
-  }
-  // Defense-in-depth: even if the entry is in memoryByRef (pre-flight ran
-  // before this run's own ops), the file may have been deleted by a
-  // concurrent process or an edge case the pre-flight filter missed.
-  if (!fs.existsSync(primaryEntry.filePath)) {
-    warnings.push(`Merge: primary ${op.primary} file gone at execution time (stale entry) — skipping.`);
-    emitMergeFailureSkips("merge_primary_file_gone");
-    return;
-  }
-
-  // Phase B: generate merged content
-  const secondaryBodies: string[] = [];
-  for (const secRef of op.secondaries) {
-    const secEntry = memoryByRef.get(secRef);
-    if (!secEntry) {
-      warnings.push(`Merge: secondary ${secRef} not found — skipping merge op.`);
-      // No accounting impact: a missing secondary is a phantom ref and
-      // never contributed to any chunk's targetRefs reduction. We still
-      // continue the loop to gather the remaining valid secondaries.
-      continue;
-    }
-    secondaryBodies.push(secRef);
-  }
-
-  if (secondaryBodies.length === 0) {
-    warnings.push(`Merge: ${op.primary} has no valid secondaries — skipping.`);
-    emitMergeFailureSkips("merge_no_valid_secondaries");
-    return;
-  }
-
-  // Pre-flight hot guard — skip the LLM call entirely if any participant
-  // is hot or unparseable. Without this, mixed chunks still send hot merges
-  // to the planner which proposes them; generateMergedContent() is then
-  // called, produces output without `description`, and the skip is
-  // misattributed to merge_missing_description instead of the real cause.
-  const preflightParticipants: string[] = [op.primary, ...op.secondaries];
-  const preflightBlocked = preflightParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>((ref) => {
-    const e = memoryByRef.get(ref);
-    if (!e) return [];
-    const verdict = consolidateGuardStatus(e.filePath);
-    if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
-    return [];
-  });
-  if (preflightBlocked.length > 0) {
-    const detail = preflightBlocked.map((p) => `${p.ref} (${p.verdict})`).join(", ");
-    warnings.push(
-      `Merge: refused for ${op.primary} — ${preflightBlocked.length} participant(s) blocked by hot/unparseable frontmatter guard (pre-flight): ${detail}`,
-    );
-    emitMergeFailureSkips("merge_participant_blocked");
-    return;
-  }
-
-  let primaryBody = "";
-  try {
-    primaryBody = fs.readFileSync(primaryEntry.filePath, "utf8");
-  } catch {
-    warnings.push(`Merge: could not read primary ${op.primary} — skipping.`);
-    emitMergeFailureSkips("merge_read_failed");
-    return;
-  }
-
-  const mergeResult = await (ctx.generateMergedContentFn ?? generateMergedContent)(
-    config,
-    op.primary,
-    primaryBody,
-    op.secondaries,
-    memoryByRef,
-    ctx.improveProfile,
-    ctx.llmConfig,
-  );
-
-  if ("error" in mergeResult) {
-    warnings.push(`Merge: ${mergeResult.error} for ${mergeResult.detail}.`);
-    emitMergeFailureSkips(mergeResult.error);
-    return;
-  }
-  let mergedContent = mergeResult.content;
-
-  // Validate frontmatter of merged content — must have a `---` block
-  // with at minimum a `description` field. We parse via the hand-rolled
-  // parser (cheap) AND require non-empty description. This guards against
-  // the historical defect where merged memories were written back with
-  // empty `description` and later polluted the promote path.
-  let parsedMerged: ReturnType<typeof parseFrontmatter>;
-  try {
-    parsedMerged = parseFrontmatter(mergedContent);
-  } catch {
-    warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
-    emitMergeFailureSkips("merge_invalid_frontmatter");
-    return;
-  }
-  if (parsedMerged.frontmatter === null) {
-    warnings.push(`Merge: merged content for ${op.primary} has no frontmatter block — skipping.`);
-    emitMergeFailureSkips("merge_invalid_frontmatter");
-    return;
-  }
-  const mergedDesc = parsedMerged.data.description;
-  if (typeof mergedDesc !== "string" || mergedDesc.trim().length === 0) {
-    warnings.push(`Merge: merged content for ${op.primary} missing description — skipping.`);
-    emitMergeFailureSkips("merge_missing_description");
-    return;
-  }
-  const truncReason = detectTruncatedDescription(mergedDesc);
-  if (truncReason) {
-    warnings.push(`Merge: merged content for ${op.primary} has truncated description (${truncReason}) — skipping.`);
-    emitMergeFailureSkips("merge_truncated_description");
-    return;
-  }
-
-  // captureMode:hot guard — refuse the merge if ANY participating memory
-  // (primary or secondary) was user-captured or has unparseable frontmatter
-  // (could have hidden a hot flag). Hot memories are user-explicit and
-  // must not be deleted/overwritten by the consolidate LLM. 14 user
-  // memories were silent-deleted by consolidate before this guard landed;
-  // recovery required copying from .akm/archive/ by hand.
-  const mergeParticipants: string[] = [op.primary, ...op.secondaries];
-  const blockedParticipants = mergeParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>((ref) => {
-    const e = memoryByRef.get(ref);
-    if (!e) return [];
-    const verdict = consolidateGuardStatus(e.filePath);
-    if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
-    return [];
-  });
-  if (blockedParticipants.length > 0) {
-    const detail = blockedParticipants.map((p) => `${p.ref} (${p.verdict})`).join(", ");
-    warnings.push(
-      `Merge: refused for ${op.primary} — ${blockedParticipants.length} participant(s) blocked by hot/unparseable frontmatter guard: ${detail}`,
-    );
-    emitMergeFailureSkips("merge_participant_blocked");
-    return;
-  }
+/**
+ * Finalize a merge whose content has already been generated and validated:
+ * provenance/anti-collapse guards (generation guard, lexical-diversity + info-floor
+ * advisories), generation frontmatter injection, then backup/write/archive/journal
+ * and the 2026-05-26 accounting counters. Extracted verbatim from `handleMergeOp`
+ * — logic and every counter increment are byte-identical (the
+ * `processed == actioned + noAction + Σskips` invariant is preserved). All
+ * refusal paths emit a skip reason and return.
+ */
+async function finalizeMerge(
+  op: ConsolidateMergeOp,
+  opIndex: number,
+  ctx: ConsolidateOpContext,
+  mergedContentArg: string,
+  emitMergeFailureSkips: (reason: string) => void,
+): Promise<void> {
+  const { config, stashDir, target, backupDir, memoryByRef, warnings, counts } = ctx;
+  let mergedContent = mergedContentArg;
 
   const allParticipants = [op.primary, ...op.secondaries];
   // Generation and provenance are mandatory merge metadata, independent of
@@ -2121,6 +1981,168 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
   for (const secRef of op.secondaries) {
     memoryByRef.delete(secRef);
   }
+}
+
+export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx: ConsolidateOpContext): Promise<void> {
+  const { config, memoryByRef, warnings, pushSkipReason } = ctx;
+  // Accounting helper: emit a per-participant skipReason for failed
+  // merges so primary + every loaded-memory secondary land in the
+  // structured skip histogram. Pre-2026-05-26 only the primary was
+  // counted (1 skipReason per failed merge), leaving N secondaries
+  // unaccounted for in the `processed == actioned + noAction + Σskips`
+  // invariant — the source of the 4–11 silent leaks per run.
+  const emitMergeFailureSkips = (reason: string): void => {
+    if (memoryByRef.has(op.primary)) pushSkipReason("merge", op.primary, reason);
+    for (const secRef of op.secondaries) {
+      if (memoryByRef.has(secRef)) pushSkipReason("merge", secRef, reason);
+    }
+  };
+
+  const primaryEntry = memoryByRef.get(op.primary);
+  if (!primaryEntry) {
+    // This fires when a prior op in the same run consumed this ref as a
+    // secondary and Fix-A pruned it from memoryByRef. It should NOT fire
+    // for hallucinated primaries (those are dropped by mergePlans() before
+    // reaching here). If this counter is non-zero, suspect an intra-run
+    // cross-chunk race, not a filter regression.
+    warnings.push(
+      `Merge: primary ${op.primary} not found in loaded memories (pruned by prior op this run) — skipping.`,
+    );
+    emitMergeFailureSkips("merge_primary_missing");
+    return;
+  }
+  // Defense-in-depth: even if the entry is in memoryByRef (pre-flight ran
+  // before this run's own ops), the file may have been deleted by a
+  // concurrent process or an edge case the pre-flight filter missed.
+  if (!fs.existsSync(primaryEntry.filePath)) {
+    warnings.push(`Merge: primary ${op.primary} file gone at execution time (stale entry) — skipping.`);
+    emitMergeFailureSkips("merge_primary_file_gone");
+    return;
+  }
+
+  // Phase B: generate merged content
+  const secondaryBodies: string[] = [];
+  for (const secRef of op.secondaries) {
+    const secEntry = memoryByRef.get(secRef);
+    if (!secEntry) {
+      warnings.push(`Merge: secondary ${secRef} not found — skipping merge op.`);
+      // No accounting impact: a missing secondary is a phantom ref and
+      // never contributed to any chunk's targetRefs reduction. We still
+      // continue the loop to gather the remaining valid secondaries.
+      continue;
+    }
+    secondaryBodies.push(secRef);
+  }
+
+  if (secondaryBodies.length === 0) {
+    warnings.push(`Merge: ${op.primary} has no valid secondaries — skipping.`);
+    emitMergeFailureSkips("merge_no_valid_secondaries");
+    return;
+  }
+
+  // Pre-flight hot guard — skip the LLM call entirely if any participant
+  // is hot or unparseable. Without this, mixed chunks still send hot merges
+  // to the planner which proposes them; generateMergedContent() is then
+  // called, produces output without `description`, and the skip is
+  // misattributed to merge_missing_description instead of the real cause.
+  const preflightParticipants: string[] = [op.primary, ...op.secondaries];
+  const preflightBlocked = preflightParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>((ref) => {
+    const e = memoryByRef.get(ref);
+    if (!e) return [];
+    const verdict = consolidateGuardStatus(e.filePath);
+    if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
+    return [];
+  });
+  if (preflightBlocked.length > 0) {
+    const detail = preflightBlocked.map((p) => `${p.ref} (${p.verdict})`).join(", ");
+    warnings.push(
+      `Merge: refused for ${op.primary} — ${preflightBlocked.length} participant(s) blocked by hot/unparseable frontmatter guard (pre-flight): ${detail}`,
+    );
+    emitMergeFailureSkips("merge_participant_blocked");
+    return;
+  }
+
+  let primaryBody = "";
+  try {
+    primaryBody = fs.readFileSync(primaryEntry.filePath, "utf8");
+  } catch {
+    warnings.push(`Merge: could not read primary ${op.primary} — skipping.`);
+    emitMergeFailureSkips("merge_read_failed");
+    return;
+  }
+
+  const mergeResult = await (ctx.generateMergedContentFn ?? generateMergedContent)(
+    config,
+    op.primary,
+    primaryBody,
+    op.secondaries,
+    memoryByRef,
+    ctx.improveProfile,
+    ctx.llmConfig,
+  );
+
+  if ("error" in mergeResult) {
+    warnings.push(`Merge: ${mergeResult.error} for ${mergeResult.detail}.`);
+    emitMergeFailureSkips(mergeResult.error);
+    return;
+  }
+  const mergedContent = mergeResult.content;
+
+  // Validate frontmatter of merged content — must have a `---` block
+  // with at minimum a `description` field. We parse via the hand-rolled
+  // parser (cheap) AND require non-empty description. This guards against
+  // the historical defect where merged memories were written back with
+  // empty `description` and later polluted the promote path.
+  let parsedMerged: ReturnType<typeof parseFrontmatter>;
+  try {
+    parsedMerged = parseFrontmatter(mergedContent);
+  } catch {
+    warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
+    emitMergeFailureSkips("merge_invalid_frontmatter");
+    return;
+  }
+  if (parsedMerged.frontmatter === null) {
+    warnings.push(`Merge: merged content for ${op.primary} has no frontmatter block — skipping.`);
+    emitMergeFailureSkips("merge_invalid_frontmatter");
+    return;
+  }
+  const mergedDesc = parsedMerged.data.description;
+  if (typeof mergedDesc !== "string" || mergedDesc.trim().length === 0) {
+    warnings.push(`Merge: merged content for ${op.primary} missing description — skipping.`);
+    emitMergeFailureSkips("merge_missing_description");
+    return;
+  }
+  const truncReason = detectTruncatedDescription(mergedDesc);
+  if (truncReason) {
+    warnings.push(`Merge: merged content for ${op.primary} has truncated description (${truncReason}) — skipping.`);
+    emitMergeFailureSkips("merge_truncated_description");
+    return;
+  }
+
+  // captureMode:hot guard — refuse the merge if ANY participating memory
+  // (primary or secondary) was user-captured or has unparseable frontmatter
+  // (could have hidden a hot flag). Hot memories are user-explicit and
+  // must not be deleted/overwritten by the consolidate LLM. 14 user
+  // memories were silent-deleted by consolidate before this guard landed;
+  // recovery required copying from .akm/archive/ by hand.
+  const mergeParticipants: string[] = [op.primary, ...op.secondaries];
+  const blockedParticipants = mergeParticipants.flatMap<{ ref: string; verdict: ConsolidateGuardVerdict }>((ref) => {
+    const e = memoryByRef.get(ref);
+    if (!e) return [];
+    const verdict = consolidateGuardStatus(e.filePath);
+    if (verdict === "hot" || verdict === "unparseable") return [{ ref, verdict }];
+    return [];
+  });
+  if (blockedParticipants.length > 0) {
+    const detail = blockedParticipants.map((p) => `${p.ref} (${p.verdict})`).join(", ");
+    warnings.push(
+      `Merge: refused for ${op.primary} — ${blockedParticipants.length} participant(s) blocked by hot/unparseable frontmatter guard: ${detail}`,
+    );
+    emitMergeFailureSkips("merge_participant_blocked");
+    return;
+  }
+
+  await finalizeMerge(op, opIndex, ctx, mergedContent, emitMergeFailureSkips);
 }
 
 /** Execute one `delete` op (behavior-identical to the former inlined branch). */
