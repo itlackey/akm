@@ -22,15 +22,10 @@ describe("improve CLI flags (0.8.0)", () => {
   // so we cannot pin rejection here — the flag-rejection tests were
   // dropped along with the flags.
 
-  test("rejects negative min retrieval count", async () => {
-    const result = await runCli(["improve", "--min-retrieval-count", "-1", "--dry-run"]);
-    expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--min-retrieval-count");
-    expect(parsed.error).toContain("non-negative integer");
-  });
+  // NOTE: the `rejects negative min retrieval count` test was dropped here —
+  // chunk-7's improve refactor removed the --min-retrieval-count validation,
+  // and citty silently ignores the now-unknown flag, so rejection can no longer
+  // be pinned (same reason the cooldown-flag rejection tests were dropped above).
 
   test("rejects invalid consolidate recovery mode", async () => {
     const result = await runCli(["improve", "--consolidate-recovery", "resume", "--dry-run"]);
