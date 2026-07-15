@@ -13,7 +13,12 @@
  */
 import { describe, expect, it } from "bun:test";
 import { stringify as yamlStringify } from "yaml";
-import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "../../src/core/asset/asset-serialize";
+import {
+  assembleAsset,
+  assembleAssetFromString,
+  serializeFrontmatter,
+  serializeFrontmatterQuoted,
+} from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 
 describe("serializeFrontmatter — canonical YAML for the frontmatter block", () => {
@@ -40,6 +45,44 @@ describe("serializeFrontmatter — canonical YAML for the frontmatter block", ()
     const out = serializeFrontmatter({ description: "x", tags: ["a"] });
     expect(out.endsWith("\n")).toBe(false);
     expect(out.endsWith(" ")).toBe(false);
+  });
+});
+
+describe("serializeFrontmatterQuoted — guaranteed-quoted scalars, array-aware", () => {
+  it("JSON.stringify-quotes every scalar value", () => {
+    const out = serializeFrontmatterQuoted({ description: "hi", n: 3, flag: true });
+    expect(out).toBe('description: "hi"\nn: 3\nflag: true');
+  });
+
+  it("serializes arrays as [<json>, <json>] with a space after the comma", () => {
+    const out = serializeFrontmatterQuoted({ tags: ["a", "b"] });
+    expect(out).toBe('tags: ["a", "b"]');
+  });
+
+  it("preserves the input object's insertion order", () => {
+    const out = serializeFrontmatterQuoted({ description: "x", when_to_use: "y", tags: ["a"] });
+    expect(out.split("\n").map((l) => l.split(":")[0])).toEqual(["description", "when_to_use", "tags"]);
+  });
+
+  it("emits no `---` fences and no trailing newline", () => {
+    const out = serializeFrontmatterQuoted({ description: "x", tags: ["a"] });
+    expect(out.startsWith("---")).toBe(false);
+    expect(out.endsWith("\n")).toBe(false);
+  });
+
+  it("survives strings the subset parser would otherwise choke on (colons, quotes, newlines)", () => {
+    const fm = { description: 'Multi: line "breaks": like\nthis', tags: ["a", "b"] };
+    const out = assembleAssetFromString(serializeFrontmatterQuoted(fm), "Body.");
+    // Round-trips through parseFrontmatter with the description intact.
+    expect(parseFrontmatter(out).data.description).toBe(fm.description);
+  });
+
+  it("is byte-identical to the distill inline serializer it replaces", () => {
+    const fm = { description: "Multi: line breaks: like this", tags: ["a", "b"], updated: "2026-07-15" };
+    const inline = Object.entries(fm)
+      .map(([k, v]) => (Array.isArray(v) ? `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]` : `${k}: ${JSON.stringify(v)}`))
+      .join("\n");
+    expect(serializeFrontmatterQuoted(fm)).toBe(inline);
   });
 });
 

@@ -13,7 +13,7 @@
  * assume the lesson path.
  */
 
-import { assembleAssetFromString } from "../../../core/asset/asset-serialize";
+import { assembleAssetFromString, serializeFrontmatterQuoted } from "../../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { repairTruncatedDescription } from "../../../core/text-truncation";
 import {
@@ -91,9 +91,7 @@ export function autoRepairLessonFrontmatter(content: string, inputRef: string): 
     ...(missingDesc && descLine ? { description: descLine } : {}),
     ...(missingWtu && wtuLine ? { when_to_use: wtuLine } : {}),
   };
-  const fmLines = Object.entries(repairedFm)
-    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-    .join("\n");
+  const fmLines = serializeFrontmatterQuoted(repairedFm);
   // Only rewrite content if we actually have at least one field to write.
   // Otherwise leave the original content for the lint pass to reject.
   if (Object.keys(repairedFm).length > 0) {
@@ -132,9 +130,7 @@ export function autoSwapDescriptionWhenToUse(content: string, inputRef: string):
         description: wtuRaw,
         when_to_use: descRaw,
       };
-      const swappedFmLines = Object.entries(swappedFm)
-        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-        .join("\n");
+      const swappedFmLines = serializeFrontmatterQuoted(swappedFm);
       return { content: assembleAssetFromString(swappedFmLines, parsedSwap.content), swapped: 1 };
     }
   }
@@ -155,9 +151,7 @@ export function repairLessonDescriptionTruncation(content: string): string {
   if (!descRepairRaw) return content;
   const repaired = repairTruncatedDescription(descRepairRaw, parsedRepair.content);
   if (repaired === descRepairRaw) return content;
-  const repairedFmLines = Object.entries({ ...fmRepair, description: repaired })
-    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-    .join("\n");
+  const repairedFmLines = serializeFrontmatterQuoted({ ...fmRepair, description: repaired });
   return assembleAssetFromString(repairedFmLines, parsedRepair.content);
 }
 

@@ -50,6 +50,29 @@ export function serializeFrontmatter(frontmatter: Record<string, unknown>): stri
 }
 
 /**
+ * Serialize a frontmatter object with every value `JSON.stringify`-quoted,
+ * without `---` fences and without a trailing newline.
+ *
+ * Use this instead of {@link serializeFrontmatter} when the input is a
+ * pre-validated LLM payload where `yaml.stringify` may emit shapes
+ * (`|`-block scalars, anchors, unquoted multiline) that the project's
+ * hand-rolled `parseFrontmatter` subset parser cannot read back. Every scalar
+ * becomes a quoted JSON literal; arrays become `[<json>, <json>]` (space after
+ * the comma). Field order is preserved from the input's insertion order.
+ *
+ * This is the single home for the "guaranteed-quoted scalars" serializer the
+ * module doc above anticipates; before it, `distill` (array-aware) and
+ * `distill/content-repair` (scalar-only) reimplemented it divergently.
+ */
+export function serializeFrontmatterQuoted(frontmatter: Record<string, unknown>): string {
+  return Object.entries(frontmatter)
+    .map(([k, v]) =>
+      Array.isArray(v) ? `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]` : `${k}: ${JSON.stringify(v)}`,
+    )
+    .join("\n");
+}
+
+/**
  * Assemble a complete asset file string from a frontmatter object and a body.
  *
  * Output shape: `---\n<yaml>\n---\n\n<body>\n` where:

@@ -52,7 +52,7 @@ import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { assembleAsset, assembleAssetFromString } from "../../core/asset/asset-serialize";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
@@ -489,13 +489,7 @@ export function assembleStructuredDistillMarkdown(
     if (sources.length > 0) fm.xrefs = sources;
   }
 
-  const fmLines = Object.entries(fm)
-    .map(([k, v]) => {
-      if (Array.isArray(v)) return `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]`;
-      return `${k}: ${JSON.stringify(v)}`;
-    })
-    .join("\n");
-  return assembleAssetFromString(fmLines, body);
+  return assembleAssetFromString(serializeFrontmatterQuoted(fm), body);
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
