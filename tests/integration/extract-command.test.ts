@@ -778,7 +778,12 @@ describe("akmExtract — engine + strategy config resolution", () => {
       timeoutMs: 55_000,
       llm: { temperature: 0.2, maxTokens: 321 },
       maxTotalChars: 1234,
-      triage: { enabled: true, minScore: 3 },
+      // minScore 2 (the default). This freeze test only needs the session to
+      // clear triage so the frozen `process-model` is exercised on the LLM call;
+      // it does not assert the threshold value. The shared `fakeSession` scores
+      // 2.0 on the kept toolDensity/editCommit/markers sub-scores — it cleared a
+      // minScore-3 bar only via the #641 proceduralAwareFloor, deleted in WI-7.3.
+      triage: { enabled: true, minScore: 2 },
     });
     const strategy = config.improve?.strategies?.extract;
     if (strategy) {
