@@ -20,13 +20,13 @@ import path from "node:path";
 import type { AkmImproveResult } from "../../../src/commands/improve/improve";
 import {
   buildImproveRunId,
-  relativeImproveResultPath,
-  writeImproveResultFile,
+  improveRunLocator,
+  recordImproveRunResult,
 } from "../../../src/commands/improve/improve-result-file";
 import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
-// The pure-function tests (buildImproveRunId, relativeImproveResultPath,
-// writeImproveResultFile) run in-process — writeImproveResultFile isolates
+// The pure-function tests (buildImproveRunId, improveRunLocator,
+// recordImproveRunResult) run in-process — recordImproveRunResult isolates
 // state.db via the allowlisted sandboxXdgDataHome helper. The three `akm
 // improve` CLI tests that used to live here run `improve` for real (which
 // opens and WRITES the state.db improve_runs table, hitting genuine
@@ -110,9 +110,9 @@ describe("buildImproveRunId", () => {
   });
 });
 
-describe("relativeImproveResultPath", () => {
+describe("improveRunLocator", () => {
   test("returns a state.db locator (not a filesystem path)", () => {
-    const rel = relativeImproveResultPath("test-run");
+    const rel = improveRunLocator("test-run");
     // Compatibility shim: still a relative-style string for log messages,
     // but now references the state.db row rather than an on-disk file.
     expect(path.isAbsolute(rel)).toBe(false);
@@ -120,7 +120,7 @@ describe("relativeImproveResultPath", () => {
   });
 });
 
-describe("writeImproveResultFile", () => {
+describe("recordImproveRunResult", () => {
   const baseResult: AkmImproveResult = {
     schemaVersion: 2,
     ok: true,
@@ -137,13 +137,13 @@ describe("writeImproveResultFile", () => {
 
     // Isolate state.db to a tmpdir so the test never touches the user's real
     // data directory. The sandbox helper sets + restores XDG_DATA_HOME so the
-    // test-isolation lint stays satisfied (writeImproveResultFile resolves
+    // test-isolation lint stays satisfied (recordImproveRunResult resolves
     // state.db from getDataDir() → <XDG_DATA_HOME>/akm/state.db).
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
 
     try {
-      const rel = writeImproveResultFile(stash, runId, baseResult);
+      const rel = recordImproveRunResult(stash, runId, baseResult);
       // Return value is now a state.db locator for log messages, not a file path.
       expect(rel).toBe(path.join("state.db", "improve_runs", runId));
 
@@ -172,7 +172,7 @@ describe("writeImproveResultFile", () => {
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
     try {
-      writeImproveResultFile(stash, runId, { ...baseResult, strategy: "quick" });
+      recordImproveRunResult(stash, runId, { ...baseResult, strategy: "quick" });
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
       expect(rows[0].profile).toBeNull();
@@ -186,7 +186,7 @@ describe("writeImproveResultFile", () => {
     const stash = makeStashDir();
     const dataSb = sandboxXdgDataHome();
     try {
-      writeImproveResultFile(
+      recordImproveRunResult(
         stash,
         "test-run-redacted",
         { ...baseResult, guidance: "credential x echoed" },
@@ -209,7 +209,7 @@ describe("writeImproveResultFile", () => {
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
     try {
-      writeImproveResultFile(stash, runId, baseResult, startedAt);
+      recordImproveRunResult(stash, runId, baseResult, startedAt);
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
       expect(rows[0].started_at).toBe(startedAt);
@@ -231,7 +231,7 @@ describe("writeImproveResultFile", () => {
     const dataSb = sandboxXdgDataHome();
     const xdgData = dataSb.dir;
     try {
-      writeImproveResultFile(stash, runId, baseResult);
+      recordImproveRunResult(stash, runId, baseResult);
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
       // started_at should be close to `past`, not to now()

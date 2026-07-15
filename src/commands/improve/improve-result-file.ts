@@ -61,17 +61,18 @@ export function buildImproveRunId(now: Date = new Date()): string {
  * log lines and error messages continue to make sense without rewriting
  * every call site.
  */
-export function relativeImproveResultPath(runId: string): string {
+export function improveRunLocator(runId: string): string {
   return path.join("state.db", "improve_runs", runId);
 }
 
 /**
  * Persist the full improve result into the `improve_runs` table of state.db.
  *
- * Backwards-compatible signature: the function name, argument list, and
- * return type all match the pre-0.8.0 file-writing helper. The returned
+ * Backwards-compatible signature: the argument list and return type match the
+ * pre-0.8.0 file-writing helper (the 0.9.0 rename from `writeImproveResultFile`
+ * corrects the name, which had lied about writing a file). The returned
  * string is the `state.db//improve_runs/<runId>` locator (see
- * {@link relativeImproveResultPath}), which is intended for log messages
+ * {@link improveRunLocator}), which is intended for log messages
  * only — no caller should treat it as a filesystem path. Zero current
  * readers existed for the previous file path, so this is a pure storage
  * swap.
@@ -83,7 +84,7 @@ export function relativeImproveResultPath(runId: string): string {
  * `feedback_akm_dryrun_artifact_trap`).
  *
  */
-export function writeImproveResultFile(
+export function recordImproveRunResult(
   stashDir: string,
   runId: string,
   result: AkmImproveResult,
@@ -115,7 +116,7 @@ export function writeImproveResultFile(
       result: persistedResult,
     });
   });
-  return relativeImproveResultPath(runId);
+  return improveRunLocator(runId);
 }
 
 /**

@@ -21,10 +21,10 @@ import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {
   buildImproveRunId,
+  improveRunLocator,
+  recordImproveRunResult,
   recordTerminatedImproveRun,
-  relativeImproveResultPath,
   type TerminationReason,
-  writeImproveResultFile,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
 import { resolveImprovePlan } from "./improve-strategies";
@@ -341,11 +341,11 @@ export const improveCommand = defineCommand({
       //      ORDER BY started_at DESC LIMIT 10"
       // runId + primaryStashDir minted up-top so signal handlers can record
       // partial runs; reuse them here for the success path.
-      const resultRef = relativeImproveResultPath(runId);
+      const resultRef = improveRunLocator(runId);
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
+          recordImproveRunResult(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.
