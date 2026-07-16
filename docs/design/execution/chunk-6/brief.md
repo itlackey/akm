@@ -174,3 +174,92 @@ adjacent, DO NOT TOUCH. Auto-accept baseline: 42/42 ×3 at b393317f.
 7. `| tail` swallows red exits — run gates un-piped before commits.
 8. Never two bun test invocations concurrently; goldens under
    tests/commands/ run in the INTEGRATION bucket at chunk-end.
+
+## Amendments from the gate/dedup grounding pass (2026-07-16, at f205c246)
+
+Eight implementation-critical findings; four have clean compliant paths,
+two are DESIGN DECISIONS to make explicitly in-ledger before WI-6.1/6.4
+land, two are bookkeeping:
+
+1. **Drain lives on the deleted symbols (DECISION REQUIRED).** drain.ts
+   (KEPT) calls `recordGateDecision` at 5 stamp sites (:584 deterministic
+   classify, :696 judgment-accept, :699 judgment-reject, :714 no-judge)
+   and reads `gateDecision?.outcome === "auto-rejected"` (:575) as its
+   re-adjudication guard ("audited-autonomous; no manual-review rung,
+   06-M3"). The plan's DELETE row names recordGateDecision +
+   Proposal.gateDecision wholesale. Compliant options: (a) retain
+   recordGateDecision/ProposalGateDecision as DRAIN-owned audit machinery
+   (relocate to drain.ts or a drain-owned module; the confidence-gate
+   VOCABULARY tokens die, drain's deterministic tokens stay) — deviation
+   from the plan's letter, ledgered; or (b) delete wholesale and replace
+   drain's stamps + rejection memory with the WI-6.4 fingerprint/backoff
+   records (the natural successor per the grounding) — bigger blast
+   radius, same-chunk. Leaning (b) only if WI-6.4 lands first; otherwise
+   (a) with a ledger deviation note. DO NOT delete the symbols before
+   resolving this.
+2. **consolidate's autoAccept is dual-purpose (DECISION REQUIRED).**
+   consolidate.ts:1772 uses `opts.autoAccept === undefined` to gate the
+   interactive confirm prompt (non-interactive default-no at :1779). The
+   re-baseline-@6 consolidate journal goldens bypass via autoAccept:100.
+   Deleting the knob needs a decided replacement trigger (e.g. an explicit
+   `assumeYes`/non-interactive option threaded from improve), decided +
+   ledgered in WI-6.1, and the goldens re-captured with the new bypass in
+   WI-6.5 (they are already re-baseline @6 — no extra designation dance).
+3. **Shipped default tasks pass `--auto-accept safe`** (default-tasks.ts
+   :55–87, five tasks) + parseAutoAcceptFlag (cli/parse-args.ts:155–176) +
+   tests/cli/auto-accept.test.ts. Flag-removal semantics (hard error vs
+   warn-ignore) must be decided + ledgered; the shipped YAML templates
+   update in the same commit.
+4. **proposal-txn.json (FROZEN) pins the dedup/cooldown skip shapes**
+   (fixture `skipShapes`: duplicate_pending / content_hash_match ×2 /
+   cooldown / forceBypass; suite :429–533, :834–961). WI-6.4's fingerprint
+   scheme legitimately changes these observable shapes → Chunk 6 becomes
+   surface owner of that SECTION: re-designate BEFORE the change lands —
+   preferred shape: split skipShapes out of the frozen asset into a new
+   re-baseline-@6 asset (registry edit + reviewed diff), leaving the
+   accept/revert/reject outcome scenarios frozen. Never a silent
+   re-record.
+5. **The DDL characterization suite is GONE** (deleted by the 07-15 purge
+   commit 3927ff94, never restored); its snapshot
+   tests/storage/__snapshots__/sqlite-migrations.characterization.test.ts.snap
+   is orphaned at HEAD (covers 001–018). Migration 019 (WI-6.4) must
+   RESTORE the test from git (3927ff94^) and re-record — do not write 019
+   with no characterization oracle. Also: migration-lifecycle-regression
+   self-adapts via STATE_MIGRATIONS.length; its STATE_PRE_CUTOVER_IDS
+   frozen list is historical — do not touch.
+6. **Free orphans to delete in WI-6.1**: persistPhaseThreshold
+   (improve-runs-repository.ts:40–45, zero callers since 7.3) and
+   listProposalGateDecisions (proposals-repository.ts:190–217, #612
+   reader, zero callers since 7.3).
+7. **Site-count drift**: createProposal sites at HEAD = 8 total / 6
+   guarded (5 emitProposal + schema-repair) / 2 human force-bypass
+   (propose.ts:304, proposal.ts:238). The plan's 11/8 counted the deleted
+   recombine sites. No automated force-bypass remains.
+8. **Health window keys `improve.autoAccept.{promoted,validationFailed}`
+   are pinned by FROZEN cli/b-health-window-compare-md.json (Chunk 9's
+   oracle).** Resolution: KEEP the keys (zero-valued for new runs;
+   historical improve_runs rows still carry counters; the legacy
+   `r.autoAccepted === true` metric path at improve-runs-repository
+   :135–137 stays) — frozen-compatible, no re-designation. The
+   gateAutoAcceptedCount/gateAutoAcceptFailedCount plumbing through
+   loop-stages/preparation/improve result envelopes: keep the RESULT
+   fields (envelope allow-list improve-result.ts:49–50 is a live output
+   surface) reporting 0; delete only the gate calls that fed them.
+
+### WI-6.1 refined deletion inventory (from the census)
+
+Dies: improve-auto-accept.ts (whole file, 372 lines) + its two imports
+(loop-stages.ts:52, preparation.ts:40); the 5 gate call sites + 2 gateCfg
+constructions (loop-stages.ts:166–184, preparation.ts:300–312, :490–498)
++ the backlog-drain guard condition (preparation.ts:625–639);
+getPhaseThreshold + persistPhaseThreshold; autoAccept schema field
+(config-schema.ts:548 + regen), improve.ts:630 merge, improve-cli.ts flag
+(:112–116,:179–180,:282,:293), parseAutoAcceptFlag; migration-012 read
+path (never the CREATE TABLE; drop-table follows the 018 precedent IF the
+plan wants the table gone — it doesn't say so; leave the table, delete
+readers). recordGateDecision/gateDecision/formatGateDecisionSummary/
+output-shape keys: per finding 1's decision. Suites retiring with the
+gate: improve-auto-accept.test.ts (flake retires with it),
+cli/auto-accept.test.ts, proposal-gate-decision.test.ts (if (b)) or
+rewritten (if (a)); proposal-stuck-repair.test.ts is DRAIN-side —
+rewrite to the replacement, never delete.
