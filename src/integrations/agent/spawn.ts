@@ -121,6 +121,29 @@ function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void
 }
 
 /**
+ * SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths (§4.6
+ * dedup, H3). No-op when the child has already exited; otherwise runs
+ * `onKill` (the caller's reason flag — `timedOut` / `aborted` — set BEFORE
+ * the first signal, exactly as the inlined copies did), SIGTERMs the
+ * process group, and schedules a follow-up SIGKILL after `graceMs` in case
+ * the process ignores SIGTERM. The SIGKILL timer is unref'ed so it never
+ * pins the event loop.
+ */
+function scheduleKillLadder(
+  proc: SpawnedSubprocess,
+  opts: { onKill: () => void; setTimeoutFn: typeof setTimeout; graceMs?: number },
+): void {
+  if (!proc || proc.exitCode !== null) return;
+  opts.onKill();
+  killGroup(proc, "SIGTERM");
+  const sigkillTimer = opts.setTimeoutFn(() => {
+    if (!proc || proc.exitCode !== null) return;
+    killGroup(proc, "SIGKILL");
+  }, opts.graceMs ?? 5000);
+  if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+}
+
+/**
  * Per-call options for {@link runAgent}. All fields are optional. Caller
  * may override `stdio`, `timeoutMs`, and `parseOutput`.
  */
@@ -522,15 +545,13 @@ export async function runAgent(
   let timer: ReturnType<typeof setTimeoutImpl> | undefined;
   if (timeoutMs !== null) {
     timer = setTimeoutImpl(() => {
-      if (!proc || proc.exitCode !== null) return;
-      timedOut = true;
-      killGroup(proc, "SIGTERM");
-      // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-      const sigkillTimer = setTimeoutImpl(() => {
-        if (!proc || proc.exitCode !== null) return;
-        killGroup(proc, "SIGKILL");
-      }, 5000);
-      if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+      // SIGTERM now, SIGKILL after 5 s in case the process ignores SIGTERM.
+      scheduleKillLadder(proc, {
+        onKill: () => {
+          timedOut = true;
+        },
+        setTimeoutFn: setTimeoutImpl,
+      });
     }, timeoutMs);
   }
 
@@ -539,14 +560,12 @@ export async function runAgent(
   let aborted = false;
   const abortSignal = options.signal;
   const onAbort = () => {
-    if (!proc || proc.exitCode !== null) return;
-    aborted = true;
-    killGroup(proc, "SIGTERM");
-    const sigkillTimer = setTimeoutImpl(() => {
-      if (!proc || proc.exitCode !== null) return;
-      killGroup(proc, "SIGKILL");
-    }, 5000);
-    if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+    scheduleKillLadder(proc, {
+      onKill: () => {
+        aborted = true;
+      },
+      setTimeoutFn: setTimeoutImpl,
+    });
   };
   if (abortSignal) {
     // A signal that aborted between the pre-spawn check and here is handled
