@@ -793,3 +793,41 @@ unit shards green (the `&&` chain reached integration), integration
 (`tests/_helpers/sandbox.ts`, `tests/_preload.ts`, the mock.module-ban lint +
 baseline, the sharding scripts) untouched all session — `git diff` empty on
 all four paths across every commit.
+
+---
+
+# Residuals session (2026-07-16+) — carried-forward WI-7.5/7.7 items
+
+## R24 — promotion-policy literal trim (reshape → trim, two commits)
+
+Reshape commit (tests green BEFORE the trim, per WI-7.5 step 3 ordering):
+the bench deep-equal against the 842-line frozen payload became (a) a live
+`selectPromotionPolicy` grid search over the corpus + (b) narrow equality on
+the winner's `{name,threshold}`; the unit suite's trainingSize/heldOutSize/
+heldOut-metrics/baselines assertions switched from
+`getDefaultPromotionPolicySelection()` to the same live recompute; the
+`.selectedModel.name` assertion survives against the frozen constant.
+
+Trim commit: `DEFAULT_PROMOTION_POLICY_SELECTION` (:650–1491, 842 lines) +
+the 3-model `CANDIDATE_MODELS` array (:444–493) are replaced by a narrow
+`PromotionPolicySelection` type + one frozen literal carrying the FULL
+13-weight `balanced-evidence` config + `threshold: 3.8` (the plan's
+`{selectedModel}` shorthand is insufficient — `assessWithWeightedModel`
+reads all 13 weight fields at runtime; brief trap #8). `SELECTED_MODEL`
+became a direct read of the constant (the module-load `.find` is gone);
+`getDefaultPromotionPolicySelection` (test-only callers) deleted;
+`selectPromotionPolicy` gained a required `candidates` parameter and the
+3-model grid moved VERBATIM to `tests/commands/distill/
+promotion-policy-corpus.ts` next to the corpus — the bench recompute must
+keep searching all three candidates or the "winner still wins" assertion
+degenerates into a tautology. `PromotionModelConfig` is now exported
+(type-only consumer: the test-side grid).
+
+Behavior: NONE changed on the production path —
+`assessMemoryKnowledgePromotionCandidate` (promote-memory.ts:216) still
+assesses with the identical weights/threshold; adversarially verified
+value-identity of all 13 weights + threshold against HEAD before commit.
+Net: src −868 (distill-promotion-policy.ts 1510 → 642 lines); tests +61.
+Suites: distill unit+bench+integration 111 pass / 0 fail; tsc clean;
+biome clean; goldens untouched (no DESIGNATIONS entry references promotion
+policy — verified).

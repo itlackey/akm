@@ -7,7 +7,7 @@ import {
   type PromotionBenchmarkCase,
   selectPromotionPolicy,
 } from "../../../src/commands/improve/distill-promotion-policy";
-import { DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
+import { CANDIDATE_MODELS, DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
 
 function fixtureByName(name: string): PromotionBenchmarkCase {
   const fixture = DEFAULT_PROMOTION_POLICY_CORPUS.find((candidate) => candidate.name === name);
@@ -21,7 +21,7 @@ describe("distill promotion policy", () => {
   });
 
   test("selected model is derived from a larger train/held-out corpus", () => {
-    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS);
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS, CANDIDATE_MODELS);
 
     expect(DEFAULT_PROMOTION_POLICY_CORPUS.length).toBeGreaterThanOrEqual(20);
     expect(selection.trainingSize).toBeGreaterThan(0);
@@ -31,7 +31,7 @@ describe("distill promotion policy", () => {
   });
 
   test("selected model beats simpler held-out baselines", () => {
-    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS);
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS, CANDIDATE_MODELS);
 
     expect(selection.heldOut.f1).toBeGreaterThanOrEqual(0.8);
     expect(selection.heldOut.netOutcomeScore).toBeGreaterThan(0);

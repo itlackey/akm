@@ -3,7 +3,7 @@ import {
   DEFAULT_PROMOTION_POLICY_SELECTION,
   selectPromotionPolicy,
 } from "../../../src/commands/improve/distill-promotion-policy";
-import { DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
+import { CANDIDATE_MODELS, DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
 
 describe("distill promotion policy benchmark", () => {
   // The production selection is a frozen constant (no grid search runs at
@@ -13,13 +13,13 @@ describe("distill promotion policy benchmark", () => {
   // The rest of the grid-search payload (per-case results, baselines) is
   // recomputed live by the unit suite rather than frozen.
   test("frozen DEFAULT_PROMOTION_POLICY_SELECTION matches a live grid search over the corpus", () => {
-    const recomputed = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS);
+    const recomputed = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS, CANDIDATE_MODELS);
     expect({
       name: recomputed.selectedModel.name,
       threshold: recomputed.selectedModel.threshold,
     }).toEqual({
       name: DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name,
-      threshold: DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.threshold,
+      threshold: DEFAULT_PROMOTION_POLICY_SELECTION.threshold,
     });
   });
 });
