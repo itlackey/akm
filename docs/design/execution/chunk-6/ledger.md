@@ -241,3 +241,26 @@ incl. no-duplication assertion, legacy synthesis).
 Gates: full lint green; ratchets 28/28; scoped suites green (proposal
 domain 166/0, oracles+consolidate+envelope 169/0 then 220/0 after review
 fixes, improve buckets 443/0). tsc clean.
+
+## WI-6.3a — unified fs-transaction engine core minted (landed with this entry)
+
+New src/core/fs-txn.ts (pure addition, no behavior displaced): the ONE
+journal home (getDataDir()/txn/<rootNs24>/<txnId>/journal.json), kind-tagged
+journal envelope carrying a uniform JournaledFileChange[] view, the shared
+tmp+fsync+rename+dir-fsync discipline (writeTxnFileDurably), durable phase
+progression (advanceTxn), per-kind handler registry
+(phases/commitPhase/validate/rollback/finalize), engine-level safety fences
+(root binding, in-root change paths, known kind+phase, loud refusal of
+unregistered kinds), rollback-before-commit-point vs
+roll-forward-from-commit-point recovery dispatch (recoverTxnsForRoot),
+cross-namespace listing (listTxnJournals), cleanup sweeping, and the single
+crash-window seam _setTxnMutationHookForTests. Imports only core (fs, path,
+crypto, core/paths, core/warn, core/file-change) — joins no cycle. Every
+function under the 220 bar. Registration stays domain-side so recovery
+entry points keep today's import topology (no new cycle participants, no
+dynamic imports). tests/core/fs-txn.test.ts pins the engine contract with
+synthetic kinds (9 tests): journal home/format, durable phases + unknown-
+phase refusal, rollback/forward dispatch, fences (escape paths, foreign
+root, unregistered kind), junk-dir sweeping, filtered recovery, and
+crash-between-finalize-steps re-entry. Ports follow: 6.3b accept/revert,
+6.3c reject, 6.3d mv, 6.3e consolidate.
