@@ -868,212 +868,72 @@ async function processSession(
   };
 }
 
-// ── Public entrypoint ────────────────────────────────────────────────────────
+/** Run-scoped inputs for {@link runExtractSessionLoop}. */
+interface ExtractSessionLoopArgs {
+  candidates: SessionSummary[];
+  options: AkmExtractOptions;
+  harness: SessionLogHarness;
+  seenMap: Map<string, ExtractedSessionRow>;
+  stateDb: Database | undefined;
+  trackingEnabled: boolean;
+  dryRun: boolean;
+  stashDir: string;
+  config: AkmConfig;
+  getLlmConfig: () => LlmProfileConfig;
+  chat: NonNullable<AkmExtractOptions["chat"]>;
+  sourceRun: string;
+  timeoutMs: number | null;
+  maxTotalChars: number | undefined;
+  minContentChars: number;
+  maxSessionsPerRun: number;
+  triage: { enabled: boolean; minScore: number };
+  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: SessionSummaryGenerator };
+  extractStandardsContext: string;
+  /** Mutated in place with run-level (non-session) warnings. */
+  topLevelWarnings: string[];
+}
 
-export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtractResult> {
-  const startMs = Date.now();
-  if (!options.type || options.type.trim() === "") {
-    throw new UsageError(
-      "--type is required. Pass a harness name (e.g. --type claude-code).",
-      "MISSING_REQUIRED_ARGUMENT",
-    );
-  }
+/** Accumulated per-run tallies + results produced by {@link runExtractSessionLoop}. */
+interface ExtractSessionLoopResult {
+  sessions: ExtractedSessionResult[];
+  processedCount: number;
+  skippedCount: number;
+  triageEvaluated: number;
+  triagePassed: number;
+  triagedOut: number;
+  allProposalIds: string[];
+}
 
-  const config = options.config ?? loadConfig();
-  const stashDir = options.stashDir ?? resolveStashDir();
-  const dryRun = options.dryRun ?? false;
-  const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
-
-  // Read process behavior from the frozen standalone plan or the active improve
-  // strategy. This prevents config changes during watch mode from changing later
-  // triggers and prevents one improve strategy from overriding another.
-  const activeProfile =
-    options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
-  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig(config, "extract", activeProfile);
-  // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
-  // (the activeProfile path) — consistent with #593/#594 where the active profile,
-  // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
-  // (no activeProfile) is a direct user/cron action and always runs; gating it on
-  // the default improve profile's stage toggle was a footgun — dropping extract
-  // from the daily improve profile would silently disable the standalone command.
-  const extractEnabled =
-    options.resolvedPlan?.enabled ??
-    (options.improveProfile ? resolveProcessEnabled("extract", options.improveProfile) : true);
-
-  // Feature-gate early so we get a clean "skipped because disabled" envelope.
-  if (!extractEnabled) {
-    return {
-      schemaVersion: 1,
-      ok: true,
-      shape: "extract-result",
-      dryRun,
-      type: options.type,
-      sessionsProcessed: 0,
-      sessionsSkipped: 0,
-      candidatesCreated: 0,
-      proposals: [],
-      sessions: [],
-      warnings: ["extract is disabled by the selected improve strategy"],
-      durationMs: Date.now() - startMs,
-    };
-  }
-
-  // Improve supplies its invocation-owned connection. Standalone extract
-  // resolves the selected process engine, then defaults.llmEngine.
-  const runnerSpec = options.resolvedPlan
-    ? options.resolvedPlan.runner
-    : resolveImproveProcessRunner(activeProfile, "extract", config);
-  const fixedLlmConfig = options.resolvedPlan ? undefined : options.llmConfig;
-  if (!runnerSpec && !fixedLlmConfig) {
-    throw new ConfigError(
-      "No LLM engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
-      "LLM_NOT_CONFIGURED",
-    );
-  }
-
-  const timeoutMs = options.resolvedPlan
-    ? options.resolvedPlan.timeoutMs
-    : Object.hasOwn(options, "timeoutMs")
-      ? (options.timeoutMs ?? null)
-      : runnerSpec?.timeoutMs !== undefined
-        ? runnerSpec.timeoutMs
-        : fixedLlmConfig && Object.hasOwn(fixedLlmConfig, "timeoutMs")
-          ? (fixedLlmConfig.timeoutMs ?? null)
-          : 600_000;
-  const getLlmConfig = (): LlmProfileConfig =>
-    runnerSpec ? materializeLlmRunnerConnection(runnerSpec) : (fixedLlmConfig as LlmProfileConfig);
-  // Pre-filter budget — process config can raise it for large-context models.
-  const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
-  // #595/#596 — minimum raw session size; sessions below it skip the LLM call
-  // entirely. Set `processes.extract.minContentChars: 0` to disable the gate.
-  const minContentChars =
-    typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : DEFAULT_MIN_CONTENT_CHARS;
-  // Cap on NEW sessions LLM-processed per run; 0 disables. Absent = default.
-  // Bounds per-run wall time / LLM cost so a backlog can't push a run past its
-  // task timeout — the overflow stays unseen and is picked up by later runs.
-  const maxSessionsPerRun =
-    typeof extractProcess?.maxSessionsPerRun === "number"
-      ? extractProcess.maxSessionsPerRun
-      : DEFAULT_MAX_SESSIONS_PER_RUN;
-  // Default discovery window — process config can override the built-in 24h.
-  const effectiveSince = options.since ?? extractProcess?.defaultSince;
-
-  // #626 — resolve the triage gate config once per run. Default-off → the
-  // per-session path never calls the scorer and emits no telemetry.
-  const triage = resolveTriageConfig(extractProcess);
-
-  // #561 — resolve session-indexing config. Default ON: we only reach this code
-  // when `session_extraction` is enabled AND an LLM is configured (both checked
-  // above), so defaulting on costs nothing offline (the summary call fails open)
-  // while making sessions searchable in the common LLM-configured case. Set
-  // `processes.extract.indexSessions: false` for byte-identical legacy behaviour.
-  const sessionIndexingEnabled = extractProcess?.indexSessions ?? true;
-  const minSessionDuration =
-    typeof extractProcess?.minSessionDuration === "number"
-      ? extractProcess.minSessionDuration
-      : DEFAULT_MIN_SESSION_DURATION_MINUTES;
-  // Production summary generator: a bounded in-tree LLM call wrapped in the same
-  // fail-open `tryLlmFeature` seam as the rest of extract. Returns `undefined`
-  // on disablement / timeout / error so no asset is written. Tests inject a fake.
-  const chatForSummary = options.chat ?? chatCompletion;
-  const defaultSessionSummaryGenerator: SessionSummaryGenerator = async (data) => {
-    let raw = "";
-    await tryLlmFeature(
-      "session_extraction",
-      config,
-      async () => {
-        raw = await chatForSummary(getLlmConfig(), [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
-          timeoutMs,
-          responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
-        });
-        return raw;
-      },
-      "",
-      { timeoutMs },
-    );
-    return parseSessionSummary(raw);
-  };
-  const sessionIndexing = {
-    enabled: sessionIndexingEnabled,
-    minDurationMinutes: minSessionDuration,
-    generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
-  };
-
-  const harness = resolveHarness(options.type, options.harnesses);
-  if (!harness) {
-    return {
-      schemaVersion: 1,
-      ok: false,
-      shape: "extract-result",
-      dryRun,
-      type: options.type,
-      sessionsProcessed: 0,
-      sessionsSkipped: 0,
-      candidatesCreated: 0,
-      proposals: [],
-      sessions: [],
-      warnings: [`no available harness matches type "${options.type}" (check that the platform is installed)`],
-      durationMs: Date.now() - startMs,
-    };
-  }
-  if (!harness.isAvailable()) {
-    return {
-      schemaVersion: 1,
-      ok: false,
-      shape: "extract-result",
-      dryRun,
-      type: options.type,
-      sessionsProcessed: 0,
-      sessionsSkipped: 0,
-      candidatesCreated: 0,
-      proposals: [],
-      sessions: [],
-      warnings: [`harness ${options.type} is registered but reports not-available (no session data on this machine)`],
-      durationMs: Date.now() - startMs,
-    };
-  }
-
-  // Decide which sessions to process: explicit sessionId OR discovery via since.
-  let candidates: SessionSummary[];
-  if (options.sessionId) {
-    const all = harness.listSessions({
-      ...(options.location ? { location: options.location } : {}),
-    });
-    const target = all.find((s) => s.sessionId === options.sessionId);
-    if (!target) {
-      return {
-        schemaVersion: 1,
-        ok: false,
-        shape: "extract-result",
-        dryRun,
-        type: options.type,
-        sessionsProcessed: 0,
-        sessionsSkipped: 0,
-        candidatesCreated: 0,
-        proposals: [],
-        sessions: [],
-        warnings: [`session ${options.sessionId} not found for harness ${options.type}`],
-        durationMs: Date.now() - startMs,
-      };
-    }
-    candidates = [target];
-  } else {
-    // No explicit `--since`/`defaultSince` → default to "since the last run"
-    // (floored at 48h) so an intermittently-online host doesn't lose sessions
-    // that ended while it was off. See {@link resolveDefaultSinceMs}.
-    const sinceMs = effectiveSince
-      ? parseSinceArg(effectiveSince)
-      : resolveDefaultSinceMs(harness.name, startMs, {
-          ...(options.stateDb ? { stateDb: options.stateDb } : {}),
-          ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
-          ...(options.skipTracking ? { skipTracking: options.skipTracking } : {}),
-        });
-    candidates = harness.listSessions({
-      sinceMs,
-      ...(options.location ? { location: options.location } : {}),
-    });
-  }
-
+/**
+ * Iterate the discovered candidate sessions: enforce the per-run cap, take the
+ * per-session cross-process lock, dispatch to {@link processSession}, aggregate
+ * the #626 triage counters, and persist each seen-row outcome. Extracted verbatim
+ * from `akmExtract` — the maxSessionsPerRun break, lock/skip accounting, triage
+ * aggregation, and seen-row upsert are byte-identical.
+ */
+async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<ExtractSessionLoopResult> {
+  const {
+    candidates,
+    options,
+    harness,
+    seenMap,
+    stateDb,
+    trackingEnabled,
+    dryRun,
+    stashDir,
+    config,
+    getLlmConfig,
+    chat,
+    sourceRun,
+    timeoutMs,
+    maxTotalChars,
+    minContentChars,
+    maxSessionsPerRun,
+    triage,
+    sessionIndexing,
+    extractStandardsContext,
+    topLevelWarnings,
+  } = args;
   const sessions: ExtractedSessionResult[] = [];
   let processedCount = 0;
   let skippedCount = 0;
@@ -1082,37 +942,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   let triagePassed = 0;
   let triagedOut = 0;
   const allProposalIds: string[] = [];
-  const topLevelWarnings: string[] = [];
-  const chat = options.chat ?? chatCompletion;
-
-  // Open state.db once for the run and bulk-load seen-rows for the candidate
-  // set so we can decide skip/process in O(1) per session. Tracking is opt-out
-  // via options.skipTracking (used by tests + one-shot debug calls).
-  const trackingEnabled = options.skipTracking !== true;
-  let stateDb: Database | undefined;
-  let seenMap = new Map<string, ExtractedSessionRow>();
-  if (trackingEnabled && candidates.length > 0) {
-    try {
-      stateDb = options.stateDb ?? openStateDatabase(options.stateDbPath);
-      seenMap = getExtractedSessionsMap(
-        stateDb,
-        harness.name,
-        candidates.map((c) => c.sessionId),
-      );
-    } catch (err) {
-      // state.db open is best-effort — log and proceed without skip-tracking
-      // so a transient sqlite error never blocks the actual extraction.
-      const msg = err instanceof Error ? err.message : String(err);
-      warn(`[extract] state.db unavailable, processing without skip-tracking: ${msg}`);
-      topLevelWarnings.push(`state.db unavailable: ${msg}`);
-      stateDb = undefined;
-    }
-  }
-
-  // Stash authoring standards (convention/meta fact bodies) for non-wiki
-  // extract output. Resolved ONCE per run and threaded into each session's
-  // prompt so facts are not re-read per session.
-  const extractStandardsContext = resolveExtractStandards(stashDir);
 
   for (const summary of candidates) {
     if (options.signal?.aborted) break;
@@ -1278,6 +1107,337 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       if (sessionLockOwnership) releaseLock(sessionLockOwnership);
     }
   }
+
+  return { sessions, processedCount, skippedCount, triageEvaluated, triagePassed, triagedOut, allProposalIds };
+}
+
+/** Resolved run-scoped config for one `akmExtract` invocation. */
+interface ExtractRunConfig {
+  timeoutMs: number | null;
+  getLlmConfig: () => LlmProfileConfig;
+  maxTotalChars: number | undefined;
+  minContentChars: number;
+  maxSessionsPerRun: number;
+  effectiveSince: string | undefined;
+  triage: { enabled: boolean; minScore: number };
+  sessionIndexing: { enabled: boolean; minDurationMinutes: number; generate: SessionSummaryGenerator };
+}
+
+/**
+ * Resolve the run-scoped LLM/engine, budget, triage, and session-indexing
+ * settings for one extract invocation (throwing when no engine is configured).
+ * Extracted verbatim from `akmExtract` — the timeout precedence chain, the
+ * session-summary generator seam, and the default resolutions are byte-identical.
+ */
+function resolveExtractRunConfig(
+  options: AkmExtractOptions,
+  config: AkmConfig,
+  extractProcess: Readonly<ImproveProcessConfig> | undefined,
+  activeProfile: ImproveProfileConfig | undefined,
+): ExtractRunConfig {
+  // Improve supplies its invocation-owned connection. Standalone extract
+  // resolves the selected process engine, then defaults.llmEngine.
+  const runnerSpec = options.resolvedPlan
+    ? options.resolvedPlan.runner
+    : resolveImproveProcessRunner(activeProfile, "extract", config);
+  const fixedLlmConfig = options.resolvedPlan ? undefined : options.llmConfig;
+  if (!runnerSpec && !fixedLlmConfig) {
+    throw new ConfigError(
+      "No LLM engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
+      "LLM_NOT_CONFIGURED",
+    );
+  }
+
+  const timeoutMs = options.resolvedPlan
+    ? options.resolvedPlan.timeoutMs
+    : Object.hasOwn(options, "timeoutMs")
+      ? (options.timeoutMs ?? null)
+      : runnerSpec?.timeoutMs !== undefined
+        ? runnerSpec.timeoutMs
+        : fixedLlmConfig && Object.hasOwn(fixedLlmConfig, "timeoutMs")
+          ? (fixedLlmConfig.timeoutMs ?? null)
+          : 600_000;
+  const getLlmConfig = (): LlmProfileConfig =>
+    runnerSpec ? materializeLlmRunnerConnection(runnerSpec) : (fixedLlmConfig as LlmProfileConfig);
+  // Pre-filter budget — process config can raise it for large-context models.
+  const maxTotalChars = typeof extractProcess?.maxTotalChars === "number" ? extractProcess.maxTotalChars : undefined;
+  // #595/#596 — minimum raw session size; sessions below it skip the LLM call
+  // entirely. Set `processes.extract.minContentChars: 0` to disable the gate.
+  const minContentChars =
+    typeof extractProcess?.minContentChars === "number" ? extractProcess.minContentChars : DEFAULT_MIN_CONTENT_CHARS;
+  // Cap on NEW sessions LLM-processed per run; 0 disables. Absent = default.
+  // Bounds per-run wall time / LLM cost so a backlog can't push a run past its
+  // task timeout — the overflow stays unseen and is picked up by later runs.
+  const maxSessionsPerRun =
+    typeof extractProcess?.maxSessionsPerRun === "number"
+      ? extractProcess.maxSessionsPerRun
+      : DEFAULT_MAX_SESSIONS_PER_RUN;
+  // Default discovery window — process config can override the built-in 24h.
+  const effectiveSince = options.since ?? extractProcess?.defaultSince;
+
+  // #626 — resolve the triage gate config once per run. Default-off → the
+  // per-session path never calls the scorer and emits no telemetry.
+  const triage = resolveTriageConfig(extractProcess);
+
+  // #561 — resolve session-indexing config. Default ON: we only reach this code
+  // when `session_extraction` is enabled AND an LLM is configured (both checked
+  // above), so defaulting on costs nothing offline (the summary call fails open)
+  // while making sessions searchable in the common LLM-configured case. Set
+  // `processes.extract.indexSessions: false` for byte-identical legacy behaviour.
+  const sessionIndexingEnabled = extractProcess?.indexSessions ?? true;
+  const minSessionDuration =
+    typeof extractProcess?.minSessionDuration === "number"
+      ? extractProcess.minSessionDuration
+      : DEFAULT_MIN_SESSION_DURATION_MINUTES;
+  // Production summary generator: a bounded in-tree LLM call wrapped in the same
+  // fail-open `tryLlmFeature` seam as the rest of extract. Returns `undefined`
+  // on disablement / timeout / error so no asset is written. Tests inject a fake.
+  const chatForSummary = options.chat ?? chatCompletion;
+  const defaultSessionSummaryGenerator: SessionSummaryGenerator = async (data) => {
+    let raw = "";
+    await tryLlmFeature(
+      "session_extraction",
+      config,
+      async () => {
+        raw = await chatForSummary(getLlmConfig(), [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
+          timeoutMs,
+          responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
+        });
+        return raw;
+      },
+      "",
+      { timeoutMs },
+    );
+    return parseSessionSummary(raw);
+  };
+  const sessionIndexing = {
+    enabled: sessionIndexingEnabled,
+    minDurationMinutes: minSessionDuration,
+    generate: options.generateSessionSummary ?? defaultSessionSummaryGenerator,
+  };
+
+  return {
+    timeoutMs,
+    getLlmConfig,
+    maxTotalChars,
+    minContentChars,
+    maxSessionsPerRun,
+    effectiveSince,
+    triage,
+    sessionIndexing,
+  };
+}
+
+/**
+ * Resolve the session set to process: the single `--session-id` target (or a
+ * not-found envelope) or the discovery-window listing. Extracted verbatim from
+ * `akmExtract`; the 48h default-since floor and location filter are unchanged.
+ */
+function discoverExtractCandidates(
+  options: AkmExtractOptions,
+  harness: SessionLogHarness,
+  effectiveSince: string | undefined,
+  startMs: number,
+  dryRun: boolean,
+): { candidates: SessionSummary[] } | { notFound: AkmExtractResult } {
+  if (options.sessionId) {
+    const all = harness.listSessions({
+      ...(options.location ? { location: options.location } : {}),
+    });
+    const target = all.find((s) => s.sessionId === options.sessionId);
+    if (!target) {
+      return {
+        notFound: {
+          schemaVersion: 1,
+          ok: false,
+          shape: "extract-result",
+          dryRun,
+          type: options.type,
+          sessionsProcessed: 0,
+          sessionsSkipped: 0,
+          candidatesCreated: 0,
+          proposals: [],
+          sessions: [],
+          warnings: [`session ${options.sessionId} not found for harness ${options.type}`],
+          durationMs: Date.now() - startMs,
+        },
+      };
+    }
+    return { candidates: [target] };
+  }
+  // No explicit `--since`/`defaultSince` → default to "since the last run"
+  // (floored at 48h) so an intermittently-online host doesn't lose sessions
+  // that ended while it was off. See {@link resolveDefaultSinceMs}.
+  const sinceMs = effectiveSince
+    ? parseSinceArg(effectiveSince)
+    : resolveDefaultSinceMs(harness.name, startMs, {
+        ...(options.stateDb ? { stateDb: options.stateDb } : {}),
+        ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
+        ...(options.skipTracking ? { skipTracking: options.skipTracking } : {}),
+      });
+  return {
+    candidates: harness.listSessions({
+      sinceMs,
+      ...(options.location ? { location: options.location } : {}),
+    }),
+  };
+}
+
+// ── Public entrypoint ────────────────────────────────────────────────────────
+
+export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtractResult> {
+  const startMs = Date.now();
+  if (!options.type || options.type.trim() === "") {
+    throw new UsageError(
+      "--type is required. Pass a harness name (e.g. --type claude-code).",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+
+  const config = options.config ?? loadConfig();
+  const stashDir = options.stashDir ?? resolveStashDir();
+  const dryRun = options.dryRun ?? false;
+  const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
+
+  // Read process behavior from the frozen standalone plan or the active improve
+  // strategy. This prevents config changes during watch mode from changing later
+  // triggers and prevents one improve strategy from overriding another.
+  const activeProfile =
+    options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
+  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig(config, "extract", activeProfile);
+  // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
+  // (the activeProfile path) — consistent with #593/#594 where the active profile,
+  // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
+  // (no activeProfile) is a direct user/cron action and always runs; gating it on
+  // the default improve profile's stage toggle was a footgun — dropping extract
+  // from the daily improve profile would silently disable the standalone command.
+  const extractEnabled =
+    options.resolvedPlan?.enabled ??
+    (options.improveProfile ? resolveProcessEnabled("extract", options.improveProfile) : true);
+
+  // Feature-gate early so we get a clean "skipped because disabled" envelope.
+  if (!extractEnabled) {
+    return {
+      schemaVersion: 1,
+      ok: true,
+      shape: "extract-result",
+      dryRun,
+      type: options.type,
+      sessionsProcessed: 0,
+      sessionsSkipped: 0,
+      candidatesCreated: 0,
+      proposals: [],
+      sessions: [],
+      warnings: ["extract is disabled by the selected improve strategy"],
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  const {
+    timeoutMs,
+    getLlmConfig,
+    maxTotalChars,
+    minContentChars,
+    maxSessionsPerRun,
+    effectiveSince,
+    triage,
+    sessionIndexing,
+  } = resolveExtractRunConfig(options, config, extractProcess, activeProfile);
+
+  const harness = resolveHarness(options.type, options.harnesses);
+  if (!harness) {
+    return {
+      schemaVersion: 1,
+      ok: false,
+      shape: "extract-result",
+      dryRun,
+      type: options.type,
+      sessionsProcessed: 0,
+      sessionsSkipped: 0,
+      candidatesCreated: 0,
+      proposals: [],
+      sessions: [],
+      warnings: [`no available harness matches type "${options.type}" (check that the platform is installed)`],
+      durationMs: Date.now() - startMs,
+    };
+  }
+  if (!harness.isAvailable()) {
+    return {
+      schemaVersion: 1,
+      ok: false,
+      shape: "extract-result",
+      dryRun,
+      type: options.type,
+      sessionsProcessed: 0,
+      sessionsSkipped: 0,
+      candidatesCreated: 0,
+      proposals: [],
+      sessions: [],
+      warnings: [`harness ${options.type} is registered but reports not-available (no session data on this machine)`],
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  // Decide which sessions to process: explicit sessionId OR discovery via since.
+  const discovery = discoverExtractCandidates(options, harness, effectiveSince, startMs, dryRun);
+  if ("notFound" in discovery) return discovery.notFound;
+  const candidates = discovery.candidates;
+
+  const topLevelWarnings: string[] = [];
+  const chat = options.chat ?? chatCompletion;
+
+  // Open state.db once for the run and bulk-load seen-rows for the candidate
+  // set so we can decide skip/process in O(1) per session. Tracking is opt-out
+  // via options.skipTracking (used by tests + one-shot debug calls).
+  const trackingEnabled = options.skipTracking !== true;
+  let stateDb: Database | undefined;
+  let seenMap = new Map<string, ExtractedSessionRow>();
+  if (trackingEnabled && candidates.length > 0) {
+    try {
+      stateDb = options.stateDb ?? openStateDatabase(options.stateDbPath);
+      seenMap = getExtractedSessionsMap(
+        stateDb,
+        harness.name,
+        candidates.map((c) => c.sessionId),
+      );
+    } catch (err) {
+      // state.db open is best-effort — log and proceed without skip-tracking
+      // so a transient sqlite error never blocks the actual extraction.
+      const msg = err instanceof Error ? err.message : String(err);
+      warn(`[extract] state.db unavailable, processing without skip-tracking: ${msg}`);
+      topLevelWarnings.push(`state.db unavailable: ${msg}`);
+      stateDb = undefined;
+    }
+  }
+
+  // Stash authoring standards (convention/meta fact bodies) for non-wiki
+  // extract output. Resolved ONCE per run and threaded into each session's
+  // prompt so facts are not re-read per session.
+  const extractStandardsContext = resolveExtractStandards(stashDir);
+
+  const { sessions, processedCount, skippedCount, triageEvaluated, triagePassed, triagedOut, allProposalIds } =
+    await runExtractSessionLoop({
+      candidates,
+      options,
+      harness,
+      seenMap,
+      stateDb,
+      trackingEnabled,
+      dryRun,
+      stashDir,
+      config,
+      getLlmConfig,
+      chat,
+      sourceRun,
+      timeoutMs,
+      maxTotalChars,
+      minContentChars,
+      maxSessionsPerRun,
+      triage,
+      sessionIndexing,
+      extractStandardsContext,
+      topLevelWarnings,
+    });
 
   // Close the state.db connection we opened. Callers that injected stateDb
   // via the test seam own its lifecycle.
