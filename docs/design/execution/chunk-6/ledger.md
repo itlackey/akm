@@ -58,3 +58,26 @@ same dry-run record shape, same batch output shapes; the destructive
 confirm prompt stays CLI-side. Suites: proposal-cli (bulk safety guard +
 WS3 bulk paths) 44 green incl. frozen outcome oracles; gates 28/28.
 Net: proposal-cli.ts −67, proposal.ts +63.
+
+## Pre-WI-6.4 surface-owner re-designation — skipShapes split (landed with this entry)
+
+Per the registry's surface-owner rule ($policy amendment 2026-07-16), the
+createProposal dedup/cooldown/force skip-record shapes moved OUT of the
+frozen journal/proposal-txn.json into a new
+journal/proposal-skip-shapes.json designated re-baseline @6, BEFORE
+WI-6.4's fingerprint scheme changes them. Mechanics: byte-faithful
+stableStringify extraction (suite passes with NO update mode — proving
+the split bytes match what the suite computes); proposal-txn.json sha256
+re-pinned over the trimmed bytes (9c06e439…) in the same reviewed change;
+suite gained a second expectGolden call; registry notes amended both
+sides. Goldens lint: 50 assets, 41 frozen hash-verified. The
+accept/revert/reject outcome scenarios stay frozen through the engine
+swap, exactly as designed.
+
+## DDL characterization suite restored (landed efe0a762)
+
+tests/storage/sqlite-migrations.characterization.test.ts restored
+verbatim from 3927ff94^ (the 07-15 purge deleted it, orphaning its
+snapshot): 8 pass / 2 snapshots verified against the existing snap at
+HEAD (001–018). Migration 019 (WI-6.4) has its characterization oracle
+back before it lands.

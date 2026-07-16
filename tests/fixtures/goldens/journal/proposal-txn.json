@@ -41,37 +41,6 @@
     }
   },
   "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
-  "createProposalSkipShapes": {
-    "contentHashMatchVsPending": {
-      "existingProposalIdMatches": true,
-      "keySet": ["existingProposalId", "message", "reason", "skipped"],
-      "reason": "content_hash_match",
-      "skipped": true
-    },
-    "contentHashMatchVsRejected": {
-      "existingProposalIdMatches": true,
-      "keySet": ["existingProposalId", "message", "reason", "skipped"],
-      "reason": "content_hash_match",
-      "skipped": true
-    },
-    "cooldown": {
-      "existingProposalIdMatches": true,
-      "keySet": ["existingProposalId", "message", "reason", "skipped"],
-      "reason": "cooldown",
-      "skipped": true
-    },
-    "duplicatePending": {
-      "existingProposalIdMatches": true,
-      "keySet": ["existingProposalId", "message", "reason", "skipped"],
-      "reason": "duplicate_pending",
-      "skipped": true
-    },
-    "forceBypass": {
-      "isNewProposal": true,
-      "skipped": false,
-      "status": "pending"
-    }
-  },
   "notes": [
     "No journal bytes/paths asserted -- journal phase sequences are informational only (brief S3.2 rule 4); Chunk 6 replaces the journal engines. Only observable outcomes (file trees, DB status, exactly-once events, abort error prefixes, recovery end-states) are the preserved contract.",
     "Reject engine has NO before-hash: rejectConcurrentEdit pins that a concurrently-edited target does not block a reject (repository.ts:1405-1415, DB-only journal, no paths/hashes). A unified FileChange transaction must not invent a hash check here.",

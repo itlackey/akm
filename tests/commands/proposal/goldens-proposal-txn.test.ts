@@ -100,6 +100,7 @@ import {
 } from "../../fixtures/goldens/journal/fixture-refs";
 
 const GOLDEN_PATH = "tests/fixtures/goldens/journal/proposal-txn.json";
+const SKIP_SHAPES_GOLDEN_PATH = "tests/fixtures/goldens/journal/proposal-skip-shapes.json";
 const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
 
 function lessonPath(stashDir: string, name: string): string {
@@ -993,6 +994,23 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
         nonPending: rejectNonPendingOutcome,
         concurrentEditSucceeds: rejectConcurrentEditOutcome,
       },
+    });
+
+    // Skip shapes live in their own asset (re-baseline @6): WI-6.4's
+    // fingerprint scheme legitimately changes these observable shapes, so the
+    // surface-owner rule re-designated exactly this section out of the frozen
+    // outcome oracle above BEFORE that change lands.
+    expectGolden(SKIP_SHAPES_GOLDEN_PATH, {
+      scenario:
+        "createProposal dedup/cooldown/force skip-record shapes (split from proposal-txn.json, WI-6.4 surface-owner re-designation)",
+      capturedAtHead: HEAD_SHA,
+      notes: [
+        "Split out of the frozen journal/proposal-txn.json on 2026-07-16: Chunk 6's WI-6.4 replaces the " +
+          "dedup/cooldown guard with §23.6 input fingerprints (+ engine/model-id term, rejection backoff retained), " +
+          "which legitimately changes these observable skip shapes. Per the registry's surface-owner rule the " +
+          "skip-shape section is re-designated re-baseline @6 BEFORE that change lands; the accept/revert/reject " +
+          "outcome scenarios remain frozen in proposal-txn.json — they are designed to survive the engine swap.",
+      ],
       createProposalSkipShapes: skipShapes,
     });
   });
