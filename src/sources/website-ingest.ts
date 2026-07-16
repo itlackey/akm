@@ -11,7 +11,8 @@ import type { SourceConfigEntry } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { getRegistryIndexCacheDir } from "../core/paths";
 import { warn } from "../core/warn";
-import { isExpired, sanitizeString } from "./providers/provider-utils";
+import { withFreshnessCache } from "./freshness";
+import { sanitizeString } from "./providers/provider-utils";
 import { type FetcherContext, loadWikiSnapshotFetchers, type WikiSnapshotResult } from "./wiki-fetchers/registry";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
@@ -110,43 +111,28 @@ export async function ensureWebsiteMirror(
   const normalizedUrl = validateWebsiteUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const cachePaths = getWebsiteCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
-  const force = options?.force === true;
 
-  let mtime = 0;
-  try {
-    mtime = fs.statSync(cachePaths.manifestPath).mtimeMs;
-  } catch {
-    /* no cached manifest */
-  }
-
-  if (
-    !force &&
-    mtime &&
-    !isExpired(mtime, CACHE_REFRESH_INTERVAL_MS) &&
-    (!requireStashDir || hasExtractedSite(cachePaths.stashDir))
-  ) {
-    return cachePaths;
-  }
-
-  try {
-    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    await scrapeWebsiteToStash(normalizedUrl, cachePaths.stashDir, {
-      maxPages: coercePositiveInt(config.options?.maxPages, MAX_PAGES_DEFAULT),
-      maxDepth: coercePositiveInt(config.options?.maxDepth, MAX_DEPTH_DEFAULT),
-      allowPrivateHosts: options?.allowPrivateHosts,
-    });
-    fs.writeFileSync(
-      cachePaths.manifestPath,
-      `${JSON.stringify({ url: normalizedUrl, fetchedAt: new Date().toISOString() }, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
-    return cachePaths;
-  } catch (err) {
-    if (mtime && !isExpired(mtime, CACHE_STALE_MS) && (!requireStashDir || hasExtractedSite(cachePaths.stashDir))) {
-      return cachePaths;
-    }
-    throw err;
-  }
+  await withFreshnessCache({
+    markerPath: cachePaths.manifestPath,
+    ttlMs: CACHE_REFRESH_INTERVAL_MS,
+    staleMs: CACHE_STALE_MS,
+    force: options?.force === true,
+    isUsable: () => !requireStashDir || hasExtractedSite(cachePaths.stashDir),
+    refresh: async () => {
+      fs.mkdirSync(cachePaths.rootDir, { recursive: true });
+      await scrapeWebsiteToStash(normalizedUrl, cachePaths.stashDir, {
+        maxPages: coercePositiveInt(config.options?.maxPages, MAX_PAGES_DEFAULT),
+        maxDepth: coercePositiveInt(config.options?.maxDepth, MAX_DEPTH_DEFAULT),
+        allowPrivateHosts: options?.allowPrivateHosts,
+      });
+      fs.writeFileSync(
+        cachePaths.manifestPath,
+        `${JSON.stringify({ url: normalizedUrl, fetchedAt: new Date().toISOString() }, null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    },
+  });
+  return cachePaths;
 }
 
 function hasExtractedSite(stashDir: string): boolean {

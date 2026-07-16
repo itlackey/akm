@@ -10,11 +10,12 @@ import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
+import { withFreshnessCache } from "../freshness";
 import type { SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 import { cloneRepo, runGit, syncRegistryGitRef } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
-import { isExpired, sanitizeString } from "./provider-utils";
+import { sanitizeString } from "./provider-utils";
 
 /** Cache TTL before refreshing the mirrored repo (12 hours). */
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -111,36 +112,25 @@ export async function ensureGitMirror(
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
   const writable = options?.writable === true;
-  const force = options?.force === true;
 
-  // Check if cache is fresh
-  let mtime = 0;
-  try {
-    mtime = fs.statSync(cachePaths.indexPath).mtimeMs;
-  } catch {
-    /* no cached index */
-  }
-
-  if (!force && mtime && !isExpired(mtime, CACHE_TTL_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
-    return;
-  }
-
-  try {
-    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
-      // Writable repo already cloned — pull instead of re-clone to preserve local changes
-      pullRepo(cachePaths.repoDir);
-    } else {
-      cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
-    }
-    // Touch index file to track freshness
-    fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
-  } catch (err) {
-    if (mtime && !isExpired(mtime, CACHE_STALE_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
-      return;
-    }
-    throw err;
-  }
+  await withFreshnessCache({
+    markerPath: cachePaths.indexPath,
+    ttlMs: CACHE_TTL_MS,
+    staleMs: CACHE_STALE_MS,
+    force: options?.force === true,
+    isUsable: () => !requireRepoDir || hasExtractedRepo(cachePaths.repoDir),
+    refresh: async () => {
+      fs.mkdirSync(cachePaths.rootDir, { recursive: true });
+      if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
+        // Writable repo already cloned — pull instead of re-clone to preserve local changes
+        pullRepo(cachePaths.repoDir);
+      } else {
+        cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
+      }
+      // Touch index file to track freshness
+      fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
+    },
+  });
 }
 
 /**
