@@ -638,3 +638,158 @@ callback) makes byte-identical pass-extraction materially harder than the
 verb-command bodies already cleared — the remaining WI-7.6/7.7 work. The ratchet
 guards them: none can grow, and each decomposition must shrink its baseline
 entry in the same change.
+
+## WI-7.6/7.7 completion — the last 5 god-functions (ratchet 5 → 0)
+
+Continuing from the "13 → 5" update: the five orchestration/loop-core
+offenders are decomposed, byte-identically, each adversarially verified
+against HEAD by an independent review pass (side-effect order, exception-path
+state, shared-mutable identity, exit-path topology) before its commit:
+
+| Item | Function | Before | Passes extracted |
+|---|---|---:|---|
+| 7.7 | `runImproveLoopStage` | 500 | `prepareImproveLoopEnv`, `processImproveLoopRef` (per-ref `LoopRefTally` — `continue`→`return`, counters folded by the orchestrator), `runLoopReflectPass`, `runLoopDistillPass`, `invokeDistillAndRecord`, `recordBudgetExhausted` |
+| 7.7 | `runImproveMaintenancePasses` + `withIndexWriterLease#arg1` (470 + 389) | 859 | `runMaintenancePassesUnderLease` (the anon callback, named), `runMemoryInferenceMaintenancePass`, `runGraphExtractionMaintenancePass`, `runOrphanProposalPurgePass`, `runProposalExpirationPass`, `runRetentionPurgePass`; `IndexDbCell` replaces the closure-mutated `db` (the #584 reopen-in-finally is the one irreducible mutable seam), `MaintenanceCtx` carries run deps |
+| 7.6 | `runImprovePreparationStage` | 1493 | `buildSnapshotManifest`, `gatherCandidates` (`partitionBySignalDelta` + `buildFeedbackSummaryMap` + `fetchRetrievalSignals` + `selectProactiveMaintenanceLane` + `selectHighSalienceLane`), `scoreSalience` (`updateOutcomeScores` + `computeSalienceVectors` + `persistSalienceAndReportRanks` + `applyForgettingSafety`), `filterEligibility` (`applyReplaySelection` + `dropRefsMissingOnDisk`), plus `assessMemoryIndexBudget` / `applyCleanupPass` / `seedRecentErrorWindows` |
+| 7.7 | `akmImprove` | 810 | `resolveImproveRunSetup` (the `ImproveRunSetup` carrier), `indexAndCollect` (former closure, now pure), `buildLockSkippedResult` / `buildDryRunResult`, `runTriagePrePass`, `makeCommitStashBatch` (getter-based live-binding capture), `preloadRejectedProposals`, `refilterProactiveLoopRefs`, `runImproveStageSequence`, `recordImproveFailure`, `finalizeImproveResult` |
+
+Every extraction biased toward testability per the session requirement:
+per-item loop bodies return results instead of mutating outer `let`s
+(`LoopRefTally`, pass result records), dependencies ride explicit args-object
+carriers (`ImproveLoopEnv`, `MaintenanceCtx`, `ImproveRunSetup`,
+`ExtractSessionRunCtx`), and each decomposition landed with a NEW focused unit
+suite driving the passes directly through injected seams:
+`improve-loop-ref-pass.test.ts` (20), `improve-maintenance-passes.test.ts`
+(12), `preparation-passes.test.ts` (13), `improve-run-units.test.ts` (4).
+
+### Brief-vs-HEAD divergences recorded for WI-7.6's six-pass prescription
+
+- **valence-score**: no separate pass exists — `computeValenceScore` (pure) is
+  called at exactly two embedded sites (`updateOutcomeScores` `.valence`,
+  scenario-A rank reconstruction `.attention`); both moved VERBATIM inside the
+  salience passes. Minting an empty pass wrapper was rejected as churn.
+- **standards-context**: does not exist in preparation.ts at HEAD — the
+  assembly lives in extract.ts (`resolveExtractStandards`, resolved once per
+  run, threaded via `ExtractSessionRunCtx.standardsContext`). Recorded here
+  instead of minting a vacuous pass.
+- The three `!== false` outcome-weight reads and the #644 provenance gates
+  moved verbatim (`computeSalienceVectors` now owns the
+  `outcomeWeightEnabled` read site); the 2026-05-26 signal-delta partition
+  semantics + comment moved verbatim into `partitionBySignalDelta`.
+
+### RunContext (D6) adoption decision — recorded, not silently skipped
+
+The WI-7.4 `RunContext.readAsset` memo has ZERO content-read consumers in the
+decomposed pass regions at HEAD (the preparation map confirmed no content
+`readFileSync` inside the six-pass region; metadata-only `statSync`/`existsSync`
+cannot route through a bytes seam without behavior change). Threading the
+literal `RunContext` object would also collide with type realities
+(`eventsCtx` non-optional vs the stages' optional threading; extract's
+`getLlmConfig` returns `LlmProfileConfig`, not `LlmConnectionConfig | null`).
+Decision: the passes take explicit run-scoped carriers instead
+(`ImproveLoopEnv` / `MaintenanceCtx` / `ImproveRunSetup` /
+`ExtractSessionRunCtx` — same DI shape, honest types), and `RunContext`
+adoption at the verb read sites stays on the WI-7.5–7.8 outstanding list
+below. `emitProposal`'s `ProposalEmitContext` is structurally satisfied by
+`RunContext`, so the facade path is compatible either way.
+
+## WI-7.8 — finalize: absolute gate, grep-gate, audits, net-LOC
+
+### Ratchet emptied + flipped (R31, DoD 5)
+
+`IMPROVE_FN_SIZE_BASELINE` is deleted; `scripts/lint-improve-fn-size.ts` is
+now the absolute gate and `tests/architecture/improve-fn-size-ratchet.test.ts`
+asserts `measureImproveFnOffenders() === []` with no allowlist. Live scan at
+finalize: **0 offenders** across every function-like node (incl. arrows/anons)
+in `src/commands/improve/**`, bar 220.
+
+### emitProposal facade adoption (R7) + processSession collapse (R5)
+
+All five surviving emit sites route through `emitProposal` (reflect.ts,
+distill.ts, distill/promote-memory.ts, extract.ts, consolidate.ts); zero
+direct `createProposal` calls remain under `src/commands/improve/**`
+(comments and the repository module itself excepted). `processSession` is
+`(runCtx: ExtractSessionRunCtx, session: ExtractSessionInput)` — 2 params,
+run-scoped inputs resolved once per run in `runExtractSessionLoop`.
+
+### Final grep-gate re-run (R30) — zero-counts recorded at finalize
+
+The full WI-7.1 + 7.2 + 7.3 token lists re-run over `src/`, `scripts/`,
+`src/assets/`: **every token 0 hits** (7.1: akmRecombine, RecombineResult,
+recombineFn, recombine_hypotheses, recombine_invoked, recombine-repository,
+getEntitiesByEntryIds, deriveRecombineLessonRef, RecombineHypothesisRow,
+case-insensitive `recombin`; 7.2: selfConsistencyThreshold, selfConsistencyN,
+pickMajorityVote, jaccardSimilarity, explorationBudgetCount, high-retrieval,
+minRetrievalCount, maxCycles, reviewPressure, FeedbackLane,
+STRONG_VALENCE_THRESHOLD; 7.3: maybeAutoTuneThreshold, computeThresholdAutoTune,
+summarizeCalibration, gateDecisionsToSamples, CalibrationSummary,
+calibration_autotune, akmProcedural, ProceduralCompilationResult,
+procedural_compiled, buildProceduralPrompt, orderedActions,
+runDeterministicDedup, computeMemoryContentHash, hotProbation, isHotProbation,
+schemaSimilarity, proceduralAwareFloor, consolidation_judged), with exactly the
+standing allowlist surviving: migration DDL in `src/core/state/migrations.ts`
+(007/010/014 historical + 018 drops) and the `outcome-loop.ts` doc comment
+explaining the deliberate `review_pressure` INSERT/UPDATE omission. One stale
+doc-comment `maxCycles` mention in `config-types.ts` (outside the 7.2 gate's
+scope) was cleaned in this pass.
+
+### R33/R11 audit — clean
+
+Scoped grep for lifecycle machinery (states/water-marks/pressure computation/
+intake blocking/CAS archive/sandbox gate/purge-quarantine commands): zero
+hits. The 8 `purgeOld*` retention call sites under improve are the
+pre-existing retention passes, moved verbatim into
+`runRetentionPurgePass`/`runProposalExpirationPass` (allowlisted vocabulary).
+`review_pressure` code references: zero (doc-comment allowlist above). No new
+labeling/clamps/prompts/digests/trust records were introduced by the
+decomposition (structural moves only, adversarially verified per function).
+
+### Bookkeeping note — WI-7.3
+
+WI-7.3's deletions are fully landed on this branch (calibration.ts,
+procedural.ts, dedup.ts, hot-probation.ts, schema-similarity-gate.ts,
+consolidation-repository.ts all gone; `content-hash.ts` minted; migration
+`018-drop-dead-lane-schema` appended; all 7.3 grep-gate tokens 0), but the
+item never received its own ledger section — the finalize grep-gate above
+serves as its zero-count record.
+
+### Net LOC (reported, not gated — plan §15.4)
+
+The WI-7.6/7.7 decomposition + testability pass is a net ADD, as expected for
+byte-identical extraction (interface carriers, pass shells, docs, and four new
+focused unit suites):
+
+- `runImproveLoopStage` commit: src +583/−403 (+180); test +359
+- maintenance commit: src +563/−401 (+162); test +290
+- preparation commit: src +924/−383 (+541); test +294
+- `akmImprove` commit: src +860/−619 (+241); test +130
+- facade adoption + processSession collapse: src +118/−78 (+40)
+- finalize (gate flip + ledger): src/scripts ≈ −25
+
+Decomposition subtotal ≈ **src +1,164 / tests +1,073**. The chunk's headline
+deletion economics live in WI-7.1–7.3 (e.g. 7.1 alone: src −1,569 /
+tests −3,034) and are unchanged by this pass; net-LOC remains REPORTED, never
+gated.
+
+### Still outstanding for the full WI-7.5–7.8 DoD (carried forward)
+
+The ratchet DoD (no fn >220, baseline emptied, gate absolute) is COMPLETE.
+Carried forward from the prior outstanding list, unchanged in scope:
+`RunContext.readAsset` adoption at the verb read sites (D6 memo has no
+consumers yet — see the decision note above), the promotion-policy literal
+trim (R24), the structured-call migration (R26, ~10 raw callers), events-ctx
+threading through the reflect/distill subtree + `locks.ts` + extract's three
+sites (R25) and the appendEvent hot-path test, and the R32/R36 consolidate
+golden replay (this worktree has no goldens infrastructure — the
+consolidate-op-handlers + integration suites remain the behavior oracle, all
+green through every decomposition commit).
+
+### Final verification (R34)
+
+Full `bun run check` run EXACTLY ONCE at finalize, exit 0: biome + the five
+lint gates + `gen-config-schema --check` green, `bunx tsc --noEmit` clean,
+unit shards green (the `&&` chain reached integration), integration
+**4456 pass / 0 fail / 55 skip** (4511 tests, 333 files, 431 s). Fixed points
+(`tests/_helpers/sandbox.ts`, `tests/_preload.ts`, the mock.module-ban lint +
+baseline, the sharding scripts) untouched all session — `git diff` empty on
+all four paths across every commit.

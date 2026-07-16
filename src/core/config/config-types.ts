@@ -64,7 +64,7 @@ export type ImproveProcessConfig = z.infer<typeof import("./config-schema").Impr
 
 /**
  * A named improve strategy (`improve.strategies.<name>`). Holds the per-process
- * `processes` map plus profile-level knobs (`autoAccept`, `limit`, `maxCycles`,
+ * `processes` map plus profile-level knobs (`autoAccept`, `limit`,
  * `symmetricValence`, `sync`). See config-schema.ts for per-field docs.
  */
 export type ImproveProfileConfig = z.infer<typeof import("./config-schema").ImproveProfileConfigSchema>;

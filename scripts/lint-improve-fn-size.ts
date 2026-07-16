@@ -3,25 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * God-function size ratchet for `src/commands/improve/**` (R31, chunk-7 DoD 5).
+ * God-function size gate for `src/commands/improve/**` (R31, chunk-7 DoD 5).
  *
  * A TS-AST scan flags every function-like node (declarations, expressions,
  * arrows, methods, accessors, constructors — including nested anonymous ones)
- * whose inclusive line span exceeds {@link IMPROVE_FN_SIZE_BAR}. The offenders
- * are checked against {@link IMPROVE_FN_SIZE_BASELINE}, a SHRINK-ONLY allowlist
- * of the god-functions still awaiting decomposition.
+ * whose inclusive line span exceeds {@link IMPROVE_FN_SIZE_BAR}.
  *
- * The paired meta-test (`tests/architecture/improve-fn-size-ratchet.test.ts`)
- * asserts the live offender list EQUALS the baseline, so:
- *   - a NEW function over the bar fails immediately (no growth); and
- *   - decomposing a listed function forces its baseline entry to be lowered or
- *     removed in the same change (no stale slack).
+ * WI-7.8 emptied the original shrink-only decomposition baseline — all 13
+ * god-functions measured at the chunk-7 HEAD are decomposed — so the gate is
+ * now ABSOLUTE: the paired meta-test
+ * (`tests/architecture/improve-fn-size-ratchet.test.ts`) asserts the offender
+ * list is EMPTY, with no allowlist to consult. A new function over the bar
+ * fails immediately; decompose it into named passes instead of growing it.
  *
- * The baseline is the WI-7.5–7.8 worklist and is emptied by WI-7.8, at which
- * point the meta-test flips to the absolute assertion (no function over the bar,
- * no allowlist).
- *
- * Pattern: `scripts/lint-tests-isolation.ts` (shrink-only exported baseline) +
+ * Pattern: `scripts/lint-tests-isolation.ts` (AST lint gate) +
  * `tests/integration/architecture/agent-runner-seam.test.ts` (TS-AST scan).
  */
 
@@ -131,10 +126,3 @@ export function measureImproveFnOffenders(): ImproveFnOffender[] {
   offenders.sort((a, b) => b.lines - a.lines || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return offenders;
 }
-
-/**
- * The god-functions in `src/commands/improve/**` still over the bar, measured at
- * chunk-7 HEAD (post WI-7.1/7.2/7.3 deletions). SHRINK-ONLY: an entry may only
- * be lowered or removed, never added or raised. Emptied by WI-7.8.
- */
-export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [];
