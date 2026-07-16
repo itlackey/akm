@@ -45,6 +45,7 @@ import path from "node:path";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { readEvents } from "../../src/core/events";
+import { txnNamespaceDir } from "../../src/core/fs-txn";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
@@ -157,7 +158,11 @@ function mvEventOutcome(ref: string): { matchingCount: number; distinctIdempoten
 }
 
 function transactionsRootIsClean(stashDir: string): boolean {
-  const root = path.join(stashDir, ".akm", "mv-transactions");
+  // WI-6.3 mechanical repoint: the mv journal home moved from the in-stash
+  // `.akm/mv-transactions` to the unified engine namespace for the stash.
+  // (The serialized `notes` strings describing the old dual-home are fixture
+  // bytes and re-capture at WI-6.5 with the rest of this re-baseline asset.)
+  const root = txnNamespaceDir(stashDir);
   if (!fs.existsSync(root)) return true;
   return fs.readdirSync(root).length === 0;
 }

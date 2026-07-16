@@ -57,11 +57,13 @@ import {
   _setTxnMutationHookForTests,
   advanceTxn,
   beginTxn,
+  canonicalTxnRoot,
   cleanupTxn,
   fsyncTxnDir,
   fsyncTxnFile,
   listTxnJournals,
   mintTxnId,
+  recoverTxnsForRoot,
   registerTxnKind,
   sweepJournallessTxnDir,
   type Txn,
@@ -90,7 +92,6 @@ import {
   listStateProposals,
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
-import { recoverInterruptedMoveTransactions } from "../mv-cli";
 import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
 import { importLegacyProposalFiles } from "./legacy-import";
 import { repairProposalContent, validateProposal } from "./validators/proposals";
@@ -1376,7 +1377,7 @@ async function recoverProposalTransactions(
     const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<ProposalTxnPayload>;
     if (journal.kind !== PROPOSAL_TXN_KIND) continue;
     if (path.resolve(journal.payload.stashDir) !== path.resolve(stashDir)) continue;
-    if (journal.version !== 1 || path.resolve(journal.root) !== path.resolve(target.source.path)) {
+    if (journal.version !== 1 || canonicalTxnRoot(journal.root) !== canonicalTxnRoot(target.source.path)) {
       throw new Error(`Refusing unsafe proposal transaction journal at ${journalPath}.`);
     }
     fenceProposalTxnJournal(journal, transactionDir, target.source.path);
@@ -1419,12 +1420,12 @@ export async function recoverProposalTransactionsForStash(
     } catch {
       target = resolveWriteTarget(config);
     }
-    if (path.resolve(target.source.path) !== path.resolve(journal.root)) {
+    if (canonicalTxnRoot(target.source.path) !== canonicalTxnRoot(journal.root)) {
       throw new Error(`Proposal transaction ${journal.transactionId} is bound to a different target root.`);
     }
     const key = path.resolve(target.source.path);
     if (recoveredRoots.has(key)) continue;
-    await recoverInterruptedMoveTransactions(target.source.path);
+    await recoverTxnsForRoot(target.source.path, (journal) => journal.kind === "mv");
     const recovered = await recoverProposalTransactions(target, stashDir, ctx);
     for (const [id, proposal] of recovered) completed.set(id, proposal);
     recoveredRoots.add(key);
@@ -1716,7 +1717,7 @@ async function promoteProposalWithLease(
   await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
   proposal = getProposal(stashDir, id, ctx);
   const target = resolveWriteTarget(config, options.target);
-  await recoverInterruptedMoveTransactions(target.source.path);
+  await recoverTxnsForRoot(target.source.path, (journal) => journal.kind === "mv");
   if (proposal.status === "accepted" && proposal.acceptedContentHash) {
     const assetPath = resolveAssetFilePathSafe(target.source, ref);
     if (
@@ -1972,7 +1973,7 @@ async function revertProposalWithLease(
     assetPath = requestedAssetPath;
   }
 
-  await recoverInterruptedMoveTransactions(target.source.path);
+  await recoverTxnsForRoot(target.source.path, (journal) => journal.kind === "mv");
   acceptedHash = proposal.acceptedTarget?.contentHash ?? proposal.acceptedContentHash ?? acceptedHash;
   const acceptedAssetExists = fs.existsSync(assetPath);
   if (
@@ -2095,7 +2096,7 @@ registerTxnKind<ProposalTxnPayload>(PROPOSAL_TXN_KIND, {
     } catch {
       target = resolveWriteTarget(config);
     }
-    if (path.resolve(target.source.path) !== path.resolve(txn.journal.root)) {
+    if (canonicalTxnRoot(target.source.path) !== canonicalTxnRoot(txn.journal.root)) {
       throw new Error(`Proposal transaction ${txn.journal.transactionId} is bound to a different target root.`);
     }
     const proposal = getProposal(p.stashDir, p.proposalId);

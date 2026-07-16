@@ -5,6 +5,7 @@ import path from "node:path";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { readEvents } from "../../src/core/events";
+import { txnNamespaceDir } from "../../src/core/fs-txn";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
@@ -103,7 +104,7 @@ describe("mv durable journal crash recovery", () => {
       .all() as Array<{ asset_ref: string }>;
     after.close();
     expect(refs).toEqual([{ asset_ref: "memory:crash-after-commit-new" }]);
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(false);
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 
   test("recovery after the durable state-finalized phase is idempotent", async () => {
@@ -154,7 +155,7 @@ describe("mv durable journal crash recovery", () => {
     const trigger = await runCliCapture(["mv", "memory:divergence-trigger", "divergence-trigger-new"]);
     expect(trigger.code).not.toBe(0);
     expect(fs.readFileSync(target, "utf8")).toBe("EXTERNAL POST-CRASH EDIT\n");
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(true);
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(true);
   });
 
   test("proposal promotion finalizes a pending committed move before writing", async () => {
@@ -244,7 +245,7 @@ describe("mv durable journal crash recovery", () => {
     };
     closeDatabase(db);
     expect(usage).toEqual({ entry_ref: "memory:crash-before-full-index-new", entry_id: after.id });
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(false);
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 
   test("targeted index recovers a committed move before scanning", async () => {

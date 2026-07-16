@@ -8,6 +8,7 @@ import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
+import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
@@ -553,9 +554,10 @@ async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
       const sourceCacheEnd = Date.now();
       const allSourceEntries = resolveSourceEntries(stashDir, config);
       const allSourceDirs = allSourceEntries.map((s) => s.path);
-      const { recoverInterruptedMoveTransactions } = await import("../commands/mv-cli");
       for (const sourceDir of new Set([stashDir, ...allSourceDirs])) {
-        await recoverInterruptedMoveTransactions(sourceDir);
+        // Unified fs-txn engine (WI-6.3): finish/roll back interrupted mv
+        // transactions for every source root before indexing walks it.
+        await recoverTxnsForRoot(sourceDir, (journal) => journal.kind === "mv");
       }
       onProgress({
         phase: "preflight",

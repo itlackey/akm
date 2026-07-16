@@ -303,3 +303,58 @@ journals from rc builds are abandoned inert files.
 
 Gates: tsc clean; full lint green; engine+oracles+recovery+durable+
 proposals+ratchets 144/0 across 12 files.
+
+## WI-6.3d — mv engine ported onto fs-txn; four entry points unified (landed with this entry)
+
+The mv move-transaction engine rides the unified engine: the in-stash
+journal home <stash>/.akm/mv-transactions is GONE (envelope root = the
+stash; home = getDataDir()/txn/<ns(stash)>). Phase vocabulary
+(prepared/applying/filesystem-committed/index-finalized/state-finalized/
+event-finalized/committed, commit point filesystem-committed), the
+two-sidecar citer protocol (backup-N/staged-N/owned-N), stage/replace
+divergence aborts with byte-identical wrapped error messages, roll-forward
+finalize (index re-key → write-path refresh → state re-key → exactly-once
+mv event), and the crash-hook points are preserved verbatim (adversarial
+review function-by-function vs HEAD: 0 blockers). The mv changes[] view
+journals the rename as create+delete pairs + citer updates — all provably
+inside the stash (read-only-source citers were never journaled).
+_setMvMutationHookForTests forwards to the engine seam; the mv crash
+runner and the re-baseline-@6 goldens-mv-recovery suite (10/10) pass
+UNCHANGED; the FROZEN move-txn oracle is byte-green after the sanctioned
+journal-home repoints in its suite (fixture bytes untouched;
+goldens-mv-recovery's serialized dual-home `notes` strings re-capture at
+WI-6.5).
+
+The four recovery entry points now reach recovery through core/fs-txn
+ONLY: repository.ts's three sites (the commands→commands
+repository→mv-cli edge the brief ordered dissolved is GONE), and
+indexer.ts + index-written-assets.ts replaced their DYNAMIC mv-cli
+imports with static core imports — DYNAMIC_IMPORT_BASELINE trimmed
+(index-written-assets removed, indexer 11→10; sites 102→100).
+recoverInterruptedMoveTransactions survives as mv-cli's own thin wrapper.
+Registration: cli.ts statically imports mv-cli, so every CLI process has
+the kind registered; a programmatic consumer importing only
+repository/indexer that encounters an mv journal fails LOUDLY
+("No transaction handler registered") rather than skipping — ledgered as
+the fail-closed trade of the dissolved edge.
+
+Review-driven hardening in this commit: transaction roots are
+canonicalized via realpath (symlinked stash spellings — e.g. macOS /tmp —
+hash to the same namespace and bind-compare equal; HEAD's in-stash mv
+home was spelling-independent, and the proposal engine's data-dir
+namespace had the same sensitivity even at HEAD); journal JSON parse
+failures are wrapped with the journal path; goldens-mv-recovery's
+cleanliness helper repointed (its assertions had gone vacuously true
+against the old home — evidence un-hollowed). Legacy-home note: the
+bespoke engines shipped only in 0.9.0 RCs; pre-upgrade interrupted
+journals in old homes (incl. worst-case applying-crash citer files parked
+under .akm/mv-transactions/<id>/owned-N) are NOT migrated — Chunk 8's
+cutover should consider a one-shot legacy-journal sweep (recorded for its
+brief). Minor accepted drifts: version-mismatch/corrupt-journal error
+text now engine-worded; journal-less dirs younger than the 5-minute grace
+are retained; mv cleanup warning moved warnVerbose→warn with the engine
+prefix. Nothing pins the old strings.
+
+Gates: tsc clean; full lint green; evidence 95/0 across 12 suites
+(mv+proposal oracles, both durable-recovery crash suites, engine unit,
+ratchets 28/28).

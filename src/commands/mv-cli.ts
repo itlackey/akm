@@ -34,7 +34,7 @@
  *
  * Ordering: the complete mutation holds the index-writer lease. After validation,
  * citer replacements are staged beside durable byte-for-byte backups and a small
- * phase journal under `.akm/mv-transactions/`. Publication uses same-filesystem
+ * phase journal under `getDataDir()/txn/`. Publication uses same-filesystem
  * renames; any synchronous failure restores every citer and asset rename. A later
  * invocation rolls back an interrupted prepared/applying journal before planning
  * another move. Derived index state remains fail-open and heals on a full index.
@@ -42,7 +42,7 @@
  * until the next graph pass — acceptable, the graph is a derived cache.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
@@ -51,6 +51,21 @@ import { deriveCanonicalAssetNameFromStashRoot, TYPE_DIRS } from "../core/asset/
 import { type AkmAssetType, isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
+import {
+  _setTxnMutationHookForTests,
+  advanceTxn,
+  beginTxn,
+  cleanupTxn,
+  fsyncTxnFile,
+  type JournaledFileChange,
+  mintTxnId,
+  recoverTxnsForRoot,
+  registerTxnKind,
+  type Txn,
+  type TxnJournal,
+  txnDirFor,
+  txnMutationHook,
+} from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { getStateDbPath, openStateDatabase } from "../core/state-db";
 import { warnVerbose } from "../core/warn";
@@ -306,17 +321,12 @@ interface CiterRewritePlan {
   originalHash: string;
 }
 
-interface MoveJournal {
-  version: 1;
-  phase:
-    | "prepared"
-    | "applying"
-    | "filesystem-committed"
-    | "index-finalized"
-    | "state-finalized"
-    | "event-finalized"
-    | "committed";
-  transactionId: string;
+/**
+ * Kind-owned payload of an `mv` transaction, riding the unified fs-txn
+ * engine (WI-6.3). The envelope carries kind/phase/transactionId/root
+ * (= the stash)/changes/decidedAt.
+ */
+interface MvTxnPayload {
   sourceName: string;
   sourceRoot: string;
   includeLegacyBare: boolean;
@@ -346,17 +356,22 @@ interface MoveJournal {
   }>;
 }
 
-interface MoveTransaction {
-  journal: MoveJournal;
-  journalPath: string;
-  transactionDir: string;
-}
+type MvTxn = Txn<MvTxnPayload>;
 
-let mvMutationHookForTests: ((point: string) => void) | undefined;
+const MV_TXN_KIND = "mv";
+const MV_TXN_PHASES = [
+  "prepared",
+  "applying",
+  "filesystem-committed",
+  "index-finalized",
+  "state-finalized",
+  "event-finalized",
+  "committed",
+] as const;
 
 /** TEST-ONLY crash-window hook used by subprocess recovery tests. */
 export function _setMvMutationHookForTests(hook?: (point: string) => void): void {
-  mvMutationHookForTests = hook;
+  _setTxnMutationHookForTests(hook);
 }
 
 function hashContent(content: string | Buffer): string {
@@ -367,38 +382,8 @@ function hashFile(filePath: string): string {
   return hashContent(fs.readFileSync(filePath));
 }
 
-function fsyncFile(filePath: string): void {
-  const fd = fs.openSync(filePath, "r");
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function fsyncDirectory(dirPath: string): void {
-  try {
-    fsyncFile(dirPath);
-  } catch {
-    // Some platforms do not permit opening directories; file fsync still applies.
-  }
-}
-
-function writeMoveJournal(journalPath: string, journal: MoveJournal): void {
-  const tempPath = `${journalPath}.tmp`;
-  fs.writeFileSync(tempPath, `${JSON.stringify(journal, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  fsyncFile(tempPath);
-  fs.renameSync(tempPath, journalPath);
-  fsyncDirectory(path.dirname(journalPath));
-}
-
-function setMoveJournalPhase(transaction: MoveTransaction, phase: MoveJournal["phase"]): void {
-  const next = { ...transaction.journal, phase };
-  writeMoveJournal(transaction.journalPath, next);
-  transaction.journal.phase = phase;
-}
-
-function rollbackMoveJournal(journal: MoveJournal): void {
+function rollbackMoveJournal(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
   const restoreRename = (
     oldPath: string | null,
     newPath: string | null,
@@ -424,9 +409,9 @@ function rollbackMoveJournal(journal: MoveJournal): void {
   };
 
   // Undo asset publication before restoring self-citing files at their old paths.
-  restoreRename(journal.oldPath, journal.newPath, journal.sourceOriginalHash, journal.expectedNewHash);
-  restoreRename(journal.twinOldPath, journal.twinNewPath, journal.twinOriginalHash, journal.expectedTwinNewHash);
-  for (const [index, citer] of journal.citers.entries()) {
+  restoreRename(p.oldPath, p.newPath, p.sourceOriginalHash, p.expectedNewHash);
+  restoreRename(p.twinOldPath, p.twinNewPath, p.twinOriginalHash, p.expectedTwinNewHash);
+  for (const [index, citer] of p.citers.entries()) {
     if (!fs.existsSync(citer.backupPath)) {
       throw new Error(`cannot restore ${citer.absPath}: backup is missing`);
     }
@@ -450,94 +435,55 @@ function rollbackMoveJournal(journal: MoveJournal): void {
   }
 }
 
-function validateCommittedMove(journal: MoveJournal): void {
-  if (fs.existsSync(journal.oldPath) || !fs.existsSync(journal.newPath)) {
-    throw new Error(`Cannot finalize move: expected only committed target ${journal.newPath}.`);
+function validateCommittedMove(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
+  if (fs.existsSync(p.oldPath) || !fs.existsSync(p.newPath)) {
+    throw new Error(`Cannot finalize move: expected only committed target ${p.newPath}.`);
   }
-  if (hashFile(journal.newPath) !== journal.expectedNewHash) {
-    throw new Error(`Cannot finalize move: committed target ${journal.newPath} diverged.`);
+  if (hashFile(p.newPath) !== p.expectedNewHash) {
+    throw new Error(`Cannot finalize move: committed target ${p.newPath} diverged.`);
   }
-  if (journal.twinNewPath) {
-    if (journal.twinOldPath && fs.existsSync(journal.twinOldPath)) {
-      throw new Error(`Cannot finalize move: old twin ${journal.twinOldPath} still exists.`);
+  if (p.twinNewPath) {
+    if (p.twinOldPath && fs.existsSync(p.twinOldPath)) {
+      throw new Error(`Cannot finalize move: old twin ${p.twinOldPath} still exists.`);
     }
-    if (!fs.existsSync(journal.twinNewPath) || hashFile(journal.twinNewPath) !== journal.expectedTwinNewHash) {
-      throw new Error(`Cannot finalize move: committed twin ${journal.twinNewPath} diverged.`);
+    if (!fs.existsSync(p.twinNewPath) || hashFile(p.twinNewPath) !== p.expectedTwinNewHash) {
+      throw new Error(`Cannot finalize move: committed twin ${p.twinNewPath} diverged.`);
     }
   }
-  for (const citer of journal.citers) {
-    if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+  for (const citer of p.citers) {
+    if (citer.absPath === p.oldPath || citer.absPath === p.twinOldPath) continue;
     if (!fs.existsSync(citer.absPath) || hashFile(citer.absPath) !== citer.replacementHash) {
       throw new Error(`Cannot finalize move: citer ${citer.absPath} diverged.`);
     }
   }
 }
 
-function cleanupMoveTransaction(transactionDir: string): string | null {
-  try {
-    fs.rmSync(transactionDir, { recursive: true, force: true });
-    const root = path.dirname(transactionDir);
-    try {
-      fs.rmdirSync(root);
-    } catch {
-      // Other transactions may still exist.
-    }
-    return null;
-  } catch (error) {
-    const warning = `move committed but journal cleanup failed at ${transactionDir}: ${error instanceof Error ? error.message : String(error)}`;
-    warnVerbose(`akm mv: ${warning}`);
-    return warning;
+/**
+ * Kind-level safety fence for an `mv` journal (the engine fences root binding
+ * and the uniform changes[] separately).
+ */
+function fenceMvTxnJournal(journal: TxnJournal<MvTxnPayload>, txnDir: string, root: string): void {
+  const p = journal.payload;
+  const stashPaths = [p.oldPath, p.newPath, p.twinOldPath, p.twinNewPath]
+    .concat(p.citers.map((citer) => citer.absPath))
+    .filter((candidate): candidate is string => candidate !== null);
+  const transactionPaths = p.citers.flatMap((citer) => [citer.backupPath, citer.stagedPath, citer.ownedPath]);
+  if (
+    stashPaths.some((candidate) => !isWithin(candidate, root)) ||
+    transactionPaths.some((candidate) => !isWithin(candidate, txnDir))
+  ) {
+    throw new Error(`Refusing unsafe move recovery journal at ${path.join(txnDir, "journal.json")}.`);
   }
 }
 
+/**
+ * Recover every interrupted `mv` transaction for `stashDir` (rolls back
+ * pre-commit journals, rolls committed ones forward). A thin wrapper over the
+ * unified engine's root recovery, kept exported for mv's own pre-flight.
+ */
 export async function recoverInterruptedMoveTransactions(stashDir: string): Promise<void> {
-  const root = path.join(stashDir, ".akm", "mv-transactions");
-  if (!fs.existsSync(root)) return;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const transactionDir = path.join(root, entry.name);
-    const journalPath = path.join(transactionDir, "journal.json");
-    if (!fs.existsSync(journalPath)) {
-      cleanupMoveTransaction(transactionDir);
-      continue;
-    }
-    let journal: MoveJournal;
-    try {
-      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as MoveJournal;
-    } catch (error) {
-      throw new Error(
-        `Cannot recover interrupted move journal at ${journalPath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (journal.version !== 1) throw new Error(`Unsupported move journal version at ${journalPath}.`);
-    const stashPaths = [journal.oldPath, journal.newPath, journal.twinOldPath, journal.twinNewPath]
-      .concat(journal.citers.map((citer) => citer.absPath))
-      .filter((candidate): candidate is string => candidate !== null);
-    const transactionPaths = journal.citers.flatMap((citer) => [citer.backupPath, citer.stagedPath, citer.ownedPath]);
-    if (
-      ![
-        "prepared",
-        "applying",
-        "filesystem-committed",
-        "index-finalized",
-        "state-finalized",
-        "event-finalized",
-        "committed",
-      ].includes(journal.phase) ||
-      stashPaths.some((candidate) => !isWithin(candidate, stashDir)) ||
-      transactionPaths.some((candidate) => !isWithin(candidate, transactionDir))
-    ) {
-      throw new Error(`Refusing unsafe move recovery journal at ${journalPath}.`);
-    }
-    const transaction = { journal, journalPath, transactionDir };
-    if (journal.phase === "prepared" || journal.phase === "applying") {
-      rollbackMoveJournal(journal);
-    } else if (journal.phase !== "committed") {
-      validateCommittedMove(journal);
-      await finalizeMoveTransaction(transaction);
-    }
-    cleanupMoveTransaction(transactionDir);
-  }
+  await recoverTxnsForRoot(stashDir, (journal) => journal.kind === MV_TXN_KIND);
 }
 
 function applyMoveFilesystem(opts: {
@@ -558,14 +504,15 @@ function applyMoveFilesystem(opts: {
   includeLegacyBare: boolean;
   eventMetadata: Record<string, unknown>;
   plans: CiterRewritePlan[];
-}): MoveTransaction {
-  const transactionRoot = path.join(opts.stashDir, ".akm", "mv-transactions");
-  fs.mkdirSync(transactionRoot, { recursive: true, mode: 0o700 });
-  const transactionId = randomUUID();
-  const transactionDir = path.join(transactionRoot, transactionId);
-  fs.mkdirSync(transactionDir, { mode: 0o700 });
+}): MvTxn {
+  // Mint the id first: the payload embeds sidecar paths under the transaction
+  // dir, and the `prepared` journal must be written exactly once with its
+  // final contents (crash runners intercept the first rename per phase).
+  const transactionId = mintTxnId();
+  const transactionDir = txnDirFor(opts.stashDir, transactionId);
+  fs.mkdirSync(transactionDir, { recursive: true, mode: 0o700 });
   const journalPath = path.join(transactionDir, "journal.json");
-  let journal: MoveJournal | undefined;
+  let txn: MvTxn | undefined;
 
   try {
     const citers = opts.plans.map((plan, index) => {
@@ -579,8 +526,8 @@ function applyMoveFilesystem(opts: {
       fs.copyFileSync(plan.absPath, backupPath);
       fs.chmodSync(backupPath, mode);
       fs.writeFileSync(stagedPath, plan.content, { encoding: "utf8", mode });
-      fsyncFile(backupPath);
-      fsyncFile(stagedPath);
+      fsyncTxnFile(backupPath);
+      fsyncTxnFile(stagedPath);
       return {
         absPath: plan.absPath,
         backupPath,
@@ -599,10 +546,7 @@ function applyMoveFilesystem(opts: {
     const sourceCiter = citers.find((citer) => citer.absPath === opts.oldPath);
     const twinCiter = citers.find((citer) => citer.absPath === opts.twinOldPath);
 
-    journal = {
-      version: 1,
-      phase: "prepared",
-      transactionId,
+    const payload: MvTxnPayload = {
       sourceName: opts.sourceName,
       sourceRoot: opts.sourceRoot,
       includeLegacyBare: opts.includeLegacyBare,
@@ -623,9 +567,35 @@ function applyMoveFilesystem(opts: {
       toRef: opts.toRef,
       citers,
     };
-    writeMoveJournal(journalPath, journal);
-    const transaction = { journal, journalPath, transactionDir };
-    setMoveJournalPhase(transaction, "applying");
+    const expectedNewHash = payload.expectedNewHash;
+    txn = beginTxn<MvTxnPayload>({
+      kind: MV_TXN_KIND,
+      root: opts.stashDir,
+      transactionId,
+      changes: [
+        { path: opts.newPath, op: "create", beforeHash: null, afterHash: expectedNewHash },
+        { path: opts.oldPath, op: "delete", beforeHash: opts.sourceOriginalHash, afterHash: null },
+        ...(opts.twinOldPath && opts.twinNewPath
+          ? ([
+              { path: opts.twinNewPath, op: "create", beforeHash: null, afterHash: payload.expectedTwinNewHash },
+              { path: opts.twinOldPath, op: "delete", beforeHash: opts.twinOriginalHash, afterHash: null },
+            ] as JournaledFileChange[])
+          : []),
+        ...citers
+          .filter((citer) => citer.absPath !== opts.oldPath && citer.absPath !== opts.twinOldPath)
+          .map(
+            (citer): JournaledFileChange => ({
+              path: citer.absPath,
+              op: "update",
+              beforeHash: citer.originalHash,
+              afterHash: citer.replacementHash,
+            }),
+          ),
+      ],
+      payload,
+      decidedAt: payload.eventTs,
+    });
+    advanceTxn(txn, "applying");
 
     for (const citer of citers) {
       fs.renameSync(citer.absPath, citer.ownedPath);
@@ -641,23 +611,23 @@ function applyMoveFilesystem(opts: {
         throw error;
       }
     }
-    if (hashFile(opts.oldPath) !== journal.expectedNewHash) throw new Error(`source ${opts.oldPath} diverged`);
+    if (hashFile(opts.oldPath) !== payload.expectedNewHash) throw new Error(`source ${opts.oldPath} diverged`);
     fs.linkSync(opts.oldPath, opts.newPath);
     fs.unlinkSync(opts.oldPath);
     if (opts.twinOldPath && opts.twinNewPath) {
-      if (hashFile(opts.twinOldPath) !== journal.expectedTwinNewHash)
+      if (hashFile(opts.twinOldPath) !== payload.expectedTwinNewHash)
         throw new Error(`twin ${opts.twinOldPath} diverged`);
       fs.linkSync(opts.twinOldPath, opts.twinNewPath);
       fs.unlinkSync(opts.twinOldPath);
     }
 
-    setMoveJournalPhase(transaction, "filesystem-committed");
-    return transaction;
+    advanceTxn(txn, "filesystem-committed");
+    return txn;
   } catch (error) {
-    if (journal) {
+    if (txn) {
       try {
-        rollbackMoveJournal(journal);
-        cleanupMoveTransaction(transactionDir);
+        rollbackMoveJournal(txn.journal);
+        cleanupTxn(transactionDir);
       } catch (rollbackError) {
         throw new Error(
           `Move failed (${error instanceof Error ? error.message : String(error)}) and rollback failed ` +
@@ -666,7 +636,7 @@ function applyMoveFilesystem(opts: {
         );
       }
     } else {
-      cleanupMoveTransaction(transactionDir);
+      cleanupTxn(transactionDir);
     }
     throw error;
   }
@@ -883,7 +853,7 @@ function rekeyIndexForMove(opts: {
       if (rekeyed !== null || twinRekeyed !== null) {
         rebuildFts(db, { incremental: true });
       }
-      mvMutationHookForTests?.("index-rekeyed");
+      txnMutationHook("index-rekeyed");
     } finally {
       closeDatabase(db);
     }
@@ -964,7 +934,7 @@ function rekeyStateDbForMove(
               db.prepare(`UPDATE ${table} SET asset_ref = ? WHERE asset_ref = ?`).run(newRef, oldRef);
             }
           })();
-          mvMutationHookForTests?.(`state-${table}-rekeyed`);
+          txnMutationHook(`state-${table}-rekeyed`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           // The ONLY swallowable failure: the table is missing on an older
@@ -996,16 +966,17 @@ function rekeyStateDbForMove(
   }
 }
 
-function persistMoveEvent(journal: MoveJournal): void {
+function persistMoveEvent(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
   const db = openStateDatabase();
   try {
     db.transaction(() => {
       insertEventOnce(db, {
         eventType: "mv",
-        ts: journal.eventTs,
-        ref: journal.toRef,
+        ts: p.eventTs,
+        ref: p.toRef,
         metadata: {
-          ...journal.eventMetadata,
+          ...p.eventMetadata,
           mutationTransactionId: journal.transactionId,
         },
         idempotencyKey: journal.transactionId,
@@ -1017,65 +988,67 @@ function persistMoveEvent(journal: MoveJournal): void {
   }
 }
 
-async function finalizeMoveTransaction(transaction: MoveTransaction): Promise<{
+async function finalizeMoveTransaction(txn: MvTxn): Promise<{
   utilityPreserved: boolean;
   warnings: string[];
 }> {
-  const { journal } = transaction;
+  const { journal } = txn;
+  const p = journal.payload;
   validateCommittedMove(journal);
   const warnings: string[] = [];
   let utilityPreserved = true;
+  // The journal envelope's root IS the stash the move mutates.
+  const stashDir = journal.root;
   if (journal.phase === "filesystem-committed") {
     const indexResult = rekeyIndexForMove({
-      stashDir: path.dirname(path.dirname(path.dirname(transaction.transactionDir))),
-      type: journal.type,
-      oldName: journal.oldName,
-      newName: journal.newName,
-      oldPath: journal.oldPath,
-      newPath: journal.newPath,
-      fromRef: journal.fromRef,
-      toRef: journal.toRef,
-      twinOldPath: journal.twinOldPath,
-      twinNewPath: journal.twinNewPath,
-      sourceName: journal.sourceName,
-      sourceRoot: journal.sourceRoot,
-      includeLegacyBare: journal.includeLegacyBare,
+      stashDir,
+      type: p.type,
+      oldName: p.oldName,
+      newName: p.newName,
+      oldPath: p.oldPath,
+      newPath: p.newPath,
+      fromRef: p.fromRef,
+      toRef: p.toRef,
+      twinOldPath: p.twinOldPath,
+      twinNewPath: p.twinNewPath,
+      sourceName: p.sourceName,
+      sourceRoot: p.sourceRoot,
+      includeLegacyBare: p.includeLegacyBare,
     });
     utilityPreserved = indexResult.preserved;
     if (indexResult.warning) warnings.push(indexResult.warning);
     if (!indexResult.complete) throw new Error(indexResult.warning ?? "move index re-key did not complete");
-    const touched = new Set<string>([journal.newPath]);
-    if (journal.twinNewPath) touched.add(journal.twinNewPath);
-    for (const citer of journal.citers) {
-      if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+    const touched = new Set<string>([p.newPath]);
+    if (p.twinNewPath) touched.add(p.twinNewPath);
+    for (const citer of p.citers) {
+      if (citer.absPath === p.oldPath || citer.absPath === p.twinOldPath) continue;
       touched.add(citer.absPath);
     }
-    const stashDir = path.dirname(path.dirname(path.dirname(transaction.transactionDir)));
     if (!(await indexWrittenAssets(stashDir, [...touched], { recoverMoves: false }))) {
       utilityPreserved = false;
       warnings.push("write-path index refresh failed; the derived index will heal on the next full index");
     }
-    setMoveJournalPhase(transaction, "index-finalized");
+    advanceTxn(txn, "index-finalized");
   }
   if (journal.phase === "index-finalized") {
     const stateResult = rekeyStateDbForMove(
-      journal.fromRef,
-      journal.toRef,
-      journal.twinNewPath !== null,
-      journal.sourceName,
-      journal.sourceRoot,
-      journal.includeLegacyBare,
+      p.fromRef,
+      p.toRef,
+      p.twinNewPath !== null,
+      p.sourceName,
+      p.sourceRoot,
+      p.includeLegacyBare,
     );
     if (stateResult.warning) warnings.push(stateResult.warning);
     if (!stateResult.complete) throw new Error(stateResult.warning ?? "move state finalization did not complete");
-    setMoveJournalPhase(transaction, "state-finalized");
+    advanceTxn(txn, "state-finalized");
   }
   if (journal.phase === "state-finalized") {
     persistMoveEvent(journal);
-    mvMutationHookForTests?.("mv-event-persisted");
-    setMoveJournalPhase(transaction, "event-finalized");
+    txnMutationHook("mv-event-persisted");
+    advanceTxn(txn, "event-finalized");
   }
-  if (journal.phase === "event-finalized") setMoveJournalPhase(transaction, "committed");
+  if (journal.phase === "event-finalized") advanceTxn(txn, "committed");
   return { utilityPreserved, warnings };
 }
 
@@ -1394,7 +1367,7 @@ export const mvCommand = defineJsonCommand({
       // Filesystem commit is irreversible. Any finalization error leaves the
       // journal for the next mutation to finish forward; it never rolls back.
       const finalized = await finalizeMoveTransaction(transaction);
-      const cleanupWarning = cleanupMoveTransaction(transaction.transactionDir);
+      const cleanupWarning = cleanupTxn(transaction.dir);
       const warnings = [...finalized.warnings, ...(cleanupWarning ? [cleanupWarning] : [])];
 
       output("mv", {
@@ -1409,5 +1382,23 @@ export const mvCommand = defineJsonCommand({
         ...(warnings.length > 0 ? { warnings } : {}),
       });
     });
+  },
+});
+
+// Register the mv transaction kind with the unified engine: rollback for
+// pre-commit journals (prepared/applying), roll-forward finalize from
+// filesystem-committed onward. Any recovery entry point that touches this
+// stash root (mv pre-flight, proposal repository, indexer, write-path
+// indexer) finishes or rolls back interrupted moves through this handler.
+registerTxnKind<MvTxnPayload>(MV_TXN_KIND, {
+  phases: MV_TXN_PHASES,
+  commitPhase: "filesystem-committed",
+  validate: (journal, txnDir, root) => fenceMvTxnJournal(journal, txnDir, root),
+  rollback: (txn) => {
+    rollbackMoveJournal(txn.journal);
+  },
+  finalize: async (txn) => {
+    validateCommittedMove(txn.journal);
+    await finalizeMoveTransaction(txn);
   },
 });

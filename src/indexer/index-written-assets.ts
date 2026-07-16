@@ -23,6 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
@@ -68,8 +69,9 @@ export async function indexWrittenAssets(
   try {
     return await withIndexWriterLease({ purpose: "index-written-assets" }, async () => {
       if (options.recoverMoves !== false) {
-        const { recoverInterruptedMoveTransactions } = await import("../commands/mv-cli");
-        await recoverInterruptedMoveTransactions(stashDir);
+        // Unified fs-txn engine (WI-6.3): finish/roll back interrupted mv
+        // transactions before the targeted write-path refresh reads the tree.
+        await recoverTxnsForRoot(stashDir, (journal) => journal.kind === "mv");
       }
       const dbPath = getDbPath();
       if (!fs.existsSync(dbPath)) return true;

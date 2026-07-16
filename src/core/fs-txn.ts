@@ -177,9 +177,22 @@ export function writeTxnFileDurably(filePath: string, content: string | Buffer, 
 
 // ── Journal home / discovery ─────────────────────────────────────────────────
 
+/**
+ * Canonical spelling of a transaction root: realpath when the root exists
+ * (so symlinked spellings — e.g. a stash reached through macOS /tmp — hash
+ * to the SAME namespace and bind-compare equal), resolved otherwise.
+ */
+export function canonicalTxnRoot(root: string): string {
+  try {
+    return fs.realpathSync(path.resolve(root));
+  } catch {
+    return path.resolve(root);
+  }
+}
+
 /** Namespace directory for all transactions mutating `root`. */
 export function txnNamespaceDir(root: string): string {
-  const ns = txnHash(path.resolve(root)).slice(0, 24);
+  const ns = txnHash(canonicalTxnRoot(root)).slice(0, 24);
   return path.join(getDataDir(), "txn", ns);
 }
 
@@ -240,7 +253,7 @@ export function beginTxn<P>(args: {
     kind: args.kind,
     phase: handler.phases[0],
     transactionId,
-    root: path.resolve(args.root),
+    root: canonicalTxnRoot(args.root),
     changes: args.changes,
     decidedAt: args.decidedAt ?? new Date().toISOString(),
     payload: args.payload,
@@ -294,7 +307,14 @@ export function isWithinTxnRoot(candidate: string, root: string): boolean {
 }
 
 function readJournal(journalPath: string): TxnJournal<unknown> {
-  const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<unknown>;
+  let journal: TxnJournal<unknown>;
+  try {
+    journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<unknown>;
+  } catch (error) {
+    throw new Error(
+      `Cannot read transaction journal at ${journalPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (journal.version !== 1 || typeof journal.kind !== "string" || typeof journal.phase !== "string") {
     throw new Error(`Refusing unsafe transaction journal at ${journalPath}.`);
   }
@@ -303,7 +323,7 @@ function readJournal(journalPath: string): TxnJournal<unknown> {
 
 /** Engine-level safety fences shared by every kind. */
 function fenceJournal(journal: TxnJournal<unknown>, txnDir: string, root: string, journalPath: string): void {
-  if (path.resolve(journal.root) !== path.resolve(root)) {
+  if (canonicalTxnRoot(journal.root) !== canonicalTxnRoot(root)) {
     throw new Error(`Refusing transaction journal bound to a different root at ${journalPath}.`);
   }
   const handler = requireKind(journal.kind);

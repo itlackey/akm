@@ -86,6 +86,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../src/core/events";
+import { txnNamespaceDir } from "../../src/core/fs-txn";
 import { getDbPath } from "../../src/core/paths";
 import * as indexDbModule from "../../src/indexer/db/db";
 import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
@@ -153,7 +154,9 @@ function mvEventOutcome(ref: string): { matchingCount: number; distinctIdempoten
 }
 
 function transactionsRoot(stashDir: string): string {
-  return path.join(stashDir, ".akm", "mv-transactions");
+  // WI-6.3 mechanical repoint: the mv journal home moved from the in-stash
+  // `.akm/mv-transactions` to the unified engine namespace for the stash.
+  return txnNamespaceDir(stashDir);
 }
 
 function transactionsRootIsClean(stashDir: string): boolean {
