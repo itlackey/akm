@@ -49,7 +49,7 @@ import type {
   ImproveRunContext,
   ImproveScope,
 } from "./improve";
-import { makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
+import { type AutoAcceptGateConfig, makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectResult } from "./reflect";
@@ -60,7 +60,66 @@ import { durableImproveRef } from "./source-identity";
 // ── improve loop / post-loop / maintenance stages ───────────────────
 // The cycle stages run by akmImprove, extracted from improve.ts.
 
-export async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoopResult> {
+/** O-5 / #378: rolling per-originator error-window cap. */
+const RECENT_ERRORS_CAP = 3;
+
+/** O-5 / #378: push a per-originator error into the rolling window. */
+function pushRecentError(recentErrors: Record<string, string[]>, originator: string, msg: string): void {
+  if (!recentErrors[originator]) recentErrors[originator] = [];
+  recentErrors[originator].push(msg);
+  if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
+}
+
+/**
+ * Per-run environment shared by every per-ref pass of the improve loop —
+ * everything that is constant across refs. Built once by
+ * {@link prepareImproveLoopEnv} so the per-ref passes take `(ref, env, tally)`
+ * instead of closing over `runImproveLoopStage` locals.
+ */
+export interface ImproveLoopEnv {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  reflectFn: ImproveRunContext["reflectFn"];
+  distillFn: ImproveRunContext["distillFn"];
+  signalBearingSet: Set<string>;
+  distillCooledRefs: Set<string>;
+  /** O(1) membership test — these refs skip the reflect call (Bug D2). */
+  distillOnlyRefSet: Set<string>;
+  /**
+   * Per-originator rolling error windows (O-5 / #378). Read-only inside the
+   * passes; pushes are returned on the {@link LoopRefTally} and folded into
+   * this record by the orchestrator between refs.
+   */
+  recentErrors: Record<string, string[]>;
+  /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
+  rejectedProposalsByRef: ImproveRunContext["rejectedProposalsByRef"];
+  eventsCtx?: EventsContext;
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile: ImproveRunContext["improveProfile"];
+  /** Engine/materialized-connection snapshot shared by every process in this run. */
+  resolvedPlan: ResolvedImprovePlan;
+  budgetSignal?: AbortSignal;
+  /**
+   * requirePlannedRefs guard: when the distill profile sets this flag, skip
+   * distill for distill-only refs if the reflect phase produced no planned refs.
+   * Prevents the distill loop from generating hundreds of distill-skipped events
+   * on quiet passes (all refs on reflect cooldown, no new signal to distill).
+   */
+  skipDistillDueToRequirePlannedRefs: boolean;
+  /** Pending proposals pre-loaded once instead of queried per asset in the loop. */
+  pendingProposalRefSet: Set<string>;
+  reflectGateCfg: AutoAcceptGateConfig;
+  distillGateCfg: AutoAcceptGateConfig;
+  /** O-1 (#364): remaining wall-clock budget, computed at call time. */
+  remainingBudgetMs: () => number;
+}
+
+/**
+ * Build the per-run loop environment from the run context: the derived guards,
+ * the pending-proposal preload, and the two auto-accept gate configs.
+ */
+export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
   const {
     scope,
     options,
@@ -68,7 +127,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     reflectFn,
     distillFn,
     loopRefs,
-    actions,
     signalBearingSet,
     distillCooledRefs,
     distillOnlyRefs,
@@ -86,28 +144,16 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
   // receives only its fair share of the wall-clock budget.
   const remainingBudgetMs = () => Math.max(0, budgetMs - (Date.now() - startMs));
 
-  const RECENT_ERRORS_CAP = 3;
+  // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
+  const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
 
   // requirePlannedRefs guard: when the distill profile sets this flag, skip
   // distill for distill-only refs if the reflect phase produced no planned refs.
   // Prevents the distill loop from generating hundreds of distill-skipped events
   // on quiet passes (all refs on reflect cooldown, no new signal to distill).
   const requirePlannedRefs = improveProfile?.processes?.distill?.requirePlannedRefs === true;
-  const _distillOnlyRefNames = new Set(distillOnlyRefs.map((r) => r.ref));
-  const hasReflectEligibleRefs = loopRefs.some((r) => !_distillOnlyRefNames.has(r.ref));
+  const hasReflectEligibleRefs = loopRefs.some((r) => !distillOnlyRefSet.has(r.ref));
   const skipDistillDueToRequirePlannedRefs = requirePlannedRefs && !hasReflectEligibleRefs;
-
-  // O-5 / #378: helper to push per-originator errors into the rolling window.
-  function pushRecentError(originator: string, msg: string): void {
-    if (!recentErrors[originator]) recentErrors[originator] = [];
-    recentErrors[originator].push(msg);
-    if (recentErrors[originator].length > RECENT_ERRORS_CAP) recentErrors[originator].shift();
-  }
-  // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
-  const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
-  let completedCount = 0;
-  let reflectsWithErrorContext = 0;
-  const memoryRefsForInference = new Set<string>();
 
   // Pre-load all pending proposals once instead of querying per asset in the loop.
   const dedupeStashDirForProposals = primaryStashDir ?? options.stashDir;
@@ -117,8 +163,6 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
       : [],
   );
 
-  let gateAutoAcceptedCount = 0;
-  let gateAutoAcceptFailedCount = 0;
   const reflectGateCfg = makeGateConfig("reflect", {
     globalThreshold: options.autoAccept,
     dryRun: options.dryRun ?? false,
@@ -139,421 +183,558 @@ export async function runImproveLoopStage(args: ImproveRunContext): Promise<Impr
     stateDbPath: eventsCtx?.dbPath,
   });
 
-  for (const planned of loopRefs) {
-    if (Date.now() - startMs >= budgetMs) {
-      const remaining = loopRefs.length - completedCount;
-      info(
-        `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
-      );
+  return {
+    scope,
+    options,
+    primaryStashDir,
+    reflectFn,
+    distillFn,
+    signalBearingSet,
+    distillCooledRefs,
+    distillOnlyRefSet,
+    recentErrors,
+    rejectedProposalsByRef,
+    eventsCtx,
+    improveProfile,
+    resolvedPlan,
+    budgetSignal,
+    skipDistillDueToRequirePlannedRefs,
+    pendingProposalRefSet,
+    reflectGateCfg,
+    distillGateCfg,
+    remainingBudgetMs,
+  };
+}
+
+/**
+ * Tally of one per-ref loop iteration, folded into run-level state by the
+ * orchestrator. Sub-passes append to THIS object and never touch run-level
+ * state, so the run counters stop being shared mutable closures. The tally is
+ * threaded INTO the sub-passes (rather than assembled from pure returns)
+ * deliberately: the per-ref try/catch must preserve actions that were already
+ * recorded when a later side effect throws — exactly as the pre-decomposition
+ * inline loop body did.
+ */
+export interface LoopRefTally {
+  /** Actions recorded for this ref, in emission order. */
+  actions: ImproveActionResult[];
+  /** 1 when the reflect call carried recent-error avoidPatterns (O-5 / #378). */
+  reflectsWithErrorContext: number;
+  /** Errors to fold into the per-originator rolling windows (O-5 / #378). */
+  recentErrorPushes: { originator: string; message: string }[];
+  gateAutoAcceptedCount: number;
+  gateAutoAcceptFailedCount: number;
+  /** Memory refs distilled-but-not-promoted this ref — queued for inference. */
+  memoryRefsForInference: string[];
+}
+
+/**
+ * One improve-loop iteration for a single planned ref: the reflect pass, then
+ * the distill pass, with the per-ref error classification (B7) around both.
+ * `continue` in the old inline loop body is an early `return` inside the
+ * passes; the orchestrator folds the returned tally and owns the run counters.
+ */
+export async function processImproveLoopRef(planned: ImproveEligibleRef, env: ImproveLoopEnv): Promise<LoopRefTally> {
+  const tally: LoopRefTally = {
+    actions: [],
+    reflectsWithErrorContext: 0,
+    recentErrorPushes: [],
+    gateAutoAcceptedCount: 0,
+    gateAutoAcceptFailedCount: 0,
+    memoryRefsForInference: [],
+  };
+  try {
+    // Bug D2: distillOnlyRefs skip the reflect call but still run the distill path.
+    // Bug D1: in-loop distill-cooldown check removed — distill-cooled candidates
+    //         have their synthetic actions emitted in runImprovePreparationStage.
+    const isDistillOnly = env.distillOnlyRefSet.has(planned.ref);
+    const parsedPlannedRef = parseAssetRef(planned.ref);
+    await runLoopReflectPass(planned, isDistillOnly, env, tally);
+    // isDistillOnly refs: no reflect action emitted — proceed directly to the distill pass.
+    await runLoopDistillPass(planned, parsedPlannedRef, isDistillOnly, env, tally);
+  } catch (err) {
+    // B7: UsageError thrown by akmDistill on validation_failed should be recorded
+    // as mode:"distill" with outcome:"validation_failed", NOT as a generic error.
+    // The distill_invoked event was already emitted inside akmDistill before the throw.
+    if (err instanceof UsageError) {
+      tally.actions.push({
+        ref: planned.ref,
+        mode: "distill",
+        result: { ok: false, outcome: "validation_failed", error: err.message } as unknown as AkmDistillResult,
+      });
+    } else {
+      tally.actions.push({
+        ref: planned.ref,
+        mode: "error",
+        result: { ok: false, error: errMessage(err) },
+      });
+    }
+  }
+  return tally;
+}
+
+/**
+ * Reflect half of one loop iteration: type/profile gates, the reflect call with
+ * recent-error avoidPatterns, outcome classification (cooldown / guard-reject /
+ * type-refused / noise-gate), plasticity counters, and the reflect auto-accept
+ * gate. Records onto the per-ref tally only.
+ */
+async function runLoopReflectPass(
+  planned: ImproveEligibleRef,
+  isDistillOnly: boolean,
+  env: ImproveLoopEnv,
+  tally: LoopRefTally,
+): Promise<void> {
+  const { options, primaryStashDir, reflectFn, eventsCtx, improveProfile, resolvedPlan, budgetSignal } = env;
+  // B6: derived memories are machine-generated; skip reflect to avoid noisy proposals.
+  // shouldDistillMemoryRef already returns false for .derived refs, so the distill
+  // path is also a no-op for them — we just avoid unnecessary agent spawns.
+  // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
+  if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
+    // Type guard: skip reflect for unsupported types (script, env, task, etc.)
+    // and raw wiki directories, driven by the active improve profile.
+    const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
+    if (reflectSkip.skip) {
+      tally.actions.push({
+        ref: planned.ref,
+        mode: "reflect-skipped",
+        result: { ok: true, reason: reflectSkip.reason },
+      });
+    } else {
+      // O-5 / #378: only inject reflect-originator errors into the reflect call.
+      // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
+      const reflectErrors = env.recentErrors.reflect ?? [];
+      if (reflectErrors.length > 0) tally.reflectsWithErrorContext++;
+      // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
+      // bounded by the wall-clock deadline rather than the default per-profile timeout.
+      const reflectBudgetMs = env.remainingBudgetMs();
+      // Use the runner frozen in the invocation plan; no leaf re-resolution.
+      const reflectProfileRunner = resolvedPlan.processes.reflect.runner;
+      const reflectCallArgs = {
+        ref: planned.ref,
+        ...(options.sourceName ? { sourceName: options.sourceName } : {}),
+        ...(options.legacyBareState ? { legacyBareState: true } : {}),
+        task: options.task,
+        // Active strategy supplies non-engine process tuning.
+        ...(improveProfile ? { improveProfile } : {}),
+        config: options.config,
+        ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
+        ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
+        eventSource: "improve" as const,
+        // #639 — resolve the low-value filter from the ACTIVE improve profile
+        // (default off when unset), so the running strategy decides.
+        lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
+        ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
+        signal: budgetSignal,
+        runner: reflectProfileRunner ?? null,
+        // Attribution: carry the eligibility lane so reflect stamps it on
+        // the reflect_invoked event and the persisted proposal.
+        ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+      };
+      const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
+        engine: resolvedPlan.processes.reflect.runner?.engine,
+        process: "reflect",
+      });
+      const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
+      // Content-policy guard hits (reflect size-rail rejections) are NOT
+      // LLM faults — the agent responded fine, the downstream guard
+      // blocked the output. Route them to a distinct `reflect-guard-rejected`
+      // mode so health metrics can split deterministic guard hits out of
+      // true LLM failures. See
+      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
+      const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
+      // Type-guard rejection (reflect refused a script/env/task ref) is
+      // also NOT an LLM failure — the LLM is never invoked. Route to the
+      // existing `reflect-skipped` bucket so it does not inflate the
+      // failure-rate numerator. ~9% of `reflect-failed` events in the
+      // user's stack were this case; see review §1a row "Reflect refused
+      // asset type".
+      const isTypeRefused = !reflectResult.ok && reflectResult.reason === "unsupported_type";
+      // Noise-gate suppression (#580): the candidate edit was an empty
+      // diff or a cosmetic-only reformat of the current asset. Like
+      // `unsupported_type`, this is a deterministic skip — not an LLM
+      // fault — so it routes to the `reflect-skipped` bucket and stays
+      // out of recentErrors/avoidPatterns.
+      const isNoChange = !reflectResult.ok && reflectResult.reason === "no_change";
+      tally.actions.push({
+        ref: planned.ref,
+        mode: reflectResult.ok
+          ? "reflect"
+          : isCooldown
+            ? "reflect-cooldown"
+            : isGuardReject
+              ? "reflect-guard-rejected"
+              : isTypeRefused || isNoChange
+                ? "reflect-skipped"
+                : "reflect-failed",
+        result: reflectResult,
+      });
+      // Cooldown skips, guard rejects, type-refused skips, and noise-gate
+      // skips are not failures — do not pollute recentErrors with them
+      // (those get injected as `avoidPatterns` into the next reflect
+      // prompt). Guard rejects ARE worth showing the LLM as a learn-signal
+      // so the next iteration sees "your last expansion was too large";
+      // type-refused and no-change are deterministic and add no learning
+      // signal.
+      if (!reflectResult.ok && !isCooldown && !isTypeRefused && !isNoChange) {
+        const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
+        tally.recentErrorPushes.push({ originator: "reflect", message: errMsg });
+      }
+      // improve_reflect_outcome — per-asset metric for tuning the reflect path.
       appendEvent(
         {
-          eventType: "improve_skipped",
+          eventType: "improve_reflect_outcome",
           ref: planned.ref,
           metadata: {
-            reason: "budget_exhausted",
-            remaining,
+            ok: reflectResult.ok,
+            durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
+            engine: reflectResult.engine,
+            reason: reflectResult.ok ? undefined : reflectResult.reason,
           },
         },
         eventsCtx,
       );
-      // B11: Emit improve_skipped for all remaining assets that will not be processed.
-      for (const remainingRef of loopRefs.slice(completedCount + 1)) {
+
+      // Plasticity counter (plan §WS-1 step 8): record no-ops so the
+      // WS-1 selection comparator (effectiveScore, ~line 3073) can dampen
+      // repeatedly-silent assets during consolidation-selection.
+      // A no_change reflect means the LLM was invoked but found nothing to
+      // improve — the asset is stable. Track it. A successful reflect means
+      // the asset changed; reset the counter so the dampener lifts.
+      if (isNoChange && eventsCtx?.db) {
+        try {
+          recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+        } catch {
+          // best-effort: plasticity counter failure never blocks the run
+        }
+      } else if (reflectResult.ok && eventsCtx?.db) {
+        try {
+          resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+        } catch {
+          // best-effort
+        }
+      }
+
+      if (reflectResult.ok) {
+        const reflectGr = await runAutoAcceptGate(
+          [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
+          env.reflectGateCfg,
+        );
+        tally.gateAutoAcceptedCount += reflectGr.promoted.length;
+        tally.gateAutoAcceptFailedCount += reflectGr.failed.length;
+      }
+    } // end else (reflect type/profile check)
+  } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
+    // B6: .derived refs skip reflect; record synthetic skip action.
+    tally.actions.push({
+      ref: planned.ref,
+      mode: "distill-skipped",
+      result: { ok: true, reason: "derived-memory-reflect-skipped" },
+    });
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: planned.ref,
+        metadata: { reason: "derived_memory_reflect_skipped" },
+      },
+      eventsCtx,
+    );
+  }
+}
+
+/**
+ * Distill half of one loop iteration: the profile / requirePlannedRefs /
+ * candidate-type / weak-signal / cooldown gates, then the pending-proposal and
+ * reject-grace dedup checks, then {@link invokeDistillAndRecord}. Each gate
+ * that was a `continue` in the old inline loop body is an early `return` here.
+ */
+async function runLoopDistillPass(
+  planned: ImproveEligibleRef,
+  parsedPlannedRef: ReturnType<typeof parseAssetRef>,
+  isDistillOnly: boolean,
+  env: ImproveLoopEnv,
+  tally: LoopRefTally,
+): Promise<void> {
+  const { options, primaryStashDir, eventsCtx, improveProfile } = env;
+  const hasRecentFeedbackSignal = env.signalBearingSet.has(planned.ref);
+  const explicitRefScope = env.scope.mode === "ref";
+  // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
+  // distill so callers who configure `profile.processes.distill.allowedTypes`
+  // or land on raw-wiki refs get a recorded skip action instead of silently
+  // proceeding.
+  const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
+  if (distillSkip.skip) {
+    tally.actions.push({
+      ref: planned.ref,
+      mode: "distill-skipped",
+      result: { ok: true, reason: distillSkip.reason },
+    });
+    return;
+  }
+  // requirePlannedRefs guard: skip distill for distill-only refs when no
+  // reflect-eligible refs were planned this run, preventing mass skip events.
+  if (env.skipDistillDueToRequirePlannedRefs && isDistillOnly) {
+    tally.actions.push({
+      ref: planned.ref,
+      mode: "distill-skipped",
+      result: { ok: true, reason: "require_planned_refs" },
+    });
+    return;
+  }
+  // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
+  // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
+  // it will refuse.
+  const shouldAttemptDistill = isDistillCandidateRef(planned.ref, options.stashDir);
+  const skipMemoryDistillForWeakSignal =
+    !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
+
+  // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
+  // refs; non-candidate refs in the set are blocked here.
+  // O-2 (#365): bypass the distill cooldown when the user explicitly targeted
+  // this ref via --scope — their intent overrides unattended-run policies.
+  if (
+    shouldAttemptDistill &&
+    !skipMemoryDistillForWeakSignal &&
+    (!env.distillCooledRefs.has(planned.ref) || explicitRefScope)
+  ) {
+    // TODO(refactor): single call site needs both lesson+knowledge refs for proposal dedup. If a third target ref type is added, extract deriveAllTargetRefs(inputRef): string[].
+    const lessonRef = deriveLessonRef(planned.ref);
+    const knowledgeRef = deriveKnowledgeRef(planned.ref);
+    const dedupeStashDir = primaryStashDir ?? options.stashDir;
+    if (dedupeStashDir) {
+      // B2: check both lesson ref and knowledge ref since auto-promoted memories
+      // create knowledge: proposals, not lesson: proposals.
+      const hasExistingPending =
+        env.pendingProposalRefSet.has(lessonRef) || env.pendingProposalRefSet.has(knowledgeRef);
+      if (hasExistingPending) {
+        tally.actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "pending proposal exists" },
+        });
         appendEvent(
           {
             eventType: "improve_skipped",
-            ref: remainingRef.ref,
-            metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
+            ref: planned.ref,
+            metadata: { reason: "pending_proposal_exists" },
           },
           eventsCtx,
         );
+        return;
       }
-      actions.push({
-        ref: planned.ref,
-        mode: "error",
-        result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
-      });
-      break;
-    }
-    try {
-      // Bug D2: distillOnlyRefs skip the reflect call but still run the distill path.
-      // Bug D1: in-loop distill-cooldown check removed — distill-cooled candidates
-      //         have their synthetic actions emitted in runImprovePreparationStage.
-      const isDistillOnly = distillOnlyRefSet.has(planned.ref);
 
-      const parsedPlannedRef = parseAssetRef(planned.ref);
-      // B6: derived memories are machine-generated; skip reflect to avoid noisy proposals.
-      // shouldDistillMemoryRef already returns false for .derived refs, so the distill
-      // path is also a no-op for them — we just avoid unnecessary agent spawns.
-      // D2: distillOnlyRefs also skip the reflect call (reflect-cooled, distill path only).
-      if (!isDistillOnly && !planned.ref.endsWith(".derived")) {
-        // Type guard: skip reflect for unsupported types (script, env, task, etc.)
-        // and raw wiki directories, driven by the active improve profile.
-        const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
-        if (reflectSkip.skip) {
-          actions.push({
+      // D-2 (#370): reject-aware cooldown for distill. When the reviewer
+      // recently rejected a distilled lesson or knowledge proposal for this
+      // asset, skip re-distillation for a 1-day grace window. Prevents the
+      // same rejected proposal from being regenerated immediately. The
+      // window is fixed (the 0.8.0 redesign moved per-ref cooldowns to
+      // signal-delta gates and dropped --distill-cooldown-days; a short
+      // reject grace is preserved here so a fresh rejection isn't
+      // overridden by the same run).
+      // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
+      const DISTILL_REJECT_COOLDOWN_MS = daysToMs(1);
+      const recentlyRejectedLesson =
+        !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
+        (env.rejectedProposalsByRef.has(lessonRef) || env.rejectedProposalsByRef.has(knowledgeRef));
+      if (recentlyRejectedLesson) {
+        const rejectedEntry = env.rejectedProposalsByRef.get(lessonRef) ?? env.rejectedProposalsByRef.get(knowledgeRef);
+        const rejectedAgeMs = rejectedEntry ? Date.now() - new Date(rejectedEntry.ts).getTime() : 0;
+        if (rejectedAgeMs < DISTILL_REJECT_COOLDOWN_MS) {
+          tally.actions.push({
             ref: planned.ref,
-            mode: "reflect-skipped",
-            result: { ok: true, reason: reflectSkip.reason },
+            mode: "distill-skipped",
+            result: { ok: true, reason: "distill reject grace window" },
           });
-        } else {
-          // O-5 / #378: only inject reflect-originator errors into the reflect call.
-          // Cross-task errors (e.g. schema-repair) must NOT contaminate reflect prompts.
-          const reflectErrors = recentErrors.reflect ?? [];
-          if (reflectErrors.length > 0) reflectsWithErrorContext++;
-          // O-1 (#364): pass remaining budget as timeoutMs so the agent spawn is
-          // bounded by the wall-clock deadline rather than the default per-profile timeout.
-          const reflectBudgetMs = remainingBudgetMs();
-          // Use the runner frozen in the invocation plan; no leaf re-resolution.
-          const reflectProfileRunner = resolvedPlan.processes.reflect.runner;
-          const reflectCallArgs = {
-            ref: planned.ref,
-            ...(options.sourceName ? { sourceName: options.sourceName } : {}),
-            ...(options.legacyBareState ? { legacyBareState: true } : {}),
-            task: options.task,
-            // Active strategy supplies non-engine process tuning.
-            ...(improveProfile ? { improveProfile } : {}),
-            config: options.config,
-            ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-            ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
-            eventSource: "improve" as const,
-            // #639 — resolve the low-value filter from the ACTIVE improve profile
-            // (default off when unset), so the running strategy decides.
-            lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
-            ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
-            signal: budgetSignal,
-            runner: reflectProfileRunner ?? null,
-            // Attribution: carry the eligibility lane so reflect stamps it on
-            // the reflect_invoked event and the persisted proposal.
-            ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-          };
-          const reflectResult: AkmReflectResult = await withLlmStage("reflect", () => reflectFn(reflectCallArgs), {
-            engine: resolvedPlan.processes.reflect.runner?.engine,
-            process: "reflect",
-          });
-          const isCooldown = !reflectResult.ok && reflectResult.reason === "cooldown";
-          // Content-policy guard hits (reflect size-rail rejections) are NOT
-          // LLM faults — the agent responded fine, the downstream guard
-          // blocked the output. Route them to a distinct `reflect-guard-rejected`
-          // mode so health metrics can split deterministic guard hits out of
-          // true LLM failures. See
-          // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
-          const isGuardReject = !reflectResult.ok && reflectResult.reason === "content_policy_reject";
-          // Type-guard rejection (reflect refused a script/env/task ref) is
-          // also NOT an LLM failure — the LLM is never invoked. Route to the
-          // existing `reflect-skipped` bucket so it does not inflate the
-          // failure-rate numerator. ~9% of `reflect-failed` events in the
-          // user's stack were this case; see review §1a row "Reflect refused
-          // asset type".
-          const isTypeRefused = !reflectResult.ok && reflectResult.reason === "unsupported_type";
-          // Noise-gate suppression (#580): the candidate edit was an empty
-          // diff or a cosmetic-only reformat of the current asset. Like
-          // `unsupported_type`, this is a deterministic skip — not an LLM
-          // fault — so it routes to the `reflect-skipped` bucket and stays
-          // out of recentErrors/avoidPatterns.
-          const isNoChange = !reflectResult.ok && reflectResult.reason === "no_change";
-          actions.push({
-            ref: planned.ref,
-            mode: reflectResult.ok
-              ? "reflect"
-              : isCooldown
-                ? "reflect-cooldown"
-                : isGuardReject
-                  ? "reflect-guard-rejected"
-                  : isTypeRefused || isNoChange
-                    ? "reflect-skipped"
-                    : "reflect-failed",
-            result: reflectResult,
-          });
-          // Cooldown skips, guard rejects, type-refused skips, and noise-gate
-          // skips are not failures — do not pollute recentErrors with them
-          // (those get injected as `avoidPatterns` into the next reflect
-          // prompt). Guard rejects ARE worth showing the LLM as a learn-signal
-          // so the next iteration sees "your last expansion was too large";
-          // type-refused and no-change are deterministic and add no learning
-          // signal.
-          if (!reflectResult.ok && !isCooldown && !isTypeRefused && !isNoChange) {
-            const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-            pushRecentError("reflect", errMsg);
-          }
-          // improve_reflect_outcome — per-asset metric for tuning the reflect path.
           appendEvent(
             {
-              eventType: "improve_reflect_outcome",
+              eventType: "improve_skipped",
               ref: planned.ref,
               metadata: {
-                ok: reflectResult.ok,
-                durationMs: reflectResult.ok ? reflectResult.durationMs : undefined,
-                engine: reflectResult.engine,
-                reason: reflectResult.ok ? undefined : reflectResult.reason,
+                reason: "distill_reject_grace_window",
               },
             },
             eventsCtx,
           );
-
-          // Plasticity counter (plan §WS-1 step 8): record no-ops so the
-          // WS-1 selection comparator (effectiveScore, ~line 3073) can dampen
-          // repeatedly-silent assets during consolidation-selection.
-          // A no_change reflect means the LLM was invoked but found nothing to
-          // improve — the asset is stable. Track it. A successful reflect means
-          // the asset changed; reset the counter so the dampener lifts.
-          if (isNoChange && eventsCtx?.db) {
-            try {
-              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
-            } catch {
-              // best-effort: plasticity counter failure never blocks the run
-            }
-          } else if (reflectResult.ok && eventsCtx?.db) {
-            try {
-              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
-            } catch {
-              // best-effort
-            }
-          }
-
-          if (reflectResult.ok) {
-            const reflectGr = await runAutoAcceptGate(
-              [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
-              reflectGateCfg,
-            );
-            gateAutoAcceptedCount += reflectGr.promoted.length;
-            gateAutoAcceptFailedCount += reflectGr.failed.length;
-          }
-        } // end else (reflect type/profile check)
-      } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
-        // B6: .derived refs skip reflect; record synthetic skip action.
-        actions.push({
-          ref: planned.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "derived-memory-reflect-skipped" },
-        });
-        appendEvent(
-          {
-            eventType: "improve_skipped",
-            ref: planned.ref,
-            metadata: { reason: "derived_memory_reflect_skipped" },
-          },
-          eventsCtx,
-        );
-      }
-      // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
-      const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
-      const explicitRefScope = scope.mode === "ref";
-      // Profile gate: apply the full type-filter / raw-wiki / disabled rules to
-      // distill so callers who configure `profile.processes.distill.allowedTypes`
-      // or land on raw-wiki refs get a recorded skip action instead of silently
-      // proceeding.
-      const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
-      if (distillSkip.skip) {
-        actions.push({
-          ref: planned.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: distillSkip.reason },
-        });
-        completedCount++;
-        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-        continue;
-      }
-      // requirePlannedRefs guard: skip distill for distill-only refs when no
-      // reflect-eligible refs were planned this run, preventing mass skip events.
-      if (skipDistillDueToRequirePlannedRefs && isDistillOnly) {
-        actions.push({
-          ref: planned.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "require_planned_refs" },
-        });
-        completedCount++;
-        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-        continue;
-      }
-      // See `isDistillCandidateRef` — excludes `lesson:*` (and anything else in
-      // DISTILL_REFUSED_INPUT_TYPES) so distill never gets queued for an input
-      // it will refuse.
-      const shouldAttemptDistill = isDistillCandidateRef(planned.ref, options.stashDir);
-      const skipMemoryDistillForWeakSignal =
-        !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
-
-      // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
-      // refs; non-candidate refs in the set are blocked here.
-      // O-2 (#365): bypass the distill cooldown when the user explicitly targeted
-      // this ref via --scope — their intent overrides unattended-run policies.
-      if (
-        shouldAttemptDistill &&
-        !skipMemoryDistillForWeakSignal &&
-        (!distillCooledRefs.has(planned.ref) || explicitRefScope)
-      ) {
-        // TODO(refactor): single call site needs both lesson+knowledge refs for proposal dedup. If a third target ref type is added, extract deriveAllTargetRefs(inputRef): string[].
-        const lessonRef = deriveLessonRef(planned.ref);
-        const knowledgeRef = deriveKnowledgeRef(planned.ref);
-        const dedupeStashDir = primaryStashDir ?? options.stashDir;
-        if (dedupeStashDir) {
-          // B2: check both lesson ref and knowledge ref since auto-promoted memories
-          // create knowledge: proposals, not lesson: proposals.
-          const hasExistingPending = pendingProposalRefSet.has(lessonRef) || pendingProposalRefSet.has(knowledgeRef);
-          if (hasExistingPending) {
-            actions.push({
-              ref: planned.ref,
-              mode: "distill-skipped",
-              result: { ok: true, reason: "pending proposal exists" },
-            });
-            appendEvent(
-              {
-                eventType: "improve_skipped",
-                ref: planned.ref,
-                metadata: { reason: "pending_proposal_exists" },
-              },
-              eventsCtx,
-            );
-            completedCount++;
-            info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-            continue;
-          }
-
-          // D-2 (#370): reject-aware cooldown for distill. When the reviewer
-          // recently rejected a distilled lesson or knowledge proposal for this
-          // asset, skip re-distillation for a 1-day grace window. Prevents the
-          // same rejected proposal from being regenerated immediately. The
-          // window is fixed (the 0.8.0 redesign moved per-ref cooldowns to
-          // signal-delta gates and dropped --distill-cooldown-days; a short
-          // reject grace is preserved here so a fresh rejection isn't
-          // overridden by the same run).
-          // References: ExpeL arXiv:2308.10144, STaR arXiv:2203.14465.
-          const DISTILL_REJECT_COOLDOWN_MS = daysToMs(1);
-          const recentlyRejectedLesson =
-            !explicitRefScope && // O-2: bypass when --scope <ref> is explicit
-            (rejectedProposalsByRef.has(lessonRef) || rejectedProposalsByRef.has(knowledgeRef));
-          if (recentlyRejectedLesson) {
-            const rejectedEntry = rejectedProposalsByRef.get(lessonRef) ?? rejectedProposalsByRef.get(knowledgeRef);
-            const rejectedAgeMs = rejectedEntry ? Date.now() - new Date(rejectedEntry.ts).getTime() : 0;
-            if (rejectedAgeMs < DISTILL_REJECT_COOLDOWN_MS) {
-              actions.push({
-                ref: planned.ref,
-                mode: "distill-skipped",
-                result: { ok: true, reason: "distill reject grace window" },
-              });
-              appendEvent(
-                {
-                  eventType: "improve_skipped",
-                  ref: planned.ref,
-                  metadata: {
-                    reason: "distill_reject_grace_window",
-                  },
-                },
-                eventsCtx,
-              );
-              completedCount++;
-              info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-              continue;
-            }
-          }
+          return;
         }
-
-        const distillResult = await withLlmStage(
-          "distill",
-          () =>
-            distillFn({
-              ref: planned.ref,
-              ...(options.sourceName ? { sourceName: options.sourceName } : {}),
-              ...(options.legacyBareState ? { legacyBareState: true } : {}),
-              ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-              ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
-              // Active profile so distill's per-process reads honor `--profile`.
-              ...(improveProfile ? { improveProfile } : {}),
-              config: options.config,
-              llmConfig: resolvedPlan.processes.distill.runner
-                ? materializeLlmRunnerConnection(resolvedPlan.processes.distill.runner)
-                : null,
-              signal: budgetSignal,
-              // Attribution: carry the eligibility lane so distill stamps it on the
-              // distill_invoked event and the persisted proposal.
-              ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-            }),
-          { engine: resolvedPlan.processes.distill.runner?.engine, process: "distill" },
-        );
-        actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
-        if (distillResult.outcome === "queued" && distillResult.proposal) {
-          const distillGr = await runAutoAcceptGate(
-            [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
-            distillGateCfg,
-          );
-          gateAutoAcceptedCount += distillGr.promoted.length;
-          gateAutoAcceptFailedCount += distillGr.failed.length;
-        }
-        if (parsedPlannedRef.type === "memory") {
-          const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
-          if (!promotedToKnowledge) memoryRefsForInference.add(planned.ref);
-        }
-        // Plasticity counter (plan §WS-1 step 8) for the distill path.
-        // quality_rejected: the LLM ran but produced output that didn't pass the
-        // quality gate — the asset is not yielding useful distill output.
-        // queued: a proposal was produced; reset the no-op counter.
-        if (eventsCtx?.db) {
-          try {
-            if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
-              recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
-            } else if (distillResult.outcome === "queued") {
-              resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
-            }
-          } catch {
-            // best-effort: plasticity counter failure never blocks the run
-          }
-        }
-        if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
-          const slug = refSlug(planned.ref);
-          writeEvalCase(primaryStashDir, {
-            ref: planned.ref,
-            failureReason: distillResult.reason ?? "quality gate rejected",
-            assetType: parseAssetRef(planned.ref).type ?? "unknown",
-            rejectedAt: Date.now(),
-            source: "distill_quality_rejected",
-            slug: `${slug}-${Date.now()}`,
-          });
-        }
-        // D6: use pre-loaded map instead of per-iteration DB query
-        const rejectedProposalEvent = rejectedProposalsByRef.get(planned.ref);
-        if (rejectedProposalEvent && primaryStashDir) {
-          const slug = refSlug(planned.ref);
-          writeEvalCase(primaryStashDir, {
-            ref: planned.ref,
-            failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
-            assetType: parseAssetRef(planned.ref).type ?? "unknown",
-            rejectedAt: new Date(rejectedProposalEvent.ts).getTime(),
-            source: "proposal_rejected",
-            slug: `${slug}-rejected`,
-          });
-        }
-      } else if (skipMemoryDistillForWeakSignal) {
-        actions.push({
-          ref: planned.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "memory requires recent feedback signal" },
-        });
-        appendEvent(
-          {
-            eventType: "improve_skipped",
-            ref: planned.ref,
-            metadata: { reason: "memory_distill_requires_feedback" },
-          },
-          eventsCtx,
-        );
-      }
-    } catch (err) {
-      // B7: UsageError thrown by akmDistill on validation_failed should be recorded
-      // as mode:"distill" with outcome:"validation_failed", NOT as a generic error.
-      // The distill_invoked event was already emitted inside akmDistill before the throw.
-      if (err instanceof UsageError) {
-        actions.push({
-          ref: planned.ref,
-          mode: "distill",
-          result: { ok: false, outcome: "validation_failed", error: err.message } as unknown as AkmDistillResult,
-        });
-      } else {
-        actions.push({
-          ref: planned.ref,
-          mode: "error",
-          result: { ok: false, error: errMessage(err) },
-        });
       }
     }
+
+    await invokeDistillAndRecord(planned, parsedPlannedRef, env, tally);
+  } else if (skipMemoryDistillForWeakSignal) {
+    tally.actions.push({
+      ref: planned.ref,
+      mode: "distill-skipped",
+      result: { ok: true, reason: "memory requires recent feedback signal" },
+    });
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: planned.ref,
+        metadata: { reason: "memory_distill_requires_feedback" },
+      },
+      eventsCtx,
+    );
+  }
+}
+
+/**
+ * The distill invocation for one ref that passed every gate: the `distillFn`
+ * call, the distill auto-accept gate, memory-inference queueing, plasticity
+ * counters, and the quality-rejected / proposal-rejected eval-case writes.
+ */
+async function invokeDistillAndRecord(
+  planned: ImproveEligibleRef,
+  parsedPlannedRef: ReturnType<typeof parseAssetRef>,
+  env: ImproveLoopEnv,
+  tally: LoopRefTally,
+): Promise<void> {
+  const { options, primaryStashDir, distillFn, eventsCtx, improveProfile, resolvedPlan, budgetSignal } = env;
+  const distillResult = await withLlmStage(
+    "distill",
+    () =>
+      distillFn({
+        ref: planned.ref,
+        ...(options.sourceName ? { sourceName: options.sourceName } : {}),
+        ...(options.legacyBareState ? { legacyBareState: true } : {}),
+        ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
+        ...(primaryStashDir ? { stashDir: primaryStashDir } : {}),
+        // Active profile so distill's per-process reads honor `--profile`.
+        ...(improveProfile ? { improveProfile } : {}),
+        config: options.config,
+        llmConfig: resolvedPlan.processes.distill.runner
+          ? materializeLlmRunnerConnection(resolvedPlan.processes.distill.runner)
+          : null,
+        signal: budgetSignal,
+        // Attribution: carry the eligibility lane so distill stamps it on the
+        // distill_invoked event and the persisted proposal.
+        ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+      }),
+    { engine: resolvedPlan.processes.distill.runner?.engine, process: "distill" },
+  );
+  tally.actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+  if (distillResult.outcome === "queued" && distillResult.proposal) {
+    const distillGr = await runAutoAcceptGate(
+      [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
+      env.distillGateCfg,
+    );
+    tally.gateAutoAcceptedCount += distillGr.promoted.length;
+    tally.gateAutoAcceptFailedCount += distillGr.failed.length;
+  }
+  if (parsedPlannedRef.type === "memory") {
+    const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
+    if (!promotedToKnowledge) tally.memoryRefsForInference.push(planned.ref);
+  }
+  // Plasticity counter (plan §WS-1 step 8) for the distill path.
+  // quality_rejected: the LLM ran but produced output that didn't pass the
+  // quality gate — the asset is not yielding useful distill output.
+  // queued: a proposal was produced; reset the no-op counter.
+  if (eventsCtx?.db) {
+    try {
+      if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
+        recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+      } else if (distillResult.outcome === "queued") {
+        resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+      }
+    } catch {
+      // best-effort: plasticity counter failure never blocks the run
+    }
+  }
+  if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
+    const slug = refSlug(planned.ref);
+    writeEvalCase(primaryStashDir, {
+      ref: planned.ref,
+      failureReason: distillResult.reason ?? "quality gate rejected",
+      assetType: parseAssetRef(planned.ref).type ?? "unknown",
+      rejectedAt: Date.now(),
+      source: "distill_quality_rejected",
+      slug: `${slug}-${Date.now()}`,
+    });
+  }
+  // D6: use pre-loaded map instead of per-iteration DB query
+  const rejectedProposalEvent = env.rejectedProposalsByRef.get(planned.ref);
+  if (rejectedProposalEvent && primaryStashDir) {
+    const slug = refSlug(planned.ref);
+    writeEvalCase(primaryStashDir, {
+      ref: planned.ref,
+      failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
+      assetType: parseAssetRef(planned.ref).type ?? "unknown",
+      rejectedAt: new Date(rejectedProposalEvent.ts).getTime(),
+      source: "proposal_rejected",
+      slug: `${slug}-rejected`,
+    });
+  }
+}
+
+/**
+ * Wall-clock budget exhausted mid-loop (O-1 / #364): emit the improve_skipped
+ * events for the current and remaining refs (B11) and return the terminal
+ * error action for the orchestrator to record before breaking out of the loop.
+ */
+function recordBudgetExhausted(args: {
+  planned: ImproveEligibleRef;
+  loopRefs: ImproveEligibleRef[];
+  completedCount: number;
+  startMs: number;
+  eventsCtx?: EventsContext;
+}): ImproveActionResult {
+  const { planned, loopRefs, completedCount, startMs, eventsCtx } = args;
+  const remaining = loopRefs.length - completedCount;
+  info(
+    `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
+  );
+  appendEvent(
+    {
+      eventType: "improve_skipped",
+      ref: planned.ref,
+      metadata: {
+        reason: "budget_exhausted",
+        remaining,
+      },
+    },
+    eventsCtx,
+  );
+  // B11: Emit improve_skipped for all remaining assets that will not be processed.
+  for (const remainingRef of loopRefs.slice(completedCount + 1)) {
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: remainingRef.ref,
+        metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
+      },
+      eventsCtx,
+    );
+  }
+  return {
+    ref: planned.ref,
+    mode: "error",
+    result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
+  };
+}
+
+export async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoopResult> {
+  const { loopRefs, actions, recentErrors, startMs, budgetMs, eventsCtx } = args;
+  const env = prepareImproveLoopEnv(args);
+
+  let completedCount = 0;
+  let reflectsWithErrorContext = 0;
+  const memoryRefsForInference = new Set<string>();
+  let gateAutoAcceptedCount = 0;
+  let gateAutoAcceptFailedCount = 0;
+
+  for (const planned of loopRefs) {
+    if (Date.now() - startMs >= budgetMs) {
+      actions.push(recordBudgetExhausted({ planned, loopRefs, completedCount, startMs, eventsCtx }));
+      break;
+    }
+    const tally = await processImproveLoopRef(planned, env);
+    // Fold the per-ref tally into run-level state — the passes never touch it.
+    actions.push(...tally.actions);
+    for (const push of tally.recentErrorPushes) pushRecentError(recentErrors, push.originator, push.message);
+    reflectsWithErrorContext += tally.reflectsWithErrorContext;
+    gateAutoAcceptedCount += tally.gateAutoAcceptedCount;
+    gateAutoAcceptFailedCount += tally.gateAutoAcceptFailedCount;
+    for (const ref of tally.memoryRefsForInference) memoryRefsForInference.add(ref);
     completedCount++;
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
