@@ -32,7 +32,7 @@ import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+import { appendEvent, type EventsContext } from "../../core/events";
 import {
   createLockPayload,
   type LockOwnership,
@@ -223,6 +223,13 @@ export interface AkmExtractOptions {
   ) => Promise<string>;
   /** Override proposal clock/id (test seam). */
   ctx?: ProposalsContext;
+  /**
+   * Events context carrying the improve run's long-lived state.db handle (or
+   * the C2 boundary-pinned path) so extract's event emits take appendEvent's
+   * fast path (R25). Proposal WRITES keep their own per-call open via
+   * withProposalsDb — no db handle is threaded into ProposalsContext (D14).
+   */
+  eventsCtx?: EventsContext;
   /** sourceRun for PROV-DM traceability. Generated when absent. */
   sourceRun?: string;
   /**
@@ -664,6 +671,8 @@ interface ExtractSessionRunCtx {
   getLlmConfig: () => LlmProfileConfig;
   chat: AkmExtractOptions["chat"];
   ctx: ProposalsContext | undefined;
+  /** R25: events carrier — event emits only; proposals keep `ctx`. */
+  eventsCtx: EventsContext | undefined;
   sourceRun: string;
   dryRun: boolean;
   timeoutMs: number | null;
@@ -765,6 +774,7 @@ async function processSession(
     getLlmConfig,
     chat,
     ctx,
+    eventsCtx,
     sourceRun,
     dryRun,
     timeoutMs,
@@ -861,7 +871,7 @@ async function processSession(
           preFilterOutput: filtered.stats.outputCount,
         },
       },
-      ctx,
+      eventsCtx,
     );
     return {
       sessionId: sessionRef.sessionId,
@@ -933,7 +943,7 @@ async function processSession(
         preFilterOutput: filtered.stats.outputCount,
       },
     },
-    ctx,
+    eventsCtx,
   );
 
   return {
@@ -1026,6 +1036,7 @@ async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<Extr
     getLlmConfig,
     chat,
     ctx: options.ctx,
+    eventsCtx: options.eventsCtx,
     sourceRun,
     dryRun,
     timeoutMs,
@@ -1563,7 +1574,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
           sourceRun,
         },
       },
-      options.ctx,
+      options.eventsCtx,
     );
   }
 

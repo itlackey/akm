@@ -584,6 +584,9 @@ async function runSessionExtractPass(args: {
                 ...(options.extractHarnesses ? { harnesses: options.extractHarnesses } : {}),
                 // C2: pin extract's skip-tracking state.db open to the boundary path.
                 ...(eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
+                // R25: extract's event emits reuse the run's events context
+                // (fast path when it carries the long-lived handle).
+                eventsCtx,
               }),
             { engine: resolvedPlan.processes.extract.runner?.engine, process: "extract" },
           );

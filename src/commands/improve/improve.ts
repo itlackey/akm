@@ -394,7 +394,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   try {
     if (!options.dryRun) {
-      const acquisition = tryAcquireImproveLock(resolvedLockPath, lockStaleAfterMs, options.skipIfLocked);
+      const acquisition = tryAcquireImproveLock(resolvedLockPath, lockStaleAfterMs, options.skipIfLocked, {
+        // R25: C2 boundary-pinned path — the long-lived handle doesn't exist yet.
+        dbPath: resolvedStateDbPath,
+      });
       if (acquisition.state === "skipped") {
         clearBudgetTimer();
         return buildLockSkippedResult(selectedStrategy.name, scope, options.runId);
