@@ -606,3 +606,35 @@ signature collapse; and the final grep-gate / net-LOC / audit finalize (WI-7.8).
   meta-test was placed at `tests/architecture/improve-fn-size-ratchet.test.ts`
   (unit shard, matching the disk-reading `lint-isolation-ratchet.test.ts`
   precedent) so it runs in `check:fast`.
+
+## WI-7.5–7.8 — decomposition progress update (ratchet 13 → 5)
+
+Continuing the byte-identical god-fn decomposition. Eight of the thirteen HEAD
+offenders are now fully under the 220-line bar; **consolidate.ts, extract.ts,
+distill.ts, reflect.ts, and distill/promote-memory.ts are entirely clear**.
+
+| Item | Function | Before | Passes extracted (all byte-identical) |
+|---|---|---:|---|
+| 7.5 | `promoteMemoryToKnowledge` | 254 | `resolveKnowledgePromotionContent` |
+| 7.6 | `runConsolidationPass` | 265 | `evaluateConsolidationEligibility` |
+| 7.8 | `handleMergeOp` | 297 | `finalizeMerge` |
+| 7.8 | `planConsolidation` | 373 | `judgeConsolidationChunks`, `recordChunkJudgedNoAction` |
+| 7.7 | `processSession` | 308 | `runPreLlmSessionGates` |
+| 7.7 | `akmExtract` | 452 | `resolveExtractRunConfig`, `discoverExtractCandidates`, `runExtractSessionLoop` |
+| 7.5 | `akmDistill` | 632 | `loadAndScoreInputSalience`, `readDistillFeedback`, `buildDistillMessages`, `runDistillLlmCall`, `distillEmptyResponseResult`, `assembleAndValidateDistillContent`, `applyDistillQualityGate`, `emitDistillLessonProposal` |
+| 7.5 | `akmReflect` | 643 | `resolveReflectRunner`, `resolveReflectSource`, `runReflectRefineIterations`, `resolveReflectPayload`, `finalizeReflectProposal`, `createReflectProposal` |
+
+Each removal was verified against that function's characterization suite
+(125–147 tests apiece) with the ratchet green throughout; full `bun run check`
+green at this point — unit **8568/0**, integration **4456/0**.
+
+**Remaining ratchet baseline (5 offenders):** `runImprovePreparationStage`
+(1493), `akmImprove` (810), `runImproveLoopStage` (500),
+`runImproveMaintenancePasses` (470), `loop-stages.ts withIndexWriterLease#arg1`
+(389). These are the improve orchestration/loop core; their intricate control
+flow (mutating closures over outer-scope `let`s, `for`-loops with
+`continue`/`break` + running counters, the maintenance `withIndexWriterLease`
+callback) makes byte-identical pass-extraction materially harder than the
+verb-command bodies already cleared — the remaining WI-7.6/7.7 work. The ratchet
+guards them: none can grow, and each decomposition must shrink its baseline
+entry in the same change.
