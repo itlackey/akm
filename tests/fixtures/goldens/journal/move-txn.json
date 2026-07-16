@@ -1,0 +1,71 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "committedDivergence": {
+    "errorContainsExpectedText": true,
+    "exitNonZero": true,
+    "journalRetained": true,
+    "laterErrorAlsoContainsExpectedText": true,
+    "laterUnrelatedMoveAlsoRefusedForward": true,
+    "triggered": true
+  },
+  "moveWithCiters": {
+    "fileTree": {
+      "knowledge/mv-move-body-citer.md": "385b1f22d2766442f6ec82be20a41fa26a4aeea5b9014f5bd79a3159635e8fdf",
+      "knowledge/mv-move-frontmatter-citer.md": "0841c0c4e7e2406bb7227d08180f7a01cc907aa61a25e8b49c5994c50a9162b3",
+      "memories/projectA/mv-move-renamed.derived.md": "e1904415be6b1adcb25ebed4547c0f7bfe4f1f3a61d37527ad21986c574e39ac",
+      "memories/projectA/mv-move-renamed.md": "91b648cfe768e193337792f9ede4d529f60fe117ec02b59c83a1d1d20128dec2",
+      "tasks/mv-move-nightly.yml": "bc930302037b9db4ca8491cacd9459030874e88451e92306d7831d9393fd21d7"
+    },
+    "from": "memory:mv-move-base",
+    "mvEvent": {
+      "distinctIdempotencyKeyCount": 1,
+      "matchingCount": 1
+    },
+    "ok": true,
+    "readOnlyCiterCount": 1,
+    "readOnlyCiterCountsMatch": true,
+    "readOnlyCiterFileUntouched": true,
+    "readOnlyCiterRelPathWithinRoDir": "knowledge/mv-move-readonly-citer.md",
+    "rewroteCounts": {
+      "knowledge/mv-move-body-citer.md": 1,
+      "knowledge/mv-move-frontmatter-citer.md": 1,
+      "tasks/mv-move-nightly.yml": 1
+    },
+    "rewroteRelPaths": [
+      "knowledge/mv-move-body-citer.md",
+      "knowledge/mv-move-frontmatter-citer.md",
+      "tasks/mv-move-nightly.yml"
+    ],
+    "to": "memory:projectA/mv-move-renamed",
+    "transactionsRootClean": true
+  },
+  "notes": [
+    "No journal bytes/paths asserted -- journal phase sequences are informational only (brief S3.2 rule 4); Chunk 6 replaces the journal engines. Only observable outcomes (file trees, citer rewrites, exactly-once events, abort error text, recovery end-states) are the preserved contract.",
+    "Post-filesystem-commit is roll-forward-only (mv-cli.ts:1394-1395, comment: 'Filesystem commit is irreversible. Any finalization error leaves the journal for the next mutation to finish forward; it never rolls back.') -- the divergent-committed-target scenario pins this: the journal is RETAINED (not cleaned up, not rolled back) and a later unrelated mv also refuses forward with the same error, until the divergence is resolved out-of-band.",
+    "DEVIATION from the brief's testsFirst description (recorded in full in this file's header comment): _setMvMutationHookForTests only fires post-filesystem-commit, never between the stage (:576) and replace (:632) windows, so this suite uses spyOn interception instead (a src/-change-free technique, one of them already established in tests/commands/mv.test.ts); and the REPLACE window's real surfaced error is a wrapped 'Move failed (refusing to replace divergent citer <path>) and rollback failed (cannot restore <path>: file diverged after exclusive ownership).' string -- the plan's named text is present but embedded, not a strict prefix (mirrors mv.test.ts's own such test, which for the same reason never asserts an exact/prefix message either). The STAGE window's error IS a clean unwrapped prefix, since `journal` was never assigned at that point in applyMoveFilesystem."
+  ],
+  "replaceDivergence": {
+    "citerHoldsOnlyTestMutation": true,
+    "errorContainsExpectedText": true,
+    "exitNonZero": true,
+    "sourceUntouched": true,
+    "targetCreated": false,
+    "triggered": true
+  },
+  "scenario": "mv move-transaction round-trip outcomes (WI-04, R3, engine 3 of 3)",
+  "stageDivergence": {
+    "citerHoldsOnlyTestMutation": true,
+    "errorContainsExpectedText": true,
+    "exitNonZero": true,
+    "sourceUntouched": true,
+    "targetCreated": false,
+    "triggered": true
+  },
+  "transientRekey": {
+    "firstAttemptFailed": true,
+    "journalRetainedAfterFailure": true,
+    "rowIdPreserved": true,
+    "secondMoveSucceeded": true,
+    "transactionsRootCleanAfterRecovery": true
+  }
+}

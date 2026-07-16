@@ -1,0 +1,94 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "notes": [
+    "Crash windows only (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/mv-crash-runner.ts subprocess harness.",
+    "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was told to hold at, never journal bytes/paths. Chunk 6 replaces the journal engines entirely.",
+    "'applying' rolls back in full (no partial state survives) because it is held right after the prepared->applying journal transition, before any citer/source rename has happened (mv-cli.ts:628-631); every later named phase rolls forward via finalizeMoveTransaction (mv-cli.ts:1020-1080) to the same accepted end state with exactly-one mv event and re-keyed index + state rows.",
+    "The four recovery entry points (mv run's own pre-flight recovery mv-cli.ts:1237, proposal promotion repository.ts:1702, the full indexer indexer.ts:558, the targeted write-path indexer index-written-assets.ts:72) each independently discover and finish the SAME kind of interrupted mv journal -- pinning that the mv journal lives IN-STASH (<stashDir>/.akm/mv-transactions), unlike the proposal journals which live in getDataDir(); Chunk 6 must preserve this dual journal-home discovery."
+  ],
+  "recoveryEntryPoints": {
+    "indexerFull": {
+      "recovered": true,
+      "usageEventReKeyedOntoRecoveredRow": true
+    },
+    "indexerTargeted": {
+      "indexRowIdPreserved": true,
+      "indexWrittenAssetsReturnedTrue": true,
+      "recovered": true
+    },
+    "mvRun": {
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recovered": true
+    },
+    "proposalPromote": {
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recovered": true
+    }
+  },
+  "rollForward": {
+    "event-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": ["event-finalized"],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "filesystem-committed": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": ["filesystem-committed"],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "index-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": ["index-finalized"],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "state-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": ["state-finalized"],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    }
+  },
+  "rollback": {
+    "applying": {
+      "recoveredMoveSucceeded": true,
+      "sourceStillAtOriginalPath": true,
+      "targetCreated": false,
+      "transactionsRootClean": true,
+      "treeByteIdenticalToPreCrash": true
+    }
+  },
+  "scenario": "mv SIGKILL crash-recovery outcomes (WI-04, R3, integration scope)"
+}

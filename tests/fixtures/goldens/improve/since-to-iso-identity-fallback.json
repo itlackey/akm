@@ -1,0 +1,14 @@
+{
+  "garbageSince": {
+    "selectedCount": 0,
+    "warningsCount": 0
+  },
+  "isoNowSince": {
+    "selectedCount": 0,
+    "warningsCount": 0
+  },
+  "validDurationSince": {
+    "selectedCount": 1,
+    "warningsCount": 0
+  }
+}

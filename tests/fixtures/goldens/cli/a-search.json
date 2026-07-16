@@ -1,0 +1,6 @@
+{
+  "argv": ["search", "cli-a-deploy", "--format=json"],
+  "exitCode": 0,
+  "hitKeys": ["action", "estimatedTokens", "name", "ref", "type"],
+  "stdoutKeys": ["hits"]
+}
