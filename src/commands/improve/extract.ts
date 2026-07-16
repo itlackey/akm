@@ -703,6 +703,57 @@ interface ExtractSessionInput {
   force: boolean;
 }
 
+/**
+ * The bounded per-session extraction LLM call. Resolves the connection with
+ * the same fail-open contract the gated fn had (a `getLlmConfig()` throw —
+ * `materializeLlmConnection` can raise ConfigError — takes the skipped path,
+ * never propagates), then routes through `callStructured` under the
+ * `session_extraction` gate. Returns the seam result plus the `llmRaw`
+ * side-channel value that distinguishes fallback-took-over from a
+ * genuinely-empty response.
+ */
+async function runSessionExtractionLlmCall(args: {
+  config: AkmConfig;
+  getLlmConfig: () => LlmProfileConfig;
+  chat: AkmExtractOptions["chat"];
+  prompt: string;
+  timeoutMs: number | null;
+  signal: AbortSignal | undefined;
+}): Promise<{ llmResult: string; llmRaw: string }> {
+  const { config, getLlmConfig, chat, prompt, timeoutMs, signal } = args;
+  let extractLlm: LlmProfileConfig | undefined;
+  try {
+    extractLlm = getLlmConfig();
+  } catch {
+    extractLlm = undefined;
+  }
+  let llmRaw = "";
+  const llmResult =
+    extractLlm === undefined
+      ? ""
+      : await callStructured<string>({
+          feature: "session_extraction",
+          akmConfig: config,
+          config: extractLlm,
+          messages: [{ role: "user", content: prompt }],
+          request: {
+            timeoutMs,
+            responseSchema: EXTRACT_JSON_SCHEMA,
+            ...(signal ? { signal } : {}),
+            ...(chat ? { chat } : {}),
+          },
+          parse: (raw) => {
+            llmRaw = raw ?? "";
+            return llmRaw;
+          },
+          // A transport throw takes the "" fallback with llmRaw left unset —
+          // the same skipped path the gated-fn throw produced before.
+          onError: () => "",
+          fallback: "",
+        });
+  return { llmResult, llmRaw };
+}
+
 async function processSession(
   runCtx: ExtractSessionRunCtx,
   session: ExtractSessionInput,
@@ -762,39 +813,14 @@ async function processSession(
     return {};
   };
 
-  // Resolve the connection with the same fail-open contract as before the
-  // callStructured migration: a getLlmConfig() throw used to happen inside
-  // the gated fn and take the same skipped path as a transport failure.
-  let extractLlm: LlmProfileConfig | undefined;
-  try {
-    extractLlm = getLlmConfig();
-  } catch {
-    extractLlm = undefined;
-  }
-  let llmRaw = "";
-  const llmResult =
-    extractLlm === undefined
-      ? ""
-      : await callStructured<string>({
-          feature: "session_extraction",
-          akmConfig: config,
-          config: extractLlm,
-          messages: [{ role: "user", content: prompt }],
-          request: {
-            timeoutMs,
-            responseSchema: EXTRACT_JSON_SCHEMA,
-            ...(signal ? { signal } : {}),
-            ...(chat ? { chat } : {}),
-          },
-          parse: (raw) => {
-            llmRaw = raw ?? "";
-            return llmRaw;
-          },
-          // A transport throw takes the "" fallback with llmRaw left unset —
-          // the same skipped path the gated-fn throw produced before.
-          onError: () => "",
-          fallback: "",
-        });
+  const { llmResult, llmRaw } = await runSessionExtractionLlmCall({
+    config,
+    getLlmConfig,
+    chat,
+    prompt,
+    timeoutMs,
+    signal,
+  });
 
   if (llmResult === "" && !llmRaw) {
     // The seam took the fallback path (disabled / timeout / error). Return skipped.
