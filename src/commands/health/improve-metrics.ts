@@ -211,14 +211,13 @@ function classifyDistillSkipReason(r: Record<string, unknown> | undefined): stri
   return "unknown";
 }
 
-/**
- * Project a single `improve_runs.result_json` envelope into an accumulator-shaped
- * ImproveHealthMetrics. The aggregator merges these per-row metrics into one
- * window-level metric.
- */
-function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetrics {
-  const metrics = createUnknownImproveMetrics();
+// ── projectRunMetrics phase helpers (chunk-9 WI-9.5c; file-level decompose of
+// the single-envelope projection — each helper mutates its own disjoint
+// subtree of the accumulator from the raw envelope, so call order does not
+// matter; kept in envelope-field order for readability) ──────────────────────
 
+/** plannedRefs / strategyFilteredRefs ref-count accounting. */
+function applyPlannedRefs(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   // plannedRefs (array of {ref, reason})
   const plannedRefs = result.plannedRefs;
   if (Array.isArray(plannedRefs)) metrics.plannedRefs += plannedRefs.length;
@@ -230,189 +229,206 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
   // remains legacy data and must not be silently relabelled as a strategy metric.
   const strategyFilteredRefs = result.schemaVersion === 2 ? result.strategyFilteredRefs : undefined;
   if (Array.isArray(strategyFilteredRefs)) metrics.strategyFilteredRefs += strategyFilteredRefs.length;
+}
 
-  // actions: split reflect / distill by outcome, count others.
+/** One `actions[]` entry → the matching counter bucket (see ImproveHealthMetrics.actions jsdoc for the taxonomy). */
+function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unknown>): void {
+  const mode = typeof action.mode === "string" ? action.mode : "";
+  switch (mode) {
+    case "reflect":
+      metrics.actions.reflect.ok += 1;
+      break;
+    case "reflect-failed":
+      metrics.actions.reflect.failed += 1;
+      break;
+    case "reflect-cooldown":
+      metrics.actions.reflect.cooldown += 1;
+      break;
+    case "reflect-skipped": {
+      metrics.actions.reflect.skipped += 1;
+      const r = action.result as Record<string, unknown> | undefined;
+      const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
+      metrics.actions.reflect.skippedByReason[reason] = (metrics.actions.reflect.skippedByReason[reason] ?? 0) + 1;
+      break;
+    }
+    case "reflect-guard-rejected":
+      metrics.actions.reflect.guardRejected += 1;
+      break;
+    case "distill": {
+      const r = action.result as Record<string, unknown> | undefined;
+      const outcome = typeof r?.outcome === "string" ? r.outcome : "";
+      switch (outcome) {
+        case "queued":
+          metrics.actions.distill.queued += 1;
+          break;
+        case "llm_failed":
+          metrics.actions.distill.llmFailed += 1;
+          break;
+        case "quality_rejected":
+        case "review_needed":
+          metrics.actions.distill.qualityRejected += 1;
+          metrics.actions.distill.judgeRejected += 1;
+          break;
+        case "validation_failed":
+          metrics.actions.distill.qualityRejected += 1;
+          metrics.actions.distill.validatorRejected += 1;
+          break;
+        case "config_disabled":
+          metrics.actions.distill.configDisabled += 1;
+          break;
+        case "skipped": {
+          // Previously dropped on the floor. The four sub-paths that emit
+          // `outcome: "skipped"` (see distill.ts:893, 1024, 1120, 1576):
+          //   - recursive_lesson_input (type guard refused a lesson input)
+          //   - conflict_noop (LLM resolved destination conflict as NOOP)
+          //   - proposal-skipped cooldown / dedup at persistence
+          // 465 events/7d in the user's live stack. The result message
+          // typically encodes the reason; we also accept an explicit
+          // `skipReason` field when downstream code sets it.
+          metrics.actions.distill.deferred += 1;
+          const reason = classifyDistillSkipReason(r);
+          metrics.actions.distill.deferredByReason[reason] =
+            (metrics.actions.distill.deferredByReason[reason] ?? 0) + 1;
+          break;
+        }
+        default:
+          break;
+      }
+      break;
+    }
+    case "distill-skipped": {
+      metrics.actions.distill.skipped += 1;
+      const r = action.result as Record<string, unknown> | undefined;
+      const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
+      metrics.actions.distill.skippedByReason[reason] = (metrics.actions.distill.skippedByReason[reason] ?? 0) + 1;
+      break;
+    }
+    case "memory-prune":
+      metrics.actions.memoryPrune += 1;
+      break;
+    case "memory-inference":
+      metrics.actions.memoryInference += 1;
+      break;
+    case "graph-extraction":
+      metrics.actions.graphExtraction += 1;
+      break;
+    case "error":
+      metrics.actions.error += 1;
+      break;
+  }
+}
+
+/** actions: split reflect / distill by outcome, count others. */
+function applyActionsList(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const actions = result.actions;
-  if (Array.isArray(actions)) {
-    for (const action of actions as Array<Record<string, unknown>>) {
-      const mode = typeof action.mode === "string" ? action.mode : "";
-      switch (mode) {
-        case "reflect":
-          metrics.actions.reflect.ok += 1;
-          break;
-        case "reflect-failed":
-          metrics.actions.reflect.failed += 1;
-          break;
-        case "reflect-cooldown":
-          metrics.actions.reflect.cooldown += 1;
-          break;
-        case "reflect-skipped": {
-          metrics.actions.reflect.skipped += 1;
-          const r = action.result as Record<string, unknown> | undefined;
-          const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
-          metrics.actions.reflect.skippedByReason[reason] = (metrics.actions.reflect.skippedByReason[reason] ?? 0) + 1;
-          break;
-        }
-        case "reflect-guard-rejected":
-          metrics.actions.reflect.guardRejected += 1;
-          break;
-        case "distill": {
-          const r = action.result as Record<string, unknown> | undefined;
-          const outcome = typeof r?.outcome === "string" ? r.outcome : "";
-          switch (outcome) {
-            case "queued":
-              metrics.actions.distill.queued += 1;
-              break;
-            case "llm_failed":
-              metrics.actions.distill.llmFailed += 1;
-              break;
-            case "quality_rejected":
-            case "review_needed":
-              metrics.actions.distill.qualityRejected += 1;
-              metrics.actions.distill.judgeRejected += 1;
-              break;
-            case "validation_failed":
-              metrics.actions.distill.qualityRejected += 1;
-              metrics.actions.distill.validatorRejected += 1;
-              break;
-            case "config_disabled":
-              metrics.actions.distill.configDisabled += 1;
-              break;
-            case "skipped": {
-              // Previously dropped on the floor. The four sub-paths that emit
-              // `outcome: "skipped"` (see distill.ts:893, 1024, 1120, 1576):
-              //   - recursive_lesson_input (type guard refused a lesson input)
-              //   - conflict_noop (LLM resolved destination conflict as NOOP)
-              //   - proposal-skipped cooldown / dedup at persistence
-              // 465 events/7d in the user's live stack. The result message
-              // typically encodes the reason; we also accept an explicit
-              // `skipReason` field when downstream code sets it.
-              metrics.actions.distill.deferred += 1;
-              const reason = classifyDistillSkipReason(r);
-              metrics.actions.distill.deferredByReason[reason] =
-                (metrics.actions.distill.deferredByReason[reason] ?? 0) + 1;
-              break;
-            }
-            default:
-              break;
-          }
-          break;
-        }
-        case "distill-skipped": {
-          metrics.actions.distill.skipped += 1;
-          const r = action.result as Record<string, unknown> | undefined;
-          const reason = typeof r?.reason === "string" && r.reason.trim() ? r.reason : "unknown";
-          metrics.actions.distill.skippedByReason[reason] = (metrics.actions.distill.skippedByReason[reason] ?? 0) + 1;
-          break;
-        }
-        case "memory-prune":
-          metrics.actions.memoryPrune += 1;
-          break;
-        case "memory-inference":
-          metrics.actions.memoryInference += 1;
-          break;
-        case "graph-extraction":
-          metrics.actions.graphExtraction += 1;
-          break;
-        case "error":
-          metrics.actions.error += 1;
-          break;
-      }
-    }
+  if (!Array.isArray(actions)) return;
+  for (const action of actions as Array<Record<string, unknown>>) {
+    applyAction(metrics, action);
   }
+}
 
-  // C1 (13-bus-factor): new runs persist the bounded `distillSkipped` aggregate
-  // instead of per-ref `distill-skipped` rows. Read the total + per-reason
-  // histogram from it into the SAME `distill.skipped` / `skippedByReason`
-  // metric the per-ref loop above populated. Legacy rows carry the per-ref rows
-  // and NO aggregate (counted above); new rows carry the aggregate and NO
-  // per-ref rows (counted here) — so a run is never double-counted.
+/**
+ * C1 (13-bus-factor): new runs persist the bounded `distillSkipped` aggregate
+ * instead of per-ref `distill-skipped` rows. Read the total + per-reason
+ * histogram from it into the SAME `distill.skipped` / `skippedByReason`
+ * metric the per-ref loop above populated. Legacy rows carry the per-ref rows
+ * and NO aggregate (counted above); new rows carry the aggregate and NO
+ * per-ref rows (counted here) — so a run is never double-counted.
+ */
+function applyDistillSkippedAggregate(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const distillSkipped = result.distillSkipped as { total?: unknown; byReason?: Record<string, unknown> } | undefined;
-  if (distillSkipped && typeof distillSkipped === "object") {
-    metrics.actions.distill.skipped += toFiniteNumber(distillSkipped.total);
-    const byReason = distillSkipped.byReason;
-    if (byReason && typeof byReason === "object") {
-      for (const [reason, count] of Object.entries(byReason)) {
-        metrics.actions.distill.skippedByReason[reason] =
-          (metrics.actions.distill.skippedByReason[reason] ?? 0) + toFiniteNumber(count);
-      }
+  if (!distillSkipped || typeof distillSkipped !== "object") return;
+  metrics.actions.distill.skipped += toFiniteNumber(distillSkipped.total);
+  const byReason = distillSkipped.byReason;
+  if (byReason && typeof byReason === "object") {
+    for (const [reason, count] of Object.entries(byReason)) {
+      metrics.actions.distill.skippedByReason[reason] =
+        (metrics.actions.distill.skippedByReason[reason] ?? 0) + toFiniteNumber(count);
     }
   }
+}
 
+/** autoAccept + the small envelope-level counters (reflectsWithErrorContext, coverageGaps, evalCasesWritten, deadUrls). */
+function applyMiscCounters(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
   metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
   metrics.reflectsWithErrorContext += toFiniteNumber(result.reflectsWithErrorContext);
   if (Array.isArray(result.coverageGaps)) metrics.coverageGapCount += result.coverageGaps.length;
   metrics.evalCasesWritten += toFiniteNumber(result.evalCasesWritten);
   if (Array.isArray(result.deadUrls)) metrics.deadUrlCount += result.deadUrls.length;
+}
 
+function applyMemorySummary(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const memorySummary = result.memorySummary as Record<string, unknown> | undefined;
-  if (memorySummary) {
-    metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
-    metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
-  }
+  if (!memorySummary) return;
+  metrics.memorySummary.eligible += toFiniteNumber(memorySummary.eligible);
+  metrics.memorySummary.derived += toFiniteNumber(memorySummary.derived);
+}
 
+function applyMemoryCleanup(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const memoryCleanup = result.memoryCleanup as Record<string, unknown> | undefined;
-  if (memoryCleanup) {
-    if (Array.isArray(memoryCleanup.pruneCandidates))
-      metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
-    if (Array.isArray(memoryCleanup.contradictionCandidates))
-      metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
-    if (Array.isArray(memoryCleanup.beliefStateTransitions))
-      metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
-    if (Array.isArray(memoryCleanup.consolidationCandidates))
-      metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
-    if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
-    if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
-  }
+  if (!memoryCleanup) return;
+  if (Array.isArray(memoryCleanup.pruneCandidates))
+    metrics.memoryCleanup.pruneCandidates += memoryCleanup.pruneCandidates.length;
+  if (Array.isArray(memoryCleanup.contradictionCandidates))
+    metrics.memoryCleanup.contradictionCandidates += memoryCleanup.contradictionCandidates.length;
+  if (Array.isArray(memoryCleanup.beliefStateTransitions))
+    metrics.memoryCleanup.beliefStateTransitions += memoryCleanup.beliefStateTransitions.length;
+  if (Array.isArray(memoryCleanup.consolidationCandidates))
+    metrics.memoryCleanup.consolidationCandidates += memoryCleanup.consolidationCandidates.length;
+  if (Array.isArray(memoryCleanup.archived)) metrics.memoryCleanup.archived += memoryCleanup.archived.length;
+  if (Array.isArray(memoryCleanup.warnings)) metrics.memoryCleanup.warnings += memoryCleanup.warnings.length;
+}
 
+function applyConsolidation(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const consolidation = result.consolidation as Record<string, unknown> | undefined;
-  if (consolidation) {
-    metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
-    metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
-    metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
-    metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
-    if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
-    metrics.consolidation.failedChunks += toFiniteNumber(consolidation.failedChunks);
-    metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
-    metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
-    metrics.consolidation.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
-    metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
-    metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
-    // Structured emitter (new on this branch): consolidate.ts now pushes
-    // per-ref grouped `{ref, skips: [{op, reason}]}` entries to `skipReasons`
-    // for every deterministic post-LLM rejection. Each ref appears once but
-    // may carry multiple skips; aggregate every reason. Pre-fix envelopes have
-    // neither field, so be defensive.
-    const skipReasons = consolidation.skipReasons;
-    if (Array.isArray(skipReasons)) {
-      for (const entry of skipReasons) {
-        if (!entry || typeof entry !== "object") continue;
-        const skips = (entry as Record<string, unknown>).skips;
-        if (!Array.isArray(skips)) continue;
-        for (const skip of skips) {
-          if (!skip || typeof skip !== "object") continue;
-          const reason = (skip as Record<string, unknown>).reason;
-          if (typeof reason !== "string" || !reason.trim()) continue;
-          metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
-        }
+  if (!consolidation) return;
+  metrics.consolidation.processed += toFiniteNumber(consolidation.processed);
+  metrics.consolidation.merged += toFiniteNumber(consolidation.merged);
+  metrics.consolidation.deleted += toFiniteNumber(consolidation.deleted);
+  metrics.consolidation.contradicted += toFiniteNumber(consolidation.contradicted);
+  if (Array.isArray(consolidation.promoted)) metrics.consolidation.promoted += consolidation.promoted.length;
+  metrics.consolidation.failedChunks += toFiniteNumber(consolidation.failedChunks);
+  metrics.consolidation.totalChunks += toFiniteNumber(consolidation.totalChunks);
+  metrics.consolidation.durationMs += toFiniteNumber(consolidation.durationMs);
+  metrics.consolidation.judgedNoAction += toFiniteNumber(consolidation.judgedNoAction);
+  metrics.consolidation.mergedSecondaries += toFiniteNumber(consolidation.mergedSecondaries);
+  metrics.consolidation.failedChunkMemories += toFiniteNumber(consolidation.failedChunkMemories);
+  // Structured emitter (new on this branch): consolidate.ts now pushes
+  // per-ref grouped `{ref, skips: [{op, reason}]}` entries to `skipReasons`
+  // for every deterministic post-LLM rejection. Each ref appears once but
+  // may carry multiple skips; aggregate every reason. Pre-fix envelopes have
+  // neither field, so be defensive.
+  const skipReasons = consolidation.skipReasons;
+  if (Array.isArray(skipReasons)) {
+    for (const entry of skipReasons) {
+      if (!entry || typeof entry !== "object") continue;
+      const skips = (entry as Record<string, unknown>).skips;
+      if (!Array.isArray(skips)) continue;
+      for (const skip of skips) {
+        if (!skip || typeof skip !== "object") continue;
+        const reason = (skip as Record<string, unknown>).reason;
+        if (typeof reason !== "string" || !reason.trim()) continue;
+        metrics.consolidation.skipReasons[reason] = (metrics.consolidation.skipReasons[reason] ?? 0) + 1;
       }
     }
-    // WS-5: extract perf telemetry from the consolidation envelope.
-    // Pre-WS-5 envelopes lack `perfTelemetry`; be defensive.
-    const perf = consolidation.perfTelemetry as Record<string, unknown> | undefined;
-    if (perf) {
-      metrics.perfTelemetry.runsWithTelemetry += 1;
-      metrics.perfTelemetry.dedupPoolSize += toFiniteNumber(perf.dedupPoolSize);
-      metrics.perfTelemetry.llmPoolSize += toFiniteNumber(perf.llmPoolSize);
-      metrics.perfTelemetry.embedMs += toFiniteNumber(perf.embedMs);
-      metrics.perfTelemetry.embedCacheHits += toFiniteNumber(perf.embedCacheHits);
-      metrics.perfTelemetry.embedCacheMisses += toFiniteNumber(perf.embedCacheMisses);
-      const budgetFrac = toFiniteNumber(perf.estimatedBudgetFractionUsed);
-      if (budgetFrac > 1.0) metrics.perfTelemetry.overBudgetRuns += 1;
-    }
   }
+  // WS-5: extract perf telemetry from the consolidation envelope.
+  // Pre-WS-5 envelopes lack `perfTelemetry`; be defensive.
+  const perf = consolidation.perfTelemetry as Record<string, unknown> | undefined;
+  if (perf) {
+    metrics.perfTelemetry.runsWithTelemetry += 1;
+    metrics.perfTelemetry.dedupPoolSize += toFiniteNumber(perf.dedupPoolSize);
+    metrics.perfTelemetry.llmPoolSize += toFiniteNumber(perf.llmPoolSize);
+    metrics.perfTelemetry.embedMs += toFiniteNumber(perf.embedMs);
+    metrics.perfTelemetry.embedCacheHits += toFiniteNumber(perf.embedCacheHits);
+    metrics.perfTelemetry.embedCacheMisses += toFiniteNumber(perf.embedCacheMisses);
+    const budgetFrac = toFiniteNumber(perf.estimatedBudgetFractionUsed);
+    if (budgetFrac > 1.0) metrics.perfTelemetry.overBudgetRuns += 1;
+  }
+}
 
+function applyMemoryInference(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
   if (memoryInference) {
     const considered = toFiniteNumber(memoryInference.considered);
@@ -441,7 +457,9 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     }
   }
   metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
+}
 
+function applyGraphExtraction(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
   const graphExtraction = result.graphExtraction as Record<string, unknown> | undefined;
   if (graphExtraction) {
     const quality = graphExtraction.quality as Record<string, unknown> | undefined;
@@ -460,22 +478,43 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     }
   }
   metrics.graphExtraction.durationMs += toFiniteNumber(result.graphExtractionDurationMs);
+}
 
-  if (Array.isArray(result.extract)) {
-    for (const e of result.extract as Record<string, unknown>[]) {
-      metrics.sessionExtraction.sessionsScanned += toFiniteNumber(e.sessionsProcessed);
-      metrics.sessionExtraction.sessionsSkipped += toFiniteNumber(e.sessionsSkipped);
-      if (Array.isArray(e.sessions)) {
-        metrics.sessionExtraction.sessionsExtracted += (e.sessions as Record<string, unknown>[]).filter(
-          (s) => Array.isArray(s.proposalIds) && (s.proposalIds as unknown[]).length > 0,
-        ).length;
-      }
-      metrics.sessionExtraction.proposalsCreated += Array.isArray(e.proposals) ? (e.proposals as unknown[]).length : 0;
-      metrics.sessionExtraction.warnings += Array.isArray(e.warnings) ? (e.warnings as unknown[]).length : 0;
-      metrics.sessionExtraction.durationMs += toFiniteNumber(e.durationMs);
+function applySessionExtraction(metrics: ImproveHealthMetrics, result: Record<string, unknown>): void {
+  if (!Array.isArray(result.extract)) return;
+  for (const e of result.extract as Record<string, unknown>[]) {
+    metrics.sessionExtraction.sessionsScanned += toFiniteNumber(e.sessionsProcessed);
+    metrics.sessionExtraction.sessionsSkipped += toFiniteNumber(e.sessionsSkipped);
+    if (Array.isArray(e.sessions)) {
+      metrics.sessionExtraction.sessionsExtracted += (e.sessions as Record<string, unknown>[]).filter(
+        (s) => Array.isArray(s.proposalIds) && (s.proposalIds as unknown[]).length > 0,
+      ).length;
     }
+    metrics.sessionExtraction.proposalsCreated += Array.isArray(e.proposals) ? (e.proposals as unknown[]).length : 0;
+    metrics.sessionExtraction.warnings += Array.isArray(e.warnings) ? (e.warnings as unknown[]).length : 0;
+    metrics.sessionExtraction.durationMs += toFiniteNumber(e.durationMs);
   }
+}
 
+/**
+ * Project a single `improve_runs.result_json` envelope into an accumulator-shaped
+ * ImproveHealthMetrics. The aggregator merges these per-row metrics into one
+ * window-level metric. File-level decomposed (chunk-9 WI-9.5c) into one
+ * `apply*` helper per envelope section above; each mutates its own disjoint
+ * subtree of the accumulator so the call order below is not load-bearing.
+ */
+function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetrics {
+  const metrics = createUnknownImproveMetrics();
+  applyPlannedRefs(metrics, result);
+  applyActionsList(metrics, result);
+  applyDistillSkippedAggregate(metrics, result);
+  applyMiscCounters(metrics, result);
+  applyMemorySummary(metrics, result);
+  applyMemoryCleanup(metrics, result);
+  applyConsolidation(metrics, result);
+  applyMemoryInference(metrics, result);
+  applyGraphExtraction(metrics, result);
+  applySessionExtraction(metrics, result);
   return metrics;
 }
 

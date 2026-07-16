@@ -44,6 +44,7 @@ import {
   type HealthCheckResult,
   type HealthMetrics,
   IMPROVE_COMPLETED_EVENT,
+  type ImproveHealthMetrics,
   type ImproveRunSummary,
   type SessionLogAdvisory,
   type WindowResult,
@@ -128,6 +129,295 @@ function validateAkmHealthOptions(options: AkmHealthOptions): void {
   }
 }
 
+// ── akmHealth phase helpers (chunk-9 WI-9.5b; file-level decompose following
+// the function's natural gather/advise/check/assemble phases) ───────────────
+
+interface TaskHistoryPhase {
+  tableNames: string[];
+  missingTables: string[];
+  probe: ReturnType<typeof probeStateDbRoundTrip>;
+  taskRowCount: number;
+  taskRowsWithLogsCount: number;
+  existingLogRowsCount: number;
+  stuckActiveRuns: number;
+  logBackingRate: number;
+  taskFailRate: number;
+  agentFailureRate: number;
+}
+
+/** Table presence, the state.db round-trip probe, and task_history-derived rates. */
+function gatherTaskHistoryPhase(
+  db: Database,
+  logsDb: Database | undefined,
+  since: string,
+  stateDbPath: string,
+  now: () => number,
+): TaskHistoryPhase {
+  const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
+  const tableNames = tables.map((row) => row.name).sort();
+  const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
+  const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
+
+  const probe = probeStateDbRoundTrip(stateDbPath);
+
+  const taskRows = queryTaskHistory(db, { since });
+  const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
+  const failedTaskRows = taskRows.filter((row) => row.status === "failed");
+  const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
+  const stuckActiveRuns = activeRows.filter(
+    (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
+  ).length;
+  const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
+  const promptFailures = promptRows.filter((row) => {
+    const detail = parseTaskMetadata(row).detail;
+    return typeof detail?.reason === "string" && detail.reason.length > 0;
+  });
+  const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
+  const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
+  const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
+
+  return {
+    tableNames,
+    missingTables,
+    probe,
+    taskRowCount: taskRows.length,
+    taskRowsWithLogsCount: taskRowsWithLogs.length,
+    existingLogRowsCount: existingLogRows.length,
+    stuckActiveRuns,
+    logBackingRate,
+    taskFailRate,
+    agentFailureRate,
+  };
+}
+
+interface SemanticConfigPhase {
+  semanticStatus: ReturnType<typeof readSemanticStatus>;
+  semanticSearchMode: string | undefined;
+  embeddingEndpoint: string | undefined;
+  egressConfigView: EgressConfigView | undefined;
+}
+
+/**
+ * Semantic-search status + the config fields the embedding-endpoint and
+ * surfaces advisories need. Best-effort: an unloadable config leaves the
+ * config-derived fields undefined and callers fall back to generic messages.
+ */
+function gatherSemanticConfigPhase(): SemanticConfigPhase {
+  const semanticStatus = readSemanticStatus();
+  let semanticSearchMode: string | undefined;
+  let embeddingEndpoint: string | undefined;
+  let egressConfigView: EgressConfigView | undefined;
+  try {
+    const config = loadConfig();
+    semanticSearchMode = config.semanticSearchMode;
+    embeddingEndpoint = config.embedding?.endpoint;
+    egressConfigView = config as EgressConfigView;
+  } catch {
+    // fall through with undefined
+  }
+  return { semanticStatus, semanticSearchMode, embeddingEndpoint, egressConfigView };
+}
+
+interface ImproveSummaryPhase {
+  improveSummary: ImproveHealthMetrics;
+  perRunSummaries: ImproveRunSummary[];
+}
+
+/**
+ * Assemble the window's improve-pipeline summary: invoked/completed/skipped
+ * counts from events, the per-run result_json aggregate, wall-time stats, and
+ * the WS-5 coverage/degradation/enrichment-minting rollups.
+ */
+function gatherImproveSummaryPhase(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  now: () => number,
+): ImproveSummaryPhase {
+  const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
+  const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
+  const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events;
+  const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
+  const { metrics: improveSummary } = summarizeImproveRuns(db, since);
+  improveSummary.invoked = improveInvoked;
+  improveSummary.completed = eventsMetrics.completed;
+  const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
+  improveSummary.skipped = skipSummary.skipped;
+  improveSummary.skipReasons = skipSummary.skipReasons;
+  const perRunSummaries = buildPerRunSummaries(db, since);
+  const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
+  improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
+
+  // WS-5: Compute denominator-fixed coverage and per-run degradation metrics
+  // for the main health path (not just window-compare mode).
+  const until = new Date(now()).toISOString();
+  const totalAssetsMain = improveSummary.memorySummary.eligible + improveSummary.memorySummary.derived;
+  improveSummary.coverage = computeDenominatorFixedCoverage(
+    db,
+    totalAssetsMain,
+    improveSummary.memorySummary.eligible,
+    since,
+    until,
+  );
+  const degradationMain = computeDegradationMetrics(db, since, until);
+  if (degradationMain) {
+    improveSummary.degradation = degradationMain;
+  }
+  improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
+
+  return { improveSummary, perRunSummaries };
+}
+
+/**
+ * The three best-effort advisory groups beyond the health-check registry:
+ * improve advisories, the `stash-git-exposure` probe, and the 08 surfaces
+ * group (secret-file-perms, binary-config-skew, orphan-stores,
+ * egress-endpoints). Order matches emission order in the returned array. A
+ * probe/filesystem failure in either try/catch must not abort the health
+ * report — each group degrades to "no advisory" independently.
+ */
+function gatherAncillaryAdvisories(
+  db: Database,
+  stateDbPath: string,
+  since: string,
+  improveSummary: ImproveHealthMetrics,
+  options: AkmHealthOptions,
+  egressConfigView: EgressConfigView | undefined,
+): HealthCheckResult[] {
+  const advisories: HealthCheckResult[] = [...collectImproveAdvisories(db, stateDbPath, since, improveSummary)];
+
+  // 08-F1: surface a `stash-git-exposure` advisory when env/secret assets are
+  // git-tracked AND a remote is configured (the leak moment). Best-effort.
+  // Cheap guard: only shell out to git when the stash has its OWN `.git` (or a
+  // test injected a fake seam), so the hot path never spawns for a non-git
+  // stash — the common unit-test case. Trade-off: a stash manually pointed at a
+  // bare subdirectory of a parent git repo (no `.git` of its own) is not
+  // checked. akm-init always creates `.git` at the stash root, so any
+  // akm-initialised stash is covered; this only skips hand-pointed nested ones.
+  try {
+    const exposureStashDir = options.stashDir ?? resolveStashDir();
+    if (options.stashExposureGit || fs.existsSync(path.join(exposureStashDir, ".git"))) {
+      const stashExposure = collectStashExposureAdvisory(exposureStashDir, options.stashExposureGit);
+      if (stashExposure) advisories.push(stashExposure);
+    }
+  } catch {
+    // Non-fatal — a git/probe failure must not abort the health report.
+  }
+
+  // 08 surfaces: the remaining read-only advisory group (secret-file-perms,
+  // binary-config-skew, orphan-stores, egress-endpoints). Best-effort — a
+  // filesystem probe failure must not abort the health report.
+  try {
+    advisories.push(
+      ...collectSurfacesAdvisories({
+        stashDir: options.stashDir ?? resolveStashDir(),
+        cacheDir: getCacheDir(),
+        dataDir: getDataDir(),
+        configDir: getConfigDir(),
+        configPath: getConfigPath(),
+        config: egressConfigView,
+      }),
+    );
+  } catch {
+    // Non-fatal.
+  }
+
+  return advisories;
+}
+
+/** Execution-log-derived session advisories. Best-effort: any failure yields an empty list. */
+function gatherSessionLogAdvisories(
+  since: string,
+  now: () => number,
+  getExecutionLogCandidatesFn: (sinceDays?: number) => SessionLogEntry[],
+): SessionLogAdvisory[] {
+  try {
+    const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
+    return getExecutionLogCandidatesFn(sinceDays).map((entry) => ({
+      topic: entry.topic,
+      frequency: entry.frequency,
+      source: entry.source,
+      isFailurePattern: entry.isFailurePattern,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+interface WindowComparePhaseResult {
+  windowResults: WindowResult[] | undefined;
+  deltas: Record<string, DeltaEntry> | undefined;
+  topLevelImprove: ImproveHealthMetrics;
+  topLevelMetrics: HealthMetrics;
+  topLevelSince: string;
+}
+
+/**
+ * Phase 3 — window-compare mode. Resolves `--window-compare`/`--windows` into
+ * per-window bundles, then folds window 0 back onto the top-level
+ * improve/metrics/since fields (backward compat with the non-window-compare
+ * shape) and computes deltas between the earliest and latest window.
+ */
+function resolveWindowComparePhase(
+  options: AkmHealthOptions,
+  db: Database,
+  stateDbPath: string,
+  now: () => number,
+  logsDb: Database | undefined,
+  probe: TaskHistoryPhase["probe"],
+  improveSummary: ImproveHealthMetrics,
+  metrics: HealthMetrics,
+  since: string,
+): WindowComparePhaseResult {
+  let windowSpecs: WindowSpec[] | undefined;
+  if (options.windowCompare) {
+    windowSpecs = resolveWindowCompare(options.windowCompare, now);
+  } else if (options.windows && options.windows.length > 0) {
+    windowSpecs = options.windows;
+  }
+
+  let windowResults: WindowResult[] | undefined;
+  let deltas: Record<string, DeltaEntry> | undefined;
+  let topLevelImprove = improveSummary;
+  let topLevelMetrics = metrics;
+  let topLevelSince = since;
+
+  if (windowSpecs) {
+    windowResults = windowSpecs.map((spec) => {
+      const winSince = parseHealthSince(spec.since);
+      const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, logsDb);
+      return {
+        name: spec.name,
+        since: winSince,
+        until: winUntil,
+        runs: bundle.runs,
+        improve: bundle.improve,
+        metrics: bundle.metrics,
+      };
+    });
+    // Preserve backward compat: top-level improve/metrics reflect window 0.
+    if (windowResults.length > 0) {
+      topLevelImprove = windowResults[0].improve;
+      topLevelMetrics = { ...windowResults[0].metrics, probeRoundTripMs: probe.durationMs };
+      topLevelSince = windowResults[0].since;
+    }
+    if (windowResults.length >= 2) {
+      // Deltas always read chronologically: `from` = earliest window,
+      // `to` = latest. Positive pctChange on a failure metric (e.g.
+      // distill.llmFailed) means things got WORSE going forward in
+      // time; negative means improvement. Window 0 in the output
+      // array is whatever the user specified first (typically
+      // `current` for --window-compare), but the delta direction is
+      // independent of that array order.
+      const sorted = [...windowResults].sort((a, b) => new Date(a.since).getTime() - new Date(b.since).getTime());
+      deltas = computeDeltas(sorted[0], sorted[sorted.length - 1]);
+    }
+  }
+
+  return { windowResults, deltas, topLevelImprove, topLevelMetrics, topLevelSince };
+}
+
 export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   validateAkmHealthOptions(options);
   const now = options.now ?? (() => Date.now());
@@ -158,125 +448,16 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   }
 
   try {
-    const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
-    const tableNames = tables.map((row) => row.name).sort();
-    const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
-    const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
+    const taskHistory = gatherTaskHistoryPhase(db, logsDb, since, stateDbPath, now);
+    const { tableNames, missingTables, probe } = taskHistory;
 
-    const probe = probeStateDbRoundTrip(stateDbPath);
+    const { semanticStatus, semanticSearchMode, embeddingEndpoint, egressConfigView } = gatherSemanticConfigPhase();
 
-    const taskRows = queryTaskHistory(db, { since });
-    const { withLogs: taskRowsWithLogs, backed: existingLogRows } = partitionLogBackedRows(taskRows, logsDb);
-    const failedTaskRows = taskRows.filter((row) => row.status === "failed");
-    const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
-    const stuckActiveRuns = activeRows.filter(
-      (row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS,
-    ).length;
-    const promptRows = taskRows.filter((row) => row.target_kind === "prompt");
-    const promptFailures = promptRows.filter((row) => {
-      const detail = parseTaskMetadata(row).detail;
-      return typeof detail?.reason === "string" && detail.reason.length > 0;
-    });
-    const logBackingRate = taskRowsWithLogs.length === 0 ? 1 : existingLogRows.length / taskRowsWithLogs.length;
-    const taskFailRate = taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length;
-    const agentFailureRate = promptRows.length === 0 ? 0 : promptFailures.length / promptRows.length;
+    const { improveSummary } = gatherImproveSummaryPhase(db, stateDbPath, since, now);
 
-    const semanticStatus = readSemanticStatus();
-    // For the embedding-endpoint advisory. Best-effort: an unloadable config
-    // leaves both undefined and the check falls back to its generic message.
-    let semanticSearchMode: string | undefined;
-    let embeddingEndpoint: string | undefined;
-    let egressConfigView: EgressConfigView | undefined;
-    try {
-      const config = loadConfig();
-      semanticSearchMode = config.semanticSearchMode;
-      embeddingEndpoint = config.embedding?.endpoint;
-      egressConfigView = config as EgressConfigView;
-    } catch {
-      // fall through with undefined
-    }
+    advisories.push(...gatherAncillaryAdvisories(db, stateDbPath, since, improveSummary, options, egressConfigView));
 
-    const improveInvoked = readEvents({ since, type: "improve_invoked" }, { dbPath: stateDbPath }).events.length;
-    const improveCompletedEvents = readEvents({ since, type: IMPROVE_COMPLETED_EVENT }, { dbPath: stateDbPath }).events;
-    const improveSkippedEvents = readEvents({ since, type: "improve_skipped" }, { dbPath: stateDbPath }).events;
-    const eventsMetrics = summarizeImproveCompleted(improveCompletedEvents);
-    const { metrics: improveSummary } = summarizeImproveRuns(db, since);
-    improveSummary.invoked = improveInvoked;
-    improveSummary.completed = eventsMetrics.completed;
-    const skipSummary = buildImproveSkipSummary(improveSkippedEvents);
-    improveSummary.skipped = skipSummary.skipped;
-    improveSummary.skipReasons = skipSummary.skipReasons;
-    const perRunSummaries = buildPerRunSummaries(db, since);
-    const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
-    improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
-
-    // WS-5: Compute denominator-fixed coverage and per-run degradation metrics
-    // for the main health path (not just window-compare mode).
-    const until = new Date(now()).toISOString();
-    const totalAssetsMain = improveSummary.memorySummary.eligible + improveSummary.memorySummary.derived;
-    improveSummary.coverage = computeDenominatorFixedCoverage(
-      db,
-      totalAssetsMain,
-      improveSummary.memorySummary.eligible,
-      since,
-      until,
-    );
-    const degradationMain = computeDegradationMetrics(db, since, until);
-    if (degradationMain) {
-      improveSummary.degradation = degradationMain;
-    }
-    improveSummary.enrichmentMinting = computeEnrichmentMintingRollup(db, since, until);
-
-    advisories.push(...collectImproveAdvisories(db, stateDbPath, since, improveSummary));
-
-    // 08-F1: surface a `stash-git-exposure` advisory when env/secret assets are
-    // git-tracked AND a remote is configured (the leak moment). Best-effort.
-    // Cheap guard: only shell out to git when the stash has its OWN `.git` (or a
-    // test injected a fake seam), so the hot path never spawns for a non-git
-    // stash — the common unit-test case. Trade-off: a stash manually pointed at a
-    // bare subdirectory of a parent git repo (no `.git` of its own) is not
-    // checked. akm-init always creates `.git` at the stash root, so any
-    // akm-initialised stash is covered; this only skips hand-pointed nested ones.
-    try {
-      const exposureStashDir = options.stashDir ?? resolveStashDir();
-      if (options.stashExposureGit || fs.existsSync(path.join(exposureStashDir, ".git"))) {
-        const stashExposure = collectStashExposureAdvisory(exposureStashDir, options.stashExposureGit);
-        if (stashExposure) advisories.push(stashExposure);
-      }
-    } catch {
-      // Non-fatal — a git/probe failure must not abort the health report.
-    }
-
-    // 08 surfaces: the remaining read-only advisory group (secret-file-perms,
-    // binary-config-skew, orphan-stores, egress-endpoints). Best-effort — a
-    // filesystem probe failure must not abort the health report.
-    try {
-      advisories.push(
-        ...collectSurfacesAdvisories({
-          stashDir: options.stashDir ?? resolveStashDir(),
-          cacheDir: getCacheDir(),
-          dataDir: getDataDir(),
-          configDir: getConfigDir(),
-          configPath: getConfigPath(),
-          config: egressConfigView,
-        }),
-      );
-    } catch {
-      // Non-fatal.
-    }
-
-    let sessionLogEntries: SessionLogAdvisory[] = [];
-    try {
-      const sinceDays = Math.max(0, Math.ceil((now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
-      sessionLogEntries = getExecutionLogCandidatesFn(sinceDays).map((entry) => ({
-        topic: entry.topic,
-        frequency: entry.frequency,
-        source: entry.source,
-        isFailurePattern: entry.isFailurePattern,
-      }));
-    } catch {
-      sessionLogEntries = [];
-    }
+    const sessionLogEntries = gatherSessionLogAdvisories(since, now, getExecutionLogCandidatesFn);
 
     // Run the ordered health-check registry. Each check projects the shared
     // context computed above into one HealthCheckResult; `channel` routes it to
@@ -288,12 +469,12 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
       tableNames,
       missingTables,
       probe,
-      taskRowCount: taskRows.length,
-      taskFailRate,
-      taskRowsWithLogsCount: taskRowsWithLogs.length,
-      existingLogRowsCount: existingLogRows.length,
-      logBackingRate,
-      stuckActiveRuns,
+      taskRowCount: taskHistory.taskRowCount,
+      taskFailRate: taskHistory.taskFailRate,
+      taskRowsWithLogsCount: taskHistory.taskRowsWithLogsCount,
+      existingLogRowsCount: taskHistory.existingLogRowsCount,
+      logBackingRate: taskHistory.logBackingRate,
+      stuckActiveRuns: taskHistory.stuckActiveRuns,
       semanticStatus,
       semanticSearchMode,
       embeddingEndpoint,
@@ -308,10 +489,10 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     }
 
     const metrics: HealthMetrics = {
-      taskFailRate: roundRate(taskFailRate),
-      agentFailureRate: roundRate(agentFailureRate),
-      stuckActiveRuns,
-      logBackingRate: roundRate(logBackingRate),
+      taskFailRate: roundRate(taskHistory.taskFailRate),
+      agentFailureRate: roundRate(taskHistory.agentFailureRate),
+      stuckActiveRuns: taskHistory.stuckActiveRuns,
+      logBackingRate: roundRate(taskHistory.logBackingRate),
       probeRoundTripMs: probe.durationMs,
       llmUsage: readLlmUsageAggregate(stateDbPath, since),
     };
@@ -323,51 +504,17 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
     // ── Window-compare mode (Phase 3) ─────────────────────────────────────
-    let windowSpecs: WindowSpec[] | undefined;
-    if (options.windowCompare) {
-      windowSpecs = resolveWindowCompare(options.windowCompare, now);
-    } else if (options.windows && options.windows.length > 0) {
-      windowSpecs = options.windows;
-    }
-
-    let windowResults: WindowResult[] | undefined;
-    let deltas: Record<string, DeltaEntry> | undefined;
-    let topLevelImprove = improveSummary;
-    let topLevelMetrics = metrics;
-    let topLevelSince = since;
-
-    if (windowSpecs && db) {
-      windowResults = windowSpecs.map((spec) => {
-        const winSince = parseHealthSince(spec.since);
-        const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-        const bundle = buildWindowMetrics(db as Database, stateDbPath, winSince, winUntil, now, logsDb);
-        return {
-          name: spec.name,
-          since: winSince,
-          until: winUntil,
-          runs: bundle.runs,
-          improve: bundle.improve,
-          metrics: bundle.metrics,
-        };
-      });
-      // Preserve backward compat: top-level improve/metrics reflect window 0.
-      if (windowResults.length > 0) {
-        topLevelImprove = windowResults[0].improve;
-        topLevelMetrics = { ...windowResults[0].metrics, probeRoundTripMs: probe.durationMs };
-        topLevelSince = windowResults[0].since;
-      }
-      if (windowResults.length >= 2) {
-        // Deltas always read chronologically: `from` = earliest window,
-        // `to` = latest. Positive pctChange on a failure metric (e.g.
-        // distill.llmFailed) means things got WORSE going forward in
-        // time; negative means improvement. Window 0 in the output
-        // array is whatever the user specified first (typically
-        // `current` for --window-compare), but the delta direction is
-        // independent of that array order.
-        const sorted = [...windowResults].sort((a, b) => new Date(a.since).getTime() - new Date(b.since).getTime());
-        deltas = computeDeltas(sorted[0], sorted[sorted.length - 1]);
-      }
-    }
+    const { windowResults, deltas, topLevelImprove, topLevelMetrics, topLevelSince } = resolveWindowComparePhase(
+      options,
+      db,
+      stateDbPath,
+      now,
+      logsDb,
+      probe,
+      improveSummary,
+      metrics,
+      since,
+    );
 
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
     let runs: ImproveRunSummary[] | undefined;

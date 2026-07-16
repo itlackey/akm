@@ -50,7 +50,6 @@ export type SrcFnOffender = FnOffender;
  * wait their turn.
  */
 export const SRC_FN_SIZE_BASELINE: readonly SrcFnOffender[] = [
-  { id: "src/commands/health/html-report.ts :: buildHealthHtmlReplacements", lines: 646 },
   { id: "src/indexer/graph/graph-extraction.ts :: runGraphExtractionPass", lines: 458 },
   { id: "src/workflows/exec/report.ts :: reportWorkflowUnitWithBarrier", lines: 438 },
   { id: "src/indexer/db/schema.ts :: ensureSchema", lines: 348 },
@@ -60,8 +59,6 @@ export const SRC_FN_SIZE_BASELINE: readonly SrcFnOffender[] = [
   { id: "src/workflows/exec/brief.ts :: buildWorkflowBrief", lines: 289 },
   { id: "src/commands/mv-cli.ts :: withAssetMutationLease#arg1", lines: 282 },
   { id: "src/indexer/search/db-search.ts :: searchDatabase", lines: 281 },
-  { id: "src/commands/health.ts :: akmHealth", lines: 272 },
-  { id: "src/commands/health/improve-metrics.ts :: projectRunMetrics", lines: 270 },
   { id: "src/indexer/passes/memory-inference.ts :: runMemoryInferencePass", lines: 255 },
   { id: "src/integrations/harnesses/opencode-sdk/sdk-runner.ts :: runOpencodeSdk", lines: 245 },
   { id: "src/llm/graph-extract.ts :: extractGraphFromBodies", lines: 236 },
