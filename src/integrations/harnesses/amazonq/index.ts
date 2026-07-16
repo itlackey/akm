@@ -16,10 +16,10 @@
  */
 
 import { BaseHarness, type HarnessCapabilities } from "../types";
-import { AMAZONQ_RESUME_FLAG, amazonqBuilder } from "./agent-builder";
+import { amazonqBuilder } from "./agent-builder";
 import { amazonqResultExtractor } from "./result-extractor";
 
-export { AMAZONQ_PLATFORM, AMAZONQ_RESUME_FLAG, amazonqBuilder } from "./agent-builder";
+export { AMAZONQ_PLATFORM, amazonqBuilder } from "./agent-builder";
 export { amazonqResultExtractor, stripTerminalFraming } from "./result-extractor";
 
 function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
@@ -50,10 +50,6 @@ export class AmazonqHarness extends BaseHarness {
   // No documented structured output: akm injects the schema into the prompt
   // and extracts embedded JSON from plain-text stdout.
   readonly structuredOutput = "none" as const;
-  // Q's `--resume` is a BARE flag (takesSessionId: false): it replays the
-  // previous conversation of the working directory and takes no session id
-  // (see AMAZONQ_RESUME_FLAG in ./agent-builder.ts).
-  readonly resume = { flag: AMAZONQ_RESUME_FLAG, takesSessionId: false } as const;
   // No `identityEnv`: the matrix lists Q's identity markers as uncertain, and
   // Q stamps no session var onto child processes.
   readonly capabilities = caps({

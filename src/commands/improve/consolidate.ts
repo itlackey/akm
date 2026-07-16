@@ -1459,9 +1459,8 @@ async function planConsolidation(
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
-      (getImproveProcessConfig(config, "consolidate", opts.improveProfile)?.antiCollapse as
-        | AntiCollapseConfig
-        | undefined) ?? {};
+      (getImproveProcessConfig("consolidate", opts.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ??
+      {};
     if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
@@ -1893,7 +1892,7 @@ async function finalizeMerge(
   mergedContentArg: string,
   emitMergeFailureSkips: (reason: string) => void,
 ): Promise<void> {
-  const { config, stashDir, target, backupDir, memoryByRef, warnings, counts } = ctx;
+  const { stashDir, target, backupDir, memoryByRef, warnings, counts } = ctx;
   let mergedContent = mergedContentArg;
 
   const allParticipants = [op.primary, ...op.secondaries];
@@ -1923,9 +1922,7 @@ async function finalizeMerge(
   // pipeline from building ever-deeper LLM-merged trees that lose the
   // source fidelity of the original episodes.
   const antiCollapseConfig: AntiCollapseConfig =
-    (getImproveProcessConfig(config, "consolidate", ctx.improveProfile)?.antiCollapse as
-      | AntiCollapseConfig
-      | undefined) ?? {};
+    (getImproveProcessConfig("consolidate", ctx.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
   if (antiCollapseConfig.enabled !== false) {
     const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
     if (generationCheck.refused) {

@@ -57,7 +57,7 @@
  *   dropped rather than approximated — never silently widened.
  * - **resume/session** — NOT expressible: per the matrix OpenHands resumes
  *   from *workspace state*, not a session-id flag, so there is no flag-shaped
- *   `HarnessResumeSupport` to export. The extractor still captures a
+ *   resume to describe. The extractor still captures a
  *   conversation/session id opportunistically when the stream reveals one;
  *   akm's `workflow_run_units` remains the durable source of truth either way
  *   (plan §"Session, MCP, and identity across harnesses").
@@ -66,8 +66,8 @@
  *
  * NOT registered anywhere: `builders.ts` / `harnesses/index.ts` wiring is a
  * follow-up integration task (as is the registry entry declaring
- * `pattern: "local-runner"`, `structuredOutput: "native-json"`, and no
- * `resume`). Exported standalone so that task only adds a registry entry.
+ * `pattern: "local-runner"`, `structuredOutput: "native-json"`).
+ * Exported standalone so that task only adds a registry entry.
  */
 
 import {

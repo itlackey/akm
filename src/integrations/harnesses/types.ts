@@ -51,24 +51,6 @@ export type HarnessExecutionPattern = "in-harness" | "local-runner" | "cloud-del
 export type HarnessStructuredOutput = "native-schema" | "native-json" | "none";
 
 /**
- * How to resume a previous harness session from the CLI. Absent when the
- * harness has no flag-shaped resume (no session model, or resume is
- * programmatic via an SDK session id).
- */
-export interface HarnessResumeSupport {
-  /** The CLI resume flag (e.g. `--resume`). */
-  readonly flag: string;
-  /**
-   * Whether {@link flag} takes the harness-native session id as its argument
-   * (`--resume <id>`). `false` = a bare flag resuming implicit local state
-   * (e.g. Amazon Q's `--resume` replays the working directory's previous
-   * conversation). Consumers building argv MUST check this before appending
-   * a session id after the flag.
-   */
-  readonly takesSessionId: boolean;
-}
-
-/**
  * Capability flags describing which of akm's six integration surfaces a
  * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
  * relevant flag instead of maintaining its own list.
@@ -165,13 +147,6 @@ export interface AkmHarness {
   readonly structuredOutput?: HarnessStructuredOutput;
 
   /**
-   * CLI resume support: the flag that replays a harness-native session id.
-   * Absent ⇒ resume is programmatic (SDK) or unsupported; akm's
-   * `workflow_run_units` remains the durable source of truth either way.
-   */
-  readonly resume?: HarnessResumeSupport;
-
-  /**
    * Env vars that carry this harness's *session id* when a process runs under
    * it (e.g. `CLAUDE_SESSION_ID`). The workflow runtime's agent-identity
    * detection (`src/workflows/runtime/agent-identity.ts`) is DERIVED from
@@ -228,7 +203,6 @@ export abstract class BaseHarness implements AkmHarness {
   readonly agentBuilder?: AgentCommandBuilder;
   readonly pattern?: HarnessExecutionPattern;
   readonly structuredOutput?: HarnessStructuredOutput;
-  readonly resume?: HarnessResumeSupport;
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];
   readonly resultExtractor?: AgentResultExtractor;

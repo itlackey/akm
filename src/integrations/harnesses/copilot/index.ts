@@ -50,8 +50,6 @@ export class CopilotHarness extends BaseHarness {
   // `--output-format json` emits a documented JSON envelope akm parses, then
   // validates against the node schema ⇒ native-json tier.
   readonly structuredOutput = "native-json" as const;
-  // `copilot --resume <sessionId>` replays a previous session.
-  readonly resume = { flag: "--resume", takesSessionId: true } as const;
   // Session-id env marker only. The matrix's other candidates (GH_TOKEN,
   // bare COPILOT_* presence vars) are credential/presence flags that would
   // stamp identity onto manual runs, so they are deliberately NOT registered

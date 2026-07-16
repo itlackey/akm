@@ -49,8 +49,7 @@ export class CodexHarness extends BaseHarness {
   // `--output-schema <file>` enforces a caller-supplied JSON schema natively.
   readonly structuredOutput = "native-schema" as const;
   // No flag-shaped resume: codex resume is the `exec resume <id>` SUBCOMMAND
-  // chain (see `codexResumeArgs` in ./agent-builder.ts), which the flag-shaped
-  // `HarnessResumeSupport` seam deliberately does not force-fit.
+  // chain (see `codexResumeArgs` in ./agent-builder.ts).
   // Presence flag: CODEX_SANDBOX is stamped only on processes codex itself
   // spawns inside its sandbox, so it genuinely means "running under codex" —
   // but its VALUE (e.g. "seatbelt") is a sandbox mode, not a session id, so it

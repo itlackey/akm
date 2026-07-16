@@ -52,7 +52,7 @@ export class OpencodeSdkHarness extends BaseHarness {
   // `session.prompt` returns structured SDK events/messages; akm extracts the
   // final message then validates against the node schema ⇒ native-json tier.
   readonly structuredOutput = "native-json" as const;
-  // No `resume` flag: session reuse is programmatic — the SDK session id is
+  // No flag-shaped resume: session reuse is programmatic — the SDK session id is
   // stored opportunistically on the unit row and passed back to
   // `session.prompt`, not replayed via a CLI flag.
   // No `identityEnv`: the SDK runs in-process; it does not mark a child

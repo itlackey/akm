@@ -480,7 +480,7 @@ export function runCollapseDetector(args: {
       const db = indexDb;
       // Over-generation threshold mirrors the guard actually in effect —
       // reading the same config key keeps the two aligned when tuned.
-      const antiCollapse = getImproveProcessConfig(args.config, "consolidate", args.improveProfile)?.antiCollapse as
+      const antiCollapse = getImproveProcessConfig("consolidate", args.improveProfile)?.antiCollapse as
         | { maxGeneration?: number }
         | undefined;
       const maxGeneration = antiCollapse?.maxGeneration ?? DEFAULT_MAX_GENERATION;

@@ -11,8 +11,8 @@
  *
  * Runtime selection:
  *   - On Bun (the primary/test runtime) we use the built-in `bun:sqlite`.
- *   - On Node.js (additive, not CI-tested this pass) we use `better-sqlite3`,
- *     loaded via a runtime-gated dynamic `require` so the Bun path never
+ *   - On Node.js (CI-tested by the node-smoke job's smoke + compat suites) we
+ *     use `better-sqlite3`, loaded via a runtime-gated dynamic `require` so the Bun path never
  *     imports it (it is an optionalDependency and may be uninstalled or
  *     uncompiled when running under Bun).
  *

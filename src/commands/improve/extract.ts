@@ -308,7 +308,7 @@ export function resolveStandaloneExtractPlan(
     throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
   }
   const selected = resolveImproveStrategy(selection.strategy, config);
-  const process = cloneAndFreeze(getImproveProcessConfig(config, "extract", selected.config) ?? {});
+  const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
   const invocation = {
     ...(selection.engine ? { engine: selection.engine } : {}),
     ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
@@ -1427,7 +1427,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   // triggers and prevents one improve strategy from overriding another.
   const activeProfile =
     options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
-  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig(config, "extract", activeProfile);
+  const extractProcess = options.resolvedPlan?.process ?? getImproveProcessConfig("extract", activeProfile);
   // The `extract.enabled` process toggle gates extract as a STAGE of `akm improve`
   // (the activeProfile path) — consistent with #593/#594 where the active profile,
   // not `default`, is the source of truth. An EXPLICIT `akm extract` invocation
@@ -1639,8 +1639,8 @@ export interface CountNewExtractCandidatesOptions {
  * over-/under-count here only affects whether the pass RUNS, never whether a
  * changed session is actually re-processed.
  */
-export function countNewExtractCandidates(config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
-  const extractProcess = getImproveProcessConfig(config, "extract", options.improveProfile);
+export function countNewExtractCandidates(_config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
+  const extractProcess = getImproveProcessConfig("extract", options.improveProfile);
   const effectiveSince = options.since ?? extractProcess?.defaultSince;
   // Mirror akmExtract: when no explicit window is set, default per-harness to
   // "since the last run" (floored at 48h) instead of a fixed 24h. Keeps this

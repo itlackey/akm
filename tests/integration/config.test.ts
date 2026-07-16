@@ -694,7 +694,7 @@ describe("LLM engine config", () => {
 describe("getImproveProcessConfig", () => {
   test("returns the named process section from the selected improve strategy", () => {
     const selected = { processes: { consolidate: { enabled: true, minPoolSize: 42 } } };
-    expect(getImproveProcessConfig(DEFAULT_CONFIG, "consolidate", selected)).toEqual({
+    expect(getImproveProcessConfig("consolidate", selected)).toEqual({
       enabled: true,
       minPoolSize: 42,
     });
@@ -702,38 +702,23 @@ describe("getImproveProcessConfig", () => {
 
   test("returns undefined when the process is absent", () => {
     const selected = { processes: { consolidate: { enabled: true } } };
-    expect(getImproveProcessConfig(DEFAULT_CONFIG, "extract", selected)).toBeUndefined();
+    expect(getImproveProcessConfig("extract", selected)).toBeUndefined();
   });
 
   test("returns undefined when no strategy was selected", () => {
-    expect(getImproveProcessConfig(DEFAULT_CONFIG, "reflect")).toBeUndefined();
-    expect(getImproveProcessConfig({ ...DEFAULT_CONFIG, improve: {} }, "reflect")).toBeUndefined();
-  });
-
-  test("does not implicitly consult configured strategies", () => {
-    const cfg = {
-      ...DEFAULT_CONFIG,
-      improve: { strategies: { aggressive: { processes: { distill: { enabled: true } } } } },
-    };
-    expect(getImproveProcessConfig(cfg, "distill")).toBeUndefined();
+    // Post-WI-9.1 the signature cannot even receive a config, so "does not
+    // implicitly consult configured strategies" is guaranteed by construction.
+    expect(getImproveProcessConfig("reflect")).toBeUndefined();
   });
 
   test("the selected strategy's per-process override is authoritative", () => {
-    const cfg = {
-      ...DEFAULT_CONFIG,
-      improve: { strategies: { baseline: { processes: { distill: { enabled: false } } } } },
-    };
     const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
-    expect(getImproveProcessConfig(cfg, "distill", activeProfile)).toEqual({ enabled: true });
+    expect(getImproveProcessConfig("distill", activeProfile)).toEqual({ enabled: true });
   });
 
   test("does not fall back when the selected strategy omits the section", () => {
-    const cfg = {
-      ...DEFAULT_CONFIG,
-      improve: { strategies: { baseline: { processes: { consolidate: { enabled: true, minPoolSize: 7 } } } } },
-    };
     const activeProfile = { processes: { distill: { enabled: true } } } as unknown as ImproveProfileConfig;
-    expect(getImproveProcessConfig(cfg, "consolidate", activeProfile)).toBeUndefined();
+    expect(getImproveProcessConfig("consolidate", activeProfile)).toBeUndefined();
   });
 });
 

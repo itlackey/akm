@@ -15,10 +15,10 @@
  */
 
 import { BaseHarness, type HarnessCapabilities } from "../types";
-import { PI_RESUME_FLAG, piBuilder } from "./agent-builder";
+import { piBuilder } from "./agent-builder";
 import { piResultExtractor } from "./result-extractor";
 
-export { PI_PLATFORM, PI_RESUME_FLAG, piBuilder } from "./agent-builder";
+export { PI_PLATFORM, piBuilder } from "./agent-builder";
 export { piResultExtractor } from "./result-extractor";
 
 function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
@@ -49,9 +49,6 @@ export class PiHarness extends BaseHarness {
   // `--mode json` emits a documented JSONL event stream akm parses, then
   // validates against the node schema ⇒ native-json tier.
   readonly structuredOutput = "native-json" as const;
-  // `pi --session <id>` replays a previous session (the matrix's -c/-r/
-  // --session family; the id-taking long form is the registered flag).
-  readonly resume = { flag: PI_RESUME_FLAG, takesSessionId: true } as const;
   // Session-id env marker only — the matrix's bare PI_* presence vars must
   // not stamp identity onto manual runs (see `AkmHarness.identityEnv`).
   readonly identityEnv = ["PI_SESSION_ID"] as const;

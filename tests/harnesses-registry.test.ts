@@ -113,7 +113,7 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     }
   });
 
-  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), --resume, CLAUDE_SESSION_ID", () => {
+  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), CLAUDE_SESSION_ID", () => {
     const claude = getHarness("claude");
     if (!claude) throw new Error("claude harness not registered");
     expect(claude.pattern).toBe("in-harness");
@@ -122,25 +122,22 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     // round-3 finding A). It carries a result extractor to unwrap that envelope.
     expect(claude.structuredOutput).toBe("native-json");
     expect(claude.resultExtractor).toBeDefined();
-    expect(claude.resume).toEqual({ flag: "--resume", takesSessionId: true });
     expect([...(claude.identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
   });
 
-  it("opencode (CLI path): local-runner, prompt+validate tier, --session, OPENCODE_SESSION_ID", () => {
+  it("opencode (CLI path): local-runner, prompt+validate tier, OPENCODE_SESSION_ID", () => {
     const opencode = getHarness("opencode");
     if (!opencode) throw new Error("opencode harness not registered");
     expect(opencode.pattern).toBe("local-runner");
     expect(opencode.structuredOutput).toBe("none");
-    expect(opencode.resume).toEqual({ flag: "--session", takesSessionId: true });
     expect([...(opencode.identityEnv ?? [])]).toEqual(["OPENCODE_SESSION_ID"]);
   });
 
-  it("opencode-sdk: local-runner, native-json, programmatic resume (no flag), no env marker", () => {
+  it("opencode-sdk: local-runner, native-json, no env marker", () => {
     const sdk = getHarness("opencode-sdk");
     if (!sdk) throw new Error("opencode-sdk harness not registered");
     expect(sdk.pattern).toBe("local-runner");
     expect(sdk.structuredOutput).toBe("native-json");
-    expect(sdk.resume).toBeUndefined();
     expect(sdk.identityEnv).toBeUndefined();
   });
 

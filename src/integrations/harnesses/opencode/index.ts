@@ -61,8 +61,6 @@ export class OpencodeHarness extends BaseHarness {
   // engine uses the prompt-injected schema + embedded-JSON extraction tier
   // (the matrix's "via prompt+validate"). The SDK entry is native-json.
   readonly structuredOutput = "none" as const;
-  // `opencode run --session <id>` continues a previous session.
-  readonly resume = { flag: "--session", takesSessionId: true } as const;
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();

@@ -248,7 +248,6 @@ export type ImproveProcessName = NamedKeys<NonNullable<ImproveProfileConfig["pro
  * default strategy; callers must pass their already selected strategy.
  */
 export function getImproveProcessConfig(
-  _config: AkmConfig,
   processName: ImproveProcessName,
   selected?: ImproveProfileConfig,
 ): ImproveProcessConfig | undefined {
@@ -263,20 +262,9 @@ export function loadConfig(): AkmConfig {
   return loadUserConfig();
 }
 
-let saveConfigOverride: ((config: AkmConfig) => void) | undefined;
-
-/** TEST-ONLY. Swap the implementation of `saveConfig`; pass undefined to restore. */
-export function _setSaveConfigForTests(fake?: (config: AkmConfig) => void): void {
-  saveConfigOverride = fake;
-}
-
 export function saveConfig(config: AkmConfig): void {
   // Every lifecycle write produces the only config version this binary can load.
   const currentConfig = { ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
-  if (saveConfigOverride) {
-    saveConfigOverride(currentConfig);
-    return;
-  }
   saveConfigReal(currentConfig);
 }
 

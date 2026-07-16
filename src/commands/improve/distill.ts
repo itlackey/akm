@@ -937,7 +937,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
 
   const messages = await buildDistillMessages({
-    config,
     options,
     stash,
     inputRef,
@@ -1003,7 +1002,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   return emitDistillLessonProposal({
     content,
-    config,
     options,
     distillLlm,
     assetContent,
@@ -1034,7 +1032,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
  */
 async function emitDistillLessonProposal(args: {
   content: string;
-  config: AkmConfig;
   options: AkmDistillOptions;
   distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
   assetContent: string | null;
@@ -1053,7 +1050,6 @@ async function emitDistillLessonProposal(args: {
   eligMeta: { eligibilitySource?: EligibilitySource };
 }): Promise<AkmDistillResult> {
   const {
-    config,
     options,
     distillLlm,
     assetContent,
@@ -1078,9 +1074,8 @@ async function emitDistillLessonProposal(args: {
   // source memories. A contradiction flag routes to human review (not auto-accept).
   // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
   const fidelityConfig =
-    (getImproveProcessConfig(config, "distill", options.improveProfile)?.fidelityCheck as
-      | { enabled?: boolean }
-      | undefined) ?? {};
+    (getImproveProcessConfig("distill", options.improveProfile)?.fidelityCheck as { enabled?: boolean } | undefined) ??
+    {};
   if (fidelityConfig.enabled && assetContent) {
     try {
       const proposalBody = stripBodyForFidelity(content);
@@ -1609,7 +1604,6 @@ function readDistillFeedback(args: {
  * from `akmDistill`.
  */
 async function buildDistillMessages(args: {
-  config: AkmConfig;
   options: AkmDistillOptions;
   stash: string;
   inputRef: string;
@@ -1620,7 +1614,6 @@ async function buildDistillMessages(args: {
   fetchSimilarLessonsFn: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
 }): Promise<ChatMessage[]> {
   const {
-    config,
     options,
     stash,
     inputRef,
@@ -1645,7 +1638,7 @@ async function buildDistillMessages(args: {
   // into the distill prompt so the LLM avoids overwriting prior generalizations
   // (catastrophic interference). DEFAULT OFF.
   const clsConfig =
-    (getImproveProcessConfig(config, "distill", options.improveProfile)?.cls as
+    (getImproveProcessConfig("distill", options.improveProfile)?.cls as
       | { enabled?: boolean; adjacentCount?: number }
       | undefined) ?? {};
   let clsContext = "";

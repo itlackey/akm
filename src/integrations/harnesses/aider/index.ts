@@ -49,7 +49,7 @@ export class AiderHarness extends BaseHarness {
   // No structured-output mode at all (the matrix's "none — parse output"):
   // akm injects the schema into the prompt and extracts embedded JSON.
   readonly structuredOutput = "none" as const;
-  // No `resume`: Aider persists context in chat-history files
+  // No flag-shaped resume: Aider persists context in chat-history files
   // (`.aider.chat.history.md`), not session ids — the plan's named example of
   // a harness with no session model. akm's `workflow_run_units` remains the
   // durable resume source of truth.

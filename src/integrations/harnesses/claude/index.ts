@@ -79,8 +79,6 @@ export class ClaudeHarness extends BaseHarness {
   // but that is a different surface than the dispatch builder — the descriptor
   // is aligned to what the builder honestly does.)
   readonly structuredOutput = "native-json" as const;
-  // `claude --resume <sessionId>` replays a previous session in headless mode.
-  readonly resume = { flag: "--resume", takesSessionId: true } as const;
   // Session-id env marker: presence of a concrete session id (not the bare
   // "running under Claude Code" flag) attributes a run to this harness.
   readonly identityEnv = ["CLAUDE_SESSION_ID"] as const;
