@@ -14,7 +14,7 @@
  * Architectural notes:
  *   - Stateless. All file/LLM access goes through injectable seams so tests
  *     never touch a real platform.
- *   - Bounded LLM call wrapped by {@link tryLlmFeature} under the
+ *   - Bounded LLM call routed through `callStructured` under the
  *     `session_extraction` gate (default-on; opt out via
  *     `improve.strategies.<name>.processes.extract.enabled: false`).
  *   - Proposals routed via `createProposal({ source: "extract", ... })` — the
@@ -58,8 +58,8 @@ import { normalizeHarnessId } from "../../integrations/harnesses";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
-import { type ChatMessage, chatCompletion } from "../../llm/client";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import type { ChatMessage } from "../../llm/client";
+import { callStructured } from "../../llm/structured-call";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import {
@@ -213,7 +213,8 @@ export interface AkmExtractOptions {
   /** Override the harness registry (test seam). */
   harnesses?: SessionLogHarness[];
   /**
-   * Override the LLM chat function (test seam). Defaults to {@link chatCompletion}.
+   * Override the LLM chat function (test seam). When absent, `callStructured`
+   * dispatches to the real late-bound `chatCompletion` transport.
    */
   chat?: (
     config: LlmProfileConfig,
@@ -262,7 +263,7 @@ export interface AkmExtractOptions {
   /**
    * #561 — override the session-summary generator (test seam). When absent the
    * production code builds one that routes through the in-tree LLM via
-   * {@link tryLlmFeature} (fail-open). Tests inject a fake to avoid any real
+   * `callStructured` (fail-open). Tests inject a fake to avoid any real
    * LLM/network call. When session indexing is disabled this is never invoked.
    */
   generateSessionSummary?: SessionSummaryGenerator;
@@ -661,7 +662,7 @@ interface ExtractSessionRunCtx {
   stashDir: string;
   config: AkmConfig;
   getLlmConfig: () => LlmProfileConfig;
-  chat: NonNullable<AkmExtractOptions["chat"]>;
+  chat: AkmExtractOptions["chat"];
   ctx: ProposalsContext | undefined;
   sourceRun: string;
   dryRun: boolean;
@@ -761,24 +762,42 @@ async function processSession(
     return {};
   };
 
+  // Resolve the connection with the same fail-open contract as before the
+  // callStructured migration: a getLlmConfig() throw used to happen inside
+  // the gated fn and take the same skipped path as a transport failure.
+  let extractLlm: LlmProfileConfig | undefined;
+  try {
+    extractLlm = getLlmConfig();
+  } catch {
+    extractLlm = undefined;
+  }
   let llmRaw = "";
-  const llmResult = await tryLlmFeature(
-    "session_extraction",
-    config,
-    async () => {
-      llmRaw = await chat(getLlmConfig(), [{ role: "user", content: prompt }], {
-        timeoutMs,
-        responseSchema: EXTRACT_JSON_SCHEMA,
-        ...(signal ? { signal } : {}),
-      });
-      return llmRaw;
-    },
-    "",
-    { timeoutMs },
-  );
+  const llmResult =
+    extractLlm === undefined
+      ? ""
+      : await callStructured<string>({
+          feature: "session_extraction",
+          akmConfig: config,
+          config: extractLlm,
+          messages: [{ role: "user", content: prompt }],
+          request: {
+            timeoutMs,
+            responseSchema: EXTRACT_JSON_SCHEMA,
+            ...(signal ? { signal } : {}),
+            ...(chat ? { chat } : {}),
+          },
+          parse: (raw) => {
+            llmRaw = raw ?? "";
+            return llmRaw;
+          },
+          // A transport throw takes the "" fallback with llmRaw left unset —
+          // the same skipped path the gated-fn throw produced before.
+          onError: () => "",
+          fallback: "",
+        });
 
   if (llmResult === "" && !llmRaw) {
-    // tryLlmFeature took the fallback path (disabled / timeout / error). Return skipped.
+    // The seam took the fallback path (disabled / timeout / error). Return skipped.
     return {
       sessionId: sessionRef.sessionId,
       harness: harness.name,
@@ -919,7 +938,7 @@ interface ExtractSessionLoopArgs {
   stashDir: string;
   config: AkmConfig;
   getLlmConfig: () => LlmProfileConfig;
-  chat: NonNullable<AkmExtractOptions["chat"]>;
+  chat: AkmExtractOptions["chat"];
   sourceRun: string;
   timeoutMs: number | null;
   maxTotalChars: number | undefined;
@@ -1231,25 +1250,39 @@ function resolveExtractRunConfig(
     typeof extractProcess?.minSessionDuration === "number"
       ? extractProcess.minSessionDuration
       : DEFAULT_MIN_SESSION_DURATION_MINUTES;
-  // Production summary generator: a bounded in-tree LLM call wrapped in the same
-  // fail-open `tryLlmFeature` seam as the rest of extract. Returns `undefined`
-  // on disablement / timeout / error so no asset is written. Tests inject a fake.
-  const chatForSummary = options.chat ?? chatCompletion;
+  // Production summary generator: a bounded in-tree LLM call wrapped in the
+  // same fail-open `callStructured` seam as the rest of extract. Returns
+  // `undefined` on disablement / timeout / error so no asset is written.
+  // Tests inject a fake.
   const defaultSessionSummaryGenerator: SessionSummaryGenerator = async (data) => {
+    // Same fail-open contract as the per-session call: a getLlmConfig()
+    // throw takes the "" fallback rather than propagating.
+    let summaryLlm: LlmProfileConfig | undefined;
+    try {
+      summaryLlm = getLlmConfig();
+    } catch {
+      summaryLlm = undefined;
+    }
     let raw = "";
-    await tryLlmFeature(
-      "session_extraction",
-      config,
-      async () => {
-        raw = await chatForSummary(getLlmConfig(), [{ role: "user", content: buildSessionSummaryPrompt(data) }], {
+    if (summaryLlm !== undefined) {
+      await callStructured<string>({
+        feature: "session_extraction",
+        akmConfig: config,
+        config: summaryLlm,
+        messages: [{ role: "user", content: buildSessionSummaryPrompt(data) }],
+        request: {
           timeoutMs,
           responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
-        });
-        return raw;
-      },
-      "",
-      { timeoutMs },
-    );
+          ...(options.chat ? { chat: options.chat } : {}),
+        },
+        parse: (r) => {
+          raw = r ?? "";
+          return raw;
+        },
+        onError: () => "",
+        fallback: "",
+      });
+    }
     return parseSessionSummary(raw);
   };
   const sessionIndexing = {
@@ -1426,7 +1459,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const candidates = discovery.candidates;
 
   const topLevelWarnings: string[] = [];
-  const chat = options.chat ?? chatCompletion;
 
   // Open state.db once for the run and bulk-load seen-rows for the candidate
   // set so we can decide skip/process in O(1) per session. Tracking is opt-out
@@ -1469,7 +1501,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       stashDir,
       config,
       getLlmConfig,
-      chat,
+      chat: options.chat,
       sourceRun,
       timeoutMs,
       maxTotalChars,
