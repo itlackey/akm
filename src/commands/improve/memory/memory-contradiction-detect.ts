@@ -43,7 +43,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config
 import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/config/config";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
-import { tryLlmFeature } from "../../../llm/feature-gate";
+import { callStructured } from "../../../llm/structured-call";
 import { isDerivedMemory, resolveParentRef } from "./derived-ref";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -287,18 +287,23 @@ export async function detectAndWriteContradictions(
         if (loserCB.includes(winnerRef)) continue;
 
         const prompt = buildContradictionJudgePrompt(a, b);
-        const judgeResult = await tryLlmFeature(
-          "memory_contradiction_detection",
-          config,
-          async () => {
-            return chat(contradictionLlm, [
-              { role: "system", content: "Return only valid JSON. No prose." },
-              { role: "user", content: prompt },
-            ]);
-          },
-          null, // Fallback: null means "skip" — gate disabled or LLM call failed.
-          { enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false },
-        );
+        const judgeResult = await callStructured<string | null>({
+          feature: "memory_contradiction_detection",
+          akmConfig: config,
+          // Resolver-less key: the strategy decision IS the gate (default-off).
+          enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
+          config: contradictionLlm,
+          messages: [
+            { role: "system", content: "Return only valid JSON. No prose." },
+            { role: "user", content: prompt },
+          ],
+          request: { chat },
+          parse: (raw) => raw ?? null,
+          // A transport throw used to escape the gated fn into the gate's
+          // catch and take the null fallback ("skip"); onError reproduces it.
+          onError: () => null,
+          fallback: null, // null means "skip" — gate disabled or LLM call failed.
+        });
 
         totalPairsChecked++;
         result.pairsChecked++;

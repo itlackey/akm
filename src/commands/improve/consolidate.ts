@@ -60,9 +60,8 @@ import {
   openExistingDatabase,
 } from "../../indexer/db/db";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
-import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import { callStructured } from "../../llm/structured-call";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
@@ -1310,29 +1309,28 @@ async function judgeConsolidationChunks(args: {
     // asset-writers-investigation §5): providers with `supportsJsonSchema: true`
     // enforce the shape upstream; others fall through to
     // `parseEmbeddedJsonResponse` on the response side.
-    const callChunkLlm = (fallbackError: string) =>
-      tryLlmFeature(
-        "memory_consolidation",
-        config,
-        async () => {
-          if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
-          try {
-            const content = await chatCompletion(
-              llmConfig,
-              [
-                { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
-                { role: "user", content: userPrompt },
-              ],
-              { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
-            );
-            return { ok: true as const, content };
-          } catch (e) {
-            return { ok: false as const, error: String(e) };
-          }
-        },
-        { ok: false as const, error: fallbackError },
-        { enabled: true },
-      );
+    const callChunkLlm = async (fallbackError: string) => {
+      // The gate runs with enabled:true (always open), so this guard is
+      // exactly the envelope the gated fn used to return first thing.
+      if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
+      return callStructured<{ ok: true; content: string } | { ok: false; error: string }>({
+        feature: "memory_consolidation",
+        akmConfig: config,
+        enabled: true,
+        config: llmConfig,
+        messages: [
+          { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        request: { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
+        parse: (raw) => ({ ok: true as const, content: raw ?? "" }),
+        // A transport throw was caught INSIDE the gated fn and returned as an
+        // {ok:false} envelope (never reaching the gate's fallback); onError
+        // reproduces that. The fallback fires only on wrapper timeout.
+        onError: (_cls, e) => ({ ok: false as const, error: String(e) }),
+        fallback: { ok: false as const, error: fallbackError },
+      });
+    };
 
     let raw = await callChunkLlm(`chunk ${chunkIdx + 1} failed`);
 
@@ -2800,23 +2798,23 @@ async function generateMergedContent(
   // so the merge generation step doesn't silently revert to the default LLM.
   const llmConfig =
     resolvedLlmConfig === null ? undefined : (resolvedLlmConfig ?? resolveConsolidateLlmConfig(config, activeProfile));
-  const result = await tryLlmFeature(
-    "memory_consolidation",
-    config,
-    async () => {
-      if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
-      try {
-        const content = await chatCompletion(llmConfig, [{ role: "user", content: prompt }], {
-          enableThinking: false,
-        });
-        return { ok: true as const, content };
-      } catch (e) {
-        return { ok: false as const, error: String(e) };
-      }
-    },
-    { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
-    { enabled: true },
-  );
+  // Same envelope semantics as the chunk-plan call above: the gate runs with
+  // enabled:true, the missing-LLM guard returns the envelope the gated fn
+  // used to return, a transport throw becomes an {ok:false} envelope via
+  // onError, and the fallback fires only on wrapper timeout.
+  const result = !llmConfig
+    ? { ok: false as const, error: "No LLM configured for consolidation" }
+    : await callStructured<{ ok: true; content: string } | { ok: false; error: string }>({
+        feature: "memory_consolidation",
+        akmConfig: config,
+        enabled: true,
+        config: llmConfig,
+        messages: [{ role: "user", content: prompt }],
+        request: { enableThinking: false },
+        parse: (raw) => ({ ok: true as const, content: raw ?? "" }),
+        onError: (_cls, e) => ({ ok: false as const, error: String(e) }),
+        fallback: { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
+      });
 
   if (!result.ok) {
     return {
