@@ -896,3 +896,73 @@ Net: seam +150 (incl. 4 contract pins); migrations ≈ −60 net across the
 five files (scaffold dedup offset by preserved-semantics comments).
 Suites: ~640 tests green across seam/reflect/distill/extract/consolidate/
 contradiction buckets; tsc + biome clean per commit.
+
+## R25 — events-ctx threading + the appendEvent hot-path pin
+
+Landed as three commits (subtree, fn-size fix-forward, remainder+test):
+
+**Subtree (14 sites)**: `AkmReflectOptions`/`AkmDistillOptions` gained the
+`eventsCtx?: EventsContext` carrier; reflect's 5 emits (entry invoked, the
+`emitReflectFailed` closure covering every failure path, sanitize-reject,
+quality-reject, proposal-created), distill's 5 (input-refusal skip,
+proposal-skip, queued, validation_failed, llm_failed — the latter two via
+new fields on `assembleAndValidateDistillContent` /
+`distillEmptyResponseResult`), promote-memory's 3 (`PromoteMemoryContext`
+gained the carrier; populated at distill's construction site), and
+`writeQualityRejection`'s 1 (new trailing param; 5 callers). The improve
+loop populates both verbs from `env.eventsCtx` at the `reflectCallArgs` /
+`distillFn` literals. Standalone CLI verbs leave the carrier unset —
+per-call behavior unchanged. `EventsContext` shape untouched (frozen,
+D14/R25); proposal WRITES keep `withProposalsDb`'s per-call open (D14 —
+no db handle into `ProposalsContext`).
+
+**Fix-forward ×2 (fn-size)**: the threading + R26 reformats pushed
+`extract.ts::processSession` to 222 and `distill.ts::akmDistill` to 223 —
+both over the WI-7.8 ABSOLUTE bar. Extracted verbatim named passes
+(`runSessionExtractionLlmCall`, `refuseDisallowedDistillInput`); gates
+back to 28/28. Process lesson recorded: the architecture gate now runs
+un-piped before every commit (a `| tail` swallowed one red exit; caught
+by the adversarial verifier on the reflect commit and fixed forward).
+
+**Remainder**: `tryAcquireImproveLock` takes an optional EventsContext;
+akmImprove passes the C2 boundary-pinned `{dbPath}` (no handle exists at
+lock time; the rare stale-recovery event now lands in the RIGHT state.db;
+P1–P8 two-try teardown untouched). Extract's 3 sites switched from the
+ProposalsContext-as-EventsContext hack to a real `AkmExtractOptions.
+eventsCtx` threaded through `ExtractSessionRunCtx`; the improve extract
+pass populates it (the old hack passed nothing in the improve flow, so
+those events ran slow-path against the live-env default — now they reuse
+the run handle).
+
+**Hot-path test** (`tests/commands/improve/appendevent-hot-path.test.ts`,
+WI-7.7 WRITE-FIRST): counting-proxy `Database` as `EventsContext.db`
+(handle identity — rows written through the exact injected handle),
+default-db leak detector (goes red on any no-ctx revert — MUTATION
+CHECKED: reverting the reflect entry emit's ctx arg turned 2 tests red;
+restored), and an `akmImprove` capture-stub run pinning loop→verb wiring
+with a non-vacuity guard. No mock.module; sandbox helpers only; injected
+chat seams keep everything offline.
+
+Gate record: zero no-ctx `appendEvent(` sites under src/commands/improve
+(all 51 emit sites now ctx-threaded or deliberately ctx-carried);
+`eventsCtx.db` deref sites compile unchanged. Suites: ~380 tests green
+across reflect/distill/promote-memory/judge/extract/locks/db-locking
+buckets + the 4 new hot-path pins; architecture ratchets 28/28 green at
+every pushed commit (after the two fix-forwards).
+
+### W1-a residuals session — CLOSED
+
+R24 + R26 + R25 complete. `RunContext.readAsset` verb-site adoption (D6)
+remains deferred to Chunk 9's RunContext unification (the memo has no
+consumers yet — see the WI-7.4 decision note). Full `bun run check` run
+once at session end (result recorded below).
+
+### Final verification (residuals session)
+
+Full `bun run check` run EXACTLY ONCE at session end, exit 0: biome + the
+six lint gates + `gen-config-schema --check` green (one import-order nit in
+the new hot-path test caught by the repo-level assist config and fixed
+before the recorded run), `bunx tsc --noEmit` clean, unit shards green,
+integration **4481 pass / 0 fail / 55 skip** (4536 tests, 335 files,
+457 s). Golden presence lint: 49 designated assets present, 41 frozen
+hash-verified, consumer suites intact. Architecture ratchets 28/28.

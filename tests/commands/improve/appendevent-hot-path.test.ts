@@ -27,9 +27,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import path from "node:path";
-
 import fs from "node:fs";
+import path from "node:path";
 
 import { akmDistill } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
