@@ -14,7 +14,7 @@
  *
  * # Architectural seams
  *
- *   - **Single bounded in-tree LLM call.** Wrapped in {@link tryLlmFeature}
+ *   - **Single bounded in-tree LLM call.** Routed through `callStructured`
  *     under the `distill` gate (v1 spec §14; 0.8.0 unified the orchestration
  *     and LLM-call gates under `processes.distill.enabled`). The wrapper
  *     enforces a hard timeout (default 600s / 10 min — overridable via
@@ -59,7 +59,7 @@ import { authoringRulesForType } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
@@ -71,7 +71,7 @@ import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/d
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import { callStructured } from "../../llm/structured-call";
 import { isProposalSkipped, listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
@@ -924,7 +924,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     distillLlm,
     messages,
     effectiveProposalKind,
-    chat,
   });
 
   if (raw === null || raw.trim() === "") {
@@ -1275,10 +1274,11 @@ function assembleAndValidateDistillContent(args: {
 }
 
 /**
- * The single bounded distill LLM call: gate-checked via `tryLlmFeature`, passing
- * the lesson/knowledge JSON schema on the production path and preserving the
- * two-arg test-seam signature. Returns the raw response (or `null`) and the
- * fallback reason. Extracted verbatim from `akmDistill`.
+ * The single bounded distill LLM call: gate-checked via `callStructured`
+ * (R26 migration off the raw `chatCompletion` scaffold), passing the
+ * lesson/knowledge JSON schema on the production path and keeping the
+ * injected test fake schema-blind. Returns the raw response (or `null`) and
+ * the fallback reason.
  */
 async function runDistillLlmCall(args: {
   config: AkmConfig;
@@ -1286,49 +1286,59 @@ async function runDistillLlmCall(args: {
   distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
   messages: ChatMessage[];
   effectiveProposalKind: "lesson" | "knowledge";
-  chat: typeof chatCompletion;
 }): Promise<{ raw: string | null; fallbackReason: "disabled" | "timeout" | "error" | undefined }> {
-  const { config, options, distillLlm, messages, effectiveProposalKind, chat } = args;
+  const { config, options, distillLlm, messages, effectiveProposalKind } = args;
   const distillSchema =
     effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
   let fallbackReason: "disabled" | "timeout" | "error" | undefined;
-  const raw = await tryLlmFeature(
+  const enabled = resolveProcessEnabled(
     "distill",
-    config,
-    async () => {
-      if (!distillLlm) {
-        // No LLM connection configured — treat as gate-disabled. Throwing
-        // here lets `tryLlmFeature` route us through the "error" fallback,
-        // which is the same graceful skipped path.
-        throw new ConfigError(
-          "No LLM engine configured. Set defaults.llmEngine or improve.strategies.<name>.processes.distill.engine.",
-          "LLM_NOT_CONFIGURED",
-        );
-      }
-      // Production path: pass the JSON schema so providers that honour
-      // `response_format: json_schema` enforce shape upstream. Providers that
-      // ignore the option fall through to the prompt-contract markdown path.
-      if (options.chat === undefined) {
-        return chatCompletion(distillLlm, messages, { responseSchema: distillSchema });
-      }
-      // Test seam: preserve the two-arg signature so existing fake `chat`
-      // functions (which return markdown strings) continue to work.
-      return chat(distillLlm, messages, options.signal ? { signal: options.signal } : undefined);
-    },
-    null as string | null,
-    {
-      enabled: resolveProcessEnabled(
-        "distill",
-        options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
-      ),
-      onFallback: (evt) => {
-        fallbackReason = evt.reason;
-        // Log the fallback reason; the caller (raw === null path) handles
-        // emitting the distill_invoked event so we don't double-emit here.
-        warnVerbose(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-      },
-    },
+    options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
   );
+  const recordFallback = (feature: string, reason: "disabled" | "timeout" | "error") => {
+    fallbackReason = reason;
+    // Log the fallback reason; the caller (raw === null path) handles
+    // emitting the distill_invoked event so we don't double-emit here.
+    warnVerbose(`[akm] LLM fallback for ${feature}: ${reason}`);
+  };
+  if (enabled && !distillLlm) {
+    // No LLM connection configured. At HEAD this threw a ConfigError inside
+    // the gated fn and tryLlmFeature routed it through the "error" fallback;
+    // reproduce that terminal state directly (the gate-disabled case above
+    // still dominates: when disabled, callStructured takes the "disabled"
+    // fallback before any LLM lookup, exactly as before).
+    recordFallback("distill", "error");
+    return { raw: null, fallbackReason };
+  }
+  const raw = await callStructured<string | null>({
+    feature: "distill",
+    akmConfig: config,
+    enabled,
+    // Safe: when the gate is open, distillLlm is defined (guard above); when
+    // it is closed, the transport never runs and config is never read.
+    config: distillLlm as import("../../core/config/config").LlmProfileConfig,
+    messages,
+    request:
+      options.chat === undefined
+        ? // Production path: pass the JSON schema so providers that honour
+          // `response_format: json_schema` enforce shape upstream. Providers
+          // that ignore the option fall through to the prompt-contract
+          // markdown path.
+          { responseSchema: distillSchema }
+        : // Test seam: keep the injected fake as the transport; fakes never
+          // see the schema (they return markdown strings).
+          { chat: options.chat, ...(options.signal ? { signal: options.signal } : {}) },
+    parse: (raw) => raw ?? null,
+    onError: (_cls, err) => {
+      // At HEAD a transport throw escaped to tryLlmFeature's catch, which
+      // fired onFallback("error"); reproduce that observable state.
+      void err;
+      recordFallback("distill", "error");
+      return null;
+    },
+    fallback: null,
+    onFallback: (evt) => recordFallback(evt.feature, evt.reason),
+  });
   return { raw, fallbackReason };
 }
 
