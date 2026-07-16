@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
+import { formatUnifiedDiff } from "../src/commands/proposal/diff-format";
 // Import directly from the relocated module (the proposals repository split
 // out of `validators/proposals.ts`).
 import {
-  formatUnifiedDiff,
   isAutomatedProposalSource,
   isValidProposalSource,
   PROPOSAL_SOURCES,
