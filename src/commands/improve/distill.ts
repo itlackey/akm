@@ -779,6 +779,55 @@ async function loadAndScoreInputSalience(args: {
   return { assetContent, existingRefVocabulary };
 }
 
+/**
+ * Recursive-distillation + secret-material input guard. Distill produces
+ * *lessons* from non-lesson sources; a lesson input would derive a recursive
+ * `lesson:lesson-<name>` ref (the 323-archived-proposals defect) and
+ * env/secret inputs must never be read or sent to the LLM. Emits the
+ * `distill_invoked(skipped)` event and returns the terminal skipped result,
+ * or `null` when the input type is allowed. Extracted verbatim from
+ * `akmDistill` (R25/R31 — the events-ctx threading pushed it over the bar).
+ */
+function refuseDisallowedDistillInput(args: {
+  options: AkmDistillOptions;
+  parsedInputRef: ReturnType<typeof parseAssetRef>;
+  inputRef: string;
+  durableInputRef: string;
+  eligMeta: { eligibilitySource?: EligibilitySource };
+}): AkmDistillResult | null {
+  const { options, parsedInputRef, inputRef, durableInputRef, eligMeta } = args;
+  if (!isDistillRefusedInputType(parsedInputRef.type)) return null;
+  // 08-F2: env/secret are a secret-material refusal (never read the bytes);
+  // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
+  const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
+  const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
+  const message = isSecretInput
+    ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+    : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: durableInputRef,
+      metadata: {
+        outcome: "skipped" as const,
+        lessonRef: skippedRef,
+        message,
+        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
+        ...eligMeta,
+      },
+    },
+    options.eventsCtx,
+  );
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "skipped",
+    inputRef,
+    lessonRef: skippedRef,
+    message,
+  };
+}
+
 export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
   const inputRef = options.ref.trim();
   if (!inputRef) {
@@ -796,48 +845,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     ? { eligibilitySource: options.eligibilitySource }
     : {};
 
-  // Recursive-distillation guard. Distill produces *lessons* from non-lesson
-  // sources (memory, skill, knowledge, etc.). Calling distill on an existing
-  // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
-  // suffix) and route a "lesson of a lesson" through the proposal queue —
-  // observed in 323 reviewed archived proposals as the recursive-ref defect.
-  // Refuse the input here so the improve loop (or other callers) get a clean
-  // skipped outcome instead of producing nonsense refs.
-  //
-  // The refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
+  // Recursive-distillation guard (see refuseDisallowedDistillInput). The
+  // refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
   // the improve planner can skip these refs before queuing distill attempts;
   // this runtime check stays as a defensive backstop for direct callers.
-  if (isDistillRefusedInputType(parsedInputRef.type)) {
-    // 08-F2: env/secret are a secret-material refusal (never read the bytes);
-    // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
-    const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
-    const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
-    const message = isSecretInput
-      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
-      : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
-    appendEvent(
-      {
-        eventType: "distill_invoked",
-        ref: durableInputRef,
-        metadata: {
-          outcome: "skipped" as const,
-          lessonRef: skippedRef,
-          message,
-          skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
-          ...eligMeta,
-        },
-      },
-      options.eventsCtx,
-    );
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      lessonRef: skippedRef,
-      message,
-    };
-  }
+  const refused = refuseDisallowedDistillInput({ options, parsedInputRef, inputRef, durableInputRef, eligMeta });
+  if (refused) return refused;
 
   const config = options.config ?? loadConfig();
   options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
