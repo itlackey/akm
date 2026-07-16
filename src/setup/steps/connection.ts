@@ -10,7 +10,6 @@
 import * as p from "../../cli/clack";
 import type { AkmConfig, EmbeddingConnectionConfig, LlmConnectionConfig } from "../../core/config/config";
 import { detectAgentCliProfiles, pickDefaultAgentProfile } from "../../integrations/agent";
-import { probeLlmCapabilities } from "../../llm/client";
 import { detectLMStudio, detectOllama, type LMStudioDetectionResult } from "../detect";
 import { verifyOpenAiCompatibleEndpoint } from "../detected-engines";
 import {
@@ -20,7 +19,17 @@ import {
   readCurrentLlmEngine,
 } from "../engine-config";
 import type { HarnessLLMConfig } from "../harness-config-import";
-import { prompt, promptOrBack } from "../prompt";
+import { prompt } from "../prompt";
+import {
+  keepCurrentOption,
+  llmConnection,
+  lmStudioOptionHint,
+  probeLlmConnection,
+  promptApiKeyEnvVarName,
+  promptEndpointUrl,
+  promptLmStudioModel,
+  promptModelName,
+} from "./connection-shared";
 
 interface OllamaChoices {
   embedding?: EmbeddingConnectionConfig;
@@ -213,19 +222,12 @@ export async function stepLlm(
       hint: ollamaChatModels?.[0] ?? "local",
     });
   }
-  const lmStudioHint = lmStudio?.available
-    ? `${lmStudio.models.length} model${lmStudio.models.length === 1 ? "" : "s"} detected`
-    : "http://localhost:1234";
-  options.push({ value: "lmstudio", label: "LM Studio / local server", hint: lmStudioHint });
+  options.push({ value: "lmstudio", label: "LM Studio / local server", hint: lmStudioOptionHint(lmStudio) });
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
   options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
   const currentLlm = readCurrentLlmEngine(current);
   if (currentLlm) {
-    options.push({
-      value: "keep",
-      label: `Keep current: ${currentLlm.provider ?? currentLlm.endpoint}`,
-      hint: currentLlm.model,
-    });
+    options.push(keepCurrentOption(currentLlm));
   }
 
   const initialValue = currentLlm ? "keep" : ollamaAvailable ? "ollama" : (LLM_PRESETS[0]?.value ?? "none");
@@ -284,123 +286,37 @@ export async function stepLlm(
         initialValue: ollamaChatModels?.[0],
       }),
     );
-    llm = {
-      provider: "ollama",
-      endpoint: `${ollamaEndpoint}/v1/chat/completions`,
-      model: modelChoice,
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    llm = llmConnection("ollama", `${ollamaEndpoint}/v1/chat/completions`, modelChoice);
   } else if (choice === "lmstudio") {
     const currentLmsLlm = currentLlm?.provider === "lmstudio" ? currentLlm : undefined;
     const defaultEndpoint =
       currentLmsLlm?.endpoint ??
       (lmStudio?.endpoint ? `${lmStudio.endpoint}/v1/chat/completions` : "http://localhost:1234/v1/chat/completions");
-    const endpoint = await prompt(() =>
-      p.text({
-        message: "Endpoint URL:",
-        placeholder: defaultEndpoint,
-        defaultValue: defaultEndpoint,
-        validate: (v) => {
-          if (!v?.trim()) return "Endpoint cannot be empty";
-          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
-        },
-      }),
-    );
-    let model: string;
-    const lmsModels = lmStudio?.available && lmStudio.models.length > 0 ? lmStudio.models : [];
-    if (lmsModels.length > 0) {
-      const modelChoice = await prompt(() =>
-        p.select({
-          message: "Model name:",
-          options: [
-            ...lmsModels.map((m) => ({ value: m, label: m })),
-            { value: "__manual__", label: "Enter manually..." },
-          ],
-          initialValue:
-            currentLmsLlm?.model && lmsModels.includes(currentLmsLlm.model) ? currentLmsLlm.model : lmsModels[0],
-        }),
-      );
-      if (modelChoice === "__manual__") {
-        model = await prompt(() =>
-          p.text({
-            message: "Model name:",
-            placeholder: currentLmsLlm?.model ?? "local-model",
-            ...(currentLmsLlm?.model ? { defaultValue: currentLmsLlm.model } : {}),
-            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-          }),
-        );
-      } else {
-        model = modelChoice;
-      }
-    } else {
-      model = await prompt(() =>
-        p.text({
-          message: "Model name:",
-          placeholder: currentLmsLlm?.model ?? "local-model",
-          ...(currentLmsLlm?.model ? { defaultValue: currentLmsLlm.model } : {}),
-          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-        }),
-      );
-    }
-    llm = {
-      provider: "lmstudio",
-      endpoint: endpoint.trim(),
-      model: model.trim(),
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    const endpoint = await promptEndpointUrl({ placeholder: defaultEndpoint, defaultValue: defaultEndpoint });
+    const model = await promptLmStudioModel(lmStudio, currentLmsLlm?.model);
+    llm = llmConnection("lmstudio", endpoint.trim(), model.trim());
   } else if (choice === "custom") {
     const currentCustomLlm = currentLlm?.provider === "custom" ? currentLlm : undefined;
-    const endpoint = await prompt(() =>
-      p.text({
-        message: "OpenAI-compatible chat completions endpoint:",
-        placeholder: currentCustomLlm?.endpoint ?? "https://your-host/v1/chat/completions",
-        ...(currentCustomLlm?.endpoint ? { defaultValue: currentCustomLlm.endpoint } : {}),
-        validate: (v) => {
-          if (!v?.trim()) return "Endpoint cannot be empty";
-          if (!v.startsWith("http://") && !v.startsWith("https://"))
-            return "Endpoint must start with http:// or https://";
-        },
-      }),
-    );
-    const model = await prompt(() =>
-      p.text({
-        message: "Model name:",
-        placeholder: currentCustomLlm?.model ?? "gpt-4o-mini",
-        ...(currentCustomLlm?.model ? { defaultValue: currentCustomLlm.model } : {}),
-        validate: (v) => {
-          if (!v?.trim()) return "Model name cannot be empty";
-        },
-      }),
-    );
-    llm = {
-      provider: "custom",
-      endpoint: endpoint.trim(),
-      model: model.trim(),
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    const endpoint = await promptEndpointUrl({
+      message: "OpenAI-compatible chat completions endpoint:",
+      placeholder: currentCustomLlm?.endpoint ?? "https://your-host/v1/chat/completions",
+      defaultValue: currentCustomLlm?.endpoint,
+      schemeMessage: "Endpoint must start with http:// or https://",
+    });
+    const model = await promptModelName({
+      placeholder: currentCustomLlm?.model ?? "gpt-4o-mini",
+      defaultValue: currentCustomLlm?.model,
+    });
+    llm = llmConnection("custom", endpoint.trim(), model.trim());
   } else {
     const preset = LLM_PRESETS.find((p) => p.value === choice);
     if (!preset) return undefined;
-    const model = await prompt(() =>
-      p.text({
-        message: `Model for ${preset.label}:`,
-        placeholder: preset.defaultModel,
-        defaultValue: preset.defaultModel,
-        validate: (v) => {
-          if (!v?.trim()) return "Model name cannot be empty";
-        },
-      }),
-    );
-    llm = {
-      provider: preset.value,
-      endpoint: preset.endpoint,
-      model: model.trim() || preset.defaultModel,
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    const model = await promptModelName({
+      message: `Model for ${preset.label}:`,
+      placeholder: preset.defaultModel,
+      defaultValue: preset.defaultModel,
+    });
+    llm = llmConnection(preset.value, preset.endpoint, model.trim() || preset.defaultModel);
   }
 
   // Remind the user about API key placement. We do not offer a "store in config"
@@ -414,21 +330,7 @@ export async function stepLlm(
   }
 
   // Capability probe — best-effort, never blocks setup.
-  const probeSpin = p.spinner();
-  probeSpin.start("Probing LLM (structured-output round-trip)...");
-  const probe = await probeLlmCapabilities(llm);
-  if (probe.reachable && probe.structuredOutput) {
-    probeSpin.stop("LLM reachable; structured output verified.");
-    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: true };
-  } else if (probe.reachable) {
-    probeSpin.stop("LLM reachable but structured-output probe failed.");
-    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: false };
-  } else {
-    probeSpin.stop("LLM not reachable.");
-    p.log.warn(
-      `Could not reach the LLM endpoint${probe.error ? ` (${probe.error})` : ""}. Configuration was saved; verify your endpoint and API key, then retry.`,
-    );
-  }
+  await probeLlmConnection(llm);
 
   return llm;
 }
@@ -487,23 +389,16 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
       hint: `detected at ${ollama.endpoint}`,
     });
   }
-  const lmStudioHint = lmStudio.available
-    ? `${lmStudio.models.length} model${lmStudio.models.length === 1 ? "" : "s"} detected`
-    : "http://localhost:1234";
   providerOptions.push(
     { value: "openai", label: "OpenAI", hint: "requires AKM_LLM_API_KEY" },
-    { value: "lmstudio", label: "LM Studio / local server", hint: lmStudioHint },
+    { value: "lmstudio", label: "LM Studio / local server", hint: lmStudioOptionHint(lmStudio) },
     { value: "custom", label: "Custom OpenAI-compatible endpoint" },
     { value: "skip", label: "Skip — disable enrichment features" },
   );
 
   const currentLlmSmall = readCurrentLlmEngine(current);
   if (currentLlmSmall) {
-    providerOptions.push({
-      value: "keep",
-      label: `Keep current: ${currentLlmSmall.provider ?? currentLlmSmall.endpoint}`,
-      hint: currentLlmSmall.model,
-    });
+    providerOptions.push(keepCurrentOption(currentLlmSmall));
   }
 
   const initialValue = currentLlmSmall ? "keep" : ollama.available ? "ollama" : "openai";
@@ -555,172 +450,59 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
         }),
       );
       if (model === "__custom__") {
-        model = await prompt(() =>
-          p.text({
-            message: "Model name:",
-            placeholder: "llama3.2",
-            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-          }),
-        );
+        model = await promptModelName({ placeholder: "llama3.2" });
       }
     } else {
       const currentOllamaModel =
         currentLlmSmall?.provider === "ollama" ? (currentLlmSmall.model ?? "llama3.2") : "llama3.2";
-      model = await prompt(() =>
-        p.text({
-          message: "Model name (e.g. llama3.2):",
-          placeholder: currentOllamaModel,
-          defaultValue: currentOllamaModel,
-          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-        }),
-      );
+      model = await promptModelName({
+        message: "Model name (e.g. llama3.2):",
+        placeholder: currentOllamaModel,
+        defaultValue: currentOllamaModel,
+      });
     }
-    llm = {
-      provider: "ollama",
-      endpoint: `${ollama.endpoint}/v1/chat/completions`,
-      model: model.trim(),
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    llm = llmConnection("ollama", `${ollama.endpoint}/v1/chat/completions`, model.trim());
   } else if (providerChoice === "openai") {
     const currentOpenAiModel =
       currentLlmSmall?.provider === "openai" ? (currentLlmSmall.model ?? "gpt-4o-mini") : "gpt-4o-mini";
-    const model = await prompt(() =>
-      p.text({
-        message: "Model name:",
-        placeholder: currentOpenAiModel,
-        defaultValue: currentOpenAiModel,
-        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-      }),
-    );
+    const model = await promptModelName({ placeholder: currentOpenAiModel, defaultValue: currentOpenAiModel });
     if (!process.env.AKM_LLM_API_KEY) {
       p.log.info("Set AKM_LLM_API_KEY in your shell before running `akm index`.");
     }
-    llm = {
-      provider: "openai",
-      endpoint: "https://api.openai.com/v1/chat/completions",
-      model: model.trim() || currentOpenAiModel,
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    llm = llmConnection("openai", "https://api.openai.com/v1/chat/completions", model.trim() || currentOpenAiModel);
   } else if (providerChoice === "lmstudio") {
     const currentLmsEndpoint =
       currentLlmSmall?.provider === "lmstudio"
         ? (currentLlmSmall.endpoint ?? `${lmStudio.endpoint}/v1/chat/completions`)
         : `${lmStudio.endpoint}/v1/chat/completions`;
     const currentLmsModel = currentLlmSmall?.provider === "lmstudio" ? currentLlmSmall.model : undefined;
-    const endpoint = await prompt(() =>
-      p.text({
-        message: "Endpoint URL:",
-        placeholder: currentLmsEndpoint,
-        defaultValue: currentLmsEndpoint,
-        validate: (v) => {
-          if (!v?.trim()) return "Endpoint cannot be empty";
-          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
-        },
-      }),
-    );
-    let model: string;
-    const lmsModels = lmStudio.available && lmStudio.models.length > 0 ? lmStudio.models : [];
-    if (lmsModels.length > 0) {
-      const modelChoice = await prompt(() =>
-        p.select({
-          message: "Model name:",
-          options: [
-            ...lmsModels.map((m) => ({ value: m, label: m })),
-            { value: "__manual__", label: "Enter manually..." },
-          ],
-          initialValue: currentLmsModel && lmsModels.includes(currentLmsModel) ? currentLmsModel : lmsModels[0],
-        }),
-      );
-      if (modelChoice === "__manual__") {
-        model = await prompt(() =>
-          p.text({
-            message: "Model name:",
-            placeholder: currentLmsModel ?? "local-model",
-            ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
-            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-          }),
-        );
-      } else {
-        model = modelChoice;
-      }
-    } else {
-      model = await prompt(() =>
-        p.text({
-          message: "Model name:",
-          placeholder: currentLmsModel ?? "local-model",
-          ...(currentLmsModel ? { defaultValue: currentLmsModel } : {}),
-          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-        }),
-      );
-    }
-    llm = {
-      provider: "lmstudio",
-      endpoint: endpoint.trim(),
-      model: model.trim(),
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
+    const endpoint = await promptEndpointUrl({ placeholder: currentLmsEndpoint, defaultValue: currentLmsEndpoint });
+    const model = await promptLmStudioModel(lmStudio, currentLmsModel);
+    llm = llmConnection("lmstudio", endpoint.trim(), model.trim());
   } else {
     // custom
     const currentCustomEndpoint = currentLlmSmall?.provider === "custom" ? currentLlmSmall.endpoint : undefined;
     const currentCustomModel = currentLlmSmall?.provider === "custom" ? currentLlmSmall.model : undefined;
-    const endpoint = await prompt(() =>
-      p.text({
-        message: "OpenAI-compatible chat completions endpoint:",
-        placeholder: currentCustomEndpoint ?? "https://your-host/v1/chat/completions",
-        ...(currentCustomEndpoint ? { defaultValue: currentCustomEndpoint } : {}),
-        validate: (v) => {
-          if (!v?.trim()) return "Endpoint cannot be empty";
-          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
-        },
-      }),
+    const endpoint = await promptEndpointUrl({
+      message: "OpenAI-compatible chat completions endpoint:",
+      placeholder: currentCustomEndpoint ?? "https://your-host/v1/chat/completions",
+      defaultValue: currentCustomEndpoint,
+    });
+    const model = await promptModelName({
+      placeholder: currentCustomModel ?? "gpt-4o-mini",
+      defaultValue: currentCustomModel,
+    });
+    const apiKeyInput = await promptApiKeyEnvVarName();
+    llm = llmConnection(
+      "custom",
+      endpoint.trim(),
+      model.trim(),
+      apiKeyInput?.trim() ? { apiKey: `\${${apiKeyInput.trim()}}` } : {},
     );
-    const model = await prompt(() =>
-      p.text({
-        message: "Model name:",
-        placeholder: currentCustomModel ?? "gpt-4o-mini",
-        ...(currentCustomModel ? { defaultValue: currentCustomModel } : {}),
-        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-      }),
-    );
-    const apiKeyInput = await promptOrBack(() =>
-      p.text({
-        message: "API key environment variable name (optional):",
-        placeholder: "CUSTOM_LLM_API_KEY",
-        validate: (value) =>
-          value && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
-            ? "Use an environment variable name, not a key value"
-            : undefined,
-      }),
-    );
-    llm = {
-      provider: "custom",
-      endpoint: endpoint.trim(),
-      model: model.trim(),
-      temperature: 0.3,
-      maxTokens: 1024,
-      ...(apiKeyInput?.trim() ? { apiKey: `\${${apiKeyInput.trim()}}` } : {}),
-    };
   }
 
   // Best-effort probe — never blocks setup.
-  const probeSpin = p.spinner();
-  probeSpin.start("Probing LLM (structured-output round-trip)...");
-  const probe = await probeLlmCapabilities(llm);
-  if (probe.reachable && probe.structuredOutput) {
-    probeSpin.stop("LLM reachable; structured output verified.");
-    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: true };
-  } else if (probe.reachable) {
-    probeSpin.stop("LLM reachable but structured-output probe failed.");
-    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: false };
-  } else {
-    probeSpin.stop("LLM not reachable.");
-    p.log.warn(
-      `Could not reach the LLM endpoint${probe.error ? ` (${probe.error})` : ""}. Configuration was saved; verify your endpoint and API key, then retry.`,
-    );
-  }
+  await probeLlmConnection(llm);
 
   return { llm, skipped: false, ollamaEndpoint };
 }
@@ -828,14 +610,11 @@ export async function stepAgentConnection(
       const profileName = `${smallModel.llm.provider ?? "default"}-agent`;
       // Pre-populate from existing agent profile for this provider, if any.
       const existingAgentModel = currentAgentBlock?.engines?.[profileName]?.model ?? smallModel.llm.model ?? undefined;
-      const agentModel = await prompt(() =>
-        p.text({
-          message: "Model to use for agent tasks (same model is fine, larger models work better):",
-          placeholder: existingAgentModel ?? "qwen2.5-coder:32b",
-          ...(existingAgentModel ? { defaultValue: existingAgentModel } : {}),
-          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-        }),
-      );
+      const agentModel = await promptModelName({
+        message: "Model to use for agent tasks (same model is fine, larger models work better):",
+        placeholder: existingAgentModel ?? "qwen2.5-coder:32b",
+        defaultValue: existingAgentModel,
+      });
       return {
         ...(currentAgentBlock ?? {}),
         engines: {
@@ -883,35 +662,17 @@ export async function stepAgentConnection(
   const currentCustomAgentProfile = currentAgentBlock?.engines?.["custom-agent"];
   const currentNewEndpoint = undefined;
   const currentNewModel = currentCustomAgentProfile?.model ?? undefined;
-  const newEndpoint = await prompt(() =>
-    p.text({
-      message: "OpenAI-compatible chat completions endpoint:",
-      placeholder: currentNewEndpoint ?? "https://your-host/v1/chat/completions",
-      ...(currentNewEndpoint ? { defaultValue: currentNewEndpoint } : {}),
-      validate: (v) => {
-        if (!v?.trim()) return "Endpoint cannot be empty";
-        if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
-      },
-    }),
-  );
-  const newApiKeyInput = await promptOrBack(() =>
-    p.text({
-      message: "API key environment variable name (optional):",
-      placeholder: "CUSTOM_LLM_API_KEY",
-      validate: (value) =>
-        value && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
-          ? "Use an environment variable name, not a key value"
-          : undefined,
-    }),
-  );
-  const newModel = await prompt(() =>
-    p.text({
-      message: "Model name (larger is better, e.g. gpt-4o):",
-      placeholder: currentNewModel ?? "gpt-4o",
-      ...(currentNewModel ? { defaultValue: currentNewModel } : {}),
-      validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-    }),
-  );
+  const newEndpoint = await promptEndpointUrl({
+    message: "OpenAI-compatible chat completions endpoint:",
+    placeholder: currentNewEndpoint ?? "https://your-host/v1/chat/completions",
+    defaultValue: currentNewEndpoint,
+  });
+  const newApiKeyInput = await promptApiKeyEnvVarName();
+  const newModel = await promptModelName({
+    message: "Model name (larger is better, e.g. gpt-4o):",
+    placeholder: currentNewModel ?? "gpt-4o",
+    defaultValue: currentNewModel,
+  });
 
   const llmEngineName = "custom-llm";
   const agentEngineName = "custom-agent";
