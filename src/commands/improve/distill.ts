@@ -672,82 +672,24 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
  * `distill_invoked` event (with `outcome` in the metadata) regardless of the
  * branch taken — so observers can count invocations cheaply.
  */
-export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
-  const inputRef = options.ref.trim();
-  if (!inputRef) {
-    throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
-  }
-  // Validate the ref shape up front so a typo never reaches the LLM.
-  const parsedInputRef = parseAssetRef(inputRef);
-  const durableInputRef = durableImproveRef(inputRef, options.sourceName);
-  const targetKind = options.proposalKind ?? "lesson";
-
-  // Attribution tagging: spread into every distill_invoked event's metadata so
-  // the lane that selected this asset is recorded uniformly across all outcome
-  // branches. Empty object when no lane was supplied (direct `akm distill`).
-  const eligMeta: { eligibilitySource?: EligibilitySource } = options.eligibilitySource
-    ? { eligibilitySource: options.eligibilitySource }
-    : {};
-
-  // Recursive-distillation guard. Distill produces *lessons* from non-lesson
-  // sources (memory, skill, knowledge, etc.). Calling distill on an existing
-  // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
-  // suffix) and route a "lesson of a lesson" through the proposal queue —
-  // observed in 323 reviewed archived proposals as the recursive-ref defect.
-  // Refuse the input here so the improve loop (or other callers) get a clean
-  // skipped outcome instead of producing nonsense refs.
-  //
-  // The refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
-  // the improve planner can skip these refs before queuing distill attempts;
-  // this runtime check stays as a defensive backstop for direct callers.
-  if (isDistillRefusedInputType(parsedInputRef.type)) {
-    // 08-F2: env/secret are a secret-material refusal (never read the bytes);
-    // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
-    const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
-    const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
-    const message = isSecretInput
-      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
-      : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: skippedRef,
-        message,
-        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
-        ...eligMeta,
-      },
-    });
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      lessonRef: skippedRef,
-      message,
-    };
-  }
-
-  const config = options.config ?? loadConfig();
-  options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
-  const stash = options.stashDir ?? resolveStashDir();
-  const chat = options.chat ?? chatCompletion;
-  const distillLlm = Object.hasOwn(options, "llmConfig")
-    ? (options.llmConfig ?? undefined)
-    : (() => {
-        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
-        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
-      })();
-  const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
-  const readEventsImpl = options.readEventsFn ?? readEvents;
-  // R1 opt-out must flow into every computeSalience call this command makes so
-  // distill-written rank_score rows use the same weights as preparation's.
-  const outcomeWeightEnabled = config.improve?.salience?.outcomeWeightEnabled !== false;
-  // D-4 / #390: similar-lessons retrieval seam (test-injectable).
-  const fetchSimilarLessonsFn =
-    options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
-
+/**
+ * Best-effort load of the distill INPUT asset plus the #608 encoding-time
+ * salience scoring: read the source, build the once-per-invocation bigram ref
+ * vocabulary, then score the asset (novelty×0.40 + magnitude×0.35 +
+ * predictionError×0.25) and mirror the result to both the asset frontmatter and
+ * `state.db :: asset_salience`. Every write is best-effort. Extracted verbatim
+ * from `akmDistill`; returns the (possibly salience-stamped) content plus the
+ * ref vocabulary the caller reuses when scoring the distilled OUTPUT (G4).
+ */
+async function loadAndScoreInputSalience(args: {
+  inputRef: string;
+  durableInputRef: string;
+  stash: string;
+  config: AkmConfig;
+  outcomeWeightEnabled: boolean;
+  lookup: (ref: string) => Promise<string | null>;
+}): Promise<{ assetContent: string | null; existingRefVocabulary: Set<string> }> {
+  const { inputRef, durableInputRef, stash, config, outcomeWeightEnabled, lookup } = args;
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
   let assetContent: string | null = null;
@@ -831,6 +773,94 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       // Scoring errors never block distillation.
     }
   }
+
+  return { assetContent, existingRefVocabulary };
+}
+
+export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
+  const inputRef = options.ref.trim();
+  if (!inputRef) {
+    throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
+  }
+  // Validate the ref shape up front so a typo never reaches the LLM.
+  const parsedInputRef = parseAssetRef(inputRef);
+  const durableInputRef = durableImproveRef(inputRef, options.sourceName);
+  const targetKind = options.proposalKind ?? "lesson";
+
+  // Attribution tagging: spread into every distill_invoked event's metadata so
+  // the lane that selected this asset is recorded uniformly across all outcome
+  // branches. Empty object when no lane was supplied (direct `akm distill`).
+  const eligMeta: { eligibilitySource?: EligibilitySource } = options.eligibilitySource
+    ? { eligibilitySource: options.eligibilitySource }
+    : {};
+
+  // Recursive-distillation guard. Distill produces *lessons* from non-lesson
+  // sources (memory, skill, knowledge, etc.). Calling distill on an existing
+  // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
+  // suffix) and route a "lesson of a lesson" through the proposal queue —
+  // observed in 323 reviewed archived proposals as the recursive-ref defect.
+  // Refuse the input here so the improve loop (or other callers) get a clean
+  // skipped outcome instead of producing nonsense refs.
+  //
+  // The refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
+  // the improve planner can skip these refs before queuing distill attempts;
+  // this runtime check stays as a defensive backstop for direct callers.
+  if (isDistillRefusedInputType(parsedInputRef.type)) {
+    // 08-F2: env/secret are a secret-material refusal (never read the bytes);
+    // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
+    const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
+    const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
+    const message = isSecretInput
+      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+      : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
+    appendEvent({
+      eventType: "distill_invoked",
+      ref: durableInputRef,
+      metadata: {
+        outcome: "skipped" as const,
+        lessonRef: skippedRef,
+        message,
+        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
+        ...eligMeta,
+      },
+    });
+    return {
+      schemaVersion: 1,
+      ok: true,
+      outcome: "skipped",
+      inputRef,
+      lessonRef: skippedRef,
+      message,
+    };
+  }
+
+  const config = options.config ?? loadConfig();
+  options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
+  const stash = options.stashDir ?? resolveStashDir();
+  const chat = options.chat ?? chatCompletion;
+  const distillLlm = Object.hasOwn(options, "llmConfig")
+    ? (options.llmConfig ?? undefined)
+    : (() => {
+        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
+        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+      })();
+  const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
+  const readEventsImpl = options.readEventsFn ?? readEvents;
+  // R1 opt-out must flow into every computeSalience call this command makes so
+  // distill-written rank_score rows use the same weights as preparation's.
+  const outcomeWeightEnabled = config.improve?.salience?.outcomeWeightEnabled !== false;
+  // D-4 / #390: similar-lessons retrieval seam (test-injectable).
+  const fetchSimilarLessonsFn =
+    options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
+
+  const { assetContent, existingRefVocabulary } = await loadAndScoreInputSalience({
+    inputRef,
+    durableInputRef,
+    stash,
+    config,
+    outcomeWeightEnabled,
+    lookup,
+  });
 
   const { events: unfilteredEvents } = readEventsImpl({
     ...(!options.legacyBareState ? { ref: durableInputRef } : {}),
