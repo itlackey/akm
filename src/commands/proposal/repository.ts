@@ -2054,4 +2054,3 @@ function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): str
     return undefined;
   }
 }
-

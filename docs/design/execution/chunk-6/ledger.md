@@ -45,3 +45,16 @@ preferred); the DDL characterization suite must be RESTORED from
 orphaned at HEAD); health autoAccept window keys stay zero-valued
 (frozen-golden-compatible); shipped default tasks' --auto-accept flag
 semantics decided with WI-6.1.
+
+## WI-6.6b — bulkAdjudicateProposals (landed with this entry)
+
+The two near-identical bulk --generator loops in proposal-cli.ts (accept
+:110–155, reject :214–259) + their verbatim-duplicated flag validation
+collapse onto one bulkAdjudicateProposals(action, generator, filters) in
+proposal.ts and a shared parseBulkFilterFlags CLI helper. Behavior
+verbatim: same filter order (source → maxDiffLines on payload content
+lines → olderThan on createdAt), same per-item accept/reject envelopes,
+same dry-run record shape, same batch output shapes; the destructive
+confirm prompt stays CLI-side. Suites: proposal-cli (bulk safety guard +
+WS3 bulk paths) 44 green incl. frozen outcome oracles; gates 28/28.
+Net: proposal-cli.ts −67, proposal.ts +63.
