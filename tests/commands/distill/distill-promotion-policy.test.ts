@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   assessMemoryKnowledgePromotionCandidate,
+  DEFAULT_PROMOTION_POLICY_SELECTION,
   deriveKnowledgeRef,
   evaluateMemoryPromotionBenchmark,
-  getDefaultPromotionPolicySelection,
   type PromotionBenchmarkCase,
+  selectPromotionPolicy,
 } from "../../../src/commands/improve/distill-promotion-policy";
 import { DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
 
@@ -20,7 +21,7 @@ describe("distill promotion policy", () => {
   });
 
   test("selected model is derived from a larger train/held-out corpus", () => {
-    const selection = getDefaultPromotionPolicySelection();
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS);
 
     expect(DEFAULT_PROMOTION_POLICY_CORPUS.length).toBeGreaterThanOrEqual(20);
     expect(selection.trainingSize).toBeGreaterThan(0);
@@ -30,7 +31,7 @@ describe("distill promotion policy", () => {
   });
 
   test("selected model beats simpler held-out baselines", () => {
-    const selection = getDefaultPromotionPolicySelection();
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS);
 
     expect(selection.heldOut.f1).toBeGreaterThanOrEqual(0.8);
     expect(selection.heldOut.netOutcomeScore).toBeGreaterThan(0);
@@ -61,7 +62,7 @@ describe("distill promotion policy", () => {
     const promoted = assessMemoryKnowledgePromotionCandidate(DEFAULT_PROMOTION_POLICY_CORPUS[0].input);
 
     expect(promoted.promote).toBe(true);
-    expect(promoted.modelName).toBe(getDefaultPromotionPolicySelection().selectedModel.name);
+    expect(promoted.modelName).toBe(DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name);
     expect(promoted.content).toContain("xrefs:");
     expect(promoted.content).toContain("memory:deploy-vpn-required");
     expect(promoted.content).toContain("Always connect the VPN before starting production deploys.");
