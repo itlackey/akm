@@ -14,23 +14,13 @@
  * config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { piBuilder } from "./agent-builder";
 import { piResultExtractor } from "./result-extractor";
 
 export { PI_PLATFORM, piBuilder } from "./agent-builder";
 export { piResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Pi coding-agent CLI.

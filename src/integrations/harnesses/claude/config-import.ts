@@ -18,10 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { HarnessConfigImporter } from "../../../setup/harness-config-import";
-
-function homeDir(): string {
-  return process.env.HOME ?? process.env.USERPROFILE ?? "";
-}
+import { homeDir } from "../shared";
 
 /**
  * Imports LLM config from a Claude Code installation.

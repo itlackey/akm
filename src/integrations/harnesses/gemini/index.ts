@@ -14,23 +14,13 @@
  * reader or config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { geminiBuilder } from "./agent-builder";
 import { geminiResultExtractor } from "./result-extractor";
 
 export { GEMINI_PLATFORM, geminiBuilder } from "./agent-builder";
 export { geminiResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Gemini CLI.

@@ -23,18 +23,8 @@
  * breaks the cycle.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 
 /**
  * OpenCode SDK (embedded-SDK dispatch path).

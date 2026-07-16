@@ -14,23 +14,13 @@
  * reader or config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { openhandsBuilder } from "./agent-builder";
 import { openhandsResultExtractor } from "./result-extractor";
 
 export { OPENHANDS_MODEL_ENV, OPENHANDS_PLATFORM, openhandsBuilder } from "./agent-builder";
 export { openhandsResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * OpenHands CLI.

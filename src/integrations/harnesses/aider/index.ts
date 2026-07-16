@@ -14,23 +14,13 @@
  * config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { aiderBuilder } from "./agent-builder";
 import { aiderResultExtractor } from "./result-extractor";
 
 export { AIDER_PLATFORM, aiderBuilder } from "./agent-builder";
 export { aiderResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Aider.

@@ -15,23 +15,13 @@
  * cloud-delegate pattern and is a separate, future descriptor.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { copilotBuilder } from "./agent-builder";
 import { copilotResultExtractor } from "./result-extractor";
 
 export { COPILOT_PLATFORM, copilotBuilder } from "./agent-builder";
 export { copilotResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * GitHub Copilot CLI (local headless CLI, not the cloud coding agent).

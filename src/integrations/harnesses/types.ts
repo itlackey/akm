@@ -25,6 +25,12 @@
 
 import type { AgentCommandBuilder, AgentResultExtractor } from "../agent/builder-shared";
 import type { SessionLogHarness } from "../session-logs/types";
+import type { HarnessCapabilities } from "./shared";
+
+// `HarnessCapabilities` lives in `./shared` (a cycle-free dependency sink —
+// see that module's doc comment) and is re-exported here so this file stays
+// the interface home for existing import sites.
+export type { HarnessCapabilities } from "./shared";
 
 /**
  * Which of the three workflow-engine execution patterns this harness uses
@@ -49,24 +55,6 @@ export type HarnessExecutionPattern = "in-harness" | "local-runner" | "cloud-del
  * All three tiers funnel through the engine's one retry-until-valid loop.
  */
 export type HarnessStructuredOutput = "native-schema" | "native-json" | "none";
-
-/**
- * Capability flags describing which of akm's six integration surfaces a
- * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
- * relevant flag instead of maintaining its own list.
- */
-export interface HarnessCapabilities {
-  /** Has readable native session logs (`akm extract`, session-logs index). */
-  readonly sessionLogs: boolean;
-  /** Can be spawned as an agent CLI / SDK (`akm propose`, reflect, tasks). */
-  readonly agentDispatch: boolean;
-  /** Participates in PATH/env detection during `akm setup`. */
-  readonly detection: boolean;
-  /** Can import an existing harness LLM/config into akm config. */
-  readonly configImport: boolean;
-  /** Reports a runtime identity string for workflow run attribution. */
-  readonly runtimeIdentity: boolean;
-}
 
 /**
  * A single harness's identity + capability membership.

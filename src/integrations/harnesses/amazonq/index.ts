@@ -15,23 +15,13 @@
  * reader or config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { amazonqBuilder } from "./agent-builder";
 import { amazonqResultExtractor } from "./result-extractor";
 
 export { AMAZONQ_PLATFORM, amazonqBuilder } from "./agent-builder";
 export { amazonqResultExtractor, stripTerminalFraming } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Amazon Q Developer CLI (`q`).

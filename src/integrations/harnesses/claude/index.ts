@@ -27,7 +27,8 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { claudeBuilder } from "./agent-builder";
 import { claudeResultExtractor } from "./result-extractor";
 import { ClaudeCodeProvider } from "./session-log";
@@ -36,17 +37,6 @@ export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
 export { claudeResultExtractor } from "./result-extractor";
 export { ClaudeCodeProvider } from "./session-log";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Claude Code.

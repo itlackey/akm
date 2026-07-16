@@ -20,24 +20,14 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { opencodeBuilder } from "./agent-builder";
 import { OpenCodeProvider } from "./session-log";
 
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
 export { OpenCodeProvider } from "./session-log";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * OpenCode.
