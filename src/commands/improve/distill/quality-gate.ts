@@ -19,6 +19,8 @@ import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { withStateDb } from "../../../core/state-db";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
+import type { LlmFeatureKey } from "../../../llm/feature-gate";
+import { callStructured } from "../../../llm/structured-call";
 import { akmSearch } from "../../read/search";
 import type { AkmDistillResult, DistillOutcome } from "../distill";
 import { scoreEncodingSalience } from "../encoding-salience";
@@ -192,9 +194,10 @@ export interface QualityJudgeOptions {
 }
 
 async function runQualityJudge(
+  feature: LlmFeatureKey,
   config: AkmConfig,
   prompt: string,
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
   const llmConfig = options.llmConfig ?? getDefaultLlmConfig(config);
@@ -202,18 +205,27 @@ async function runQualityJudge(
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
   try {
-    const raw = await chat(
-      llmConfig,
-      [
+    // UNGATED at the seam (no akmConfig): the quality gates' enablement is
+    // resolved by the caller before this function runs, and a transport throw
+    // propagates into the fail-closed catch below. `feature` labels the call.
+    const raw = await callStructured<string>({
+      feature,
+      config: llmConfig,
+      messages: [
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: prompt },
       ],
-      {
+      request: {
         enableThinking: false,
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
+        ...(chat ? { chat } : {}),
       },
-    );
+      parse: (rawResponse) => rawResponse ?? "",
+      // Unreachable on the ungated path (errors propagate); fail closed anyway.
+      onError: () => "",
+      fallback: "",
+    });
     const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
     if (
       !parsed ||
@@ -255,10 +267,16 @@ export async function runLessonQualityJudge(
   config: AkmConfig,
   lessonContent: string,
   sourceContent: string,
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(config, buildJudgePrompt(lessonContent, sourceContent, options.similarLessons), chat, options);
+  return runQualityJudge(
+    "lesson_quality_gate",
+    config,
+    buildJudgePrompt(lessonContent, sourceContent, options.similarLessons),
+    chat,
+    options,
+  );
 }
 
 /** Judge an in-place reflect revision without applying new-lesson novelty criteria. */
@@ -267,10 +285,16 @@ export async function runReflectQualityJudge(
   candidateContent: string,
   sourceContent: string,
   feedback: string[],
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(config, buildReflectJudgePrompt(candidateContent, sourceContent, feedback), chat, options);
+  return runQualityJudge(
+    "proposal_quality_gate",
+    config,
+    buildReflectJudgePrompt(candidateContent, sourceContent, feedback),
+    chat,
+    options,
+  );
 }
 
 // ── Quality-rejection helper ─────────────────────────────────────────────────

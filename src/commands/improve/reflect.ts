@@ -57,7 +57,8 @@ import {
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
-import { type ChatMessage, chatCompletion } from "../../llm/client";
+import type { ChatMessage, chatCompletion } from "../../llm/client";
+import { callStructured } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -893,14 +894,27 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
   }
 
   try {
-    const stdout = await (opts.chat ?? chatCompletion)(opts.connection, messages, {
-      ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-      ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
-      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-      // Reflect requires a machine-readable payload. Visible chain-of-thought
-      // can consume the output cap before the model reaches the JSON object.
-      enableThinking: false,
+    // UNGATED at the seam (no akmConfig): reflect enablement is resolved by
+    // the improve strategy before dispatch, and errors propagate into the
+    // catch below, folding into the failure-shaped AgentRunResult.
+    const stdout = await callStructured<string>({
+      feature: "reflect_proposal",
+      config: opts.connection,
+      messages,
+      request: {
+        ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
+        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+        // Reflect requires a machine-readable payload. Visible chain-of-thought
+        // can consume the output cap before the model reaches the JSON object.
+        enableThinking: false,
+        ...(opts.chat ? { chat: opts.chat } : {}),
+      },
+      parse: (raw) => raw ?? "",
+      // Unreachable on the ungated path (errors propagate to the catch below).
+      onError: () => "",
+      fallback: "",
     });
     return {
       ok: true,
@@ -1071,7 +1085,7 @@ async function finalizeReflectProposal(args: {
       payload.content,
       assetContent ?? "",
       feedback,
-      options.chat ?? chatCompletion,
+      options.chat,
       {
         ...(runnerIsLlm(runnerSpec) ? { llmConfig: materializeLlmRunnerConnection(runnerSpec) } : {}),
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
