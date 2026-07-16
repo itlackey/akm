@@ -10,6 +10,7 @@
  * the main text module.
  */
 
+import { createCommandRegistry } from "../command-registry";
 import type { DetailLevel } from "../context";
 
 /**
@@ -33,7 +34,7 @@ export interface TextFormatterEntry {
   handler: TextFormatterHandler;
 }
 
-const TEXT_FORMATTER_REGISTRY = new Map<string, TextFormatterHandler>();
+const TEXT_FORMATTER_REGISTRY = createCommandRegistry<TextFormatterHandler>();
 
 /**
  * Register a plain-text formatter for a command name.
@@ -46,7 +47,7 @@ const TEXT_FORMATTER_REGISTRY = new Map<string, TextFormatterHandler>();
  * ```
  */
 export function registerTextFormatter(command: string, handler: TextFormatterHandler): void {
-  TEXT_FORMATTER_REGISTRY.set(command, handler);
+  TEXT_FORMATTER_REGISTRY.register(command, handler);
 }
 
 /**
@@ -57,16 +58,14 @@ export function registerTextFormatter(command: string, handler: TextFormatterHan
  * with no reliance on module import order.
  */
 export function registerTextFormatters(entries: Iterable<TextFormatterEntry>): void {
-  for (const { command, handler } of entries) {
-    TEXT_FORMATTER_REGISTRY.set(command, handler);
-  }
+  TEXT_FORMATTER_REGISTRY.registerAll(entries);
 }
 
 /**
  * Remove a previously-registered text formatter. Test-only utility.
  */
 export function deregisterTextFormatter(command: string): void {
-  TEXT_FORMATTER_REGISTRY.delete(command);
+  TEXT_FORMATTER_REGISTRY.deregister(command);
 }
 
 /**
