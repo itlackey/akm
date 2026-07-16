@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { ndcgAtK } from "../../../../scripts/akm-eval/src/rank-metrics";
 import {
   type CollapseDetectorConfig,
   computeCycleMetrics,
@@ -26,7 +27,6 @@ import {
   runCollapseDetector,
 } from "../../../../src/commands/improve/collapse-detector";
 import { saveConfig } from "../../../../src/core/config/config";
-import { ndcgAtK } from "../../../../src/core/eval/rank-metrics";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { closeDatabase, openExistingDatabase } from "../../../../src/indexer/db/db";
 import { akmIndex } from "../../../../src/indexer/indexer";

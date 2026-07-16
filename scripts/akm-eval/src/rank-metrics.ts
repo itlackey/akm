@@ -9,12 +9,18 @@
  * "keyword leapfrog" bug ship past a recall-only check (a junk hit and a good
  * hit both being present scores 1.0 on recall even when junk ranks first).
  *
- * Shared by the akm-eval harness runner (`runners/curate.ts`, black-box CLI),
- * the in-process CI guard (`tests/curate-golden-eval.test.ts`), and the R5
- * collapse/churn detector (`src/commands/improve/collapse-detector.ts`). No
- * IO, no akm imports — just arrays of refs in returned order vs. labeled
- * judgments. Moved here from `scripts/akm-eval/src/curate-metrics.ts` (which
- * re-exports this module) so src/ code never imports from scripts/.
+ * Canonical home (chunk-9 WI-9.4e, anchors C.3 — moved verbatim from
+ * `src/core/eval/rank-metrics.ts`, which had zero `src/` importers). Real
+ * consumers: the akm-eval harness runner (`curate-bench.ts`, black-box CLI,
+ * via the sibling `curate-metrics.ts` re-export shim), the in-process CI
+ * guards `tests/curate-metrics.test.ts` and
+ * `tests/integration/curate-golden-eval.test.ts` (both via that same shim),
+ * and the R5 collapse/churn detector's INTEGRATION TEST
+ * (`tests/integration/commands/improve/collapse-detector.test.ts`, which
+ * imports `ndcgAtK` directly to score its collapse simulation) — NOT the
+ * `src/commands/improve/collapse-detector.ts` production module itself,
+ * which never imported this file. No IO, no akm imports — just arrays of
+ * refs in returned order vs. labeled judgments.
  */
 
 export interface CurateJudgment {
