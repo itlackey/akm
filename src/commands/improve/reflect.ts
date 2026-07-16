@@ -1212,6 +1212,364 @@ function createReflectProposal(args: {
   };
 }
 
+/**
+ * Resolve the agent's proposal payload from a successful run: the file-write
+ * contract path (read `lastDraftPath`, extract self-rated confidence) or the
+ * legacy JSON-stdout path (`parseAgentProposalPayload`, with the raw-content
+ * fallback and cooldown-signal reclassification). Returns the payload or a
+ * terminal failure envelope. Extracted verbatim from `akmReflect`.
+ */
+function resolveReflectPayload(args: {
+  result: AgentRunResult;
+  lastDraftPath: string | undefined;
+  sensitiveValues: readonly string[];
+  options: AkmReflectOptions;
+  runnerSpec: RunnerSpec;
+  engineName: string;
+  emitReflectFailed: (
+    reason: AgentFailureReason,
+    subreason: string,
+    ref?: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+}): { payload: ReturnType<typeof parseAgentProposalPayload> } | { failure: AkmReflectResult } {
+  const { result, lastDraftPath, sensitiveValues, options, runnerSpec, engineName, emitReflectFailed } = args;
+  // 6. Resolve the proposal content.
+  //
+  // Path A (file-write contract — preferred for agent/sdk runners on long
+  // assets): the agent wrote the body to `lastDraftPath` and printed
+  // `DRAFT_WRITTEN` on stdout. Load the body from disk and synthesize a
+  // payload. The `EXCESSIVE_EXPANSION`/schema-shape gates downstream still
+  // apply — they validate content, not transport.
+  //
+  // Path B (legacy JSON stdout): the agent inlined the proposal body in
+  // JSON on stdout. Falls through to `parseAgentProposalPayload`. Also the
+  // path used by the LLM HTTP runner, which cannot honour file-write.
+  const draftFileExists =
+    lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
+  const draftSignaled = stdoutSignalsDraftWritten(result.stdout);
+
+  if (draftSignaled && lastDraftPath && !draftFileExists) {
+    // Agent claimed to write the draft but the file is missing or empty.
+    // Surface as a parse_error rather than silently falling through — the
+    // alternative would be parsing the `DRAFT_WRITTEN` sentinel as JSON,
+    // which is guaranteed to fail with a confusing message.
+    emitReflectFailed("parse_error", "draft_missing", options.ref, {
+      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+    });
+    return {
+      failure: {
+        schemaVersion: 2,
+        ok: false,
+        reason: "parse_error",
+        error: `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      },
+    };
+  }
+
+  if (draftFileExists && lastDraftPath) {
+    // Happy path: agent wrote the body to disk. Use the ref the caller
+    // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
+    // below has no effect when there is no expected ref).
+    const fileContent = redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues);
+    // Phase 6A: file-write contract carries self-rated confidence on the
+    // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
+    // file-write path is on equal footing with the JSON-stdout path for
+    // auto-accept gating in `akm improve`.
+    const draftConfidence = extractDraftConfidence(result.stdout);
+    return {
+      payload: {
+        ref: options.ref ?? "",
+        content: fileContent,
+        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
+      },
+    };
+  }
+
+  try {
+    return { payload: parseAgentProposalPayload(result.stdout ?? "") };
+  } catch (err) {
+    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, runnerSpec.kind === "sdk");
+    if (fallback) {
+      return { payload: fallback };
+    }
+    // Reclassify cooldown/skip messages that arrive as stdout text instead of
+    // valid proposal JSON. These are legitimate skip signals, not parse failures,
+    // and should not pollute reflectFailedActions or recentErrors injection.
+    const stdoutText = result.stdout ?? "";
+    const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
+    const reason: AgentFailureReason = isCooldownSignal ? "cooldown" : "parse_error";
+    emitReflectFailed(reason, isCooldownSignal ? "stdout_cooldown_signal" : "parse_error", options.ref, {
+      ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+    });
+    return {
+      failure: {
+        schemaVersion: 2,
+        ok: false,
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      },
+    };
+  }
+}
+
+/**
+ * Resolve the single named engine for a reflect invocation (standalone --engine
+ * / defaults.engine, or the improve strategy's LLM-only process overlay),
+ * throwing on any incompatible or missing engine, and validating the unattended
+ * LLM requirement. Extracted verbatim from `akmReflect`.
+ */
+function resolveReflectRunner(options: AkmReflectOptions): {
+  config: import("../../core/config/config").AkmConfig;
+  activeStrategy: import("../../core/config/config").ImproveProfileConfig | undefined;
+  runnerSpec: RunnerSpec;
+  engineName: string;
+} {
+  const config = options.config ?? loadConfig();
+  const activeStrategy =
+    options.improveProfile ?? config.improve?.strategies?.[config.defaults?.improveStrategy ?? "default"];
+  let runnerSpec: RunnerSpec;
+  if (options.runner) {
+    runnerSpec = options.runner;
+  } else if (Object.hasOwn(options, "runner")) {
+    throw new ConfigError(
+      "Reflect requires an LLM engine for the active improve invocation.",
+      "LLM_NOT_CONFIGURED",
+      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
+    );
+  } else if (options.engine) {
+    runnerSpec = resolveEngine(options.engine, config);
+  } else if (options.improveProfile) {
+    const processRunner = resolveImproveProcessRunner(activeStrategy, "reflect", config);
+    if (!processRunner) {
+      throw new ConfigError(
+        "Reflect requires an LLM engine for the active improve strategy.",
+        "LLM_NOT_CONFIGURED",
+        "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
+      );
+    }
+    runnerSpec = processRunner;
+  } else {
+    const defaultEngine = config.defaults?.engine;
+    if (!defaultEngine) {
+      throw new ConfigError("reflect requires --engine or defaults.engine.", "INVALID_CONFIG_FILE");
+    }
+    runnerSpec = resolveEngine(defaultEngine, config);
+  }
+  if (options.eventSource === "improve" && !runnerIsLlm(runnerSpec)) {
+    throw new ConfigError(
+      `Unattended improve requires an LLM engine for reflect; engine "${runnerSpec.engine ?? options.engine ?? "unknown"}" is tool-capable.`,
+      "INVALID_CONFIG_FILE",
+      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine to an LLM engine.",
+    );
+  }
+  const engineName = runnerSpec.engine ?? options.engine;
+  if (!engineName) {
+    throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
+  }
+  return { config, activeStrategy, runnerSpec, engineName };
+}
+
+/**
+ * Resolve the reflect target's parsed ref + current on-disk content: enforce the
+ * REFLECT_ALLOWED_TYPES markdown-canonical type guard (returning a terminal
+ * `unsupported_type` failure), honour the `options.assetContent` test seam, else
+ * best-effort load via the local file path / index lookup. Extracted verbatim
+ * from `akmReflect`.
+ */
+async function resolveReflectSource(
+  options: AkmReflectOptions,
+  stash: string,
+  emitReflectFailed: (
+    reason: AgentFailureReason,
+    subreason: string,
+    ref?: string,
+    extra?: Record<string, unknown>,
+  ) => void,
+): Promise<{ assetContent: string | undefined; parsedRef: AssetRef | undefined } | { failure: AkmReflectResult }> {
+  let assetContent: string | undefined;
+  let parsedRef: AssetRef | undefined;
+  if (options.ref) {
+    parsedRef = parseAssetRef(options.ref);
+
+    // 2a. Type guard — reflect only operates on asset types whose canonical
+    // shape is `frontmatter + markdown body`. Refuse non-markdown types
+    // (script / env / task) up-front so reflect never prepends YAML to a
+    // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
+    if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
+      // Deterministic type-guard rejection — the LLM is never invoked. Emit
+      // with reason `unsupported_type` so the improve loop can route this to
+      // the `reflect-skipped` action bucket instead of `reflect-failed`. See
+      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a
+      // ("Reflect refused asset type" — ~9% of reflect-failed events).
+      emitReflectFailed("unsupported_type", "unsupported_type", options.ref, { type: parsedRef.type });
+      return {
+        failure: {
+          schemaVersion: 2,
+          ok: false,
+          reason: "unsupported_type" as AgentFailureReason,
+          error: `Reflect refused: asset type "${parsedRef.type}" is not supported by reflect (only markdown-canonical types are allowed: ${[...REFLECT_ALLOWED_TYPES].sort().join(", ")}). Use \`akm propose\` or edit the file directly.`,
+          ref: options.ref,
+          exitCode: null,
+        },
+      };
+    }
+
+    if (options.assetContent !== undefined) {
+      // Test seam — caller pre-loaded the source content.
+      assetContent = options.assetContent;
+    } else {
+      try {
+        const qualifiedRef = durableImproveRef(options.ref, options.sourceName);
+        const localFilePath = await findAssetFilePath(qualifiedRef, stash);
+        if (localFilePath && fs.existsSync(localFilePath)) {
+          assetContent = fs.readFileSync(localFilePath, "utf8");
+        } else {
+          const entry = await lookup(parseAssetRef(qualifiedRef));
+          if (entry?.filePath && fs.existsSync(entry.filePath)) {
+            assetContent = fs.readFileSync(entry.filePath, "utf8");
+          }
+        }
+      } catch {
+        // Index miss is non-fatal — the agent can still propose a fresh asset.
+      }
+    }
+  }
+  return { assetContent, parsedRef };
+}
+
+/**
+ * Run the agent with the optional Self-Refine loop (R-1 / #372): up to
+ * MAX_REFINE_ITERS invocations, each injecting the prior draft as self-critique
+ * context and exiting early on a no-op refinement. Synthesizes per-iteration
+ * draft paths into `draftPathsToCleanup` (mutated) and returns the final agent
+ * result + last draft path. Extracted verbatim from `akmReflect`.
+ */
+async function runReflectRefineIterations(args: {
+  options: AkmReflectOptions;
+  parsedRef: AssetRef | undefined;
+  assetContent: string | undefined;
+  feedback: ReturnType<typeof readRecentFeedback>;
+  schemaHints: ReturnType<typeof buildSchemaHints>;
+  relatedLessons: Awaited<ReturnType<typeof readRelatedLessons>>;
+  rejectedProposals: ReturnType<typeof readRejectedProposals>;
+  standardsContext: string;
+  runnerSpec: RunnerSpec;
+  agentEnv: Record<string, string>;
+  draftPathsToCleanup: string[];
+}): Promise<{ result: AgentRunResult; lastDraftPath: string | undefined }> {
+  const {
+    options,
+    parsedRef,
+    assetContent,
+    feedback,
+    schemaHints,
+    relatedLessons,
+    rejectedProposals,
+    standardsContext,
+    runnerSpec,
+    agentEnv,
+    draftPathsToCleanup,
+  } = args;
+  const MAX_REFINE_ITERS = 3;
+  const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
+  // Determine whether this dispatch can honour the file-write contract.
+  // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
+  // LLM HTTP runner does NOT.
+  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
+  // Initialized to a sentinel; always overwritten in the first loop iteration
+  // (maxRefineIters is clamped to >= 1 above).
+  let result = {} as AgentRunResult;
+  let priorDraft: string | undefined;
+  let lastDraftPath: string | undefined;
+
+  for (let iter = 0; iter < maxRefineIters; iter++) {
+    // Synthesize a fresh tmp path per iteration so refinement passes never
+    // clobber an earlier draft (and so reading back is unambiguous).
+    const iterDraftPath = canRunnerWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
+    if (iterDraftPath) {
+      draftPathsToCleanup.push(iterDraftPath);
+      lastDraftPath = iterDraftPath;
+    }
+
+    const { prompt, maxOutputChars } = buildReflectPrompt({
+      ...(options.ref ? { ref: options.ref } : {}),
+      ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+      ...(parsedRef?.name ? { name: parsedRef.name } : {}),
+      ...(assetContent !== undefined ? { assetContent } : {}),
+      ...(feedback.length > 0 ? { feedback } : {}),
+      ...(schemaHints.length > 0 ? { schemaHints } : {}),
+      ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
+      ...(options.task ? { task: options.task } : {}),
+      ...(standardsContext.trim() ? { standardsContext } : {}),
+      ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
+      ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+      // R-1: inject prior draft as self-critique target on iterations > 0
+      ...(priorDraft !== undefined ? { priorDraft } : {}),
+      // Issue A (#reflect-pipeline file-write contract): when the runner can
+      // touch the filesystem, instruct the agent to write the proposal body
+      // to a tmp file instead of inlining it in JSON. Avoids parse failures
+      // on long bodies (e.g. knowledge:systems/KOKORO_USAGE_GUIDE 8.4KB).
+      ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
+    });
+    // Convert char ceiling → token cap for the LLM path: divide by 3 chars/token
+    // (conservative — most models are 3.5–4) and add 500-char overhead for the
+    // JSON wrapper and frontmatter block that surround the body in the response.
+    const maxTokensForLlm = maxOutputChars !== undefined ? Math.ceil((maxOutputChars + 500) / 3) : undefined;
+
+    // Every engine kind crosses the same dispatch seam. Injected spawn/timer
+    // functions remain ordinary run options for deterministic tests.
+    const runOptions: RunAgentOptions = {
+      stdio: "captured",
+      parseOutput: "text",
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
+      ...(options.runAgentOptions ?? {}),
+    };
+    const iterResult = await executeRunner(runnerSpec, prompt ?? "", runOptions, {
+      llm: async (spec, _prompt, opts) =>
+        // LLM HTTP runners cannot honor the file-write contract, so they
+        // return structured JSON through stdout.
+        runReflectViaLlm({
+          prompt,
+          connection: spec.connection,
+          ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+          ...(options.signal ? { signal: options.signal } : {}),
+          priorDraft,
+          iteration: iter,
+          responseSchema: REFLECT_JSON_SCHEMA,
+          chat: options.chat,
+          ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
+        }),
+    });
+
+    result = iterResult;
+
+    if (!iterResult.ok) break; // surface failure after loop
+
+    // On success, extract the draft content for the next iteration.
+    // If the agent returns the same content as the prior draft, stop early
+    // (no-op refinement) to avoid wasting tokens on identical iterations.
+    if (iter < maxRefineIters - 1) {
+      const nextDraft = iterResult.stdout ?? "";
+      if (priorDraft !== undefined && nextDraft === priorDraft) break;
+      priorDraft = nextDraft;
+    }
+  }
+
+  return { result, lastDraftPath };
+}
+
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
   const stash = options.stashDir ?? resolveStashDir();
 
@@ -1258,98 +1616,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   };
 
   // 2. Resolve target asset content (if a ref is supplied).
-  let assetContent: string | undefined;
-  let parsedRef: AssetRef | undefined;
-  if (options.ref) {
-    parsedRef = parseAssetRef(options.ref);
-
-    // 2a. Type guard — reflect only operates on asset types whose canonical
-    // shape is `frontmatter + markdown body`. Refuse non-markdown types
-    // (script / env / task) up-front so reflect never prepends YAML to a
-    // `.ts` file or rewrites a `.env` blob as prose. See REFLECT_ALLOWED_TYPES.
-    if (!REFLECT_ALLOWED_TYPES.has(parsedRef.type)) {
-      // Deterministic type-guard rejection — the LLM is never invoked. Emit
-      // with reason `unsupported_type` so the improve loop can route this to
-      // the `reflect-skipped` action bucket instead of `reflect-failed`. See
-      // `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a
-      // ("Reflect refused asset type" — ~9% of reflect-failed events).
-      emitReflectFailed("unsupported_type", "unsupported_type", options.ref, { type: parsedRef.type });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "unsupported_type" as AgentFailureReason,
-        error: `Reflect refused: asset type "${parsedRef.type}" is not supported by reflect (only markdown-canonical types are allowed: ${[...REFLECT_ALLOWED_TYPES].sort().join(", ")}). Use \`akm propose\` or edit the file directly.`,
-        ref: options.ref,
-        exitCode: null,
-      };
-    }
-
-    if (options.assetContent !== undefined) {
-      // Test seam — caller pre-loaded the source content.
-      assetContent = options.assetContent;
-    } else {
-      try {
-        const qualifiedRef = durableImproveRef(options.ref, options.sourceName);
-        const localFilePath = await findAssetFilePath(qualifiedRef, stash);
-        if (localFilePath && fs.existsSync(localFilePath)) {
-          assetContent = fs.readFileSync(localFilePath, "utf8");
-        } else {
-          const entry = await lookup(parseAssetRef(qualifiedRef));
-          if (entry?.filePath && fs.existsSync(entry.filePath)) {
-            assetContent = fs.readFileSync(entry.filePath, "utf8");
-          }
-        }
-      } catch {
-        // Index miss is non-fatal — the agent can still propose a fresh asset.
-      }
-    }
-  }
+  const sourceResolved = await resolveReflectSource(options, stash, emitReflectFailed);
+  if ("failure" in sourceResolved) return sourceResolved.failure;
+  const { assetContent, parsedRef } = sourceResolved;
 
   // 3. Resolve exactly one named engine. Standalone reflect uses --engine or
   // defaults.engine; improve resolves its LLM-only strategy/process overlay.
   // An incompatible explicit engine is an error and never falls through.
-  const config = options.config ?? loadConfig();
-  const activeStrategy =
-    options.improveProfile ?? config.improve?.strategies?.[config.defaults?.improveStrategy ?? "default"];
-  let runnerSpec: RunnerSpec;
-  if (options.runner) {
-    runnerSpec = options.runner;
-  } else if (Object.hasOwn(options, "runner")) {
-    throw new ConfigError(
-      "Reflect requires an LLM engine for the active improve invocation.",
-      "LLM_NOT_CONFIGURED",
-      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
-    );
-  } else if (options.engine) {
-    runnerSpec = resolveEngine(options.engine, config);
-  } else if (options.improveProfile) {
-    const processRunner = resolveImproveProcessRunner(activeStrategy, "reflect", config);
-    if (!processRunner) {
-      throw new ConfigError(
-        "Reflect requires an LLM engine for the active improve strategy.",
-        "LLM_NOT_CONFIGURED",
-        "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
-      );
-    }
-    runnerSpec = processRunner;
-  } else {
-    const defaultEngine = config.defaults?.engine;
-    if (!defaultEngine) {
-      throw new ConfigError("reflect requires --engine or defaults.engine.", "INVALID_CONFIG_FILE");
-    }
-    runnerSpec = resolveEngine(defaultEngine, config);
-  }
-  if (options.eventSource === "improve" && !runnerIsLlm(runnerSpec)) {
-    throw new ConfigError(
-      `Unattended improve requires an LLM engine for reflect; engine "${runnerSpec.engine ?? options.engine ?? "unknown"}" is tool-capable.`,
-      "INVALID_CONFIG_FILE",
-      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine to an LLM engine.",
-    );
-  }
-  const engineName = runnerSpec.engine ?? options.engine;
-  if (!engineName) {
-    throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
-  }
+  const { config, activeStrategy, runnerSpec, engineName } = resolveReflectRunner(options);
 
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
   // proposals. These are stable across refinement iterations; only the
@@ -1368,42 +1642,19 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // convention/meta facts (non-wiki asset); empty when neither fires.
   const standardsContext = resolveStandardsContext(options.ref, stash);
 
-  // 5. Spawn the agent — with optional Self-Refine loop (R-1 / #372).
-  //
-  // maxRefineIters controls how many agent invocations are made:
-  //   - 1 (default): single-shot, same as pre-R-1 behaviour
-  //   - 2–3: on each subsequent pass, the prior draft is injected back into
-  //     the prompt as Self-Refine critique context (arXiv:2303.17651)
-  //
-  // The loop exits early when the agent returns the same content as before
-  // (no-op refinement) to avoid wasting tokens on identical iterations.
-  const MAX_REFINE_ITERS = 3;
-  const maxRefineIters = Math.min(Math.max(1, options.maxRefineIters ?? 1), MAX_REFINE_ITERS);
+  // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),
+  // extracted to {@link runReflectRefineIterations}.
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
   const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
     ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
     ...(options.runAgentOptions ?? {}),
   });
 
-  // Determine whether this dispatch can honour the file-write contract.
-  // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
-  // LLM HTTP runner does NOT.
-  // Test seams (`options.runAgentOptions.spawn`) emulate agent CLI behaviour so
-  // they participate as well — tests opt out by simply not writing the file.
-  const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
-
-  // Initialized to a sentinel; always overwritten in the first loop iteration
-  // (maxRefineIters is clamped to >= 1 above). TypeScript cannot prove a
-  // for-loop always runs at least once, so we use a type assertion here.
-  let result = {} as AgentRunResult;
-  let priorDraft: string | undefined;
   // Track every draft file path we synthesize so cleanup can remove them on
   // every return path (success and failure). Mirrors propose's unlink pattern
   // in `src/commands/propose.ts:215-226` but generalised to N refinement
   // iterations. Always called via {@link cleanupDrafts} below.
   const draftPathsToCleanup: string[] = [];
-  // Last iteration's draft path — read back if the agent wrote it.
-  let lastDraftPath: string | undefined;
 
   // Best-effort unlink: tolerate already-deleted files (we may have unlinked
   // an intermediate iteration's draft) and unwritable paths. Never throws —
@@ -1418,85 +1669,28 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   };
 
-  // `payload` is populated inside the try (either by reading the draft file
-  // or parsing stdout JSON). Hoisted here so the post-try sections (R-3 ref
-  // guard, quality gate, sanitizer, createProposal) can use it after the
-  // drafts have been cleaned up.
+  // `result` / `lastDraftPath` / `payload` are populated inside the try. Hoisted
+  // here so the post-try sections (R-3 ref guard, sanitizer, quality gate,
+  // createProposal) can use them after the drafts have been cleaned up.
+  let result = {} as AgentRunResult;
+  let lastDraftPath: string | undefined;
   let payload: ReturnType<typeof parseAgentProposalPayload>;
   try {
-    for (let iter = 0; iter < maxRefineIters; iter++) {
-      // Synthesize a fresh tmp path per iteration so refinement passes never
-      // clobber an earlier draft (and so reading back is unambiguous).
-      const iterDraftPath = canRunnerWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
-      if (iterDraftPath) {
-        draftPathsToCleanup.push(iterDraftPath);
-        lastDraftPath = iterDraftPath;
-      }
-
-      const { prompt, maxOutputChars } = buildReflectPrompt({
-        ...(options.ref ? { ref: options.ref } : {}),
-        ...(parsedRef?.type ? { type: parsedRef.type } : {}),
-        ...(parsedRef?.name ? { name: parsedRef.name } : {}),
-        ...(assetContent !== undefined ? { assetContent } : {}),
-        ...(feedback.length > 0 ? { feedback } : {}),
-        ...(schemaHints.length > 0 ? { schemaHints } : {}),
-        ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
-        ...(options.task ? { task: options.task } : {}),
-        ...(standardsContext.trim() ? { standardsContext } : {}),
-        ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
-        ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-        // R-1: inject prior draft as self-critique target on iterations > 0
-        ...(priorDraft !== undefined ? { priorDraft } : {}),
-        // Issue A (#reflect-pipeline file-write contract): when the runner can
-        // touch the filesystem, instruct the agent to write the proposal body
-        // to a tmp file instead of inlining it in JSON. Avoids parse failures
-        // on long bodies (e.g. knowledge:systems/KOKORO_USAGE_GUIDE 8.4KB).
-        ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
-      });
-      // Convert char ceiling → token cap for the LLM path: divide by 3 chars/token
-      // (conservative — most models are 3.5–4) and add 500-char overhead for the
-      // JSON wrapper and frontmatter block that surround the body in the response.
-      const maxTokensForLlm = maxOutputChars !== undefined ? Math.ceil((maxOutputChars + 500) / 3) : undefined;
-
-      // Every engine kind crosses the same dispatch seam. Injected spawn/timer
-      // functions remain ordinary run options for deterministic tests.
-      const runOptions: RunAgentOptions = {
-        stdio: "captured",
-        parseOutput: "text",
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-        ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-        ...(options.runAgentOptions ?? {}),
-      };
-      const iterResult = await executeRunner(runnerSpec, prompt ?? "", runOptions, {
-        llm: async (spec, _prompt, opts) =>
-          // LLM HTTP runners cannot honor the file-write contract, so they
-          // return structured JSON through stdout.
-          runReflectViaLlm({
-            prompt,
-            connection: spec.connection,
-            ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
-            ...(options.signal ? { signal: options.signal } : {}),
-            priorDraft,
-            iteration: iter,
-            responseSchema: REFLECT_JSON_SCHEMA,
-            chat: options.chat,
-            ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
-          }),
-      });
-
-      result = iterResult;
-
-      if (!iterResult.ok) break; // surface failure after loop
-
-      // On success, extract the draft content for the next iteration.
-      // If the agent returns the same content as the prior draft, stop early
-      // (no-op refinement) to avoid wasting tokens on identical iterations.
-      if (iter < maxRefineIters - 1) {
-        const nextDraft = iterResult.stdout ?? "";
-        if (priorDraft !== undefined && nextDraft === priorDraft) break;
-        priorDraft = nextDraft;
-      }
-    }
+    const iterated = await runReflectRefineIterations({
+      options,
+      parsedRef,
+      assetContent,
+      feedback,
+      schemaHints,
+      relatedLessons,
+      rejectedProposals,
+      standardsContext,
+      runnerSpec,
+      agentEnv,
+      draftPathsToCleanup,
+    });
+    result = iterated.result;
+    lastDraftPath = iterated.lastDraftPath;
 
     const finalResult: AgentRunResult = result;
 
@@ -1521,92 +1715,17 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     // Re-alias to `result` for the downstream code that references it.
     result = finalResult;
 
-    // 6. Resolve the proposal content.
-    //
-    // Path A (file-write contract — preferred for agent/sdk runners on long
-    // assets): the agent wrote the body to `lastDraftPath` and printed
-    // `DRAFT_WRITTEN` on stdout. Load the body from disk and synthesize a
-    // payload. The `EXCESSIVE_EXPANSION`/schema-shape gates downstream still
-    // apply — they validate content, not transport.
-    //
-    // Path B (legacy JSON stdout): the agent inlined the proposal body in
-    // JSON on stdout. Falls through to `parseAgentProposalPayload`. Also the
-    // path used by the LLM HTTP runner, which cannot honour file-write.
-    const draftFileExists =
-      lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
-    const draftSignaled = stdoutSignalsDraftWritten(result.stdout);
-
-    if (draftSignaled && lastDraftPath && !draftFileExists) {
-      // Agent claimed to write the draft but the file is missing or empty.
-      // Surface as a parse_error rather than silently falling through — the
-      // alternative would be parsing the `DRAFT_WRITTEN` sentinel as JSON,
-      // which is guaranteed to fail with a confusing message.
-      emitReflectFailed("parse_error", "draft_missing", options.ref, {
-        ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-      });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error",
-        error: `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        ...(result.stderr ? { stderr: result.stderr } : {}),
-      };
-    }
-
-    if (draftFileExists && lastDraftPath) {
-      // Happy path: agent wrote the body to disk. Use the ref the caller
-      // supplied (or a placeholder when omitted — the R-3 ref-mismatch guard
-      // below has no effect when there is no expected ref).
-      const fileContent = redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues);
-      // Phase 6A: file-write contract carries self-rated confidence on the
-      // `DRAFT_WRITTEN confidence=<n>` sentinel line. Extract it so the
-      // file-write path is on equal footing with the JSON-stdout path for
-      // auto-accept gating in `akm improve`.
-      const draftConfidence = extractDraftConfidence(result.stdout);
-      payload = {
-        ref: options.ref ?? "",
-        content: fileContent,
-        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
-      };
-      // The agent followed the file-write contract — `payload.ref` mirrors the
-      // caller's expected ref, so the R-3 guard below cannot fire. The agent
-      // had no opportunity to retarget the proposal. If the ref was omitted
-      // entirely, downstream `createProposal` will reject the empty ref.
-    } else {
-      try {
-        payload = parseAgentProposalPayload(result.stdout ?? "");
-      } catch (err) {
-        const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref, runnerSpec.kind === "sdk");
-        if (fallback) {
-          payload = fallback;
-        } else {
-          // Reclassify cooldown/skip messages that arrive as stdout text instead of
-          // valid proposal JSON. These are legitimate skip signals, not parse failures,
-          // and should not pollute reflectFailedActions or recentErrors injection.
-          const stdoutText = result.stdout ?? "";
-          const isCooldownSignal = isStructuredCooldownSignal(stdoutText);
-          const reason: AgentFailureReason = isCooldownSignal ? "cooldown" : "parse_error";
-          emitReflectFailed(reason, isCooldownSignal ? "stdout_cooldown_signal" : "parse_error", options.ref, {
-            ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
-          });
-          return {
-            schemaVersion: 2,
-            ok: false,
-            reason,
-            error: err instanceof Error ? err.message : String(err),
-            ...(options.ref ? { ref: options.ref } : {}),
-            engine: engineName,
-            exitCode: result.exitCode,
-            stdout: result.stdout,
-            ...(result.stderr ? { stderr: result.stderr } : {}),
-          };
-        }
-      }
-    }
+    const resolved = resolveReflectPayload({
+      result,
+      lastDraftPath,
+      sensitiveValues,
+      options,
+      runnerSpec,
+      engineName,
+      emitReflectFailed,
+    });
+    if ("failure" in resolved) return resolved.failure;
+    payload = resolved.payload;
   } finally {
     // Always remove tmp draft files — success, failure, or exception. Returns
     // inside the try above trigger this block before the function exits. Code
