@@ -137,6 +137,4 @@ export function measureImproveFnOffenders(): ImproveFnOffender[] {
  * chunk-7 HEAD (post WI-7.1/7.2/7.3 deletions). SHRINK-ONLY: an entry may only
  * be lowered or removed, never added or raised. Emptied by WI-7.8.
  */
-export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
-  { id: "src/commands/improve/improve.ts :: akmImprove", lines: 810 },
-];
+export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [];
