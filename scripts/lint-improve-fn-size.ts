@@ -140,8 +140,8 @@ export function measureImproveFnOffenders(): ImproveFnOffender[] {
 export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
   { id: "src/commands/improve/preparation.ts :: runImprovePreparationStage", lines: 1493 },
   { id: "src/commands/improve/improve.ts :: akmImprove", lines: 810 },
-  { id: "src/commands/improve/reflect.ts :: akmReflect", lines: 643 },
   { id: "src/commands/improve/loop-stages.ts :: runImproveLoopStage", lines: 500 },
   { id: "src/commands/improve/loop-stages.ts :: runImproveMaintenancePasses", lines: 470 },
+  { id: "src/commands/improve/reflect.ts :: akmReflect", lines: 453 },
   { id: "src/commands/improve/loop-stages.ts :: withIndexWriterLease#arg1", lines: 389 },
 ];

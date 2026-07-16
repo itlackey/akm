@@ -937,6 +937,281 @@ function failureEnvelope(
   };
 }
 
+/**
+ * Reflect content-preservation + proposal creation: restore/reset protected
+ * frontmatter and reject unsafe body-size ratios (sanitizeReflectPayload), the
+ * #580 noise gate, the optional quality judge, then create the proposal (with
+ * the R-4/#373 lesson provenance stamp) and emit `reflect_completed`. Extracted
+ * verbatim from `akmReflect`; every reject/skip envelope and event is
+ * byte-identical.
+ */
+async function finalizeReflectProposal(args: {
+  payload: ReturnType<typeof parseAgentProposalPayload>;
+  assetContent: string | undefined;
+  result: AgentRunResult;
+  options: AkmReflectOptions;
+  engineName: string;
+  config: import("../../core/config/config").AkmConfig;
+  activeStrategy: import("../../core/config/config").ImproveProfileConfig | undefined;
+  runnerSpec: RunnerSpec;
+  feedback: Parameters<typeof runReflectQualityJudge>[3];
+  stash: string;
+  emitReflectFailed: (
+    reason: AgentFailureReason,
+    subreason: string,
+    ref?: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+}): Promise<AkmReflectResult> {
+  const {
+    assetContent,
+    result,
+    options,
+    engineName,
+    config,
+    activeStrategy,
+    runnerSpec,
+    feedback,
+    stash,
+    emitReflectFailed,
+  } = args;
+  let payload = args.payload;
+
+  // 7. Reflect content-preservation rails:
+  //     - Restore source frontmatter so reflect can never strip indexable
+  //       fields (`description`, `when_to_use`, `tags`, ...).
+  //     - Reset protected identity fields (`name`, `ref`, `id`, `slug`,
+  //       `type`) the LLM tried to change.
+  //     - Reject proposals that shrink/expand the body past safe ratios.
+  //
+  // See REFLECT_ALLOWED_TYPES / sanitizeReflectPayload for the underlying
+  // hypotheses + observed regressions (`8737ab63`, `26941510`, and the
+  // catastrophic-shrinkage cases from the May 2026 review).
+  const sanitizeOutcome = sanitizeReflectPayload(
+    { content: payload.content, ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}) },
+    assetContent,
+    payload.ref,
+  );
+  if (sanitizeOutcome.reject) {
+    appendEvent({
+      eventType: "reflect_completed",
+      ref: payload.ref,
+      metadata: {
+        source: "reflect",
+        sanitized: true,
+        rejected: true,
+        rejectReason: sanitizeOutcome.reject.error,
+        ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
+      },
+    });
+    return {
+      schemaVersion: 2,
+      ok: false,
+      reason: sanitizeOutcome.reject.reason,
+      error: sanitizeOutcome.reject.error,
+      ...(options.ref ? { ref: options.ref } : {}),
+      engine: engineName,
+      exitCode: result.exitCode,
+    };
+  }
+  payload = {
+    ...payload,
+    content: sanitizeOutcome.content,
+    ...(sanitizeOutcome.frontmatter ? { frontmatter: sanitizeOutcome.frontmatter } : {}),
+  };
+
+  // 7c. Noise gate (#580): never queue a proposal whose sanitized content is
+  // identical to the current asset (empty diff) or differs only cosmetically
+  // (whitespace reflow, code-fence language hints, YAML scalar re-folding).
+  // Pure deterministic text comparison — see `reflect-noise.ts`. Skipped when
+  // there is no source asset (new-asset proposals have nothing to diff against).
+  if (assetContent !== undefined) {
+    const changeKind = classifyReflectChange(assetContent, payload.content);
+    // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
+    // pre-#639 behaviour (low-value treated the same as substantive). Resolved
+    // by the caller from the active improve strategy's
+    // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
+    // running strategy decides.
+    const lowValueFilterEnabled = options.lowValueFilter === true;
+    const isDeferred =
+      changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
+    if (isDeferred) {
+      const subreason =
+        changeKind === "noop"
+          ? "reflect_skipped_noop"
+          : changeKind === "low-value"
+            ? "reflect_skipped_low_value"
+            : "reflect_skipped_cosmetic";
+      emitReflectFailed("no_change", subreason, options.ref, { changeKind });
+      return {
+        schemaVersion: 2,
+        ok: false,
+        reason: "no_change" as const,
+        error:
+          changeKind === "noop"
+            ? `Reflect skipped: proposed content for ${payload.ref} is identical to the current asset (empty diff); no proposal created.`
+            : changeKind === "low-value"
+              ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
+              : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+      };
+    }
+  }
+
+  // 7c. Judge the exact sanitized content that can be persisted. Fail closed
+  // on cancellation, transport failure, malformed output, or an invalid score.
+  const qualityGateEnabled =
+    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
+    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
+  if (qualityGateEnabled) {
+    const judgeResult = await runReflectQualityJudge(
+      config,
+      payload.content,
+      assetContent ?? "",
+      feedback,
+      options.chat ?? chatCompletion,
+      {
+        ...(runnerIsLlm(runnerSpec) ? { llmConfig: materializeLlmRunnerConnection(runnerSpec) } : {}),
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+    );
+    if (!judgeResult.pass) {
+      appendEvent({
+        eventType: "reflect_completed",
+        ref: payload.ref,
+        metadata: {
+          source: "reflect",
+          qualityRejected: true,
+          qualityScore: judgeResult.score,
+          qualityReason: judgeResult.reason,
+        },
+      });
+      return {
+        schemaVersion: 2,
+        ok: false,
+        reason: "parse_error" as const,
+        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
+        ...(options.ref ? { ref: options.ref } : {}),
+        engine: engineName,
+        exitCode: result.exitCode,
+      };
+    }
+  }
+
+  return createReflectProposal({
+    payload,
+    options,
+    stash,
+    engineName,
+    durationMs: result.durationMs,
+    emitReflectFailed,
+  });
+}
+
+/**
+ * Create the reflect proposal from sanitized+judged payload: stamp the R-4/#373
+ * lesson provenance marker, call `createProposal`, and emit the terminal
+ * `reflect_completed` (or a cooldown skip envelope). Extracted verbatim from
+ * `akmReflect`'s finalize tail.
+ */
+function createReflectProposal(args: {
+  payload: ReturnType<typeof parseAgentProposalPayload>;
+  options: AkmReflectOptions;
+  stash: string;
+  engineName: string;
+  durationMs: number;
+  emitReflectFailed: (
+    reason: AgentFailureReason,
+    subreason: string,
+    ref?: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+}): AkmReflectResult {
+  const { payload, options, stash, engineName, durationMs, emitReflectFailed } = args;
+  // 8. Create the proposal. The proposal queue is the ONLY thing reflect
+  // writes — promotion to a real asset is gated by `akm proposal accept`.
+  //
+  // R-4 / #373: Stamp `derived_from_reflect: true` in the frontmatter of any
+  // lesson proposal generated by reflect. This provenance marker lets
+  // `readRelatedLessons` exclude echo-chamber lessons (lessons that originate
+  // from prior reflect runs on the same skill) unless independent feedback
+  // evidence exists. ExpeL arXiv:2308.10144 — reject rules without success/
+  // failure differential from independent evidence.
+  const isLessonProposal = (() => {
+    try {
+      return parseAssetRef(payload.ref).type === "lesson";
+    } catch {
+      return false;
+    }
+  })();
+  const basePayloadFrontmatter = payload.frontmatter ?? {};
+  const payloadFrontmatterWithProvenance: Record<string, unknown> = isLessonProposal
+    ? { ...basePayloadFrontmatter, derived_from_reflect: true }
+    : basePayloadFrontmatter;
+
+  const createInput: CreateProposalInput = {
+    ref: payload.ref,
+    source: "reflect",
+    sourceRun: `reflect-${Date.now()}`,
+    payload: {
+      content: payload.content,
+      ...(Object.keys(payloadFrontmatterWithProvenance).length > 0
+        ? { frontmatter: payloadFrontmatterWithProvenance }
+        : {}),
+    },
+    // Phase 6A: forward LLM-reported confidence into the proposal record.
+    // `parseAgentProposalPayload` already clamps to [0, 1] and drops non-
+    // finite values; `createProposal` runs its own sanitizer as a safety net.
+    ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
+    // Attribution tagging: persist the eligibility lane on the proposal so it
+    // survives to accept/reject/revert time even across runs. See EligibilitySource.
+    ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+  };
+  const proposalResult = createProposal(stash, createInput, options.ctx);
+
+  if (isProposalSkipped(proposalResult)) {
+    // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")
+    // so the improve orchestrator can distinguish legitimate skips from real failures
+    // and exclude them from recentErrors/avoidPatterns injection.
+    emitReflectFailed("cooldown", "proposal_skipped", options.ref, {
+      proposalSkipReason: proposalResult.reason,
+    });
+    return {
+      schemaVersion: 2,
+      ok: false,
+      reason: "cooldown" as const,
+      error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
+      ...(options.ref ? { ref: options.ref } : {}),
+      engine: engineName,
+      exitCode: null,
+    };
+  }
+
+  const proposal: Proposal = proposalResult;
+
+  appendEvent({
+    eventType: "reflect_completed",
+    ref: proposal.ref,
+    metadata: {
+      proposalId: proposal.id,
+      source: "reflect",
+      engine: engineName,
+    },
+  });
+
+  return {
+    schemaVersion: 2,
+    ok: true,
+    proposal,
+    ref: proposal.ref,
+    engine: engineName,
+    durationMs,
+  };
+}
+
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
   const stash = options.stashDir ?? resolveStashDir();
 
@@ -1376,207 +1651,17 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     }
   }
 
-  // 7. Reflect content-preservation rails:
-  //     - Restore source frontmatter so reflect can never strip indexable
-  //       fields (`description`, `when_to_use`, `tags`, ...).
-  //     - Reset protected identity fields (`name`, `ref`, `id`, `slug`,
-  //       `type`) the LLM tried to change.
-  //     - Reject proposals that shrink/expand the body past safe ratios.
-  //
-  // See REFLECT_ALLOWED_TYPES / sanitizeReflectPayload for the underlying
-  // hypotheses + observed regressions (`8737ab63`, `26941510`, and the
-  // catastrophic-shrinkage cases from the May 2026 review).
-  const sanitizeOutcome = sanitizeReflectPayload(
-    { content: payload.content, ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}) },
+  return finalizeReflectProposal({
+    payload,
     assetContent,
-    payload.ref,
-  );
-  if (sanitizeOutcome.reject) {
-    appendEvent({
-      eventType: "reflect_completed",
-      ref: payload.ref,
-      metadata: {
-        source: "reflect",
-        sanitized: true,
-        rejected: true,
-        rejectReason: sanitizeOutcome.reject.error,
-        ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
-      },
-    });
-    return {
-      schemaVersion: 2,
-      ok: false,
-      reason: sanitizeOutcome.reject.reason,
-      error: sanitizeOutcome.reject.error,
-      ...(options.ref ? { ref: options.ref } : {}),
-      engine: engineName,
-      exitCode: result.exitCode,
-    };
-  }
-  payload = {
-    ...payload,
-    content: sanitizeOutcome.content,
-    ...(sanitizeOutcome.frontmatter ? { frontmatter: sanitizeOutcome.frontmatter } : {}),
-  };
-
-  // 7c. Noise gate (#580): never queue a proposal whose sanitized content is
-  // identical to the current asset (empty diff) or differs only cosmetically
-  // (whitespace reflow, code-fence language hints, YAML scalar re-folding).
-  // Pure deterministic text comparison — see `reflect-noise.ts`. Skipped when
-  // there is no source asset (new-asset proposals have nothing to diff against).
-  if (assetContent !== undefined) {
-    const changeKind = classifyReflectChange(assetContent, payload.content);
-    // 'low-value' is config-gated (#639). DEFAULT OFF — absent = byte-identical
-    // pre-#639 behaviour (low-value treated the same as substantive). Resolved
-    // by the caller from the active improve strategy's
-    // `processes.reflect.lowValueFilter.enabled` and passed via options, so the
-    // running strategy decides.
-    const lowValueFilterEnabled = options.lowValueFilter === true;
-    const isDeferred =
-      changeKind === "noop" || changeKind === "cosmetic" || (changeKind === "low-value" && lowValueFilterEnabled);
-    if (isDeferred) {
-      const subreason =
-        changeKind === "noop"
-          ? "reflect_skipped_noop"
-          : changeKind === "low-value"
-            ? "reflect_skipped_low_value"
-            : "reflect_skipped_cosmetic";
-      emitReflectFailed("no_change", subreason, options.ref, { changeKind });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "no_change" as const,
-        error:
-          changeKind === "noop"
-            ? `Reflect skipped: proposed content for ${payload.ref} is identical to the current asset (empty diff); no proposal created.`
-            : changeKind === "low-value"
-              ? `Reflect skipped: proposed content for ${payload.ref} is a low-value prose micro-rewrite (few changed tokens, no structural changes); no proposal created.`
-              : `Reflect skipped: proposed content for ${payload.ref} is a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes); no proposal created.`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-      };
-    }
-  }
-
-  // 7c. Judge the exact sanitized content that can be persisted. Fail closed
-  // on cancellation, transport failure, malformed output, or an invalid score.
-  const qualityGateEnabled =
-    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
-    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
-  if (qualityGateEnabled) {
-    const judgeResult = await runReflectQualityJudge(
-      config,
-      payload.content,
-      assetContent ?? "",
-      feedback,
-      options.chat ?? chatCompletion,
-      {
-        ...(runnerIsLlm(runnerSpec) ? { llmConfig: materializeLlmRunnerConnection(runnerSpec) } : {}),
-        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.signal ? { signal: options.signal } : {}),
-      },
-    );
-    if (!judgeResult.pass) {
-      appendEvent({
-        eventType: "reflect_completed",
-        ref: payload.ref,
-        metadata: {
-          source: "reflect",
-          qualityRejected: true,
-          qualityScore: judgeResult.score,
-          qualityReason: judgeResult.reason,
-        },
-      });
-      return {
-        schemaVersion: 2,
-        ok: false,
-        reason: "parse_error" as const,
-        error: `Reflect proposal quality gate rejected: score=${judgeResult.score}, reason="${judgeResult.reason}"`,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-        exitCode: result.exitCode,
-      };
-    }
-  }
-
-  // 8. Create the proposal. The proposal queue is the ONLY thing reflect
-  // writes — promotion to a real asset is gated by `akm proposal accept`.
-  //
-  // R-4 / #373: Stamp `derived_from_reflect: true` in the frontmatter of any
-  // lesson proposal generated by reflect. This provenance marker lets
-  // `readRelatedLessons` exclude echo-chamber lessons (lessons that originate
-  // from prior reflect runs on the same skill) unless independent feedback
-  // evidence exists. ExpeL arXiv:2308.10144 — reject rules without success/
-  // failure differential from independent evidence.
-  const isLessonProposal = (() => {
-    try {
-      return parseAssetRef(payload.ref).type === "lesson";
-    } catch {
-      return false;
-    }
-  })();
-  const basePayloadFrontmatter = payload.frontmatter ?? {};
-  const payloadFrontmatterWithProvenance: Record<string, unknown> = isLessonProposal
-    ? { ...basePayloadFrontmatter, derived_from_reflect: true }
-    : basePayloadFrontmatter;
-
-  const createInput: CreateProposalInput = {
-    ref: payload.ref,
-    source: "reflect",
-    sourceRun: `reflect-${Date.now()}`,
-    payload: {
-      content: payload.content,
-      ...(Object.keys(payloadFrontmatterWithProvenance).length > 0
-        ? { frontmatter: payloadFrontmatterWithProvenance }
-        : {}),
-    },
-    // Phase 6A: forward LLM-reported confidence into the proposal record.
-    // `parseAgentProposalPayload` already clamps to [0, 1] and drops non-
-    // finite values; `createProposal` runs its own sanitizer as a safety net.
-    ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
-    // Attribution tagging: persist the eligibility lane on the proposal so it
-    // survives to accept/reject/revert time even across runs. See EligibilitySource.
-    ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-  };
-  const proposalResult = createProposal(stash, createInput, options.ctx);
-
-  if (isProposalSkipped(proposalResult)) {
-    // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")
-    // so the improve orchestrator can distinguish legitimate skips from real failures
-    // and exclude them from recentErrors/avoidPatterns injection.
-    emitReflectFailed("cooldown", "proposal_skipped", options.ref, {
-      proposalSkipReason: proposalResult.reason,
-    });
-    return {
-      schemaVersion: 2,
-      ok: false,
-      reason: "cooldown" as const,
-      error: `Proposal skipped (${proposalResult.reason}): ${proposalResult.message}`,
-      ...(options.ref ? { ref: options.ref } : {}),
-      engine: engineName,
-      exitCode: null,
-    };
-  }
-
-  const proposal: Proposal = proposalResult;
-
-  appendEvent({
-    eventType: "reflect_completed",
-    ref: proposal.ref,
-    metadata: {
-      proposalId: proposal.id,
-      source: "reflect",
-      engine: engineName,
-    },
+    result,
+    options,
+    engineName,
+    config,
+    activeStrategy,
+    runnerSpec,
+    feedback,
+    stash,
+    emitReflectFailed,
   });
-
-  return {
-    schemaVersion: 2,
-    ok: true,
-    proposal,
-    ref: proposal.ref,
-    engine: engineName,
-    durationMs: result.durationMs,
-  };
 }
