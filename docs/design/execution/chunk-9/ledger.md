@@ -256,3 +256,44 @@ collapse suites 26/0; combined touched-suite re-run 341/0; reviewer
 re-ran tsc + cycles + full lint + architecture + cli-output/html
 oracles (59/0). Process: Sonnet implementation / Fable review per the
 2026-07-16 session directive.
+
+## WI-9.5 — health/tasks decomposition (16e7ef8e..6c706c7f)
+
+(a) H2 typed seam: report-view-model.ts (819 lines) holds the pure
+AkmHealthResult→HealthReportViewModel extractor; html-report.ts
+1050→567 as thin VM→fragment renderers + glue. Rendered bytes
+unchanged (oracles green unmodified). EMERGENT: the fn-size ratchet
+flagged the freshly extracted 341-line VM builder as a NEW offender —
+decomposed into phase helpers rather than baselined (the gate working
+exactly as armed). md-report.ts untouched (its WindowResult tables
+don't map onto the VM shapes — brief allowance exercised).
+(b) akmHealth 272→orchestrator over six gather/resolve phase helpers;
+one behaviorally-inert simplification ledgered (redundant `&& db`
+conjunct dropped — non-optional by control flow at that point).
+(c) projectRunMetrics 270→ten per-subtree apply* helpers, verified
+disjoint (no cross-block reads); summarizeImproveCompleted untouched
+(do-not-re-churn honored).
+(d) health/types.ts 690→33-line re-export barrel over 7 flat
+types-<domain>.ts siblings (flat naming avoids the types/ dir
+collision); one-directional deps; pure type move.
+(e) BackendExec<Extra> (default `unknown` — Record<string,never>
+rejected legit test-mock excess properties) + throwIfNotOk/runOrThrow
+in exec-utils.ts; 13 sites converted with class/code/message/hint
+byte-preserved (reviewer verified originals were already ConfigError
+INVALID_CONFIG_FILE); CronExec deliberately NOT converted (bespoke
+read/write shape); rollback accumulate-and-continue blocks deliberately
+inline; *Fs dedup via NodeFs intersections; backends barrel untouched
+(WI-9.8's cycle kill). BackendOptionsBase evaluated and rejected
+(3 shared fields — not worth the churn).
+
+fn-size baseline: 3 more entries trimmed (buildHealthHtmlReplacements
+646, akmHealth 272, projectRunMetrics 270) — baseline now 15 entries.
+Net LOC +610 (typed-interface surface for the VM + domain-type files —
+structural investment, ledgered against the §12.1 REPORTED target).
+
+Gates (worker + reviewer): tsc; biome 1064 files; cycles 107/107;
+fn-size trimmed-and-green; full bun run lint (goldens 50/50);
+architecture 28/28; health suite 78/0; tasks suites 133/0;
+html-output-cli 6/0; ZERO test files modified. Reviewer re-ran tsc,
+fn-size, architecture + both html/cli oracles (52/0) and verified the
+backend-throw byte-preservation claim against the diff directly.
