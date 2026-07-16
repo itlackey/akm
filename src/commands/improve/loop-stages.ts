@@ -5,7 +5,7 @@
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { daysToMs } from "../../core/common";
-import { DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
+import { type AkmConfig, DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
@@ -862,11 +862,44 @@ export async function runImprovePostLoopStage(args: {
   };
 }
 
-// TODO(refactor): mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass.
-// Exported for tests (#584/#585 DB-locking regression coverage); production
-// callers reach it only through akmImprove → runImprovePostLoopStage.
+// TODO(refactor): `runImproveMaintenancePasses` mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass. (The extracted passes below already return their warnings; only the exported signature keeps the side channel.)
 
-// TODO(refactor): mutates the passed-in `allWarnings` array as a hidden side channel. Return warnings in ImproveMaintenanceResult and merge in caller — invasive signature change deferred to next refactor pass.
+/**
+ * The one irreducible mutable seam of the maintenance stage: the index.db
+ * handle. `reindexWithIndexDbReleased` must close the CURRENT handle before a
+ * reindex and reopen a fresh one in `finally` even when the reindex throws
+ * (#584), and the lease-scoped `finally` must close whatever handle is current
+ * — neither can be expressed as a pure return value, so the passes share this
+ * cell instead of a closure-mutated `let`.
+ */
+export interface IndexDbCell {
+  current?: Database;
+}
+
+/** Run-scoped carriers shared by every maintenance pass (built once per run). */
+export interface MaintenanceCtx {
+  config: AkmConfig;
+  sources: ReturnType<typeof resolveSourceEntries>;
+  primaryStashDir: string;
+  eventsCtx?: EventsContext;
+  /** O-1 (#364): shared wall-clock AbortSignal; cancels sub-calls when budget expires. */
+  budgetSignal?: AbortSignal;
+  /** Active improve profile, resolved from profile name + config. */
+  improveProfile?: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan?: ResolvedImprovePlan;
+  memoryInferenceFn: typeof runMemoryInferencePass;
+  graphExtractionFn: typeof runGraphExtractionPass;
+  /**
+   * #584: reindexFn opens its own write handle on the same index.db WAL file.
+   * Holding our handle across that call produced SQLITE_BUSY / "database is
+   * locked" failures in production, so the handle is closed BEFORE every
+   * reindex and reopened after — the fresh handle also sees the post-reindex
+   * state that graph extraction relies on. The reopen runs in `finally` so a
+   * failed reindex still leaves a usable handle.
+   */
+  reindexWithIndexDbReleased: (stashDir: string) => Promise<void>;
+}
+
 // Exported for tests (#584/#585 DB-locking regression coverage); production
 // callers reach it only through akmImprove → runImprovePostLoopStage.
 export async function runImproveMaintenancePasses(args: {
@@ -885,18 +918,7 @@ export async function runImproveMaintenancePasses(args: {
   improveProfile?: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan?: ResolvedImprovePlan;
 }): Promise<ImproveMaintenanceResult> {
-  const {
-    options,
-    primaryStashDir,
-    memoryRefsForInference,
-    allWarnings,
-    reindexFn,
-    consolidationRan,
-    budgetSignal,
-    eventsCtx,
-    improveProfile,
-    resolvedPlan,
-  } = args;
+  const { options, primaryStashDir, memoryRefsForInference, allWarnings, reindexFn, budgetSignal, eventsCtx } = args;
   if (!primaryStashDir) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
   if (budgetSignal?.aborted) return { memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 };
 
@@ -905,437 +927,579 @@ export async function runImproveMaintenancePasses(args: {
   const memoryInferenceFn = options.memoryInferenceFn ?? runMemoryInferencePass;
   const graphExtractionFn = options.graphExtractionFn ?? runGraphExtractionPass;
 
-  let db: Database | undefined;
-  let memoryInference: MemoryInferenceResult | undefined;
-  let graphExtraction: GraphExtractionResult | undefined;
-  let reindexedAfterInference = false;
-  const actions: ImproveActionResult[] = [];
-  let memoryInferenceDurationMs = 0;
-  let graphExtractionDurationMs = 0;
-  let orphansPurged = 0;
-  let proposalsExpired = 0;
-
   const openIndexDb = () =>
     openIndexDatabase(
       getDbPath(),
       config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
     );
 
-  // #584: reindexFn opens its own write handle on the same index.db WAL file.
-  // Holding our handle across that call produced SQLITE_BUSY / "database is
-  // locked" failures in production, so the handle is closed BEFORE every
-  // reindex and reopened after — the fresh handle also sees the post-reindex
-  // state that graph extraction below relies on. The
-  // reopen runs in `finally` so a failed reindex still leaves a usable handle.
+  const dbCell: IndexDbCell = {};
+
+  // #584: see the MaintenanceCtx.reindexWithIndexDbReleased doc — close before
+  // every reindex, reopen in `finally` so a failed reindex still leaves a
+  // usable handle in the cell.
   const reindexWithIndexDbReleased = async (stashDir: string): Promise<void> => {
-    if (db) {
-      closeDatabase(db);
-      db = undefined;
+    if (dbCell.current) {
+      closeDatabase(dbCell.current);
+      dbCell.current = undefined;
     }
     try {
       await reindexFn({ stashDir, signal: budgetSignal });
     } finally {
-      db = openIndexDb();
+      dbCell.current = openIndexDb();
     }
   };
 
-  await withIndexWriterLease({ purpose: "improve-maintenance", signal: budgetSignal }, async () => {
+  const ctx: MaintenanceCtx = {
+    config,
+    sources,
+    primaryStashDir,
+    eventsCtx,
+    budgetSignal,
+    improveProfile: args.improveProfile,
+    resolvedPlan: args.resolvedPlan,
+    memoryInferenceFn,
+    graphExtractionFn,
+    reindexWithIndexDbReleased,
+  };
+
+  const collected = await withIndexWriterLease({ purpose: "improve-maintenance", signal: budgetSignal }, () =>
+    runMaintenancePassesUnderLease(ctx, dbCell, {
+      actionableRefs: args.actionableRefs,
+      memoryRefsForInference,
+      consolidationRan: args.consolidationRan,
+      allWarnings,
+      openIndexDb,
+    }),
+  );
+
+  return {
+    ...(collected.memoryInference ? { memoryInference: collected.memoryInference } : {}),
+    ...(collected.graphExtraction ? { graphExtraction: collected.graphExtraction } : {}),
+    ...(collected.actions.length > 0 ? { actions: collected.actions } : {}),
+    memoryInferenceDurationMs: collected.memoryInferenceDurationMs,
+    graphExtractionDurationMs: collected.graphExtractionDurationMs,
+    orphansPurged: collected.orphansPurged,
+    proposalsExpired: collected.proposalsExpired,
+  };
+}
+
+/** Everything the lease-scoped maintenance sequence accumulates for the caller. */
+interface MaintenanceUnderLeaseResult {
+  memoryInference?: MemoryInferenceResult;
+  graphExtraction?: GraphExtractionResult;
+  actions: ImproveActionResult[];
+  memoryInferenceDurationMs: number;
+  graphExtractionDurationMs: number;
+  orphansPurged: number;
+  proposalsExpired: number;
+}
+
+/**
+ * The maintenance sequence run under the index-writer lease (formerly the
+ * ~389-line anonymous `withIndexWriterLease` callback): memory inference →
+ * reindex-after-inference → graph extraction → proposal hygiene (orphan purge,
+ * expiration) → retention purges. Each pass returns its results and warnings;
+ * this orchestrator folds warnings into the caller's `allWarnings` sink at the
+ * same points the inline code pushed them.
+ */
+async function runMaintenancePassesUnderLease(
+  ctx: MaintenanceCtx,
+  dbCell: IndexDbCell,
+  args: {
+    actionableRefs: ImproveEligibleRef[];
+    memoryRefsForInference: Set<string>;
+    consolidationRan?: boolean;
+    allWarnings: string[];
+    openIndexDb: () => Database;
+  },
+): Promise<MaintenanceUnderLeaseResult> {
+  const { allWarnings } = args;
+  const actions: ImproveActionResult[] = [];
+  let reindexedAfterInference = false;
+  try {
+    dbCell.current = args.openIndexDb();
+
+    const inference = await runMemoryInferenceMaintenancePass(ctx, dbCell, args.memoryRefsForInference);
+    if (inference.action) actions.push(inference.action);
+    allWarnings.push(...inference.warnings);
+    const memoryInference = inference.memoryInference;
+
+    if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
+      info("[improve] reindexing after memory inference writes");
+      try {
+        await ctx.reindexWithIndexDbReleased(ctx.primaryStashDir);
+        reindexedAfterInference = true;
+        info("[improve] reindex after memory inference complete");
+      } catch (err) {
+        allWarnings.push(`reindex after memory inference failed: ${errMessage(err)}`);
+      }
+    }
+
+    const graph = await runGraphExtractionMaintenancePass(ctx, dbCell, {
+      actionableRefs: args.actionableRefs,
+      memoryRefsForInference: args.memoryRefsForInference,
+      consolidationRan: args.consolidationRan,
+      reindexedAfterInference,
+    });
+    if (graph.action) actions.push(graph.action);
+    allWarnings.push(...graph.warnings);
+
+    const orphan = runOrphanProposalPurgePass(ctx);
+    allWarnings.push(...orphan.warnings);
+
+    const expiration = runProposalExpirationPass(ctx);
+    allWarnings.push(...expiration.warnings);
+
+    allWarnings.push(...runRetentionPurgePass(ctx).warnings);
+
+    return {
+      memoryInference,
+      graphExtraction: graph.graphExtraction,
+      actions,
+      memoryInferenceDurationMs: inference.durationMs,
+      graphExtractionDurationMs: graph.durationMs,
+      orphansPurged: orphan.orphansPurged,
+      proposalsExpired: expiration.proposalsExpired,
+    };
+  } finally {
+    if (dbCell.current) closeDatabase(dbCell.current);
+  }
+}
+
+/**
+ * Memory inference candidate-discovery (post-Item 9 fix from
+ * memory:akm-improve-critical-review-2026-05-20). Previously this pass
+ * was gated on memoryRefsForInference.size > 0 AND passed those refs as a
+ * candidateRefs filter. But memoryRefsForInference is populated from refs
+ * distilled THIS RUN — by the time that happens, those parents are
+ * already split (`inferenceProcessed: true`) and `isPendingMemory` excludes
+ * them. The genuinely-pending parents in the stash never entered the
+ * filter. Result: 0/0/0 for 25 consecutive runs.
+ *
+ * Fix: always run the pass when the feature is enabled; let the pass's
+ * own `collectPendingMemories` + `isPendingMemory` predicate find
+ * candidates from the filesystem-of-truth. The this-run set is still
+ * logged as a hint but no longer used as a filter.
+ */
+export async function runMemoryInferenceMaintenancePass(
+  ctx: MaintenanceCtx,
+  dbCell: IndexDbCell,
+  memoryRefsForInference: Set<string>,
+): Promise<{
+  memoryInference?: MemoryInferenceResult;
+  durationMs: number;
+  action?: ImproveActionResult;
+  warnings: string[];
+}> {
+  const { config, sources, primaryStashDir, budgetSignal, improveProfile, resolvedPlan, memoryInferenceFn } = ctx;
+  const warnings: string[] = [];
+  let memoryInference: MemoryInferenceResult | undefined;
+  let durationMs = 0;
+  let action: ImproveActionResult | undefined;
+
+  const memoryInferenceDisabledByProfile = improveProfile?.processes?.memoryInference?.enabled === false;
+  const minPendingCount = improveProfile?.processes?.memoryInference?.minPendingCount;
+  const pendingBelowMinCount = (() => {
+    if (!primaryStashDir || minPendingCount === undefined || minPendingCount <= 0) return false;
+    const pending = collectPendingMemories(primaryStashDir).length;
+    if (pending < minPendingCount) {
+      info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
+      return true;
+    }
+    return false;
+  })();
+  if (memoryInferenceDisabledByProfile) {
+    info("[improve] memory inference skipped (disabled by improve profile)");
+  } else if (pendingBelowMinCount) {
+    // skipped — message already emitted above
+  } else {
+    const hintRefs = memoryRefsForInference.size;
+    info(
+      hintRefs > 0
+        ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
+        : "[improve] memory inference starting (discovering pending parents)",
+    );
+    const inferenceStart = Date.now();
     try {
-      db = openIndexDb();
-
-      // Memory inference candidate-discovery (post-Item 9 fix from
-      // memory:akm-improve-critical-review-2026-05-20). Previously this pass
-      // was gated on memoryRefsForInference.size > 0 AND passed those refs as a
-      // candidateRefs filter. But memoryRefsForInference is populated from refs
-      // distilled THIS RUN — by the time that happens, those parents are
-      // already split (`inferenceProcessed: true`) and `isPendingMemory` excludes
-      // them. The genuinely-pending parents in the stash never entered the
-      // filter. Result: 0/0/0 for 25 consecutive runs.
-      //
-      // Fix: always run the pass when the feature is enabled; let the pass's
-      // own `collectPendingMemories` + `isPendingMemory` predicate find
-      // candidates from the filesystem-of-truth. The this-run set is still
-      // logged as a hint but no longer used as a filter.
-      const memoryInferenceDisabledByProfile = improveProfile?.processes?.memoryInference?.enabled === false;
-      const minPendingCount = improveProfile?.processes?.memoryInference?.minPendingCount;
-      const pendingBelowMinCount = (() => {
-        if (!primaryStashDir || minPendingCount === undefined || minPendingCount <= 0) return false;
-        const pending = collectPendingMemories(primaryStashDir).length;
-        if (pending < minPendingCount) {
-          info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
-          return true;
-        }
-        return false;
-      })();
-      if (memoryInferenceDisabledByProfile) {
-        info("[improve] memory inference skipped (disabled by improve profile)");
-      } else if (pendingBelowMinCount) {
-        // skipped — message already emitted above
-      } else {
-        const hintRefs = memoryRefsForInference.size;
-        info(
-          hintRefs > 0
-            ? `[improve] memory inference starting (${hintRefs} hint refs touched this run; pass discovers all pending)`
-            : "[improve] memory inference starting (discovering pending parents)",
-        );
-        const inferenceStart = Date.now();
-        try {
-          // O-1 (#364): pass budget signal so a hung inference call is cancelled.
-          memoryInference = await withLlmStage(
-            "memory-inference",
-            () =>
-              memoryInferenceFn({
-                config,
-                ...(resolvedPlan
-                  ? {
-                      llmConfig: resolvedPlan.processes.memoryInference.runner
-                        ? materializeLlmRunnerConnection(resolvedPlan.processes.memoryInference.runner)
-                        : null,
-                    }
-                  : {}),
-                sources,
-                signal: budgetSignal,
-                db,
-                reEnrich: false,
-                onProgress: (event) => {
-                  const current = event.currentRef ? ` ${event.currentRef}` : "";
-                  info(
-                    `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
-                  );
-                },
-              }),
-            { engine: resolvedPlan?.processes.memoryInference.runner?.engine, process: "memoryInference" },
-          );
-          memoryInferenceDurationMs = Date.now() - inferenceStart;
-          actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
-          info(
-            `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
-          );
-        } catch (err) {
-          memoryInferenceDurationMs = Date.now() - inferenceStart;
-          allWarnings.push(`memory inference failed: ${errMessage(err)}`);
-        }
-      }
-
-      if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
-        info("[improve] reindexing after memory inference writes");
-        try {
-          await reindexWithIndexDbReleased(primaryStashDir);
-          reindexedAfterInference = true;
-          info("[improve] reindex after memory inference complete");
-        } catch (err) {
-          allWarnings.push(`reindex after memory inference failed: ${errMessage(err)}`);
-        }
-      }
-
-      const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
-      const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
-      const graphExtractionFullScan = improveProfile?.processes?.graphExtraction?.fullScan === true;
-      // #624 P2: optional incremental high-signal-first cap. Unset = process all
-      // eligible (byte-identical to today; no ranking/slice).
-      const graphExtractionTopN = improveProfile?.processes?.graphExtraction?.topN;
-      const graphExtractionIncludeTypes = improveProfile?.processes?.graphExtraction?.includeTypes ?? [
-        ...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
-      ];
-      const graphExtractionBatchSize =
-        improveProfile?.processes?.graphExtraction?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
-      // Build the set of refs actually touched this run.
-      const touchedRefs = new Set<string>();
-      for (const r of args.actionableRefs) touchedRefs.add(r.ref);
-      for (const r of memoryRefsForInference) touchedRefs.add(r);
-
-      // INVARIANT: graph extraction normally runs only on files touched by
-      // actionable refs (candidatePaths). Full-corpus scans are opt-in via
-      // profile.processes.graphExtraction.fullScan = true (used by the
-      // `graph-refresh` built-in profile and its weekly scheduled task).
-      // The empty-Set fallback is intentional when no refs were touched —
-      // the extractor's filter rejects every file and returns empty, keeping
-      // the pass invoked so the action is recorded and tests stay exercised.
-      if (graphExtractionDisabledByProfile) {
-        info("[improve] graph extraction skipped (disabled by improve profile)");
-      } else if (sources.length > 0 && graphEnabled) {
-        info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
-        const extractionStart = Date.now();
-        try {
-          // D9: if consolidation ran but memory inference did not reindex, force a reindex
-          // so graph extraction sees current DB state after consolidation writes.
-          if (consolidationRan && !reindexedAfterInference) {
-            info("[improve] reindexing after consolidation (graph extraction needs current state)");
-            try {
-              await reindexWithIndexDbReleased(primaryStashDir);
-              reindexedAfterInference = true;
-              info("[improve] reindex after consolidation complete");
-            } catch (err) {
-              allWarnings.push(`reindex after consolidation failed: ${errMessage(err)}`);
-            }
-          }
-          // #584: no close/reopen needed here — reindexWithIndexDbReleased
-          // already swapped in a fresh post-reindex handle.
-          // Resolve touched refs to absolute file paths. Skipped for fullScan
-          // (candidatePaths stays undefined → extractor processes all files).
-          let candidatePaths: Set<string> | undefined;
-          if (!graphExtractionFullScan) {
-            candidatePaths = new Set<string>();
-            if (primaryStashDir && touchedRefs.size > 0) {
-              const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
-              const resolved = await Promise.all(
-                [...touchedRefs].map((ref) =>
-                  findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null),
-                ),
-              );
-              for (const p of resolved) {
-                if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
-              }
-            }
-          }
-          const progressHandler = (event: {
-            processed: number;
-            total: number;
-            extracted: number;
-            totalEntities: number;
-            totalRelations: number;
-            currentPath?: string;
-          }) => {
-            const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
-            info(
-              `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
-            );
-          };
-          // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
-          graphExtraction = await withLlmStage(
-            "graph-extraction",
-            () =>
-              graphExtractionFn({
-                config,
-                ...(resolvedPlan
-                  ? {
-                      llmConfig: resolvedPlan.processes.graphExtraction.runner
-                        ? materializeLlmRunnerConnection(resolvedPlan.processes.graphExtraction.runner)
-                        : null,
-                    }
-                  : {}),
-                sources,
-                signal: budgetSignal,
-                db,
-                reEnrich: false,
-                onProgress: progressHandler,
-                options: {
-                  candidatePaths,
-                  includeTypes: graphExtractionIncludeTypes,
-                  batchSize: graphExtractionBatchSize,
-                  ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
-                },
-              }),
-            { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
-          );
-          graphExtractionDurationMs = Date.now() - extractionStart;
-          actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
-          info(
-            `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
-          );
-        } catch (err) {
-          graphExtractionDurationMs = Date.now() - extractionStart;
-          allWarnings.push(`graph extraction failed: ${errMessage(err)}`);
-        }
-      } else if (sources.length > 0 && !graphEnabled) {
-        info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
-      }
-
-      // Orphan proposal purge — reject pending reflect proposals whose target
-      // asset no longer exists on disk. Runs after graph extraction so newly
-      // promoted assets from accept flows during this run are already present.
-      if (primaryStashDir) {
-        try {
-          const purgeResult = purgeOrphanProposals(
-            primaryStashDir,
-            sources.map((s) => s.path),
-          );
-          orphansPurged = purgeResult.rejected;
-          if (purgeResult.rejected > 0) {
-            info(
-              `[improve] orphan purge: ${purgeResult.rejected}/${purgeResult.checked} orphaned proposals rejected (${purgeResult.durationMs}ms)`,
-            );
-          }
-          appendEvent(
-            {
-              eventType: "proposal_orphan_purge",
-              ref: "proposals:_orphan-purge",
-              metadata: {
-                checked: purgeResult.checked,
-                rejected: purgeResult.rejected,
-                durationMs: purgeResult.durationMs,
-                byType: purgeResult.byType,
-                orphans: purgeResult.orphans.map((o) => o.ref),
-              },
-            },
-            eventsCtx,
-          );
-        } catch (err) {
-          allWarnings.push(`orphan purge failed: ${errMessage(err)}`);
-        }
-
-        // Phase 6B (Advantage D6b): expire pending proposals that have aged past
-        // the retention window. Runs AFTER orphan purge so we never double-archive
-        // a proposal that orphan-purge already moved. `expireStaleProposals` emits
-        // its own per-proposal `proposal_expired` events; we additionally emit a
-        // single roll-up event here for parity with the orphan-purge surface.
-        try {
-          const expireResult = expireStaleProposals(primaryStashDir, config);
-          proposalsExpired = expireResult.expired;
-          if (expireResult.expired > 0) {
-            info(
-              `[improve] expiration: ${expireResult.expired}/${expireResult.checked} pending proposals expired ` +
-                `(retention=${expireResult.retentionDays}d, ${expireResult.durationMs}ms)`,
-            );
-          }
-          appendEvent(
-            {
-              eventType: "proposal_expiration_pass",
-              ref: "proposals:_expiration",
-              metadata: {
-                checked: expireResult.checked,
-                expired: expireResult.expired,
-                durationMs: expireResult.durationMs,
-                retentionDays: expireResult.retentionDays,
-                expiredProposals: expireResult.expiredProposals,
-              },
-            },
-            eventsCtx,
-          );
-        } catch (err) {
-          allWarnings.push(`proposal expiration failed: ${errMessage(err)}`);
-        }
-      }
-
-      // Fix #2 (observability 0.8.0): trim the events table in state.db so it
-      // doesn't grow unbounded. `akm health` writes a `health_probe` row on every
-      // invocation, and every command surface emits at least one event besides —
-      // without this trim, state.db is a permanent append-only log. Config key
-      // `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
-      // window. The purge runs against state.db (a different SQLite file from
-      // the index `db` above).
-      {
-        const retentionDays =
-          typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
-        if (retentionDays > 0) {
-          // #585: reuse the long-lived eventsCtx.db connection when akmImprove
-          // opened one — opening a second state.db write connection while
-          // eventsDb is still live made two simultaneous writers contend on the
-          // same WAL file ("database is locked"). Only the eventsCtx.dbPath
-          // fallback path (state.db failed to open up-front) opens — and then
-          // owns and closes — its own handle. C2 still holds: the fallback uses
-          // the boundary-pinned path, never a live `process.env` re-read.
-          try {
-            withStateDb(
-              (stateDb) => {
-                const purgedCount = purgeOldEvents(stateDb, retentionDays);
-                if (purgedCount > 0) {
-                  info(
-                    `[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`,
-                  );
+      // O-1 (#364): pass budget signal so a hung inference call is cancelled.
+      memoryInference = await withLlmStage(
+        "memory-inference",
+        () =>
+          memoryInferenceFn({
+            config,
+            ...(resolvedPlan
+              ? {
+                  llmConfig: resolvedPlan.processes.memoryInference.runner
+                    ? materializeLlmRunnerConnection(resolvedPlan.processes.memoryInference.runner)
+                    : null,
                 }
-                appendEvent(
-                  {
-                    eventType: "events_purged",
-                    ref: "events:_purge",
-                    metadata: { purgedCount, retentionDays },
-                  },
-                  eventsCtx,
-                );
-
-                // improve_runs uses the same retention window as events — both are
-                // observability/audit data, both grow append-only, both have a
-                // dedicated purge helper. Mirroring the events purge here means a
-                // single retention knob (improve.eventRetentionDays) governs both.
-                const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
-                if (improveRunsPurged > 0) {
-                  info(
-                    `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
-                  );
-                }
-                appendEvent(
-                  {
-                    eventType: "improve_runs_purged",
-                    ref: "improve_runs:_purge",
-                    metadata: { purgedCount: improveRunsPurged, retentionDays },
-                  },
-                  eventsCtx,
-                );
-
-                // R5: improve_cycle_metrics has its OWN retention window
-                // (default 365d — a slow collapse needs a longer trend than
-                // the 90d events window). canary_queries rows are never purged.
-                const cycleRetention = config.improve?.collapseDetector?.retentionDays ?? CYCLE_METRICS_RETENTION_DAYS;
-                const cycleMetricsPurged = purgeOldCycleMetrics(stateDb, cycleRetention);
-                if (cycleMetricsPurged > 0) {
-                  info(
-                    `[improve] cycle-metrics purge: ${cycleMetricsPurged} row(s) older than ${cycleRetention}d removed from state.db`,
-                  );
-                  appendEvent(
-                    {
-                      // Dedicated type (mirrors improve_runs_purged) so consumers
-                      // never have to disambiguate purge targets via the ref string.
-                      eventType: "improve_cycle_metrics_purged",
-                      ref: "improve_cycle_metrics:_purge",
-                      metadata: { purgedCount: cycleMetricsPurged, retentionDays: cycleRetention },
-                    },
-                    eventsCtx,
-                  );
-                }
-              },
-              { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
-            );
-          } catch (err) {
-            allWarnings.push(`events purge failed: ${errMessage(err)}`);
-          }
-
-          // task_logs in logs.db (#579) shares the same retention window as
-          // events/improve_runs — all three are observability data governed by
-          // the single improve.eventRetentionDays knob. Separate try/finally
-          // because logs.db is a different file: a locked/missing logs.db must
-          // not block the state.db purges above.
-          let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
-          try {
-            logsDb = openLogsDatabase();
-            const taskLogsPurged = purgeOldTaskLogs(logsDb, retentionDays);
-            if (taskLogsPurged > 0) {
+              : {}),
+            sources,
+            signal: budgetSignal,
+            db: dbCell.current,
+            reEnrich: false,
+            onProgress: (event) => {
+              const current = event.currentRef ? ` ${event.currentRef}` : "";
               info(
-                `[improve] task_logs purge: ${taskLogsPurged} log line(s) older than ${retentionDays}d removed from logs.db`,
+                `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
               );
-            }
+            },
+          }),
+        { engine: resolvedPlan?.processes.memoryInference.runner?.engine, process: "memoryInference" },
+      );
+      durationMs = Date.now() - inferenceStart;
+      action = { ref: "memory:_inference", mode: "memory-inference", result: memoryInference };
+      info(
+        `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
+      );
+    } catch (err) {
+      durationMs = Date.now() - inferenceStart;
+      warnings.push(`memory inference failed: ${errMessage(err)}`);
+    }
+  }
+
+  return { memoryInference, durationMs, action, warnings };
+}
+
+/**
+ * Graph-extraction maintenance pass.
+ *
+ * INVARIANT: graph extraction normally runs only on files touched by
+ * actionable refs (candidatePaths). Full-corpus scans are opt-in via
+ * profile.processes.graphExtraction.fullScan = true (used by the
+ * `graph-refresh` built-in profile and its weekly scheduled task).
+ * The empty-Set fallback is intentional when no refs were touched —
+ * the extractor's filter rejects every file and returns empty, keeping
+ * the pass invoked so the action is recorded and tests stay exercised.
+ */
+export async function runGraphExtractionMaintenancePass(
+  ctx: MaintenanceCtx,
+  dbCell: IndexDbCell,
+  args: {
+    actionableRefs: ImproveEligibleRef[];
+    memoryRefsForInference: Set<string>;
+    /** D9: true when consolidation ran and wrote at least one record this improve run. */
+    consolidationRan?: boolean;
+    /** True when the memory-inference reindex already refreshed the handle. */
+    reindexedAfterInference: boolean;
+  },
+): Promise<{
+  graphExtraction?: GraphExtractionResult;
+  durationMs: number;
+  action?: ImproveActionResult;
+  warnings: string[];
+}> {
+  const { config, sources, primaryStashDir, budgetSignal, improveProfile, resolvedPlan, graphExtractionFn } = ctx;
+  const warnings: string[] = [];
+  let graphExtraction: GraphExtractionResult | undefined;
+  let durationMs = 0;
+  let action: ImproveActionResult | undefined;
+  let reindexedAfterInference = args.reindexedAfterInference;
+
+  const graphEnabled = resolvedPlan ? true : isProcessEnabled("index", "graph_extraction", config);
+  const graphExtractionDisabledByProfile = improveProfile?.processes?.graphExtraction?.enabled === false;
+  const graphExtractionFullScan = improveProfile?.processes?.graphExtraction?.fullScan === true;
+  // #624 P2: optional incremental high-signal-first cap. Unset = process all
+  // eligible (byte-identical to today; no ranking/slice).
+  const graphExtractionTopN = improveProfile?.processes?.graphExtraction?.topN;
+  const graphExtractionIncludeTypes = improveProfile?.processes?.graphExtraction?.includeTypes ?? [
+    ...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
+  ];
+  const graphExtractionBatchSize =
+    improveProfile?.processes?.graphExtraction?.batchSize ?? DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE;
+  // Build the set of refs actually touched this run.
+  const touchedRefs = new Set<string>();
+  for (const r of args.actionableRefs) touchedRefs.add(r.ref);
+  for (const r of args.memoryRefsForInference) touchedRefs.add(r);
+
+  if (graphExtractionDisabledByProfile) {
+    info("[improve] graph extraction skipped (disabled by improve profile)");
+  } else if (sources.length > 0 && graphEnabled) {
+    info(`[improve] graph extraction starting${graphExtractionFullScan ? " (full-corpus scan)" : ""}`);
+    const extractionStart = Date.now();
+    try {
+      // D9: if consolidation ran but memory inference did not reindex, force a reindex
+      // so graph extraction sees current DB state after consolidation writes.
+      if (args.consolidationRan && !reindexedAfterInference) {
+        info("[improve] reindexing after consolidation (graph extraction needs current state)");
+        try {
+          await ctx.reindexWithIndexDbReleased(primaryStashDir);
+          reindexedAfterInference = true;
+          info("[improve] reindex after consolidation complete");
+        } catch (err) {
+          warnings.push(`reindex after consolidation failed: ${errMessage(err)}`);
+        }
+      }
+      // #584: no close/reopen needed here — reindexWithIndexDbReleased
+      // already swapped in a fresh post-reindex handle.
+      // Resolve touched refs to absolute file paths. Skipped for fullScan
+      // (candidatePaths stays undefined → extractor processes all files).
+      let candidatePaths: Set<string> | undefined;
+      if (!graphExtractionFullScan) {
+        candidatePaths = new Set<string>();
+        if (primaryStashDir && touchedRefs.size > 0) {
+          const writableDirSet = new Set(getWritableStashDirs(primaryStashDir).map((d) => path.resolve(d)));
+          const resolved = await Promise.all(
+            [...touchedRefs].map((ref) => findAssetFilePath(ref, primaryStashDir, writableDirSet).catch(() => null)),
+          );
+          for (const p of resolved) {
+            if (typeof p === "string" && p.length > 0) candidatePaths.add(p);
+          }
+        }
+      }
+      const progressHandler = (event: {
+        processed: number;
+        total: number;
+        extracted: number;
+        totalEntities: number;
+        totalRelations: number;
+        currentPath?: string;
+      }) => {
+        const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
+        info(
+          `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
+        );
+      };
+      // O-1 (#364): pass budget signal so a hung graph extraction call is cancelled.
+      graphExtraction = await withLlmStage(
+        "graph-extraction",
+        () =>
+          graphExtractionFn({
+            config,
+            ...(resolvedPlan
+              ? {
+                  llmConfig: resolvedPlan.processes.graphExtraction.runner
+                    ? materializeLlmRunnerConnection(resolvedPlan.processes.graphExtraction.runner)
+                    : null,
+                }
+              : {}),
+            sources,
+            signal: budgetSignal,
+            db: dbCell.current,
+            reEnrich: false,
+            onProgress: progressHandler,
+            options: {
+              candidatePaths,
+              includeTypes: graphExtractionIncludeTypes,
+              batchSize: graphExtractionBatchSize,
+              ...(graphExtractionTopN != null ? { topN: graphExtractionTopN } : {}),
+            },
+          }),
+        { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
+      );
+      durationMs = Date.now() - extractionStart;
+      action = { ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction };
+      info(
+        `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
+      );
+    } catch (err) {
+      durationMs = Date.now() - extractionStart;
+      warnings.push(`graph extraction failed: ${errMessage(err)}`);
+    }
+  } else if (sources.length > 0 && !graphEnabled) {
+    info("[improve] graph extraction skipped (features.index.graph_extraction is disabled)");
+  }
+
+  return { graphExtraction, durationMs, action, warnings };
+}
+
+/**
+ * Orphan proposal purge — reject pending reflect proposals whose target
+ * asset no longer exists on disk. Runs after graph extraction so newly
+ * promoted assets from accept flows during this run are already present.
+ */
+function runOrphanProposalPurgePass(ctx: MaintenanceCtx): { orphansPurged: number; warnings: string[] } {
+  const { primaryStashDir, sources, eventsCtx } = ctx;
+  const warnings: string[] = [];
+  let orphansPurged = 0;
+  try {
+    const purgeResult = purgeOrphanProposals(
+      primaryStashDir,
+      sources.map((s) => s.path),
+    );
+    orphansPurged = purgeResult.rejected;
+    if (purgeResult.rejected > 0) {
+      info(
+        `[improve] orphan purge: ${purgeResult.rejected}/${purgeResult.checked} orphaned proposals rejected (${purgeResult.durationMs}ms)`,
+      );
+    }
+    appendEvent(
+      {
+        eventType: "proposal_orphan_purge",
+        ref: "proposals:_orphan-purge",
+        metadata: {
+          checked: purgeResult.checked,
+          rejected: purgeResult.rejected,
+          durationMs: purgeResult.durationMs,
+          byType: purgeResult.byType,
+          orphans: purgeResult.orphans.map((o) => o.ref),
+        },
+      },
+      eventsCtx,
+    );
+  } catch (err) {
+    warnings.push(`orphan purge failed: ${errMessage(err)}`);
+  }
+  return { orphansPurged, warnings };
+}
+
+/**
+ * Phase 6B (Advantage D6b): expire pending proposals that have aged past
+ * the retention window. Runs AFTER orphan purge so we never double-archive
+ * a proposal that orphan-purge already moved. `expireStaleProposals` emits
+ * its own per-proposal `proposal_expired` events; we additionally emit a
+ * single roll-up event here for parity with the orphan-purge surface.
+ */
+function runProposalExpirationPass(ctx: MaintenanceCtx): { proposalsExpired: number; warnings: string[] } {
+  const { primaryStashDir, config, eventsCtx } = ctx;
+  const warnings: string[] = [];
+  let proposalsExpired = 0;
+  try {
+    const expireResult = expireStaleProposals(primaryStashDir, config);
+    proposalsExpired = expireResult.expired;
+    if (expireResult.expired > 0) {
+      info(
+        `[improve] expiration: ${expireResult.expired}/${expireResult.checked} pending proposals expired ` +
+          `(retention=${expireResult.retentionDays}d, ${expireResult.durationMs}ms)`,
+      );
+    }
+    appendEvent(
+      {
+        eventType: "proposal_expiration_pass",
+        ref: "proposals:_expiration",
+        metadata: {
+          checked: expireResult.checked,
+          expired: expireResult.expired,
+          durationMs: expireResult.durationMs,
+          retentionDays: expireResult.retentionDays,
+          expiredProposals: expireResult.expiredProposals,
+        },
+      },
+      eventsCtx,
+    );
+  } catch (err) {
+    warnings.push(`proposal expiration failed: ${errMessage(err)}`);
+  }
+  return { proposalsExpired, warnings };
+}
+
+/**
+ * Fix #2 (observability 0.8.0): trim the events table in state.db so it
+ * doesn't grow unbounded. `akm health` writes a `health_probe` row on every
+ * invocation, and every command surface emits at least one event besides —
+ * without this trim, state.db is a permanent append-only log. Config key
+ * `improve.eventRetentionDays` (default 90, set 0 to disable) controls the
+ * window. The purge runs against state.db (a different SQLite file from
+ * the index handle the other passes use).
+ */
+export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[] } {
+  const { config, eventsCtx } = ctx;
+  const warnings: string[] = [];
+  const retentionDays = typeof config.improve?.eventRetentionDays === "number" ? config.improve.eventRetentionDays : 90;
+  if (retentionDays > 0) {
+    // #585: reuse the long-lived eventsCtx.db connection when akmImprove
+    // opened one — opening a second state.db write connection while
+    // eventsDb is still live made two simultaneous writers contend on the
+    // same WAL file ("database is locked"). Only the eventsCtx.dbPath
+    // fallback path (state.db failed to open up-front) opens — and then
+    // owns and closes — its own handle. C2 still holds: the fallback uses
+    // the boundary-pinned path, never a live `process.env` re-read.
+    try {
+      withStateDb(
+        (stateDb) => {
+          const purgedCount = purgeOldEvents(stateDb, retentionDays);
+          if (purgedCount > 0) {
+            info(`[improve] events purge: ${purgedCount} event(s) older than ${retentionDays}d removed from state.db`);
+          }
+          appendEvent(
+            {
+              eventType: "events_purged",
+              ref: "events:_purge",
+              metadata: { purgedCount, retentionDays },
+            },
+            eventsCtx,
+          );
+
+          // improve_runs uses the same retention window as events — both are
+          // observability/audit data, both grow append-only, both have a
+          // dedicated purge helper. Mirroring the events purge here means a
+          // single retention knob (improve.eventRetentionDays) governs both.
+          const improveRunsPurged = purgeOldImproveRuns(stateDb, retentionDays);
+          if (improveRunsPurged > 0) {
+            info(
+              `[improve] improve_runs purge: ${improveRunsPurged} run(s) older than ${retentionDays}d removed from state.db`,
+            );
+          }
+          appendEvent(
+            {
+              eventType: "improve_runs_purged",
+              ref: "improve_runs:_purge",
+              metadata: { purgedCount: improveRunsPurged, retentionDays },
+            },
+            eventsCtx,
+          );
+
+          // R5: improve_cycle_metrics has its OWN retention window
+          // (default 365d — a slow collapse needs a longer trend than
+          // the 90d events window). canary_queries rows are never purged.
+          const cycleRetention = config.improve?.collapseDetector?.retentionDays ?? CYCLE_METRICS_RETENTION_DAYS;
+          const cycleMetricsPurged = purgeOldCycleMetrics(stateDb, cycleRetention);
+          if (cycleMetricsPurged > 0) {
+            info(
+              `[improve] cycle-metrics purge: ${cycleMetricsPurged} row(s) older than ${cycleRetention}d removed from state.db`,
+            );
             appendEvent(
               {
-                eventType: "task_logs_purged",
-                ref: "task_logs:_purge",
-                metadata: { purgedCount: taskLogsPurged, retentionDays },
+                // Dedicated type (mirrors improve_runs_purged) so consumers
+                // never have to disambiguate purge targets via the ref string.
+                eventType: "improve_cycle_metrics_purged",
+                ref: "improve_cycle_metrics:_purge",
+                metadata: { purgedCount: cycleMetricsPurged, retentionDays: cycleRetention },
               },
               eventsCtx,
             );
-          } catch (err) {
-            allWarnings.push(`task_logs purge failed: ${errMessage(err)}`);
-          } finally {
-            if (logsDb) {
-              try {
-                logsDb.close();
-              } catch {
-                // best-effort
-              }
-            }
           }
+        },
+        { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
+      );
+    } catch (err) {
+      warnings.push(`events purge failed: ${errMessage(err)}`);
+    }
+
+    // task_logs in logs.db (#579) shares the same retention window as
+    // events/improve_runs — all three are observability data governed by
+    // the single improve.eventRetentionDays knob. Separate try/finally
+    // because logs.db is a different file: a locked/missing logs.db must
+    // not block the state.db purges above.
+    let logsDb: ReturnType<typeof openLogsDatabase> | undefined;
+    try {
+      logsDb = openLogsDatabase();
+      const taskLogsPurged = purgeOldTaskLogs(logsDb, retentionDays);
+      if (taskLogsPurged > 0) {
+        info(
+          `[improve] task_logs purge: ${taskLogsPurged} log line(s) older than ${retentionDays}d removed from logs.db`,
+        );
+      }
+      appendEvent(
+        {
+          eventType: "task_logs_purged",
+          ref: "task_logs:_purge",
+          metadata: { purgedCount: taskLogsPurged, retentionDays },
+        },
+        eventsCtx,
+      );
+    } catch (err) {
+      warnings.push(`task_logs purge failed: ${errMessage(err)}`);
+    } finally {
+      if (logsDb) {
+        try {
+          logsDb.close();
+        } catch {
+          // best-effort
         }
       }
-    } finally {
-      if (db) closeDatabase(db);
     }
-  });
-
-  return {
-    ...(memoryInference ? { memoryInference } : {}),
-    ...(graphExtraction ? { graphExtraction } : {}),
-    ...(actions.length > 0 ? { actions } : {}),
-    memoryInferenceDurationMs,
-    graphExtractionDurationMs,
-    orphansPurged,
-    proposalsExpired,
-  };
+  }
+  return { warnings };
 }
