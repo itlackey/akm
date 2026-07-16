@@ -45,19 +45,6 @@ for await (const src of schemaGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
-// Soft check: the vendored ECharts payload backs `akm health --format html`
-// in self-contained (inline) mode. Missing it is non-fatal — the report can
-// still be generated with AKM_ECHARTS=cdn — but warn loudly so a broken
-// checkout doesn't silently ship a build without offline reports (#582).
-try {
-  statSync("src/assets/templates/html/vendor/echarts.min.js");
-} catch {
-  console.warn(
-    "copy-assets: WARNING — src/assets/templates/html/vendor/echarts.min.js is missing; " +
-      "`akm health --format html` will only work with AKM_ECHARTS=cdn.",
-  );
-}
-
 // 5. Copy the published launchers plus the Node-runtime entry wrapper and
 //    text-import loader hook into dist/. The shell launchers keep the npm/bun
 //    global-install contract runtime-agnostic: prefer Bun when present, fall

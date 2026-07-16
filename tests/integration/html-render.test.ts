@@ -6,13 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveOutputMode } from "../../src/output/context";
-import {
-  DEFAULT_TEMPLATE,
-  deliverRendered,
-  escapeHtml,
-  renderHtml,
-  resolveTemplatePath,
-} from "../../src/output/html-render";
+import { deliverRendered, escapeHtml, renderHtml, resolveTemplatePath } from "../../src/output/html-render";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -34,15 +28,15 @@ describe("resolveTemplatePath", () => {
     expect(fs.existsSync(p)).toBe(true);
   });
 
-  test("falls back to default.html for a command without a template", () => {
-    const p = resolveTemplatePath("proposal-list");
-    expect(p.endsWith(`${path.sep}${DEFAULT_TEMPLATE}.html`)).toBe(true);
-    expect(fs.existsSync(p)).toBe(true);
-  });
-
-  test("sanitizes path-traversal command names to the default template", () => {
+  test("sanitizes path-traversal command names to a bare basename under the templates dir", () => {
+    // `--format html` is health-only (chunk-9 WI-9.4c / Decision 4): there is
+    // no more generic default.html fallback, so a hostile/unknown command
+    // name resolves to `<basename>.html` (which simply won't exist) rather
+    // than escaping the templates directory.
     const p = resolveTemplatePath("../../../etc/passwd");
-    expect(p.endsWith(`${path.sep}${DEFAULT_TEMPLATE}.html`)).toBe(true);
+    expect(p.endsWith(`${path.sep}passwd.html`)).toBe(true);
+    expect(p).not.toContain("..");
+    expect(fs.existsSync(p)).toBe(false);
   });
 });
 
@@ -69,19 +63,6 @@ describe("renderHtml", () => {
     // %%A%%'s value embeds the literal %%B%% token; it must survive verbatim
     // regardless of key iteration order.
     expect(renderHtml(tmpl, { "%%A%%": "raw %%B%%", "%%B%%": "beta" })).toBe("raw %%B%%|beta");
-  });
-
-  test("the default template renders COMMAND / CONTENT_JSON / GENERATED_AT", () => {
-    const html = renderHtml(resolveTemplatePath(DEFAULT_TEMPLATE), {
-      "%%COMMAND%%": "proposal-list",
-      "%%CONTENT_JSON%%": escapeHtml(JSON.stringify({ totalCount: 0 })),
-      "%%GENERATED_AT%%": "2026-06-11T00:00:00.000Z",
-    });
-    expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain("proposal-list");
-    expect(html).toContain("{&quot;totalCount&quot;:0}");
-    expect(html).toContain("Generated 2026-06-11T00:00:00.000Z");
-    expect(html).not.toMatch(/%%[A-Z_]+%%/);
   });
 });
 

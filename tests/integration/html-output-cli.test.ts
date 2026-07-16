@@ -5,6 +5,11 @@
 /**
  * CLI-level coverage for `--format html` and the global `--output <path>`
  * flag (#582), driven through the in-process harness.
+ *
+ * `--format html` is health-only (chunk-9 WI-9.4c / Decision 4): the generic
+ * JSON-in-<pre> fallback template was removed, so every non-health command
+ * now rejects `--format html` with a `UsageError` (INVALID_FLAG_VALUE)
+ * instead of rendering the default template.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let cleanup: Cleanup = () => {};
@@ -40,17 +45,15 @@ function seedProposal(ref = "lesson:rg-over-grep"): void {
   if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
 }
 
-describe("--format html (default template)", () => {
-  test("akm proposal list --format html renders the JSON envelope in the dark template", async () => {
+describe("--format html (health-only)", () => {
+  test("akm proposal list --format html rejects with a UsageError (html is health-only)", async () => {
     seedProposal();
-    const { code, stdout } = await runCliCapture(["proposal", "list", "--format", "html"]);
-    expect(code).toBe(0);
-    expect(stdout).toContain("<!DOCTYPE html>");
-    expect(stdout).toContain("<title>akm proposal-list</title>");
-    // The JSON envelope is HTML-escaped inside the <pre> block.
-    expect(stdout).toContain("&quot;totalCount&quot;: 1");
-    expect(stdout).toContain("lesson:rg-over-grep");
-    expect(stdout).not.toMatch(/%%[A-Z_]+%%/);
+    const { code, stderr } = await runCliCapture(["proposal", "list", "--format", "html"]);
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stderr);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("html output is only available for `akm health`");
   });
 
   test("invalid --format still rejects unknown values and lists html", async () => {
@@ -62,15 +65,14 @@ describe("--format html (default template)", () => {
 });
 
 describe("--output <path>", () => {
-  test("writes the html document to the file instead of stdout", async () => {
+  test("--format html --output still rejects (html is health-only, before any file write)", async () => {
     seedProposal();
     const out = path.join(storage.root, "proposals.html");
-    const { code, stdout } = await runCliCapture(["proposal", "list", "--format", "html", "--output", out]);
-    expect(code).toBe(0);
-    expect(stdout.trim()).toBe("");
-    const html = fs.readFileSync(out, "utf8");
-    expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain("&quot;totalCount&quot;: 1");
+    const { code, stderr } = await runCliCapture(["proposal", "list", "--format", "html", "--output", out]);
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stderr);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(fs.existsSync(out)).toBe(false);
   });
 
   test("also redirects json output to the file", async () => {
@@ -85,8 +87,8 @@ describe("--output <path>", () => {
 });
 
 describe("akm health --format html", () => {
-  test("renders the full report from the bespoke template (cdn mode)", async () => {
-    const { code, stdout } = await withEnv({ AKM_ECHARTS: "cdn" }, () => runCliCapture(["health", "--format", "html"]));
+  test("renders the full report from the bespoke template (echarts is CDN-only, chunk-9 WI-9.4d)", async () => {
+    const { code, stdout } = await runCliCapture(["health", "--format", "html"]);
     // health maps warn→4; both pass and warn are valid for a fresh sandbox DB.
     expect([0, 4]).toContain(code);
     expect(stdout).toContain("<!DOCTYPE html>");
@@ -111,24 +113,11 @@ describe("akm health --format html", () => {
 
   test("--compare overrides the trend window and --output writes the file", async () => {
     const out = path.join(storage.root, "health.html");
-    const { code, stdout } = await withEnv({ AKM_ECHARTS: "cdn" }, () =>
-      runCliCapture(["health", "--format", "html", "--compare", "7d", "--output", out]),
-    );
+    const { code, stdout } = await runCliCapture(["health", "--format", "html", "--compare", "7d", "--output", out]);
     expect([0, 4]).toContain(code);
     expect(stdout.trim()).toBe("");
     const html = fs.readFileSync(out, "utf8");
     expect(html).toContain("Trend vs prior 7d");
     expect(html).toContain("AKM Health Report");
-  });
-
-  test("inline mode (default) embeds the vendored echarts payload", async () => {
-    const out = path.join(storage.root, "health-inline.html");
-    const { code } = await runCliCapture(["health", "--format", "html", "--output", out]);
-    expect([0, 4]).toContain(code);
-    const stat = fs.statSync(out);
-    // The vendored echarts.min.js is ~1MB; a self-contained report must carry it.
-    expect(stat.size).toBeGreaterThan(1_000_000);
-    const html = fs.readFileSync(out, "utf8");
-    expect(html).not.toContain("cdn.jsdelivr.net");
   });
 });

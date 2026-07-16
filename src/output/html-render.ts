@@ -6,11 +6,12 @@
  * `--format html` rendering primitives (#582).
  *
  * Templates live in `src/assets/templates/html/` (mirrored to
- * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). A command with a
- * bespoke template ships `<command>.html`; every other command falls back to
- * `default.html`, which renders the command's JSON envelope in a `<pre>`
- * block. Substitution is plain `%%TOKEN%%` string replacement — no template
- * engine, by design.
+ * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). `--format html`
+ * is health-only (chunk-9 WI-9.4c / Decision 4): `akm health` ships the sole
+ * bespoke `<command>.html` template; every other command rejects `--format
+ * html` with a `UsageError` before reaching this module (see
+ * `src/cli/shared.ts`'s `output()`). Substitution is plain `%%TOKEN%%` string
+ * replacement — no template engine, by design.
  */
 
 import fs from "node:fs";
@@ -19,20 +20,14 @@ import { getDirname } from "../runtime";
 
 const TEMPLATES_DIR = path.join(getDirname(import.meta.url), "../assets/templates/html");
 
-/** Template used by every command without a bespoke `<command>.html`. */
-export const DEFAULT_TEMPLATE = "default";
-
 /**
- * Resolve the on-disk template path for a command. `<command>.html` when the
- * command ships a bespoke template (today: `health`), otherwise
- * `default.html`. Command names are sanitized to a bare basename so a hostile
- * command string can never escape the templates directory.
+ * Resolve the on-disk template path for a command's bespoke `<command>.html`.
+ * The command name is sanitized to a bare basename so a hostile command
+ * string can never escape the templates directory.
  */
 export function resolveTemplatePath(command: string): string {
   const name = path.basename(command.trim());
-  const candidate = path.join(TEMPLATES_DIR, `${name}.html`);
-  if (name !== DEFAULT_TEMPLATE && fs.existsSync(candidate)) return candidate;
-  return path.join(TEMPLATES_DIR, `${DEFAULT_TEMPLATE}.html`);
+  return path.join(TEMPLATES_DIR, `${name}.html`);
 }
 
 /** Matches a `%%TOKEN%%` placeholder (uppercase + underscore key). */

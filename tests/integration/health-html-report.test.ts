@@ -4,7 +4,6 @@
 
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
-import path from "node:path";
 import { akmHealth } from "../../src/commands/health";
 import { buildHealthHtmlReplacements, type HealthHtmlReportOptions } from "../../src/commands/health/html-report";
 import type { AkmHealthResult } from "../../src/commands/health/types";
@@ -13,7 +12,7 @@ import { appendEvent } from "../../src/core/events";
 import { openStateDatabase } from "../../src/core/state-db";
 import { renderHtml, resolveTemplatePath } from "../../src/output/html-render";
 import { recordImproveRun } from "../../src/storage/repositories/improve-runs-repository";
-import { type Cleanup, type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let cleanup: Cleanup = () => {};
@@ -101,7 +100,6 @@ function buildOpts(partial: Partial<HealthHtmlReportOptions> = {}): HealthHtmlRe
     window: "24h",
     compare: "24h",
     proposals: [],
-    echarts: "cdn",
     ...partial,
   };
 }
@@ -283,27 +281,14 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%EXEC_SUMMARY_HTML%%"]).toContain("<b>improving</b>");
   });
 
-  test("echarts cdn mode emits a script src tag; inline mode embeds the lib escaped", () => {
+  test("echarts is CDN-only (chunk-9 WI-9.4d — the vendored inline payload was removed)", () => {
     seedImproveRun();
     const result = healthResult();
 
-    const cdn = buildHealthHtmlReplacements(result, buildOpts({ echarts: "cdn" }));
-    expect(cdn["%%ECHARTS_TAG%%"]).toBe(
+    const replacements = buildHealthHtmlReplacements(result, buildOpts());
+    expect(replacements["%%ECHARTS_TAG%%"]).toBe(
       '<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>',
     );
-
-    const lib = makeSandboxDir("akm-echarts-fixture-");
-    try {
-      const libPath = path.join(lib.dir, "echarts.min.js");
-      fs.writeFileSync(libPath, "var echarts={};/*</script>*/");
-      const inline = buildHealthHtmlReplacements(result, buildOpts({ echarts: "inline", echartsLibPath: libPath }));
-      expect(inline["%%ECHARTS_TAG%%"]).toStartWith("<script>");
-      expect(inline["%%ECHARTS_TAG%%"]).toContain("var echarts={};");
-      // Embedded payload must not be able to close the script tag early.
-      expect(inline["%%ECHARTS_TAG%%"]).toContain("<\\/script>*/");
-    } finally {
-      lib.cleanup();
-    }
   });
 
   test("empty window renders the no-runs snapshot and pass cards", () => {

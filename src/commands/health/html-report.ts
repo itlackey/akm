@@ -13,12 +13,17 @@
  * Determinism: nothing here depends on Date.now()/Math.random(). Runs are
  * sorted by startedAt; `%%GENERATED_AT%%` derives from the latest run (or the
  * window anchor), so output is byte-identical for identical inputs.
+ *
+ * ECharts delivery (chunk-9 WI-9.4d, anchors C.1): CDN-only. The vendored
+ * `~1MB` `echarts.min.js` self-contained/"inline" mode was removed along with
+ * the asset itself — `buildEchartsTag` always emits a `<script src>` tag
+ * pointed at the jsDelivr CDN, so viewing the report now requires network
+ * access. BEHAVIOR CHANGE (plan-accepted, ledgered): previously
+ * `AKM_ECHARTS=cdn` opted IN to the CDN with "inline" as the default; there is
+ * no more env var or option to opt back into an offline report.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { escapeHtml } from "../../output/html-render";
-import { getDirname } from "../../runtime";
 import { pkgVersion } from "../../version";
 import {
   type AkmHealthResult,
@@ -39,7 +44,6 @@ import {
 const DISTILL_REASONS_HIDDEN = new Set(["no new signal since last proposal"]);
 
 const ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
-const ECHARTS_VENDOR_PATH = path.join(getDirname(import.meta.url), "../../assets/templates/html/vendor/echarts.min.js");
 
 /** Pending-proposal fields the report consumes (`listPendingProposals` rows satisfy this). */
 export interface PendingProposalLike {
@@ -62,10 +66,6 @@ export interface HealthHtmlReportOptions {
    * are not distorted when `--since` and `--compare` differ.
    */
   deltas?: Record<string, DeltaEntry>;
-  /** ECharts delivery. Defaults to `AKM_ECHARTS` ("cdn" opts in; anything else inlines). */
-  echarts?: "inline" | "cdn";
-  /** Override for the vendored echarts.min.js path (tests). */
-  echartsLibPath?: string;
 }
 
 // ── Small formatters (ports of render.py helpers) ───────────────────────────
@@ -384,13 +384,9 @@ function buildSliceOptions(window: string): string {
   return opts.join("\n      ");
 }
 
-function buildEchartsTag(opts: HealthHtmlReportOptions): string {
-  const mode = opts.echarts ?? (process.env.AKM_ECHARTS === "cdn" ? "cdn" : "inline");
-  if (mode === "cdn") return `<script src="${ECHARTS_CDN}"></script>`;
-  const libPath = opts.echartsLibPath ?? ECHARTS_VENDOR_PATH;
-  // Guard against an accidental </script> in the minified payload.
-  const lib = fs.readFileSync(libPath, "utf8").replaceAll("</script>", "<\\/script>");
-  return `<script>\n${lib}\n</script>`;
+/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. */
+function buildEchartsTag(): string {
+  return `<script src="${ECHARTS_CDN}"></script>`;
 }
 
 // ── Main builder ─────────────────────────────────────────────────────────────
@@ -1028,7 +1024,7 @@ export function buildHealthHtmlReplacements(
       : '<tr><td colspan="4" style="text-align:center;color:var(--muted);">No pending proposals</td></tr>';
 
   return {
-    "%%ECHARTS_TAG%%": buildEchartsTag(opts),
+    "%%ECHARTS_TAG%%": buildEchartsTag(),
     "%%REPORT_TITLE%%": esc(reportTitle),
     "%%WINDOW%%": esc(opts.window),
     "%%SINCE_HUMAN%%": sinceHuman,
