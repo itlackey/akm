@@ -4,6 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { ConfigError } from "../../core/errors";
 
 /** Shared result type for synchronous command execution. */
 export interface ExecResult {
@@ -21,6 +22,17 @@ export interface ExecResult {
 export interface NodeExec {
   run(args: string[]): ExecResult;
 }
+
+/**
+ * A backend's `exec` seam: the shared `run(args)` shape plus whatever
+ * backend-specific extra members it needs (e.g. launchd's `uid()`). schtasks
+ * needs no extra members, so `SchtasksExec` is just `BackendExec` (the
+ * default `Extra` is `unknown`, an intersection no-op); launchd is
+ * `BackendExec<{ uid(): number }>`. cron is NOT a `BackendExec` — its native
+ * tool takes no argv (`crontab -l`/`crontab -`), so its `CronExec` keeps its
+ * own bespoke `read()`/`write()` shape.
+ */
+export type BackendExec<Extra = unknown> = NodeExec & Extra;
 
 /**
  * Default exec strategy: run commands synchronously via {@link spawnCommand}.
@@ -79,6 +91,37 @@ export function spawnCommand(args: string[]): ExecResult {
     stdout: decodeCommandOutput(r.stdout),
     stderr: decodeCommandOutput(r.stderr),
   };
+}
+
+export interface ThrowIfNotOkOptions {
+  /** Predicate for an acceptable result — defaults to `status === 0`. */
+  isOk?: (result: ExecResult) => boolean;
+  /** Build the `ConfigError` message from the failed result. */
+  message: (result: ExecResult) => string;
+  /** Optional `ConfigError` hint (third constructor arg). */
+  hint?: string;
+}
+
+/**
+ * Throw a `ConfigError` (code `INVALID_CONFIG_FILE`) when `result` doesn't
+ * satisfy `isOk` (default: `status === 0`); otherwise return `result`
+ * unchanged. Factors out the "run a native scheduler command, throw a
+ * formatted error on a bad exit" idiom repeated across the cron/launchd/
+ * schtasks backends — NOT the accumulate-into-`rollbackErrors`-and-continue
+ * idiom used during rollback, which stays inline (throwing there would
+ * change control flow: rollback needs to keep trying its remaining steps).
+ */
+export function throwIfNotOk(result: ExecResult, options: ThrowIfNotOkOptions): ExecResult {
+  const ok = options.isOk ? options.isOk(result) : result.status === 0;
+  if (!ok) {
+    throw new ConfigError(options.message(result), "INVALID_CONFIG_FILE", options.hint);
+  }
+  return result;
+}
+
+/** {@link throwIfNotOk} for the common case of running `args` via `exec` first. */
+export function runOrThrow(exec: NodeExec, args: string[], options: ThrowIfNotOkOptions): ExecResult {
+  return throwIfNotOk(exec.run(args), options);
 }
 
 /** Decode native command output, including the UTF-16 XML emitted by schtasks. */

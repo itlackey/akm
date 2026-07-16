@@ -37,23 +37,18 @@ import {
   type ScheduledTaskContext,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
-import { escapeXml, nodeExec, nodeFs } from "./exec-utils";
+import { type BackendExec, escapeXml, type NodeFs, nodeExec, nodeFs, runOrThrow } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
-export interface LaunchdExec {
-  run(args: string[]): { status: number; stdout: string; stderr: string };
-  uid(): number;
-}
+export type LaunchdExec = BackendExec<{ uid(): number }>;
 
-export interface LaunchdFs {
-  writeFile(file: string, content: string): void;
+export type LaunchdFs = NodeFs & {
   readFile(file: string): string;
   removeFile(file: string): void;
   replaceFile(source: string, destination: string): void;
-  ensureDir(dir: string): void;
   list(dir: string): string[];
   exists(file: string): boolean;
-}
+};
 
 export interface LaunchdBackendOptions {
   exec?: LaunchdExec;
@@ -95,13 +90,9 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
 
   const setEnableState = (id: string, enabled: boolean) => {
     const verb = enabled ? "enable" : "disable";
-    const result = exec.run(["launchctl", verb, target(id)]);
-    if (result.status !== 0) {
-      throw new ConfigError(
-        `launchctl ${verb} failed: ${result.stderr || result.stdout || "no output"}.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
+    runOrThrow(exec, ["launchctl", verb, target(id)], {
+      message: (r) => `launchctl ${verb} failed: ${r.stderr || r.stdout || "no output"}.`,
+    });
   };
 
   return {
@@ -134,13 +125,10 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
       let fileReplaced = false;
       let enableStateTouched = false;
       try {
-        const bootout = exec.run(["launchctl", "bootout", target(task.id)]);
-        if (bootout.status !== 0 && !isServiceNotFoundResult(bootout)) {
-          throw new ConfigError(
-            `launchctl bootout failed (exit ${bootout.status}): ${bootout.stderr || bootout.stdout || "no output"}.`,
-            "INVALID_CONFIG_FILE",
-          );
-        }
+        const bootout = runOrThrow(exec, ["launchctl", "bootout", target(task.id)], {
+          isOk: (r) => r.status === 0 || isServiceNotFoundResult(r),
+          message: (r) => `launchctl bootout failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+        });
         bootoutCompleted = true;
         previousWasLoaded = previousPlist !== undefined && bootout.status === 0;
         fsLike.replaceFile(tempFile, file);
@@ -149,14 +137,10 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
         // before bootstrap, then apply the desired state after registration.
         enableStateTouched = true;
         setEnableState(task.id, true);
-        const bootstrap = exec.run(["launchctl", "bootstrap", `gui/${exec.uid()}`, file]);
-        if (bootstrap.status !== 0) {
-          throw new ConfigError(
-            `launchctl bootstrap failed (exit ${bootstrap.status}): ${bootstrap.stderr || bootstrap.stdout || "no output"}.`,
-            "INVALID_CONFIG_FILE",
-            "Ensure `launchctl` is available; on macOS it is part of the base system.",
-          );
-        }
+        runOrThrow(exec, ["launchctl", "bootstrap", `gui/${exec.uid()}`, file], {
+          message: (r) => `launchctl bootstrap failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+          hint: "Ensure `launchctl` is available; on macOS it is part of the base system.",
+        });
         if (!task.enabled) {
           setEnableState(task.id, false);
         }
@@ -238,13 +222,10 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
       }
     },
     uninstall(id: string) {
-      const bootout = exec.run(["launchctl", "bootout", target(id)]);
-      if (bootout.status !== 0 && !isServiceNotFoundResult(bootout)) {
-        throw new ConfigError(
-          `launchctl bootout failed (exit ${bootout.status}): ${bootout.stderr || bootout.stdout || "no output"}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
+      runOrThrow(exec, ["launchctl", "bootout", target(id)], {
+        isOk: (r) => r.status === 0 || isServiceNotFoundResult(r),
+        message: (r) => `launchctl bootout failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+      });
       // launchctl disable overrides persist after the plist is removed.
       setEnableState(id, true);
       const file = plistPath(id);

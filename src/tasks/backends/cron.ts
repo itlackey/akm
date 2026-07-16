@@ -38,7 +38,7 @@ import {
   type ScheduledTaskContext,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
-import { nodeFs } from "./exec-utils";
+import { type NodeFs, nodeFs, throwIfNotOk } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
 export type CronExecResult = { status: number; stdout: string; stderr: string };
@@ -50,9 +50,7 @@ export interface CronExec {
   write(content: string): CronExecResult;
 }
 
-export interface CronFs {
-  ensureDir(dir: string): void;
-}
+export type CronFs = Pick<NodeFs, "ensureDir">;
 
 export interface CronBackendOptions {
   exec?: CronExec;
@@ -291,14 +289,10 @@ function readCrontab(exec: CronExec): string {
 
 function writeCrontab(exec: CronExec, content: string): void {
   const normalised = content.endsWith("\n") || content.length === 0 ? content : `${content}\n`;
-  const result = exec.write(normalised);
-  if (result.status !== 0) {
-    throw new ConfigError(
-      `crontab - failed (exit ${result.status}): ${result.stderr || result.stdout || "no output"}.`,
-      "INVALID_CONFIG_FILE",
-      "Ensure the `crontab` binary is on PATH and your shell can write the user crontab.",
-    );
-  }
+  throwIfNotOk(exec.write(normalised), {
+    message: (r) => `crontab - failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+    hint: "Ensure the `crontab` binary is on PATH and your shell can write the user crontab.",
+  });
 }
 
 function replaceCrontab(exec: CronExec, existing: string, next: string): void {

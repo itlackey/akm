@@ -45,19 +45,23 @@ import {
   type ScheduledTaskContext,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
-import { escapeXml, nodeExec, nodeFs, normalizeXmlForUtf16File } from "./exec-utils";
+import {
+  type BackendExec,
+  escapeXml,
+  type NodeFs,
+  nodeExec,
+  nodeFs,
+  normalizeXmlForUtf16File,
+  runOrThrow,
+} from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 
-export interface SchtasksExec {
-  run(args: string[]): { status: number; stdout: string; stderr: string };
-}
+export type SchtasksExec = BackendExec;
 
-export interface SchtasksFs {
-  writeFile(file: string, content: string): void;
+export type SchtasksFs = NodeFs & {
   removeFile(file: string): void;
   tmpdir(): string;
-  ensureDir(dir: string): void;
-}
+};
 
 export interface SchtasksBackendOptions {
   exec?: SchtasksExec;
@@ -93,7 +97,10 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       const xml = normalizeXmlForUtf16File(
         buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder, scheduledContext, userSid }),
       );
-      const query = exec.run(["schtasks", "/Query", "/TN", taskName(task.id), "/XML"]);
+      const query = runOrThrow(exec, ["schtasks", "/Query", "/TN", taskName(task.id), "/XML"], {
+        isOk: (r) => r.status === 0 || isMissingTaskResult(r),
+        message: (r) => `schtasks /Query failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+      });
       let previous: { xml: string; enabled: boolean } | undefined;
       if (query.status === 0) {
         const enabled = taskXmlEnabled(query.stdout);
@@ -104,11 +111,6 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
           );
         }
         previous = { xml: normalizeXmlForUtf16File(query.stdout), enabled };
-      } else if (!isMissingTaskResult(query)) {
-        throw new ConfigError(
-          `schtasks /Query failed (exit ${query.status}): ${query.stderr || query.stdout || "no output"}.`,
-          "INVALID_CONFIG_FILE",
-        );
       }
       fsLike.ensureDir(logDir);
       const tmpFile = path.join(fsLike.tmpdir(), `akm-task-${task.id}-${Date.now()}.xml`);
@@ -116,21 +118,13 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       try {
         try {
           // /F forces overwrite if a task with the same name exists.
-          const r = exec.run(["schtasks", "/Create", "/TN", taskName(task.id), "/XML", tmpFile, "/F"]);
-          if (r.status !== 0) {
-            throw new ConfigError(
-              `schtasks /Create failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
-              "INVALID_CONFIG_FILE",
-            );
-          }
+          runOrThrow(exec, ["schtasks", "/Create", "/TN", taskName(task.id), "/XML", tmpFile, "/F"], {
+            message: (r) => `schtasks /Create failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+          });
           if (!task.enabled) {
-            const dis = exec.run(["schtasks", "/Change", "/TN", taskName(task.id), "/DISABLE"]);
-            if (dis.status !== 0) {
-              throw new ConfigError(
-                `schtasks /Change /DISABLE failed: ${dis.stderr || dis.stdout || "no output"}.`,
-                "INVALID_CONFIG_FILE",
-              );
-            }
+            runOrThrow(exec, ["schtasks", "/Change", "/TN", taskName(task.id), "/DISABLE"], {
+              message: (r) => `schtasks /Change /DISABLE failed: ${r.stderr || r.stdout || "no output"}.`,
+            });
           }
         } catch (err) {
           const rollbackErrors: unknown[] = [];
@@ -151,21 +145,14 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
           } else {
             try {
               fsLike.writeFile(tmpFile, previous.xml);
-              const restore = exec.run(["schtasks", "/Create", "/TN", taskName(task.id), "/XML", tmpFile, "/F"]);
-              if (restore.status !== 0) {
-                throw new ConfigError(
-                  `schtasks /Create during rollback failed: ${restore.stderr || restore.stdout || "no output"}.`,
-                  "INVALID_CONFIG_FILE",
-                );
-              }
+              runOrThrow(exec, ["schtasks", "/Create", "/TN", taskName(task.id), "/XML", tmpFile, "/F"], {
+                message: (r) => `schtasks /Create during rollback failed: ${r.stderr || r.stdout || "no output"}.`,
+              });
               const stateFlag = previous.enabled ? "/ENABLE" : "/DISABLE";
-              const state = exec.run(["schtasks", "/Change", "/TN", taskName(task.id), stateFlag]);
-              if (state.status !== 0) {
-                throw new ConfigError(
-                  `schtasks /Change ${stateFlag} during rollback failed: ${state.stderr || state.stdout || "no output"}.`,
-                  "INVALID_CONFIG_FILE",
-                );
-              }
+              runOrThrow(exec, ["schtasks", "/Change", "/TN", taskName(task.id), stateFlag], {
+                message: (r) =>
+                  `schtasks /Change ${stateFlag} during rollback failed: ${r.stderr || r.stdout || "no output"}.`,
+              });
             } catch (rollbackError) {
               rollbackErrors.push(rollbackError);
             }
@@ -184,32 +171,21 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       }
     },
     uninstall(id: string) {
-      const r = exec.run(["schtasks", "/Delete", "/TN", taskName(id), "/F"]);
-      if (r.status !== 0 && !/cannot find/i.test(r.stderr ?? "")) {
-        throw new ConfigError(
-          `schtasks /Delete failed: ${r.stderr || r.stdout || "no output"}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
+      runOrThrow(exec, ["schtasks", "/Delete", "/TN", taskName(id), "/F"], {
+        isOk: (r) => r.status === 0 || /cannot find/i.test(r.stderr ?? ""),
+        message: (r) => `schtasks /Delete failed: ${r.stderr || r.stdout || "no output"}.`,
+      });
     },
     setEnabled(id: string, enabled: boolean) {
       const flag = enabled ? "/ENABLE" : "/DISABLE";
-      const r = exec.run(["schtasks", "/Change", "/TN", taskName(id), flag]);
-      if (r.status !== 0) {
-        throw new ConfigError(
-          `schtasks /Change ${flag} failed: ${r.stderr || r.stdout || "no output"}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
+      runOrThrow(exec, ["schtasks", "/Change", "/TN", taskName(id), flag], {
+        message: (r) => `schtasks /Change ${flag} failed: ${r.stderr || r.stdout || "no output"}.`,
+      });
     },
     list(): InstalledTaskRef[] {
-      const r = exec.run(["schtasks", "/Query", "/FO", "CSV", "/NH"]);
-      if (r.status !== 0) {
-        throw new ConfigError(
-          `schtasks /Query failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
+      const r = runOrThrow(exec, ["schtasks", "/Query", "/FO", "CSV", "/NH"], {
+        message: (res) => `schtasks /Query failed (exit ${res.status}): ${res.stderr || res.stdout || "no output"}.`,
+      });
       const ids: string[] = [];
       for (const line of (r.stdout ?? "").split(/\r?\n/)) {
         const m = line.match(/^"([^"]+)",/);
@@ -220,13 +196,10 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
         }
       }
       return ids.map((id) => {
-        const query = exec.run(["schtasks", "/Query", "/TN", taskName(id), "/XML"]);
-        if (query.status !== 0) {
-          throw new ConfigError(
-            `schtasks /Query /XML for "${taskName(id)}" failed (exit ${query.status}): ${query.stderr || query.stdout || "no output"}.`,
-            "INVALID_CONFIG_FILE",
-          );
-        }
+        const query = runOrThrow(exec, ["schtasks", "/Query", "/TN", taskName(id), "/XML"], {
+          message: (r) =>
+            `schtasks /Query /XML for "${taskName(id)}" failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+        });
         const signature = installedSignature(query.stdout);
         return signature === undefined ? { id } : { id, signature };
       });
@@ -663,13 +636,9 @@ function normalizeNativeDefaults(triggers: XmlElement, principals: XmlElement, s
 }
 
 function resolveCurrentUserSid(exec: SchtasksExec): string {
-  const result = exec.run(["whoami", "/user", "/fo", "csv", "/nh"]);
-  if (result.status !== 0) {
-    throw new ConfigError(
-      `whoami /user failed (exit ${result.status}): ${result.stderr || result.stdout || "no output"}.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
+  const result = runOrThrow(exec, ["whoami", "/user", "/fo", "csv", "/nh"], {
+    message: (r) => `whoami /user failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
+  });
   const match = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.match(/\bS-\d+(?:-\d+){2,}\b/i);
   if (!match) {
     throw new ConfigError("whoami /user returned no Windows user SID.", "INVALID_CONFIG_FILE");
