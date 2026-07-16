@@ -474,3 +474,46 @@ Gates: tsc clean; full lint green (frozen proposal-txn.json byte-green,
 serialize pinned to its capture sha); frozen oracles 22/0; improve +
 proposal domain + storage 268/0; ratchets 28/28; DDL characterization
 52/0.
+
+## WI-6.5 — re-baseline-@6 goldens re-captured; all six designations finalized frozen
+
+The two crash-recovery goldens were re-captured on the unified engine:
+journal/proposal-recovery.json and journal/move-recovery.json. Phase
+vocabulary and EVERY recovery outcome came through the engine swap
+unchanged — the re-capture diffs touch only capturedAtHead (now
+90640d41), the serialized notes strings, and serializer whitespace on
+single-element arrays; every boolean/status/count is byte-identical to
+the pre-swap capture. The suites' notes were rewritten to the engine
+reality: stale mv-cli/repository line references repointed
+(applying-hold mv-cli.ts:598, finalizeMoveTransaction :991,
+recoverProposalTransactions repository.ts:1430, reject-ordering
+proposal.ts:175), and the mv fixture's dual journal-home story
+(in-stash .akm/mv-transactions vs getDataDir() proposal journals)
+replaced: every kind's journal now lives in the engine's per-root
+namespace, and the four recovery entry points (mv pre-flight
+mv-cli.ts:486, proposal promotion repository.ts:1791, full indexer
+indexer.ts:560, targeted write-path indexer
+index-written-assets.ts:74) are pinned as still firing mv recovery via
+recoverTxnsForRoot(kind === 'mv') after the collapse.
+
+All SIX re-baseline-@6 registry entries flipped back to
+frozen-migration-input with fresh sha256 pins and reBaselineChunk
+dropped, honoring each entry's same-chunk promise:
+journal/proposal-skip-shapes.json (re-captured at WI-6.4 — the §23.6
+guard's contract), journal/proposal-recovery.json and
+journal/move-recovery.json (re-captured here), and the three
+consolidate journal goldens re-captured at WI-6.3e
+(journal-lifecycle.json, journal-recovery.json — whose note now pins
+the orphaned-backup leak FIX rather than the legacy characterization
+warning — and journal-guard-verdicts.json, the predicted near-no-op).
+Registry notes rewritten to describe the captured NEW surfaces; the
+Chunk-5 §15.2 fixture-local-ref caveats retained where the fixture
+still embeds ref-shaped strings. Frozen inventory 41 → 47 assets,
+hash-verified on every lint run. No re-baseline-@6 entries remain
+(the three @5 CLI-output entries are Chunk 5's, untouched).
+
+Gates: tsc clean; full lint green (47 frozen hash-verified);
+goldens-designations 7/7; the four consumer suites of the flipped
+assets plus goldens-mv-txn 57/0 re-run WITHOUT the update flag
+(byte-match proof); frozen oracles proposal-txn + move-txn stay green
+within that run.

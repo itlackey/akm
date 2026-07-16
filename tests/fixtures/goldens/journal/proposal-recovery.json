@@ -4,7 +4,9 @@
       "acceptedContentHashPresent": true,
       "assetContentMatchesProposal": true,
       "backupContentMatchesOriginal": true,
-      "journalPhasesObserved": ["asset-published"],
+      "journalPhasesObserved": [
+        "asset-published"
+      ],
       "ok": true,
       "promotedEvent": {
         "distinctIdempotencyKeyCount": 1,
@@ -16,7 +18,9 @@
       "acceptedContentHashPresent": true,
       "assetContentMatchesProposal": true,
       "backupContentMatchesOriginal": true,
-      "journalPhasesObserved": ["event-persisted"],
+      "journalPhasesObserved": [
+        "event-persisted"
+      ],
       "ok": true,
       "promotedEvent": {
         "distinctIdempotencyKeyCount": 1,
@@ -28,7 +32,9 @@
       "acceptedContentHashPresent": true,
       "assetContentMatchesProposal": true,
       "backupContentMatchesOriginal": true,
-      "journalPhasesObserved": ["index-finalized"],
+      "journalPhasesObserved": [
+        "index-finalized"
+      ],
       "ok": true,
       "promotedEvent": {
         "distinctIdempotencyKeyCount": 1,
@@ -40,7 +46,9 @@
       "acceptedContentHashPresent": true,
       "assetContentMatchesProposal": true,
       "backupContentMatchesOriginal": true,
-      "journalPhasesObserved": ["prepared"],
+      "journalPhasesObserved": [
+        "prepared"
+      ],
       "ok": true,
       "promotedEvent": {
         "distinctIdempotencyKeyCount": 1,
@@ -52,7 +60,9 @@
       "acceptedContentHashPresent": true,
       "assetContentMatchesProposal": true,
       "backupContentMatchesOriginal": true,
-      "journalPhasesObserved": ["proposal-persisted"],
+      "journalPhasesObserved": [
+        "proposal-persisted"
+      ],
       "ok": true,
       "promotedEvent": {
         "distinctIdempotencyKeyCount": 1,
@@ -61,16 +71,18 @@
       "status": "accepted"
     }
   },
-  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "capturedAtHead": "90640d4103ab4024ab0bf8b0705bd54d847c9a4a",
   "notes": [
     "Crash windows only (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/proposal-crash-runner.ts subprocess harness.",
-    "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was told to hold at, never journal bytes/paths. Chunk 6 replaces the journal engines entirely.",
-    "'prepared' rolls back (no partial state survives); every later phase rolls forward via recoverProposalTransactions (repository.ts:1310-1355) so all listed phases converge on the same final accepted/reverted/rejected outcome with exactly-one event.",
-    "The ordering scenario pins that akmProposalReject (proposal.ts:169-186) calls recoverProposalTransactionsForStash BEFORE its own pending-status check, so a crashed-but-recoverable accept is rolled forward first and the reject then correctly fails as 'not pending' rather than racing the interrupted accept."
+    "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was told to hold at, never journal bytes/paths. Re-captured at Chunk 6 (WI-6.5): the proposal journals now ride the unified FileChange transaction engine (src/core/fs-txn.ts) — phase vocabulary and every recovery outcome preserved through the swap.",
+    "'prepared' rolls back (no partial state survives); every later phase rolls forward via recoverProposalTransactions (repository.ts:1430) so all listed phases converge on the same final accepted/reverted/rejected outcome with exactly-one event.",
+    "The ordering scenario pins that akmProposalReject (proposal.ts:175) calls recoverProposalTransactionsForStash BEFORE its own pending-status check, so a crashed-but-recoverable accept is rolled forward first and the reject then correctly fails as 'not pending' rather than racing the interrupted accept."
   ],
   "reject": {
     "prepared": {
-      "journalPhasesObserved": ["prepared"],
+      "journalPhasesObserved": [
+        "prepared"
+      ],
       "rejectedEvent": {
         "distinctIdempotencyKeyCount": 1,
         "matchingCount": 1
@@ -78,7 +90,9 @@
       "status": "rejected"
     },
     "reject-event-persisted": {
-      "journalPhasesObserved": ["reject-event-persisted"],
+      "journalPhasesObserved": [
+        "reject-event-persisted"
+      ],
       "rejectedEvent": {
         "distinctIdempotencyKeyCount": 1,
         "matchingCount": 1
@@ -86,7 +100,9 @@
       "status": "rejected"
     },
     "reject-state-persisted": {
-      "journalPhasesObserved": ["reject-state-persisted"],
+      "journalPhasesObserved": [
+        "reject-state-persisted"
+      ],
       "rejectedEvent": {
         "distinctIdempotencyKeyCount": 1,
         "matchingCount": 1
@@ -101,7 +117,9 @@
   },
   "revert": {
     "asset-published": {
-      "journalPhasesObserved": ["asset-published"],
+      "journalPhasesObserved": [
+        "asset-published"
+      ],
       "ok": true,
       "restoredByteIdentical": true,
       "revertedEvent": {
@@ -111,7 +129,9 @@
       "status": "reverted"
     },
     "event-persisted": {
-      "journalPhasesObserved": ["event-persisted"],
+      "journalPhasesObserved": [
+        "event-persisted"
+      ],
       "ok": true,
       "restoredByteIdentical": true,
       "revertedEvent": {
@@ -121,7 +141,9 @@
       "status": "reverted"
     },
     "index-finalized": {
-      "journalPhasesObserved": ["index-finalized"],
+      "journalPhasesObserved": [
+        "index-finalized"
+      ],
       "ok": true,
       "restoredByteIdentical": true,
       "revertedEvent": {
@@ -131,7 +153,9 @@
       "status": "reverted"
     },
     "prepared": {
-      "journalPhasesObserved": ["prepared"],
+      "journalPhasesObserved": [
+        "prepared"
+      ],
       "ok": true,
       "restoredByteIdentical": true,
       "revertedEvent": {
@@ -141,7 +165,9 @@
       "status": "reverted"
     },
     "proposal-persisted": {
-      "journalPhasesObserved": ["proposal-persisted"],
+      "journalPhasesObserved": [
+        "proposal-persisted"
+      ],
       "ok": true,
       "restoredByteIdentical": true,
       "revertedEvent": {

@@ -76,7 +76,7 @@ import {
 } from "../fixtures/goldens/journal/fixture-refs";
 
 const GOLDEN_PATH = "tests/fixtures/goldens/journal/move-recovery.json";
-const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
+const HEAD_SHA = "90640d4103ab4024ab0bf8b0705bd54d847c9a4a";
 const RUNNER = path.join(import.meta.dir, "_helpers", "mv-crash-runner.ts");
 
 let storage: IsolatedAkmStorage;
@@ -532,17 +532,21 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         "Crash windows only (brief §3.4) — parameterizes the existing, unmodified " +
           "tests/integration/_helpers/mv-crash-runner.ts subprocess harness.",
         "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was " +
-          "told to hold at, never journal bytes/paths. Chunk 6 replaces the journal engines entirely.",
+          "told to hold at, never journal bytes/paths. Re-captured at Chunk 6 (WI-6.5): the mv journal now " +
+          "rides the unified FileChange transaction engine (src/core/fs-txn.ts) — phase vocabulary and every " +
+          "recovery outcome preserved through the swap.",
         "'applying' rolls back in full (no partial state survives) because it is held right after the " +
           "prepared->applying journal transition, before any citer/source rename has happened " +
-          "(mv-cli.ts:628-631); every later named phase rolls forward via finalizeMoveTransaction " +
-          "(mv-cli.ts:1020-1080) to the same accepted end state with exactly-one mv event and re-keyed index + " +
+          "(mv-cli.ts:598); every later named phase rolls forward via finalizeMoveTransaction " +
+          "(mv-cli.ts:991) to the same accepted end state with exactly-one mv event and re-keyed index + " +
           "state rows.",
-        "The four recovery entry points (mv run's own pre-flight recovery mv-cli.ts:1237, proposal promotion " +
-          "repository.ts:1702, the full indexer indexer.ts:558, the targeted write-path indexer " +
-          "index-written-assets.ts:72) each independently discover and finish the SAME kind of interrupted mv " +
-          "journal -- pinning that the mv journal lives IN-STASH (<stashDir>/.akm/mv-transactions), unlike the " +
-          "proposal journals which live in getDataDir(); Chunk 6 must preserve this dual journal-home discovery.",
+        "The four recovery entry points (mv run's own pre-flight recovery mv-cli.ts:486, proposal promotion " +
+          "repository.ts:1791, the full indexer indexer.ts:560, the targeted write-path indexer " +
+          "index-written-assets.ts:74) each independently discover and finish the SAME kind of interrupted mv " +
+          "journal via recoverTxnsForRoot with a kind === 'mv' filter. The old dual journal-home story " +
+          "(in-stash .akm/mv-transactions vs getDataDir() proposal journals) is GONE: every kind's journal " +
+          "lives in the engine's per-root namespace (getDataDir()/txn/<hash(canonical stash root)>), and the " +
+          "four entry points pin that mv recovery still fires from all four call sites after the collapse.",
       ],
       rollback: { applying: rollbackOutcome },
       rollForward: forwardOutcomes,

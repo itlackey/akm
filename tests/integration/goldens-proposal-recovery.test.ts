@@ -55,7 +55,7 @@ import {
 } from "../fixtures/goldens/journal/fixture-refs";
 
 const GOLDEN_PATH = "tests/fixtures/goldens/journal/proposal-recovery.json";
-const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
+const HEAD_SHA = "90640d4103ab4024ab0bf8b0705bd54d847c9a4a";
 const RUNNER = path.join(import.meta.dir, "_helpers", "proposal-crash-runner.ts");
 
 let storage: IsolatedAkmStorage;
@@ -306,11 +306,13 @@ describe("golden fixture: serialize proposal crash recovery outcomes (WI-03, R3)
         "Crash windows only (brief §3.4) — parameterizes the existing, unmodified " +
           "tests/integration/_helpers/proposal-crash-runner.ts subprocess harness.",
         "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was " +
-          "told to hold at, never journal bytes/paths. Chunk 6 replaces the journal engines entirely.",
+          "told to hold at, never journal bytes/paths. Re-captured at Chunk 6 (WI-6.5): the proposal journals " +
+          "now ride the unified FileChange transaction engine (src/core/fs-txn.ts) — phase vocabulary and every " +
+          "recovery outcome preserved through the swap.",
         "'prepared' rolls back (no partial state survives); every later phase rolls forward via " +
-          "recoverProposalTransactions (repository.ts:1310-1355) so all listed phases converge on the same " +
+          "recoverProposalTransactions (repository.ts:1430) so all listed phases converge on the same " +
           "final accepted/reverted/rejected outcome with exactly-one event.",
-        "The ordering scenario pins that akmProposalReject (proposal.ts:169-186) calls " +
+        "The ordering scenario pins that akmProposalReject (proposal.ts:175) calls " +
           "recoverProposalTransactionsForStash BEFORE its own pending-status check, so a crashed-but-recoverable " +
           "accept is rolled forward first and the reject then correctly fails as 'not pending' rather than " +
           "racing the interrupted accept.",
