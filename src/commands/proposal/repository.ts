@@ -1801,7 +1801,7 @@ async function promoteProposalWithLease(
       throw new UsageError(`proposal ${id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
     }
     if (!assetPath || !fs.existsSync(assetPath) || proposalFileHash(assetPath) !== proposal.acceptedContentHash) {
-      throw new Error(`Accepted proposal ${id} does not match the current asset content.`);
+      throw new UsageError(`Accepted proposal ${id} does not match the current asset content.`, "INVALID_FLAG_VALUE");
     }
     return { proposal, assetPath, ref: proposal.ref };
   }
@@ -1813,7 +1813,7 @@ async function promoteProposalWithLease(
   }
 
   const assetPath = resolveAssetFilePathSafe(target.source, ref);
-  if (!assetPath) throw new Error(`Cannot resolve proposal target ${proposal.ref}.`);
+  if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
   let backup: Buffer | undefined;
   if (fs.existsSync(assetPath)) {
     try {

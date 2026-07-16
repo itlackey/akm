@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   findSourceForPath,
   getPrimarySource,
@@ -60,7 +60,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const destRoot = options.dest ? path.resolve(options.dest) : primarySource?.path;
 
   if (!destRoot) {
-    throw new Error("No working stash configured and no --dest provided. Run `akm init` or pass --dest.");
+    throw new ConfigError(
+      "No working stash configured and no --dest provided. Run `akm init` or pass --dest.",
+      "STASH_DIR_NOT_FOUND",
+    );
   }
 
   let searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
@@ -161,7 +164,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     const overwritten = fs.existsSync(destSkillDir);
 
     if (overwritten && !options.force) {
-      throw new Error(`Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`);
+      throw new UsageError(
+        `Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
     }
 
     if (overwritten) {
@@ -184,7 +190,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const overwritten = fs.existsSync(destPath);
 
   if (overwritten && !options.force) {
-    throw new Error(`Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`);
+    throw new UsageError(
+      `Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`,
+      "RESOURCE_ALREADY_EXISTS",
+    );
   }
 
   fs.mkdirSync(path.dirname(destPath), { recursive: true });

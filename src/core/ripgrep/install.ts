@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { IS_WINDOWS } from "../common";
+import { ConfigError } from "../errors";
 import { RG_BINARY, resolveRg } from "./resolve";
 
 /**
@@ -59,9 +60,10 @@ export function ensureRg(binDir: string): EnsureRgResult {
   // Determine platform
   const target = getRgPlatformTarget();
   if (!target) {
-    throw new Error(
+    throw new ConfigError(
       `Unsupported platform for ripgrep auto-install: ${process.platform}/${process.arch}. ` +
         `Install ripgrep manually: https://github.com/BurntSushi/ripgrep#installation`,
+      "UNSUPPORTED_PLATFORM",
     );
   }
 

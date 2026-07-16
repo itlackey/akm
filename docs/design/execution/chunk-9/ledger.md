@@ -99,3 +99,58 @@ Gates: tsc clean; biome full-tree clean; zero-count greps
 AkmHarness.resume 0 in src TS); harness+agent+config suites 448/0
 post-fix; improve bucket green; architecture ratchets 28/28 un-piped;
 full lint green (47 frozen goldens hash-verified).
+
+## WI-9.2 — typed-error sweep (landed with this entry)
+
+CENSUS/PLAN CORRECTION (the headline finding): plan §10.7's "79
+user-facing in commands/" vastly overcounts. Site-by-site disposition of
+all 78 commands + 26 core bare `throw new Error(` sites found only 10
+genuinely user-facing conversion candidates; 87 are correct as
+INTERNAL-classified invariants — dominated by the proposal/mv/fs-txn
+crash-window machinery (21+21+8 sites: rollback divergence, journal
+fences, phase races — deliberately INTERNAL, §15-rule-3 adjacent),
+module-load weight assertions, caught-locally control-flow, and
+external-operation failures (network/checksum/spawn during upgrade and
+ripgrep install) that fit none of config/usage/not-found; extending the
+taxonomy with a fourth kind was NOT plan-ordered and is not done here.
+
+Converted (10 sites, messages byte-verbatim, class+code only):
+- self-update.ts ×4 → ConfigError: UNSUPPORTED_PLATFORM (platform
+  matrix); UPGRADE_BLOCKED ×3 (0.8→0.9 migration-contract block,
+  EACCES/EPERM write refusal, retained-backup overwrite refusal; the
+  contract message hoisted to a const, bytes unchanged).
+- source-clone.ts ×3: ConfigError STASH_DIR_NOT_FOUND (no stash + no
+  --dest); UsageError RESOURCE_ALREADY_EXISTS ×2 (exists w/o --force).
+- proposal/repository.ts ×2 → UsageError: INVALID_FLAG_VALUE (re-accept
+  with diverged accepted content — matches sibling :1801),
+  INVALID_PROPOSAL (unresolvable ref at accept).
+- core/ripgrep/install.ts ×1 → ConfigError UNSUPPORTED_PLATFORM.
+New codes (append-only, ConfigError): UNSUPPORTED_PLATFORM,
+UPGRADE_BLOCKED. No new hints (messages carry remediation).
+BEHAVIOR: these 10 paths move from exit 70/no-code envelopes to exit
+78/2 with a stable `code` field — the intended §10.7 change.
+
+Skipped (2 sites): source-clone.ts self-clone guards — pinned RAW by
+frozen golden cli/f-raw-error-sites.json, whose designation notes name
+it "the typed-error sweep's oracle that these do not silently gain an
+AkmError code". Skipped per the surface-owner rule; conversion would
+need explicit re-designation.
+
+Kept (6 out-of-hierarchy Error subclasses, all verified by consumer
+inspection): LlmFeatureTimeoutError, LlmCallError, UnitTransportError,
+ResponseTooLargeError (each caught by identity — internal control-flow),
+UnitCapExceededError (never thrown; message harvesting only),
+UntrustedNpmTarballError (already code-stabilized + identity-pinned by
+tests; security refusal with no taxonomy fit).
+
+Flagged-torn (left bare, revisit if the taxonomy grows a kind):
+self-update's 4 checksum-verification refusals; env/secret.ts:67 lock
+timeout. Remaining bare counts: src/commands 69, src/core 25, src total
+201 (from 211) — the residue is invariants by design, not backlog.
+
+Gates: tsc clean; biome clean (1046 files); architecture 28/28
+un-piped; frozen txn oracles 22/0 (repository.ts is txn-adjacent);
+goldens-cli-output 25/0 (includes the frozen f-raw-error-sites oracle);
+self-update/source-clone/ripgrep/common 125/0; proposal family 188/0;
+module-boundaries + consolidate-wave2-d + sources-cli-envelope 26/0.
+No test or golden updates were needed.
