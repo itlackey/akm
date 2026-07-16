@@ -154,3 +154,59 @@ goldens-cli-output 25/0 (includes the frozen f-raw-error-sites oracle);
 self-update/source-clone/ripgrep/common 125/0; proposal family 188/0;
 module-boundaries + consolidate-wave2-d + sources-cli-envelope 26/0.
 No test or golden updates were needed.
+
+## WI-9.3 — dedup families (landed as 7 commits, b295dac2..3278db56)
+
+(a) caps() ×10 + (b) homeDir() ×2 → harnesses/shared.ts. Byte-identity
+verified (single md5 across all 10 caps copies). HarnessCapabilities
+moved verbatim into shared.ts (dependency sink) with a types.ts
+re-export — placing the helper anywhere importing types.ts would have
+grown the 61-file cycle SCC; ratchet verified 107/107 after.
+(e) scheduleKillLadder: spawn.ts's two inlined SIGTERM→SIGKILL copies
+(flag-before-signal ordering, exited re-checks, unref'ed 5 s follow-up)
+→ one module-private helper. DEVIATION (sanctioned escape hatch): the
+opencode-sdk sdk-runner ladder stays — bare child kill (no process
+group), exit-listener-cleared escalation timer, SIGTERM-throw rollback,
+idempotence guard; parameterizing needed 6+ knobs. runAgent 298→294
+(stays baselined; ratchet shrink-tolerant).
+(f) semver engine → registry/semver.ts, pure verbatim move; only export
+keywords changed; maxSatisfying re-exported from resolve.ts (surface
+unchanged). runtime.ts semverOrder deliberately NOT unified (different
+contract).
+(c) withFreshnessCache (sources/freshness.ts): both mirror sites'
+semantics were identical; ladder extracted with ttl/stale/force/isUsable
+knobs; refresh specifics stay at call sites.
+(d) AbstractSessionLogProvider (session-logs/provider-base.ts):
+PLAN CORRECTION — the two providers share scaffolding (statSafe, walk,
+mtime-filtered listing loop, flat line→event scan, conditional-spread
+ref assembly), not a full template; their listing/reading strategies
+genuinely differ (recursive JSONL + peek vs SQLite store + JSON tree).
+Net +94 LOC for single ownership. Nano-delta recorded: a legacy
+opencode session meta with directory:"" now omits projectHint instead
+of emitting "" (unreachable in practice, unpinned).
+(g) connection-shared.ts: prompts/probe/derivation extracted with copy,
+order, initialValues, and validation messages verbatim; wizard oracles
+(setup-wizard, setup-run) green UNMODIFIED. stepLlm 250→143,
+stepSmallModelConnection 272→152 — both trimmed from
+SRC_FN_SIZE_BASELINE (20→18 entries).
+(h) TRAP-4 RESOLUTION: consolidate's parseSinceToIso shadow relied on
+pass-through-on-garbage (caller compares the returned string against
+mtime-ISO strings; golden-pinned by goldens-duration-flags +
+since-to-iso-identity-fallback.json) — the canonical throws AND
+normalizes, so a try/catch wrap would NOT have been behavior-preserving.
+Added documented parseSinceToIsoLenient to core/time.ts; shadow
+deleted. extract.ts m-AMBIGUITY CONFIRMED: its recognizer is
+case-insensitive (5M = 5 minutes, pinned by e-extract-since.json) vs
+the core grammar's case-sensitive M=months; extract keeps its regex,
+delegates only unit arithmetic to parseDuration. memory-improve "N days
+ago": zero-count confirmed (resolveRelativeDates is M-5 content
+rewriting, unrelated).
+
+Net LOC: batch A −20, batch B +70 (families c/d trade lines for single
+ownership; g is the reducer at −81). Gates per batch: tsc, biome,
+cycle ratchet 107/107, fn-size (18 entries), architecture 28/28,
+wizard/session-log/consolidate/extract/registry/spawn suites all green,
+zero test-file modifications. Review process note: batch B ran under
+the delegated-implementation/self-review split (session directive,
+2026-07-16); reviewer re-ran the wizard + duration oracles and the
+decisive ratchets independently before commit.
