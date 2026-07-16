@@ -81,3 +81,14 @@ verbatim from 3927ff94^ (the 07-15 purge deleted it, orphaning its
 snapshot): 8 pass / 2 snapshots verified against the existing snap at
 HEAD (001–018). Migration 019 (WI-6.4) has its characterization oracle
 back before it lands.
+
+## Decisions closed (maintainer, 2026-07-16)
+
+The two escalations + the flag-semantics question were decided by the
+maintainer (see brief DECISIONS section): (1) drain's gate-decision
+machinery is RETAINED as drain-owned — a ledgered deviation from plan
+§4.5's DELETE-row letter, rationale recorded; (2) consolidate's confirm
+prompt re-gates on a new explicit assumeYes option; (3) --auto-accept
+becomes warn-and-ignore for one minor with shipped templates updated,
+hard removal in 0.10. WI-6.1 is unblocked and no longer
+order-coupled to WI-6.4.

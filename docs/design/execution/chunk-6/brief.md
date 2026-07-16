@@ -263,3 +263,37 @@ gate: improve-auto-accept.test.ts (flake retires with it),
 cli/auto-accept.test.ts, proposal-gate-decision.test.ts (if (b)) or
 rewritten (if (a)); proposal-stuck-repair.test.ts is DRAIN-side —
 rewrite to the replacement, never delete.
+
+## DECISIONS (maintainer, 2026-07-16) — WI-6.1/6.4 unblocked
+
+The three open directions were put to the maintainer and decided:
+
+1. **Drain stamps — RETAIN AS DRAIN-OWNED.** `Proposal.gateDecision`,
+   `ProposalGateDecision`/`ProposalGateDecisionOutcome`, and
+   `recordGateDecision` survive, re-scoped/documented as the drain
+   engine's deterministic audit machinery (its judgment stamps + the
+   :575 auto-rejected re-adjudication guard). WI-6.1 deletes only the
+   confidence-gate writers: improve-auto-accept.ts dies whole; the
+   confidence-vocabulary reason tokens die from the ProposalGateDecision
+   doc; output renderers (formatGateDecisionSummary, shape keys) stay —
+   drain stamps still render. proposal-gate-decision.test.ts is REWRITTEN
+   to drain-scoped coverage, not deleted; proposal-stuck-repair.test.ts
+   unchanged (drain-side). This is a ledgered deviation from plan §4.5's
+   DELETE row letter (~30 LOC retained); rationale: the plan's intent is
+   killing CONFIDENCE-gating, and drain (explicitly KEPT) needs its
+   deterministic audit trail. WI-6.1 no longer depends on WI-6.4's
+   ordering.
+2. **Confirm gate — mint `assumeYes?: boolean` on consolidate options,**
+   threaded from improve. Prompt fires on interactive TTY when unset;
+   non-interactive default-no preserved exactly (consolidate.ts:1779).
+   The re-baseline-@6 consolidate goldens re-capture with assumeYes:true
+   replacing today's autoAccept:100 bypass (WI-6.5).
+3. **`--auto-accept` — warn-and-ignore for one minor.** The flag parses,
+   emits a deprecation warning, has no effect; the five shipped default
+   task templates drop it in the same commit; hard removal in 0.10
+   (roadmap note lands with Chunk 10's docs sweep). Rationale: installed
+   crontabs embed the old command line — a hard error would make
+   background scheduled runs fail invisibly post-upgrade.
+   parseAutoAcceptFlag survives in deprecated-warning form;
+   tests/cli/auto-accept.test.ts is rewritten to pin the
+   warn-and-ignore contract instead of the threshold grammar.
