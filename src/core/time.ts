@@ -108,6 +108,26 @@ export function parseSinceToIso(since: string): string {
 }
 
 /**
+ * LENIENT variant for config-driven since-values that may be a duration
+ * shorthand (e.g. `"30m"`, `"24h"`, `"7d"` per {@link DURATION_UNITS}):
+ * a matching duration resolves to the ISO timestamp of `now - duration`;
+ * anything else is returned UNCHANGED (assumed to already be an ISO
+ * timestamp) — this function never throws.
+ *
+ * Deliberately distinct from {@link parseSinceToIso}, which rejects
+ * unparseable input with a UsageError: the identity fallback here is
+ * behavior consumers rely on (consolidate's incremental narrowing compares
+ * the returned string lexicographically against file-mtime ISO strings, so
+ * garbage input silently selects nothing rather than failing the run —
+ * pinned by tests/commands/goldens-duration-flags.test.ts).
+ */
+export function parseSinceToIsoLenient(since: string): string {
+  const ms = parseDuration(since, DURATION_UNITS);
+  if (ms === null) return since;
+  return new Date(Date.now() - ms).toISOString();
+}
+
+/**
  * Convert an ISO-8601 timestamp string to the SQLite datetime format
  * `"YYYY-MM-DD HH:MM:SS"` used by `datetime('now')`.
  */

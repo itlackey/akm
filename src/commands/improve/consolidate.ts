@@ -27,7 +27,7 @@ import {
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
+import { parseSinceToIsoLenient } from "../../core/time";
 import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -2603,27 +2603,15 @@ async function checkPreEmitDedup(opts: {
  * everything changed or the index can't answer (fail-open to preserve merge
  * correctness). `since` is an ISO timestamp.
  */
-/**
- * Parse a human-readable duration string (e.g. "30m", "24h", "7d") to an ISO
- * timestamp representing `now - duration`. Returns the input unchanged when it
- * doesn't match the pattern (assumed to already be an ISO timestamp).
- */
-function parseSinceToIso(since: string): string {
-  // Canonical CLI unit grammar: `m` = minutes, `M` = months (see core/time.ts
-  // DURATION_UNITS). Non-matching input is returned unchanged (assumed to
-  // already be an ISO timestamp).
-  const ms = parseDuration(since, DURATION_UNITS);
-  if (ms === null) return since;
-  return new Date(Date.now() - ms).toISOString();
-}
-
 export function narrowToIncrementalCandidates(
   memories: MemoryEntry[],
   since: string,
   warnings: string[],
   neighborsPerChanged = 5,
 ): MemoryEntry[] {
-  const sinceIso = parseSinceToIso(since);
+  // Lenient by design: garbage `since` passes through unchanged and the ISO
+  // string comparison below then selects nothing (see core/time.ts doc).
+  const sinceIso = parseSinceToIsoLenient(since);
   const isChanged = (m: MemoryEntry): boolean => {
     try {
       return fs.statSync(m.filePath).mtime.toISOString() > sinceIso;

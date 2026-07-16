@@ -46,6 +46,7 @@ import { resolveStashStandards } from "../../core/standards/resolve-stash-standa
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
 import { getStateDbPath, openStateDatabase, withStateDb } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
+import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
@@ -396,6 +397,12 @@ export interface AkmExtractResult {
  *
  * Throws UsageError on unparseable input so the CLI surfaces a clear error
  * rather than silently defaulting.
+ *
+ * The recognizer is deliberately CASE-INSENSITIVE and whitespace-tolerant —
+ * `5M` means 5 MINUTES here, diverging from the core grammar's case-sensitive
+ * `M`=months (pinned by tests/commands/goldens-duration-flags.test.ts); only
+ * the unit arithmetic is delegated to the canonical {@link DURATION_UNITS}
+ * table via {@link parseDuration}.
  */
 export function parseSinceArg(value: string | undefined, now: number = Date.now()): number {
   if (!value || value.trim() === "") {
@@ -404,10 +411,8 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
   const trimmed = value.trim();
   const relMatch = trimmed.match(/^(\d+)\s*([mhd])$/i);
   if (relMatch) {
-    const n = Number.parseInt(relMatch[1] ?? "0", 10);
-    const unit = (relMatch[2] ?? "h").toLowerCase();
-    const ms = unit === "m" ? n * 60_000 : unit === "h" ? n * 3_600_000 : n * 86_400_000;
-    return now - ms;
+    const ms = parseDuration(`${relMatch[1] ?? "0"}${(relMatch[2] ?? "h").toLowerCase()}`, DURATION_UNITS);
+    if (ms !== null) return now - ms;
   }
   const iso = Date.parse(trimmed);
   if (!Number.isNaN(iso)) return iso;
