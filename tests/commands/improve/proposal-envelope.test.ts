@@ -108,7 +108,7 @@ describe("emitProposal facade", () => {
 
     expect(facade).toEqual(direct);
     // And the scenario actually exercised a guard (not a trivially-equal no-op).
-    expect(direct).toEqual({ firstSkipped: false, secondReason: "content_hash_match", forcedSkipped: false });
+    expect(direct).toEqual({ firstSkipped: false, secondReason: "fingerprint_match", forcedSkipped: false });
   });
 
   test("forwards an undefined proposalsCtx straight through to createProposal", () => {

@@ -292,6 +292,8 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     {
       ref: promotion.knowledgeRef,
       source: "distill",
+      // §23.6 fingerprint model-id term (WI-6.4).
+      ...(ctx.llmConfig?.model ? { modelId: ctx.llmConfig.model } : {}),
       ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
       payload: {
         content: resolvedPromotionContent,

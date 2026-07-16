@@ -462,7 +462,16 @@ function isStructuredCooldownSignal(stdout: string): boolean {
     if (parsed?.skipped === true) return true;
     if (
       typeof parsed?.reason === "string" &&
-      ["duplicate_pending", "content_hash_match", "cooldown", "below_threshold"].includes(parsed.reason)
+      // WI-6.4 vocabulary (fingerprint_match / rejection_backoff) plus the
+      // legacy tokens — old agent payloads may still carry the retired names.
+      [
+        "fingerprint_match",
+        "rejection_backoff",
+        "duplicate_pending",
+        "content_hash_match",
+        "cooldown",
+        "below_threshold",
+      ].includes(parsed.reason)
     )
       return true;
   } catch {
@@ -1197,6 +1206,9 @@ function createReflectProposal(args: {
     // Attribution tagging: persist the eligibility lane on the proposal so it
     // survives to accept/reject/revert time even across runs. See EligibilitySource.
     ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+    // §23.6 fingerprint model-id term (WI-6.4): the engine that generated
+    // this draft (reflect resolves engines, not bare model ids).
+    modelId: engineName,
   };
   const proposalResult = emitProposal({ stashDir: stash, proposalsCtx: options.ctx }, createInput);
 

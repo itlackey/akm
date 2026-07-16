@@ -21,6 +21,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "016-collapse-churn-detector",
     "017-improve-run-strategy",
     "018-drop-dead-lane-schema",
+    "019-proposal-fingerprints",
   ],
   "schema": [
     {
@@ -113,6 +114,14 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     {
       "name": "idx_improve_runs_strategy_started",
       "sql": "CREATE INDEX idx_improve_runs_strategy_started ON improve_runs(strategy, started_at)",
+      "type": "index",
+    },
+    {
+      "name": "idx_proposal_fingerprints_ref",
+      "sql": 
+"CREATE INDEX idx_proposal_fingerprints_ref
+        ON proposal_fingerprints(stash_dir, ref)"
+,
       "type": "index",
     },
     {
@@ -323,6 +332,22 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         metrics_json  TEXT,
         metadata_json TEXT    NOT NULL DEFAULT '{}'
       , strategy TEXT)"
+,
+      "type": "table",
+    },
+    {
+      "name": "proposal_fingerprints",
+      "sql": 
+"CREATE TABLE proposal_fingerprints (
+        stash_dir TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model_id TEXT NOT NULL DEFAULT '',
+        proposal_id TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (stash_dir, fingerprint)
+      )"
 ,
       "type": "table",
     },

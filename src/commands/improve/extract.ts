@@ -890,6 +890,14 @@ async function processSession(
     };
   }
 
+  // §23.6 fingerprint model-id term: the profile resolved for this session's
+  // LLM call (best-effort — an unconfigured profile leaves the term empty).
+  let extractModelId: string | undefined;
+  try {
+    extractModelId = runCtx.getLlmConfig().model;
+  } catch {
+    extractModelId = undefined;
+  }
   for (const candidate of payload.candidates) {
     const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
     if (dryRun) {
@@ -904,6 +912,9 @@ async function processSession(
           ref,
           source: "extract",
           sourceRun,
+          // §23.6 fingerprint model-id term (WI-6.4). The LLM already ran for
+          // this session, so the profile is resolvable; guard anyway.
+          ...(extractModelId ? { modelId: extractModelId } : {}),
           payload: {
             content,
             frontmatter: {

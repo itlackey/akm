@@ -387,7 +387,7 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
 // ── F-2 / #363 — dedup / cooldown guard ─────────────────────────────────────
 
 describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
-  test("duplicate_pending: second proposal for same ref+source is skipped without force", () => {
+  test("fingerprint_match: a second mint with identical inputs is skipped without force", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
       ref: "lesson:dup-test",
@@ -396,6 +396,8 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     });
     expect(isProposalSkipped(first)).toBe(false);
 
+    // Same target (absent), source, and (absent) model — the differing content
+    // is not a fingerprint term (§23.6: INPUT fingerprint).
     const second = createProposal(stash, {
       ref: "lesson:dup-test",
       source: "reflect",
@@ -403,10 +405,10 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     });
     expect(isProposalSkipped(second)).toBe(true);
     if (!isProposalSkipped(second)) throw new Error("type guard");
-    expect(second.reason).toBe("duplicate_pending");
+    expect(second.reason).toBe("fingerprint_match");
   });
 
-  test("content_hash_match: identical content for same ref+source is silently skipped", () => {
+  test("fingerprint changes with the target's before-state: the second mint queues alongside", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
       ref: "lesson:hash-test",
@@ -415,17 +417,21 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     });
     expect(isProposalSkipped(first)).toBe(false);
 
+    // Materialise the target so the mint-time before-hash (a fingerprint term)
+    // changes — the old ref+source duplicate_pending guard is retired.
+    const assetPath = path.join(stash, "lessons", "hash-test.md");
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
+
     const second = createProposal(stash, {
       ref: "lesson:hash-test",
       source: "distill",
       payload: { content: VALID_LESSON },
     });
-    expect(isProposalSkipped(second)).toBe(true);
-    if (!isProposalSkipped(second)) throw new Error("type guard");
-    expect(second.reason).toBe("content_hash_match");
+    expect(isProposalSkipped(second)).toBe(false);
   });
 
-  test("cooldown: a proposal is skipped for ref+source within the cooldown window after rejection", () => {
+  test("rejection_backoff: new inputs are skipped for ref+source within the window after rejection", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
       ref: "lesson:cooldown-test",
@@ -435,6 +441,12 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     if (isProposalSkipped(first)) throw new Error("unexpected skip");
     archiveProposal(stash, first.id, "rejected", "Test rejection for cooldown");
 
+    // Change the target so the second mint is a genuinely new fingerprint —
+    // the retained backoff (not the fingerprint) must fire.
+    const assetPath = path.join(stash, "lessons", "cooldown-test.md");
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
+
     const second = createProposal(stash, {
       ref: "lesson:cooldown-test",
       source: "reflect",
@@ -442,7 +454,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     });
     expect(isProposalSkipped(second)).toBe(true);
     if (!isProposalSkipped(second)) throw new Error("type guard");
-    expect(second.reason).toBe("cooldown");
+    expect(second.reason).toBe("rejection_backoff");
     expect(second.message).toContain("14d window");
   });
 

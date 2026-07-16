@@ -408,3 +408,69 @@ a corrupt consolidate journal now fails mv-filtered recovery loudly
 
 Gates: tsc clean; full lint green; consolidate+improve-memory 283/0;
 ratchets+engine+frozen oracles+mv recovery 68/0.
+
+## WI-6.4 — dedup/cooldown → §23.6 input fingerprints (+model-id term), backoff retained, migration 019
+
+The F-2 dedup/cooldown guard (duplicate_pending, content_hash_match,
+cooldown) is replaced by the §23.6 input fingerprint: sha256 over
+NUL-joined [v1, source, ref, target-before-hash, evidence (reserved),
+guidance (reserved), evaluator (reserved), model-id] — the plan §4.5
+engine/model-id term included from day one; evidence/guidance/evaluator
+slots reserved empty until Wave-2 recipes exist. Deliberately an INPUT
+fingerprint (generated content is NOT a term): already-processed inputs
+skip re-processing regardless of what the model produced. New skip
+reasons: fingerprint_match, rejection_backoff. Rejection backoff is
+RETAINED byte-equivalent-modulo-renames (review-verified mechanical
+diff): same rejected lookup/sort/window math, 14 d reflect / 30 d
+distill / 7 d default. Fingerprints are recorded via INSERT OR REPLACE
+after upsertProposal inside the same BEGIN IMMEDIATE transaction —
+including on force (a forced enqueue still processed those inputs) —
+and pruned best-effort alongside proposal expiry (created_at + retention
+cutoff). Migration 019-proposal-fingerprints appended (001–018 byte
+untouched); DDL characterization snapshot re-recorded additively.
+Model-id operands threaded at every automated mint: schema-repair,
+extract (guarded once per run), reflect (engine name), consolidate +
+promote-memory (resolved connection), distill (RESOLVED distillLlm —
+review fix; the raw option under-reported for standalone runs). Human
+sources pass none.
+
+Ledgered behavior deltas: (1) duplicate_pending retired — different-
+inputs proposals for the same ref+source now QUEUE ALONGSIDE a pending
+one (the fingerprint dedups identical inputs only); (2) post-rejection
+same-inputs suppression is permanent until target/model/scheme changes
+or the 90 d prune fires (HEAD's content_hash_match rejected-row window
+was 30 d); (3) post-REVERT same-inputs re-mints are likewise suppressed
+(HEAD allowed immediate re-mint after revert) — the fingerprint row
+survives the proposal lifecycle by design; (4) accept-to-foreign-root
+staleness: the fingerprint's before-hash is minted from the LOCAL stash
+snapshot, so accepting to a --target/defaultWriteTarget root never
+rotates it — bounded by the retention prune under default config,
+UNBOUNDED when archiveRetentionDays<=0 disables expiry (escapes: force,
+model change, scheme bump). PLAN CALLOUT for Wave-2 recipes: fingerprint
+rotation on accept, or prune independent of the retention switch;
+(5) cold-start amnesty: migration 019 ships an empty table and legacy
+import records no fingerprints (before-hash/model-id are unrecoverable
+retroactively, and sha256 is unavailable to SQL migrations), so
+pre-upgrade pending proposals lose dedup protection for exactly one
+mint cycle — one duplicate per ref+source+model, one-time; rejected
+rows stay covered by the backoff.
+
+Adversarial review: 0 blockers, 3 concerns, 5 notes. Concerns ledgered
+above as deltas (4), (5) and fixed as the distill operand. Note fixes
+landed here: reflect's structured skip-signal allow-list gained the new
+vocabulary (legacy tokens kept for old agent payloads); the fingerprint
+row now stores the NORMALIZED ref (the value the fingerprint is computed
+over) so future ref-keyed readers never mismatch; createProposal JSDoc
+and a dangling F-2 comment rewritten to the new guard. Deferred to
+WI-6.5 per the registry note: proposal-skip-shapes.json designation flip
+back to frozen + fresh sha256 (asset re-captured here with 6 scenarios:
+fingerprintMatchSameInputs, fingerprintMatchVsRejected,
+newInputsAfterTargetChange, modelIdTerm, rejectionBackoff, forceBypass).
+Health metrics: classifyDistillSkipReason extracted (fn-size ratchet);
+fingerprint/backoff patterns classified before the legacy
+cooldown/content-hash ones.
+
+Gates: tsc clean; full lint green (frozen proposal-txn.json byte-green,
+serialize pinned to its capture sha); frozen oracles 22/0; improve +
+proposal domain + storage 268/0; ratchets 28/28; DDL characterization
+52/0.

@@ -812,6 +812,34 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       ALTER TABLE asset_outcome DROP COLUMN review_pressure;
     `,
   },
+
+  // ── Migration 019 — proposal input fingerprints (Chunk 6, WI-6.4) ────────────
+  //
+  // Durable store for the §23.6 input fingerprints that replace the
+  // dedup/cooldown content-hash machinery (plan §4.5): one row per processed
+  // fingerprint (scheme version + source + target ref + target before-hash +
+  // reserved evidence/guidance/evaluator terms + engine/model-id term). A
+  // matching fingerprint skips re-processing the same inputs unless
+  // explicitly forced; rows are pruned with the proposal retention window.
+  // Rejection backoff (the retained cooldown) keeps reading the proposals
+  // table itself and needs no schema.
+  {
+    id: "019-proposal-fingerprints",
+    up: `
+      CREATE TABLE IF NOT EXISTS proposal_fingerprints (
+        stash_dir TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model_id TEXT NOT NULL DEFAULT '',
+        proposal_id TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (stash_dir, fingerprint)
+      );
+      CREATE INDEX IF NOT EXISTS idx_proposal_fingerprints_ref
+        ON proposal_fingerprints(stash_dir, ref);
+    `,
+  },
 ];
 
 /**

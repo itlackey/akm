@@ -90,6 +90,7 @@ import {
   CREATE_FORCE_BYPASS_NAME,
   CREATE_HASH_MATCH_PENDING_NAME,
   CREATE_HASH_MATCH_REJECTED_NAME,
+  CREATE_MODEL_ID_TERM_NAME,
   lessonContent,
   lessonRef,
   REJECT_CONCURRENT_EDIT_NAME,
@@ -101,7 +102,10 @@ import {
 
 const GOLDEN_PATH = "tests/fixtures/goldens/journal/proposal-txn.json";
 const SKIP_SHAPES_GOLDEN_PATH = "tests/fixtures/goldens/journal/proposal-skip-shapes.json";
+// The FROZEN proposal-txn.json oracle's capture sha (byte-pinned — never touch).
 const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
+// The re-baseline-@6 skip-shapes fixture's capture sha (WI-6.4 re-capture).
+const SKIP_SHAPES_HEAD_SHA = "42e4dd1d104bb2c8b18b8b11cca0a74f84feee7a";
 
 function lessonPath(stashDir: string, name: string): string {
   return path.join(stashDir, "lessons", `${name}.md`);
@@ -428,51 +432,35 @@ describe("goldens: proposal reject engine round-trip (WI-03, R3)", () => {
   });
 });
 
-describe("goldens: createProposal skip-record shapes (WI-03, R3)", () => {
-  test("duplicate_pending: second create for the same ref+source without force is skipped", async () => {
-    const storage = withIsolatedAkmStorage();
-    try {
-      const ref = lessonRef(CREATE_DUPLICATE_PENDING_NAME);
-      const a = createProposal(storage.stashDir, {
-        ref,
-        source: "distill",
-        payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "FIRST BODY.") },
-      });
-      if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
-
-      const b = createProposal(storage.stashDir, {
-        ref,
-        source: "distill",
-        payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "SECOND DIFFERENT BODY.") },
-      });
-      expect(isProposalSkipped(b)).toBe(true);
-      if (!isProposalSkipped(b)) throw new Error("expected skip");
-      expect(b.reason).toBe("duplicate_pending");
-      expect(b.existingProposalId).toBe(a.id);
-    } finally {
-      storage.cleanup();
-    }
-  });
-
-  test("content_hash_match vs a pending proposal", async () => {
+describe("goldens: createProposal skip-record shapes (WI-6.4 fingerprints, re-baseline @6)", () => {
+  test("fingerprint_match: identical inputs skip even when the generated content differs", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const ref = lessonRef(CREATE_HASH_MATCH_PENDING_NAME);
-      const content = lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "SAME BODY.");
-      const a = createProposal(storage.stashDir, { ref, source: "distill", payload: { content } });
+      const a = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        payload: { content: lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "FIRST BODY.") },
+      });
       if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
 
-      const b = createProposal(storage.stashDir, { ref, source: "distill", payload: { content } });
+      // Same target (absent), same source, same (absent) model — same INPUT
+      // fingerprint, regardless of the differing output content.
+      const b = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        payload: { content: lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "SECOND DIFFERENT BODY.") },
+      });
       expect(isProposalSkipped(b)).toBe(true);
       if (!isProposalSkipped(b)) throw new Error("expected skip");
-      expect(b.reason).toBe("content_hash_match");
+      expect(b.reason).toBe("fingerprint_match");
       expect(b.existingProposalId).toBe(a.id);
     } finally {
       storage.cleanup();
     }
   });
 
-  test("content_hash_match vs the most-recently-rejected proposal", async () => {
+  test("fingerprint_match vs a rejected proposal: same inputs stay deduplicated after rejection", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const ref = lessonRef(CREATE_HASH_MATCH_REJECTED_NAME);
@@ -484,14 +472,83 @@ describe("goldens: createProposal skip-record shapes (WI-03, R3)", () => {
       const b = createProposal(storage.stashDir, { ref, source: "distill", payload: { content } });
       expect(isProposalSkipped(b)).toBe(true);
       if (!isProposalSkipped(b)) throw new Error("expected skip");
-      expect(b.reason).toBe("content_hash_match");
+      expect(b.reason).toBe("fingerprint_match");
       expect(b.existingProposalId).toBe(a.id);
     } finally {
       storage.cleanup();
     }
   });
 
-  test("cooldown: different content after a recent rejection is skipped until the window elapses", async () => {
+  test("new inputs after the target changes are NOT deduplicated (the old duplicate_pending is retired)", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const ref = lessonRef(CREATE_DUPLICATE_PENDING_NAME);
+      const a = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "FIRST BODY.") },
+      });
+      if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
+
+      // Materialise the target: the mint-time before-state (and so the
+      // fingerprint) changes; a second proposal may queue ALONGSIDE the
+      // still-pending first one.
+      writeAsset(
+        storage.stashDir,
+        CREATE_DUPLICATE_PENDING_NAME,
+        lessonContent(CREATE_DUPLICATE_PENDING_NAME, "ON DISK NOW."),
+      );
+      const b = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "SECOND BODY.") },
+      });
+      expect(isProposalSkipped(b)).toBe(false);
+      if (isProposalSkipped(b)) throw new Error("expected a real proposal");
+      expect(b.id).not.toBe(a.id);
+      expect(b.status).toBe("pending");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("model-id term: the same inputs processed by a different model are a new fingerprint", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const ref = lessonRef(CREATE_MODEL_ID_TERM_NAME);
+      const content = lessonContent(CREATE_MODEL_ID_TERM_NAME, "SAME BODY.");
+      const a = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        modelId: "engine-a:model-1",
+        payload: { content },
+      });
+      if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
+
+      const b = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        modelId: "engine-b:model-2",
+        payload: { content },
+      });
+      expect(isProposalSkipped(b)).toBe(false);
+
+      const c = createProposal(storage.stashDir, {
+        ref,
+        source: "distill",
+        modelId: "engine-a:model-1",
+        payload: { content },
+      });
+      expect(isProposalSkipped(c)).toBe(true);
+      if (!isProposalSkipped(c)) throw new Error("expected skip");
+      expect(c.reason).toBe("fingerprint_match");
+      expect(c.existingProposalId).toBe(a.id);
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("rejection_backoff: NEW inputs after a recent rejection are skipped until the window elapses", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const ref = lessonRef(CREATE_COOLDOWN_NAME);
@@ -504,7 +561,10 @@ describe("goldens: createProposal skip-record shapes (WI-03, R3)", () => {
       if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
       archiveProposal(storage.stashDir, a.id, "rejected", "not useful", { now: () => t0 });
 
-      // 1 day later — well inside the 30-day "distill" cooldown window.
+      // Change the target so the second mint has a genuinely NEW fingerprint —
+      // the backoff (not the fingerprint) must be what fires.
+      writeAsset(storage.stashDir, CREATE_COOLDOWN_NAME, lessonContent(CREATE_COOLDOWN_NAME, "ON DISK NOW."));
+      // 1 day later — well inside the 30-day "distill" backoff window.
       const oneDayLater = t0 + 24 * 60 * 60 * 1000;
       const b = createProposal(
         storage.stashDir,
@@ -513,14 +573,14 @@ describe("goldens: createProposal skip-record shapes (WI-03, R3)", () => {
       );
       expect(isProposalSkipped(b)).toBe(true);
       if (!isProposalSkipped(b)) throw new Error("expected skip");
-      expect(b.reason).toBe("cooldown");
+      expect(b.reason).toBe("rejection_backoff");
       expect(b.existingProposalId).toBe(a.id);
     } finally {
       storage.cleanup();
     }
   });
 
-  test("force bypass: force:true creates a new pending proposal despite duplicate/cooldown guards", async () => {
+  test("force bypass: force:true creates a new pending proposal despite fingerprint/backoff guards", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const ref = lessonRef(CREATE_FORCE_BYPASS_NAME);
@@ -528,8 +588,7 @@ describe("goldens: createProposal skip-record shapes (WI-03, R3)", () => {
       const a = createProposal(storage.stashDir, { ref, source: "distill", payload: { content } });
       if (isProposalSkipped(a)) throw new Error("unexpected skip on first create");
 
-      // Same content, same ref+source, no force -> would ordinarily skip
-      // (content_hash_match against the still-pending `a`) -- force bypasses it.
+      // Same inputs, no force -> would skip (fingerprint_match) -- force bypasses.
       const b = createProposal(storage.stashDir, { ref, source: "distill", force: true, payload: { content } });
       expect(isProposalSkipped(b)).toBe(false);
       if (isProposalSkipped(b)) throw new Error("expected a real proposal");
@@ -834,75 +893,108 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
       }
     })();
 
-    // -- createProposal skip-record shapes --
+    // -- createProposal skip-record shapes (WI-6.4 fingerprints) --
     const skipShapes = await (async () => {
       const storage = withIsolatedAkmStorage();
       try {
-        const dupRef = lessonRef(CREATE_DUPLICATE_PENDING_NAME);
-        const dupA = createProposal(storage.stashDir, {
-          ref: dupRef,
+        // Identical inputs, differing content -> fingerprint_match.
+        const fpRef = lessonRef(CREATE_HASH_MATCH_PENDING_NAME);
+        const fpA = createProposal(storage.stashDir, {
+          ref: fpRef,
+          source: "distill",
+          payload: { content: lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "FIRST BODY.") },
+        });
+        if (isProposalSkipped(fpA)) throw new Error("unexpected skip");
+        const fpB = createProposal(storage.stashDir, {
+          ref: fpRef,
+          source: "distill",
+          payload: { content: lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "SECOND DIFFERENT BODY.") },
+        });
+
+        // Same inputs after a rejection -> still fingerprint_match.
+        const fpRejRef = lessonRef(CREATE_HASH_MATCH_REJECTED_NAME);
+        const fpRejContent = lessonContent(CREATE_HASH_MATCH_REJECTED_NAME, "REJECTED BODY.");
+        const fpRejA = createProposal(storage.stashDir, {
+          ref: fpRejRef,
+          source: "distill",
+          payload: { content: fpRejContent },
+        });
+        if (isProposalSkipped(fpRejA)) throw new Error("unexpected skip");
+        archiveProposal(storage.stashDir, fpRejA.id, "rejected", "not useful");
+        const fpRejB = createProposal(storage.stashDir, {
+          ref: fpRejRef,
+          source: "distill",
+          payload: { content: fpRejContent },
+        });
+
+        // Target changed between mints -> new fingerprint, queues alongside.
+        const newInputsRef = lessonRef(CREATE_DUPLICATE_PENDING_NAME);
+        const newInputsA = createProposal(storage.stashDir, {
+          ref: newInputsRef,
           source: "distill",
           payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "FIRST BODY.") },
         });
-        if (isProposalSkipped(dupA)) throw new Error("unexpected skip");
-        const dupB = createProposal(storage.stashDir, {
-          ref: dupRef,
+        if (isProposalSkipped(newInputsA)) throw new Error("unexpected skip");
+        writeAsset(
+          storage.stashDir,
+          CREATE_DUPLICATE_PENDING_NAME,
+          lessonContent(CREATE_DUPLICATE_PENDING_NAME, "ON DISK NOW."),
+        );
+        const newInputsB = createProposal(storage.stashDir, {
+          ref: newInputsRef,
           source: "distill",
           payload: { content: lessonContent(CREATE_DUPLICATE_PENDING_NAME, "SECOND BODY.") },
         });
 
-        const hashPendingRef = lessonRef(CREATE_HASH_MATCH_PENDING_NAME);
-        const hashPendingContent = lessonContent(CREATE_HASH_MATCH_PENDING_NAME, "SAME BODY.");
-        const hashPendingA = createProposal(storage.stashDir, {
-          ref: hashPendingRef,
+        // Different model id -> new fingerprint; same model id -> match.
+        const modelRef = lessonRef(CREATE_MODEL_ID_TERM_NAME);
+        const modelContent = lessonContent(CREATE_MODEL_ID_TERM_NAME, "SAME BODY.");
+        const modelA = createProposal(storage.stashDir, {
+          ref: modelRef,
           source: "distill",
-          payload: { content: hashPendingContent },
+          modelId: "engine-a:model-1",
+          payload: { content: modelContent },
         });
-        if (isProposalSkipped(hashPendingA)) throw new Error("unexpected skip");
-        const hashPendingB = createProposal(storage.stashDir, {
-          ref: hashPendingRef,
+        if (isProposalSkipped(modelA)) throw new Error("unexpected skip");
+        const modelB = createProposal(storage.stashDir, {
+          ref: modelRef,
           source: "distill",
-          payload: { content: hashPendingContent },
+          modelId: "engine-b:model-2",
+          payload: { content: modelContent },
         });
-
-        const hashRejectedRef = lessonRef(CREATE_HASH_MATCH_REJECTED_NAME);
-        const hashRejectedContent = lessonContent(CREATE_HASH_MATCH_REJECTED_NAME, "REJECTED BODY.");
-        const hashRejectedA = createProposal(storage.stashDir, {
-          ref: hashRejectedRef,
+        const modelC = createProposal(storage.stashDir, {
+          ref: modelRef,
           source: "distill",
-          payload: { content: hashRejectedContent },
-        });
-        if (isProposalSkipped(hashRejectedA)) throw new Error("unexpected skip");
-        archiveProposal(storage.stashDir, hashRejectedA.id, "rejected", "not useful");
-        const hashRejectedB = createProposal(storage.stashDir, {
-          ref: hashRejectedRef,
-          source: "distill",
-          payload: { content: hashRejectedContent },
+          modelId: "engine-a:model-1",
+          payload: { content: modelContent },
         });
 
-        const cooldownRef = lessonRef(CREATE_COOLDOWN_NAME);
+        // Rejection backoff with genuinely NEW inputs.
+        const backoffRef = lessonRef(CREATE_COOLDOWN_NAME);
         const t0 = Date.parse("2026-01-01T00:00:00.000Z");
-        const cooldownA = createProposal(
+        const backoffA = createProposal(
           storage.stashDir,
           {
-            ref: cooldownRef,
+            ref: backoffRef,
             source: "distill",
             payload: { content: lessonContent(CREATE_COOLDOWN_NAME, "FIRST BODY.") },
           },
           { now: () => t0 },
         );
-        if (isProposalSkipped(cooldownA)) throw new Error("unexpected skip");
-        archiveProposal(storage.stashDir, cooldownA.id, "rejected", "not useful", { now: () => t0 });
-        const cooldownB = createProposal(
+        if (isProposalSkipped(backoffA)) throw new Error("unexpected skip");
+        archiveProposal(storage.stashDir, backoffA.id, "rejected", "not useful", { now: () => t0 });
+        writeAsset(storage.stashDir, CREATE_COOLDOWN_NAME, lessonContent(CREATE_COOLDOWN_NAME, "ON DISK NOW."));
+        const backoffB = createProposal(
           storage.stashDir,
           {
-            ref: cooldownRef,
+            ref: backoffRef,
             source: "distill",
             payload: { content: lessonContent(CREATE_COOLDOWN_NAME, "DIFFERENT BODY.") },
           },
           { now: () => t0 + 24 * 60 * 60 * 1000 },
         );
 
+        // Force bypass.
         const forceRef = lessonRef(CREATE_FORCE_BYPASS_NAME);
         const forceContent = lessonContent(CREATE_FORCE_BYPASS_NAME, "FIRST BODY.");
         const forceA = createProposal(storage.stashDir, {
@@ -922,35 +1014,36 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
           isProposalSkipped(r) ? Object.keys(r).sort() : undefined;
 
         return {
-          duplicatePending: {
-            skipped: isProposalSkipped(dupB),
-            reason: isProposalSkipped(dupB) ? dupB.reason : undefined,
-            existingProposalIdMatches: isProposalSkipped(dupB) ? dupB.existingProposalId === dupA.id : undefined,
-            keySet: skipKeySet(dupB),
+          fingerprintMatchSameInputs: {
+            skipped: isProposalSkipped(fpB),
+            reason: isProposalSkipped(fpB) ? fpB.reason : undefined,
+            existingProposalIdMatches: isProposalSkipped(fpB) ? fpB.existingProposalId === fpA.id : undefined,
+            keySet: skipKeySet(fpB),
           },
-          contentHashMatchVsPending: {
-            skipped: isProposalSkipped(hashPendingB),
-            reason: isProposalSkipped(hashPendingB) ? hashPendingB.reason : undefined,
-            existingProposalIdMatches: isProposalSkipped(hashPendingB)
-              ? hashPendingB.existingProposalId === hashPendingA.id
-              : undefined,
-            keySet: skipKeySet(hashPendingB),
+          fingerprintMatchVsRejected: {
+            skipped: isProposalSkipped(fpRejB),
+            reason: isProposalSkipped(fpRejB) ? fpRejB.reason : undefined,
+            existingProposalIdMatches: isProposalSkipped(fpRejB) ? fpRejB.existingProposalId === fpRejA.id : undefined,
+            keySet: skipKeySet(fpRejB),
           },
-          contentHashMatchVsRejected: {
-            skipped: isProposalSkipped(hashRejectedB),
-            reason: isProposalSkipped(hashRejectedB) ? hashRejectedB.reason : undefined,
-            existingProposalIdMatches: isProposalSkipped(hashRejectedB)
-              ? hashRejectedB.existingProposalId === hashRejectedA.id
-              : undefined,
-            keySet: skipKeySet(hashRejectedB),
+          newInputsAfterTargetChange: {
+            skipped: isProposalSkipped(newInputsB),
+            isNewProposal: !isProposalSkipped(newInputsB) && newInputsB.id !== newInputsA.id,
+            status: !isProposalSkipped(newInputsB) ? newInputsB.status : undefined,
           },
-          cooldown: {
-            skipped: isProposalSkipped(cooldownB),
-            reason: isProposalSkipped(cooldownB) ? cooldownB.reason : undefined,
-            existingProposalIdMatches: isProposalSkipped(cooldownB)
-              ? cooldownB.existingProposalId === cooldownA.id
+          modelIdTerm: {
+            differentModelSkipped: isProposalSkipped(modelB),
+            sameModelSkipped: isProposalSkipped(modelC),
+            sameModelReason: isProposalSkipped(modelC) ? modelC.reason : undefined,
+            sameModelExistingIdMatches: isProposalSkipped(modelC) ? modelC.existingProposalId === modelA.id : undefined,
+          },
+          rejectionBackoff: {
+            skipped: isProposalSkipped(backoffB),
+            reason: isProposalSkipped(backoffB) ? backoffB.reason : undefined,
+            existingProposalIdMatches: isProposalSkipped(backoffB)
+              ? backoffB.existingProposalId === backoffA.id
               : undefined,
-            keySet: skipKeySet(cooldownB),
+            keySet: skipKeySet(backoffB),
           },
           forceBypass: {
             skipped: isProposalSkipped(forceB),
@@ -1005,7 +1098,7 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
     expectGolden(SKIP_SHAPES_GOLDEN_PATH, {
       scenario:
         "createProposal dedup/cooldown/force skip-record shapes (split from proposal-txn.json, WI-6.4 surface-owner re-designation)",
-      capturedAtHead: HEAD_SHA,
+      capturedAtHead: SKIP_SHAPES_HEAD_SHA,
       notes: [
         "Split out of the frozen journal/proposal-txn.json on 2026-07-16: Chunk 6's WI-6.4 replaces the " +
           "dedup/cooldown guard with §23.6 input fingerprints (+ engine/model-id term, rejection backoff retained), " +

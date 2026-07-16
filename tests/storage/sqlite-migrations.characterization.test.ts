@@ -86,6 +86,7 @@ describe("SQLite migration runner characterization", () => {
         "016-collapse-churn-detector",
         "017-improve-run-strategy",
         "018-drop-dead-lane-schema",
+        "019-proposal-fingerprints",
       ]);
 
       // The set of durable objects the migrations create.

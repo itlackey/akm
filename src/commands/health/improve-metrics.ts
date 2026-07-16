@@ -193,6 +193,25 @@ export function summarizeImproveCompleted(events: ReturnType<typeof readEvents>[
 }
 
 /**
+ * Bucket a distill `outcome: "skipped"` result into a low-cardinality reason.
+ * Prefers an explicit `skipReason`; otherwise sniffs the message. The WI-6.4
+ * fingerprint/backoff vocabulary is checked before the legacy patterns, which
+ * stay for historical improve_runs rows.
+ */
+function classifyDistillSkipReason(r: Record<string, unknown> | undefined): string {
+  const explicitReason = typeof r?.skipReason === "string" ? r.skipReason : undefined;
+  if (explicitReason) return explicitReason;
+  const msg = typeof r?.message === "string" ? r.message : "";
+  if (/lesson inputs/i.test(msg)) return "recursive_lesson_input";
+  if (/NOOP/.test(msg)) return "conflict_noop";
+  if (/fingerprint/i.test(msg)) return "fingerprint_match";
+  if (/rejection backoff/i.test(msg)) return "rejection_backoff";
+  if (/cooldown/i.test(msg)) return "proposal_cooldown";
+  if (/content[_ ]?hash/i.test(msg)) return "content_hash_match";
+  return "unknown";
+}
+
+/**
  * Project a single `improve_runs.result_json` envelope into an accumulator-shaped
  * ImproveHealthMetrics. The aggregator merges these per-row metrics into one
  * window-level metric.
@@ -269,15 +288,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
               // typically encodes the reason; we also accept an explicit
               // `skipReason` field when downstream code sets it.
               metrics.actions.distill.deferred += 1;
-              const explicitReason = typeof r?.skipReason === "string" ? r.skipReason : undefined;
-              const msg = typeof r?.message === "string" ? r.message : "";
-              let reason = explicitReason ?? "unknown";
-              if (!explicitReason) {
-                if (/lesson inputs/i.test(msg)) reason = "recursive_lesson_input";
-                else if (/NOOP/.test(msg)) reason = "conflict_noop";
-                else if (/cooldown/i.test(msg)) reason = "proposal_cooldown";
-                else if (/content[_ ]?hash/i.test(msg)) reason = "content_hash_match";
-              }
+              const reason = classifyDistillSkipReason(r);
               metrics.actions.distill.deferredByReason[reason] =
                 (metrics.actions.distill.deferredByReason[reason] ?? 0) + 1;
               break;

@@ -475,22 +475,32 @@ export interface CreateProposalInput {
    * (`propose`, `remember`, `import`) that have no eligibility lane.
    */
   eligibilitySource?: EligibilitySource;
+  /**
+   * Engine/model identifier that generated this proposal's content — the
+   * plan §4.5 model-id term of the §23.6 input fingerprint. The same inputs
+   * processed by a DIFFERENT model are a new fingerprint (not a dup). Omitted
+   * by human-initiated sources; automated producers pass their resolved
+   * runner's model where available.
+   */
+  modelId?: string;
 }
 
 /**
- * Reason a `createProposal` call was skipped by the dedup/cooldown guard.
+ * Reason a `createProposal` call was skipped by the fingerprint/backoff guard
+ * (WI-6.4, plan §4.5 — the §23.6 input-fingerprint scheme replaced the
+ * dedup/cooldown content-hash machinery).
  *
- *   - `duplicate_pending`  — A pending proposal already exists for this
- *                            `ref+source` combination. Pass `force: true` to
- *                            bypass.
- *   - `content_hash_match` — An identical payload (same content hash) is
- *                            already pending or was recently rejected. Bypass
- *                            with `force: true`.
- *   - `cooldown`           — A proposal for this `ref+source` was rejected
- *                            within the source-specific cooldown window
- *                            (reflect: 14 d, distill: 30 d, others: 7 d).
+ *   - `fingerprint_match`  — These exact inputs (scheme version + source +
+ *                            target ref + target before-hash + engine/model-id;
+ *                            evidence/guidance/evaluator terms reserved) were
+ *                            already processed into a proposal. Pass
+ *                            `force: true` to enqueue anyway.
+ *   - `rejection_backoff`  — A proposal for this `ref+source` was rejected
+ *                            within the source-specific backoff window
+ *                            (reflect: 14 d, distill: 30 d, others: 7 d) —
+ *                            the RETAINED cooldown semantics.
  */
-export type ProposalSkipReason = "duplicate_pending" | "content_hash_match" | "cooldown";
+export type ProposalSkipReason = "fingerprint_match" | "rejection_backoff";
 
 export interface CreateProposalSkipped {
   skipped: true;
@@ -509,18 +519,19 @@ export function isProposalSkipped(result: CreateProposalResult): result is Creat
   return (result as CreateProposalSkipped).skipped === true;
 }
 
-// ── Dedup / cooldown constants ───────────────────────────────────────────────
+// ── Fingerprint / rejection-backoff constants ────────────────────────────────
 
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Post-rejection cooldown windows by source. After a proposal is rejected,
- * `createProposal` silently skips new proposals for the same `ref+source`
- * until the window expires (unless `force: true` is passed).
+ * Post-rejection backoff windows by source (the RETAINED cooldown semantics,
+ * plan §4.5). After a proposal is rejected, `createProposal` silently skips
+ * new proposals for the same `ref+source` until the window expires (unless
+ * `force: true` is passed).
  *
  * Rationale (Settles 2009 active-learning survey; Argilla/Label Studio HITL):
- * Reviewer fatigue is a blocker for the human-in-the-loop guarantee. Cooldowns
- * prevent nightly improve runs from re-flooding the queue with near-identical
+ * Reviewer fatigue is a blocker for the human-in-the-loop guarantee. Backoff
+ * prevents nightly improve runs from re-flooding the queue with near-identical
  * proposals the reviewer just declined.
  *
  *   - reflect: 14 days (agent-based; slower feedback loops)
@@ -577,16 +588,17 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
  * Create a new pending proposal. The id is a stable random UUID, so two
  * proposals with the same `ref` never collide.
  *
- * **Dedup / cooldown guard** (F-2 / #363):
+ * **Input-fingerprint / rejection-backoff guard** (§23.6, WI-6.4):
  *
  * Before writing, this function checks:
- *   1. `duplicate_pending` — a pending proposal already exists for the same
- *      `ref+source`. Pass `input.force = true` to bypass.
- *   2. `content_hash_match` — an identical content hash is already pending or
- *      was recently rejected for this `ref+source`. Bypass with `force: true`.
- *   3. `cooldown` — a proposal for this `ref+source` was rejected within the
- *      source-specific cooldown window (reflect: 14 d, distill: 30 d,
- *      others: 7 d). Bypass with `force: true`.
+ *   1. `fingerprint_match` — the §23.6 input fingerprint (scheme version,
+ *      source, ref, target before-hash, model id) was already processed.
+ *      The row survives the proposal's lifecycle, so identical inputs stay
+ *      deduplicated until the target, model, or scheme changes. Pass
+ *      `input.force = true` to bypass.
+ *   2. `rejection_backoff` — a proposal for this `ref+source` was rejected
+ *      within the source-specific backoff window (reflect: 14 d, distill:
+ *      30 d, others: 7 d). Bypass with `force: true`.
  *
  * When a guard fires the function returns a `CreateProposalSkipped` record
  * instead of writing. Use {@link isProposalSkipped} to detect it.
@@ -687,10 +699,17 @@ export function createProposal(
   ];
   const mintedBeforeHash = mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined;
 
+  const fingerprint = computeProposalFingerprint({
+    ref: normalizedRef,
+    source: input.source,
+    ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
+    ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+  });
+
   return withProposalsDb(stashDir, ctx, (db) => {
     return withImmediateTransaction(db, () => {
       if (!input.force) {
-        const skip = checkDedupAndCooldown(db, stashDir, normalizedRef, input, ctx);
+        const skip = checkFingerprintAndBackoff(db, stashDir, normalizedRef, input, fingerprint, ctx);
         if (skip) return skip;
       }
 
@@ -728,79 +747,118 @@ export function createProposal(
       };
 
       upsertProposal(db, proposal, stashDir);
+      // Record the processed fingerprint (also on force — a forced enqueue is
+      // still "these inputs were processed"; future unforced identical inputs
+      // dedup against it).
+      recordProposalFingerprint(db, stashDir, fingerprint, normalizedRef, input, proposal.id, created);
       return proposal;
     });
   });
 }
 
+/** Version stamp of the input-fingerprint scheme; bump when terms change. */
+const PROPOSAL_FINGERPRINT_VERSION = 1;
+
 /**
- * Evaluate the F-2 dedup / cooldown guards against the store. Returns the
- * skip record when a guard fires, or undefined when the create may proceed.
+ * Compute the §23.6 input fingerprint for a proposal mint (+ the plan §4.5
+ * engine/model-id term). Terms, in order: scheme version, source (the recipe
+ * stand-in until Wave-2 recipes exist), target ref, target before-hash
+ * (empty for a create), evidence IDs/hashes (reserved — not yet modeled),
+ * guidance hashes (reserved), evaluator version (reserved), model id.
+ * Deliberately an INPUT fingerprint: the generated content is not a term —
+ * already-processed inputs skip re-processing regardless of what the model
+ * produced this time.
  */
-function checkDedupAndCooldown(
+function computeProposalFingerprint(args: {
+  ref: string;
+  source: string;
+  beforeHash?: string;
+  modelId?: string;
+}): string {
+  return contentHash(
+    [
+      `v${PROPOSAL_FINGERPRINT_VERSION}`,
+      args.source,
+      args.ref,
+      args.beforeHash ?? "",
+      "", // evidence IDs/hashes — reserved (Wave-2 recipes)
+      "", // guidance hashes — reserved
+      "", // evaluator version — reserved
+      args.modelId ?? "",
+    ].join("\0"),
+  );
+}
+
+/**
+ * Durably record a processed fingerprint (INSERT OR REPLACE — idempotent).
+ * `ref` must be the NORMALIZED ref — the same value the fingerprint was
+ * computed over — so future ref-keyed readers of the table never mismatch.
+ */
+function recordProposalFingerprint(
+  db: Database,
+  stashDir: string,
+  fingerprint: string,
+  ref: string,
+  input: CreateProposalInput,
+  proposalId: string,
+  createdAt: string,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO proposal_fingerprints
+       (stash_dir, fingerprint, ref, source, model_id, proposal_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(stashDir, fingerprint, ref, input.source, input.modelId ?? "", proposalId, createdAt);
+}
+
+/**
+ * Evaluate the fingerprint + rejection-backoff guards. Returns the skip
+ * record when a guard fires, or undefined when the create may proceed.
+ */
+function checkFingerprintAndBackoff(
   db: Database,
   stashDir: string,
   normalizedRef: string,
   input: CreateProposalInput,
+  fingerprint: string,
   ctx: ProposalsContext | undefined,
 ): CreateProposalSkipped | undefined {
-  const newHash = contentHash(input.payload.content);
   const nowMs = (ctx?.now ?? Date.now)();
-  const cooldownMs = cooldownMsForSource(input.source);
+  const backoffMs = cooldownMsForSource(input.source);
 
-  // Scan pending proposals for ref+source matches.
-  const pending = listStateProposals(db, { stashDir, ref: normalizedRef, status: "pending" }).filter(
-    (p) => p.source === input.source,
-  );
-
-  if (pending.length > 0) {
-    // Check for identical content hash first (silent skip).
-    const hashMatch = pending.find((p) => contentHash(proposalContent(p)) === newHash);
-    if (hashMatch) {
-      return {
-        skipped: true,
-        reason: "content_hash_match",
-        message: `Identical proposal for ${normalizedRef} already pending (id: ${hashMatch.id}).`,
-        existingProposalId: hashMatch.id,
-      };
-    }
-    // Duplicate pending for same ref+source (different content).
-    const firstPending = pending[0];
+  // §23.6: an already-processed fingerprint skips another model call's output
+  // unless explicitly forced. The row survives the proposal's lifecycle —
+  // identical inputs stay deduplicated until the target (before-hash), the
+  // model, or the scheme changes.
+  const existing = db
+    .prepare("SELECT proposal_id FROM proposal_fingerprints WHERE stash_dir = ? AND fingerprint = ?")
+    .get(stashDir, fingerprint) as { proposal_id: string | null } | undefined;
+  if (existing) {
     return {
       skipped: true,
-      reason: "duplicate_pending",
-      message: `A pending proposal for ${normalizedRef} from source "${input.source}" already exists (id: ${firstPending?.id ?? "unknown"}). Pass force:true to enqueue alongside it.`,
-      existingProposalId: firstPending?.id,
+      reason: "fingerprint_match",
+      message: `These inputs were already processed into a proposal for ${normalizedRef} (fingerprint match). Pass force:true to enqueue anyway.`,
+      ...(existing.proposal_id ? { existingProposalId: existing.proposal_id } : {}),
     };
   }
 
-  // Check cooldown against recently rejected proposals.
+  // Rejection backoff (RETAINED cooldown semantics): a recent rejection for
+  // this ref+source suppresses new proposals until the window expires.
   const rejected = listStateProposals(db, { stashDir, ref: normalizedRef, status: "rejected" })
     .filter((p) => p.source === input.source)
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
 
   const mostRecent = rejected[0];
   if (mostRecent !== undefined) {
-    // Check content hash against recently rejected.
-    if (contentHash(proposalContent(mostRecent)) === newHash) {
-      return {
-        skipped: true,
-        reason: "content_hash_match",
-        message: `Identical proposal for ${normalizedRef} was already rejected (id: ${mostRecent.id}).`,
-        existingProposalId: mostRecent.id,
-      };
-    }
-    // Check cooldown window.
     const rejectedAt = new Date(mostRecent.updatedAt ?? 0).getTime();
-    if (nowMs - rejectedAt < cooldownMs) {
-      const cooldownDays = cooldownMs / MS_PER_DAY;
-      const remainingDays = Math.ceil((cooldownMs - (nowMs - rejectedAt)) / MS_PER_DAY);
+    if (nowMs - rejectedAt < backoffMs) {
+      const backoffDays = backoffMs / MS_PER_DAY;
+      const remainingDays = Math.ceil((backoffMs - (nowMs - rejectedAt)) / MS_PER_DAY);
       return {
         skipped: true,
-        reason: "cooldown",
+        reason: "rejection_backoff",
         message:
-          `Proposal for ${normalizedRef} from source "${input.source}" is in cooldown ` +
-          `(${cooldownDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
+          `Proposal for ${normalizedRef} from source "${input.source}" is in rejection backoff ` +
+          `(${backoffDays}d window, ~${remainingDays}d remaining). Pass force:true to bypass.`,
         existingProposalId: mostRecent.id,
       };
     }
@@ -1105,6 +1163,19 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
         `[proposals] expireStaleProposals: failed to expire ${p.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  // Prune fingerprint rows past the same retention window (best-effort):
+  // ISO created_at strings compare lexicographically.
+  try {
+    const cutoffIso = new Date(nowMs - retentionMs).toISOString();
+    withProposalsDb(stashDir, ctx, (db) =>
+      db.prepare("DELETE FROM proposal_fingerprints WHERE stash_dir = ? AND created_at < ?").run(stashDir, cutoffIso),
+    );
+  } catch (err) {
+    warn(
+      `[proposals] expireStaleProposals: fingerprint prune failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return {

@@ -476,7 +476,9 @@ describe("concurrent create + list safety (WAL)", () => {
 
       const parsed = await Promise.all([workerA.result, workerB.result]);
       expect(parsed.filter((entry) => entry.kind === "created")).toHaveLength(1);
-      expect(parsed.filter((entry) => entry.kind === "skipped" && entry.reason === "duplicate_pending")).toHaveLength(
+      // WI-6.4: both workers mint the same INPUTS (same ref/source/absent
+      // target/absent model), so the loser hits the winner's fingerprint row.
+      expect(parsed.filter((entry) => entry.kind === "skipped" && entry.reason === "fingerprint_match")).toHaveLength(
         1,
       );
       expect(listProposals(stash, {}, { dbPath })).toHaveLength(1);

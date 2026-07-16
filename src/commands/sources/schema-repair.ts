@@ -222,6 +222,8 @@ export async function runSchemaRepairPass(
       const proposalResult = createProposal(stashDir, {
         ref: failure.ref,
         source: "schema-repair",
+        // §23.6 fingerprint model-id term (WI-6.4).
+        modelId: llmConfig.model,
         payload: {
           content: newContent,
           ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),

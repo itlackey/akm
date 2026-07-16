@@ -1,7 +1,7 @@
 {
-  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "capturedAtHead": "42e4dd1d104bb2c8b18b8b11cca0a74f84feee7a",
   "createProposalSkipShapes": {
-    "contentHashMatchVsPending": {
+    "fingerprintMatchSameInputs": {
       "existingProposalIdMatches": true,
       "keySet": [
         "existingProposalId",
@@ -9,10 +9,10 @@
         "reason",
         "skipped"
       ],
-      "reason": "content_hash_match",
+      "reason": "fingerprint_match",
       "skipped": true
     },
-    "contentHashMatchVsRejected": {
+    "fingerprintMatchVsRejected": {
       "existingProposalIdMatches": true,
       "keySet": [
         "existingProposalId",
@@ -20,35 +20,35 @@
         "reason",
         "skipped"
       ],
-      "reason": "content_hash_match",
-      "skipped": true
-    },
-    "cooldown": {
-      "existingProposalIdMatches": true,
-      "keySet": [
-        "existingProposalId",
-        "message",
-        "reason",
-        "skipped"
-      ],
-      "reason": "cooldown",
-      "skipped": true
-    },
-    "duplicatePending": {
-      "existingProposalIdMatches": true,
-      "keySet": [
-        "existingProposalId",
-        "message",
-        "reason",
-        "skipped"
-      ],
-      "reason": "duplicate_pending",
+      "reason": "fingerprint_match",
       "skipped": true
     },
     "forceBypass": {
       "isNewProposal": true,
       "skipped": false,
       "status": "pending"
+    },
+    "modelIdTerm": {
+      "differentModelSkipped": false,
+      "sameModelExistingIdMatches": true,
+      "sameModelReason": "fingerprint_match",
+      "sameModelSkipped": true
+    },
+    "newInputsAfterTargetChange": {
+      "isNewProposal": true,
+      "skipped": false,
+      "status": "pending"
+    },
+    "rejectionBackoff": {
+      "existingProposalIdMatches": true,
+      "keySet": [
+        "existingProposalId",
+        "message",
+        "reason",
+        "skipped"
+      ],
+      "reason": "rejection_backoff",
+      "skipped": true
     }
   },
   "notes": [

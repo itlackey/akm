@@ -41,6 +41,7 @@ export const CREATE_HASH_MATCH_PENDING_NAME = "jnl-create-hash-match-pending";
 export const CREATE_HASH_MATCH_REJECTED_NAME = "jnl-create-hash-match-rejected";
 export const CREATE_COOLDOWN_NAME = "jnl-create-cooldown";
 export const CREATE_FORCE_BYPASS_NAME = "jnl-create-force-bypass";
+export const CREATE_MODEL_ID_TERM_NAME = "jnl-create-model-id-term";
 
 /**
  * Validator-passing lesson body. `description`/`when_to_use` are fixed,

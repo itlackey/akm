@@ -2456,6 +2456,8 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
         ref: knowledgeRef,
         source: "consolidate",
         sourceRun,
+        // §23.6 fingerprint model-id term (WI-6.4).
+        ...(ctx.llmConfig?.model ? { modelId: ctx.llmConfig.model } : {}),
         payload: {
           content: promotedAssetContent,
           frontmatter: { description, xrefs: [op.ref] },

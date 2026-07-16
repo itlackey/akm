@@ -1005,6 +1005,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     content,
     config,
     options,
+    distillLlm,
     assetContent,
     inputRef,
     durableInputRef,
@@ -1035,6 +1036,7 @@ async function emitDistillLessonProposal(args: {
   content: string;
   config: AkmConfig;
   options: AkmDistillOptions;
+  distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
   assetContent: string | null;
   inputRef: string;
   durableInputRef: string;
@@ -1053,6 +1055,7 @@ async function emitDistillLessonProposal(args: {
   const {
     config,
     options,
+    distillLlm,
     assetContent,
     inputRef,
     durableInputRef,
@@ -1123,6 +1126,11 @@ async function emitDistillLessonProposal(args: {
     { stashDir: stash, proposalsCtx: options.ctx },
     {
       ref: effectiveLessonRef,
+      // §23.6 fingerprint model-id term (WI-6.4). Uses the RESOLVED connection
+      // (profile/config fallback included), not the raw option — a standalone
+      // `akm distill` run must fingerprint under the model that actually
+      // generated the content, matching the promote-memory branch.
+      ...(distillLlm?.model ? { modelId: distillLlm.model } : {}),
       source: "distill",
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: {
