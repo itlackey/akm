@@ -35,7 +35,7 @@ import { resolveStashDir } from "../../core/common";
 import type { ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { appendEvent, readEvents } from "../../core/events";
+import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { redactSensitiveText } from "../../core/redaction";
@@ -99,6 +99,13 @@ export interface AkmReflectOptions {
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   /** Test seam: stable id / clock for proposal creation. */
   ctx?: ProposalsContext;
+  /**
+   * Events context carrying the improve run's long-lived state.db handle (or
+   * the C2 boundary-pinned path) so reflect's event emits take appendEvent's
+   * fast path instead of a per-event open/migrate/close (R25). Populated by
+   * the improve loop; standalone CLI reflect leaves it unset.
+   */
+  eventsCtx?: EventsContext;
   /**
    * Error patterns from earlier assets in the same improve run. When non-empty,
    * injected into the reflect prompt so the agent avoids repeating the same
@@ -1007,17 +1014,20 @@ async function finalizeReflectProposal(args: {
     payload.ref,
   );
   if (sanitizeOutcome.reject) {
-    appendEvent({
-      eventType: "reflect_completed",
-      ref: payload.ref,
-      metadata: {
-        source: "reflect",
-        sanitized: true,
-        rejected: true,
-        rejectReason: sanitizeOutcome.reject.error,
-        ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
+    appendEvent(
+      {
+        eventType: "reflect_completed",
+        ref: payload.ref,
+        metadata: {
+          source: "reflect",
+          sanitized: true,
+          rejected: true,
+          rejectReason: sanitizeOutcome.reject.error,
+          ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
+        },
       },
-    });
+      options.eventsCtx,
+    );
     return {
       schemaVersion: 2,
       ok: false,
@@ -1093,16 +1103,19 @@ async function finalizeReflectProposal(args: {
       },
     );
     if (!judgeResult.pass) {
-      appendEvent({
-        eventType: "reflect_completed",
-        ref: payload.ref,
-        metadata: {
-          source: "reflect",
-          qualityRejected: true,
-          qualityScore: judgeResult.score,
-          qualityReason: judgeResult.reason,
+      appendEvent(
+        {
+          eventType: "reflect_completed",
+          ref: payload.ref,
+          metadata: {
+            source: "reflect",
+            qualityRejected: true,
+            qualityScore: judgeResult.score,
+            qualityReason: judgeResult.reason,
+          },
         },
-      });
+        options.eventsCtx,
+      );
       return {
         schemaVersion: 2,
         ok: false,
@@ -1206,15 +1219,18 @@ function createReflectProposal(args: {
 
   const proposal: Proposal = proposalResult;
 
-  appendEvent({
-    eventType: "reflect_completed",
-    ref: proposal.ref,
-    metadata: {
-      proposalId: proposal.id,
-      source: "reflect",
-      engine: engineName,
+  appendEvent(
+    {
+      eventType: "reflect_completed",
+      ref: proposal.ref,
+      metadata: {
+        proposalId: proposal.id,
+        source: "reflect",
+        engine: engineName,
+      },
     },
-  });
+    options.eventsCtx,
+  );
 
   return {
     schemaVersion: 2,
@@ -1589,17 +1605,20 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 1. Always emit `reflect_invoked` at command entry — observers see the
   // attempt regardless of downstream success/failure.
-  appendEvent({
-    eventType: "reflect_invoked",
-    ...(options.ref ? { ref: durableImproveRef(options.ref, options.sourceName) } : {}),
-    metadata: {
-      ...(options.task ? { task: options.task } : {}),
-      ...(options.engine ? { engine: options.engine } : {}),
-      // Attribution tagging: stamp the eligibility lane so reflect_invoked can be
-      // sliced by lane downstream. See EligibilitySource.
-      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+  appendEvent(
+    {
+      eventType: "reflect_invoked",
+      ...(options.ref ? { ref: durableImproveRef(options.ref, options.sourceName) } : {}),
+      metadata: {
+        ...(options.task ? { task: options.task } : {}),
+        ...(options.engine ? { engine: options.engine } : {}),
+        // Attribution tagging: stamp the eligibility lane so reflect_invoked can be
+        // sliced by lane downstream. See EligibilitySource.
+        ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
+      },
     },
-  });
+    options.eventsCtx,
+  );
 
   // Fix #3 (observability 0.8.0): every failure path below MUST emit
   // `reflect_completed` so observers can close the invoke/complete loop. The
@@ -1616,17 +1635,20 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ref?: string,
     extra?: Record<string, unknown>,
   ): void => {
-    appendEvent({
-      eventType: "reflect_completed",
-      ...(ref ? { ref } : {}),
-      metadata: {
-        source: "reflect",
-        ok: false,
-        reason,
-        subreason,
-        ...(extra ?? {}),
+    appendEvent(
+      {
+        eventType: "reflect_completed",
+        ...(ref ? { ref } : {}),
+        metadata: {
+          source: "reflect",
+          ok: false,
+          reason,
+          subreason,
+          ...(extra ?? {}),
+        },
       },
-    });
+      options.eventsCtx,
+    );
   };
 
   // 2. Resolve target asset content (if a ref is supplied).

@@ -60,7 +60,7 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { appendEvent, readEvents } from "../../core/events";
+import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { getDbPath } from "../../core/paths";
@@ -193,6 +193,13 @@ export interface AkmDistillOptions {
   chat?: typeof chatCompletion;
   /** Override the proposals clock / id generator (test seam). */
   ctx?: ProposalsContext;
+  /**
+   * Events context carrying the improve run's long-lived state.db handle (or
+   * the C2 boundary-pinned path) so distill's event emits take appendEvent's
+   * fast path instead of a per-event open/migrate/close (R25). Populated by
+   * the improve loop; standalone CLI distill leaves it unset.
+   */
+  eventsCtx?: EventsContext;
   /**
    * Test seam — read events through this function instead of the global
    * events.jsonl. Defaults to {@link readEvents}.
@@ -808,17 +815,20 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     const message = isSecretInput
       ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
       : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: skippedRef,
-        message,
-        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
-        ...eligMeta,
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: durableInputRef,
+        metadata: {
+          outcome: "skipped" as const,
+          lessonRef: skippedRef,
+          message,
+          skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
+          ...eligMeta,
+        },
       },
-    });
+      options.eventsCtx,
+    );
     return {
       schemaVersion: 1,
       ok: true,
@@ -896,6 +906,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     eligibilitySource: options.eligibilitySource,
     sourceRun: options.sourceRun,
     proposalsCtx: options.ctx,
+    eventsCtx: options.eventsCtx,
     exclusionSetSize: exclusionSet.size,
     filteredFeedbackCount,
     feedbackFullyFiltered,
@@ -937,6 +948,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       filteredFeedbackCount,
       feedbackFullyFiltered,
       eligMeta,
+      eventsCtx: options.eventsCtx,
     });
   }
 
@@ -949,6 +961,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     exclusionSet,
     filteredFeedbackCount,
     eligMeta,
+    eventsCtx: options.eventsCtx,
   });
 
   const gate = await applyDistillQualityGate({
@@ -1066,6 +1079,7 @@ async function emitDistillLessonProposal(args: {
             ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
           },
           options.eligibilitySource,
+          options.eventsCtx,
         );
       }
     } catch {
@@ -1103,17 +1117,20 @@ async function emitDistillLessonProposal(args: {
   );
 
   if (isProposalSkipped(proposalResult2)) {
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: effectiveLessonRef,
-        message: proposalResult2.message,
-        skipReason: proposalResult2.reason,
-        ...eligMeta,
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: durableInputRef,
+        metadata: {
+          outcome: "skipped" as const,
+          lessonRef: effectiveLessonRef,
+          message: proposalResult2.message,
+          skipReason: proposalResult2.reason,
+          ...eligMeta,
+        },
       },
-    });
+      options.eventsCtx,
+    );
     return {
       schemaVersion: 1,
       ok: true,
@@ -1134,24 +1151,27 @@ async function emitDistillLessonProposal(args: {
     existingRefVocabulary,
     outcomeWeightEnabled,
   );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: durableInputRef,
-    metadata: {
-      outcome: "queued" as const,
-      lessonRef: effectiveLessonRef,
-      proposalRef: effectiveLessonRef,
-      proposalKind: effectiveProposalKind,
-      proposalId: proposal2.id,
-      // R3: judge verdicts are longitudinally queryable, not just a one-shot
-      // proposal.confidence write (normalized 1–5 score / 5).
-      ...(lessonJudgeConfidence !== undefined ? { judgeConfidence: lessonJudgeConfidence } : {}),
-      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-      ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
-      ...eligMeta,
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: durableInputRef,
+      metadata: {
+        outcome: "queued" as const,
+        lessonRef: effectiveLessonRef,
+        proposalRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        proposalId: proposal2.id,
+        // R3: judge verdicts are longitudinally queryable, not just a one-shot
+        // proposal.confidence write (normalized 1–5 score / 5).
+        ...(lessonJudgeConfidence !== undefined ? { judgeConfidence: lessonJudgeConfidence } : {}),
+        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
+        ...eligMeta,
+      },
     },
-  });
+    options.eventsCtx,
+  );
 
   return {
     schemaVersion: 1,
@@ -1184,6 +1204,7 @@ function assembleAndValidateDistillContent(args: {
   exclusionSet: Set<string>;
   filteredFeedbackCount: number;
   eligMeta: { eligibilitySource?: EligibilitySource };
+  eventsCtx?: EventsContext;
 }): { content: string; descriptionSwapped: number } {
   const {
     raw,
@@ -1194,6 +1215,7 @@ function assembleAndValidateDistillContent(args: {
     exclusionSet,
     filteredFeedbackCount,
     eligMeta,
+    eventsCtx,
   } = args;
   // Structured-output path: when the provider honoured the JSON schema, `raw`
   // is a JSON object string (not a markdown blob). Try to parse it and assemble
@@ -1248,18 +1270,21 @@ function assembleAndValidateDistillContent(args: {
   }
 
   if (findings.length > 0) {
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "validation_failed" as const,
-        lessonRef: effectiveLessonRef,
-        proposalKind: effectiveProposalKind,
-        findingKinds: findings.map((f) => f.kind),
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        ...eligMeta,
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: durableInputRef,
+        metadata: {
+          outcome: "validation_failed" as const,
+          lessonRef: effectiveLessonRef,
+          proposalKind: effectiveProposalKind,
+          findingKinds: findings.map((f) => f.kind),
+          ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+          ...eligMeta,
+        },
       },
-    });
+      eventsCtx,
+    );
     const message = findings.map((f) => f.message).join("\n");
     throw new UsageError(
       `Distilled ${effectiveProposalKind} failed validation:\n${message}`,
@@ -1358,6 +1383,7 @@ function distillEmptyResponseResult(args: {
   filteredFeedbackCount: number;
   feedbackFullyFiltered: boolean;
   eligMeta: { eligibilitySource?: EligibilitySource };
+  eventsCtx?: EventsContext;
 }): AkmDistillResult {
   const {
     fallbackReason,
@@ -1369,6 +1395,7 @@ function distillEmptyResponseResult(args: {
     filteredFeedbackCount,
     feedbackFullyFiltered,
     eligMeta,
+    eventsCtx,
   } = args;
   // Distinguish "config gate disabled" from "LLM call failed". For the
   // config-disabled branch, we ALSO suppress the `distill_invoked` event
@@ -1391,17 +1418,20 @@ function distillEmptyResponseResult(args: {
   // LLM was actually invoked but produced nothing usable (transport error,
   // timeout, or empty/whitespace response). Emit the event so the failure
   // is observable.
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: durableInputRef,
-    metadata: {
-      outcome: "llm_failed" as const,
-      lessonRef: effectiveLessonRef,
-      proposalKind: effectiveProposalKind,
-      ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      ...eligMeta,
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: durableInputRef,
+      metadata: {
+        outcome: "llm_failed" as const,
+        lessonRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
+      },
     },
-  });
+    eventsCtx,
+  );
   return {
     schemaVersion: 1,
     ok: true,
@@ -1476,6 +1506,7 @@ async function applyDistillQualityGate(args: {
             ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
           },
           options.eligibilitySource,
+          options.eventsCtx,
         ),
       };
     }
@@ -1489,6 +1520,7 @@ async function applyDistillQualityGate(args: {
         judgeResult.reason,
         exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
         options.eligibilitySource,
+        options.eventsCtx,
       ),
     };
   }

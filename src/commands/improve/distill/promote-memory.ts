@@ -21,7 +21,7 @@
 import fs from "node:fs";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../../core/config/config";
-import { appendEvent } from "../../../core/events";
+import { appendEvent, type EventsContext } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
@@ -60,6 +60,11 @@ export interface PromoteMemoryContext {
   eligibilitySource?: EligibilitySource;
   sourceRun?: string;
   proposalsCtx?: ProposalsContext;
+  /**
+   * Events context for the run's long-lived state.db handle so the promotion
+   * branch's `distill_invoked` emits take appendEvent's fast path (R25).
+   */
+  eventsCtx?: EventsContext;
   exclusionSetSize: number;
   filteredFeedbackCount: number;
   feedbackFullyFiltered: boolean;
@@ -136,16 +141,19 @@ async function resolveKnowledgePromotionContent(
 
       if (mergeResult?.action === "NOOP") {
         // Existing content is authoritative — no update needed.
-        appendEvent({
-          eventType: "distill_invoked",
-          ref: durableInputRef,
-          metadata: {
-            outcome: "skipped" as const,
-            lessonRef: knowledgeRef,
-            message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
-            ...ctx.eligMeta,
+        appendEvent(
+          {
+            eventType: "distill_invoked",
+            ref: durableInputRef,
+            metadata: {
+              outcome: "skipped" as const,
+              lessonRef: knowledgeRef,
+              message: "D-1: LLM resolved destination conflict as NOOP — existing content kept",
+              ...ctx.eligMeta,
+            },
           },
-        });
+          ctx.eventsCtx,
+        );
         return {
           earlyResult: {
             schemaVersion: 1,
@@ -257,6 +265,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
           judgeResult.reason,
           { reviewNeeded: true },
           ctx.eligibilitySource,
+          ctx.eventsCtx,
         );
       }
       return writeQualityRejection(
@@ -268,6 +277,7 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
         judgeResult.reason,
         {},
         ctx.eligibilitySource,
+        ctx.eventsCtx,
       );
     }
     // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict reaches
@@ -294,17 +304,20 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   );
 
   if (isProposalSkipped(proposalResult)) {
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: promotion.knowledgeRef,
-        message: proposalResult.message,
-        skipReason: proposalResult.reason,
-        ...eligMeta,
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        ref: durableInputRef,
+        metadata: {
+          outcome: "skipped" as const,
+          lessonRef: promotion.knowledgeRef,
+          message: proposalResult.message,
+          skipReason: proposalResult.reason,
+          ...eligMeta,
+        },
       },
-    });
+      ctx.eventsCtx,
+    );
     return {
       schemaVersion: 1,
       ok: true,
@@ -324,23 +337,26 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     existingRefVocabulary,
     outcomeWeightEnabled,
   );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: durableInputRef,
-    metadata: {
-      outcome: "queued" as const,
-      lessonRef: promotion.knowledgeRef,
-      proposalRef: promotion.knowledgeRef,
-      proposalKind: "knowledge" as const,
-      proposalId: proposal.id,
-      // R3: judge verdicts are longitudinally queryable, not just a one-shot
-      // proposal.confidence write (normalized 1–5 score / 5).
-      ...(knowledgeJudgeConfidence !== undefined ? { judgeConfidence: knowledgeJudgeConfidence } : {}),
-      ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
-      ...(exclusionSetSize > 0 ? { filteredFeedbackCount } : {}),
-      ...eligMeta,
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: durableInputRef,
+      metadata: {
+        outcome: "queued" as const,
+        lessonRef: promotion.knowledgeRef,
+        proposalRef: promotion.knowledgeRef,
+        proposalKind: "knowledge" as const,
+        proposalId: proposal.id,
+        // R3: judge verdicts are longitudinally queryable, not just a one-shot
+        // proposal.confidence write (normalized 1–5 score / 5).
+        ...(knowledgeJudgeConfidence !== undefined ? { judgeConfidence: knowledgeJudgeConfidence } : {}),
+        ...(ctx.sourceRun !== undefined ? { sourceRun: ctx.sourceRun } : {}),
+        ...(exclusionSetSize > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
+      },
     },
-  });
+    ctx.eventsCtx,
+  );
 
   return {
     schemaVersion: 1,

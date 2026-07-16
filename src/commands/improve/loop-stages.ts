@@ -327,6 +327,8 @@ async function runLoopReflectPass(
         ...(reflectBudgetMs > 0 ? { timeoutMs: reflectBudgetMs } : {}),
         signal: budgetSignal,
         runner: reflectProfileRunner ?? null,
+        // R25: reflect's event emits reuse the run's long-lived state.db handle.
+        eventsCtx: env.eventsCtx,
         // Attribution: carry the eligibility lane so reflect stamps it on
         // the reflect_invoked event and the persisted proposal.
         ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -606,6 +608,8 @@ async function invokeDistillAndRecord(
           ? materializeLlmRunnerConnection(resolvedPlan.processes.distill.runner)
           : null,
         signal: budgetSignal,
+        // R25: distill's event emits reuse the run's long-lived state.db handle.
+        eventsCtx,
         // Attribution: carry the eligibility lane so distill stamps it on the
         // distill_invoked event and the persisted proposal.
         ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),

@@ -15,7 +15,7 @@ import path from "node:path";
 import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { timestampForFilename } from "../../../core/common";
 import { type AkmConfig, getDefaultLlmConfig, type LlmConnectionConfig } from "../../../core/config/config";
-import { appendEvent } from "../../../core/events";
+import { appendEvent, type EventsContext } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { withStateDb } from "../../../core/state-db";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
@@ -310,6 +310,7 @@ export async function runReflectQualityJudge(
  * @param score     - Quality score from the judge.
  * @param reason    - Human-readable rejection reason.
  * @param extraMeta - Optional additional metadata for the event.
+ * @param eventsCtx - Events context so the emit takes appendEvent's fast path (R25).
  */
 export function writeQualityRejection(
   stash: string,
@@ -320,6 +321,7 @@ export function writeQualityRejection(
   reason: string,
   extraMeta: Record<string, unknown> = {},
   eligibilitySource?: EligibilitySource,
+  eventsCtx?: EventsContext,
 ): AkmDistillResult {
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
@@ -331,20 +333,23 @@ export function writeQualityRejection(
     `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
     "utf8",
   );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: inputRef,
-    metadata: {
-      outcome,
-      lessonRef,
-      score,
-      reason,
-      ...extraMeta,
-      // Attribution tagging: stamp the eligibility lane so distill_invoked can be
-      // sliced by lane downstream. See EligibilitySource.
-      ...(eligibilitySource ? { eligibilitySource } : {}),
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: inputRef,
+      metadata: {
+        outcome,
+        lessonRef,
+        score,
+        reason,
+        ...extraMeta,
+        // Attribution tagging: stamp the eligibility lane so distill_invoked can be
+        // sliced by lane downstream. See EligibilitySource.
+        ...(eligibilitySource ? { eligibilitySource } : {}),
+      },
     },
-  });
+    eventsCtx,
+  );
   return {
     schemaVersion: 1,
     ok: true,
