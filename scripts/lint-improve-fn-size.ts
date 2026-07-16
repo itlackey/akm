@@ -138,6 +138,5 @@ export function measureImproveFnOffenders(): ImproveFnOffender[] {
  * be lowered or removed, never added or raised. Emptied by WI-7.8.
  */
 export const IMPROVE_FN_SIZE_BASELINE: readonly ImproveFnOffender[] = [
-  { id: "src/commands/improve/preparation.ts :: runImprovePreparationStage", lines: 1493 },
   { id: "src/commands/improve/improve.ts :: akmImprove", lines: 810 },
 ];
