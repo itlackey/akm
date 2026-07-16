@@ -831,3 +831,68 @@ Net: src −868 (distill-promotion-policy.ts 1510 → 642 lines); tests +61.
 Suites: distill unit+bench+integration 111 pass / 0 fail; tsc clean;
 biome clean; goldens untouched (no DESIGNATIONS entry references promotion
 policy — verified).
+
+## R26 — structured-call migration (seam extension + four migration commits)
+
+D7's preferred branch, finished: every raw `chatCompletion` call expression
+in the chunk-7 files now routes through `callStructured`. Landed as five
+commits, each green on its scoped suites before push:
+
+1. **Seam extension** (additive, contract-pinned): `CallStructuredOptions.
+   enabled` forwards to `tryLlmFeature` — without it, resolver-less feature
+   keys (`distill`, `memory_consolidation`, `memory_contradiction_detection`,
+   the quality gates) migrate onto a permanently-closed gate;
+   `CallStructuredRequest` gains `maxTokens` + `enableThinking`; option keys
+   forward hasOwn-conditionally because the wrapper AND transport are
+   tri-state on `timeoutMs` (absent = default, present-undefined = disabled).
+   The three existing adopters pass the timeoutMs key explicitly → behavior
+   unchanged (suites green). Contract pins (8)–(11) added.
+2. **reflect + quality-gate**: `runReflectViaLlm` → ungated callStructured
+   (new `reflect_proposal` LlmFeatureKey labels it; enablement is
+   strategy-resolved before dispatch); errors still fold into the
+   failure-shaped AgentRunResult. `runQualityJudge` (shared LLM-as-judge) →
+   ungated callStructured with the injected chat as transport override;
+   `chat` widens to `QualityJudgeChat | undefined` so reflect passes
+   `options.chat` straight through; wrappers stamp lane-appropriate keys.
+   Fail-closed reasons + 3.5/2.5 banding byte-preserved.
+3. **distill**: `runDistillLlmCall` migrates with the `enabled` override; the
+   in-gate missing-LLM ConfigError becomes a pre-seam guard producing the
+   identical terminal state (fallbackReason "error" + same warnVerbose line;
+   disabled still dominates); production responseSchema path and the
+   schema-blind test-seam bifurcation preserved.
+4. **extract**: both bounded calls (per-session + #561 summary generator)
+   migrate; `getLlmConfig()` moves behind an explicit try/catch preserving
+   the fail-open contract (materializeLlmConnection CAN throw ConfigError —
+   verified — and used to be swallowed by the gate); the llmRaw side-channel
+   stays; the chat ctx field widens to optional and both `?? chatCompletion`
+   bindings die — extract.ts now has ZERO chatCompletion occurrences.
+5. **consolidate + memory-contradiction-detect**: envelope semantics
+   preserved exactly (throw → {ok:false, String(e)} via onError, never the
+   gate fallback; retry-with-2s-backoff, AKM_DEBUG_LLM, accounting bumps
+   untouched); contradiction pair-judge keeps its default-off strategy gate
+   and null-skip semantics.
+
+### Final grep record (the six files + quality-gate.ts)
+
+`chatCompletion\(` call expressions: **0** in reflect.ts, distill.ts,
+extract.ts, consolidate.ts, shared.ts (0 lines — deleted in WI-7.1/7.3;
+complete-by-deletion), memory/memory-contradiction-detect.ts, and
+distill/quality-gate.ts. Remaining value references are sanctioned
+non-calls: type-position `typeof chatCompletion` seam declarations
+(reflect ×2 type-only import, distill ×2), distill.ts:835's binding that
+feeds promote-memory's required `ctx.chat` (subtree consumer, Chunk 9
+RunContext work), and mcd's documented default parameter.
+`_setChatCompletionForTests` verified working through the seam's late
+binding by the frozen consolidate golden call-count pins and the reflect
+response-schema capture suite.
+
+Out-of-chunk raw callers left untouched for Chunk 9 (re-confirmed at HEAD):
+graph-extract batch/retry (llm/graph-extract.ts:660,:683), tasks/runner.ts
+chatCompletionImpl, workflows native-executor + frozen-judge lazy imports,
+sources/schema-repair.ts, remember.ts, proposal/propose.ts + drain.ts,
+run-context.ts:204 default binding, llm/client.ts in-module probes.
+
+Net: seam +150 (incl. 4 contract pins); migrations ≈ −60 net across the
+five files (scaffold dedup offset by preserved-semantics comments).
+Suites: ~640 tests green across seam/reflect/distill/extract/consolidate/
+contradiction buckets; tsc + biome clean per commit.
