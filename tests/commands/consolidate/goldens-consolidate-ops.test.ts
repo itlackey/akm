@@ -154,6 +154,13 @@ function makeCtx(root: string, overrides: Partial<ConsolidateOpContext> & { skip
   return {
     config: {} as ConsolidateOpContext["config"],
     stashDir: root,
+    txn: {
+      // Unregistered kind: markJournalCompleted's advanceTxn throws before any
+      // fs write and is swallowed by its best-effort catch — a true no-op stub.
+      journal: { kind: "stub-unregistered-kind", payload: { startedAt: "", operations: [], completed: [] } },
+      journalPath: "",
+      dir: "",
+    } as unknown as ConsolidateOpContext["txn"],
     sourceRun: "goldens-consolidate-ops-test",
     target: makeTarget(root),
     backupDir: path.join(root, ".akm", "consolidate-backup", "test"),

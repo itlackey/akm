@@ -8,6 +8,7 @@ import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
 import { akmSearch } from "../../../src/commands/read/search";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
+import { canonicalTxnRoot, txnNamespaceDir } from "../../../src/core/fs-txn";
 import { setQuiet } from "../../../src/core/warn";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -1410,6 +1411,38 @@ describe("akm improve memory cleanup", () => {
     });
   });
 
+  /**
+   * Plant a stale (incomplete) consolidate checklist journal in the unified
+   * engine home for `stashDir`; returns the transaction directory.
+   */
+  function writeStaleConsolidateTxnJournal(stashDir: string): string {
+    const txnDir = path.join(txnNamespaceDir(stashDir), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    fs.mkdirSync(txnDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(txnDir, "journal.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "consolidate",
+          phase: "applying",
+          transactionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          root: canonicalTxnRoot(stashDir),
+          changes: [],
+          decidedAt: "2026-01-01T00:00:00.000Z",
+          payload: {
+            startedAt: "2026-01-01T00:00:00.000Z",
+            operations: [{ op: "delete", ref: "memory:old", reason: "stale" }],
+            completed: [],
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return txnDir;
+  }
+
   // 0.8.0: this test invokes akmImprove twice end-to-end against a real (empty)
   // stash; the planner + consolidate journal check together routinely take
   // 4–6 s, which exceeds Bun's 5 s default per-test timeout under full-suite
@@ -1417,21 +1450,8 @@ describe("akm improve memory cleanup", () => {
   // warm and the system is busy.
   test("stale consolidate journal error gives actionable improve recovery guidance", async () => {
     const stashDir = makeTempDir("akm-improve-stale-journal-abort-");
-    fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stashDir, ".akm", "consolidate-journal.json"),
-      JSON.stringify(
-        {
-          startedAt: "2026-01-01T00:00:00.000Z",
-          operations: [{ op: "delete", ref: "memory:old", reason: "stale" }],
-          completed: [],
-          backupTimestamp: "2026-01-01T00-00-00-000Z",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
+    // WI-6.3e: the checklist journal rides the unified fs-txn engine.
+    writeStaleConsolidateTxnJournal(stashDir);
 
     await expect(
       akmImprove({
@@ -1491,22 +1511,11 @@ describe("akm improve memory cleanup", () => {
 
   test("consolidate recovery clean removes stale journal and allows improve to continue", async () => {
     const stashDir = makeTempDir("akm-improve-stale-journal-clean-");
-    const staleBackupTs = "2026-01-01T00-00-00-000Z";
-    fs.mkdirSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs), { recursive: true });
-    fs.writeFileSync(
-      path.join(stashDir, ".akm", "consolidate-journal.json"),
-      JSON.stringify(
-        {
-          startedAt: "2026-01-01T00:00:00.000Z",
-          operations: [{ op: "delete", ref: "memory:old", reason: "stale" }],
-          completed: [],
-          backupTimestamp: staleBackupTs,
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
+    // WI-6.3e: the checklist journal rides the unified fs-txn engine; the
+    // journal and its backups share the transaction directory.
+    const txnDir = writeStaleConsolidateTxnJournal(stashDir);
+    fs.mkdirSync(path.join(txnDir, "backup"), { recursive: true });
+    fs.writeFileSync(path.join(txnDir, "backup", "orphan.md"), "x", "utf8");
 
     const result = await akmImprove({
       scope: "memory",
@@ -1536,7 +1545,6 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-journal.json"))).toBe(false);
-    expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs))).toBe(false);
+    expect(fs.existsSync(txnDir)).toBe(false);
   });
 });

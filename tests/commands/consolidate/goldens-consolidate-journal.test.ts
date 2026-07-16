@@ -4,73 +4,38 @@
 
 /**
  * Golden capture: consolidate journal round-trip + hot-capture guard (WI-06,
- * plan §11 Chunk 0a / R5). Chunk 0a brief §2.3, `anchors.md`
- * `consolidate.ts:657` (`getJournalPath`), `:661` (`getBackupDir`), `:665-690`
- * (`removeStaleJournal`), `:692-735` (`checkForIncompleteJournal`, invoked at
- * `:1012`), `:737-747` (`writeJournal`), `:749-759` (`markJournalCompleted`),
- * `:761-774` (`cleanupJournal`), `:776-783` (`backupFile`), `:1617-1636`
- * (all-hot chunk early-exit); `consolidate/eligibility.ts:60`
- * (`consolidateGuardStatus`).
+ * plan §11 Chunk 0a / R5; re-keyed at Chunk 6 WI-6.3e).
  *
- * ## Harness — real `akmConsolidate` runs; interrupted state via crafted journal files
+ * ## Harness — real `akmConsolidate` runs; interrupted state via crafted journals
  *
- * Per brief step 1: the full-run lifecycle and all-hot scenarios drive the
- * REAL `akmConsolidate` (stubbed LLM transport via `_setChatCompletionForTests`)
- * so `writeJournal`/`backupFile`/`markJournalCompleted`/`cleanupJournal` all
- * execute for real. Since none of those journal helpers are exported (they are
- * module-private to `consolidate.ts`), the write-time SHAPE of the journal is
- * observed via `spyOn(fs, "writeFileSync"/"copyFileSync")` interception — the
- * same `src/`-change-free technique WI-04's `goldens-mv-txn.test.ts` uses for
- * its stage/replace-divergence scenarios (see that suite's header comment).
- * The recovery-mode scenarios (abort/clean/unreadable/completed) instead craft
- * an INTERRUPTED journal fixture directly on disk (JSON, hand-written) and let
- * `checkForIncompleteJournal` (invoked at the very top of `akmConsolidate`,
- * before any memory pool work) observe it — this keeps the suite unit-scope
- * (no process spawns / SIGKILL timing needed).
+ * Since WI-6.3e the consolidate CHECKLIST journal rides the unified fs-txn
+ * engine (src/core/fs-txn.ts): kind `consolidate`, root = the stash, backups
+ * under the transaction directory in getDataDir()/txn/<ns>/<id>/. The
+ * full-run lifecycle and all-hot scenarios drive the REAL `akmConsolidate`
+ * (stubbed LLM transport via `_setChatCompletionForTests`); the write-time
+ * journal shape is observed via `spyOn(fs.writeFileSync/copyFileSync)`
+ * interception of the engine's durable `journal.json.tmp` writes. The
+ * recovery-mode scenarios craft an INTERRUPTED engine journal directly on
+ * disk and let `checkForIncompleteJournal` (run-entry, unchanged
+ * abort/clean semantics) observe it — no process spawns needed.
  *
- * ## Characterization warning (brief step 2, Risk 8)
+ * ## Code-organization note
  *
- * Journal recovery paths have ZERO existing test coverage at HEAD. The
- * `completed >= operations` "silent cleanup" scenario below captures a
- * genuinely surprising outcome: `checkForIncompleteJournal` treats a
- * fully-completed-but-never-cleaned-up journal as NOT incomplete and does
- * nothing to it (no throw, no removal) — the stale journal file only gets
- * swept away as a SIDE EFFECT of the next run's own `writeJournal` overwrite +
- * `cleanupJournal`, and that next run's `cleanupJournal` only removes the
- * timestamp it itself used. The STALE journal's own backup directory (a
- * different timestamp) is an ORPHAN that is never reclaimed by any code path
- * this suite can find. This is captured AS-IS, not fixed — see the scenario's
- * `notes` field in the fixture and the WI-08 report.
- *
- * ## Code-organization note (deviation from WI-03/04/05's literal-duplication style)
- *
- * WI-03/04/05 re-run each scenario's setup TWICE — once inline inside an
- * assertion `test()`, once again (separately written) inside a final
- * "golden fixture: serialize" test — explicitly so the golden capture does
- * not depend on which subset of tests bun:test happened to execute. This
- * suite achieves the same order-independence a different way: each `capture*`
- * helper below is a single, fully self-contained function (fresh sandbox
- * in, fresh sandbox torn down on exit, no shared mutable state) that is
- * idempotent and side-effect-free across repeated invocations. Assertion
- * `test()` blocks and the final golden-serializing tests both call the SAME
- * `capture*` helper — never a hand-duplicated copy of its body — so there is
- * no risk of the two diverging, and no risk of the golden depending on test
- * execution order (every call constructs its own isolated world).
+ * Each `capture*` helper is a single, fully self-contained function (fresh
+ * sandbox in, torn down on exit, idempotent) called by BOTH the assertion
+ * `test()` blocks and the final golden-serializing tests — so the golden can
+ * never depend on test execution order.
  *
  * ## Designation
  *
- * `frozen-migration-input` (`DESIGNATIONS.json`) for all three fixtures this
- * suite writes. `journal-lifecycle.json`'s captured journal `operations[].ref`
- * embeds a fixture-local ref string (`tests/fixtures/goldens/consolidate/fixture-refs.ts`)
- * — noted as a re-baseline-@-5 caveat on that one field, same convention as
- * WI-03/04's fileTree-key caveats, WITHOUT changing the asset's overall
- * designation. `journal-recovery.json` and `journal-guard-verdicts.json`
- * contain no ref literals at all (only booleans/counts/verdict strings).
- *
- * Journal phase/shape details are recorded as INFORMATIONAL data only (brief
- * §3.2 rule 4) — Chunk 6 replaces these journals wholesale; only the
- * observable outcomes (file/dir existence, op counts, error classification)
- * are the preserved contract.
+ * All three fixtures are registry-designated `re-baseline @6`
+ * (DESIGNATIONS.json) and were re-captured at WI-6.3e with the engine port
+ * (reviewed diff + ledger entry). The legacy characterization surprise (the
+ * completed-journal orphaned-backup leak) is deliberately FIXED by the
+ * per-transaction-dir scheme and documented in the re-captured fixture
+ * notes. Journal phase/shape details remain INFORMATIONAL data only (brief
+ * §3.2 rule 4); the observable outcomes (abort/clean verdicts, file/dir
+ * existence, op counts, error classification) are the preserved contract.
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -85,6 +50,7 @@ import { consolidateGuardStatus } from "../../../src/commands/improve/consolidat
 import { assembleAsset } from "../../../src/core/asset/asset-serialize";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
+import { canonicalTxnRoot, txnNamespaceDir } from "../../../src/core/fs-txn";
 import { _setChatCompletionForTests } from "../../../src/llm/client";
 import { expectGolden } from "../../_helpers/golden";
 import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -105,7 +71,7 @@ import {
 const GOLDEN_LIFECYCLE_PATH = "tests/fixtures/goldens/consolidate/journal-lifecycle.json";
 const GOLDEN_RECOVERY_PATH = "tests/fixtures/goldens/consolidate/journal-recovery.json";
 const GOLDEN_GUARD_PATH = "tests/fixtures/goldens/consolidate/journal-guard-verdicts.json";
-const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
+const HEAD_SHA = "6dc0354cd0ad5638ea06904bad5720f24b8eca54";
 
 // Consolidation enabled, embeddings off (clustering is a no-op), and a real
 // LLM engine SLOT configured (so resolveConsolidateLlmConfig resolves truthy
@@ -129,20 +95,51 @@ const CONFIG = {
   defaults: { llmEngine: "default", improveStrategy: "judged" },
 } as unknown as AkmConfig;
 
-// ── Path helpers (mirror the module-private getJournalPath/getBackupDir) ───
+// ── Path helpers (WI-6.3e re-key: the checklist journal rides the unified ──
+// fs-txn engine — kind `consolidate`, root = stash; backups live under the
+// transaction directory. Crafted journals are engine envelopes.)
 
-function journalFilePath(stashDir: string): string {
-  return path.join(stashDir, ".akm", "consolidate-journal.json");
+const CRAFTED_TXN_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+function craftedTxnDir(stashDir: string): string {
+  return path.join(txnNamespaceDir(stashDir), CRAFTED_TXN_ID);
 }
 
-function backupDirFor(stashDir: string, timestamp: string): string {
-  return path.join(stashDir, ".akm", "consolidate-backup", timestamp);
+function craftedJournalPath(stashDir: string): string {
+  return path.join(craftedTxnDir(stashDir), "journal.json");
 }
 
-function writeRawJournalFile(stashDir: string, journal: unknown): void {
-  const p = journalFilePath(stashDir);
+function craftedBackupDir(stashDir: string): string {
+  return path.join(craftedTxnDir(stashDir), "backup");
+}
+
+function namespaceIsClean(stashDir: string): boolean {
+  const ns = txnNamespaceDir(stashDir);
+  if (!fs.existsSync(ns)) return true;
+  return fs.readdirSync(ns).length === 0;
+}
+
+function writeRawJournalFile(stashDir: string, payload: unknown): void {
+  const p = craftedJournalPath(stashDir);
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(journal, null, 2), "utf8");
+  fs.writeFileSync(
+    p,
+    JSON.stringify(
+      {
+        version: 1,
+        kind: "consolidate",
+        phase: "applying",
+        transactionId: CRAFTED_TXN_ID,
+        root: canonicalTxnRoot(stashDir),
+        changes: [],
+        decidedAt: "2026-05-01T00:00:00.000Z",
+        payload,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
 }
 
 function memoryPath(root: string, name: string): string {
@@ -177,12 +174,7 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
       return JSON.stringify({ operations: [{ op: "delete", ref, reason: "redundant" }] });
     });
 
-    const journalWrites: Array<{
-      startedAt: unknown;
-      operations: unknown;
-      completed: unknown;
-      backupTimestamp: unknown;
-    }> = [];
+    const journalWrites: Array<{ phase: unknown; operations: unknown; completed: unknown }> = [];
     const backupCopyBasenames: string[] = [];
 
     const originalWriteFileSync = fs.writeFileSync;
@@ -192,8 +184,20 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
       ...args: unknown[]
     ) => {
       const result = originalWriteFileSync(file, data, ...(args as [fs.WriteFileOptions?]));
-      if (path.basename(String(file)) === "consolidate-journal.json") {
-        journalWrites.push(JSON.parse(String(data)));
+      // Engine journals are written durably: journal.json.tmp then renamed.
+      if (path.basename(String(file)) === "journal.json.tmp") {
+        const envelope = JSON.parse(String(data)) as {
+          kind?: string;
+          phase?: unknown;
+          payload?: { operations?: unknown; completed?: unknown };
+        };
+        if (envelope.kind === "consolidate") {
+          journalWrites.push({
+            phase: envelope.phase,
+            operations: envelope.payload?.operations,
+            completed: envelope.payload?.completed,
+          });
+        }
       }
       return result;
     }) as typeof fs.writeFileSync);
@@ -205,7 +209,7 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
       mode?: number,
     ) => {
       const result = originalCopyFileSync(src, dest, mode);
-      if (String(dest).includes(`${path.sep}consolidate-backup${path.sep}`)) {
+      if (String(dest).includes(`${path.sep}backup${path.sep}`)) {
         backupCopyBasenames.push(path.basename(String(dest)));
       }
       return result;
@@ -219,8 +223,6 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
       copySpy.mockRestore();
     }
 
-    const capturedBackupTimestamp = journalWrites[0]?.backupTimestamp as string | undefined;
-
     return {
       chatCompletionCallCount: chatCalls,
       deleted: result.deleted,
@@ -229,17 +231,16 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
       firstJournalWrite: journalWrites[0],
       lastJournalWrite: journalWrites[journalWrites.length - 1],
       backupCopyBasenames,
-      journalExistsAfterRun: fs.existsSync(journalFilePath(root)),
-      backupDirExistsAfterRun: capturedBackupTimestamp
-        ? fs.existsSync(backupDirFor(root, capturedBackupTimestamp))
-        : undefined,
+      // The journal and its run's backups share the transaction dir; a clean
+      // finish sweeps it (and the namespace dir when empty).
+      namespaceCleanAfterRun: namespaceIsClean(root),
     };
   } finally {
     storage.cleanup();
   }
 }
 
-describe("full-run journal lifecycle (writeJournal/backupFile/markJournalCompleted/cleanupJournal)", () => {
+describe("full-run journal lifecycle (beginConsolidateTxn/backupFile/markJournalCompleted/cleanupTxn)", () => {
   test("real akmConsolidate run: journal shape, backup copy, and end-state removal", async () => {
     const captured = await captureFullRunLifecycle();
 
@@ -247,24 +248,24 @@ describe("full-run journal lifecycle (writeJournal/backupFile/markJournalComplet
     expect(captured.deleted).toBe(1);
     expect(captured.ok).toBe(true);
 
-    // writeJournal (:737-747): started empty-completed; markJournalCompleted
-    // (:749-759): a second write appends the completed op ref.
-    expect(captured.journalWriteCount).toBe(2);
-    const first = captured.firstJournalWrite as { operations: unknown[]; completed: unknown[] };
-    const last = captured.lastJournalWrite as { operations: unknown[]; completed: string[] };
+    // Engine checklist journal: begin (applying, empty completed) →
+    // markJournalCompleted (applying, completed appended) → committed.
+    expect(captured.journalWriteCount).toBe(3);
+    const first = captured.firstJournalWrite as { phase: string; operations: unknown[]; completed: unknown[] };
+    const last = captured.lastJournalWrite as { phase: string; operations: unknown[]; completed: string[] };
+    expect(first.phase).toBe("applying");
     expect(first.operations).toHaveLength(1);
     expect(first.completed).toEqual([]);
+    expect(last.phase).toBe("committed");
     expect(last.operations).toEqual(first.operations);
     expect(last.completed).toEqual([memoryRef(JOURNAL_LIFECYCLE_NAME)]);
 
-    // backupFile (:776-783): the deleted memory's content is copied into the
-    // backup dir before the archive+hard-delete.
+    // backupFile: the deleted memory's content is copied into the transaction
+    // dir's backup/ before the archive+hard-delete.
     expect(captured.backupCopyBasenames).toEqual([`${JOURNAL_LIFECYCLE_NAME}.md`]);
 
-    // cleanupJournal (:761-774): both the journal file and its run's backup
-    // dir are gone once the run completes successfully.
-    expect(captured.journalExistsAfterRun).toBe(false);
-    expect(captured.backupDirExistsAfterRun).toBe(false);
+    // A clean finish sweeps the transaction dir (journal + backups together).
+    expect(captured.namespaceCleanAfterRun).toBe(true);
   });
 });
 
@@ -319,17 +320,15 @@ async function captureAbortIncomplete(): Promise<Record<string, unknown>> {
   const storage = withIsolatedAkmStorage();
   try {
     const root = storage.stashDir;
-    const ts = "2026-05-01T00-00-00-000Z";
     const opA: ConsolidateDeleteOp = { op: "delete", ref: memoryRef(JOURNAL_STALE_OP_REF_NAME), reason: "x" };
     const opB: ConsolidateDeleteOp = { op: "delete", ref: memoryRef(`${JOURNAL_STALE_OP_REF_NAME}-2`), reason: "x" };
     writeRawJournalFile(root, {
       startedAt: "2026-05-01T00:00:00.000Z",
       operations: [opA, opB] satisfies ConsolidateOperation[],
       completed: [opA.ref], // 1 of 2 completed -> incomplete
-      backupTimestamp: ts,
     });
-    fs.mkdirSync(backupDirFor(root, ts), { recursive: true });
-    fs.writeFileSync(path.join(backupDirFor(root, ts), "placeholder.md"), "x", "utf8");
+    fs.mkdirSync(craftedBackupDir(root), { recursive: true });
+    fs.writeFileSync(path.join(craftedBackupDir(root), "placeholder.md"), "x", "utf8");
 
     let caught: unknown;
     try {
@@ -345,8 +344,8 @@ async function captureAbortIncomplete(): Promise<Record<string, unknown>> {
       code: err?.code,
       messageContainsIncompleteDetected: (err?.message ?? "").includes("Incomplete consolidation run detected"),
       messageContainsBackupHint: (err?.message ?? "").includes("Backup dir:"),
-      journalStillExists: fs.existsSync(journalFilePath(root)),
-      backupDirStillExists: fs.existsSync(backupDirFor(root, ts)),
+      journalStillExists: fs.existsSync(craftedJournalPath(root)),
+      backupDirStillExists: fs.existsSync(craftedBackupDir(root)),
     };
   } finally {
     storage.cleanup();
@@ -359,7 +358,7 @@ async function captureAbortUnreadable(): Promise<Record<string, unknown>> {
   const storage = withIsolatedAkmStorage();
   try {
     const root = storage.stashDir;
-    const p = journalFilePath(root);
+    const p = craftedJournalPath(root);
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, "{ not valid json", "utf8");
 
@@ -385,25 +384,21 @@ async function captureAbortUnreadable(): Promise<Record<string, unknown>> {
 
 // ── Capture: recoveryMode "clean" on an incomplete journal ──────────────────
 //
-// Covers both derivations of the backup-dir timestamp (:673-678): an explicit
-// `backupTimestamp` field, and the `startedAt` fallback (`[:.]` -> `-`) used
-// when `backupTimestamp` is absent.
+// The journal and its backups share the transaction directory, so "clean"
+// removes both in one sweep (the legacy scheme's two backup-timestamp
+// derivations collapsed with the timestamped backup dirs themselves).
 
-async function captureCleanIncomplete(useStartedAtFallback: boolean): Promise<Record<string, unknown>> {
+async function captureCleanIncomplete(): Promise<Record<string, unknown>> {
   const storage = withIsolatedAkmStorage();
   try {
     const root = storage.stashDir;
-    const startedAtIso = "2026-05-01T00:00:00.000Z";
-    const explicitTs = "2026-05-01T01-00-00-000Z";
-    const expectedBackupTs = useStartedAtFallback ? startedAtIso.replace(/[:.]/g, "-") : explicitTs;
     const op: ConsolidateDeleteOp = { op: "delete", ref: memoryRef(JOURNAL_STALE_OP_REF_NAME), reason: "x" };
     writeRawJournalFile(root, {
-      startedAt: startedAtIso,
+      startedAt: "2026-05-01T00:00:00.000Z",
       operations: [op] satisfies ConsolidateOperation[],
       completed: [],
-      ...(useStartedAtFallback ? {} : { backupTimestamp: explicitTs }),
     });
-    fs.mkdirSync(backupDirFor(root, expectedBackupTs), { recursive: true });
+    fs.mkdirSync(craftedBackupDir(root), { recursive: true });
 
     const result = await akmConsolidate({
       stashDir: root,
@@ -415,33 +410,30 @@ async function captureCleanIncomplete(useStartedAtFallback: boolean): Promise<Re
     return {
       ok: result.ok,
       processed: result.processed,
-      journalRemoved: !fs.existsSync(journalFilePath(root)),
-      backupDirRemoved: !fs.existsSync(backupDirFor(root, expectedBackupTs)),
+      journalRemoved: !fs.existsSync(craftedJournalPath(root)),
+      backupDirRemoved: !fs.existsSync(craftedBackupDir(root)),
     };
   } finally {
     storage.cleanup();
   }
 }
 
-// ── Capture: completed >= operations -> silently passed through (surprise) ─
+// ── Capture: completed >= operations -> committed leftover swept quietly ────
 
-async function captureCompletedSilentLeak(): Promise<Record<string, unknown>> {
+async function captureCompletedSwept(): Promise<Record<string, unknown>> {
   const storage = withIsolatedAkmStorage();
   try {
     const root = storage.stashDir;
     const { ref } = writeMemory(root, JOURNAL_SILENT_LEAK_NAME);
 
-    const staleTs = "2020-01-01T00-00-00-000Z";
     const staleOp: ConsolidateDeleteOp = { op: "delete", ref: memoryRef(JOURNAL_STALE_OP_REF_NAME), reason: "stale" };
     writeRawJournalFile(root, {
       startedAt: "2020-01-01T00:00:00.000Z",
       operations: [staleOp] satisfies ConsolidateOperation[],
       completed: [staleOp.ref], // completed === operations.length -> NOT incomplete
-      backupTimestamp: staleTs,
     });
-    const staleBackupDir = backupDirFor(root, staleTs);
-    fs.mkdirSync(staleBackupDir, { recursive: true });
-    fs.writeFileSync(path.join(staleBackupDir, "orphaned.md"), "orphaned backup content", "utf8");
+    fs.mkdirSync(craftedBackupDir(root), { recursive: true });
+    fs.writeFileSync(path.join(craftedBackupDir(root), "orphaned.md"), "orphaned backup content", "utf8");
 
     overrideSeam(_setChatCompletionForTests, async () =>
       JSON.stringify({ operations: [{ op: "delete", ref, reason: "redundant" }] }),
@@ -452,20 +444,18 @@ async function captureCompletedSilentLeak(): Promise<Record<string, unknown>> {
     return {
       ok: result.ok,
       deleted: result.deleted,
-      journalGoneAfterFreshRun: !fs.existsSync(journalFilePath(root)),
-      // CHARACTERIZATION SURPRISE (do not fix): checkForIncompleteJournal never
-      // flagged the stale "completed" journal as incomplete, so it never called
-      // removeStaleJournal on it -- the stale journal's OWN backup dir is an
-      // orphan this run's cleanupJournal (which only knows its OWN fresh
-      // timestamp) cannot and does not reach.
-      staleOrphanedBackupDirStillPresent: fs.existsSync(staleBackupDir),
+      // The legacy engine's "silent leak" (a completed-but-never-cleaned
+      // journal's backup dir was never reclaimed) is GONE: per-transaction
+      // dirs let the run-entry check sweep committed leftovers whole.
+      staleCommittedLeftoverSwept: !fs.existsSync(craftedTxnDir(root)),
+      namespaceCleanAfterRun: namespaceIsClean(root),
     };
   } finally {
     storage.cleanup();
   }
 }
 
-describe("checkForIncompleteJournal recovery-mode matrix (:692-735, invoked at :1012)", () => {
+describe("checkForIncompleteJournal recovery-mode matrix (run-entry, abort|clean)", () => {
   test('incomplete journal + recoveryMode "abort" (default) -> throws with backup-dir hint; nothing removed', async () => {
     const captured = await captureAbortIncomplete();
     expect(captured.threw).toBe(true);
@@ -486,27 +476,20 @@ describe("checkForIncompleteJournal recovery-mode matrix (:692-735, invoked at :
     expect(captured.journalStillExists).toBe(true);
   });
 
-  test('recoveryMode "clean" on an incomplete journal -> removeStaleJournal removes journal AND backup dir (explicit backupTimestamp)', async () => {
-    const captured = await captureCleanIncomplete(false);
+  test('recoveryMode "clean" on an incomplete journal -> the transaction dir (journal AND backups) is removed', async () => {
+    const captured = await captureCleanIncomplete();
     expect(captured.ok).toBe(true);
     expect(captured.processed).toBe(0);
     expect(captured.journalRemoved).toBe(true);
     expect(captured.backupDirRemoved).toBe(true);
   });
 
-  test('recoveryMode "clean" on an incomplete journal -> backup dir derived from startedAt fallback ([:.]->-) is also removed', async () => {
-    const captured = await captureCleanIncomplete(true);
-    expect(captured.ok).toBe(true);
-    expect(captured.journalRemoved).toBe(true);
-    expect(captured.backupDirRemoved).toBe(true);
-  });
-
-  test("completed >= operations -> treated as not-incomplete; silently overwritten/cleaned by the NEXT successful run, but its own stale backup dir leaks", async () => {
-    const captured = await captureCompletedSilentLeak();
+  test("completed >= operations -> committed leftover swept quietly (the legacy orphaned-backup leak is gone)", async () => {
+    const captured = await captureCompletedSwept();
     expect(captured.ok).toBe(true);
     expect(captured.deleted).toBe(1);
-    expect(captured.journalGoneAfterFreshRun).toBe(true);
-    expect(captured.staleOrphanedBackupDirStillPresent).toBe(true);
+    expect(captured.staleCommittedLeftoverSwept).toBe(true);
+    expect(captured.namespaceCleanAfterRun).toBe(true);
   });
 });
 
@@ -556,14 +539,14 @@ test("golden fixture: journal-lifecycle.json (full-run lifecycle + all-hot zero-
     scenario: "consolidate journal round-trip: full-run lifecycle + all-hot chunk early-exit (WI-06, R5)",
     capturedAtHead: HEAD_SHA,
     notes: [
-      "Journal helpers (getJournalPath/writeJournal/markJournalCompleted/cleanupJournal/backupFile) are module-private " +
-        "to consolidate.ts -- their write-time shape is observed via spyOn(fs.writeFileSync/copyFileSync) interception " +
-        "around a REAL akmConsolidate run (src/-change-free technique, same as WI-04's goldens-mv-txn.test.ts).",
-      "journalPhasesObserved encoding (brief §3.2 rule 4): only the write COUNT and each write's parsed shape are " +
-        "recorded as informational data -- never asserted against raw journal bytes or directory layout.",
+      "Re-captured at WI-6.3e: the consolidate checklist journal rides the unified fs-txn engine (kind `consolidate`, " +
+        "root = stash; backups under the transaction dir). Write-time shape observed via " +
+        "spyOn(fs.writeFileSync/copyFileSync) interception of the engine's durable journal.json.tmp writes around a " +
+        "REAL akmConsolidate run.",
+      "Only the write COUNT and each write's parsed phase/checklist shape are recorded as informational data " +
+        "(brief §3.2 rule 4) -- never raw journal bytes or directory layout.",
       "fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref " +
-        "(tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only; the asset " +
-        "as a whole stays frozen-migration-input (same convention as the WI-03/04 fileTree-key caveats).",
+        "(tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only.",
     ],
     cases: { fullRunLifecycle, allHotZeroLlm },
   });
@@ -572,28 +555,26 @@ test("golden fixture: journal-lifecycle.json (full-run lifecycle + all-hot zero-
 test("golden fixture: journal-recovery.json (checkForIncompleteJournal recovery-mode matrix)", async () => {
   const abortIncomplete = await captureAbortIncomplete();
   const abortUnreadable = await captureAbortUnreadable();
-  const cleanIncompleteExplicitBackupTimestamp = await captureCleanIncomplete(false);
-  const cleanIncompleteStartedAtFallback = await captureCleanIncomplete(true);
-  const completedSilentLeak = await captureCompletedSilentLeak();
+  const cleanIncomplete = await captureCleanIncomplete();
+  const completedSwept = await captureCompletedSwept();
 
   expectGolden(GOLDEN_RECOVERY_PATH, {
     scenario: "consolidate journal recovery-mode matrix: checkForIncompleteJournal (WI-06, R5)",
     capturedAtHead: HEAD_SHA,
     notes: [
-      "CHARACTERIZATION WARNING (brief step 2, Risk 8): journal recovery paths have ZERO existing test coverage at " +
-        "HEAD. completedSilentLeak.staleOrphanedBackupDirStillPresent=true is a genuinely surprising outcome -- a " +
-        "fully-completed-but-never-cleaned-up journal's OWN backup directory is never reclaimed by any code path this " +
-        "suite can find (checkForIncompleteJournal silently no-ops on it; the NEXT run's cleanupJournal only removes " +
-        "its OWN fresh timestamp's backup dir). Captured as-is per plan §15.5 -- never fixed by this chunk.",
+      "Re-captured at WI-6.3e (unified fs-txn engine). Recovery stays a run-entry decision: abort (default) refuses " +
+        "the run with the same ConfigError guidance; clean removes the stale transaction dir (journal + backups " +
+        "together -- the legacy scheme's two backup-timestamp derivations collapsed with the timestamped backup " +
+        "dirs). The legacy characterization surprise (a completed-but-never-cleaned journal's backup dir leaking " +
+        "forever) is GONE: committed leftovers are swept whole at the run-entry check.",
       "No ref literals appear anywhere in this fixture: every case here reports only booleans, counts, and the " +
         "ConfigError code string -- no ref-grammar re-baseline caveat applies.",
     ],
     cases: {
       abortIncomplete,
       abortUnreadable,
-      cleanIncompleteExplicitBackupTimestamp,
-      cleanIncompleteStartedAtFallback,
-      completedSilentLeak,
+      cleanIncomplete,
+      completedSwept,
     },
   });
 });

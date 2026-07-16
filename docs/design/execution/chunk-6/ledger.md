@@ -358,3 +358,53 @@ prefix. Nothing pins the old strings.
 Gates: tsc clean; full lint green; evidence 95/0 across 12 suites
 (mv+proposal oracles, both durable-recovery crash suites, engine unit,
 ratchets 28/28).
+
+## WI-6.3e — consolidate checklist journal subsumed; ALL FOUR legacy homes gone (landed with this entry)
+
+The consolidate journal (the 4th, simpler engine) rides the unified
+engine: kind `consolidate`, root = the stash, backups under the
+transaction directory. The in-stash `.akm/consolidate-journal.json` +
+`.akm/consolidate-backup/<ts>/` homes are GONE — with the proposal,
+reject, and mv homes already collapsed, the WI-6.3 gate "journal dirs
+removed, replaced by the one transaction's home" is fully met. Semantics
+preserved: the checklist journal is written durably before any mutation;
+per-op completion marks stay best-effort (now durable same-phase payload
+rewrites); recovery stays a RUN-ENTRY decision (--consolidate-recovery
+abort|clean) with the same ConfigError guidance; the op handlers take the
+txn through ConsolidateOpContext. The registered kind can never be
+auto-rolled-back (commitPhase = first phase; generic recovery aborts
+loudly with the clean guidance).
+
+Ledgered behavior deltas (documented in the re-captured fixture notes):
+(1) completed>=operations leftovers are swept whole at the run-entry
+check — the legacy characterization surprise (a completed journal's
+orphaned backup dir leaking forever) is FIXED by the per-transaction-dir
+scheme; (2) the two backup-timestamp derivations died with the
+timestamped backup dirs; (3) journal write count 2→3 (begin/mark/commit).
+
+The three re-baseline-@6 consolidate goldens were re-captured with this
+port (reviewed diff in this commit; registry designation finalization
+rides WI-6.5 with the remaining assets): journal-lifecycle.json (engine
+envelope phases + namespace-clean end state), journal-recovery.json
+(cases collapsed/renamed; leak-fix documented), journal-guard-verdicts
+(capturedAtHead only — the predicted near-no-op). Suite harness re-keyed
+to the engine home; stale header/anchors rewritten.
+
+Adversarial review found 2 blockers, both fixed here: (1) an UNREADABLE
+journal in the shared stash namespace cannot be attributed to a kind —
+consolidate's unreadable-branch no longer sweeps ("clean") or
+misattributes ("abort") what may be a sibling mv/proposal journal fencing
+an irreversible mutation; it warns-and-skips on clean and aborts with
+kind-agnostic guidance otherwise; (2) two un-ported integration tests in
+improve-memory.test.ts that plant stale journals were re-keyed to the
+engine home. Also fixed: the handler-test txn stubs are truly inert
+(unregistered kind — no stray .tmp in CWD); clean-mode removal failures
+are reported as failures again. Accepted (RC-only exposure, consistent
+with 6.3b/d): legacy in-stash consolidate journals from rc builds are
+not bridged — not shipped in any stable release (verified v0.8.9);
+docs/technical references to the legacy homes fall to Chunk 10's sweep;
+a corrupt consolidate journal now fails mv-filtered recovery loudly
+(kind-agnostic fail-closed; disjoint at HEAD).
+
+Gates: tsc clean; full lint green; consolidate+improve-memory 283/0;
+ratchets+engine+frozen oracles+mv recovery 68/0.

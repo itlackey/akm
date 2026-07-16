@@ -1,5 +1,5 @@
 {
-  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "capturedAtHead": "6dc0354cd0ad5638ea06904bad5720f24b8eca54",
   "cases": {
     "allHotZeroLlm": {
       "chatCompletionCallCount": 0,
@@ -11,12 +11,12 @@
       "processed": 2
     },
     "fullRunLifecycle": {
-      "backupCopyBasenames": ["cj-lifecycle-delete.md"],
-      "backupDirExistsAfterRun": false,
+      "backupCopyBasenames": [
+        "cj-lifecycle-delete.md"
+      ],
       "chatCompletionCallCount": 1,
       "deleted": 1,
       "firstJournalWrite": {
-        "backupTimestamp": "<TS>",
         "completed": [],
         "operations": [
           {
@@ -25,13 +25,13 @@
             "ref": "memory:cj-lifecycle-delete"
           }
         ],
-        "startedAt": "<TS>"
+        "phase": "applying"
       },
-      "journalExistsAfterRun": false,
-      "journalWriteCount": 2,
+      "journalWriteCount": 3,
       "lastJournalWrite": {
-        "backupTimestamp": "<TS>",
-        "completed": ["memory:cj-lifecycle-delete"],
+        "completed": [
+          "memory:cj-lifecycle-delete"
+        ],
         "operations": [
           {
             "op": "delete",
@@ -39,15 +39,16 @@
             "ref": "memory:cj-lifecycle-delete"
           }
         ],
-        "startedAt": "<TS>"
+        "phase": "committed"
       },
+      "namespaceCleanAfterRun": true,
       "ok": true
     }
   },
   "notes": [
-    "Journal helpers (getJournalPath/writeJournal/markJournalCompleted/cleanupJournal/backupFile) are module-private to consolidate.ts -- their write-time shape is observed via spyOn(fs.writeFileSync/copyFileSync) interception around a REAL akmConsolidate run (src/-change-free technique, same as WI-04's goldens-mv-txn.test.ts).",
-    "journalPhasesObserved encoding (brief §3.2 rule 4): only the write COUNT and each write's parsed shape are recorded as informational data -- never asserted against raw journal bytes or directory layout.",
-    "fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only; the asset as a whole stays frozen-migration-input (same convention as the WI-03/04 fileTree-key caveats)."
+    "Re-captured at WI-6.3e: the consolidate checklist journal rides the unified fs-txn engine (kind `consolidate`, root = stash; backups under the transaction dir). Write-time shape observed via spyOn(fs.writeFileSync/copyFileSync) interception of the engine's durable journal.json.tmp writes around a REAL akmConsolidate run.",
+    "Only the write COUNT and each write's parsed phase/checklist shape are recorded as informational data (brief §3.2 rule 4) -- never raw journal bytes or directory layout.",
+    "fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only."
   ],
   "scenario": "consolidate journal round-trip: full-run lifecycle + all-hot chunk early-exit (WI-06, R5)"
 }
