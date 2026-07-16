@@ -24,9 +24,10 @@ import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../..
 import { appendEvent } from "../../../core/events";
 import type { EligibilitySource } from "../../../core/improve-types";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
-import { createProposal, isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
+import { isProposalSkipped, type Proposal, type ProposalsContext } from "../../proposal/repository";
 import type { AkmDistillResult } from "../distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../distill-promotion-policy";
+import { emitProposal } from "../proposal-envelope";
 import { durableImproveRef } from "../source-identity";
 import { persistOutputEncodingSalience, runLessonQualityJudge, writeQualityRejection } from "./quality-gate";
 
@@ -276,8 +277,8 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     if (judgeResult.score > 0) knowledgeJudgeConfidence = judgeResult.score / 5;
   }
   const knowledgeParsed = parseFrontmatter(resolvedPromotionContent);
-  const proposalResult = createProposal(
-    stash,
+  const proposalResult = emitProposal(
+    { stashDir: stash, proposalsCtx: ctx.proposalsCtx },
     {
       ref: promotion.knowledgeRef,
       source: "distill",
@@ -290,7 +291,6 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
       // Attribution tagging: persist the eligibility lane on the proposal.
       ...(ctx.eligibilitySource ? { eligibilitySource: ctx.eligibilitySource } : {}),
     },
-    ctx.proposalsCtx,
   );
 
   if (isProposalSkipped(proposalResult)) {

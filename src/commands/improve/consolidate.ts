@@ -19,7 +19,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
+import { isProposalSkipped, listProposals } from "../proposal/repository";
 import {
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
@@ -36,6 +36,7 @@ import {
 } from "./anti-collapse";
 import { cacheHash, stripFrontmatterBody } from "./content-hash";
 import { writeContradictEdge } from "./memory/memory-belief";
+import { emitProposal } from "./proposal-envelope";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
@@ -2457,16 +2458,19 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
       return;
     }
 
-    const proposalResult = createProposal(stashDir, {
-      ref: knowledgeRef,
-      source: "consolidate",
-      sourceRun,
-      payload: {
-        content: proposalContent,
-        frontmatter: { description, xrefs: [op.ref] },
+    const proposalResult = emitProposal(
+      { stashDir },
+      {
+        ref: knowledgeRef,
+        source: "consolidate",
+        sourceRun,
+        payload: {
+          content: proposalContent,
+          frontmatter: { description, xrefs: [op.ref] },
+        },
+        ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       },
-      ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
-    });
+    );
     if (isProposalSkipped(proposalResult)) {
       warnings.push(`Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`);
       pushSkipReason("promote", op.ref, `promote_proposal_${proposalResult.reason}`);

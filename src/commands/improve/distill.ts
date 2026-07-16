@@ -72,13 +72,7 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { tryLlmFeature } from "../../llm/feature-gate";
-import {
-  createProposal,
-  isProposalSkipped,
-  listProposals,
-  type Proposal,
-  type ProposalsContext,
-} from "../proposal/repository";
+import { isProposalSkipped, listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
@@ -98,6 +92,7 @@ import { buildClsContext, checkDistillFidelity } from "./distill-guards";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { emitProposal } from "./proposal-envelope";
 import { computeSalience, upsertAssetSalience } from "./salience";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -1092,8 +1087,8 @@ async function emitDistillLessonProposal(args: {
   };
   delete frontmatterWithXrefs.sources;
   content = assembleAsset(frontmatterWithXrefs, parsed.content);
-  const proposalResult2 = createProposal(
-    stash,
+  const proposalResult2 = emitProposal(
+    { stashDir: stash, proposalsCtx: options.ctx },
     {
       ref: effectiveLessonRef,
       source: "distill",
@@ -1106,7 +1101,6 @@ async function emitDistillLessonProposal(args: {
       // Attribution tagging: persist the eligibility lane on the proposal.
       ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
     },
-    options.ctx,
   );
 
   if (isProposalSkipped(proposalResult2)) {

@@ -61,7 +61,6 @@ import { type ChatMessage, chatCompletion } from "../../llm/client";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
-  createProposal,
   isProposalSkipped,
   listProposals,
   type Proposal,
@@ -71,6 +70,7 @@ import { checkReflectSize, isValidDescription } from "../proposal/validators/pro
 import { deriveLessonRef } from "./distill";
 import { runReflectQualityJudge } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
+import { emitProposal } from "./proposal-envelope";
 import { classifyReflectChange } from "./reflect-noise";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -1170,7 +1170,7 @@ function createReflectProposal(args: {
     // survives to accept/reject/revert time even across runs. See EligibilitySource.
     ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
   };
-  const proposalResult = createProposal(stash, createInput, options.ctx);
+  const proposalResult = emitProposal({ stashDir: stash, proposalsCtx: options.ctx }, createInput);
 
   if (isProposalSkipped(proposalResult)) {
     // Dedup/cooldown guard fired — surface as a "cooldown" reason (not "parse_error")

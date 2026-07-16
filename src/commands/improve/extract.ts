@@ -69,9 +69,10 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
-import { createProposal, isProposalSkipped, type ProposalsContext } from "../proposal/repository";
+import { isProposalSkipped, type ProposalsContext } from "../proposal/repository";
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { emitProposal } from "./proposal-envelope";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -650,40 +651,79 @@ function runPreLlmSessionGates(args: {
   return { data, filtered, contentHash };
 }
 
-async function processSession(
-  harness: SessionLogHarness,
-  sessionRef: SessionRef,
-  stashDir: string,
-  config: AkmConfig,
-  getLlmConfig: () => LlmProfileConfig,
-  chat: NonNullable<AkmExtractOptions["chat"]>,
-  ctx: ProposalsContext | undefined,
-  sourceRun: string,
-  dryRun: boolean,
-  timeoutMs: number | null,
-  maxTotalChars: number | undefined,
-  minContentChars: number,
-  // #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
-  // exact pre-change path (no scorer call, no new skipReason).
-  triage: { enabled: boolean; minScore: number },
+/**
+ * Run-scoped inputs shared by every {@link processSession} call — resolved once
+ * per extract run by {@link runExtractSessionLoop}. WI-7.7 §2: the former
+ * 18-positional-argument signature collapsed to `(runCtx, session)`.
+ */
+interface ExtractSessionRunCtx {
+  harness: SessionLogHarness;
+  stashDir: string;
+  config: AkmConfig;
+  getLlmConfig: () => LlmProfileConfig;
+  chat: NonNullable<AkmExtractOptions["chat"]>;
+  ctx: ProposalsContext | undefined;
+  sourceRun: string;
+  dryRun: boolean;
+  timeoutMs: number | null;
+  maxTotalChars: number | undefined;
+  minContentChars: number;
+  /**
+   * #626 — pre-LLM heuristic triage gate. Default-off (enabled:false) takes the
+   * exact pre-change path (no scorer call, no new skipReason).
+   */
+  triage: { enabled: boolean; minScore: number };
   sessionIndexing: {
     enabled: boolean;
     minDurationMinutes: number;
     generate: SessionSummaryGenerator;
-  },
-  // #602 — already-extracted skip moved INSIDE processSession: the content hash
-  // can only be computed after readSession, so the skip decision lives here. The
-  // prior row + bypass flags are threaded in from the caller. Skipping here still
-  // costs ZERO LLM calls (the expensive resource #602 protects); only the cheap
-  // file read is incurred.
-  prior: ExtractedSessionRow | undefined,
-  force: boolean,
-  signal: AbortSignal | undefined,
-  // Stash authoring standards (convention/meta fact bodies) for non-wiki
-  // output. Resolved ONCE per run by the caller and threaded in so facts are
-  // not re-read per session. Empty string when none exist.
-  standardsContext: string,
+  };
+  signal: AbortSignal | undefined;
+  /**
+   * Stash authoring standards (convention/meta fact bodies) for non-wiki
+   * output. Resolved ONCE per run and threaded in so facts are not re-read per
+   * session. Empty string when none exist.
+   */
+  standardsContext: string;
+}
+
+/**
+ * Per-session inputs for one {@link processSession} invocation.
+ *
+ * #602 — the already-extracted skip lives INSIDE processSession: the content
+ * hash can only be computed after readSession, so the skip decision happens
+ * there. The prior row + bypass flag are threaded in from the caller. Skipping
+ * there still costs ZERO LLM calls (the expensive resource #602 protects);
+ * only the cheap file read is incurred.
+ */
+interface ExtractSessionInput {
+  sessionRef: SessionRef;
+  prior: ExtractedSessionRow | undefined;
+  force: boolean;
+}
+
+async function processSession(
+  runCtx: ExtractSessionRunCtx,
+  session: ExtractSessionInput,
 ): Promise<ExtractedSessionResult> {
+  const {
+    harness,
+    stashDir,
+    config,
+    getLlmConfig,
+    chat,
+    ctx,
+    sourceRun,
+    dryRun,
+    timeoutMs,
+    maxTotalChars,
+    minContentChars,
+    triage,
+    sessionIndexing,
+    signal,
+    standardsContext,
+  } = runCtx;
+  const { sessionRef, prior, force } = session;
   const warnings: string[] = [];
   const gate = runPreLlmSessionGates({ harness, sessionRef, prior, force, maxTotalChars, minContentChars, triage });
   if ("skip" in gate) return gate.skip;
@@ -803,8 +843,8 @@ async function processSession(
     }
     try {
       const { ref, content, description } = built;
-      const result = createProposal(
-        stashDir,
+      const result = emitProposal(
+        { stashDir, proposalsCtx: ctx },
         {
           ref,
           source: "extract",
@@ -820,7 +860,6 @@ async function processSession(
             },
           },
         },
-        ctx,
       );
       if (isProposalSkipped(result)) {
         warnings.push(`candidate ${candidate.type}:${candidate.name} skipped: ${result.reason}: ${result.message}`);
@@ -934,6 +973,24 @@ async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<Extr
     extractStandardsContext,
     topLevelWarnings,
   } = args;
+  // WI-7.7 §2: run-scoped processSession inputs, resolved once per run.
+  const sessionRunCtx: ExtractSessionRunCtx = {
+    harness,
+    stashDir,
+    config,
+    getLlmConfig,
+    chat,
+    ctx: options.ctx,
+    sourceRun,
+    dryRun,
+    timeoutMs,
+    maxTotalChars,
+    minContentChars,
+    triage,
+    sessionIndexing,
+    signal: options.signal,
+    standardsContext: extractStandardsContext,
+  };
   const sessions: ExtractedSessionResult[] = [];
   let processedCount = 0;
   let skippedCount = 0;
@@ -994,26 +1051,11 @@ async function runExtractSessionLoop(args: ExtractSessionLoopArgs): Promise<Extr
     }
 
     try {
-      const result = await processSession(
-        harness,
-        summary,
-        stashDir,
-        config,
-        getLlmConfig,
-        chat,
-        options.ctx,
-        sourceRun,
-        dryRun,
-        timeoutMs,
-        maxTotalChars,
-        minContentChars,
-        triage,
-        sessionIndexing,
+      const result = await processSession(sessionRunCtx, {
+        sessionRef: summary,
         prior,
-        options.force === true,
-        options.signal,
-        extractStandardsContext,
-      );
+        force: options.force === true,
+      });
       sessions.push(result);
       // #626 — triage aggregation. A session reached the triage gate only when it
       // was NOT already preempted by an earlier skip (read_failed / too_short /
