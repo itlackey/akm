@@ -63,12 +63,24 @@ export function classifyLlmError(err: unknown): LlmErrorClass {
  * the structured callers actually use, plus an injectable `chat` seam so tests
  * can replace the transport without a network call. When `chat` is omitted the
  * real {@link chatCompletion} is used.
+ *
+ * KEY-PRESENCE SEMANTICS (`timeoutMs`): both the feature-gate wrapper and the
+ * transport are tri-state — an ABSENT `timeoutMs` key means "use the default"
+ * (600 s wrapper / config-derived transport timeout), while a PRESENT key set
+ * to `undefined`/`null` means "timeout explicitly disabled". `callStructured`
+ * therefore forwards each option key only when it is present on `request`
+ * (`Object.hasOwn`), so callers that omit the key keep the defaults and
+ * callers that set it — even to `undefined` — keep the explicit override.
  */
 export interface CallStructuredRequest {
   temperature?: number;
   timeoutMs?: number | null;
   signal?: AbortSignal;
   responseSchema?: Record<string, unknown>;
+  /** Hard output-token cap forwarded to the transport as `max_tokens`. */
+  maxTokens?: number;
+  /** Override the connection's `enableThinking` for this call. */
+  enableThinking?: boolean;
   onRetryAttempt?: () => void;
   /**
    * Transport override. Defaults to {@link chatCompletion}. Tests inject a fake
@@ -82,6 +94,8 @@ export interface CallStructuredRequest {
       timeoutMs?: number | null;
       signal?: AbortSignal;
       responseSchema?: Record<string, unknown>;
+      maxTokens?: number;
+      enableThinking?: boolean;
       onRetryAttempt?: () => void;
     },
   ) => Promise<string>;
@@ -95,6 +109,15 @@ export interface CallStructuredOptions<T> {
    * the gate is bypassed and errors propagate to the caller.
    */
   akmConfig?: AkmConfig;
+  /**
+   * Enablement already resolved by the owning command, forwarded to
+   * `tryLlmFeature`. REQUIRED for gated features without a `FEATURE_LOCATION`
+   * resolver (`distill`, `memory_consolidation`,
+   * `memory_contradiction_detection`, the quality gates): for those keys
+   * `isLlmFeatureEnabled` returns `false` unless this override is passed, so
+   * omitting it hard-disables the feature. Ignored on the ungated path.
+   */
+  enabled?: boolean;
   /** LLM connection/profile config forwarded to `chatCompletion`. */
   config: LlmProfileConfig;
   /** The chat messages to send. */
@@ -119,15 +142,22 @@ export interface CallStructuredOptions<T> {
 }
 
 export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise<T> {
-  const { feature, akmConfig, config, messages, request, parse, onError, fallback, onFallback } = opts;
+  const { feature, akmConfig, enabled, config, messages, request, parse, onError, fallback, onFallback } = opts;
 
   const chat = request?.chat ?? chatCompletion;
+  // Forward each option key ONLY when present on `request` — see the
+  // key-presence semantics note on CallStructuredRequest: for `timeoutMs`,
+  // present-but-undefined means "explicitly disabled" while absent means
+  // "use the default", both in the feature-gate wrapper and the transport.
+  const has = (key: string): boolean => request !== undefined && Object.hasOwn(request, key);
   const chatOptions = {
-    temperature: request?.temperature,
-    timeoutMs: request?.timeoutMs,
-    signal: request?.signal,
-    responseSchema: request?.responseSchema,
-    onRetryAttempt: request?.onRetryAttempt,
+    ...(has("temperature") ? { temperature: request?.temperature } : {}),
+    ...(has("timeoutMs") ? { timeoutMs: request?.timeoutMs } : {}),
+    ...(has("signal") ? { signal: request?.signal } : {}),
+    ...(has("responseSchema") ? { responseSchema: request?.responseSchema } : {}),
+    ...(has("maxTokens") ? { maxTokens: request?.maxTokens } : {}),
+    ...(has("enableThinking") ? { enableThinking: request?.enableThinking } : {}),
+    ...(has("onRetryAttempt") ? { onRetryAttempt: request?.onRetryAttempt } : {}),
   };
 
   // UNGATED: run the chat+parse directly. Errors propagate — no `onError`
@@ -152,7 +182,8 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
     },
     fallback,
     {
-      timeoutMs: request?.timeoutMs,
+      ...(has("timeoutMs") ? { timeoutMs: request?.timeoutMs } : {}),
+      ...(enabled !== undefined ? { enabled } : {}),
       onFallback,
     },
   );
