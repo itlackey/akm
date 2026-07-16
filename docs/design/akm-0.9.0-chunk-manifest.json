@@ -13,7 +13,8 @@
     "Every chunk commits its per-chunk deletion ledger — a HARD gate (plan §1.3: 'the hard gates are the zero-count greps, the per-chunk deletion ledgers, and the parity/contract/behavior tests'; §11 preamble; DoD 8)",
     "The net-LOC NUMBER (signed adds + deletions) is REPORTED per chunk, never a pass/fail threshold (plan §1.3, DoD 8)",
     "No new trust/approval/security machinery; memory lifecycle deferred entirely; anything lifecycle-shaped or trust-shaped in a diff is a scope-creep BLOCKER (plan §1.3, §12.4)",
-    "Local green gate per chunk: typecheck + unit + affected integration + safety suites (plan §11); bun run check is the full-suite superset used when no affected-only selection exists"
+    "Local green gate per chunk: typecheck + unit + affected integration + safety suites (plan §11); bun run check is the full-suite superset used when no affected-only selection exists",
+    "Golden-oracle presence is mechanical: scripts/lint-goldens-presence.ts (in bun run lint) fails if tests/fixtures/goldens/DESIGNATIONS.json or any registered asset/consumer suite is missing. A chunk gate that references goldens/fixtures is RED — never skipped, never vacuously green — when the referenced files are absent; retiring an asset means updating DESIGNATIONS.json in the same change (its designated re-baseline chunk only)"
   ],
   "chunks": [
     {
@@ -73,7 +74,9 @@
       "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): Wave 1 kills the non-taxonomy cycles (improve-types, config↔integrations, harness/tasks barrels); CI gate lands as a RATCHET (no new cycles, count monotonically decreasing; hits 0 when Chunk 3 deletes the taxonomy cycles). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices. PLUS §13.1 fold-ins assigned to this chunk: vendored echarts.min.js → CDN default-flip and drop the vendored asset (−1 MB; a default flip of html-report.ts:41/:383, not an implementation — §14.1); deterministic-embedder relocation of TEST SCAFFOLDING ONLY (−60) — the AKM_EMBED_DETERMINISTIC env-gated switch STAYS in the production embedder facade (embedder.ts:120,154): scripts/akm-eval and the §13.2 measurement pass depend on it; core/eval/rank-metrics.ts → scripts/akm-eval (−180); the --format html generic template framework → health-only render (−160). PLUS §14.2 fold-ins: H1 AkmHarness capability-discriminated union (retire the load-time throw), H2 health-report view-model/HTML split (deeper than §4.7's line-count split), H3 scheduleKillLadder covering the in-file spawn.ts:527,545 copies, L1 text/registry.ts fold. PLUS §14.3: delete AkmHarness.resume + the *_RESUME_FLAG constants. Fold-ins are ledgered under §12.1's residual row, outside this chunk's ~−2000.",
       "gates": [
         "grep resolveStashDir → residual only in the RunContext builder",
-        "Import-cycle ratchet armed in CI (no new cycles; count monotonically decreasing)"
+        "Import-cycle ratchet flips ABSOLUTE for non-taxonomy cycles: scripts/lint-import-cycles.ts baseline (pre-armed at the chunk-7 HEAD; no new participants ever) shrinks to taxonomy-only participants",
+        "grep ImproveRunContext → 0 (the legacy dual context is unified into the minted RunContext; empties the tests/architecture/run-context-adoption.test.ts baseline, flipping it absolute)",
+        "createRunContext (src/commands/improve/run-context.ts) constructed at every improve verb entry — adoption verified by the run-context-adoption ratchet, not by prose"
       ],
       "netLoc": "~−2000",
       "testBucket": "§15.1 per-chunk pairing (seam-retirement test updates land with each seam); CLI output baselines from Chunk 0a stay green",
@@ -90,7 +93,8 @@
         "Golden fixtures committed",
         "Line-anchor re-measurement recorded (§12.4 line-drift risk)",
         "Orphan-bearing fixture + rc-train FROM-state fixture exist and load",
-        "§15.5 golden inventory committed with frozen-vs-re-baseline designation per asset"
+        "§15.5 golden inventory committed with frozen-vs-re-baseline designation per asset",
+        "Re-key merge property fixtures committed: a seeded generator producing randomized state across the three ref spellings (bare / origin-qualified / .derived twins) + the invariant harness (no key lost, event rows carried as-is with counts preserved, scalar fields most-recently-updated wins, output deterministic and idempotent) — exercised for real by Chunk 8"
       ],
       "netLoc": "0 (capture-only)",
       "testBucket": "§15.5 goldens; capture is the deliverable",
@@ -192,7 +196,8 @@
         "grep parseAssetRef → 0",
         "grep .stash.json / loadStashFile → 0",
         "§12.3 search parity gate green: nDCG/MRR/recall/banned-hit + filter-behavior parity (proposed/belief/scope) + whyMatched parity; canary re-mint as a named step",
-        "Test codemod (scripts/) lands ATOMICALLY with the grammar change (§15.2), then assertion-review pass; grep ratchet drives tests/ to zero"
+        "Test codemod (scripts/) lands ATOMICALLY with the grammar change (§15.2); the codemod COMMIT contains ONLY the codemod script + mechanically regenerated files — zero hand-edited test hunks (hand edits go in separate reviewable commits; mixing them into the codemod commit is an adherence BLOCKER); grep ratchet drives tests/ to zero",
+        "Post-codemod mutation spot-check recorded in the chunk report: revert ≥20 randomly sampled re-keyed literals → the suite MUST go red (proves the re-keyed assertions still bite; a sample that stays green is a gate failure)"
       ],
       "netLoc": "~−480",
       "testBucket": "§15.2 codemod (~2,003 ref literals + ~100 layout files) atomic with this chunk; §15.6 manual rewrites (37 StashEntry consumers incl. mv.test/indexer.test/e2e.test, 12 parseAssetRef files); §15.7 search parity suite",
@@ -227,7 +232,8 @@
         "Orphan fixture completes-with-quarantine (not aborted)",
         "rc-train FROM-state fixture green",
         "No bindings/lifecycle DDL minted; bindings: config key not emitted (§3.2, Tier B)",
-        "Migration suites extended, not rewritten (§15.3)"
+        "Migration suites extended, not rewritten (§15.3)",
+        "Property-based re-key merge test green over ≥1000 generated cases (Chunk 0b generator; three-spelling merge invariants) — hand-built fixtures alone do not satisfy this gate"
       ],
       "netLoc": "~−200 (coordination rework priced in)",
       "testBucket": "§15.7 migration crash/orphan/rc-FROM-state suites; §15.3 migration-lifecycle-regression + migration-backup extended",

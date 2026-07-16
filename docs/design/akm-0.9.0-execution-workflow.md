@@ -67,6 +67,10 @@ Each brief work item carries a `testMode`; the adherence reviewer verifies compl
 - **deletion-gate** — the zero-count grep is the test; the §12.3 replacement contract test lands in the **same commit** as the deletion (plan §15.4).
 - **docs-assets** — the lints are the verification (shipped-assets lint, schema regen check, link checks).
 
+**Codemod commits are script-only (plan §15 rule 2, Chunk 5):** the commit carrying a codemod contains the `scripts/` codemod plus its mechanically regenerated output and NOTHING hand-edited — the reviewable artifact is the script, not thousands of diff hunks. Hand edits go in separate commits. The adherence reviewer treats a mixed codemod commit as a blocker, and the chunk report must record the ≥20-literal mutation spot-check (revert sampled re-keyed literals → suite goes red).
+
+**Pre-armed ratchets (gate hardening, 2026-07-16) devs will hit in the unit suite:** the import-cycle ratchet (`scripts/lint-import-cycles.ts` — no new file may join a static import cycle), the repo-wide function-size ratchet (`scripts/lint-src-fn-size.ts` — no new function over 220 lines outside `src/commands/improve/**`, which has its own absolute gate), and the RunContext-adoption ratchet (`tests/architecture/run-context-adoption.test.ts` — `ImproveRunContext` must never spread; Chunk 9 drives it to zero). All three are shrink-tolerant: making things better never requires a baseline edit; making things worse fails. `bun run lint` additionally enforces golden-oracle presence (`scripts/lint-goldens-presence.ts`) — a missing golden fixture reds every baseline and Finalize, closing the vacuous-pass hole the 2026-07-15 purge exposed.
+
 ## 4. Git conventions
 
 - Integration branch: **`claude/akm-architecture-refactor-fubvd7`** — the branch that carries the plan and this machinery. All chunk work bases from it and merges back into it. No separate integration branch is created.
