@@ -27,6 +27,7 @@ import {
   type Proposal,
   type ProposalsContext,
   promoteProposal,
+  proposalContent,
   recoverProposalTransactionsForStash,
   rejectProposalDurably,
   resolveProposalId,
@@ -349,7 +350,7 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
   const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
-      const lines = (p.payload.content ?? "").split("\n").length;
+      const lines = proposalContent(p).split("\n").length;
       if (lines > options.maxDiffLines) return false;
     }
     if (options.olderThanMs !== undefined) {

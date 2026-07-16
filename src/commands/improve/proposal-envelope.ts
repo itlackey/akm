@@ -8,16 +8,14 @@
  * Every improve verb that raises a proposal (revise = reflect, learn =
  * distill/promote/extract, consolidate = the merge/promote ops) routes it
  * through this single seam instead of calling {@link createProposal} directly.
- * Centralising the call gives Chunk 6 exactly ONE place to thread the future
- * `FileChange[]` / `beforeHash` envelope through — none of that exists yet.
  *
- * At Chunk 7 the facade is a behaviour-preserving pass-through: it wraps the
- * CURRENT `createProposal` shape verbatim (`payload.content` + optional
- * `frontmatter`, status `pending`, dedup/cooldown guards intact) and is
- * arg-for-arg equivalent to a direct call. It intentionally does NOT synthesise
+ * Since WI-6.2 the envelope carries `changes: FileChange[]` + `beforeHash`:
+ * `createProposal` derives a single-entry change set (whose `after` IS
+ * `payload.content`) and the mint-time before-state hash for every proposal
+ * emitted through this seam — producers stay payload-shaped and get the
+ * envelope for free. The facade remains a pass-through: it does NOT synthesise
  * `sourceRun` or mutate the input — each emit site owns its own
- * `source`/`sourceRun`/attribution, so adoption in WI-7.5/7.7/7.8 is mechanical
- * and byte-for-byte behaviour-neutral.
+ * `source`/`sourceRun`/attribution.
  *
  * Pinned by `tests/commands/improve/proposal-envelope.test.ts`.
  */

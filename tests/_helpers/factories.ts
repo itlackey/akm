@@ -43,6 +43,15 @@ export function quietQualityGateConfig(): AkmConfig {
 }
 
 /**
+ * The single-entry `FileChange[]` a payload-shaped proposal fixture carries
+ * (WI-6.2 envelope): one `update` whose `after` IS the payload content, with
+ * the legacy empty-`path` sentinel (tests don't resolve mint-time paths).
+ */
+export function payloadChanges(content: string): Proposal["changes"] {
+  return [{ path: "", after: content, op: "update" }];
+}
+
+/**
  * A pending `reflect`-sourced proposal for `ref` with a fixed timestamp and a
  * `# proposal` body. The id is `proposal-<ref>` with non-alphanumerics slugged.
  */
@@ -55,6 +64,7 @@ export function makeProposal(ref: string): Proposal {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     payload: { content: "# proposal" },
+    changes: payloadChanges("# proposal"),
   };
 }
 

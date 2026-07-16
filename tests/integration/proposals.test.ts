@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1349,5 +1350,114 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const e = thrown as Error & { code?: string; name: string };
     expect(e.name).toBe("NotFoundError");
     expect(e.code).toBe("FILE_NOT_FOUND");
+  });
+});
+
+// ── WI-6.2 — FileChange[] envelope + mint-time beforeHash ───────────────────
+
+describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
+  test("new target: single create change, after IS the payload content, no beforeHash", () => {
+    const stash = makeStashDir();
+    const created = createProposal(stash, {
+      ref: "lesson:envelope-new",
+      source: "reflect",
+      sourceRun: "run-envelope",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    expect(created.changes).toHaveLength(1);
+    const change = created.changes[0];
+    expect(change?.op).toBe("create");
+    expect(change?.after).toBe(VALID_LESSON);
+    // Mint-time before-state is summarised by beforeHash only — the change
+    // body's `before` is a transaction-time capture and must stay unset.
+    expect(change?.before).toBeUndefined();
+    expect(created.beforeHash).toBeUndefined();
+    // The mint-time path resolves against the proposal's own stash, relative.
+    expect(change?.path.startsWith("lessons")).toBe(true);
+    expect(path.isAbsolute(change?.path ?? "/")).toBe(false);
+  });
+
+  test("existing target: update change + beforeHash = sha256 of the on-disk content", () => {
+    const stash = makeStashDir();
+    const before = "---\ndescription: old\n---\n\nOld body.\n";
+    const created0 = createProposal(stash, {
+      ref: "lesson:envelope-existing",
+      source: "reflect",
+      sourceRun: "run-envelope",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created0)) throw new Error("unexpected skip");
+    // Materialise the target at the exact mint-time path the envelope recorded.
+    const abs = path.join(stash, created0.changes[0]?.path ?? "");
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, before, "utf8");
+
+    const created = createProposal(stash, {
+      ref: "lesson:envelope-existing",
+      source: "reflect",
+      sourceRun: "run-envelope",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    expect(created.changes[0]?.op).toBe("update");
+    expect(created.changes[0]?.before).toBeUndefined();
+    expect(created.beforeHash).toBe(createHash("sha256").update(before, "utf8").digest("hex"));
+  });
+
+  test("round-trip: changes + beforeHash survive persistence (entry-0 after from the content column)", () => {
+    const stash = makeStashDir();
+    const created = createProposal(stash, {
+      ref: "lesson:envelope-roundtrip",
+      source: "reflect",
+      sourceRun: "run-envelope",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    const reread = getProposal(stash, created.id);
+    expect(reread.changes).toEqual(created.changes);
+    expect(reread.beforeHash).toBe(created.beforeHash);
+    expect(reread.changes[0]?.after).toBe(reread.payload.content);
+    // The row must NOT duplicate the primary change's after body in metadata.
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    state.close();
+    const meta = JSON.parse(row.metadata_json) as { changes?: Array<Record<string, unknown>> };
+    expect(meta.changes?.[0]?.after).toBeUndefined();
+  });
+
+  test("legacy row (no persisted envelope) synthesizes one update change with the path sentinel", () => {
+    const stash = makeStashDir();
+    const created = createProposal(stash, {
+      ref: "lesson:envelope-legacy",
+      source: "reflect",
+      sourceRun: "run-envelope",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    // Strip the persisted envelope, simulating a pre-0.9.0 row.
+    const state = openStateDatabase();
+    const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
+      metadata_json: string;
+    };
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    delete metadata.changes;
+    delete metadata.beforeHash;
+    state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
+    state.close();
+
+    const reread = getProposal(stash, created.id);
+    expect(reread.changes).toEqual([{ path: "", after: VALID_LESSON, op: "update" }]);
+    expect(reread.beforeHash).toBeUndefined();
   });
 });

@@ -12,7 +12,47 @@
  */
 
 import type { Proposal } from "../../commands/proposal/repository";
+import type { FileChange } from "../../core/file-change";
 import type { Database, SqlValue } from "../database";
+
+/**
+ * Persisted shape of one `FileChange` inside `metadata_json.changes`.
+ *
+ * `before` is never persisted (transaction-time capture only), and the FIRST
+ * entry's `after` is implied by the dedicated `content` column — storing it
+ * again would double every row. Non-primary entries (multi-file proposals)
+ * carry their own `after`.
+ */
+interface StoredFileChange {
+  path: string;
+  op: FileChange["op"];
+  after?: string;
+}
+
+/** Serialize `Proposal.changes` for `metadata_json` (see {@link StoredFileChange}). */
+function changesToStored(changes: FileChange[]): StoredFileChange[] {
+  return changes.map((c, i) => ({
+    path: c.path,
+    op: c.op,
+    ...(i > 0 && c.after !== undefined ? { after: c.after } : {}),
+  }));
+}
+
+/**
+ * Reconstruct `Proposal.changes` from `metadata_json.changes` + the `content`
+ * column. Legacy rows (persisted before the envelope existed) synthesize one
+ * `update` entry with an empty `path` sentinel (resolve from the ref instead).
+ */
+function storedToChanges(stored: unknown, content: string): FileChange[] {
+  if (!Array.isArray(stored) || stored.length === 0) {
+    return [{ path: "", after: content, op: "update" }];
+  }
+  return (stored as StoredFileChange[]).map((c, i) => ({
+    path: typeof c.path === "string" ? c.path : "",
+    op: c.op === "create" || c.op === "delete" ? c.op : "update",
+    ...(i === 0 ? (c.op === "delete" ? {} : { after: content }) : c.after !== undefined ? { after: c.after } : {}),
+  }));
+}
 
 /**
  * Raw SQLite row shape for the `proposals` table.
@@ -67,6 +107,8 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       content: row.content,
       ...(frontmatter !== undefined ? { frontmatter } : {}),
     },
+    changes: storedToChanges(meta.changes, row.content),
+    ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
@@ -88,6 +130,18 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
 export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<ProposalRow, "id"> & { id: string } {
   // Fields that have no dedicated column live in metadata_json.
   const metaObj: Record<string, unknown> = {};
+  // Legacy filesystem proposal.json objects (pre-envelope, imported by
+  // legacy-import.ts) reach this mapper without `changes` at runtime despite
+  // the type — or, if hand-edited, with a malformed value. Synthesize the
+  // same sentinel entry the read path uses rather than letting one corrupt
+  // legacy file abort a whole import batch.
+  const safeChanges = Array.isArray(proposal.changes)
+    ? proposal.changes.filter((c): c is FileChange => typeof c === "object" && c !== null)
+    : undefined;
+  metaObj.changes = changesToStored(
+    safeChanges && safeChanges.length > 0 ? safeChanges : [{ path: "", after: proposal.payload.content, op: "update" }],
+  );
+  if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;

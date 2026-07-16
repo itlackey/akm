@@ -39,6 +39,7 @@ function makeAcceptedProposal(id: string, ref: string): Proposal {
     payload: {
       content: `Content for ${ref}`,
     },
+    changes: [{ path: "", after: `Content for ${ref}`, op: "update" }],
   };
 }
 

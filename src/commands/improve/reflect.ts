@@ -66,6 +66,7 @@ import {
   listProposals,
   type Proposal,
   type ProposalsContext,
+  proposalContent,
 } from "../proposal/repository";
 import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { deriveLessonRef } from "./distill";
@@ -286,7 +287,7 @@ function readRejectedProposals(stash: string, ref?: string): RejectedProposalCon
       .map((p) => ({
         ref: p.ref,
         reason: p.review?.reason ?? "no reason given",
-        contentPreview: p.payload.content.slice(0, 500),
+        contentPreview: proposalContent(p).slice(0, 500),
       }));
   } catch {
     return [];

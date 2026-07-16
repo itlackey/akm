@@ -19,7 +19,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { isProposalSkipped, listProposals } from "../proposal/repository";
+import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
@@ -605,7 +605,7 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
     const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
     for (const p of pending) {
       try {
-        hashes.add(cacheHash(p.payload.content));
+        hashes.add(cacheHash(proposalContent(p)));
       } catch {
         // skip malformed payloads — they can't dedup anyway
       }
@@ -2390,7 +2390,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     (p) => p.source === "consolidate",
   );
   const contentDupProposal = allPendingConsolidateProposals.find((p) => {
-    return cacheHash(p.payload.content) === bodyHash;
+    return cacheHash(proposalContent(p)) === bodyHash;
   });
   if (contentDupProposal) {
     warnings.push(
@@ -2438,7 +2438,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
       ],
     };
     const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
-    const proposalContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
+    const promotedAssetContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
 
     // Pre-emit dedup against pending consolidate proposals from the
     // same improve run (slug-variant match). The cross-run content-hash
@@ -2464,7 +2464,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
         source: "consolidate",
         sourceRun,
         payload: {
-          content: proposalContent,
+          content: promotedAssetContent,
           frontmatter: { description, xrefs: [op.ref] },
         },
         ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),

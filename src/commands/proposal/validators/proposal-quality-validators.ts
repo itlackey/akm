@@ -68,6 +68,7 @@ import {
   WHEN_TO_USE_MAX_CHARS,
   WHEN_TO_USE_MIN_CHARS,
 } from "../../../core/authoring-rules";
+import { proposalContent } from "../../../core/file-change";
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
 import type { ProposalValidator } from "./proposal-validators";
 
@@ -316,7 +317,7 @@ const descriptionQualityValidator: ProposalValidator = {
     if (typeof proposal.payload?.content !== "string" || proposal.payload.content.trim() === "") return [];
     let fm: Record<string, unknown>;
     try {
-      fm = parseFrontmatter(proposal.payload.content).data as Record<string, unknown>;
+      fm = parseFrontmatter(proposalContent(proposal)).data as Record<string, unknown>;
     } catch {
       return [];
     }
@@ -340,7 +341,7 @@ const lessonContentQualityValidator: ProposalValidator = {
     if (typeof proposal.payload?.content !== "string") return [];
     let fm: Record<string, unknown>;
     try {
-      fm = parseFrontmatter(proposal.payload.content).data as Record<string, unknown>;
+      fm = parseFrontmatter(proposalContent(proposal)).data as Record<string, unknown>;
     } catch {
       return [];
     }
@@ -370,7 +371,7 @@ const lessonContentQualityValidator: ProposalValidator = {
         message: `Lesson proposal ${proposal.id} (${proposal.ref}) has identical description and when_to_use.`,
       });
     }
-    const dfm = detectDoubleFrontmatter(proposal.payload.content);
+    const dfm = detectDoubleFrontmatter(proposalContent(proposal));
     if (dfm)
       findings.push({ kind: dfm.kind, message: `Lesson proposal ${proposal.id} (${proposal.ref}): ${dfm.message}` });
     return findings;
@@ -408,7 +409,7 @@ const reflectSizeGuardValidator: ProposalValidator = {
   validate(proposal, ctx) {
     const sourceBody = stripFrontmatterBody(ctx.source?.content ?? "");
     const proposedBody =
-      typeof proposal.payload?.content === "string" ? stripFrontmatterBody(proposal.payload.content) : "";
+      typeof proposal.payload?.content === "string" ? stripFrontmatterBody(proposalContent(proposal)) : "";
     const outcome = checkReflectSize(sourceBody, proposedBody);
     if (outcome.ok) return [];
     const pct = (outcome.ratio * 100).toFixed(0);

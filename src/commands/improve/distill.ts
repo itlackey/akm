@@ -72,7 +72,13 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
-import { isProposalSkipped, listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
+import {
+  isProposalSkipped,
+  listProposals,
+  type Proposal,
+  type ProposalsContext,
+  proposalContent,
+} from "../proposal/repository";
 import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
@@ -1623,7 +1629,7 @@ async function buildDistillMessages(args: {
     .slice(0, MAX_REJECTED_PROPOSALS)
     .map((p) => ({
       reason: p.review?.reason ?? "no reason given",
-      contentPreview: p.payload.content.slice(0, 500),
+      contentPreview: proposalContent(p).slice(0, 500),
     }));
 
   // WS-3b CLS interleaving (step 9).

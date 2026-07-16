@@ -76,6 +76,7 @@ const okReflect = (ref: string): AkmReflectResult => ({
     createdAt: "2026-06-14T12:00:00.000Z",
     updatedAt: "2026-06-14T12:00:00.000Z",
     payload: { content: "# improved" },
+    changes: [{ path: "", after: "# improved", op: "update" }],
   },
   ref,
   engine: "test",

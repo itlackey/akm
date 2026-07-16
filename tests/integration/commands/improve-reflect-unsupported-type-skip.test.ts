@@ -75,6 +75,7 @@ function makeStubReflectResult(ref: string): AkmReflectResult {
       createdAt: "2026-05-22T00:00:00.000Z",
       updatedAt: "2026-05-22T00:00:00.000Z",
       payload: { content: "# stub reflect" },
+      changes: [{ path: "", after: "# stub reflect", op: "update" }],
     },
   };
 }
@@ -319,6 +320,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           createdAt: "2026-05-26T00:00:00.000Z",
           updatedAt: "2026-05-26T00:00:00.000Z",
           payload: { content: "# stub reflect" },
+          changes: [{ path: "", after: "# stub reflect", op: "update" }],
         },
       }),
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),

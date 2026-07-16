@@ -45,6 +45,7 @@ function makeProposal(content: string, envelopeFm: Record<string, unknown> = {})
       content,
       frontmatter: envelopeFm,
     },
+    changes: [{ path: "", after: content, op: "update" }],
   };
 }
 

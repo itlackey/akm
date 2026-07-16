@@ -5,6 +5,7 @@
 import type { AssetRef } from "../../../core/asset/asset-ref";
 import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
 import type { Proposal } from "../repository";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
@@ -55,9 +56,9 @@ const genericProposalValidator: ProposalValidator = {
       return findings;
     }
 
-    if (proposal.payload.content.startsWith("---")) {
+    if (proposalContent(proposal).startsWith("---")) {
       try {
-        parseFrontmatter(proposal.payload.content);
+        parseFrontmatter(proposalContent(proposal));
       } catch (err) {
         findings.push({
           kind: "invalid-frontmatter",
@@ -76,7 +77,7 @@ const lessonProposalValidator: ProposalValidator = {
     return ctx.parsedRef?.type === "lesson";
   },
   validate(proposal) {
-    return lintLessonContent(proposal.payload.content, `proposal:${proposal.id}`).findings.map((finding) => ({
+    return lintLessonContent(proposalContent(proposal), `proposal:${proposal.id}`).findings.map((finding) => ({
       kind: finding.kind,
       message: finding.message,
     }));

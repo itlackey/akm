@@ -185,3 +185,59 @@ integrations 409/0, affected fast suites 66/0, consolidate-journal goldens
 11/0, improve-memory-misc 21/0. bunx tsc --noEmit clean. Adversarial diff
 review: 0 blockers; both concerns (assumeYes threading, LLM-facing gate
 strings) resolved in this commit. Net: 31 files, +245 / −1537.
+
+## WI-6.2 — FileChange[] + beforeHash through the envelope (landed with this entry)
+
+Minted src/core/file-change.ts (dependency-free): `FileChange { path;
+before?; after?; op: create|update|delete }` per plan §2.2, plus the
+structural `proposalContent()` accessor (changes[0].after ?? payload.content).
+`Proposal` gains REQUIRED `changes: FileChange[]` + optional `beforeHash`.
+`createProposal` derives them for every mint through the emitProposal seam
+(all 8 producers, zero producer changes): target resolved against the
+proposal's OWN stash (stash-relative, informational — accept re-resolves
+from config), op = update iff the file exists, beforeHash = sha256 of the
+mint-time on-disk content. The change's `before` body is a
+transaction-time capture and is never set or persisted at mint time;
+resolution failure degrades to a create.
+
+Persistence is schema-compatible (metadata_json; NO migration — 019 stays
+reserved for WI-6.4's fingerprints): stored `changes` drop entry-0's
+`after` (implied by the content column; non-primary entries carry their
+own) and never store `before`; `beforeHash` stored alongside. Legacy rows
+synthesize `[{path:"", after: content, op:"update"}]` on read; the write
+mapper tolerates legacy/malformed runtime objects (legacy-import parses
+pre-envelope proposal.json files — a corrupt entry must not abort the
+import batch).
+
+Invariant `changes[0].after === payload.content` enforced at every
+in-memory content mutation via new `withProposalContent()` (accepted-
+publish + both schema-repair sites — the adversarial review confirmed by
+exhaustive spread-hunt these are the ONLY payload-replacing sites; a
+delete-op primary change is left `after`-less). Consumers converted to
+`proposalContent()`: dedup-guard hash reads, diffProposal, revert's
+legacy-accepted read, drain (isEmptyDiff / classify frontmatter / judgment
+context / sibling sections), bulkAdjudicateProposals maxDiffLines,
+consolidate cacheHash reads ×2, distill/reflect contentPreviews,
+validators' content reads. Deliberately NOT converted: input-side payload
+construction, output/text renderers (render the persisted shape;
+CLI-golden-pinned), and the defensive payload-envelope guards inside
+validators — all die with payload's eventual removal. Validators take the
+accessor from core/file-change, NOT ../repository — the
+repository↔validators knot (Chunk 9's) is not deepened; file-change.ts
+imports nothing and joins no cycle.
+
+Behavior: none observable — the accessor falls back to payload; frozen
+outcome oracles (proposal-txn, mv-txn) and the consolidate goldens stayed
+byte-green; skip shapes unchanged. metadata_json rows grow two keys
+(changes, beforeHash) — no reader enumerates keys strictly (verified).
+Adversarial review: 0 blockers; its one concern (malformed legacy
+`changes` aborting an import batch) + two hardening notes (delete-op
+`after`, a `proposalContent` local shadow in consolidate) fixed in this
+commit. Tests: factories gained payloadChanges(); 13 suites' Proposal
+literals extended mechanically; 4 new envelope contract tests in
+tests/integration/proposals.test.ts (derivation create/update, round-trip
+incl. no-duplication assertion, legacy synthesis).
+
+Gates: full lint green; ratchets 28/28; scoped suites green (proposal
+domain 166/0, oracles+consolidate+envelope 169/0 then 220/0 after review
+fixes, improve buckets 443/0). tsc clean.

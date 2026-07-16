@@ -71,6 +71,7 @@ const stubReflect = async ({ ref }: { ref?: string }): Promise<AkmReflectResult>
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     payload: { content: "# stub proposal" },
+    changes: [{ path: "", after: "# stub proposal", op: "update" }],
   },
   ref: ref ?? "",
   engine: "test",

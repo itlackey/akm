@@ -52,6 +52,7 @@ import { isWithin } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { type FileChange, proposalContent } from "../../core/file-change";
 import type { EligibilitySource } from "../../core/improve-types";
 import { getDataDir } from "../../core/paths";
 import { withImmediateTransaction, withStateDb } from "../../core/state-db";
@@ -193,7 +194,11 @@ export interface ExpireStaleResult {
 export type ProposalStatus = "pending" | "accepted" | "rejected" | "reverted";
 
 export interface ProposalPayload {
-  /** Full file content the accepted proposal will write to disk. */
+  /**
+   * Full file content the accepted proposal will write to disk. Since WI-6.2
+   * this is, by construction, identical to `Proposal.changes[0].after` — the
+   * payload is the single-content view of the envelope's primary change.
+   */
   content: string;
   /** Convenience parsed frontmatter, if the content is markdown-with-frontmatter. */
   frontmatter?: Record<string, unknown>;
@@ -203,6 +208,27 @@ export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
   decidedAt: string;
+}
+
+// The envelope's primary-content accessor lives in the dependency-free
+// core/file-change module; re-exported here so proposal consumers get it
+// alongside the repository API.
+export { proposalContent };
+
+/**
+ * Copy of `p` with `content` replacing BOTH the payload's content and the
+ * primary change's `after` — every in-memory content mutation must keep the
+ * WI-6.2 invariant (`changes[0].after === payload.content`) intact.
+ */
+function withProposalContent(p: Proposal, content: string): Proposal {
+  return {
+    ...p,
+    payload: { ...p.payload, content },
+    changes: (p.changes ?? [{ path: "", op: "update" as const }]).map((c, i) =>
+      // A delete-op primary change carries no `after` (file-change.ts contract).
+      i === 0 && c.op !== "delete" ? { ...c, after: content } : c,
+    ),
+  };
 }
 
 /**
@@ -303,6 +329,23 @@ export interface Proposal {
   createdAt: string;
   updatedAt: string;
   payload: ProposalPayload;
+  /**
+   * The file mutations this proposal performs (plan §2.2). Multi-file capable;
+   * proposals minted from a single-content payload carry exactly one entry
+   * whose `after` IS `payload.content`. Derived at {@link createProposal} time;
+   * legacy rows persisted before 0.9.0 synthesize a single `update` entry with
+   * an empty `path` at read time.
+   */
+  changes: FileChange[];
+  /**
+   * SHA-256 hex of the content that existed at the primary change's target
+   * path in the proposal's OWN stash when the proposal was minted. Absent when
+   * the target did not exist (a `create`) or could not be resolved locally.
+   * Consumed by the §23.6 input fingerprint (mint-time before-state term);
+   * the unified transaction engine captures its own before-state at apply
+   * time — this is NOT an apply-time guard.
+   */
+  beforeHash?: string;
   review?: ProposalReview;
   /**
    * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
@@ -602,6 +645,31 @@ export function createProposal(
 
   const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
 
+  // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
+  // target is resolved against the proposal's OWN stash (a local snapshot —
+  // accept re-resolves the write target from config at apply time), and only
+  // the before-state's HASH is kept: the change's `before` body is a
+  // transaction-time capture that does not exist at mint time.
+  let targetRelPath: string;
+  let mintBeforeContent: string | undefined;
+  try {
+    const typeRoot = path.join(stashDir, TYPE_DIRS[parsedRef.type]);
+    const targetAbs = resolveAssetPathFromName(parsedRef.type, typeRoot, parsedRef.name);
+    targetRelPath = path.relative(stashDir, targetAbs);
+    if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
+  } catch {
+    // Resolution failure degrades to a best-effort create — never blocks the mint.
+    targetRelPath = path.join(TYPE_DIRS[parsedRef.type], parsedRef.name);
+  }
+  const mintedChanges: FileChange[] = [
+    {
+      path: targetRelPath,
+      after: input.payload.content,
+      op: mintBeforeContent !== undefined ? "update" : "create",
+    },
+  ];
+  const mintedBeforeHash = mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined;
+
   return withProposalsDb(stashDir, ctx, (db) => {
     return withImmediateTransaction(db, () => {
       if (!input.force) {
@@ -634,6 +702,8 @@ export function createProposal(
           content: input.payload.content,
           ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
         },
+        changes: mintedChanges,
+        ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
         ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
         // Attribution tagging: persist the eligibility lane so it survives to
         // accept/reject/revert time. See EligibilitySource.
@@ -668,7 +738,7 @@ function checkDedupAndCooldown(
 
   if (pending.length > 0) {
     // Check for identical content hash first (silent skip).
-    const hashMatch = pending.find((p) => contentHash(p.payload.content) === newHash);
+    const hashMatch = pending.find((p) => contentHash(proposalContent(p)) === newHash);
     if (hashMatch) {
       return {
         skipped: true,
@@ -695,7 +765,7 @@ function checkDedupAndCooldown(
   const mostRecent = rejected[0];
   if (mostRecent !== undefined) {
     // Check content hash against recently rejected.
-    if (contentHash(mostRecent.payload.content) === newHash) {
+    if (contentHash(proposalContent(mostRecent)) === newHash) {
       return {
         skipped: true,
         reason: "content_hash_match",
@@ -1206,8 +1276,7 @@ function persistProposalTransactionState(
           throw new Error(`Proposal ${journal.proposalId} changed status during acceptance (${current.status}).`);
         }
         const accepted: Proposal = {
-          ...proposal,
-          payload: { ...proposal.payload, content: publishedContent },
+          ...withProposalContent(proposal, publishedContent),
           status: "accepted",
           updatedAt: journal.decidedAt,
           review: { outcome: "accepted", decidedAt: journal.decidedAt },
@@ -1661,11 +1730,9 @@ async function promoteProposalWithLease(
   // promote the repaired version; if validation still fails, the original
   // error path throws as before. The repair is content-preserving and
   // deterministic — it never invents text.
-  const repairedContent = repairProposalContent(proposal.payload.content);
+  const repairedContent = repairProposalContent(proposalContent(proposal));
   const proposalToValidate: Proposal =
-    repairedContent !== proposal.payload.content
-      ? { ...proposal, payload: { ...proposal.payload, content: repairedContent } }
-      : proposal;
+    repairedContent !== proposalContent(proposal) ? withProposalContent(proposal, repairedContent) : proposal;
 
   const report = validateProposal(proposalToValidate);
   if (!report.ok) {
@@ -1680,10 +1747,9 @@ async function promoteProposalWithLease(
   // Use the (possibly repaired) payload for the promotion write. Persist the
   // repaired content back onto the DB row so the audit trail reflects the
   // final promoted payload (not the defective original).
-  if (repairedContent !== proposal.payload.content) {
+  if (repairedContent !== proposalContent(proposal)) {
     withProposalsDb(stashDir, ctx, (db) => {
-      const updated: Proposal = { ...proposal, payload: { ...proposal.payload, content: repairedContent } };
-      upsertProposal(db, updated, stashDir);
+      upsertProposal(db, withProposalContent(proposal, repairedContent), stashDir);
     });
   }
 
@@ -1848,9 +1914,8 @@ async function revertProposalWithLease(
       "Backups are only captured when a proposal overwrites an existing asset — new-asset proposals cannot be reverted via this path; delete the asset directly instead.",
     );
   }
-  const legacyAccepted = proposal.payload.content.endsWith("\n")
-    ? proposal.payload.content
-    : `${proposal.payload.content}\n`;
+  const proposalBody = proposalContent(proposal);
+  const legacyAccepted = proposalBody.endsWith("\n") ? proposalBody : `${proposalBody}\n`;
   let acceptedHash =
     proposal.acceptedTarget?.contentHash ?? proposal.acceptedContentHash ?? proposalHash(legacyAccepted);
   const writableTargets = resolveWritableTargets(config);
@@ -2023,7 +2088,7 @@ export function diffProposal(
     // callers can see the proposed payload without erroring out.
   }
 
-  const proposed = proposal.payload.content;
+  const proposed = proposalContent(proposal);
   if (existing === null) {
     return {
       existing: null,

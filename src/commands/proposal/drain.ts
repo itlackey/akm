@@ -51,7 +51,13 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import { executeRunner, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./repository";
+import {
+  listProposals,
+  type Proposal,
+  type ProposalGateDecision,
+  proposalContent,
+  recordGateDecision,
+} from "./repository";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,7 +208,7 @@ export function contentLineCount(content: string): number {
 
 /** An empty / near-empty diff has no meaningful body content. */
 export function isEmptyDiff(proposal: Proposal): boolean {
-  const content = proposal.payload.content ?? "";
+  const content = proposalContent(proposal);
   if (content.trim().length === 0) return true;
   return contentBodyLineCount(content) === 0;
 }
@@ -220,7 +226,7 @@ export function classifyProposal(
   | { verdict: "reject"; reason: string; gate: DrainGateContext }
   | { verdict: "defer"; reason: DrainDeferReason; gate: DrainGateContext }
   | null {
-  const content = proposal.payload.content ?? "";
+  const content = proposalContent(proposal);
 
   // Empty / near-empty diffs reject first (the reject-empty floor).
   if (policy.rejectEmpty && isEmptyDiff(proposal)) {
@@ -230,7 +236,7 @@ export function classifyProposal(
   const rule = policy.accept.find((r) => {
     if (r.generator !== proposal.source) return false;
     if (r.requireType !== undefined) {
-      const fm = parseFrontmatter(proposal.payload.content ?? "").data;
+      const fm = parseFrontmatter(proposalContent(proposal)).data;
       if (typeof fm.type !== "string" || fm.type !== r.requireType) return false;
     }
     return true;
@@ -314,7 +320,7 @@ export function buildJudgmentPrompt(
   reason: DrainDeferReason,
   ctx: { liveAsset: string | undefined; siblings: Proposal[] },
 ): string {
-  const proposed = proposal.payload.content ?? "";
+  const proposed = proposalContent(proposal);
   const sections: string[] = [
     "You are adjudicating a pending knowledge-base proposal that the deterministic",
     "triage pass could not resolve. Decide whether to accept, reject, or defer it.",
@@ -338,7 +344,7 @@ export function buildJudgmentPrompt(
   if (ctx.siblings.length > 0) {
     sections.push("", "## Other pending proposals for the same ref (dedup context)");
     for (const sib of ctx.siblings) {
-      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", sib.payload.content ?? "", "```");
+      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", proposalContent(sib), "```");
     }
   }
 

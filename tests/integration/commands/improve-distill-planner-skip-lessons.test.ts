@@ -186,6 +186,7 @@ describe("improve planner: skip distill-refused input types", () => {
             createdAt: "2026-05-21T00:00:00.000Z",
             updatedAt: "2026-05-21T00:00:00.000Z",
             payload: { content: "# reflect" },
+            changes: [{ path: "", after: "# reflect", op: "update" }],
           },
         };
       },

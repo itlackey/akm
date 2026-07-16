@@ -69,6 +69,7 @@ const stubReflect = (ref: string): AkmReflectResult => ({
     createdAt: "2026-06-11T00:00:00.000Z",
     updatedAt: "2026-06-11T00:00:00.000Z",
     payload: { content: "# stub reflect" },
+    changes: [{ path: "", after: "# stub reflect", op: "update" }],
   },
 });
 
