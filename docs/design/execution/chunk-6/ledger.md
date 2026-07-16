@@ -517,3 +517,71 @@ goldens-designations 7/7; the four consumer suites of the flipped
 assets plus goldens-mv-txn 57/0 re-run WITHOUT the update flag
 (byte-match proof); frozen oracles proposal-txn + move-txn stay green
 within that run.
+
+## WI-6.7 — §15.7 fault-injection suite; chunk gates; CHUNK 6 CLOSED
+
+New suite tests/core/fs-txn-faults.test.ts (6 tests): a synthetic kind
+implements the SAME multi-file batch discipline the domain kinds use
+(journal first → stage after-content inside the transaction dir →
+per-file before-hash verification → displace-to-backup → durable write
+→ commit phase → finalize) and proves the plan's Chunk-6 gate
+"one-transaction fault tests green": (1) a fault injected at EVERY
+index of a 3-file FileChange[] batch (2 updates + 1 create), before
+the commit phase, leaves NO partial write once recovery runs — the
+mid-flight partial state is asserted first (the fault genuinely fired),
+then recovery restores every update byte-identical and removes the
+create; (2) a fault after the commit phase rolls the WHOLE batch
+forward — one applied target is destroyed before recovery runs, so
+finalize's re-materialization from the staged content is OBSERVED, not
+inferred; (3) a before-hash divergence mid-batch (concurrent editor
+between journal mint and the displace window) aborts the whole batch —
+files applied earlier are rolled back, the diverged file keeps the
+editor's bytes, the create never lands; (4) a fresh batch on the same
+root succeeds after a rolled-back fault; every path ends with the
+engine namespace clean. Injection rides _setTxnMutationHookForTests;
+known aborts roll back in-process like the domain kinds' abort windows
+while injected faults leave the journal on disk exactly as a SIGKILL
+would. Domain-kind crash semantics stay pinned separately by the
+subprocess SIGKILL suites (proposal-durable-recovery,
+mv-durable-recovery — re-keyed to the engine at WI-6.3; 27/0 at close)
+and the frozen outcome oracles.
+
+Chunk gates (manifest chunk 6):
+(1) "Journal dirs removed" — met at WI-6.3e (all four legacy homes
+gone, one engine home). (2) "One-transaction fault tests green —
+mid-apply fault leaves no partial write, before-hash abort (§12.3)" —
+met here, 6/0. (3) Frozen outcome oracles journal/proposal-txn.json +
+journal/move-txn.json stayed byte-green through the entire collapse
+(re-verified at every transaction work item); the journal-engine-shape
+goldens designated re-baseline @6 were re-captured with reviewed diffs
++ ledger entries (WI-6.3e, WI-6.4, WI-6.5) and every designation
+finalized back to frozen-migration-input with fresh sha256 pins
+(WI-6.5; frozen inventory 41 → 47).
+
+Chunk-end full `bun run check` ONCE: exit 0 — biome + all seven lint
+scripts (47 frozen goldens hash-verified) + tsc + the unit stage + the
+integration stage all green; the integration stage alone reported
+4454 pass / 55 skip / 0 fail across its 334 files.
+
+Net-LOC REPORT (§12.1 — reported, never a gate): src net +210
+(+1810/−1600 across 38 files) vs the plan's ~−800 projection. Drivers:
+(a) the unified engine is NEW shared code (fs-txn.ts +411,
+file-change.ts +59) and the four legacy engines it replaced were
+substantially rewritten in place rather than net-deleted — the kind
+handlers keep full rollback/roll-forward/recovery semantics
+(repository.ts +562/−470, mv-cli.ts +181/−190, consolidate.ts
++144/−132); (b) WI-6.4 fingerprints are new machinery (+ migration 019
++28) while the dedup/cooldown they replaced was similar-sized and
+rejection backoff was RETAINED by plan §4.5; (c) the confidence-gate
+deletion was scoped down by the 2026-07-16 maintainer decision
+(drain-owned audit machinery retained — preparation.ts −81,
+loop-stages.ts −38 instead of the projected wholesale delete);
+(d) WI-6.6a moved 51 formatter lines out of repository.ts (net ~0).
+Tests net ≈ +509 (incl. this fault suite and the restored DDL
+characterization suite); docs ≈ +880 (brief, amendments, this ledger
+including this closing entry).
+
+CHUNK 6 CLOSED. Next in manifest order: Chunk 9 (Wave-1 cross-cutting
+sweep), then Wave 2 (0b → 1 → 1.5 → 2 → 3 → 4 → 5 → 6.5 → 8 → 10).
+Standing note for Chunk 8's brief (recorded at WI-6.3d): consider a
+one-shot legacy-journal-home sweep at cutover for RC-only journals.
