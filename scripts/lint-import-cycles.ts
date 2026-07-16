@@ -17,13 +17,23 @@
  *   - a file NOT in {@link CYCLE_PARTICIPANT_BASELINE} that participates in a
  *     cycle fails (no NEW files may join the knot);
  *   - files leaving the knot pass silently — no baseline edit required;
- *   - Chunk 9 kills the non-taxonomy cycles and Chunk 3 drives the count to 0
- *     (manifest gates), at which point the baseline empties and this becomes
- *     an absolute no-cycles gate.
+ *   - kill ownership (plan DoD 11): Chunk 9 takes the named + unowned local
+ *     knots, Chunk 3 the taxonomy set, Chunk 5 the indexer-db trio, Chunk 8
+ *     the workflows-runtime trio — the baseline is EMPTY after Chunk 8 and
+ *     this becomes an absolute no-cycles gate.
  *
  * Known limitation, accepted: a brand-new edge between two files ALREADY in
  * the baseline (deepening the existing knot) is not detected — participant
  * granularity trades that for zero churn while the knot is being dismantled.
+ *
+ * COMPANION RATCHET (adversarial-audit hardening, 2026-07-16): because
+ * dynamic `import()` is excluded from the graph, converting a static import
+ * to `await import()` would silence a cycle red while merely deferring the
+ * cycle — a one-line, house-style dodge. So dynamic-import call sites are
+ * ratcheted too: {@link DYNAMIC_IMPORT_BASELINE} pins today's per-file
+ * counts, and no file may GROW its count (new lazy-loads need a loud,
+ * reviewable baseline edit; shrinking is silent). Cycle-laundering via
+ * import() is therefore a visible red, not an escape hatch.
  *
  * Enforced by `tests/architecture/import-cycle-ratchet.test.ts` (unit suite →
  * every chunk Finalize carries it).
@@ -171,8 +181,10 @@ export function measureCycleParticipants(): string[] {
 
 /**
  * SHRINK-ONLY baseline: the cycle participants measured at the chunk-7
- * completion HEAD (43d6f10). Files may only ever LEAVE this list (Chunk 9
- * kills the non-taxonomy cycles; Chunk 3 empties it). Never add an entry.
+ * completion HEAD (43d6f10). Files may only ever LEAVE this list (kill
+ * ownership per plan DoD 11: Chunk 9 → named + unowned knots, Chunk 3 →
+ * taxonomy, Chunk 5 → indexer-db trio, Chunk 8 → workflows-runtime trio,
+ * emptying it). Never add an entry.
  */
 export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
   "src/commands/env/env.ts",
@@ -290,17 +302,105 @@ export function checkImportCycleRatchet(participants: readonly string[] = measur
   return participants.filter((p) => !allowed.has(p));
 }
 
+/** Per-file count of dynamic `import(...)` call sites across src/**. */
+export function measureDynamicImports(): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const file of walkTsFiles(SRC_ROOT)) {
+    const rel = toRel(file);
+    const src = fs.readFileSync(file, "utf8");
+    if (!src.includes("import(")) continue;
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let n = 0;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) n += 1;
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    if (n > 0) counts.set(rel, n);
+  }
+  return counts;
+}
+
+/**
+ * SHRINK-ONLY per-file dynamic-import baseline at the chunk-7 completion HEAD.
+ * A genuinely new lazy-load lowers no gate — it edits this map, loudly, in its
+ * own reviewable diff line. Converting a static import to import() to dodge
+ * the cycle ratchet trips this instead.
+ */
+export const DYNAMIC_IMPORT_BASELINE: Readonly<Record<string, number>> = {
+  "src/cli.ts": 8,
+  "src/commands/agent/agent-dispatch.ts": 1,
+  "src/commands/agent/contribute-cli.ts": 1,
+  "src/commands/config-cli.ts": 2,
+  "src/commands/env/env-cli.ts": 10,
+  "src/commands/env/secret-cli.ts": 5,
+  "src/commands/migrate-cli.ts": 2,
+  "src/commands/proposal/proposal-cli.ts": 7,
+  "src/commands/proposal/propose.ts": 4,
+  "src/commands/read/show.ts": 2,
+  "src/commands/registry-cli.ts": 1,
+  "src/commands/remember.ts": 2,
+  "src/commands/sources/add-cli.ts": 2,
+  "src/commands/sources/sources-cli.ts": 1,
+  "src/commands/wiki-cli.ts": 13,
+  "src/commands/workflow-cli.ts": 7,
+  "src/indexer/ensure-index.ts": 1,
+  "src/indexer/index-written-assets.ts": 1,
+  "src/indexer/indexer.ts": 11,
+  "src/indexer/init.ts": 3,
+  "src/indexer/passes/metadata-contributors.ts": 1,
+  "src/indexer/search/db-search.ts": 1,
+  "src/indexer/walk/file-context.ts": 1,
+  "src/integrations/harnesses/opencode-sdk/sdk-runner.ts": 2,
+  "src/llm/embedders/local.ts": 1,
+  "src/setup/detect.ts": 1,
+  "src/setup/setup.ts": 1,
+  "src/sources/providers/sync-from-ref.ts": 2,
+  "src/sources/wiki-fetchers/registry.ts": 1,
+  "src/storage/repositories/events-repository.ts": 1,
+  "src/workflows/exec/frozen-judge.ts": 1,
+  "src/workflows/exec/native-executor.ts": 4,
+  "src/workflows/exec/report.ts": 1,
+};
+
+export interface DynamicImportViolation {
+  file: string;
+  count: number;
+  kind: "new" | "grew";
+  baseline?: number;
+}
+
+/** Dynamic-import ratchet check (empty = green). */
+export function checkDynamicImportRatchet(
+  counts: ReadonlyMap<string, number> = measureDynamicImports(),
+): DynamicImportViolation[] {
+  const violations: DynamicImportViolation[] = [];
+  for (const [file, count] of counts) {
+    const base = DYNAMIC_IMPORT_BASELINE[file];
+    if (base === undefined) violations.push({ file, count, kind: "new" });
+    else if (count > base) violations.push({ file, count, kind: "grew", baseline: base });
+  }
+  return violations;
+}
+
 if (import.meta.main) {
   const participants = measureCycleParticipants();
   const violations = checkImportCycleRatchet(participants);
-  if (violations.length > 0) {
+  const dynamicViolations = checkDynamicImportRatchet();
+  if (violations.length > 0 || dynamicViolations.length > 0) {
     console.error(
-      `lint-import-cycles: ${violations.length} file(s) joined an import cycle (baseline is shrink-only):`,
+      `lint-import-cycles: ${violations.length + dynamicViolations.length} ratchet violation(s) (baselines are shrink-only):`,
     );
     for (const v of violations) console.error(`  NEW cycle participant: ${v}`);
+    for (const v of dynamicViolations)
+      console.error(
+        v.kind === "new"
+          ? `  NEW dynamic-import file: ${v.file} (${v.count} site(s)) — if this is a genuine lazy-load, add it to DYNAMIC_IMPORT_BASELINE in its own diff line; if it dodges a cycle, break the cycle`
+          : `  dynamic-import count GREW: ${v.file} ${v.baseline} → ${v.count}`,
+      );
     process.exit(1);
   }
   console.log(
-    `lint-import-cycles: OK — ${participants.length} cycle participant(s), all within the shrink-only baseline (${CYCLE_PARTICIPANT_BASELINE.length}).`,
+    `lint-import-cycles: OK — ${participants.length} cycle participant(s) within baseline (${CYCLE_PARTICIPANT_BASELINE.length}); dynamic-import counts within baseline.`,
   );
 }

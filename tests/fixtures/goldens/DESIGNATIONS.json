@@ -1,239 +1,278 @@
 {
-  "$policy": "See docs/design/execution/chunk-0a/anchors.md §3.3 and docs/design/execution/chunk-0a/brief.md §3.3 (R12 / plan §15 rule 5). Every file under tests/fixtures/goldens/** (excluding this registry itself and fixture-refs.ts modules) must have exactly one entry below. designation is one of: \"frozen-migration-input\" (the asset is a preservation oracle — a chunk that touches its surface must reproduce it byte-for-byte/outcome-for-outcome; never re-recorded outside its owning chunk) or \"re-baseline\" (the asset deliberately baselines behavior a later chunk is going to change on purpose; reBaselineChunk names the manifest chunk id — see docs/design/akm-0.9.0-chunk-manifest.json — where it is reviewed and re-captured). reBaselineChunk is required iff designation is \"re-baseline\" and must be absent otherwise. consumers[] lists the suite(s) that load the fixture via tests/_helpers/golden.ts's expectGolden/loadGolden. Policed by tests/goldens-designations.test.ts.",
+  "$policy": "See docs/design/execution/chunk-0a/anchors.md §3.3 and docs/design/execution/chunk-0a/brief.md §3.3 (R12 / plan §15 rule 5). Every file under tests/fixtures/goldens/** (excluding this registry itself and fixture-refs.ts modules) must have exactly one entry below. designation is one of: \"frozen-migration-input\" (the asset is a preservation oracle — a chunk that touches its surface must reproduce it byte-for-byte/outcome-for-outcome; never re-recorded outside its owning chunk) or \"re-baseline\" (the asset deliberately baselines behavior a later chunk is going to change on purpose; reBaselineChunk names the manifest chunk id — see docs/design/akm-0.9.0-chunk-manifest.json — where it is reviewed and re-captured). reBaselineChunk is required iff designation is \"re-baseline\" and must be absent otherwise. consumers[] lists the suite(s) that load the fixture via tests/_helpers/golden.ts's expectGolden/loadGolden. Policed by tests/goldens-designations.test.ts. | Amendment (2026-07-16 gate hardening): (1) every frozen-migration-input entry carries a sha256 of its asset bytes, verified by scripts/lint-goldens-presence.ts on every lint run — AKM_UPDATE_GOLDENS=1 cannot silently mutate a frozen oracle; a legitimate re-baseline updates designation+reBaselineChunk+sha256-removal in the same reviewed change. (2) Surface-owner rule: a chunk that the plan orders to change an asset's pinned surface becomes that asset's re-baseline owner — re-designate the entry (designation, reBaselineChunk, notes) BEFORE the surface change lands, so the re-capture is a reviewed diff, not a frozen-asset violation.",
   "entries": [
     {
       "path": "tests/fixtures/goldens/journal/proposal-txn.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/proposal/goldens-proposal-txn.test.ts"],
-      "notes": "WI-03, plan §11 Chunk 0a / R3 (engines 1+2 of 3: proposal accept/revert + reject). Preservation oracle through Chunk 6's collapse into one FileChange transaction. Pins accept (new-asset, overwrite-with-backup, idempotent re-accept short-circuit, target-mutated-during-displace abort), revert (success restore, refuse-clobber), reject (success, non-pending UsageError, concurrent-edit succeeds -- reject has NO before-hash), and createProposal dedup/cooldown/force skip-record shapes, as file-tree/DB-status/exactly-once-event outcomes only -- no journal bytes or paths (brief §3.2 rule 4). Contains fixture-local names only (tests/fixtures/goldens/journal/fixture-refs.ts) — no production refs. Caveat: the `fileTree` object's keys are relative asset paths (e.g. `lessons/<fixture-local-name>.md`) that embed the same fixture-local name a ref would carry; if Chunk 5's §15.2 ref-grammar codemod changes how names map to on-disk paths, these path keys (not the outcome booleans/counts) would need re-baselining alongside that migration even though this asset is otherwise designated frozen. Also records a captured DEVIATION from the brief's testsFirst description for the target-mutated-during-displace scenario (see the suite's file-header comment): the real surfaced abort error is 'Cannot roll back proposal transaction: <path> diverged.', not 'Proposal target changed while its backup was being acquired.', and the target is left holding the mutator's content rather than being byte-identically restored."
+      "notes": "WI-03, plan §11 Chunk 0a / R3 (engines 1+2 of 3: proposal accept/revert + reject). Preservation oracle through Chunk 6's collapse into one FileChange transaction. Pins accept (new-asset, overwrite-with-backup, idempotent re-accept short-circuit, target-mutated-during-displace abort), revert (success restore, refuse-clobber), reject (success, non-pending UsageError, concurrent-edit succeeds -- reject has NO before-hash), and createProposal dedup/cooldown/force skip-record shapes, as file-tree/DB-status/exactly-once-event outcomes only -- no journal bytes or paths (brief §3.2 rule 4). Contains fixture-local names only (tests/fixtures/goldens/journal/fixture-refs.ts) — no production refs. Caveat: the `fileTree` object's keys are relative asset paths (e.g. `lessons/<fixture-local-name>.md`) that embed the same fixture-local name a ref would carry; if Chunk 5's §15.2 ref-grammar codemod changes how names map to on-disk paths, these path keys (not the outcome booleans/counts) would need re-baselining alongside that migration even though this asset is otherwise designated frozen. Also records a captured DEVIATION from the brief's testsFirst description for the target-mutated-during-displace scenario (see the suite's file-header comment): the real surfaced abort error is 'Cannot roll back proposal transaction: <path> diverged.', not 'Proposal target changed while its backup was being acquired.', and the target is left holding the mutator's content rather than being byte-identically restored.",
+      "sha256": "1f33cdf2e380f71dfceae93cfe31ec0a0d642c31194b47849897cb43695c3de2"
     },
     {
       "path": "tests/fixtures/goldens/journal/proposal-recovery.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": ["tests/integration/goldens-proposal-recovery.test.ts"],
-      "notes": "WI-03, plan §11 Chunk 0a / R3 (crash-recovery half of engines 1+2 of 3). Integration scope (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/proposal-crash-runner.ts subprocess harness. Pins SIGKILL recovery outcomes for accept (all 5 pre-commit phases: prepared rolls back, every later phase rolls forward), revert (exactly-once per phase), reject (exactly-one rejected event per phase incl. the prepared/state-persisted/event-finalized set), and the reject-recovers-a-pending-accept ordering (akmProposalReject recovers an interrupted accept transaction BEFORE evaluating its own pending-status guard). journalPhasesObserved is informational only (brief §3.2 rule 4) — the single phase name the runner was told to hold at, never journal bytes/paths. Same fileTree-key caveat as tests/fixtures/goldens/journal/proposal-txn.json does not apply here (this fixture serializes only booleans/status strings/event counts, no fileTree)."
+      "notes": "WI-03, plan §11 Chunk 0a / R3 (crash-recovery half of engines 1+2 of 3). Integration scope (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/proposal-crash-runner.ts subprocess harness. Pins SIGKILL recovery outcomes for accept (all 5 pre-commit phases: prepared rolls back, every later phase rolls forward), revert (exactly-once per phase), reject (exactly-one rejected event per phase incl. the prepared/state-persisted/event-finalized set), and the reject-recovers-a-pending-accept ordering (akmProposalReject recovers an interrupted accept transaction BEFORE evaluating its own pending-status guard). journalPhasesObserved is informational only (brief §3.2 rule 4) — the single phase name the runner was told to hold at, never journal bytes/paths. Same fileTree-key caveat as tests/fixtures/goldens/journal/proposal-txn.json does not apply here (this fixture serializes only booleans/status strings/event counts, no fileTree). | Re-designated 2026-07-16 (gate hardening, false-positive audit): this asset pins the OLD journal engine's observable shape (phase vocabulary / journal location / journal write counts), and Chunk 6 is ordered by the plan to replace that engine with one FileChange transaction — Chunk 6 therefore OWNS this asset's re-capture (reviewed diff + ledger entry in the same chunk). The outcome-level txn oracles (proposal-txn.json, move-txn.json) stay frozen: they pin file-tree/DB-status/event outcomes designed to survive the engine swap.",
+      "reBaselineChunk": "6"
     },
     {
       "path": "tests/fixtures/goldens/journal/move-txn.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-mv-txn.test.ts"],
-      "notes": "WI-04, plan §11 Chunk 0a / R3 (engine 3 of 3: mv move engine). Preservation oracle through Chunk 6's collapse into one FileChange transaction. Pins the move-with-citers scenario (body-ref + frontmatter-ref + task-yaml citers + .derived.md twin: fileTree, rewrote counts, readOnlyCiters, exactly-one mv event), the divergent-citer abort at both the STAGE (mv-cli.ts:576) and REPLACE (:632) windows, the divergent-committed-target recovery refusal (validateCommittedMove :453-474, roll-forward-only per :1394-1395), and the transient index re-key failure retaining the journal until a later mutation completes it forward -- all as file-tree/citer-rewrite/exactly-once-event outcomes only, no journal bytes or paths (brief §3.2 rule 4). Contains fixture-local names only (tests/fixtures/goldens/journal/fixture-refs.ts) — no production refs. Caveat (same class as tests/fixtures/goldens/journal/proposal-txn.json): the `moveWithCiters.fileTree`/`rewroteRelPaths`/`rewroteCounts` keys are relative asset paths embedding fixture-local names, and `moveWithCiters.from`/`to` are literal fixture-local ref strings; if Chunk 5's §15.2 ref-grammar codemod changes how names map to on-disk paths or ref spellings, these path/ref fields (not the outcome booleans/counts) would need re-baselining alongside that migration even though this asset is otherwise designated frozen. Also records a captured DEVIATION from the brief's testsFirst description (see the suite's file-header comment): `_setMvMutationHookForTests` never fires between the stage and replace windows (only post-filesystem-commit), so spyOn interception is used instead; and the REPLACE window's real surfaced error is a wrapped 'Move failed (refusing to replace divergent citer <path>) and rollback failed (cannot restore <path>: file diverged after exclusive ownership).' string, not a bare prefix."
+      "notes": "WI-04, plan §11 Chunk 0a / R3 (engine 3 of 3: mv move engine). Preservation oracle through Chunk 6's collapse into one FileChange transaction. Pins the move-with-citers scenario (body-ref + frontmatter-ref + task-yaml citers + .derived.md twin: fileTree, rewrote counts, readOnlyCiters, exactly-one mv event), the divergent-citer abort at both the STAGE (mv-cli.ts:576) and REPLACE (:632) windows, the divergent-committed-target recovery refusal (validateCommittedMove :453-474, roll-forward-only per :1394-1395), and the transient index re-key failure retaining the journal until a later mutation completes it forward -- all as file-tree/citer-rewrite/exactly-once-event outcomes only, no journal bytes or paths (brief §3.2 rule 4). Contains fixture-local names only (tests/fixtures/goldens/journal/fixture-refs.ts) — no production refs. Caveat (same class as tests/fixtures/goldens/journal/proposal-txn.json): the `moveWithCiters.fileTree`/`rewroteRelPaths`/`rewroteCounts` keys are relative asset paths embedding fixture-local names, and `moveWithCiters.from`/`to` are literal fixture-local ref strings; if Chunk 5's §15.2 ref-grammar codemod changes how names map to on-disk paths or ref spellings, these path/ref fields (not the outcome booleans/counts) would need re-baselining alongside that migration even though this asset is otherwise designated frozen. Also records a captured DEVIATION from the brief's testsFirst description (see the suite's file-header comment): `_setMvMutationHookForTests` never fires between the stage and replace windows (only post-filesystem-commit), so spyOn interception is used instead; and the REPLACE window's real surfaced error is a wrapped 'Move failed (refusing to replace divergent citer <path>) and rollback failed (cannot restore <path>: file diverged after exclusive ownership).' string, not a bare prefix.",
+      "sha256": "6990cd8daed48fca41246ecb6fd88cd0d87eb640d70c3f1b1f28303f3a666c3c"
     },
     {
       "path": "tests/fixtures/goldens/journal/move-recovery.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": ["tests/integration/goldens-mv-recovery.test.ts"],
-      "notes": "WI-04, plan §11 Chunk 0a / R3 (crash-recovery half of engine 3 of 3). Integration scope (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/mv-crash-runner.ts subprocess harness. Pins SIGKILL recovery outcomes: 'applying' rolls back in full (byte-identical tree, before any citer/source rename); filesystem-committed/index-finalized/state-finalized/event-finalized each roll forward via finalizeMoveTransaction to the same end state with exactly-one mv event and re-keyed index + state rows; and the FOUR independent recovery entry points (mv run's own pre-flight recovery mv-cli.ts:1237, proposal promotion repository.ts:1702, the full indexer indexer.ts:558, the targeted write-path indexer index-written-assets.ts:72) each independently finish the SAME kind of interrupted mv journal, pinning that the mv journal lives IN-STASH (<stashDir>/.akm/mv-transactions) unlike the proposal journals which live in getDataDir(). journalPhasesObserved is informational only (brief §3.2 rule 4). No ref-grammar caveat: this fixture serializes only booleans/counts/phase-name strings, no fileTree or ref literals."
+      "notes": "WI-04, plan §11 Chunk 0a / R3 (crash-recovery half of engine 3 of 3). Integration scope (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/mv-crash-runner.ts subprocess harness. Pins SIGKILL recovery outcomes: 'applying' rolls back in full (byte-identical tree, before any citer/source rename); filesystem-committed/index-finalized/state-finalized/event-finalized each roll forward via finalizeMoveTransaction to the same end state with exactly-one mv event and re-keyed index + state rows; and the FOUR independent recovery entry points (mv run's own pre-flight recovery mv-cli.ts:1237, proposal promotion repository.ts:1702, the full indexer indexer.ts:558, the targeted write-path indexer index-written-assets.ts:72) each independently finish the SAME kind of interrupted mv journal, pinning that the mv journal lives IN-STASH (<stashDir>/.akm/mv-transactions) unlike the proposal journals which live in getDataDir(). journalPhasesObserved is informational only (brief §3.2 rule 4). No ref-grammar caveat: this fixture serializes only booleans/counts/phase-name strings, no fileTree or ref literals. | Re-designated 2026-07-16 (gate hardening, false-positive audit): this asset pins the OLD journal engine's observable shape (phase vocabulary / journal location / journal write counts), and Chunk 6 is ordered by the plan to replace that engine with one FileChange transaction — Chunk 6 therefore OWNS this asset's re-capture (reviewed diff + ledger entry in the same chunk). The outcome-level txn oracles (proposal-txn.json, move-txn.json) stay frozen: they pin file-tree/DB-status/event outcomes designed to survive the engine swap.",
+      "reBaselineChunk": "6"
     },
     {
       "path": "tests/fixtures/goldens/consolidate/consolidate-ops.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/consolidate/goldens-consolidate-ops.test.ts"],
-      "notes": "WI-05, plan §15.7 / R5. Chunk 7 DoD 5 oracle for the four consolidate op-handlers (handleMergeOp/handleDeleteOp/handlePromoteOp/handleContradictOp, consolidate.ts:2117/2416/2477/2693) extracted out of akmConsolidateInner's op-execution loop — must stay green through Chunk 7's decomposition of that loop. Pins merge (1+1 primary byte-for-byte after <TS> norm + secondary archived-with-superseded_by-then-deleted; 1+2 secondaries' deliberate one-generateMergedContent-call/all-archived asymmetry, captured via the REAL generateMergedContent with _setChatCompletionForTests stubbed since the asymmetry is a property of that function's secondaries[0]-only read; the refusal matrix for hot/unparseable participants and missing/truncated description and the anti-collapse generation guard), delete (normal/hot-refused/already-gone), promote (happy path + the six named gates in consolidate.ts:2477-2690 order), and contradict (>=0.92 byte-for-byte timestamp-free, idempotent re-run, archived state preserved, <0.92 skip, missing confidence defaults to 1.0). Contains fixture-local names only (tests/fixtures/goldens/consolidate/fixture-refs.ts) — no production refs. Archive filenames embed a timestampForFilename() token and are recorded as array VALUES (never object keys) so <TS> normalization applies. DEVIATION from the brief's step 2 prose (see the suite's file-header comment): most scenarios inject a generateMergedContentFn directly into ConsolidateOpContext and drive the handlers directly (mirroring tests/commands/consolidate/consolidate-op-handlers.test.ts) rather than stubbing chunk-plan selection via akmConsolidate + _setChatCompletionForTests — WI-05 scopes to op OUTCOMES, not op SELECTION (planConsolidation's concern, covered by consolidate-chunks.test.ts and WI-06). The 'hot memories via remember hot-capture path' step is satisfied by writing captureMode:hot/beliefState:asserted frontmatter directly (matching remember-cli.ts:188,288's own output shape) rather than invoking the rememberCommand CLI entry point, consistent with how all 13 existing consolidate suites mint hot fixtures."
+      "notes": "WI-05, plan §15.7 / R5. Chunk 7 DoD 5 oracle for the four consolidate op-handlers (handleMergeOp/handleDeleteOp/handlePromoteOp/handleContradictOp, consolidate.ts:2117/2416/2477/2693) extracted out of akmConsolidateInner's op-execution loop — must stay green through Chunk 7's decomposition of that loop. Pins merge (1+1 primary byte-for-byte after <TS> norm + secondary archived-with-superseded_by-then-deleted; 1+2 secondaries' deliberate one-generateMergedContent-call/all-archived asymmetry, captured via the REAL generateMergedContent with _setChatCompletionForTests stubbed since the asymmetry is a property of that function's secondaries[0]-only read; the refusal matrix for hot/unparseable participants and missing/truncated description and the anti-collapse generation guard), delete (normal/hot-refused/already-gone), promote (happy path + the six named gates in consolidate.ts:2477-2690 order), and contradict (>=0.92 byte-for-byte timestamp-free, idempotent re-run, archived state preserved, <0.92 skip, missing confidence defaults to 1.0). Contains fixture-local names only (tests/fixtures/goldens/consolidate/fixture-refs.ts) — no production refs. Archive filenames embed a timestampForFilename() token and are recorded as array VALUES (never object keys) so <TS> normalization applies. DEVIATION from the brief's step 2 prose (see the suite's file-header comment): most scenarios inject a generateMergedContentFn directly into ConsolidateOpContext and drive the handlers directly (mirroring tests/commands/consolidate/consolidate-op-handlers.test.ts) rather than stubbing chunk-plan selection via akmConsolidate + _setChatCompletionForTests — WI-05 scopes to op OUTCOMES, not op SELECTION (planConsolidation's concern, covered by consolidate-chunks.test.ts and WI-06). The 'hot memories via remember hot-capture path' step is satisfied by writing captureMode:hot/beliefState:asserted frontmatter directly (matching remember-cli.ts:188,288's own output shape) rather than invoking the rememberCommand CLI entry point, consistent with how all 13 existing consolidate suites mint hot fixtures.",
+      "sha256": "161a60f9bd18d6cc44966cdabb06eb6aa738cfa9ce6e8df00f89829ee918e8f9"
     },
     {
       "path": "tests/fixtures/goldens/consolidate/merge-plans.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/consolidate/goldens-merge-plans.test.ts"],
-      "notes": "WI-05, plan §15.7 / R5. Pure-function preservation oracle for mergePlans (consolidate/merge.ts:35, precedence rules :80-110): hallucinated-ref drop (primary and secondary), merge-wins-over-delete (both chunk orders), promote-queued-before-merge (ops ARRAY ORDER, since applyConsolidationPlan processes ops in array order), and contradict pair-dedup by ref|contradictedByRef (keeping the first occurrence). Byte-for-byte JSON in/out — mergePlans has no fs/LLM/config/timestamp/id dependency, so no <TS>/<ID> placeholders apply; this is the one WI-05 asset with zero normalization surface. Contains fixture-local names only. Extends (does not duplicate) tests/commands/consolidate/consolidate-promote-dedup.test.ts's mergePlans promote-by-ref dedup coverage."
+      "notes": "WI-05, plan §15.7 / R5. Pure-function preservation oracle for mergePlans (consolidate/merge.ts:35, precedence rules :80-110): hallucinated-ref drop (primary and secondary), merge-wins-over-delete (both chunk orders), promote-queued-before-merge (ops ARRAY ORDER, since applyConsolidationPlan processes ops in array order), and contradict pair-dedup by ref|contradictedByRef (keeping the first occurrence). Byte-for-byte JSON in/out — mergePlans has no fs/LLM/config/timestamp/id dependency, so no <TS>/<ID> placeholders apply; this is the one WI-05 asset with zero normalization surface. Contains fixture-local names only. Extends (does not duplicate) tests/commands/consolidate/consolidate-promote-dedup.test.ts's mergePlans promote-by-ref dedup coverage.",
+      "sha256": "bd96226586bb022429915ab7f3b5fed19b0de72dda5b441dc878ce77a325ae34"
     },
     {
       "path": "tests/fixtures/goldens/consolidate/journal-lifecycle.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
-      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for the consolidate journal's full-run write/complete/cleanup lifecycle (getJournalPath/writeJournal :737-747/markJournalCompleted :749-759/cleanupJournal :761-774/backupFile :776-783, all module-private — observed via spyOn(fs.writeFileSync/copyFileSync) around a REAL akmConsolidate run, same src/-change-free technique as WI-04's goldens-mv-txn.test.ts) and the all-hot chunk early-exit (:1617-1636: zero LLM calls, every memory bucketed judgedNoAction). Journal write shape/count is informational data only (brief §3.2 rule 4) — never asserted against raw journal bytes or directory layout, only observable outcomes (write count, parsed completed/operations arrays, end-state file/dir existence). Caveat (same class as the WI-03/04 fileTree-key caveats): fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) that would need re-keying alongside Chunk 5's §15.2 grammar codemod even though this asset is otherwise designated frozen; the outcome booleans/counts are not affected. No production refs anywhere in the fixture."
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for the consolidate journal's full-run write/complete/cleanup lifecycle (getJournalPath/writeJournal :737-747/markJournalCompleted :749-759/cleanupJournal :761-774/backupFile :776-783, all module-private — observed via spyOn(fs.writeFileSync/copyFileSync) around a REAL akmConsolidate run, same src/-change-free technique as WI-04's goldens-mv-txn.test.ts) and the all-hot chunk early-exit (:1617-1636: zero LLM calls, every memory bucketed judgedNoAction). Journal write shape/count is informational data only (brief §3.2 rule 4) — never asserted against raw journal bytes or directory layout, only observable outcomes (write count, parsed completed/operations arrays, end-state file/dir existence). Caveat (same class as the WI-03/04 fileTree-key caveats): fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) that would need re-keying alongside Chunk 5's §15.2 grammar codemod even though this asset is otherwise designated frozen; the outcome booleans/counts are not affected. No production refs anywhere in the fixture. | Re-designated 2026-07-16 (gate hardening, false-positive audit): this asset pins the OLD journal engine's observable shape (phase vocabulary / journal location / journal write counts), and Chunk 6 is ordered by the plan to replace that engine with one FileChange transaction — Chunk 6 therefore OWNS this asset's re-capture (reviewed diff + ledger entry in the same chunk). The outcome-level txn oracles (proposal-txn.json, move-txn.json) stay frozen: they pin file-tree/DB-status/event outcomes designed to survive the engine swap.",
+      "reBaselineChunk": "6"
     },
     {
       "path": "tests/fixtures/goldens/consolidate/journal-recovery.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
-      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for checkForIncompleteJournal's recovery-mode matrix (:692-735, invoked at akmConsolidate entry :1012): incomplete journal + recoveryMode 'abort' (default) throws ConfigError INVALID_CONFIG_FILE with a backup-dir hint and removes nothing; an unreadable (malformed JSON) journal throws the same code under abort; recoveryMode 'clean' on an incomplete journal calls removeStaleJournal (:665-690) and removes both the journal and its backup dir, for both the explicit backupTimestamp field and the startedAt-derived ([:.]->-) fallback; and a 'completed >= operations' journal is silently treated as NOT incomplete (no throw, no removal) — CHARACTERIZATION WARNING (plan §15.5, brief Risk 8): this is a genuinely surprising, previously-uncovered outcome — such a journal's own backup directory becomes a permanent orphan that no code path this suite can find ever reclaims; captured as-is, not fixed. No ref literals appear in this fixture (booleans, counts, and the ConfigError code string only) — no ref-grammar re-baseline caveat applies."
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for checkForIncompleteJournal's recovery-mode matrix (:692-735, invoked at akmConsolidate entry :1012): incomplete journal + recoveryMode 'abort' (default) throws ConfigError INVALID_CONFIG_FILE with a backup-dir hint and removes nothing; an unreadable (malformed JSON) journal throws the same code under abort; recoveryMode 'clean' on an incomplete journal calls removeStaleJournal (:665-690) and removes both the journal and its backup dir, for both the explicit backupTimestamp field and the startedAt-derived ([:.]->-) fallback; and a 'completed >= operations' journal is silently treated as NOT incomplete (no throw, no removal) — CHARACTERIZATION WARNING (plan §15.5, brief Risk 8): this is a genuinely surprising, previously-uncovered outcome — such a journal's own backup directory becomes a permanent orphan that no code path this suite can find ever reclaims; captured as-is, not fixed. No ref literals appear in this fixture (booleans, counts, and the ConfigError code string only) — no ref-grammar re-baseline caveat applies. | Re-designated 2026-07-16 (gate hardening, false-positive audit): this asset pins the OLD journal engine's observable shape (phase vocabulary / journal location / journal write counts), and Chunk 6 is ordered by the plan to replace that engine with one FileChange transaction — Chunk 6 therefore OWNS this asset's re-capture (reviewed diff + ledger entry in the same chunk). The outcome-level txn oracles (proposal-txn.json, move-txn.json) stay frozen: they pin file-tree/DB-status/event outcomes designed to survive the engine swap.",
+      "reBaselineChunk": "6"
     },
     {
       "path": "tests/fixtures/goldens/consolidate/journal-guard-verdicts.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": ["tests/commands/consolidate/goldens-consolidate-journal.test.ts"],
-      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for consolidateGuardStatus's four-way verdict (consolidate/eligibility.ts:60): hot (captureMode:hot frontmatter), safe (ordinary frontmatter), unparseable (zero-key/no-frontmatter body), and missing (file absent). Prompt-level hot-list annotation is a different concern already covered by tests/commands/consolidate/consolidate-chunks.test.ts — referenced, not duplicated here. No ref literals in this fixture (verdict strings only)."
+      "notes": "WI-06, plan §11 Chunk 0a / R5. Preservation oracle for consolidateGuardStatus's four-way verdict (consolidate/eligibility.ts:60): hot (captureMode:hot frontmatter), safe (ordinary frontmatter), unparseable (zero-key/no-frontmatter body), and missing (file absent). Prompt-level hot-list annotation is a different concern already covered by tests/commands/consolidate/consolidate-chunks.test.ts — referenced, not duplicated here. No ref literals in this fixture (verdict strings only). | Re-designated 2026-07-16 (gate hardening, false-positive audit): this asset pins the OLD journal engine's observable shape (phase vocabulary / journal location / journal write counts), and Chunk 6 is ordered by the plan to replace that engine with one FileChange transaction — Chunk 6 therefore OWNS this asset's re-capture (reviewed diff + ledger entry in the same chunk). The outcome-level txn oracles (proposal-txn.json, move-txn.json) stay frozen: they pin file-tree/DB-status/event outcomes designed to survive the engine swap.",
+      "reBaselineChunk": "6"
     },
     {
       "path": "tests/fixtures/goldens/improve/signal-delta-gate.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/improve/goldens-signal-delta-gate.test.ts"],
-      "notes": "WI-06, plan §11 Chunk 0a / R5, §6 preserve list. The signal-delta gate SURVIVES Chunk 7's deletion of the P0-A high-retrieval lane and self-consistency voting (both pinned separately as re-baseline @ 7 by improve/self-consistency.json and improve/p0a-selection.json). Pins isSignalDeltaEligible's truth table (eligibility.ts:421-431, pure function), and the eligibleRefs/distillOnlyRefs/noFeedbackPool partition COUNTS from one full akmImprove preparation run with proactiveMaintenance disabled and zero retrievals/salience seeded so only the signal-delta gate can ever select a ref — P0-A lane membership and SC voting internals are deliberately out of scope (brief Risk 9); only the shared 'signal-delta' eligibilitySource tag (the gate's own vocabulary, not a P0-A-specific algorithm) is asserted. buildLatestFeedbackTsMap's signal/note filter and buildLatestProposalTsMap's reflect/distill cursor rules are exercised directly by the suite's assertion tests (state.db-backed) but are not separately serialized into this fixture beyond the truth-table/partition-count sections. Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), booleans, and counts — no production refs."
+      "notes": "WI-06, plan §11 Chunk 0a / R5, §6 preserve list. The signal-delta gate SURVIVES Chunk 7's deletion of the P0-A high-retrieval lane and self-consistency voting (both pinned separately as re-baseline @ 7 by improve/self-consistency.json and improve/p0a-selection.json). Pins isSignalDeltaEligible's truth table (eligibility.ts:421-431, pure function), and the eligibleRefs/distillOnlyRefs/noFeedbackPool partition COUNTS from one full akmImprove preparation run with proactiveMaintenance disabled and zero retrievals/salience seeded so only the signal-delta gate can ever select a ref — P0-A lane membership and SC voting internals are deliberately out of scope (brief Risk 9); only the shared 'signal-delta' eligibilitySource tag (the gate's own vocabulary, not a P0-A-specific algorithm) is asserted. buildLatestFeedbackTsMap's signal/note filter and buildLatestProposalTsMap's reflect/distill cursor rules are exercised directly by the suite's assertion tests (state.db-backed) but are not separately serialized into this fixture beyond the truth-table/partition-count sections. Contains only fixture-local ref names (tests/fixtures/goldens/improve/fixture-refs.ts), booleans, and counts — no production refs.",
+      "sha256": "1d38346d151a34bd7db098dd0e280bcf3fd8d7651021cd1ba6d1b1f1711ec12a"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-config-list.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `config list` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `config list` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "713cc65ed17f2d1aee30c64c227a35307af768fbb96d767c9583a67d27a582dc"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-curate.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `curate <term>` JSON envelope key-set + shape tag. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `curate <term>` JSON envelope key-set + shape tag. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "71200b7c47126e81718aa0e2e27c22616ba38b388300197ceea0526d99ae5b7d"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-env-secret-list.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `env list` + `secret list` redacted-shape key-sets (baseline only; no redaction added). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `env list` + `secret list` redacted-shape key-sets (baseline only; no redaction added). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "075a90f2f23ddc4637ed6a28ce985f223d63123399de4f49d23916d0a28f2199"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-events.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `akm log list`/`log tail --max-events 1` (the \"events\" output-shape family) JSON envelope key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `akm log list`/`log tail --max-events 1` (the \"events\" output-shape family) JSON envelope key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "e477a47754a6c3efc3d76fea3310706d55f8b482bf66b652d87930648f1b8389"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-history.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `history --ref <ref>` JSON envelope key-set, seeded via real usage events. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `history --ref <ref>` JSON envelope key-set, seeded via real usage events. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "17a58c19dbf3ab89ac9ec408f184ee04b6bd029aa7d90aabd5966cde092dd445"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-info.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `info` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `info` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "5f11bcd0fa30fe192291cdd25a5ada83b3ea44a7eb9feb18e4ed33fcfb9295ea"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-list.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `list` (installed sources) JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `list` (installed sources) JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "9510134f31a327d9f0b4c3fd88bb2908a8ffcde3270195a18bcb5fc468aa17c1"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-proposal.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `proposal list|show|diff` JSON envelope key-sets, seeded via a real proposal. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `proposal list|show|diff` JSON envelope key-sets, seeded via a real proposal. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "991f2d4f6b021756919355713ebaa0d60a0e8533f83d9e5bc4d9d7cd5443e210"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-search.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `search <term>` JSON envelope + hit key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `search <term>` JSON envelope + hit key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "feac94cca559640efe5c91a8e7947bdb2449cd41ae8408a93781dc8dced2c79e"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-show-apply-branches.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show` formatShowPlain APPLY-directive branches (skill, with/without an active workflow run in scope) — booleans/exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show` formatShowPlain APPLY-directive branches (skill, with/without an active workflow run in scope) — booleans/exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "01b6457ade2fb9637b341c364f5a01e5e60b9d3415142f52b19172088e3ea4fb"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-show-shapes.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show --shape=agent` / `--shape=summary` JSON key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show --shape=agent` / `--shape=summary` JSON key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "beb0102eab6ef8ba414b680feab09dda7de3567923200e00b47ffe254f084b05"
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-fail-warn-exit.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` exit 1 (fail, missing task log) and exit 4 (warn, stuck active run) fixtures. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` exit 1 (fail, missing task log) and exit 4 (warn, stuck active run) fixtures. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "5167d8b0a486d6328f373309b2ec3945afda5f188a88e9782420526720a0e092"
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-html.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --format=html` structural markers (chart ids, doctype/title presence) + the unit-level `buildHealthHtmlReplacements` key-set — never HTML bytes. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --format=html` structural markers (chart ids, doctype/title presence) + the unit-level `buildHealthHtmlReplacements` key-set — never HTML bytes. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "034c657511610c4a88ce476abb782d8996ec23d98d9a916d8068c838701bf76a"
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-json-text.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` json + text output on an empty state.db (status: pass) — key-set + non-emptiness only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health` json + text output on an empty state.db (status: pass) — key-set + non-emptiness only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "e0444f1bcb846e5d0c232a3d388db8b3f8d8af9a5216009c12035d9aed7b4fc5"
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-repeated-windows.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B repeated `--windows` flag (parseAllFlagValues, cli.ts:371) — window name order + key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B repeated `--windows` flag (parseAllFlagValues, cli.ts:371) — window name order + key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "f40afa55679768210d5543fdc143733e74ae016fc6922e091c1982fc7359db73"
     },
     {
       "path": "tests/fixtures/goldens/cli/c-tasks-family.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks list|show|run|history|doctor` JSON envelope key-sets, driven against a command-type task running the `true` shell builtin. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks list|show|run|history|doctor` JSON envelope key-sets, driven against a command-type task running the `true` shell builtin. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "ca7aec3487655e4d068a31d77a5550944d690dad20ce767b23d735b1459bd642"
     },
     {
       "path": "tests/fixtures/goldens/cli/c-tasks-run-config-bypass.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks run <id>` config-bypass path (cli.ts:609-620) against a deliberately malformed config.json. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks run <id>` config-bypass path (cli.ts:609-620) against a deliberately malformed config.json. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "bb644dabdf16872c254aee8c1d4118d433188cf29e082425ff6afab570c358bd"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-help-migrate-format-collision.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate` argv-collision characterization: the SPACE-separated `--format json <version>` form collides and surfaces MISSING_REQUIRED_ARGUMENT even though a version was supplied, while the EQUALS form and version-before-flag ordering do not collide — exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate` argv-collision characterization: the SPACE-separated `--format json <version>` form collides and surfaces MISSING_REQUIRED_ARGUMENT even though a version was supplied, while the EQUALS form and version-before-flag ordering do not collide — exit codes only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "d7a95f42fc1f5da05b3f3bff651126227fc2193c914206bd650f2d8441f85d90"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-help-migrate-missing-version.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate --format=json` with no version → MISSING_REQUIRED_ARGUMENT envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate --format=json` with no version → MISSING_REQUIRED_ARGUMENT envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "4dd99b4379bdcfde9dbf1dd51adc3979c1bc07abfd3be0243229374665aa274a"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-quiet-search.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--quiet search <term>` stderr-suppression flag — booleans/exit code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--quiet search <term>` stderr-suppression flag — booleans/exit code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "f8935597822c5eafcacea6dc712e6db5b25d28865ad2699a75324762fad08880"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-setup-no-init.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `setup --yes --no-init --dir <tmp>` — JSON key-set + a boolean confirming the stash directory is not scaffolded. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `setup --yes --no-init --dir <tmp>` — JSON key-set + a boolean confirming the stash directory is not scaffolded. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "6671fdfc1f0027003ee97adb28f884e982ce28554982c1627421140d4325dc86"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-shape-summary-gate.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `proposal list --shape=summary` fail-fast INVALID_SHAPE_VALUE (shapes.ts:124, shape-registry gate as defense-in-depth since runCliCapture skips the startup-block pre-check) — exit code + error code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `proposal list --shape=summary` fail-fast INVALID_SHAPE_VALUE (shapes.ts:124, shape-registry gate as defense-in-depth since runCliCapture skips the startup-block pre-check) — exit code + error code only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "76f281638af0b4c6d66acb7a968cd470e32c7ffb21c78261be459dea097bd828"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-version.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--version` — exit code + a semver-shape boolean, never the literal version string (which changes every release). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--version` — exit code + a semver-shape boolean, never the literal version string (which changes every release). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "4fb02a6a45bb3f4038aa6aa061099e1527632c2df924d7c70c085a269ae2dc51"
     },
     {
       "path": "tests/fixtures/goldens/cli/f-config-error.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F broken config.json → ConfigError envelope key-set, exit 78. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F broken config.json → ConfigError envelope key-set, exit 78. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "97755f2f908f740d7f04bcf6307106ed84491109b02f9af65543b9530a9e76cf"
     },
     {
       "path": "tests/fixtures/goldens/cli/f-not-found.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `show <valid-type>:<unknown-name>` → NotFoundError envelope key-set, exit 1. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `show <valid-type>:<unknown-name>` → NotFoundError envelope key-set, exit 1. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "c6196b6d85b63cccb4163bfe9a5a8819666136749424e808569f77ec9f7a3873"
     },
     {
       "path": "tests/fixtures/goldens/cli/f-raw-error-sites.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F two representative raw `throw new Error(...)` sites in src/commands/ (lessons coverage on a schema-less index.db; source-clone.ts's self-clone guard) surfacing as {ok:false} envelopes with NO `code` field, exit 70 (INTERNAL) — the typed-error sweep's oracle that these do not silently gain an AkmError `code`. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F two representative raw `throw new Error(...)` sites in src/commands/ (lessons coverage on a schema-less index.db; source-clone.ts's self-clone guard) surfacing as {ok:false} envelopes with NO `code` field, exit 70 (INTERNAL) — the typed-error sweep's oracle that these do not silently gain an AkmError `code`. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "90f751c59346d82cbfedb32ffadfa1d1bf567432a6e626e97658098e7c1fb820"
     },
     {
       "path": "tests/fixtures/goldens/cli/e-events-since.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm log list --since`: the duration-shorthand form (`24h`) is REJECTED (INVALID_FLAG_VALUE) while `@offset:<id>` is accepted — a fourth, distinct --since grammar from health/extract/consolidate, captured as-is. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm log list --since`: the duration-shorthand form (`24h`) is REJECTED (INVALID_FLAG_VALUE) while `@offset:<id>` is accepted — a fourth, distinct --since grammar from health/extract/consolidate, captured as-is. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "651b6d656f5ee583bc99fbde7a67d88223fabeb0fe7cc724f1dbebefd06f1ee7"
     },
     {
       "path": "tests/fixtures/goldens/cli/e-extract-since.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm extract --since` duration/ISO/garbage/case-variant sweep, incl. the `5M` case-variant pin (extract.ts:416 `[mhd]/i` — 5 MINUTES here, diverging from core DURATION_UNITS' `M`=months). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm extract --since` duration/ISO/garbage/case-variant sweep, incl. the `5M` case-variant pin (extract.ts:416 `[mhd]/i` — 5 MINUTES here, diverging from core DURATION_UNITS' `M`=months). Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "b99f930d7c3114c8f772773c61e700a7379f301f218bbd8987cf75c205053589"
     },
     {
       "path": "tests/fixtures/goldens/cli/e-health-since.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm health --since 5m` (core DURATION_UNITS grammar) — exit code + status only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family E `akm health --since 5m` (core DURATION_UNITS grammar) — exit code + status only. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "2f8d25730dceb86087dbbbbf9fba3a71d280bf72df97678c5650bd79e558c745"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-search-text.json",
@@ -260,43 +299,50 @@
       "path": "tests/fixtures/goldens/cli/b-health-group-by-run-md.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --group-by run --format=md` TSV-table scrubbed text output — no ref literals (per-run improve metrics only). Chunk 9 oracle; no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --group-by run --format=md` TSV-table scrubbed text output — no ref literals (per-run improve metrics only). Chunk 9 oracle; no production ref literals.",
+      "sha256": "fa5976265c7d294a08da90f96992d78995b5769ee830842aca6295a0d689937d"
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-window-compare-md.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-health-tasks.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --window-compare 24h --format=md` window-compare TSV-table scrubbed text output — no ref literals. Chunk 9 oracle; no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family B `akm health --window-compare 24h --format=md` window-compare TSV-table scrubbed text output — no ref literals. Chunk 9 oracle; no production ref literals.",
+      "sha256": "dbf56f312307962c324ec83a7bb6a050e2ca4f7999b0ab9c5bf1d974eb62cb6a"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-help-migrate.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate <version>` scrubbed text output — static bundled release-notes prose (docs/migration/release-notes), not derived from any fixture/sandbox ref, so unaffected by Chunk 5's ref-grammar codemod. Chunk 9 oracle; no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate <version>` scrubbed text output — static bundled release-notes prose (docs/migration/release-notes), not derived from any fixture/sandbox ref, so unaffected by Chunk 5's ref-grammar codemod. Chunk 9 oracle; no production ref literals.",
+      "sha256": "efc26b5d2f066f0d588565dc80dbdb772f68ac3b7abb792457634d2cdb16f321"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-help.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--help` output — booleans (usage/akm substring presence) only, never the full citty-rendered usage text. Chunk 9 oracle; no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `--help` output — booleans (usage/akm substring presence) only, never the full citty-rendered usage text. Chunk 9 oracle; no production ref literals.",
+      "sha256": "e57e483e94d993b6229cf1ad9f5741f431b5539872108f0e230dea87c7a7624b"
     },
     {
       "path": "tests/fixtures/goldens/improve/since-to-iso-identity-fallback.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins parseSinceToIso's (consolidate.ts:2824, module-private) identity-fallback behavior on unparseable --since input, exercised indirectly through the exported narrowToIncrementalCandidates: garbage input never selects any memory (lexicographic string-comparison artifact of the identity fallback), a valid duration/ISO input does. Config-driven only (incrementalSince) — not reachable from any CLI flag. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs."
+      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins parseSinceToIso's (consolidate.ts:2824, module-private) identity-fallback behavior on unparseable --since input, exercised indirectly through the exported narrowToIncrementalCandidates: garbage input never selects any memory (lexicographic string-comparison artifact of the identity fallback), a valid duration/ISO input does. Config-driven only (incrementalSince) — not reachable from any CLI flag. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs.",
+      "sha256": "0ffa972d1e1b3634fcb95a5748441eaeda7f9fe3bc88dfdcc29118cb84e43b6b"
     },
     {
       "path": "tests/fixtures/goldens/improve/resolve-relative-dates.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-duration-flags.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins resolveRelativeDates' (memory-improve.ts:362-391, module-private) phrase grammar (yesterday / last week|month|year / N days|weeks|months ago) against a pinned frontmatter createdAt referenceDate, exercised indirectly through the exported applyMemoryCleanup. Memory-CONTENT phrase rewriting, NOT flag parsing — captured so it is not silently folded into the duration-flag grammar. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs."
+      "notes": "WI-07, plan §11 Chunk 0a / R4 (family E non-CLI residues). Pins resolveRelativeDates' (memory-improve.ts:362-391, module-private) phrase grammar (yesterday / last week|month|year / N days|weeks|months ago) against a pinned frontmatter createdAt referenceDate, exercised indirectly through the exported applyMemoryCleanup. Memory-CONTENT phrase rewriting, NOT flag parsing — captured so it is not silently folded into the duration-flag grammar. Contains only fixture-local names (tests/fixtures/goldens/cli/fixture-refs.ts) and a normalized <TS> placeholder — no production refs.",
+      "sha256": "94b7baad34d9d356b5932478aab9419fb6e95a6f88fdd25692de69b27bcba798"
     },
     {
       "path": "tests/fixtures/goldens/cli/f-usage-error.json",
       "designation": "frozen-migration-input",
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `--format bogus` → UsageError envelope key-set + code (INVALID_FORMAT_VALUE), exit 2. Chunk 9 oracle; no production ref literals."
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `--format bogus` → UsageError envelope key-set + code (INVALID_FORMAT_VALUE), exit 2. Chunk 9 oracle; no production ref literals.",
+      "sha256": "7e974424210492860282f00b2166af144a6af3dfc96b9c89f705f73953cbbd11"
     }
   ]
 }

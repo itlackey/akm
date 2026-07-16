@@ -83,4 +83,19 @@ describe("RunContext adoption ratchet", () => {
     const src = fs.readFileSync(seamPath, "utf8");
     expect(/export function createRunContext\b/.test(src)).toBe(true);
   });
+
+  test("the legacy context cannot be retired by RENAME: while the baseline is non-empty, its definition site must exist", () => {
+    // Adversarial-audit guard: the Chunk-9 gate is `grep ImproveRunContext →
+    // 0`, and a rename (ImproveRunContext → SomethingElse) would zero every
+    // count while leaving the dual-context limbo intact. While any baseline
+    // entry remains, the interface definition itself must still exist in
+    // improve.ts — so retiring the name requires editing THIS gate file in
+    // the same reviewable change, alongside truly unifying onto RunContext.
+    const total = [...IMPROVE_RUN_CONTEXT_BASELINE.values()].reduce((s, n) => s + n, 0);
+    expect(total).toBeLessThanOrEqual(8); // cardinality pin — baseline may only shrink
+    if (IMPROVE_RUN_CONTEXT_BASELINE.size > 0) {
+      const improveSrc = fs.readFileSync(path.join(SRC_ROOT, "commands", "improve", "improve.ts"), "utf8");
+      expect(/export interface ImproveRunContext\b/.test(improveSrc)).toBe(true);
+    }
+  });
 });

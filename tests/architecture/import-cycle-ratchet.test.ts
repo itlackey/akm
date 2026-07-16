@@ -18,7 +18,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   CYCLE_PARTICIPANT_BASELINE,
+  checkDynamicImportRatchet,
   checkImportCycleRatchet,
+  DYNAMIC_IMPORT_BASELINE,
   measureCycleParticipants,
 } from "../../scripts/lint-import-cycles";
 
@@ -35,10 +37,37 @@ describe("import-cycle ratchet (shrink-only participant baseline)", () => {
     expect(violations).toEqual([]);
   });
 
-  test("the baseline is well-formed: sorted, unique, src-relative", () => {
+  test("the baseline is well-formed: sorted, unique, src-relative — and never grows past its armed size", () => {
     const sorted = [...CYCLE_PARTICIPANT_BASELINE].sort();
     expect([...CYCLE_PARTICIPANT_BASELINE]).toEqual(sorted);
     expect(new Set(CYCLE_PARTICIPANT_BASELINE).size).toBe(CYCLE_PARTICIPANT_BASELINE.length);
     for (const p of CYCLE_PARTICIPANT_BASELINE) expect(p.startsWith("src/")).toBe(true);
+    // Cardinality pin (adversarial audit): quietly ADDING a baseline entry to
+    // admit a new cycle now also requires loudly editing this number.
+    expect(CYCLE_PARTICIPANT_BASELINE.length).toBeLessThanOrEqual(107);
+  });
+
+  test("dynamic import() counts never grow per file (cycle-laundering guard)", () => {
+    const violations = checkDynamicImportRatchet();
+    if (violations.length > 0) {
+      throw new Error(
+        `dynamic-import ratchet violations (converting a static import to import() to dodge the cycle ratchet is ` +
+          `not sanctioned; a genuine new lazy-load edits DYNAMIC_IMPORT_BASELINE in its own diff line):\n${violations
+            .map((v) =>
+              v.kind === "new"
+                ? `  NEW dynamic-import file: ${v.file} (${v.count})`
+                : `  GREW: ${v.file} ${v.baseline} → ${v.count}`,
+            )
+            .join("\n")}`,
+      );
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("the dynamic-import baseline never grows past its armed size", () => {
+    const files = Object.keys(DYNAMIC_IMPORT_BASELINE);
+    const total = files.reduce((s, f) => s + DYNAMIC_IMPORT_BASELINE[f], 0);
+    expect(files.length).toBeLessThanOrEqual(33);
+    expect(total).toBeLessThanOrEqual(102);
   });
 });

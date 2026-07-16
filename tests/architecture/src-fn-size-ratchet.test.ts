@@ -42,7 +42,7 @@ describe("src-wide fn size ratchet (shrink-tolerant)", () => {
     expect(violations).toEqual([]);
   });
 
-  test("the baseline is well-formed: unique ids, all over the bar, sorted deterministically", () => {
+  test("the baseline is well-formed: unique ids, all over the bar, sorted deterministically — and never grows past its armed size", () => {
     const ids = SRC_FN_SIZE_BASELINE.map((o) => o.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const o of SRC_FN_SIZE_BASELINE) expect(o.lines).toBeGreaterThan(SRC_FN_SIZE_BAR);
@@ -50,6 +50,9 @@ describe("src-wide fn size ratchet (shrink-tolerant)", () => {
       (a, b) => b.lines - a.lines || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     expect(SRC_FN_SIZE_BASELINE).toEqual(sorted);
+    // Cardinality pin (adversarial audit): admitting a new offender requires
+    // loudly editing this number, not just inserting a sorted entry.
+    expect(SRC_FN_SIZE_BASELINE.length).toBeLessThanOrEqual(20);
   });
 
   test("the baseline carries no stale entries for functions that no longer exist over the bar in a DIFFERENT file (id drift guard)", () => {

@@ -2,6 +2,7 @@
   "docId": "akm-0.9.0-chunk-manifest",
   "authority": "docs/design/akm-0.9.0-bundle-adapter-architecture-plan.md — the plan IS the authority. This manifest is a derived index of plan §11 (Execution Order — Two Waves) for machine consumption by the akm-090-chunk workflow. If §11 changes, regenerate this file; on any conflict the plan wins. Section references of the form §15.N mean numbered RULE N of plan §15 (the plan has no §15 sub-headings).",
   "generated": "2026-07-14",
+  "amended": "2026-07-16 — gate hardening: golden presence/integrity globalGate; pre-armed cycle + fn-size + RunContext-adoption ratchets; chunk 9/5/0b/8 gate additions; cycle-kill ownership map (plan DoD 11)",
   "planVersion": "final scope pass, commit 5555616 (Tier-A only, lifecycle deferred, no trust machinery, reported ledger, hygiene-first waves)",
   "integrationBranch": "claude/akm-architecture-refactor-fubvd7",
   "branchPrefix": "akm-090/chunk-",
@@ -14,7 +15,7 @@
     "The net-LOC NUMBER (signed adds + deletions) is REPORTED per chunk, never a pass/fail threshold (plan §1.3, DoD 8)",
     "No new trust/approval/security machinery; memory lifecycle deferred entirely; anything lifecycle-shaped or trust-shaped in a diff is a scope-creep BLOCKER (plan §1.3, §12.4)",
     "Local green gate per chunk: typecheck + unit + affected integration + safety suites (plan §11); bun run check is the full-suite superset used when no affected-only selection exists",
-    "Golden-oracle presence is mechanical: scripts/lint-goldens-presence.ts (in bun run lint) fails if tests/fixtures/goldens/DESIGNATIONS.json or any registered asset/consumer suite is missing. A chunk gate that references goldens/fixtures is RED — never skipped, never vacuously green — when the referenced files are absent; retiring an asset means updating DESIGNATIONS.json in the same change (its designated re-baseline chunk only)"
+    "Golden-oracle presence is mechanical: scripts/lint-goldens-presence.ts (in bun run lint) fails if tests/fixtures/goldens/DESIGNATIONS.json or any registered asset/consumer suite is missing. A chunk gate that references goldens/fixtures is RED — never skipped, never vacuously green — when the referenced files are absent; retiring an asset means updating DESIGNATIONS.json in the same change — in its designated re-baseline chunk, or under the registry's surface-owner rule (the chunk the plan orders to change a pinned surface re-designates the asset BEFORE the change lands). Frozen assets are additionally byte-pinned: the lint verifies each frozen entry's sha256, so AKM_UPDATE_GOLDENS=1 cannot silently re-record one"
   ],
   "chunks": [
     {
@@ -58,7 +59,8 @@
       "scope": "Collapse 3 FS journal engines into one FileChange transaction (preserve fsync + before-hash). Proposal{changes: FileChange[]}. Dedup/cooldown → fingerprints (with model-id term) + retained rejection backoff in this same chunk (§4.5). Delete the confidence gate. bulkAdjudicateProposals. Runs on the CURRENT ref grammar; proposal keys re-key at cutover like all state.",
       "gates": [
         "Journal dirs removed",
-        "One-transaction fault tests green — mid-apply fault leaves no partial write, before-hash abort (§12.3)"
+        "One-transaction fault tests green — mid-apply fault leaves no partial write, before-hash abort (§12.3)",
+        "Outcome-level txn goldens (journal/proposal-txn.json, journal/move-txn.json — frozen) stay green through the engine collapse; the five journal-engine-shape goldens designated re-baseline @6 (journal/{proposal,move}-recovery.json, consolidate/journal-{lifecycle,recovery,guard-verdicts}.json) are re-captured HERE with a reviewed diff + ledger entry + registry update in the same chunk (surface-owner rule)"
       ],
       "netLoc": "~−800",
       "testBucket": "§15.7 transaction fault injection; §15.5 proposal/transaction round-trip goldens from Chunk 0a stay green",
@@ -71,10 +73,10 @@
       "wave": 1,
       "branch": "akm-090/chunk-9",
       "title": "Cross-cutting sweep",
-      "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): Wave 1 kills the non-taxonomy cycles (improve-types, config↔integrations, harness/tasks barrels); CI gate lands as a RATCHET (no new cycles, count monotonically decreasing; hits 0 when Chunk 3 deletes the taxonomy cycles). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices. PLUS §13.1 fold-ins assigned to this chunk: vendored echarts.min.js → CDN default-flip and drop the vendored asset (−1 MB; a default flip of html-report.ts:41/:383, not an implementation — §14.1); deterministic-embedder relocation of TEST SCAFFOLDING ONLY (−60) — the AKM_EMBED_DETERMINISTIC env-gated switch STAYS in the production embedder facade (embedder.ts:120,154): scripts/akm-eval and the §13.2 measurement pass depend on it; core/eval/rank-metrics.ts → scripts/akm-eval (−180); the --format html generic template framework → health-only render (−160). PLUS §14.2 fold-ins: H1 AkmHarness capability-discriminated union (retire the load-time throw), H2 health-report view-model/HTML split (deeper than §4.7's line-count split), H3 scheduleKillLadder covering the in-file spawn.ts:527,545 copies, L1 text/registry.ts fold. PLUS §14.3: delete AkmHarness.resume + the *_RESUME_FLAG constants. Fold-ins are ledgered under §12.1's residual row, outside this chunk's ~−2000.",
+      "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): the ratchet is PRE-ARMED (scripts/lint-import-cycles.ts, 2026-07-16 gate hardening — no new participants ever, plus the dynamic-import() count companion); this chunk kills the named knots (improve-types, config↔integrations, harness/tasks barrels) PLUS the small unowned local knots (graph pair, graph-db pair, ranking pair, proposal repository↔validators, wiki-fetchers back-edge, write-source↔git, events pair), trimming the baseline in the same commits; the taxonomy set stays until Chunk 3, the indexer-db trio until Chunk 5, the workflows-runtime trio until Chunk 8 (plan DoD 11 ownership map). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices. PLUS §13.1 fold-ins assigned to this chunk: vendored echarts.min.js → CDN default-flip and drop the vendored asset (−1 MB; a default flip of html-report.ts:41/:383, not an implementation — §14.1); deterministic-embedder relocation of TEST SCAFFOLDING ONLY (−60) — the AKM_EMBED_DETERMINISTIC env-gated switch STAYS in the production embedder facade (embedder.ts:120,154): scripts/akm-eval and the §13.2 measurement pass depend on it; core/eval/rank-metrics.ts → scripts/akm-eval (−180); the --format html generic template framework → health-only render (−160). PLUS §14.2 fold-ins: H1 AkmHarness capability-discriminated union (retire the load-time throw), H2 health-report view-model/HTML split (deeper than §4.7's line-count split), H3 scheduleKillLadder covering the in-file spawn.ts:527,545 copies, L1 text/registry.ts fold. PLUS §14.3: delete AkmHarness.resume + the *_RESUME_FLAG constants. Fold-ins are ledgered under §12.1's residual row, outside this chunk's ~−2000.",
       "gates": [
         "grep resolveStashDir → residual only in the RunContext builder",
-        "Import-cycle ratchet flips ABSOLUTE for non-taxonomy cycles: scripts/lint-import-cycles.ts baseline (pre-armed at the chunk-7 HEAD; no new participants ever) shrinks to taxonomy-only participants",
+        "Cycle baseline trimmed to exactly the later-chunk-owned knots (taxonomy set → Chunk 3; indexer db/entry-mapper/schema trio → Chunk 5; workflows-runtime step-work/runs/unit-checkin trio → Chunk 8 — plan DoD 11 ownership map); every other participant dead; no new participants ever (ratchet pre-armed at the chunk-7 HEAD)",
         "grep ImproveRunContext → 0 (the legacy dual context is unified into the minted RunContext; empties the tests/architecture/run-context-adoption.test.ts baseline, flipping it absolute)",
         "createRunContext (src/commands/improve/run-context.ts) constructed at every improve verb entry — adoption verified by the run-context-adoption ratchet, not by prose"
       ],
@@ -159,7 +161,7 @@
         "grep resolveAssetPathFromName → 0",
         "grep runMatchers → 0",
         "grep getAssetTypes → 0, ASSET_SPECS → 0, LINTER_MAP → 0 (their registries are deleted in this chunk)",
-        "Import-cycle count → 0 (taxonomy cycles die here; completes the Chunk 9 ratchet)",
+        "Taxonomy cycle participants leave the pre-armed ratchet baseline (asset-registry/asset-spec/matchers/renderers knot dead; indexer-db and workflows-runtime knots legitimately remain until Chunks 5/8 — plan DoD 11)",
         "git exact-path staging contract test green — pathspecs scope to adapter directoryList(), not nothing-staged (§12.3, §12.4)",
         "Install-time recognition still detects valid bundle roots (provider-utils/git-provider threaded — §12.4)"
       ],
@@ -196,7 +198,8 @@
         "grep parseAssetRef → 0",
         "grep .stash.json / loadStashFile → 0",
         "§12.3 search parity gate green: nDCG/MRR/recall/banned-hit + filter-behavior parity (proposed/belief/scope) + whyMatched parity; canary re-mint as a named step",
-        "Test codemod (scripts/) lands ATOMICALLY with the grammar change (§15.2); the codemod COMMIT contains ONLY the codemod script + mechanically regenerated files — zero hand-edited test hunks (hand edits go in separate reviewable commits; mixing them into the codemod commit is an adherence BLOCKER); grep ratchet drives tests/ to zero",
+        "Test codemod (scripts/) lands ATOMICALLY with the grammar change (§15.2); the codemod COMMIT contains ONLY the codemod script + mechanically regenerated files (including DESIGNATIONS.json path/sha256 updates the script emits when fixture paths move) — zero hand-edited test hunks (hand edits go in separate reviewable commits; mixing them into the codemod commit is an adherence BLOCKER); grep ratchet drives tests/ to zero",
+        "db.ts split lands cycle-free: the indexer db/entry-mapper/schema participants leave the pre-armed ratchet baseline (successor files must not cycle — plan DoD 11)",
         "Post-codemod mutation spot-check recorded in the chunk report: revert ≥20 randomly sampled re-keyed literals → the suite MUST go red (proves the re-keyed assertions still bite; a sample that stays green is a gate failure)"
       ],
       "netLoc": "~−480",
@@ -233,7 +236,8 @@
         "rc-train FROM-state fixture green",
         "No bindings/lifecycle DDL minted; bindings: config key not emitted (§3.2, Tier B)",
         "Migration suites extended, not rewritten (§15.3)",
-        "Property-based re-key merge test green over ≥1000 generated cases (Chunk 0b generator; three-spelling merge invariants) — hand-built fixtures alone do not satisfy this gate"
+        "Property-based re-key merge test green over ≥1000 generated cases (Chunk 0b generator; three-spelling merge invariants) — hand-built fixtures alone do not satisfy this gate",
+        "The workflows-runtime knot (step-work/runs/unit-checkin) leaves the pre-armed ratchet baseline with the report.ts decomposition — the cycle baseline is EMPTY from this chunk and the ratchet absolute (plan DoD 11)"
       ],
       "netLoc": "~−200 (coordination rework priced in)",
       "testBucket": "§15.7 migration crash/orphan/rc-FROM-state suites; §15.3 migration-lifecycle-regression + migration-backup extended",

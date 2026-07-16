@@ -84,7 +84,7 @@ export function* walkTsFiles(dir: string): Generator<string> {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) yield* walkTsFiles(full);
-    else if (entry.isFile() && entry.name.endsWith(".ts")) yield full;
+    else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) yield full;
   }
 }
 
