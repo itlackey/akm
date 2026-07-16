@@ -210,3 +210,49 @@ zero test-file modifications. Review process note: batch B ran under
 the delegated-implementation/self-review split (session directive,
 2026-07-16); reviewer re-ran the wizard + duration oracles and the
 decisive ratchets independently before commit.
+
+## Decisions 4–5 closed (with WI-9.4)
+
+(4) --format html surface: `html` stays a valid --format value; the
+generic JSON-in-<pre> fallback is deleted and non-health commands now
+get UsageError INVALID_FLAG_VALUE ("html output is only available for
+`akm health`"). Verified BEFORE the change that no golden pins the
+deleted surface, and that error envelopes never route through output()
+(emitJsonError owns them independent of --format), so the throw cannot
+mask a real failure. (5) Deterministic embedder: NO-OP confirmed — the
+AKM_EMBED_DETERMINISTIC facade (4 sites in embedder.ts) and the pure
+implementation stay in place; the plan's −60 relocation is recorded as
+overstated-at-HEAD (the facade must import the implementation; moving
+it would break scripts/akm-eval's real-binary runs).
+
+## WI-9.4 — output/report surface (b1ffdf57..d8ed2110)
+
+(a) createCommandRegistry<H> (output/command-registry.ts) behind both
+registries; exported names/signatures unchanged; registry semantics
+(last-write-wins, silent delete, undefined-on-unknown) verified against
+both originals. (b) text/helpers.ts 1418→84-line re-export barrel over
+show-format/show-directives/workflow-format/proposal-format/
+command-format; all 63 function bodies verified byte-identical by a
+function-level extractor except formatShowPlain's intended directive
+delegation (directive strings byte-identical). command-format.ts is a
+deliberate broad stateless bucket to respect the 4-module cap.
+(c) html health-only per Decision 4; default.html (−78) +
+DEFAULT_TEMPLATE + the shared.ts html case deleted; 2 test files
+rewritten to expect the typed refusal. (d) echarts CDN-only: vendored
+echarts.min.js DELETED (−1,034,102 bytes), inline mode + echarts/
+echartsLibPath options + AKM_ECHARTS env + copy-assets warning removed;
+BEHAVIOR: charts need network at view time (plan-accepted §13.1);
+health.html comment updated; _preload allowlist trimmed. (e)
+rank-metrics.ts → scripts/akm-eval/src/rank-metrics.ts verbatim
+(function-diff verified); curate-metrics shim repointed; STALE header
+doc corrected (collapse-detector production claim was false); one test
+import repointed; src/core/eval/ removed. (f) embedder no-op verified.
+
+Gates (worker + reviewer independently): tsc; biome (1056 files);
+cycle ratchet 107/107; full `bun run lint` incl. goldens-presence 50/50
+(47 frozen hash-verified — neither deleted asset was designated);
+architecture 28/28; output/text suites 246/0; html suites 22/0; curate/
+collapse suites 26/0; combined touched-suite re-run 341/0; reviewer
+re-ran tsc + cycles + full lint + architecture + cli-output/html
+oracles (59/0). Process: Sonnet implementation / Fable review per the
+2026-07-16 session directive.
