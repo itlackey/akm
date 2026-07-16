@@ -179,8 +179,13 @@ describe("fs-txn engine core", () => {
     registerRecordingKind("test-kind-list", calls);
     const txn = beginTxn({ kind: "test-kind-list", root, changes: [], payload: { label: "l1" } });
     void txn;
-    // A junk dir with no journal.json.
-    fs.mkdirSync(path.join(txnNamespaceDir(root), "junk-no-journal"), { recursive: true });
+    // A junk dir with no journal.json — backdated past the sweep grace
+    // window (fresh journal-less dirs are a sibling beginTxn window and are
+    // deliberately NOT swept).
+    const junkDir = path.join(txnNamespaceDir(root), "junk-no-journal");
+    fs.mkdirSync(junkDir, { recursive: true });
+    const past = new Date(Date.now() - 600_000);
+    fs.utimesSync(junkDir, past, past);
 
     const listed = listTxnJournals((j) => j.kind === "test-kind-list");
     expect(listed).toHaveLength(1);

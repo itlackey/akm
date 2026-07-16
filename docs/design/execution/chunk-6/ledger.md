@@ -264,3 +264,42 @@ phase refusal, rollback/forward dispatch, fences (escape paths, foreign
 root, unregistered kind), junk-dir sweeping, filtered recovery, and
 crash-between-finalize-steps re-entry. Ports follow: 6.3b accept/revert,
 6.3c reject, 6.3d mv, 6.3e consolidate.
+
+## WI-6.3b/c — proposal accept/revert + reject engines ported onto fs-txn (landed with this entry)
+
+Both bespoke proposal journal engines now ride the unified engine. Journal
+homes getDataDir()/proposal-transactions/<hash(stash\0target)> and
+getDataDir()/proposal-rejections/<hash(stash)> are GONE, replaced by the
+one home getDataDir()/txn/<hash(root)> (proposal txns keyed by TARGET
+root; reject txns keyed by stash). Phase vocabularies, commit points,
+before-hash semantics (and reject's deliberate LACK of one), exactly-once
+event idempotency keys, idempotent re-accept short-circuit, refuse-clobber
+rollback, the irreversible-conflict guard, per-journal target re-binding,
+and every safety fence are preserved verbatim (adversarial diff review
+compared function-by-function against HEAD: 0 blockers). The crash-window
+seam _setProposalMutationHookForTests forwards to the engine hook with
+identical point names/positions; the subprocess crash runners and the
+re-baseline-@6 goldens-proposal-recovery suite pass UNCHANGED (they
+intercept journal.json.tmp renames + phase names, both invariant).
+goldens-proposal-txn's journal-home cleanliness helper repointed
+proposal-transactions → txn (the mechanical repoint the registry note
+sanctions); fixture bytes untouched, frozen oracles byte-green.
+
+Kinds "proposal" and "proposal-reject" are registered with the engine
+(recovery adapters resolving config/target with root-binding checks) so
+recoverTxnsForRoot can finish any root's interrupted mutations — no
+in-src caller yet (the mv port adopts it next). Review concerns fixed in
+this commit: listTxnJournals now fails LOUDLY on unreadable journals
+(preserving HEAD's fail-closed scan); journal-less txn dirs are swept
+only past a 5-minute grace window (kinds share a per-root namespace, so a
+scanner could otherwise race a sibling beginTxn's mkdir→journal window);
+beginTxn validates pre-minted transaction ids as plain path segments.
+Notes accepted: acceptedTarget.root now persists the RESOLVED root
+(inert — all consumers path.resolve); cleanup-failure warn prefix
+[proposals]→[txn] (stderr-only rare path); legacy homes are not migrated
+— the bespoke engines shipped only in 0.9.0 RCs (fa0f1210 first reachable
+from v0.9.0-rc.3), never a stable release, so pre-upgrade interrupted
+journals from rc builds are abandoned inert files.
+
+Gates: tsc clean; full lint green; engine+oracles+recovery+durable+
+proposals+ratchets 144/0 across 12 files.

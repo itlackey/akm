@@ -183,6 +183,16 @@ export function txnNamespaceDir(root: string): string {
   return path.join(getDataDir(), "txn", ns);
 }
 
+/** Mint a transaction id ahead of {@link beginTxn} (see its `transactionId`). */
+export function mintTxnId(): string {
+  return randomUUID();
+}
+
+/** The directory a transaction with `transactionId` on `root` will own. */
+export function txnDirFor(root: string, transactionId: string): string {
+  return path.join(txnNamespaceDir(root), transactionId);
+}
+
 function writeJournal(txn: Txn<unknown>): void {
   writeTxnFileDurably(txn.journalPath, `${JSON.stringify(txn.journal, null, 2)}\n`);
 }
@@ -209,9 +219,20 @@ export function beginTxn<P>(args: {
   changes: JournaledFileChange[];
   payload: P;
   decidedAt?: string;
+  /**
+   * Pre-minted transaction id (defaults to a fresh UUID). Callers whose
+   * payload embeds paths under the transaction directory mint the id first
+   * (via {@link mintTxnId}) so the initial `prepared` journal is written
+   * exactly ONCE with its final contents — crash-window tests intercept the
+   * first journal rename per phase. Must be a plain path segment.
+   */
+  transactionId?: string;
 }): Txn<P> {
   const handler = requireKind(args.kind);
-  const transactionId = randomUUID();
+  const transactionId = args.transactionId ?? randomUUID();
+  if (!/^[A-Za-z0-9._-]+$/.test(transactionId) || transactionId === "." || transactionId === "..") {
+    throw new Error(`Invalid transaction id "${transactionId}" — must be a plain path segment.`);
+  }
   const dir = path.join(txnNamespaceDir(args.root), transactionId);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const journal: TxnJournal<P> = {
@@ -245,6 +266,24 @@ export function cleanupTxn(dir: string): string | null {
     }`;
     warn(`[txn] ${message}`);
     return message;
+  }
+}
+
+/**
+ * Sweep a transaction directory that has NO journal — but only when it is
+ * demonstrably stale. All kinds share one namespace per root, so a scanner
+ * may encounter a SIBLING transaction inside `beginTxn`'s mkdir→journal
+ * window; a grace period keeps the sweep from racing it. Returns true when
+ * the directory was removed.
+ */
+export function sweepJournallessTxnDir(dir: string, graceMs = 300_000): boolean {
+  try {
+    const age = Date.now() - fs.statSync(dir).mtimeMs;
+    if (age < graceMs) return false;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -305,7 +344,7 @@ export async function recoverTxnsForRoot(
     const dir = path.join(nsDir, entry.name);
     const journalPath = path.join(dir, "journal.json");
     if (!fs.existsSync(journalPath)) {
-      cleanupTxn(dir);
+      sweepJournallessTxnDir(dir);
       continue;
     }
     const journal = readJournal(journalPath);
@@ -341,12 +380,11 @@ export function listTxnJournals(predicate: (journal: TxnJournal<unknown>) => boo
       if (!entry.isDirectory()) continue;
       const journalPath = path.join(nsDir, entry.name, "journal.json");
       if (!fs.existsSync(journalPath)) continue;
-      try {
-        const journal = readJournal(journalPath);
-        if (predicate(journal)) matches.push(journal);
-      } catch {
-        // Unreadable journals are handled (refused loudly) by recovery, not listing.
-      }
+      // Unreadable/invalid journals fail LOUDLY: a caller deciding what to
+      // recover must never silently overlook a damaged journal (it may fence
+      // an interrupted, irreversible mutation).
+      const journal = readJournal(journalPath);
+      if (predicate(journal)) matches.push(journal);
     }
   }
   return matches;

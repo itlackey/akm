@@ -115,13 +115,15 @@ function writeAsset(stashDir: string, name: string, content: string): string {
 }
 
 /**
- * `getDataDir()/proposal-transactions` root. `cleanupProposalTransaction`
- * (`repository.ts`) removes the per-transaction dir and its immediate
- * namespace parent (when empty) but never removes this top-level root
- * itself once created — so "cleaned" means empty-or-absent, not absent.
+ * The unified transaction home (`getDataDir()/txn`, WI-6.3 — mechanical
+ * repoint of the legacy `proposal-transactions` root, per the registry's
+ * re-baseline-@6 note). `cleanupTxn` (`core/fs-txn.ts`) removes the
+ * per-transaction dir and its immediate namespace parent (when empty) but
+ * never removes this top-level root itself once created — so "cleaned"
+ * means empty-or-absent, not absent.
  */
 function proposalTransactionsRoot(dataDir: string): string {
-  return path.join(dataDir, "akm", "proposal-transactions");
+  return path.join(dataDir, "akm", "txn");
 }
 
 function transactionsRootIsClean(dataDir: string): boolean {
