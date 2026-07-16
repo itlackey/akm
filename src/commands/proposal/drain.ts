@@ -14,9 +14,10 @@
  *   - Reuses `listProposals` (no source filter — generator filtering is
  *     in-memory) and the `akmProposalAccept` / `akmProposalReject` wrappers from
  *     `proposal.ts` so the standard `promoted` / `rejected` events are emitted.
- *     It deliberately does NOT use `runAutoAcceptGate`, which is confidence-gated.
+ *     Deterministic by design — never confidence-gated (the improve confidence
+ *     gate that once ran alongside this engine died in 0.9.0).
  *   - Backlog-only: `excludeIds` removes this-run's fresh proposals so triage
- *     never re-adjudicates the per-run auto-accept gate's decisions (decision #2).
+ *     never re-adjudicates a current run's output (decision #2).
  *   - Hard guardrails enforced in code: a `maxAccepts` ceiling checked *before*
  *     the promote loop (remainder → `skippedByCap`); `maxDiffLines` defers large
  *     accepts; `applyMode: "queue"` (the safe default) never promotes (stage
@@ -32,8 +33,8 @@
  *     never silently looks like full success.
  *
  * The promote / reject functions and the runner dispatch are injectable
- * (mirrors `improve-auto-accept.ts` and reflect's dual test seams) so tests can
- * run the full engine without touching the filesystem or spawning a process.
+ * (mirrors reflect's dual test seams) so tests can run the full engine without
+ * touching the filesystem or spawning a process.
  */
 
 import fs from "node:fs";
@@ -153,7 +154,7 @@ export interface DrainResult {
   staged: string[];
 }
 
-// Injectable test seams (mirrors improve-auto-accept.ts's promoteFn override).
+// Injectable test seams (promoteFn/rejectFn overrides, mirroring reflect's).
 export type PromoteFn = typeof akmProposalAccept;
 export type RejectFn = (
   options: Parameters<typeof akmProposalReject>[0],

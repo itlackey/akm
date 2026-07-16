@@ -15,7 +15,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
 import type { AkmImproveOptions, ImproveRunContext } from "../../../src/commands/improve/improve";
-import { makeGateConfig } from "../../../src/commands/improve/improve-auto-accept";
 import {
   type ImproveLoopEnv,
   prepareImproveLoopEnv,
@@ -74,20 +73,9 @@ function distillQueued(ref: string, proposalKind: "lesson" | "knowledge") {
   };
 }
 
-/**
- * Build a minimal `ImproveLoopEnv` around injected verb seams. Gate configs are
- * built with `globalThreshold: undefined` so `runAutoAcceptGate` short-circuits
- * (no state.db writes) — gate mechanics have their own suite.
- */
+/** Build a minimal `ImproveLoopEnv` around injected verb seams. */
 function makeEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): ImproveLoopEnv {
   const options: AkmImproveOptions = { stashDir: overrides.stashDir, config: {} as AkmConfig };
-  const gateShared = {
-    globalThreshold: undefined,
-    dryRun: true,
-    stashDir: undefined,
-    config: {} as AkmConfig,
-    eventsCtx: undefined,
-  };
   return {
     scope: { mode: "all" },
     options,
@@ -108,8 +96,6 @@ function makeEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): Imp
     } as unknown as ImproveLoopEnv["resolvedPlan"],
     skipDistillDueToRequirePlannedRefs: false,
     pendingProposalRefSet: new Set(),
-    reflectGateCfg: makeGateConfig("reflect", gateShared),
-    distillGateCfg: makeGateConfig("distill", gateShared),
     remainingBudgetMs: () => 60_000,
     ...overrides,
   };

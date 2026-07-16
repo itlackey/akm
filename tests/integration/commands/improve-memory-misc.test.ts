@@ -893,25 +893,26 @@ describe("new 0.8.0 improve metrics", () => {
     expect(result.orphansPurged).toBeGreaterThanOrEqual(1);
   });
 
-  // ── Phase 6A — Confidence-driven auto-accept ──────────────────────────────
+  // ── 0.9.0 confidence-gate deletion — replacement contract ─────────────────
+  // The Phase 6A gate (auto-promote at confidence >= threshold) was deleted:
+  // proposals now ALWAYS queue for review regardless of confidence. This pins
+  // the replacement behavior for what used to be the strongest accept case.
 
-  test("auto-accept promotes a high-confidence reflect proposal when threshold met", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import(
+  test("a high-confidence reflect proposal stays pending (no auto-accept path exists)", async () => {
+    const { createProposal, getProposal, isProposalSkipped, listProposals } = await import(
       "../../../src/commands/proposal/repository"
     );
-    const stashDir = makeTempDir("akm-6a-auto-accept-");
+    const stashDir = makeTempDir("akm-6a-no-gate-");
     writeMemory(stashDir, "target-asset", { description: "Existing memory" }, "Existing body.");
     await buildIndex(stashDir);
 
-    // The mock reflectFn must persist a real proposal on disk so that
-    // promoteProposal() can find it. We persist with confidence 0.95 — well
-    // above the default threshold of 0.9 — to exercise the auto-accept path.
+    // The mock reflectFn persists a real proposal with confidence 0.95 — under
+    // the deleted gate's default threshold (0.9) this WOULD have auto-promoted.
     // scope is a specific ref so collectEligibleRefs unconditionally plans it.
     const result = await akmImprove({
       scope: "memory:target-asset",
       stashDir,
       ensureIndexFn: async () => false,
-      autoAccept: 90, // explicit threshold (default is now OFF / undefined); conversion = 0.9
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -951,87 +952,25 @@ describe("new 0.8.0 improve metrics", () => {
       }),
     });
 
-    // Find the reflect action that fired for memory:target-asset
-    const reflectAction = result.actions?.find((a) => a.mode === "reflect" && a.ref === "memory:target-asset");
-    expect(reflectAction).toBeDefined();
-    if (!reflectAction || reflectAction.mode !== "reflect") throw new Error("expected reflect action");
-    const ar = reflectAction.result as AkmReflectResult;
-    if (!ar.ok) throw new Error("expected ok reflect result");
-    // Proposal should be auto-accepted → status === accepted
-    const proposal = getProposal(stashDir, ar.proposal.id);
-    expect(proposal.status).toBe("accepted");
-    // A `promoted` event with `autoAccept: true` is emitted from the loop.
+    // The proposal stays pending with its confidence preserved for reviewers.
+    const pending = listProposals(stashDir, { status: "pending", ref: "memory:target-asset" });
+    expect(pending.length).toBe(1);
+    expect(pending[0]?.confidence).toBe(0.95);
+    if (pending[0]) {
+      const proposal = getProposal(stashDir, pending[0].id);
+      expect(proposal.status).toBe("pending");
+      // No gate ran — nothing stamped a gate decision on the fresh proposal.
+      expect(proposal.gateDecision).toBeUndefined();
+    }
+    // No promoted event with the gate's autoAccept metadata is emitted.
     const promotedEvents = readEvents({ type: "promoted" });
     const auto = promotedEvents.events.find(
       (e) => (e.metadata as Record<string, unknown> | undefined)?.autoAccept === true,
     );
-    expect(auto).toBeDefined();
-  });
-
-  test("auto-accept skips proposals below the threshold (left pending)", async () => {
-    const { createProposal, getProposal, isProposalSkipped } = await import(
-      "../../../src/commands/proposal/repository"
-    );
-    const stashDir = makeTempDir("akm-6a-below-threshold-");
-    writeMemory(stashDir, "target-low", { description: "Existing memory" }, "Existing body.");
-    await buildIndex(stashDir);
-
-    await akmImprove({
-      scope: "memory:target-low",
-      stashDir,
-      ensureIndexFn: async () => false,
-      autoAccept: 90,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
-      reflectFn: async ({ ref, stashDir: sd }) => {
-        const created = createProposal(sd ?? stashDir, {
-          ref: ref ?? "memory:target-low",
-          source: "reflect",
-          sourceRun: "test-confidence-low",
-          force: true,
-          payload: { content: `---\ndescription: low confidence\n---\n\nLOW.\n` },
-          confidence: 0.3, // well below 0.9
-        });
-        if (isProposalSkipped(created)) throw new Error("seed proposal skipped");
-        return {
-          schemaVersion: 2,
-          ok: true,
-          proposal: created,
-          ref: created.ref,
-          engine: "test",
-          durationMs: 1,
-        } satisfies AkmReflectResult;
-      },
-      distillFn: async ({ ref }) => ({
-        schemaVersion: 1,
-        ok: true,
-        outcome: "queued" as const,
-        inputRef: ref,
-        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-      }),
-    });
-
-    // Find the proposal directly on disk; status must remain pending.
-    const { listProposals } = await import("../../../src/commands/proposal/repository");
-    const pending = listProposals(stashDir, { status: "pending", ref: "memory:target-low" });
-    expect(pending.length).toBe(1);
-    expect(pending[0]?.confidence).toBe(0.3);
-    // No auto-accept promoted event for this proposal.
-    const promotedEvents = readEvents({ type: "promoted" });
-    const autoForLow = promotedEvents.events.find(
-      (e) => e.ref === "memory:target-low" && (e.metadata as Record<string, unknown> | undefined)?.autoAccept === true,
-    );
-    expect(autoForLow).toBeUndefined();
-    // Verify with getProposal so we don't accidentally pass on an empty array.
-    if (pending[0]) {
-      expect(getProposal(stashDir, pending[0].id).status).toBe("pending");
-    }
+    expect(auto).toBeUndefined();
+    // The result envelope no longer reports gate counts (0 is omitted).
+    expect(result.gateAutoAcceptedCount ?? 0).toBe(0);
+    expect(result.gateAutoAcceptFailedCount ?? 0).toBe(0);
   });
 
   // ── Phase 6B — proposalsExpired propagates through the improve result ─────
@@ -1063,10 +1002,6 @@ describe("new 0.8.0 improve metrics", () => {
       scope: "memory:live-asset",
       stashDir,
       ensureIndexFn: async () => false,
-      // Disable auto-accept so the seed proposal doesn't get auto-promoted by
-      // a fresh reflect run before the expiration pass observes it. (The
-      // seeded proposal has no confidence anyway — defence in depth.)
-      autoAccept: undefined,
       // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,

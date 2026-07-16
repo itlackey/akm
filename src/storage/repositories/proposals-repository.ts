@@ -187,39 +187,6 @@ export function listStateProposals(
 }
 
 /**
- * Read every proposal's `gateDecision` record across all stashes (#612).
- *
- * Calibration reads the auto-accept gate's per-proposal decisions regardless of
- * the proposal's current lifecycle status — a proposal that was auto-accepted
- * is now `accepted`, an auto-rejected one stays `pending`, so filtering by
- * status would drop half the join. Rows without a `gateDecision` (created
- * before #577, or never gated) are skipped. The result is ordered by
- * `decidedAt ASC` for deterministic downstream aggregation, falling back to
- * `created_at` ordering from the SQL layer for rows with equal/missing
- * timestamps.
- */
-export function listProposalGateDecisions(db: Database): NonNullable<Proposal["gateDecision"]>[] {
-  const rows = db.prepare("SELECT metadata_json FROM proposals ORDER BY created_at ASC, rowid ASC").all() as Array<{
-    metadata_json: string;
-  }>;
-  const decisions: NonNullable<Proposal["gateDecision"]>[] = [];
-  for (const row of rows) {
-    let meta: Record<string, unknown>;
-    try {
-      meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const decision = meta.gateDecision as Proposal["gateDecision"] | undefined;
-    if (decision && typeof decision === "object" && typeof decision.outcome === "string") {
-      decisions.push(decision);
-    }
-  }
-  decisions.sort((a, b) => new Date(a.decidedAt).getTime() - new Date(b.decidedAt).getTime());
-  return decisions;
-}
-
-/**
  * Look up a single proposal by id, optionally scoped to one stash root.
  * Returns undefined when not found.
  */

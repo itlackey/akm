@@ -10,6 +10,7 @@
  */
 
 import { UsageError } from "../core/errors";
+import { warn } from "../core/warn";
 
 // ── Subcommand detection ─────────────────────────────────────────────────────
 
@@ -127,52 +128,28 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
   return parseInt(trimmed, 10);
 }
 
-// ── Auto-accept flag parsing ─────────────────────────────────────────────────
+// ── Auto-accept flag parsing (deprecated) ───────────────────────────────────
 
 /**
- * Parse the value of `akm improve --auto-accept` into a confidence threshold.
+ * DEPRECATED (0.9.0): `akm improve --auto-accept` is accepted but ignored.
  *
- * Semantics (see docs/migration/v0.7-to-v0.8.md):
- * - `undefined` (flag absent) → `undefined` (default-OFF; pre-prod flip)
- * - `""` (bare `--auto-accept`, no value) → `undefined` (treated as flag absent)
- * - `"false"` (case-insensitive) → `undefined` (explicit disable)
- * - `"safe"` (case-insensitive) → `90` (permanent back-compat alias)
- * - integer string `"0".."100"` → that integer
- * - anything else → throws `UsageError("INVALID_FLAG_VALUE")`
+ * The confidence gate the flag configured was deleted in 0.9.0 — proposals
+ * now queue for review (`akm proposal` / the drain engine) instead of being
+ * auto-promoted by threshold. The flag warns-and-ignores for one minor
+ * because installed crontabs embed the old command line; a hard parse error
+ * would make scheduled background runs fail invisibly after upgrade. Hard
+ * removal in 0.10.
  *
- * Citty's `type: "string"` resolves bare flags to `""` and an absent flag to
- * `undefined`. Both forms now disable auto-accept; users must pass an explicit
- * threshold (`--auto-accept=N` or `--auto-accept=safe`) to opt in. This is a
- * deliberate flip from the earlier 0.8.0-RC behaviour, which defaulted to ON
- * at threshold 90 and surprised users who didn't expect Phase B operations to
- * apply without confirmation.
- *
- * Until proposals expose per-operation confidence scores, any non-`undefined`
- * threshold causes the consolidate path to auto-accept the whole batch
- * (legacy "safe" behaviour). The threshold value is preserved for the eventual
- * per-operation comparison; see the TODO in `consolidate.ts`.
+ * - `undefined` (flag absent) → silent no-op.
+ * - Any present value (bare flag, `safe`, `false`, a number, garbage) →
+ *   one deprecation warning on stderr; never throws.
  */
-export function parseAutoAcceptFlag(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  if (trimmed === "") return undefined;
-  const lower = trimmed.toLowerCase();
-  if (lower === "false") return undefined;
-  if (lower === "safe") return 90;
-  if (!/^\d+$/.test(trimmed)) {
-    throw new UsageError(
-      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const parsed = parseInt(trimmed, 10);
-  if (parsed < 0 || parsed > 100) {
-    throw new UsageError(
-      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return parsed;
+export function parseAutoAcceptFlag(raw: string | undefined): void {
+  if (raw === undefined) return;
+  warn(
+    "[improve] --auto-accept is deprecated and ignored (the 0.9.0 confidence gate was removed; " +
+      "proposals queue for review via `akm proposal` or the drain engine). The flag will be removed in 0.10.",
+  );
 }
 
 // ── String flag parsing ──────────────────────────────────────────────────────

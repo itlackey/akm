@@ -82,14 +82,6 @@ export interface AkmImproveOptions {
   writeTarget?: ResolvedWriteTarget;
   /** Stable source identity used for durable source-qualified improve state. */
   sourceName?: string;
-  /**
-   * Confidence threshold (0-100). Undefined disables auto-accept for all
-   * sub-processes (consolidation will prompt interactively on HTTP paths).
-   * The CLI parser supplies 90 when --auto-accept is absent, so CLI callers
-   * get auto-accept on by default. Programmatic callers must pass 90 explicitly
-   * to match that behaviour.
-   */
-  autoAccept?: number;
   stashDir?: string;
   config?: AkmConfig;
   /** Internal cutover flag: permit bare durable-state reads for the historical local stash only. */
@@ -236,7 +228,7 @@ export interface ImprovePreparationResult {
   /**
    * Consolidation result (#551). Consolidation now runs in the preparation
    * stage BEFORE the session-extract pass, so it only ever judges memories
-   * promoted by PRIOR runs — files written by extract auto-accept in the
+   * promoted by PRIOR runs — files written by extract promotions in the
    * current run do not exist yet when the pool-delta gate is evaluated.
    */
   consolidation: ConsolidateResult;
@@ -584,7 +576,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const runImproveLoopStageImpl = options.runImproveLoopStageFn ?? runImproveLoopStage;
   const runImprovePostLoopStageImpl = options.runImprovePostLoopStageFn ?? runImprovePostLoopStage;
   // Resolve the improve profile for this run. Profile drives type filtering,
-  // process gating, and default autoAccept/limit values.
+  // process gating, and the default limit value.
   const _earlyConfig = options.config ?? loadConfig();
   const resolvedPlan =
     options.resolvedPlan ??
@@ -627,7 +619,6 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     legacyBareState:
       options.legacyBareState ??
       shouldReadLegacyBareImproveState(writeTarget.source.name, writeTarget.source.path, _earlyConfig),
-    autoAccept: options.autoAccept ?? improveProfile.autoAccept,
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.
     limit: options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit,
@@ -1222,7 +1213,8 @@ async function runImproveStageSequence(args: {
         resolvedPlan,
         consolidationRan: preparation.consolidationRan,
         // R5: floor violations from this run's consolidate pass + the
-        // auto-accepted volume so far (prep + loop gates) for churn detection.
+        // accepted volume so far (always 0 since the 0.9.0 confidence-gate
+        // deletion) for churn detection.
         consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
         acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
       });
@@ -1579,7 +1571,7 @@ function emitImproveCompletedEvent(
  * Consolidation moved OUT of the post-loop stage and into the preparation
  * stage, where it runs BEFORE the session-extract pass. This guarantees the
  * pool-delta gate (and akmConsolidate itself) only ever observe memories that
- * existed at the start of the run — files written by extract auto-accept in
+ * existed at the start of the run — files written by extract promotions in
  * the CURRENT run are not on disk yet, so they cannot make the gate fire.
  */
 export interface ConsolidationPassResult {

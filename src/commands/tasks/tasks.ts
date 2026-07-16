@@ -860,23 +860,23 @@ function collectStaleTaskIds(): string[] {
 const STALE_GENERATED_COMMANDS: Record<string, { command: string; replacement: string }> = {
   "akm-improve-frequent": {
     command: "akm improve --profile frequent --auto-accept safe",
-    replacement: "akm improve --strategy frequent --auto-accept safe",
+    replacement: "akm improve --strategy frequent",
   },
   "akm-improve-consolidate": {
     command: "akm improve --profile consolidate --auto-accept safe",
-    replacement: "akm improve --strategy consolidate --auto-accept safe",
+    replacement: "akm improve --strategy consolidate",
   },
   "akm-improve-nightly": {
     command: "akm improve --profile thorough --auto-accept safe",
-    replacement: "akm improve --strategy thorough --auto-accept safe",
+    replacement: "akm improve --strategy thorough",
   },
   "akm-improve-catchup": {
     command: "akm improve --profile catchup --auto-accept safe",
-    replacement: "akm improve --strategy catchup --auto-accept safe",
+    replacement: "akm improve --strategy catchup",
   },
   "akm-graph-refresh-weekly": {
     command: "akm improve --profile graph-refresh --auto-accept safe",
-    replacement: "akm improve --strategy graph-refresh --auto-accept safe",
+    replacement: "akm improve --strategy graph-refresh",
   },
 };
 

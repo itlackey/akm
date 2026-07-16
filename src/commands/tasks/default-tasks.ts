@@ -52,7 +52,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-improve-frequent",
     strategy: "frequent",
-    command: "akm improve --strategy frequent --auto-accept safe",
+    command: "akm improve --strategy frequent",
     schedule: "0 * * * *",
     description: "Frequent extract + inference pass (every 60 min)",
     enableMode: "always",
@@ -60,7 +60,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-improve-consolidate",
     strategy: "consolidate",
-    command: "akm improve --strategy consolidate --auto-accept safe",
+    command: "akm improve --strategy consolidate",
     schedule: "0 */4 * * *",
     description: "Consolidation-only pass (every 4h)",
     enableMode: "always",
@@ -68,7 +68,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-improve-nightly",
     strategy: "thorough",
-    command: "akm improve --strategy thorough --auto-accept safe",
+    command: "akm improve --strategy thorough",
     schedule: "0 2 * * *",
     description: "Full nightly quality sweep (daily 2am)",
     enableMode: "server",
@@ -76,7 +76,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-improve-catchup",
     strategy: "catchup",
-    command: "akm improve --strategy catchup --auto-accept safe",
+    command: "akm improve --strategy catchup",
     schedule: null,
     description: "Manual recovery — consolidation + triage drain (run on demand)",
     enableMode: "manual",
@@ -84,7 +84,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
   {
     id: "akm-graph-refresh-weekly",
     strategy: "graph-refresh",
-    command: "akm improve --strategy graph-refresh --auto-accept safe",
+    command: "akm improve --strategy graph-refresh",
     schedule: "0 3 * * 0",
     description: "Full-corpus graph rebuild (weekly Sunday 3am)",
     enableMode: "always",

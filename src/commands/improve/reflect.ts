@@ -834,7 +834,7 @@ export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
       minimum: 0,
       maximum: 1,
       description:
-        "Optional self-reported quality confidence in [0, 1]. Proposals with confidence >= the active threshold (default 0.8) may be auto-accepted by `akm improve`.",
+        "Optional self-reported quality confidence in [0, 1]. Persisted on the proposal for reviewers and the triage judge to read during adjudication.",
     },
   },
 };

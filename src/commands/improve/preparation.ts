@@ -20,7 +20,6 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { akmLint } from "../lint/index";
-import { getProposal, listProposals } from "../proposal/repository";
 import { runSchemaRepairPass } from "../sources/schema-repair";
 import { akmConsolidate, type ConsolidateResult } from "./consolidate";
 // Eligibility / candidate-selection predicates live in ./eligibility.
@@ -37,7 +36,6 @@ import {
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
 import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
-import { makeGateConfig, resolveExtractConfidence, runAutoAcceptGate } from "./improve-auto-accept";
 import type { ResolvedImprovePlan } from "./improve-strategies";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {
@@ -98,8 +96,8 @@ function readConsecutiveNoOpsForImproveRef(
  *      PRIOR-run memories; current-run extract promotions are invisible to it.
  *
  *   2. SMARTER POOL-DELTA GATE: even among on-disk files, a memory whose only
- *      post-`lastConsolidateTs` mtime bump came from its OWN auto-accept
- *      promotion (i.e. it was just promoted by extract in the immediately
+ *      post-`lastConsolidateTs` mtime bump came from its OWN promotion
+ *      (i.e. it was just promoted in the immediately
  *      preceding run and has not had a full improve cycle to settle) does NOT
  *      count as "work to do". We exclude those paths from the pool-delta check
  *      using the `promoted` events already emitted with each promotion's
@@ -157,7 +155,7 @@ function evaluateConsolidationEligibility(args: {
   const lastConsolidateTs = lastConsolidation?.ts;
 
   // #551 smarter gate: build the set of memory asset paths whose only delta
-  // since the last consolidate is their OWN auto-accept promotion. Those files
+  // since the last consolidate is their OWN promotion. Those files
   // have not had a full improve cycle to settle, so they offer no merge /
   // contradiction candidates yet — excluding them stops the gate firing on
   // freshly-promoted single-source memories. We read `promoted` events emitted
@@ -295,22 +293,6 @@ export async function runConsolidationPass(args: {
     warnings: [],
     durationMs: 0,
   };
-  let gateAutoAcceptedCount = 0;
-  let gateAutoAcceptFailedCount = 0;
-  const consolidateGateCfg = makeGateConfig(
-    "consolidate",
-    {
-      globalThreshold: options.autoAccept,
-      dryRun: options.dryRun ?? false,
-      stashDir: primaryStashDir,
-      config: consolidationConfig,
-      eventsCtx,
-      targetSelector: options.target,
-      stateDbPath: eventsCtx?.dbPath,
-    },
-    { minimumThreshold: 95 },
-  );
-
   if (consolidateDisabledByProfile) {
     info("[improve] consolidation skipped (disabled by improve profile)");
   } else if (poolBelowMinSize) {
@@ -356,13 +338,13 @@ export async function runConsolidationPass(args: {
           limit: improveProfile?.processes?.consolidate?.limit,
           neighborsPerChanged: improveProfile?.processes?.consolidate?.neighborsPerChanged,
           maxChunkSize: improveProfile?.processes?.consolidate?.maxChunkSize,
-          // Honor profile.autoAccept (already merged into options.autoAccept at the
-          // top of akmImprove). The CLI parser always supplies 90 when --auto-accept
-          // is absent, so ?? 90 is not needed here and would prevent --auto-accept=false
-          // (which maps to undefined) from disabling consolidation auto-accept.
-          // options.consolidateOptions.autoAccept (if explicitly provided by caller)
-          // still wins because the spread above runs first.
-          autoAccept: options.consolidateOptions?.autoAccept ?? options.autoAccept,
+          // The improve pipeline is an automated batch flow: it must never
+          // block on consolidate's interactive HTTP-path confirm prompt, and
+          // scheduled runs must keep APPLYING the consolidation plan (the
+          // shipped tasks previously got this via `--auto-accept safe`'s
+          // prompt-bypass role; the confidence gate itself died in 0.9.0).
+          // An explicit caller-provided consolidateOptions.assumeYes wins.
+          assumeYes: options.consolidateOptions?.assumeYes ?? true,
           // WS-3a: forward budget signal for graceful abort on timeout, and pass
           // the profile's p90 estimate for cold-start budget reduction.
           signal: budgetSignal,
@@ -373,22 +355,6 @@ export async function runConsolidationPass(args: {
         }),
       { engine: resolvedPlan.processes.consolidate.runner?.engine, process: "consolidate" },
     );
-    {
-      const consolidateGr = await runAutoAcceptGate(
-        consolidation.promoted.map((proposalId) => {
-          try {
-            if (!primaryStashDir) return { proposalId, confidence: undefined };
-            const proposal = getProposal(primaryStashDir, proposalId);
-            return { proposalId, confidence: proposal.confidence };
-          } catch {
-            return { proposalId, confidence: undefined };
-          }
-        }),
-        consolidateGateCfg,
-      );
-      gateAutoAcceptedCount += consolidateGr.promoted.length;
-      gateAutoAcceptFailedCount += consolidateGr.failed.length;
-    }
     if (consolidation.processed > 0) {
       appendEvent(
         {
@@ -425,15 +391,17 @@ export async function runConsolidationPass(args: {
   const consolidationRan =
     !consolidateDisabledByProfile && !poolBelowMinSize && !consolidationOnCooldown && consolidation.processed > 0;
 
-  return { consolidation, consolidationRan, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
+  // Gate counters are live result-envelope fields; always 0 since the 0.9.0
+  // confidence-gate deletion.
+  return { consolidation, consolidationRan, gateAutoAcceptedCount: 0, gateAutoAcceptFailedCount: 0 };
 }
 
 /**
  * Phase 0.4 — session-extract pass. Reads native session files through the
- * SessionLogHarness registry, asks a bounded LLM for candidate proposals, gates
- * them, and drains the extract backlog. Failures are non-fatal (collected into
- * `warnings`). Returns the extract results + the gate counters seeded from the
- * consolidation pass and accumulated here.
+ * SessionLogHarness registry, and asks a bounded LLM for candidate proposals.
+ * Failures are non-fatal (collected into `warnings`). Returns the extract
+ * results + the gate counters (live result-envelope fields, seeded from the
+ * consolidation pass; always 0 since the 0.9.0 confidence-gate deletion).
  */
 async function runSessionExtractPass(args: {
   options: AkmImproveOptions;
@@ -449,18 +417,8 @@ async function runSessionExtractPass(args: {
   gateAutoAcceptedCount: number;
   gateAutoAcceptFailedCount: number;
   warnings: string[];
-  extractGateCfg: ReturnType<typeof makeGateConfig>;
 }> {
-  const {
-    options,
-    primaryStashDir,
-    improveProfile,
-    resolvedPlan,
-    eventsCtx,
-    budgetSignal,
-    seedGateAccepted,
-    seedGateFailed,
-  } = args;
+  const { options, primaryStashDir, improveProfile, resolvedPlan, eventsCtx, budgetSignal } = args;
   const warnings: string[] = [];
   // Phase 0.4 — session-extract pass.
   //
@@ -481,21 +439,7 @@ async function runSessionExtractPass(args: {
   // Failures are non-fatal — one harness throwing doesn't abort improve.
   // The extract envelope's own `warnings` field surfaces what went wrong.
   let extractResults: AkmExtractResult[] | undefined;
-  // Seed the preparation-stage gate counters with consolidation's auto-accept
-  // gate results (#551: consolidation now runs in this stage), then accumulate
-  // extract's gate results on top.
-  let gateAutoAcceptedCount = seedGateAccepted;
-  let gateAutoAcceptFailedCount = seedGateFailed;
   const extractConfig = options.config ?? loadConfig();
-  const extractGateCfg = makeGateConfig("extract", {
-    globalThreshold: options.autoAccept,
-    dryRun: options.dryRun ?? false,
-    stashDir: primaryStashDir,
-    config: extractConfig,
-    eventsCtx,
-    targetSelector: options.target,
-    stateDbPath: eventsCtx?.dbPath,
-  });
   // #554 minNewSessions gate: skip the entire extract pass (ensureIndex was
   // already done upstream; here we elide every akmExtract/processSession call)
   // when the NEW (unseen, in-window) candidate-session pool is below a minimum.
@@ -503,9 +447,9 @@ async function runSessionExtractPass(args: {
   // finds no new sessions, yet still burns the full extract pipeline. Default 0
   // (disabled) preserves existing always-run behaviour; only opted-in profiles
   // (e.g. `frequent`) set it. Evaluated BEFORE any LLM call so a skip costs zero
-  // LLM work AND writes nothing — which also means no extract auto-accept bumps
-  // memory mtimes, so a skipped extract never flags work for the NEXT run's
-  // consolidation mtime-gate (the downstream trigger #554 asks us to suppress).
+  // LLM work AND writes nothing — a skipped extract never flags work for the
+  // NEXT run's consolidation mtime-gate (the downstream trigger #554 asks us
+  // to suppress).
   const EXTRACT_DEFAULT_MIN_NEW_SESSIONS = 0;
   // Read from the ACTIVE resolved profile (not always `default`), matching how
   // `extract.enabled` resolves — otherwise a non-default profile (e.g.
@@ -591,20 +535,6 @@ async function runSessionExtractPass(args: {
             { engine: resolvedPlan.processes.extract.runner?.engine, process: "extract" },
           );
           extractResults.push(result);
-
-          {
-            const gr = await runAutoAcceptGate(
-              primaryStashDir
-                ? result.proposals.map((proposalId) => {
-                    const proposal = getProposal(primaryStashDir, proposalId);
-                    return { proposalId, confidence: resolveExtractConfidence(proposal) };
-                  })
-                : [],
-              extractGateCfg,
-            );
-            gateAutoAcceptedCount += gr.promoted.length;
-            gateAutoAcceptFailedCount += gr.failed.length;
-          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           warnings.push(`extract(${h.name}) failed: ${msg}`);
@@ -618,26 +548,15 @@ async function runSessionExtractPass(args: {
     }
   }
 
-  // Backlog drain: gate any pending extract proposals that weren't created in
-  // this run (i.e. pre-date the gate or were produced by a run that timed out
-  // before the gate fired). Without this, eligible proposals accumulate
-  // indefinitely — the fresh-gate only covers the current run's output.
-  if (primaryStashDir && !options.dryRun && options.autoAccept !== undefined) {
-    const freshIds = new Set((extractResults ?? []).flatMap((r) => r.proposals));
-    const backlog = listProposals(primaryStashDir, { status: "pending" }).filter(
-      (p) => p.source === "extract" && !freshIds.has(p.id),
-    );
-    if (backlog.length > 0) {
-      const backlogCandidates = backlog.map((p) => ({
-        proposalId: p.id,
-        confidence: resolveExtractConfidence(p),
-      }));
-      const backlogGr = await runAutoAcceptGate(backlogCandidates, extractGateCfg);
-      gateAutoAcceptedCount += backlogGr.promoted.length;
-      gateAutoAcceptFailedCount += backlogGr.failed.length;
-    }
-  }
-  return { extractResults, gateAutoAcceptedCount, gateAutoAcceptFailedCount, warnings, extractGateCfg };
+  // Gate counters are live result-envelope fields; always 0 since the 0.9.0
+  // confidence-gate deletion (pending extract proposals now wait for the
+  // proposal queue / drain engine instead of an in-run backlog gate).
+  return {
+    extractResults,
+    gateAutoAcceptedCount: args.seedGateAccepted,
+    gateAutoAcceptFailedCount: args.seedGateFailed,
+    warnings,
+  };
 }
 
 /**
@@ -796,8 +715,8 @@ export async function runImprovePreparationStage(args: {
   // Phase 0.3 — memory consolidation pass (#551).
   //
   // Consolidation runs BEFORE the session-extract pass. This is the structural
-  // half of the #551 fix: extract auto-accept writes brand-new memory .md files
-  // on every run, which previously made the consolidation pool-delta gate fire
+  // half of the #551 fix: extract promotions write brand-new memory .md files,
+  // which previously made the consolidation pool-delta gate fire
   // unconditionally (any new file => "memory updated since last consolidate").
   // By running consolidation first, the gate and akmConsolidate only ever see
   // memories that existed at the start of the run — current-run extract
@@ -1725,7 +1644,7 @@ function selectHighSalienceLane(args: {
   //
   // Cooldown: a ref qualifies at most once — when no prior reflect proposal
   // exists for it (`!lastReflectProposalTs.has`). Without this guard the lane
-  // re-selects the same high-salience refs on EVERY run (auto-accept emits a
+  // re-selects the same high-salience refs on EVERY run (promotion emits a
   // `promoted` event, not `feedback`, so the ref never leaves
   // noFeedbackCandidates), burning LLM calls and churning the asset. This
   // mirrors the same `!lastReflectProposalTs.has(r.ref)` once-per-asset

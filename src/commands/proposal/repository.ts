@@ -206,8 +206,9 @@ export interface ProposalReview {
 }
 
 /**
- * The verdict an automated gate (the deterministic drain/triage engine or the
- * `akm improve` confidence gate) reached for this proposal (#577).
+ * The verdict the deterministic drain/triage engine reached for this proposal
+ * (#577). Drain-owned audit machinery: the `akm improve` confidence gate that
+ * also stamped these died in 0.9.0; historical rows it wrote still render.
  *
  *   - `auto-accepted` — the gate promoted the proposal without review.
  *   - `deferred`      — the gate left the proposal pending for human (or
@@ -232,19 +233,14 @@ export interface ProposalGateDecision {
   outcome: ProposalGateDecisionOutcome;
   /**
    * Short machine-stable reason token chosen by the gate that recorded the
-   * decision. The vocabulary actually persisted today:
+   * decision. The vocabulary persisted today (drain/triage gate): `empty-diff`,
+   * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band`,
+   * `possible-dup`, `no-judge-configured`, `judgment-accept`,
+   * `judgment-reject`.
    *
-   *   - improve gate: `above-threshold`, `below-threshold`, `no-confidence`,
-   *     `exploration-budget` (WS-4 — promoted regardless of confidence; excluded
-   *     from auto-tune calibration).
-   *   - drain/triage gate: `empty-diff`, `max-diff-lines`, `min-content-lines`,
-   *     `policy-accept`, `mid-band`, `possible-dup`, `no-judge-configured`,
-   *     `judgment-accept`, `judgment-reject`.
-   *
-   * The spec (#577) also names `type-filter` as an example token, but that is a
-   * *ref-level* improve pre-filter (`shouldSkipRef`) that runs before any
-   * proposal exists — there is no proposal to stamp at that point — so no gate
-   * path persists it. It is documented here only as a spec example.
+   * Historical rows written by the deleted (0.9.0) improve confidence gate may
+   * carry `above-threshold`, `below-threshold`, `no-confidence`, or
+   * `exploration-budget` — renderers still display them.
    */
   reason: string;
   /** Computed confidence score in `[0, 1]`, when the gate had one. */
@@ -263,7 +259,7 @@ export interface ProposalGateDecision {
    * knobs it actually consulted.
    */
   thresholds?: {
-    /** Confidence auto-accept threshold in `[0, 1]` (improve gate). */
+    /** Confidence threshold in `[0, 1]` (historical improve-gate rows only). */
     autoAccept?: number;
     /** Maximum diff-line bound that deferred the proposal (drain gate). */
     maxDiffLines?: number;
@@ -312,18 +308,18 @@ export interface Proposal {
    * Optional confidence score in `[0, 1]` (Advantage D6a / Phase 6A).
    *
    * When the proposal source can self-estimate quality (e.g. the reflect LLM
-   * returning a calibrated score with its draft), this value drives the
-   * auto-accept policy in `akm improve`. Proposals with `confidence` at or
-   * above the active confidence threshold are accepted without reviewer
-   * intervention; everything else waits in the pending queue.
+   * returning a calibrated score with its draft), the score is persisted for
+   * reviewers and downstream tooling (`akm proposal show`, drain judgment
+   * context). It no longer drives any automated accept path — the `akm
+   * improve` confidence gate that promoted on threshold died in 0.9.0.
    *
    * Out-of-range or non-finite values are stripped at {@link createProposal}
    * time so downstream code can rely on the invariant `0 <= confidence <= 1`.
    */
   confidence?: number;
   /**
-   * The automated gate's verdict for this proposal (#577), recorded at gate
-   * time by the drain/triage engine or the `akm improve` confidence gate.
+   * The drain/triage engine's verdict for this proposal (#577), recorded at
+   * adjudication time (drain-owned audit machinery).
    *
    * Carries the decision (auto-accepted / deferred / auto-rejected), the reason
    * token, the confidence the gate computed, and the thresholds in effect, so
@@ -331,8 +327,9 @@ export interface Proposal {
    * the operator reconstructing it from run-level aggregates.
    *
    * Absent on proposals that never passed through a gate, and on every proposal
-   * created before 0.9.0 (forward-only — no backfill). Renderers must treat a
-   * missing decision as "unknown".
+   * created before 0.9.0 (forward-only — no backfill). Historical rows written
+   * by the deleted improve confidence gate still render. Renderers must treat
+   * a missing decision as "unknown".
    */
   gateDecision?: ProposalGateDecision;
   /**
@@ -616,7 +613,7 @@ export function createProposal(
 
       // Phase 6A: validate confidence is a finite number in [0, 1]. Anything else
       // is dropped silently — we never store NaN, Infinity, or out-of-range values.
-      // Callers that mis-report confidence should not poison the auto-accept gate.
+      // Callers that mis-report confidence should not poison downstream readers.
       const sanitizedConfidence =
         typeof input.confidence === "number" &&
         Number.isFinite(input.confidence) &&
@@ -855,7 +852,9 @@ export function archiveProposal(
 }
 
 /**
- * Record an automated gate's decision onto a proposal (#577).
+ * Record the drain/triage engine's decision onto a proposal (#577).
+ * Drain-owned audit machinery — the deterministic drain engine is the only
+ * live writer since the 0.9.0 confidence-gate deletion.
  *
  * Stamps `gateDecision` (decision / reason / confidence / thresholds) onto the
  * row so `akm proposal show` and `list` can explain why a proposal landed where

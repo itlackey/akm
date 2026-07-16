@@ -2,24 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Per-proposal gate-decision persistence + rendering (#577).
+// Per-proposal gate-decision persistence + rendering (#577) — drain-scoped.
 //
-// The deterministic drain/triage engine and the `akm improve` confidence gate
-// must stamp WHY each proposal landed where it did (auto-accepted / deferred /
-// auto-rejected, with reason + thresholds) onto the proposal row, and the
-// `proposal show` / `list` surfaces must expose it. Legacy proposals carry no
-// decision and must render cleanly as "unknown".
+// The deterministic drain/triage engine must stamp WHY each proposal landed
+// where it did (auto-accepted / deferred / auto-rejected, with reason +
+// thresholds) onto the proposal row, and the `proposal show` / `list` surfaces
+// must expose it. Legacy proposals carry no decision and must render cleanly
+// as "unknown". Historical rows written by the deleted (0.9.0) improve
+// confidence gate must keep rendering — the render fixtures below pin that.
 //
 // FS-bound (real createProposal/listProposals against the sandboxed state.db),
 // no process.env mutation — the stash dir is passed explicitly and the preload
 // sandbox owns HOME/XDG, so no extra env helper is required.
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runAutoAcceptGate } from "../../src/commands/improve/improve-auto-accept";
 import { drainProposals } from "../../src/commands/proposal/drain";
 import { PERSONAL_STASH } from "../../src/commands/proposal/drain-policies";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../../src/commands/proposal/proposal";
@@ -27,13 +26,11 @@ import {
   createProposal,
   getProposal,
   isProposalSkipped,
-  type PromoteResult,
   type Proposal,
   recordGateDecision,
 } from "../../src/commands/proposal/repository";
 import { shapeProposalEntry } from "../../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../../src/output/text/helpers";
-import { makeConfig } from "../_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -221,129 +218,6 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     );
 
     expect(getProposal(stash, p.id).gateDecision).toBeUndefined();
-  });
-});
-
-// ── improve auto-accept gate records on each path ───────────────────────────
-
-describe("runAutoAcceptGate records a gate decision per path (#577)", () => {
-  test("auto-accepted: confidence >= threshold stamps above-threshold with the comparison operands", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lesson:hi", "reflect", VALID_LESSON);
-
-    const promote = mock(
-      async (): Promise<PromoteResult> => ({
-        proposal: { ...getProposal(stash, p.id) },
-        assetPath: "/tmp/x.md",
-        ref: "lesson:hi",
-      }),
-    );
-
-    const result = await runAutoAcceptGate(
-      [{ proposalId: p.id, confidence: 0.95 }],
-      {
-        phase: "reflect",
-        globalThreshold: 90,
-        dryRun: false,
-        stashDir: stash,
-        config: makeConfig(stash),
-        eventsCtx: undefined,
-      },
-      promote,
-    );
-
-    expect(result.promoted).toEqual([p.id]);
-    const decision = getProposal(stash, p.id).gateDecision;
-    expect(decision?.outcome).toBe("auto-accepted");
-    expect(decision?.reason).toBe("above-threshold");
-    expect(decision?.confidence).toBe(0.95);
-    expect(decision?.thresholds?.autoAccept).toBe(0.9);
-  });
-
-  test("deferred (below-threshold): records confidence + threshold so '0.72 < 0.90' is reconstructable", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lesson:lo", "reflect", VALID_LESSON);
-
-    const result = await runAutoAcceptGate([{ proposalId: p.id, confidence: 0.72 }], {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: stash,
-      config: makeConfig(stash),
-      eventsCtx: undefined,
-    });
-
-    expect(result.skipped).toEqual([p.id]);
-    const decision = getProposal(stash, p.id).gateDecision;
-    expect(decision?.outcome).toBe("deferred");
-    expect(decision?.reason).toBe("below-threshold");
-    expect(decision?.confidence).toBe(0.72);
-    expect(decision?.thresholds?.autoAccept).toBe(0.9);
-  });
-
-  test("deferred (no-confidence): a candidate with no score is stamped no-confidence", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lesson:none", "reflect", VALID_LESSON);
-
-    await runAutoAcceptGate([{ proposalId: p.id, confidence: undefined }], {
-      phase: "reflect",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: stash,
-      config: makeConfig(stash),
-      eventsCtx: undefined,
-    });
-
-    const decision = getProposal(stash, p.id).gateDecision;
-    expect(decision?.outcome).toBe("deferred");
-    expect(decision?.reason).toBe("no-confidence");
-    expect(decision?.confidence).toBeUndefined();
-  });
-
-  test("disabled gate (no threshold) records nothing — no gate actually ran", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lesson:disabled", "reflect", VALID_LESSON);
-
-    await runAutoAcceptGate([{ proposalId: p.id, confidence: 0.99 }], {
-      phase: "reflect",
-      globalThreshold: undefined,
-      dryRun: false,
-      stashDir: stash,
-      config: makeConfig(stash),
-      eventsCtx: undefined,
-    });
-
-    expect(getProposal(stash, p.id).gateDecision).toBeUndefined();
-  });
-
-  test("unchanged auto-rejected proposal is suppressed instead of retried", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lesson:retry", "extract", VALID_LESSON);
-    const proposal = getProposal(stash, p.id);
-    recordGateDecision(stash, p.id, {
-      outcome: "auto-rejected",
-      reason: "validation:invalid-description",
-      confidence: 0.95,
-      thresholds: { autoAccept: 0.9 },
-      contentHash: createHash("sha256").update(proposal.payload.content).digest("hex"),
-      gate: "improve:extract",
-    });
-    const initial = getProposal(stash, p.id);
-    expect(initial.gateDecision?.outcome).toBe("auto-rejected");
-
-    const result = await runAutoAcceptGate([{ proposalId: p.id, confidence: 0.95 }], {
-      phase: "extract",
-      globalThreshold: 90,
-      dryRun: false,
-      stashDir: stash,
-      config: makeConfig(stash),
-      eventsCtx: undefined,
-    });
-
-    expect(result.failed).toEqual([]);
-    expect(result.promoted).toEqual([]);
-    expect(result.suppressed).toEqual([p.id]);
-    expect(getProposal(stash, p.id).gateDecision).toEqual(initial.gateDecision);
   });
 });
 

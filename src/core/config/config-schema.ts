@@ -545,7 +545,6 @@ export const ImproveProfileConfigSchema = z
     llm: LlmInvocationOverridesSchema.optional(),
     description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
-    autoAccept: nonNegativeNumber.optional(),
     limit: positiveInt.optional(),
     // #614 — symmetric valence weighting in the eligibility sort. When true,
     // the attention term becomes |valence| MAGNITUDE so BOTH strong positive

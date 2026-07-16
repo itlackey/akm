@@ -44,7 +44,7 @@ const tasksAddCommand = defineJsonCommand({
     command: {
       type: "string",
       description:
-        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
+        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --strategy frequent". Split on whitespace; quote the whole flag value.',
     },
     engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
     model: { type: "string", description: "Model override for prompt targets" },

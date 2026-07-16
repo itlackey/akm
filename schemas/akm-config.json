@@ -3573,10 +3573,6 @@
                 },
                 "additionalProperties": true
               },
-              "autoAccept": {
-                "type": "number",
-                "minimum": 0
-              },
               "limit": {
                 "type": "integer",
                 "exclusiveMinimum": 0
@@ -7296,10 +7292,6 @@
                     },
                     "additionalProperties": true
                   },
-                  "autoAccept": {
-                    "type": "number",
-                    "minimum": 0
-                  },
                   "limit": {
                     "type": "integer",
                     "exclusiveMinimum": 0
@@ -10767,10 +10759,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "autoAccept": {
-          "type": "number",
-          "minimum": 0
         },
         "limit": {
           "type": "integer",

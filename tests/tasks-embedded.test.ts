@@ -18,7 +18,7 @@ import { listEmbeddedTasks } from "../src/tasks/embedded";
 import { parseTaskDocument } from "../src/tasks/parser";
 
 const EXPECTED = [
-  { id: "improve", command: "akm improve --auto-accept safe", schedule: "0 2 * * *", enabled: true },
+  { id: "improve", command: "akm improve", schedule: "0 2 * * *", enabled: true },
   { id: "backup", command: "akm db backups", schedule: "0 3 * * 0", enabled: false },
   { id: "version-check", command: "akm info --check-version", schedule: "0 9 * * 1", enabled: true },
   { id: "index-refresh", command: "akm index", schedule: "0 4 * * *", enabled: true },

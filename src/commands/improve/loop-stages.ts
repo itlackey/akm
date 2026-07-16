@@ -49,7 +49,6 @@ import type {
   ImproveRunContext,
   ImproveScope,
 } from "./improve";
-import { type AutoAcceptGateConfig, makeGateConfig, runAutoAcceptGate } from "./improve-auto-accept";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectResult } from "./reflect";
@@ -109,15 +108,13 @@ export interface ImproveLoopEnv {
   skipDistillDueToRequirePlannedRefs: boolean;
   /** Pending proposals pre-loaded once instead of queried per asset in the loop. */
   pendingProposalRefSet: Set<string>;
-  reflectGateCfg: AutoAcceptGateConfig;
-  distillGateCfg: AutoAcceptGateConfig;
   /** O-1 (#364): remaining wall-clock budget, computed at call time. */
   remainingBudgetMs: () => number;
 }
 
 /**
- * Build the per-run loop environment from the run context: the derived guards,
- * the pending-proposal preload, and the two auto-accept gate configs.
+ * Build the per-run loop environment from the run context: the derived guards
+ * and the pending-proposal preload.
  */
 export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
   const {
@@ -163,26 +160,6 @@ export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
       : [],
   );
 
-  const reflectGateCfg = makeGateConfig("reflect", {
-    globalThreshold: options.autoAccept,
-    dryRun: options.dryRun ?? false,
-    stashDir: primaryStashDir,
-    config: options.config ?? loadConfig(),
-    eventsCtx,
-    targetSelector: options.target,
-    stateDbPath: eventsCtx?.dbPath,
-  });
-
-  const distillGateCfg = makeGateConfig("distill", {
-    globalThreshold: options.autoAccept,
-    dryRun: options.dryRun ?? false,
-    stashDir: primaryStashDir,
-    config: options.config ?? loadConfig(),
-    eventsCtx,
-    targetSelector: options.target,
-    stateDbPath: eventsCtx?.dbPath,
-  });
-
   return {
     scope,
     options,
@@ -200,8 +177,6 @@ export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
     budgetSignal,
     skipDistillDueToRequirePlannedRefs,
     pendingProposalRefSet,
-    reflectGateCfg,
-    distillGateCfg,
     remainingBudgetMs,
   };
 }
@@ -276,8 +251,8 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
 /**
  * Reflect half of one loop iteration: type/profile gates, the reflect call with
  * recent-error avoidPatterns, outcome classification (cooldown / guard-reject /
- * type-refused / noise-gate), plasticity counters, and the reflect auto-accept
- * gate. Records onto the per-ref tally only.
+ * type-refused / noise-gate), and plasticity counters. Records onto the per-ref
+ * tally only.
  */
 async function runLoopReflectPass(
   planned: ImproveEligibleRef,
@@ -415,15 +390,6 @@ async function runLoopReflectPass(
         } catch {
           // best-effort
         }
-      }
-
-      if (reflectResult.ok) {
-        const reflectGr = await runAutoAcceptGate(
-          [{ proposalId: reflectResult.proposal.id, confidence: reflectResult.proposal.confidence }],
-          env.reflectGateCfg,
-        );
-        tally.gateAutoAcceptedCount += reflectGr.promoted.length;
-        tally.gateAutoAcceptFailedCount += reflectGr.failed.length;
       }
     } // end else (reflect type/profile check)
   } else if (!isDistillOnly && planned.ref.endsWith(".derived")) {
@@ -582,8 +548,8 @@ async function runLoopDistillPass(
 
 /**
  * The distill invocation for one ref that passed every gate: the `distillFn`
- * call, the distill auto-accept gate, memory-inference queueing, plasticity
- * counters, and the quality-rejected / proposal-rejected eval-case writes.
+ * call, memory-inference queueing, plasticity counters, and the
+ * quality-rejected / proposal-rejected eval-case writes.
  */
 async function invokeDistillAndRecord(
   planned: ImproveEligibleRef,
@@ -617,14 +583,6 @@ async function invokeDistillAndRecord(
     { engine: resolvedPlan.processes.distill.runner?.engine, process: "distill" },
   );
   tally.actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
-  if (distillResult.outcome === "queued" && distillResult.proposal) {
-    const distillGr = await runAutoAcceptGate(
-      [{ proposalId: distillResult.proposal.id, confidence: distillResult.proposal.confidence }],
-      env.distillGateCfg,
-    );
-    tally.gateAutoAcceptedCount += distillGr.promoted.length;
-    tally.gateAutoAcceptFailedCount += distillGr.failed.length;
-  }
   if (parsedPlannedRef.type === "memory") {
     const promotedToKnowledge = distillResult.outcome === "queued" && distillResult.proposalKind === "knowledge";
     if (!promotedToKnowledge) tally.memoryRefsForInference.push(planned.ref);
@@ -770,7 +728,11 @@ export async function runImprovePostLoopStage(args: {
   consolidationRan: boolean;
   /** R5: this run's advisory merge-information-floor violation count (consolidate pass). */
   consolidationMergeFloorViolations?: number;
-  /** R5: auto-accepted proposal count so far this run (prep + loop gates) — the churn-volume signal. */
+  /**
+   * R5: accepted proposal count so far this run — the churn-volume signal.
+   * Always 0 since the 0.9.0 confidence-gate deletion; the field stays so the
+   * collapse detector's envelope shape is unchanged.
+   */
   acceptedActions?: number;
 }): Promise<ImprovePostLoopResult> {
   const {
@@ -859,8 +821,8 @@ export async function runImprovePostLoopStage(args: {
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
     orphansPurged: maintenanceResult.orphansPurged,
     proposalsExpired: maintenanceResult.proposalsExpired,
-    // Consolidation's auto-accept gate counts now accrue in the preparation
-    // stage (#551); post-loop no longer runs an auto-accept gate of its own.
+    // Live result-envelope fields (improve-result allow-list). Always 0 since
+    // the 0.9.0 confidence-gate deletion; kept so the output shape is stable.
     gateAutoAcceptedCount: 0,
     gateAutoAcceptFailedCount: 0,
   };

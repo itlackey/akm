@@ -112,7 +112,7 @@ export const improveCommand = defineCommand({
     "auto-accept": {
       type: "string",
       description:
-        "Auto-accept proposals at or above this confidence threshold (0-100). Default: disabled. Pass a value 0-100 to enable. 'safe' is an alias for 90. Pass 'false' to be explicit.",
+        "DEPRECATED and ignored (the 0.9.0 confidence gate was removed; proposals queue for review via `akm proposal` / the drain engine). Accepted for one minor so existing crontabs keep working; removed in 0.10.",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {
@@ -176,8 +176,8 @@ export const improveCommand = defineCommand({
         );
       }
       const jsonToStdout = args["json-to-stdout"];
-      const autoAcceptRaw = args["auto-accept"];
-      const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
+      // Deprecated (0.9.0): warns when present, has no effect. Removed in 0.10.
+      parseAutoAcceptFlag(args["auto-accept"]);
       const targetArg = getStringArg(args, "target");
       const taskArg = getStringArg(args, "task");
       const dryRun = args["dry-run"];
@@ -279,7 +279,6 @@ export const improveCommand = defineCommand({
                 resolvedPlan,
                 target: targetArg,
                 writeTarget,
-                autoAccept,
                 ...(runId !== undefined ? { runId } : {}),
                 ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
                 ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -290,7 +289,6 @@ export const improveCommand = defineCommand({
                 consolidateOptions: {
                   target: targetArg,
                   dryRun,
-                  autoAccept,
                   task: taskArg,
                   ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
                 },

@@ -11,7 +11,10 @@ describe("RESPONSE_CONTRACT_JSON — explicit confidence elicitation", () => {
     const { prompt } = buildReflectPrompt({ ref: "lesson:demo", type: "lesson", name: "demo" });
     expect(prompt).toMatch(/confidence/i);
     expect(prompt).toMatch(/0\.\.1|0\s*[–-]\s*1|\[0,\s*1\]|0\.0-1\.0|0\.0–1\.0/);
-    expect(prompt).toMatch(/auto-accept/i);
+    // 0.9.0: the confidence gate is gone — prompts must NOT teach the model
+    // that its score drives an automated accept path.
+    expect(prompt).not.toMatch(/auto-accept/i);
+    expect(prompt).toMatch(/reviewer/i);
   });
 
   test("buildProposePrompt asks for a self-rated confidence score", () => {

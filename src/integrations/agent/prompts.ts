@@ -43,10 +43,10 @@ export interface AgentProposalPayload {
   frontmatter?: Record<string, unknown>;
   /**
    * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
-   * 6A). When provided by the agent (or LLM via structured output) and at or
-   * above the active threshold, `akm improve` may auto-accept the proposal
-   * without reviewer intervention. Out-of-range / non-finite values are
-   * clamped or dropped downstream in `createProposal`.
+   * 6A). Persisted on the proposal for reviewers and the triage judge — it no
+   * longer drives any automated accept path (the improve confidence gate died
+   * in 0.9.0). Out-of-range / non-finite values are clamped or dropped
+   * downstream in `createProposal`.
    */
   confidence?: number;
 }
@@ -100,7 +100,7 @@ const RESPONSE_CONTRACT_JSON = [
   "  • 0.70–0.89 — clear improvement, but a reviewer might reasonably prefer different framing or scope.",
   "  • 0.50–0.69 — marginal / judgment call; might help, might not be worth the churn.",
   "  • Below 0.50 — you are not confident this improves on the source. Prefer returning the source body roughly unchanged with a low score over inventing changes.",
-  "Auto-accept gates on confidence ≥ 0.80 by default. Overclaiming ships low-quality changes; underclaiming leaves good ones stuck in queue. Be honest.",
+  "Reviewers and the triage judge read this score when adjudicating the proposal queue. Overclaiming erodes trust in your proposals; underclaiming buries good ones. Be honest.",
 ].join("\n");
 
 /**
@@ -119,7 +119,7 @@ function fileWriteContract(draftFilePath: string): string {
     "  • 0.70–0.89 — clear improvement, but a reviewer might prefer different framing.",
     "  • 0.50–0.69 — marginal / judgment call.",
     "  • Below 0.50 — not confident; prefer not writing changes at all.",
-    "Auto-accept gates on confidence ≥ 0.80. Overclaim → low-quality changes land; underclaim → good changes stuck in queue.",
+    "Reviewers and the triage judge read this score during adjudication. Overclaim → trust erodes; underclaim → good changes buried.",
   ].join("\n");
 }
 
@@ -127,7 +127,7 @@ function fileWriteContract(draftFilePath: string): string {
  * Extract a confidence score from a `DRAFT_WRITTEN confidence=<n>` line emitted
  * by an agent following {@link fileWriteContract}. Tolerates trailing prose,
  * surrounding log lines, and missing/invalid confidence (returns `undefined`
- * so callers can keep the proposal but skip auto-accept).
+ * so callers can keep the proposal without a score).
  *
  * Matched forms (case-insensitive, anywhere in stdout):
  *   - `DRAFT_WRITTEN confidence=0.85`

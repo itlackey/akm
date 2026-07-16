@@ -92,3 +92,96 @@ prompt re-gates on a new explicit assumeYes option; (3) --auto-accept
 becomes warn-and-ignore for one minor with shipped templates updated,
 hard removal in 0.10. WI-6.1 is unblocked and no longer
 order-coupled to WI-6.4.
+
+## WI-6.1 — confidence-gate deletion (landed with this entry)
+
+BEHAVIOR CHANGE (live, plan §4.5): the `akm improve` confidence gate is
+deleted. Configs/profiles that set `autoAccept` and invocations passing
+`--auto-accept` LOSE auto-accept behavior entirely — reflect/distill/
+extract/consolidate proposals now always queue as pending for adjudication
+(`akm proposal`, drain engine), regardless of confidence. No replacement
+automated accept path exists in improve.
+
+Deletions: improve-auto-accept.ts (whole module, 372 lines — gate, config
+builder, extract-confidence resolver); five gate call sites + two gateCfg
+constructions + the extract backlog-drain gate (loop-stages.ts,
+preparation.ts); `AkmImproveOptions.autoAccept` + the improve.ts profile
+merge; `ImproveProfileConfigSchema.autoAccept` + schema regen (−12 lines in
+schemas/akm-config.json); getPhaseThreshold/persistPhaseThreshold
+(migration 012's readers — the CREATE TABLE and its migration block are
+byte-untouched, append-only); listProposalGateDecisions (#612 orphan).
+Retired suite: improve-auto-accept.test.ts (the ledgered order-dependent
+flake retires with it).
+
+Decision 1 (drain-owned retention — ledgered deviation from §4.5's
+DELETE-row letter): recordGateDecision, ProposalGateDecision(Outcome),
+Proposal.gateDecision, and every output renderer/shape key SURVIVE,
+re-documented as the drain engine's deterministic audit machinery; the
+improve-gate reason tokens are doc'd as historical-rows-only. drain.ts
+logic byte-identical (comment re-scoping only; verified by adversarial
+diff review). proposal-gate-decision.test.ts rewritten drain-scoped (only
+the deleted gate's describe block removed; drain + rendering test bodies
+byte-identical). proposal-stuck-repair.test.ts untouched.
+
+Decision 2 (confirm gate): consolidate options lose `autoAccept`, gain
+`assumeYes?: boolean`. The HTTP-path confirm prompt fires on interactive
+TTY when `assumeYes` is not true; the non-interactive default-no branch is
+byte-identical. SECOND BEHAVIOR NOTE: improve's consolidation pass threads
+`assumeYes: consolidateOptions?.assumeYes ?? true` — the pipeline is an
+automated batch flow and must keep APPLYING consolidation plans (shipped
+tasks previously got the prompt-bypass via `--auto-accept safe`; without
+this thread, every scheduled run would burn the full LLM planning pass and
+abort pre-apply, and consolidate's merge/delete ops are direct FS writes
+with no drain path). Corollary: a bare interactive `akm improve` on the
+HTTP path now applies the consolidate plan instead of prompting — the
+prompt is owned by standalone/programmatic consolidate invocations.
+goldens-consolidate-journal.test.ts repointed its three bypass sites
+autoAccept:100 → assumeYes:true; all three re-baseline-@6 consolidate
+goldens stayed BYTE-green (the knob never reached pinned output).
+
+Decision 3 (--auto-accept warn-and-ignore for one minor):
+parseAutoAcceptFlag warns-and-ignores (never throws — installed crontabs
+embed the flag; a hard error would fail scheduled runs invisibly). The
+five DEFAULT_IMPROVE_TASKS commands + assets/tasks/core/improve.yml drop
+the flag; tasks.ts STALE_GENERATED_COMMANDS keeps its old-spelling match
+keys, replacements drop the flag; help-improve.md + the tasks-cli example
+updated. cli/auto-accept.test.ts rewritten to pin the deprecation contract
+(absent → silent; any present value → exactly one warning, never a throw).
+Hard removal in 0.10 (roadmap note lands with Chunk 10's docs sweep).
+Known residue: tasks already generated with the `--strategy X
+--auto-accept safe` spelling match no upgrade-map key and will warn on
+every run until repaired by hand or 0.10 — accepted.
+
+Kept per grounding finding 8: gateAutoAcceptedCount/
+gateAutoAcceptFailedCount envelope fields (live output allow-list) now
+structurally 0; health `improve.autoAccept.*` window keys + improve-metrics
+reads stay (frozen cli/b-health-window-compare-md.json compatible);
+LoopRefTally counter fields stay. Replacement contract test (§15 rule 1
+pairing): improve-memory-misc's "high-confidence reflect proposal stays
+pending" (0.95 confidence → pending, no gateDecision stamp, no autoAccept
+promoted event, envelope counts 0).
+
+Live LLM-facing strings fixed (adversarial-review finding): the reflect
+JSON-schema `confidence` description (reflect.ts) and the two response
+contracts (integrations/agent/prompts.ts) no longer teach the model that
+its score drives an automated accept path — rewritten to
+reviewer/triage-judge framing; prompts-confidence.test.ts now pins the
+ABSENCE of auto-accept language. Comment-only gate references in
+consolidate/types.ts, distill.ts, extract.ts, outcome-loop.ts, and
+tasks/parser.ts remain for Chunk 10's shipped-assets sweep.
+
+Pre-existing red fixed in passing: journal/proposal-skip-shapes.json
+(landed e5ce6b45) failed biome's JSON formatter; golden bytes are
+machine-captured (stableStringify) and sha-pinned when frozen, so
+tests/fixtures/goldens/**/*.json is now excluded in biome.json rather than
+reformatting a suite-compared fixture.
+
+Gates: full lint green (goldens presence 50 assets / 41 frozen
+hash-verified; schema --check green); architecture ratchets 28/28
+UN-PIPED; frozen outcome oracles byte-green (proposal-txn, mv-txn); scoped
+suites green — improve unit+integration 464/0 (41 files), consolidate+cli+
+tasks+health 323/0, drain/health-accounting/CLI-goldens 70/0, llm/agent/
+integrations 409/0, affected fast suites 66/0, consolidate-journal goldens
+11/0, improve-memory-misc 21/0. bunx tsc --noEmit clean. Adversarial diff
+review: 0 blockers; both concerns (assumeYes threading, LLM-facing gate
+strings) resolved in this commit. Net: 31 files, +245 / −1537.

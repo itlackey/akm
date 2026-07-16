@@ -15,7 +15,7 @@
     }
   },
   "files": {
-    "includes": ["src/**", "tests/**", "!src/assets/templates/html"]
+    "includes": ["src/**", "tests/**", "!src/assets/templates/html", "!tests/fixtures/goldens/**/*.json"]
   },
   "overrides": [
     {

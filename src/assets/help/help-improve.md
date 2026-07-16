@@ -31,23 +31,18 @@ Options:
   --dry-run            Show planned actions without generating proposals
   --target <source>    Override the write target for accepted proposals
   --auto-accept[=<value>]
-                        Confidence threshold (0-100) for auto-accepting proposals.
-                        Default when flag is absent: ON at threshold 90 (all sub-processes).
-                        --auto-accept            same as --auto-accept=90
-                        --auto-accept=<N>        integer 0-100; accept proposals at or above N
-                        --auto-accept=safe       alias for 90 (back-compat, not deprecated)
-                        --auto-accept=false      disable auto-accept for all sub-processes;
-                                                 reflect/distill proposals go to the queue and
-                                                 consolidation will prompt interactively on HTTP paths
-                        Note: until proposals carry real confidence scores, any non-`false`
-                        value behaves like the legacy "safe" mode (whole-batch auto-accept).
+                        DEPRECATED (0.9.0) and ignored. The confidence gate was
+                        removed; proposals always queue for review — adjudicate
+                        with `akm proposal` or the drain engine. The flag still
+                        parses (with a warning) so existing scheduled tasks keep
+                        working; it will be removed in 0.10.
   --strategy <name>    Improve strategy to apply. Built-ins: default, quick,
                         thorough, memory-focus, frequent, catchup, consolidate,
                         graph-refresh, reflect-distill,
                          proactive-maintenance. User-defined
                          strategies under `improve.strategies.<name>` in config are
                          also accepted. Strategies bundle process gating, type
-                        filters, and run-level autoAccept/limit defaults. Falls
+                        filters, and run-level limit defaults. Falls
                          back to `defaults.improveStrategy` in config, then to "default".
                         An unknown name is a hard error listing the valid names
                         (no silent fallback to default).

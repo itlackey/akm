@@ -112,13 +112,13 @@ const HEAD_SHA = "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1";
 // and the stubbed chatCompletion transport is actually reachable) — mirrors
 // tests/commands/consolidate/consolidate-judged-cache.test.ts's CONFIG.
 //
-// Any scenario below whose stub returns >=1 op MUST also pass `autoAccept` to
-// akmConsolidate(): a truthy llmConfig makes `isHttpPath` true (:1415,
-// `!!llmConfig`), and with `allOps.length > 0` and `autoAccept === undefined`
-// akmConsolidateInner (:1998) calls the REAL interactive `promptConfirm` —
-// this hangs/flakes under bun:test's non-tty stdin (not a `src/` bug this
-// chunk may touch; existing behavior). `autoAccept` bypasses that branch
-// entirely, matching what a real auto-accepting CLI/programmatic caller does.
+// Any scenario below whose stub returns >=1 op MUST also pass `assumeYes` to
+// akmConsolidate(): a truthy llmConfig makes `isHttpPath` true, and with
+// `allOps.length > 0` and `assumeYes` unset akmConsolidateInner reaches the
+// REAL interactive `promptConfirm` path — this hangs/flakes under bun:test's
+// non-tty stdin (not a `src/` bug this chunk may touch; existing behavior).
+// `assumeYes: true` bypasses that branch entirely, matching what a real
+// programmatic batch caller does (replaced the deleted autoAccept:100 bypass).
 const CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
@@ -213,7 +213,7 @@ async function captureFullRunLifecycle(): Promise<Record<string, unknown>> {
 
     let result: Awaited<ReturnType<typeof akmConsolidate>>;
     try {
-      result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, autoAccept: 100 });
+      result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, assumeYes: true });
     } finally {
       writeSpy.mockRestore();
       copySpy.mockRestore();
@@ -283,7 +283,7 @@ async function captureAllHotZeroLlm(): Promise<Record<string, unknown>> {
       return JSON.stringify({ operations: [] });
     });
 
-    const result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, autoAccept: 100 });
+    const result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, assumeYes: true });
 
     return {
       chatCompletionCallCount: chatCalls,
@@ -447,7 +447,7 @@ async function captureCompletedSilentLeak(): Promise<Record<string, unknown>> {
       JSON.stringify({ operations: [{ op: "delete", ref, reason: "redundant" }] }),
     );
 
-    const result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, autoAccept: 100 });
+    const result = await akmConsolidate({ stashDir: root, target: root, config: CONFIG, assumeYes: true });
 
     return {
       ok: result.ok,

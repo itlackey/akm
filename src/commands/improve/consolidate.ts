@@ -264,10 +264,13 @@ export interface AkmConsolidateOptions {
   writeTarget?: ResolvedWriteTarget;
   dryRun?: boolean; // generate AI plan but skip all writes
   /**
-   * Confidence threshold (0-100). Undefined disables auto-accept and enables
-   * interactive confirmation on the HTTP consolidation path.
+   * Skip the interactive confirm prompt on the HTTP consolidation path and
+   * apply the plan directly. Unset/false: the prompt fires on an interactive
+   * TTY; non-interactive contexts (CI, cron, piped stdin, AKM_NON_INTERACTIVE)
+   * default to a non-destructive "no". Replaces the deleted confidence-gate
+   * `autoAccept` knob's prompt-bypass role (0.9.0).
    */
-  autoAccept?: number;
+  assumeYes?: boolean;
   task?: string; // extra guidance appended to the system prompt
   stashDir?: string;
   config?: AkmConfig;
@@ -1761,15 +1764,13 @@ async function akmConsolidateInner(
 
   warn(`[consolidate] plan: ${allOps.length} operation(s)`);
 
-  // -- HTTP path: warn about quality and confirm unless auto-accepted --------
+  // -- HTTP path: warn about quality and confirm unless assumeYes ------------
   if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
-    // Per-proposal confidence gating is handled by the caller (improve.ts)
-    // via runAutoAcceptGate after this function returns. The gate reads
-    // proposal.confidence (forwarded from op.confidence above) and applies
-    // a minimumThreshold floor of 95 for consolidate's destructive ops.
-    // Here we only gate the interactive-confirm path for manual/HTTP invocations.
-    if (opts.autoAccept === undefined && allOps.length > 0) {
+    // Gate the interactive-confirm path for manual/HTTP invocations. Callers
+    // that must apply without a prompt (goldens, programmatic batch runs)
+    // pass `assumeYes: true`.
+    if (opts.assumeYes !== true && allOps.length > 0) {
       const n = allOps.length;
       // Non-interactive contexts (CI / test runners / piped stdin) must not
       // block on an unanswerable prompt. Default to a non-destructive "no"
