@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
 import { daysToMs } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
@@ -23,16 +22,13 @@ import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
-import { type ResolvedWriteTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
-import { type EnsureIndexOptions, ensureIndex } from "../../indexer/ensure-index";
-import type { GraphExtractionResult, runGraphExtractionPass } from "../../indexer/graph/graph-extraction";
+import { ensureIndex } from "../../indexer/ensure-index";
 import { akmIndex } from "../../indexer/indexer";
-import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
-import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
 import {
@@ -43,9 +39,8 @@ import {
 } from "../../sources/providers/git";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
-import type { DeadUrl } from "../url-checker";
-import type { AkmConsolidateOptions, ConsolidateResult } from "./consolidate";
-import { type AkmDistillResult, akmDistill } from "./distill";
+import type { ConsolidateResult } from "./consolidate";
+import { akmDistill } from "./distill";
 // Eligibility / candidate-selection predicates live in ./eligibility.
 import {
   buildLatestProposalTsMap,
@@ -56,119 +51,41 @@ import {
   shouldAnalyzeMemoryCleanup,
 } from "./eligibility";
 import { countEvalCases } from "./eval-cases";
-import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
+// Shared improve option/result types live in the dependency-leaf
+// ./improve-run-types (severs the improve ↔ loop-stages ↔ preparation import
+// cycle, SCC #8 — anchors.md D.3). Re-exported below for external importers.
+import type {
+  AkmImproveOptions,
+  ImprovePostLoopResult,
+  ImprovePreparationResult,
+  ImproveScope,
+} from "./improve-run-types";
 import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 import { improveLockPath, MIN_IMPROVE_LOCK_STALE_MS, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 // The cycle loop / post-loop / maintenance stages live in ./loop-stages.
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
 import { detectAndWriteContradictions } from "./memory/memory-contradiction-detect";
-import { analyzeMemoryCleanup, type applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
+import { analyzeMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 // The pre-loop preparation pipeline lives in ./preparation.
 import { runImprovePreparationStage } from "./preparation";
 import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
-import { type AkmReflectResult, akmReflect } from "./reflect";
+import { akmReflect } from "./reflect";
+import { createRunContext, type RunContext } from "./run-context";
 import { errMessage } from "./shared";
 import { shouldReadLegacyBareImproveState } from "./source-identity";
 
+export type {
+  AkmImproveOptions,
+  ConsolidationPassResult,
+  ImproveLoopResult,
+  ImproveLoopState,
+  ImproveMaintenanceResult,
+  ImprovePostLoopResult,
+  ImprovePreparationResult,
+  ImproveScope,
+} from "./improve-run-types";
 // Re-exported from ./loop-stages for test importers (improve-db-locking).
 export { runImproveMaintenancePasses } from "./loop-stages";
-
-export interface AkmImproveOptions {
-  scope?: string;
-  task?: string;
-  dryRun?: boolean;
-  target?: string;
-  /** Write target resolved once at the improve invocation boundary. */
-  writeTarget?: ResolvedWriteTarget;
-  /** Stable source identity used for durable source-qualified improve state. */
-  sourceName?: string;
-  stashDir?: string;
-  config?: AkmConfig;
-  /** Internal cutover flag: permit bare durable-state reads for the historical local stash only. */
-  legacyBareState?: boolean;
-  /** Invocation plan preflighted by the public CLI before any side effects. */
-  resolvedPlan?: ResolvedImprovePlan;
-  /**
-   * Run identifier minted by the CLI (`buildImproveRunId()`). Threaded onto the
-   * result so health/run records and sync-commit templates (`{runId}`) can read
-   * it. Undefined for programmatic callers that do not mint one.
-   */
-  runId?: string;
-  /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
-  timeoutMs?: number;
-  limit?: number;
-  /**
-   * When another improve run already holds the lock, skip the whole run
-   * gracefully instead of failing with an "already running" config error.
-   * Intended for scheduled runs that should not overlap. Default: false.
-   */
-  skipIfLocked?: boolean;
-  /** Named improve strategy from improve.strategies or built-in strategy names. */
-  strategy?: string;
-  /** Test seam: override collectEligibleRefs. */
-  collectEligibleRefsFn?: typeof collectEligibleRefs;
-  /** Test seam: override runImprovePreparationStage. */
-  runImprovePreparationStageFn?: typeof runImprovePreparationStage;
-  /** Test seam: override runImproveLoopStage. */
-  runImproveLoopStageFn?: typeof runImproveLoopStage;
-  /** Test seam: override runImprovePostLoopStage. */
-  runImprovePostLoopStageFn?: typeof runImprovePostLoopStage;
-  consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
-  /** Number of eligible memory assets above which consolidation is forced even if the memory_consolidation feature flag is not set. Defaults to 100. */
-  memoryVolumeConsolidationThreshold?: number;
-  reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
-  distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
-  memoryInferenceFn?: typeof runMemoryInferencePass;
-  graphExtractionFn?: typeof runGraphExtractionPass;
-  /** Injectable contradiction-detection seam for invocation-plan boundary tests. */
-  contradictionDetectionFn?: typeof detectAndWriteContradictions;
-  /**
-   * #554 minNewSessions gate: injectable counter for the number of NEW (unseen,
-   * in-window) extract candidate sessions. Defaults to the real
-   * {@link countNewExtractCandidates}. Tests inject a deterministic count to
-   * exercise the below-threshold skip without touching real session logs.
-   */
-  extractCandidateCountFn?: typeof countNewExtractCandidates;
-  /**
-   * Override the session-log harness registry used by the extract phase (test
-   * seam). When set, it is forwarded to both the #554 candidate counter and the
-   * `akmExtract` calls so the same harness set drives the gate and the pass.
-   */
-  extractHarnesses?: SessionLogHarness[];
-  ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
-  reindexFn?: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
-  /** Attempt LLM-driven repair after the unconditional structural validation sweep. Default true. */
-  repairValidationFailures?: boolean;
-  /**
-   * When true, only assets with recent feedback signals are eligible.
-   * Disables the proactive/high-salience fallback lanes for type/all scope runs.
-   */
-  requireFeedbackSignal?: boolean;
-  /**
-   * Named process key forwarded to `akmReflect` so the improve loop picks up
-   * per-process agent config (e.g. `agent.processes["reflect"]`).
-   * Defaults to `"reflect"`. Set to another process name to route improve's
-   * reflect calls through a different profile.
-   */
-  agentProcess?: string;
-  /**
-   * Phase 4: injectable triage drain seam for tests. When omitted, the real
-   * `drainProposals` runs as the improve pre-pass (gated on the `triage`
-   * process being enabled, `scope.mode !== "ref"`, and `!options.dryRun`).
-   */
-  drainProposalsFn?: typeof drainProposals;
-  /**
-   * Injectable end-of-run stash-sync seam for tests. When omitted, the real
-   * `saveGitStash` runs (gated on a git-backed primary stash + sync enabled).
-   */
-  saveGitStashFn?: typeof saveGitStash;
-  /**
-   * End-of-run auto-sync override (from CLI `--no-sync`/`--no-push`). Only the
-   * keys the caller passed are set; CLI overrides the resolved profile `sync`
-   * block, which in turn overrides the built-in default.
-   */
-  sync?: { enabled?: boolean; push?: boolean };
-}
 
 export type {
   AkmImproveResult,
@@ -177,104 +94,6 @@ export type {
   ImproveEligibleRef,
   ImproveMemoryCleanupResult,
 };
-
-export type ImproveScope = ReturnType<typeof resolveImproveScope>;
-
-export interface ImprovePreparationResult {
-  actions: ImproveActionResult[];
-  cleanupWarnings: string[];
-  appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
-  memoryIndexHealth?: { lineCount: number; overBudget: boolean };
-  /** Session-extract pass results (one per available harness), when enabled. */
-  extract?: AkmExtractResult[];
-  /**
-   * Genuinely processable refs in priority order: post-validation, post-cooldown
-   * (fully reflect+distill cooled refs are excluded and their synthetic skip
-   * actions/events are emitted during preparation), post-signal-filter, and
-   * sorted by combined utility + feedback-negativity score. distillOnly refs
-   * participate in this set so --limit selects by score. Callers consuming
-   * `plannedRefs` in the result envelope and post-loop maintenance use this
-   * as the canonical "what got worked on this run" view.
-   */
-  actionableRefs: ImproveEligibleRef[];
-  signalBearingSet: Set<string>;
-  validationFailures: Array<{ ref: string; reason: string }>;
-  schemaRepairs: Array<{
-    ref: string;
-    reason: string;
-    outcome: "queued" | "written" | "skipped" | "error";
-    proposalId?: string;
-    error?: string;
-  }>;
-  lintSummary?: { fixed: number; flagged: number };
-  loopRefs: ImproveEligibleRef[];
-  distillCooledRefs: Set<string>;
-  /** Refs on reflect cooldown but eligible for distill-only processing (Bug D2). */
-  distillOnlyRefs: ImproveEligibleRef[];
-  coverageGaps: string[];
-  /** Per-ref utility scores (R-2 / #389): used for self-consistency threshold check. */
-  utilityMap: Map<string, number>;
-  /**
-   * Per-originator rolling error windows (O-5 / #378).
-   *
-   * Errors from one sub-pass must NOT be injected into unrelated sub-passes as
-   * avoidPatterns — that is the cross-task contamination failure mode Reflexion
-   * (arXiv:2303.11366) warns against. Each originator key ("schema-repair",
-   * "reflect", "distill") maps to its own rolling window of last-N errors.
-   */
-  recentErrors: Record<string, string[]>;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
-  /**
-   * Consolidation result (#551). Consolidation now runs in the preparation
-   * stage BEFORE the session-extract pass, so it only ever judges memories
-   * promoted by PRIOR runs — files written by extract promotions in the
-   * current run do not exist yet when the pool-delta gate is evaluated.
-   */
-  consolidation: ConsolidateResult;
-  /** Whether the consolidation pass actually ran (vs profile-disabled / pool-delta skip). Drives graph-extraction reindex. */
-  consolidationRan: boolean;
-  /**
-   * Layer 2 proactive-maintenance selector outcome, when the process ran.
-   * Undefined when the process is disabled or the run is ref-scoped.
-   */
-  proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
-}
-
-export interface ImproveLoopResult {
-  reflectsWithErrorContext: number;
-  memoryRefsForInference: Set<string>;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
-}
-
-export interface ImprovePostLoopResult {
-  allWarnings: string[];
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
-  deadUrls?: DeadUrl[];
-  memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
-  maintenanceActions?: ImproveActionResult[];
-  memoryInferenceDurationMs: number;
-  graphExtractionDurationMs: number;
-  orphansPurged?: number;
-  /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
-  proposalsExpired?: number;
-  /** R5: the collapse/churn detector's cycle snapshot, when this run qualified. */
-  cycleMetrics?: import("../../storage/repositories/canaries-repository").CycleMetricsRow;
-}
-
-export interface ImproveMaintenanceResult {
-  memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
-  actions?: ImproveActionResult[];
-  memoryInferenceDurationMs: number;
-  graphExtractionDurationMs: number;
-  orphansPurged?: number;
-  /** Phase 6B (Advantage D6b): pending proposals archived as expired this run. */
-  proposalsExpired?: number;
-}
 
 export function renderSyncCommitMessage(
   template: string,
@@ -468,6 +287,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // across runs. Wrapping is best-effort end to end — see usage-telemetry.ts.
     disposeLlmUsageSink = installLlmUsagePersistence(eventsCtx);
 
+    // WI-9.10: construct the run's RunContext here — the first point after
+    // run-setup where config/stashDir/eventsCtx/proposalsCtx/sourceRun/dryRun
+    // are all in hand. See buildImproveRunContext for exactly which
+    // already-resolved values back each field.
+    const ctx = buildImproveRunContext(setup, eventsCtx);
+
     const seq = await runImproveStageSequence({
       run: setup,
       strategyFilteredRefs,
@@ -476,6 +301,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memorySummary,
       preEnsureCleanupWarnings,
       eventsCtx,
+      ctx,
     });
 
     const result = finalizeImproveResult({
@@ -679,6 +505,48 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
 
 /** The run-setup record every downstream unit receives (inferred shape). */
 type ImproveRunSetup = ReturnType<typeof resolveImproveRunSetup>;
+
+/**
+ * WI-9.10: build the run's {@link RunContext} purely from values
+ * `resolveImproveRunSetup` and the long-lived state.db open already
+ * resolved — no second config load, no new db handle. Called once, right
+ * after `eventsCtx` is resolved (the last of {config, stashDir, eventsCtx,
+ * proposalsCtx, sourceRun, dryRun} to become available in `akmImprove`).
+ */
+function buildImproveRunContext(run: ImproveRunSetup, eventsCtx: EventsContext): RunContext {
+  return createRunContext({
+    config: run._earlyConfig,
+    // primaryStashDir can fail to resolve (rare); "." mirrors the existing
+    // lockBaseDir fallback in resolveImproveRunSetup for the same case. This
+    // is a BEST-EFFORT value for the required RunContext field only — the
+    // loop stage reads `ImproveLoopState.primaryStashDir` (the honest
+    // optional), so its `if (primaryStashDir)` guards still skip on the
+    // unresolvable path; no RunContext consumer reads `ctx.stashDir` there.
+    stashDir: run.primaryStashDir ?? run.options.stashDir ?? ".",
+    eventsCtx,
+    // ProposalsContext threads only a dbPath seam (D14: no db handle is
+    // threaded in), mirroring eventsCtx's own dbPath-only fallback shape.
+    // Not yet wired into any proposal call site this stage — verb-level
+    // RunContext adoption (reflect/distill/extract/consolidate) is later.
+    proposalsCtx: { dbPath: run.resolvedStateDbPath },
+    // Representative connection for this run: reflect is the loop's primary
+    // LLM-driving process. Mirrors the existing
+    // `runner ? materializeLlmRunnerConnection(runner) : null` pattern
+    // already used for the consolidate process elsewhere (contradiction pass).
+    getLlmConfig: () => {
+      const runner = run.resolvedPlan.processes.reflect.runner;
+      return runner ? materializeLlmRunnerConnection(runner) : null;
+    },
+    sourceRun: run.options.runId ?? `improve-${run.startMs}`,
+    // Always false here: callers only reach this point past the dry-run
+    // early return in akmImprove.
+    dryRun: run.options.dryRun ?? false,
+    // Same AbortSignal instance armBudgetWatchdog stamped a live
+    // `remainingBudgetMs` getter onto (#616) — identity preserved so
+    // `ctx.signal.remainingBudgetMs` resolves correctly for every consumer.
+    signal: run.budgetAbortController.signal,
+  });
+}
 
 /** The catch-path improve_failed audit event (D3), redacted. */
 function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: EventsContext): void {
@@ -1049,6 +917,76 @@ export function refilterProactiveLoopRefs(
 }
 
 /**
+ * Post-loop stage, or a no-op skip when the shared wall-clock budget is
+ * already exhausted. The result still finalizes normally on skip, so
+ * scheduled budget exhaustion exits 0 (extracted verbatim from
+ * `runImproveStageSequence` — fn-size decomposition, no logic change).
+ */
+async function runPostLoopStageOrSkip(args: {
+  budgetAbortController: AbortController;
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  preparation: ImprovePreparationResult;
+  memoryRefsForInference: Set<string>;
+  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
+  eventsCtx: EventsContext;
+  improveProfile: import("../../core/config/config").ImproveProfileConfig;
+  resolvedPlan: ResolvedImprovePlan;
+  loopGateCountThisCycle: number;
+  runImprovePostLoopStageImpl: typeof runImprovePostLoopStage;
+}): Promise<ImprovePostLoopResult> {
+  const {
+    budgetAbortController,
+    scope,
+    options,
+    primaryStashDir,
+    preparation,
+    memoryRefsForInference,
+    reindexFn,
+    eventsCtx,
+    improveProfile,
+    resolvedPlan,
+    loopGateCountThisCycle,
+    runImprovePostLoopStageImpl,
+  } = args;
+  // Do not start new post-loop work after the shared wall-clock budget. The
+  // result still finalizes normally, so scheduled budget exhaustion exits 0.
+  const emptyPostLoopResult: ImprovePostLoopResult = {
+    allWarnings: [],
+    gateAutoAcceptedCount: 0,
+    gateAutoAcceptFailedCount: 0,
+    memoryInferenceDurationMs: 0,
+    graphExtractionDurationMs: 0,
+  };
+  const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
+  if (budgetAbortController.signal.aborted || (remainingBudget !== undefined && remainingBudget <= 0)) {
+    info("[improve] post-loop maintenance skipped (wall-clock budget exhausted)");
+    return emptyPostLoopResult;
+  }
+  return runImprovePostLoopStageImpl({
+    scope,
+    options,
+    primaryStashDir,
+    actionableRefs: preparation.actionableRefs,
+    appliedCleanup: preparation.appliedCleanup,
+    cleanupWarnings: preparation.cleanupWarnings,
+    memoryRefsForInference,
+    reindexFn,
+    eventsCtx,
+    budgetSignal: budgetAbortController.signal,
+    improveProfile,
+    resolvedPlan,
+    consolidationRan: preparation.consolidationRan,
+    // R5: floor violations from this run's consolidate pass + the accepted
+    // volume so far (always 0 since the 0.9.0 confidence-gate deletion) for
+    // churn detection.
+    consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
+    acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
+  });
+}
+
+/**
  * Stage-sequencing: the strategy-filtered audit event, then the single
  * prep → loop → post-loop pass via the #616 seams (D12). Returns every
  * accumulator the result assembly reads — the old closure-scoped `let`s.
@@ -1061,9 +999,18 @@ async function runImproveStageSequence(args: {
   memorySummary: { eligible: number; derived: number };
   preEnsureCleanupWarnings: string[];
   eventsCtx: EventsContext;
+  /** WI-9.10: the run's RunContext, threaded only to the loop stage so far. */
+  ctx: RunContext;
 }) {
-  const { strategyFilteredRefs, plannedRefs, memoryCleanupPlan, memorySummary, preEnsureCleanupWarnings, eventsCtx } =
-    args;
+  const {
+    strategyFilteredRefs,
+    plannedRefs,
+    memoryCleanupPlan,
+    memorySummary,
+    preEnsureCleanupWarnings,
+    eventsCtx,
+    ctx,
+  } = args;
   const {
     scope,
     options,
@@ -1153,9 +1100,10 @@ async function runImproveStageSequence(args: {
       const postLockLoopRefs = refilterProactiveLoopRefs(preparation.loopRefs, options, improveProfile);
 
       return runImproveLoopStageImpl({
+        ctx,
+        primaryStashDir,
         scope,
         options,
-        primaryStashDir,
         reflectFn,
         distillFn,
         loopRefs: postLockLoopRefs,
@@ -1168,10 +1116,8 @@ async function runImproveStageSequence(args: {
         utilityMap: preparation.utilityMap,
         startMs,
         budgetMs,
-        eventsCtx,
         improveProfile,
         resolvedPlan,
-        budgetSignal: budgetAbortController.signal,
       });
     };
     const loopResult = await runLoop();
@@ -1185,42 +1131,20 @@ async function runImproveStageSequence(args: {
     // its result and run-flag are read from `preparation`, not the post-loop.
     consolidation = preparation.consolidation;
 
-    // Do not start new post-loop work after the shared wall-clock budget. The
-    // result still finalizes normally, so scheduled budget exhaustion exits 0.
-    const emptyPostLoopResult: ImprovePostLoopResult = {
-      allWarnings: [],
-      gateAutoAcceptedCount: 0,
-      gateAutoAcceptFailedCount: 0,
-      memoryInferenceDurationMs: 0,
-      graphExtractionDurationMs: 0,
-    };
-    const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
-    let postLoopResult: ImprovePostLoopResult;
-    if (budgetAbortController.signal.aborted || (remainingBudget !== undefined && remainingBudget <= 0)) {
-      info("[improve] post-loop maintenance skipped (wall-clock budget exhausted)");
-      postLoopResult = emptyPostLoopResult;
-    } else {
-      postLoopResult = await runImprovePostLoopStageImpl({
-        scope,
-        options,
-        primaryStashDir,
-        actionableRefs: preparation.actionableRefs,
-        appliedCleanup: preparation.appliedCleanup,
-        cleanupWarnings: preparation.cleanupWarnings,
-        memoryRefsForInference,
-        reindexFn,
-        eventsCtx,
-        budgetSignal: budgetAbortController.signal,
-        improveProfile,
-        resolvedPlan,
-        consolidationRan: preparation.consolidationRan,
-        // R5: floor violations from this run's consolidate pass + the
-        // accepted volume so far (always 0 since the 0.9.0 confidence-gate
-        // deletion) for churn detection.
-        consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
-        acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
-      });
-    }
+    const postLoopResult = await runPostLoopStageOrSkip({
+      budgetAbortController,
+      scope,
+      options,
+      primaryStashDir,
+      preparation,
+      memoryRefsForInference,
+      reindexFn,
+      eventsCtx,
+      improveProfile,
+      resolvedPlan,
+      loopGateCountThisCycle,
+      runImprovePostLoopStageImpl,
+    });
     // Result objects (single pass — no cycle accumulation).
     memoryInference = postLoopResult.memoryInference;
     graphExtraction = postLoopResult.graphExtraction;
@@ -1565,57 +1489,6 @@ function emitImproveCompletedEvent(
     },
     eventsCtx,
   );
-}
-
-/**
- * Result of the consolidation pass (#551).
- *
- * Consolidation moved OUT of the post-loop stage and into the preparation
- * stage, where it runs BEFORE the session-extract pass. This guarantees the
- * pool-delta gate (and akmConsolidate itself) only ever observe memories that
- * existed at the start of the run — files written by extract promotions in
- * the CURRENT run are not on disk yet, so they cannot make the gate fire.
- */
-export interface ConsolidationPassResult {
-  consolidation: ConsolidateResult;
-  /** True iff consolidation actually processed memories this run (drives graph reindex). */
-  consolidationRan: boolean;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
-}
-
-export interface ImproveRunContext {
-  scope: ImproveScope;
-  options: AkmImproveOptions;
-  primaryStashDir?: string;
-  reflectFn: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
-  distillFn: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
-  loopRefs: ImproveEligibleRef[];
-  actions: ImproveActionResult[];
-  signalBearingSet: Set<string>;
-  distillCooledRefs: Set<string>;
-  /** Refs that should only run the distill path (reflect-cooled but distill expired, Bug D2). */
-  distillOnlyRefs: ImproveEligibleRef[];
-  /** Per-originator rolling error windows (O-5 / #378). */
-  recentErrors: Record<string, string[]>;
-  /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
-  rejectedProposalsByRef: Map<string, EventEnvelope>;
-  /** R-2 / #389: per-ref utility scores for self-consistency threshold check. */
-  utilityMap: Map<string, number>;
-  startMs: number;
-  budgetMs: number;
-  eventsCtx?: EventsContext;
-  /** Active improve profile, resolved from profile name + config. */
-  improveProfile: import("../../core/config/config").ImproveProfileConfig;
-  /** Engine/materialized-connection snapshot shared by every process in this run. */
-  resolvedPlan: ResolvedImprovePlan;
-  /**
-   * #616 — run-budget abort signal (also carries a live `remainingBudgetMs`
-   * getter). Threaded in so the loop stage participates in the same cooperative
-   * budget drain as the prep/post-loop stages and so multi-cycle callers can
-   * observe abort propagation.
-   */
-  budgetSignal?: AbortSignal;
 }
 
 function shapeMemoryCleanup(plan: MemoryCleanupPlan): ImproveMemoryCleanupResult {

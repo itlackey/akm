@@ -35,7 +35,12 @@ import {
 } from "./eligibility";
 import { type AkmExtractResult, akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore, FEEDBACK_WEIGHT, UTILITY_WEIGHT } from "./feedback-valence";
-import type { AkmImproveOptions, ConsolidationPassResult, ImprovePreparationResult, ImproveScope } from "./improve";
+import type {
+  AkmImproveOptions,
+  ConsolidationPassResult,
+  ImprovePreparationResult,
+  ImproveScope,
+} from "./improve-run-types";
 import type { ResolvedImprovePlan } from "./improve-strategies";
 import { applyMemoryCleanup, type MemoryCleanupPlan } from "./memory/memory-improve";
 import {

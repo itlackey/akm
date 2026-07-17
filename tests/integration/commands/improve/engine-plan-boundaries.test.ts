@@ -9,6 +9,7 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import { resolveImprovePlan } from "../../../../src/commands/improve/improve-strategies";
 import { runImproveLoopStage, runImproveMaintenancePasses } from "../../../../src/commands/improve/loop-stages";
 import { runImprovePreparationStage, runValidationAndRepairPass } from "../../../../src/commands/improve/preparation";
+import { createRunContext } from "../../../../src/commands/improve/run-context";
 import type { AkmConfig, ImproveProfileConfig } from "../../../../src/core/config/config";
 import { makeStashDir } from "../../../_helpers/sandbox";
 
@@ -225,9 +226,18 @@ describe("improve engine-plan boundaries", () => {
       let reflectOptions: Record<string, unknown> | undefined;
       let distillOptions: Record<string, unknown> | undefined;
       await runImproveLoopStage({
+        ctx: createRunContext({
+          stashDir: stash.dir,
+          config,
+          eventsCtx: {},
+          proposalsCtx: {},
+          getLlmConfig: () => null,
+          sourceRun: "test-run",
+          dryRun: false,
+        }),
+        primaryStashDir: stash.dir,
         scope: { mode: "ref", value: "memory:source" },
         options: { config, stashDir: stash.dir },
-        primaryStashDir: stash.dir,
         reflectFn: async (options) => {
           reflectOptions = options as unknown as Record<string, unknown>;
           return {

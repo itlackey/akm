@@ -188,9 +188,6 @@ export function measureCycleParticipants(): string[] {
  */
 export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
   "src/commands/env/env.ts",
-  "src/commands/improve/improve.ts",
-  "src/commands/improve/loop-stages.ts",
-  "src/commands/improve/preparation.ts",
   "src/core/asset/asset-ref.ts",
   "src/core/asset/asset-registry.ts",
   "src/core/asset/asset-spec.ts",

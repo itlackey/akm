@@ -44,11 +44,11 @@ import { writeEvalCase } from "./eval-cases";
 import type {
   AkmImproveOptions,
   ImproveLoopResult,
+  ImproveLoopState,
   ImproveMaintenanceResult,
   ImprovePostLoopResult,
-  ImproveRunContext,
   ImproveScope,
-} from "./improve";
+} from "./improve-run-types";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { AkmReflectResult } from "./reflect";
@@ -79,8 +79,8 @@ export interface ImproveLoopEnv {
   scope: ImproveScope;
   options: AkmImproveOptions;
   primaryStashDir?: string;
-  reflectFn: ImproveRunContext["reflectFn"];
-  distillFn: ImproveRunContext["distillFn"];
+  reflectFn: ImproveLoopState["reflectFn"];
+  distillFn: ImproveLoopState["distillFn"];
   signalBearingSet: Set<string>;
   distillCooledRefs: Set<string>;
   /** O(1) membership test — these refs skip the reflect call (Bug D2). */
@@ -92,10 +92,10 @@ export interface ImproveLoopEnv {
    */
   recentErrors: Record<string, string[]>;
   /** D6: pre-loaded map of most-recent proposal_rejected event per ref (last 30d). */
-  rejectedProposalsByRef: ImproveRunContext["rejectedProposalsByRef"];
+  rejectedProposalsByRef: ImproveLoopState["rejectedProposalsByRef"];
   eventsCtx?: EventsContext;
   /** Active improve profile, resolved from profile name + config. */
-  improveProfile: ImproveRunContext["improveProfile"];
+  improveProfile: ImproveLoopState["improveProfile"];
   /** Engine/materialized-connection snapshot shared by every process in this run. */
   resolvedPlan: ResolvedImprovePlan;
   budgetSignal?: AbortSignal;
@@ -116,11 +116,11 @@ export interface ImproveLoopEnv {
  * Build the per-run loop environment from the run context: the derived guards
  * and the pending-proposal preload.
  */
-export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
+export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
   const {
+    ctx,
     scope,
     options,
-    primaryStashDir,
     reflectFn,
     distillFn,
     loopRefs,
@@ -131,11 +131,19 @@ export function prepareImproveLoopEnv(args: ImproveRunContext): ImproveLoopEnv {
     rejectedProposalsByRef,
     startMs,
     budgetMs,
-    eventsCtx,
     improveProfile,
     resolvedPlan,
-    budgetSignal,
   } = args;
+  // WI-9.10: the legacy dual context's optional eventsCtx/budgetSignal are
+  // now RunContext's required eventsCtx / optional signal — renamed local
+  // aliases so the rest of this function (and the ImproveLoopEnv object
+  // literal below) is unchanged. `primaryStashDir` deliberately comes from
+  // the state's honest optional field, NOT `ctx.stashDir`: the rare
+  // unresolvable-primary path must keep skipping the `if (primaryStashDir)`
+  // guards below (see the field's doc in ./improve-run-types).
+  const primaryStashDir = args.primaryStashDir;
+  const eventsCtx = ctx.eventsCtx;
+  const budgetSignal = ctx.signal;
 
   // O-1 (#364): compute remaining budget at call time so each sub-call
   // receives only its fair share of the wall-clock budget.
@@ -674,8 +682,9 @@ function recordBudgetExhausted(args: {
   };
 }
 
-export async function runImproveLoopStage(args: ImproveRunContext): Promise<ImproveLoopResult> {
-  const { loopRefs, actions, recentErrors, startMs, budgetMs, eventsCtx } = args;
+export async function runImproveLoopStage(args: ImproveLoopState): Promise<ImproveLoopResult> {
+  const { ctx, loopRefs, actions, recentErrors, startMs, budgetMs } = args;
+  const eventsCtx = ctx.eventsCtx;
   const env = prepareImproveLoopEnv(args);
 
   let completedCount = 0;

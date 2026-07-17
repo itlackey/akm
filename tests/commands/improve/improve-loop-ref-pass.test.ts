@@ -14,13 +14,14 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
-import type { AkmImproveOptions, ImproveRunContext } from "../../../src/commands/improve/improve";
+import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
 import {
   type ImproveLoopEnv,
   prepareImproveLoopEnv,
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
 import type { AkmReflectResult } from "../../../src/commands/improve/reflect";
+import { createRunContext } from "../../../src/commands/improve/run-context";
 import type { Proposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
@@ -286,8 +287,25 @@ describe("processImproveLoopRef — distill half", () => {
 });
 
 describe("prepareImproveLoopEnv — derived guards", () => {
-  function runCtx(overrides: Partial<ImproveRunContext>): ImproveRunContext {
+  // WI-9.10: ImproveRunContext is deleted — ImproveLoopState wraps a RunContext
+  // (`ctx`) and keeps `primaryStashDir` as an honest optional (undefined here
+  // when the caller sets no stashDir — the no-stash preload-tolerance path,
+  // test below: "distillOnlyRefSet mirrors..."). `ctx.stashDir` is REQUIRED by
+  // the RunContext contract, so the fixture falls back to "" for it; nothing
+  // in these tests reads `ctx.stashDir`.
+  function runCtx(overrides: Partial<ImproveLoopState>): ImproveLoopState {
+    const stashDir = (overrides.options as { stashDir?: string } | undefined)?.stashDir;
     return {
+      ctx: createRunContext({
+        stashDir: stashDir ?? "",
+        config: {} as AkmConfig,
+        eventsCtx: {},
+        proposalsCtx: {},
+        getLlmConfig: () => null,
+        sourceRun: "test-run",
+        dryRun: false,
+      }),
+      primaryStashDir: stashDir,
       scope: { mode: "all" },
       options: { config: {} as AkmConfig },
       reflectFn: () => Promise.reject(new Error("unused")),
@@ -305,7 +323,7 @@ describe("prepareImproveLoopEnv — derived guards", () => {
       improveProfile: {},
       resolvedPlan: {
         processes: { reflect: { runner: null }, distill: { runner: null } },
-      } as unknown as ImproveRunContext["resolvedPlan"],
+      } as unknown as ImproveLoopState["resolvedPlan"],
       ...overrides,
     };
   }
@@ -314,7 +332,7 @@ describe("prepareImproveLoopEnv — derived guards", () => {
     const { stashDir } = freshSandbox();
     const profile = {
       processes: { distill: { requirePlannedRefs: true } },
-    } as ImproveRunContext["improveProfile"];
+    } as ImproveLoopState["improveProfile"];
     const base = {
       options: { stashDir, config: {} as AkmConfig },
       improveProfile: profile,

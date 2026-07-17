@@ -5,20 +5,29 @@
 /**
  * RunContext adoption ratchet (0.9.0 gate hardening; plan §2.1 / §11 Chunk 9).
  *
- * Chunk 7 MINTED the `RunContext` seam (`src/commands/improve/run-context.ts`)
- * but adoption at the verb call sites is Chunk 6/9 work. Until then the loop
- * carries its state on the legacy `ImproveRunContext` (improve.ts) — a second,
- * incompatible context. This ratchet prevents the limbo from deepening:
+ * Chunk 7 MINTED the `RunContext` seam (`src/commands/improve/run-context.ts`).
+ * Until WI-9.10, the improve loop carried its state on the legacy
+ * `ImproveRunContext` (improve.ts) — a second, incompatible context.
+ * WI-9.10 unified `ImproveRunContext` onto `RunContext` + a new mutable
+ * `ImproveLoopState` (`src/commands/improve/improve-run-types.ts`) that
+ * CONTAINS a `RunContext`, and deleted the `ImproveRunContext` interface
+ * outright, so this ratchet is now ABSOLUTE (anchors.md A.5):
  *
- *   1. `ImproveRunContext` references must NEVER spread beyond the files that
- *      carry them today, and per-file counts must not grow. Chunk 9 drives
- *      them to ZERO (manifest gate: `grep ImproveRunContext → 0`), at which
- *      point the empty baseline flips this into the absolute assertion.
- *   2. The minted `createRunContext` seam must not be deleted as "dead code"
- *      before its adoption chunk lands — removal without adoption re-opens
- *      the D6 read-once gap the seam exists to close.
+ *   1. `ImproveRunContext` may never reappear ANYWHERE in `src/**` — the
+ *      baseline below is the empty map, so every match is a violation
+ *      (manifest gate: `grep ImproveRunContext → 0`, satisfied by
+ *      construction).
+ *   2. The minted `createRunContext` seam must not be deleted as "dead
+ *      code" — it is now load-bearing: `akmImprove` constructs it at the
+ *      run entry (`src/commands/improve/improve.ts`).
+ *   3. The legacy interface must never come back under the same name, in
+ *      ANY file — a rename-and-redefine would slip past a naive grep of
+ *      the OLD identifier only if it also changed the name; this ratchet
+ *      greps the literal identifier itself across all of `src/**`, so a
+ *      revival under the same name fails immediately, absolutely.
  *
- * Baseline measured at the chunk-7 completion HEAD (43d6f10).
+ * Baseline measured at the chunk-7 completion HEAD (43d6f10); emptied and
+ * flipped absolute at WI-9.10 (chunk-9).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -28,11 +37,8 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const SRC_ROOT = path.join(REPO_ROOT, "src");
 
-/** SHRINK-ONLY: file → max allowed `ImproveRunContext` identifier references. */
-const IMPROVE_RUN_CONTEXT_BASELINE: ReadonlyMap<string, number> = new Map([
-  ["src/commands/improve/improve.ts", 1],
-  ["src/commands/improve/loop-stages.ts", 7],
-]);
+/** ABSOLUTE (empty): no file may reference the legacy `ImproveRunContext` identifier. */
+const IMPROVE_RUN_CONTEXT_BASELINE: ReadonlyMap<string, number> = new Map([]);
 
 function* walkTsFiles(dir: string): Generator<string> {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -54,7 +60,7 @@ function countReferences(): Map<string, number> {
 }
 
 describe("RunContext adoption ratchet", () => {
-  test("ImproveRunContext (the legacy dual context) never spreads: no new files, no per-file growth", () => {
+  test("ImproveRunContext (the legacy dual context) is fully retired: zero references anywhere in src", () => {
     const live = countReferences();
     const problems: string[] = [];
     for (const [file, count] of live) {
@@ -67,35 +73,38 @@ describe("RunContext adoption ratchet", () => {
     }
     if (problems.length > 0) {
       throw new Error(
-        `RunContext adoption ratchet — the legacy ImproveRunContext must shrink toward zero (Chunk 9), never ` +
-          `spread:\n${problems.join("\n")}\n\nThread the minted RunContext (src/commands/improve/run-context.ts) instead.`,
+        `RunContext adoption ratchet — ImproveRunContext was deleted at WI-9.10; the baseline is now the empty ` +
+          `map, so ANY match is a violation:\n${problems.join("\n")}\n\nThread the minted RunContext ` +
+          `(src/commands/improve/run-context.ts) + ImproveLoopState (src/commands/improve/improve-run-types.ts) instead.`,
       );
     }
     expect(problems).toEqual([]);
   });
 
-  test("the minted createRunContext seam stays in place until its adoption chunk retires the baseline", () => {
-    // Guard against a well-meaning dead-code sweep deleting the seam before
-    // Chunk 6/9 adopt it. Once IMPROVE_RUN_CONTEXT_BASELINE is empty (legacy
-    // context gone), this existence pin may be replaced by real usage.
+  test("the minted createRunContext seam stays in place — it is load-bearing at the akmImprove entry", () => {
+    // Guard against a well-meaning dead-code sweep deleting the seam. It is no
+    // longer merely "pinned for a future adoption chunk" — akmImprove
+    // constructs it directly (src/commands/improve/improve.ts).
     const seamPath = path.join(SRC_ROOT, "commands", "improve", "run-context.ts");
     expect(fs.existsSync(seamPath)).toBe(true);
     const src = fs.readFileSync(seamPath, "utf8");
     expect(/export function createRunContext\b/.test(src)).toBe(true);
   });
 
-  test("the legacy context cannot be retired by RENAME: while the baseline is non-empty, its definition site must exist", () => {
-    // Adversarial-audit guard: the Chunk-9 gate is `grep ImproveRunContext →
-    // 0`, and a rename (ImproveRunContext → SomethingElse) would zero every
-    // count while leaving the dual-context limbo intact. While any baseline
-    // entry remains, the interface definition itself must still exist in
-    // improve.ts — so retiring the name requires editing THIS gate file in
-    // the same reviewable change, alongside truly unifying onto RunContext.
-    const total = [...IMPROVE_RUN_CONTEXT_BASELINE.values()].reduce((s, n) => s + n, 0);
-    expect(total).toBeLessThanOrEqual(8); // cardinality pin — baseline may only shrink
-    if (IMPROVE_RUN_CONTEXT_BASELINE.size > 0) {
-      const improveSrc = fs.readFileSync(path.join(SRC_ROOT, "commands", "improve", "improve.ts"), "utf8");
-      expect(/export interface ImproveRunContext\b/.test(improveSrc)).toBe(true);
+  test("the legacy interface can never come back under its own name, in any file (absolute anti-rename/anti-regression guard)", () => {
+    // WI-9.10 flip: with the baseline emptied, the previous "definition site
+    // must still exist while the baseline is non-empty" guard would now be
+    // permanently vacuous. Replaced with the permanent, absolute assertion the
+    // ratchet exists to protect: no file anywhere in src/** may declare an
+    // `interface ImproveRunContext` (or a `type ImproveRunContext` alias)
+    // ever again — independent of, and in addition to, the identifier-count
+    // check above.
+    expect(IMPROVE_RUN_CONTEXT_BASELINE.size).toBe(0);
+    for (const file of walkTsFiles(SRC_ROOT)) {
+      const src = fs.readFileSync(file, "utf8");
+      const rel = path.relative(REPO_ROOT, file).split(path.sep).join("/");
+      expect([rel, /\binterface\s+ImproveRunContext\b/.test(src)]).toEqual([rel, false]);
+      expect([rel, /\btype\s+ImproveRunContext\b/.test(src)]).toEqual([rel, false]);
     }
   });
 });
