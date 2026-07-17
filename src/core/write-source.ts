@@ -286,8 +286,9 @@ export async function deleteAssetFromSource(
  * caller paths), commits once, and pushes when the target is writable, has a
  * remote, and `push !== false`.
  *
- * The push intent honours a deprecated `options.pushOnCommit` on the source
- * config (mapped onto the batch push gate) when `push` is not explicitly set.
+ * The deprecated `options.pushOnCommit` on the source config is now fully
+ * IGNORED (Decision 6, WI-9.6b): it neither sets nor suppresses `push`. Only a
+ * one-time deprecation warning remains (see {@link warnIfPushOnCommit}).
  */
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
@@ -298,10 +299,7 @@ export function commitWriteTargetBoundary(
 
   warnIfPushOnCommit(target.config);
 
-  // Map the deprecated per-asset `pushOnCommit` intent onto the batch push gate
-  // when the caller did not pass an explicit push toggle. `saveGitStash` still
-  // gates the actual push on writable + remote, so this only ever opts *in*.
-  const push = options?.push ?? (target.config.options?.pushOnCommit === true ? true : undefined);
+  const push = options?.push;
 
   const writable = resolveWritable(target.config);
   const repoDir = target.source.repoPath ?? target.source.path;
@@ -321,8 +319,9 @@ export function commitWriteTargetBoundary(
 /**
  * Emit a one-time deprecation warning the first time a source config carrying
  * `options.pushOnCommit` is encountered. The field still parses (for old
- * configs) but its per-asset push-on-commit behaviour is retired; its intent is
- * now honoured via the batch push gate (writable + remote + push toggle).
+ * configs) but is now FULLY IGNORED (Decision 6, WI-9.6b): it no longer maps
+ * onto the batch push gate in any way (neither opts in nor opts out). The
+ * field will be REMOVED in 0.10.
  */
 let pushOnCommitWarned = false;
 function warnIfPushOnCommit(config: SourceConfigEntry): void {
@@ -331,9 +330,10 @@ function warnIfPushOnCommit(config: SourceConfigEntry): void {
   pushOnCommitWarned = true;
   const label = config.name ? ` on source "${config.name}"` : "";
   process.stderr.write(
-    `warning: \`options.pushOnCommit\`${label} is deprecated (0.9.0) and no longer commits per asset. ` +
-      "akm now commits writes in a single batch at the operation boundary and pushes when the target is " +
-      "writable with a remote. Remove the option or rely on sync push instead.\n",
+    `warning: \`options.pushOnCommit\`${label} is deprecated (0.9.0) and now fully ignored — it no longer ` +
+      "affects push behaviour in any way. akm commits writes in a single batch at the operation boundary and " +
+      "pushes when the target is writable with a remote and push isn't explicitly disabled. Remove the option " +
+      "or rely on sync push instead; it will be REMOVED in 0.10.\n",
   );
 }
 

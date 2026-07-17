@@ -935,7 +935,9 @@ function makeCommitStashBatch(deps: {
     }
     const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
     const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(_earlyConfig);
-    const push = options.sync?.push ?? writeTarget?.config.options?.pushOnCommit ?? improveProfile.sync?.push ?? true;
+    // pushOnCommit is deprecated and fully ignored (Decision 6, WI-9.6b) — it no
+    // longer participates in this fallback chain.
+    const push = options.sync?.push ?? improveProfile.sync?.push ?? true;
     const message = renderSyncCommitMessage(
       effectiveSync.message ?? "akm improve auto-sync",
       messageContext,

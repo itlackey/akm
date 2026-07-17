@@ -9,7 +9,7 @@
  *   - the single batch-at-boundary commit (issue #507) produces exactly one
  *     complete commit + clean tree, pushes per the writable+remote+push gate,
  *     and is a no-op for filesystem targets
- *   - deprecated `pushOnCommit` maps onto the batch push gate
+ *   - deprecated `pushOnCommit` is now fully ignored (warn-and-ignore, Decision 6)
  *   - rejection of `writable: true` on website / npm at config load
  *   - rejection of unsupported `kind` reaching the helper
  *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → stashDir)
@@ -301,7 +301,13 @@ describe("writeAssetToSource — git (no per-write commit)", () => {
     expect(remoteLog.stdout.trim()).toBe("seed");
   });
 
-  test("deprecated pushOnCommit maps onto the batch push gate (still pushes)", async () => {
+  test("deprecated pushOnCommit is ignored — writable+remote pushes anyway via the batch default", async () => {
+    // pushOnCommit no longer maps onto the push gate in any way (Decision 6,
+    // WI-9.6b): this still pushes, but because the target is writable with a
+    // remote and no explicit `push` override was given — NOT because of
+    // pushOnCommit. See the "content-layout sync" test in
+    // improve-sync.test.ts for a case where the old mapping's absence is
+    // actually observable (pushOnCommit: false no longer suppresses push).
     const { remoteDir, workDir } = initBareGitRepo();
     const target = gitTarget(workDir, { writable: true, pushOnCommit: true });
 
