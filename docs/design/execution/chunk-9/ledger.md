@@ -473,3 +473,50 @@ maintainer decision on retiring the unresolvable path.
 Gates (worker + reviewer): tsc; full lint; cycles 28/28; fn-size both;
 architecture 28/28; improve family + frozen txn oracles 535/0
 (reviewer, single un-piped run) and 557/0 + 22/0 (worker).
+
+## WI-9.10c — createRunContext at the 4 remaining verb entries + D6 memo consumers (1247b0ec)
+
+Sonnet worker implemented; reviewed by a 6-agent adversarial Opus
+workflow (per-verb reviewers for reflect/distill/extract/consolidate +
+an adoption-ratchet reviewer + one serialized gate-runner, then 3-lens
+refutation of every finding). Zero findings survived; zero raised.
+
+akmReflect/akmDistill/akmExtract/akmConsolidate each build a run-scoped
+RunContext via createRunContext at entry from already-resolved values
+(stash, config, resolved runner/profile) — no second config load, no new
+db handle, no reordering of engine-resolution error priority (built only
+after config/runnerSpec exist). All 5 improve verb entries are now on the
+minted seam (manifest gate 4).
+
+D6 read-once memo gains its FIRST real content-read consumers (closes the
+chunk-7 deferred decision, ledger ~955): reflect's readRelatedLessons
+reads lessons via a per-invocation withFreshAssetMemo() scope — verified
+no same-path write follows in the invocation, so memoizing is safe;
+distill reads the target asset through its memo and REFRESHES via
+ctx.writeAsset on the in-loop salience stamp (run-context.ts:816 case) so
+a later readAsset returns post-write bytes; extract routes its content
+read through the memo likewise.
+
+extract's recorded chunk-7 type blocker (getLlmConfig returns
+LlmProfileConfig, not LlmConnectionConfig|null) bridged locally at the
+construction site — adapter wraps the resolved profile getter to
+RunContext's signature WITHOUT widening the RunContext type. Empty
+eventsCtx:{} / proposalsCtx:{} used only where no consumer dereferences
+them this stage (verb-level proposal/event RunContext adoption is future
+work). reflect (emitReflectInvokedAndBuildFailureEmitter, buildReflect-
+RunContext) + extract (buildExtractRunContext) gain verbatim fn-size
+decompositions — improve/** stays absolute-empty.
+
+run-context-adoption.test.ts: new per-verb-entry adoption assertion
+(gate 4) — each of the 5 entry files (improve/reflect/distill/extract/
+consolidate) must CALL createRunContext(, not merely import it; the seam
+existence pin is upgraded to a real load-bearing-usage check. Gate 3
+(absolute ImproveRunContext=0 + anti-revival guard) preserved.
+
+Gates (Opus gate-runner, sequential un-piped; reviewer-confirmed
+independently for the two ratchets the lint chain omits): tsc clean;
+full lint chain OK (process-argv/goldens-presence 50-/47-frozen/schema);
+import-cycles 28/28 + dynamic within baseline; improve + src fn-size
+exit 0; architecture 28/28 (1162 expect); frozen txn oracles 22/22
+byte-green; improve command+integration family 485/0; D6 run-context
+memo contract 7/7.
