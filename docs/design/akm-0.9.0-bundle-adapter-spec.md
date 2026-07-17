@@ -264,7 +264,7 @@ Adapters/materializers/registry/network **never run at query time** (normative �
 
 **Incrementality is ITEM-scoped, not file-scoped**: the mount manifest is `{ scanGeneration, adapterVersion, items: {conceptId → {files: {path → hash,mtimeMs}}} }`. A changed path maps to affected item(s) via `affectedItems` (default: identity); every file of an affected item re-recognizes together, so directory-scoped items (skill = the dir; llm-wiki pages under `schema.md`) stay coherent — a sibling edit updates the item, deleting the primary file deletes the item, deleting a sibling does not. Adapters MAY declare coupling files (wiki `schema.md`) whose change escalates to a component rescan. The FTS dirty-queue (schema.ts:352) and zero-row dir-state classification (dir-staleness.ts) carry forward into this manifest.
 
-Registry is a **static frozen `BUILTIN_ADAPTERS`** map (normative §12.6): `okf`, `llm-wiki`, `claude`, `opencode`, `agent-skills`, `akm-workflow`, `akm-task`, `dotenv`, `website-snapshot`, `generic-files`. One adapter per component root, selected once via the **ordered probe list of §1.2** (deterministic winner, persisted; `generic-files` config-only, never probed). Unknown `type` ⇒ searchable + generic renderer; unknown adapter id ⇒ component skipped with a warning. Conformance: each adapter's `looksLikeRoot` fires on its own golden root and on **no** sibling adapter's golden root.
+Registry is a **static frozen `BUILTIN_ADAPTERS`** map (normative §12.6): `okf`, **`akm`**, `llm-wiki`, `claude`, `opencode`, `agent-skills`, `akm-workflow`, `akm-task`, `dotenv`, `website-snapshot`, `generic-files`. (**`akm`** — the AKM workspace's own adapter, **§5.1** — is a first-class built-in; it is the config-default for the AKM workspace root and is NOT part of the §1.2 auto-probe order. It was omitted from an earlier draft of this list; that omission is corrected here.) One adapter per component root, selected once via the **ordered probe list of §1.2** (deterministic winner, persisted; `generic-files` config-only, never probed). Unknown `type` ⇒ searchable + generic renderer; unknown adapter id ⇒ component skipped with a warning. Conformance: each adapter's `looksLikeRoot` fires on its own golden root and on **no** sibling adapter's golden root.
 
 ---
 
@@ -279,6 +279,57 @@ Pure OKF: **`type` from frontmatter, identity from path, no directory routing.**
 - **renderer/action:** `TYPE_PRESENTATION` keyed on the file's `type` (default `knowledge-md`).
 - **validate (LENIENT):** base checks only; unknown frontmatter never fails; `missing-ref` on OKF links is a **warning** (consumers MUST tolerate broken links); `missing-type` is info.
 - **Reserved:** `index.md`/`log.md` recognized, not indexed as concepts; root `index.md` may carry `okf_version`; `akm index` never regenerates `index.md` (normative §14.6, D14).
+
+---
+
+## 5.1 The two markdown-family adapters — `akm` (current behavior) vs `okf` (frontmatter `type`) — BINDING, NOT OPEN TO RE-INTERPRETATION
+
+`akm` and `okf` both index markdown-with-YAML-frontmatter, but they classify
+`type` by **different, deliberately fixed** mechanisms. This is a binding 0.9.0
+decision. An implementation MUST NOT collapse one into the other, swap their
+recognition strategies, "modernize" `akm` onto frontmatter, or split `akm` into
+per-`type` adapters. Any future proposal to do so is a **spec change**, not an
+implementation detail, and requires amending this section first.
+
+- **`okf` — `type` from frontmatter (OKF §1.2), NO directory gate.** The
+  reference/default adapter (§5). `recognize` reads the OKF `type` field from
+  each concept's YAML frontmatter; the directory a file lives in **never**
+  determines its `type`. `type` absent ⇒ `knowledge` (+ `missing-type` info).
+  Used for OKF bundles, third-party OKF trees, and any content already authored
+  with `type:` frontmatter.
+
+- **`akm` — CURRENT FUNCTIONALITY PRESERVED (the existing matcher stack); a
+  behavior-preserving port.** The AKM workspace's own adapter. Its
+  `recognize` / `placeNew` / `directoryList` / `validate` / presentation
+  reproduce **today's** classification VERBATIM — the `runMatchers` →
+  `classifyByExtension` / `classifyByDirectory` / `classifyByParentDirHint` /
+  `classifyBySmartMd` / `classifyByWiki` / `classifyByWorkflowProgram` stack and
+  the per-`type` placement / lint / render logic (`file-context.ts:242-265`,
+  `matchers.ts:151-305`, `asset-spec.ts`, the per-type linters/renderers). The
+  byte-for-byte recognition / placement / renderer / lint goldens (Chunk 0b) are
+  its conformance gate. The `akm` adapter:
+  - is **NOT** re-derived to a frontmatter-`type` model;
+  - is **NOT** split into one-adapter-per-`type` — per §6 / §0.2 the 14 AKM
+    formats are `type` **values** the single `akm` adapter emits, never adapters
+    (per-`type` renderer/validator/placement differences are data/functions keyed
+    on the open `type`, exactly as §2/§6 specify);
+  - introduces **NO** new positional / directory-name heuristics of its own — it
+    relocates the *existing* classification behind the `BundleAdapter` interface,
+    unchanged in behavior.
+
+**Why the two differ — the transitional reason (recorded so it is never
+re-litigated).** AKM-native content does **not** carry a frontmatter `type`
+field today: only `command`/`agent` files do; `knowledge`/`memory`/`lesson`/
+`fact`/`session`/`skill`/`workflow`/`task`/`env`/`secret`/`script`/`wiki` are
+classified by directory, filename, or content-probe via the matchers. The
+migration that stamps `type:` frontmatter onto AKM-native content lands in
+**Chunk 8** (migration cutover) — AFTER Chunk 2 mints the adapters. The `akm`
+adapter therefore MUST keep classifying via the existing matchers so behavior is
+preserved across the cutover; `okf` is the clean frontmatter path for content
+that already conforms. Convergence — AKM content authored with `type:`
+frontmatter, indexable by either adapter — is a migration **outcome**, not a
+Chunk-2 rewrite. **Chunk 2 preserves current AKM recognition AND adds the OKF
+frontmatter path; it does not replace one with the other.**
 
 ---
 
@@ -313,7 +364,7 @@ An **adapter is a format family**, one per component root, emitting one or more 
 | adapter | format / root | types | writable | notes |
 |---|---|---|---|---|
 | **okf** (§5) | OKF markdown; `type` from frontmatter | any OKF type | yes | **reference/default**; consumes third-party OKF |
-| **akm** | AKM workspace: OKF markdown + AKM extensions (workflow/task/env/secret/script) under AKM subdirs | full §6 profile | yes (markdown/workflow/task); env/secret metadata-only | AKM's own workspace bundle |
+| **akm** (**§5.1**, BINDING) | AKM workspace — **maintains current recognition/placement/lint/render functionality via the existing matcher stack** (behavior-preserving port; **NOT** frontmatter-`type`, **NOT** per-`type` adapters). OKF markdown + AKM extensions (workflow/task/env/secret/script) under AKM subdirs | full §6 profile | yes (markdown/workflow/task); env/secret metadata-only | AKM's own workspace bundle; recognition contract fixed in **§5.1** |
 | **llm-wiki** (**restored, DEV-7**) | LLM Wiki: `schema.md`, `index.md`, `log.md`, `raw/`, `pages/`, xrefs, citations, native ingest | wiki page kinds (adapter-owned) | yes | owns its native multi-file semantics + authoring/validation; `wiki` asset-*type* is gone but the **adapter** is first-class (normative §13.3) |
 | **claude** | `.claude` tool dir — translator; derives `type` from dir | command, agent, skill, instruction | yes | AKM workspace layout **is** `.claude` minus the prefix |
 | **opencode** | `.opencode` tool dir — translator (NEW) | command, agent, **skill**, instruction | yes | `AGENTS.md`=instruction; `config.json` not indexed; OpenCode has first-class skills (`.opencode/skills/<name>/SKILL.md`) and reads `.claude/skills/` — plural `commands/`/`agents/` dirs |
