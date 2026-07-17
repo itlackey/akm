@@ -31,7 +31,6 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -74,7 +73,7 @@ import { runReflectQualityJudge } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { emitProposal } from "./proposal-envelope";
 import { classifyReflectChange } from "./reflect-noise";
-import { createRunContext, type RunContext } from "./run-context";
+import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
@@ -1691,7 +1690,7 @@ function emitReflectInvokedAndBuildFailureEmitter(
 }
 
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
-  const stash = options.stashDir ?? resolveStashDir();
+  const stash = resolveRunStashDir(options.stashDir);
 
   // 1. Emit reflect_invoked + build the reflect_completed failure emitter
   // every failure path below uses.

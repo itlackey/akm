@@ -56,7 +56,6 @@ import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } fr
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -100,7 +99,7 @@ import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { emitProposal } from "./proposal-envelope";
-import { createRunContext, type RunContext } from "./run-context";
+import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import { computeSalience, upsertAssetSalience } from "./salience";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -795,7 +794,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   const config = options.config ?? loadConfig();
   options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
-  const stash = options.stashDir ?? resolveStashDir();
+  const stash = resolveRunStashDir(options.stashDir);
   const chat = options.chat ?? chatCompletion;
   const distillLlm = Object.hasOwn(options, "llmConfig")
     ? (options.llmConfig ?? undefined)

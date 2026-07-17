@@ -28,7 +28,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { resolveStashDir, timestampForFilename } from "../../core/common";
+import { timestampForFilename } from "../../core/common";
 import type {
   AkmConfig,
   ImproveProcessConfig,
@@ -81,7 +81,7 @@ import { isProposalSkipped, type ProposalsContext } from "../proposal/repository
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { emitProposal } from "./proposal-envelope";
-import { createRunContext, type RunContext } from "./run-context";
+import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -1437,7 +1437,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
 
   const config = options.config ?? loadConfig();
-  const stashDir = options.stashDir ?? resolveStashDir();
+  const stashDir = resolveRunStashDir(options.stashDir);
   const dryRun = options.dryRun ?? false;
   const sourceRun = options.sourceRun ?? `extract-${timestampForFilename()}`;
 

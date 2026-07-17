@@ -42,6 +42,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import type { LlmConnectionConfig } from "../../core/config/config-types";
 import type { EventsContext } from "../../core/events";
@@ -212,4 +213,17 @@ export function createRunContext(init: RunContextInit): RunContext {
       init.io?.writeFile ?? ((filePath: string, content: string): void => fs.writeFileSync(filePath, content, "utf8")),
   };
   return buildRunContext(carriers, null);
+}
+
+/**
+ * Resolve the run's stash directory at the improve builder boundary: the
+ * explicit `options.stashDir` when the caller passed one, else the ambient
+ * resolveStashDir() fallback. WI-9.10d: this is the SINGLE resolveStashDir
+ * call site on the improve path — the verb entries call THIS instead of
+ * resolveStashDir directly, so the ambient read lives only in the builder
+ * module. (The CLI-wide resolveStashDir sweep for non-improve commands is a
+ * deferred follow-on — see the chunk-9 ledger WI-9.10d entry.)
+ */
+export function resolveRunStashDir(explicitStashDir?: string): string {
+  return explicitStashDir ?? resolveStashDir();
 }
