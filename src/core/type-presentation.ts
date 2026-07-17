@@ -41,6 +41,19 @@
  * adapters' own file headers): no interface hook exists for one, and it is
  * out of WI-2.1's gated scope (recognition/placement/lint parity, not
  * renderer-output parity).
+ *
+ * ── `workflow`/`task` (added chunk-2, WI-2.2) ──
+ *
+ * `workflow.rendererName` is `"workflow-md"` — the type-level DEFAULT/primary
+ * form, mirroring `asset-spec.ts`'s `workflow` entry (which carries the same
+ * default and lets the legacy `workflowProgramMatcher` override it
+ * per-file). `workflow` has a SECOND renderer, `"workflow-program-yaml"`,
+ * for its YAML-program form — this per-TYPE table cannot name two renderers
+ * for one type key, so the program form's identity is carried on the
+ * per-DOCUMENT `IndexDocument.rendererName` field instead (additive,
+ * `core/adapter/types.ts`; see that field's doc comment and
+ * `core/adapter/adapters/workflow-adapter.ts`'s header for the full
+ * mechanism — flagged prominently, do not silently drop it).
  */
 
 import { isKnownType, type KnownType } from "./recognition-util";
@@ -69,14 +82,14 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
   command: { label: "Command" },
   agent: { label: "Agent" },
   knowledge: { label: "Knowledge" },
-  workflow: { label: "Workflow" },
+  workflow: { label: "Workflow", rendererName: "workflow-md" },
   script: { label: "Script", rendererName: "script-source" },
   memory: { label: "Memory" },
   env: { label: "Env" },
   secret: { label: "Secret" },
   wiki: { label: "Wiki", rendererName: "wiki-md" },
   lesson: { label: "Lesson" },
-  task: { label: "Task" },
+  task: { label: "Task", rendererName: "task-yaml" },
   session: { label: "Session" },
   fact: { label: "Fact" },
 };

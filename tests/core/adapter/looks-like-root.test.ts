@@ -15,27 +15,34 @@
  * `tests/fixtures/stashes/all-types/` fixture contains every type's
  * directory at once, which would make every adapter's naive
  * `directoryList()`-presence probe fire simultaneously — the OPPOSITE of
- * what "no sibling's" must prove). This suite exercises the 3 new,
- * minimal, single-adapter-only root fixtures this WI adds under
- * `tests/fixtures/stashes/{skill,wiki,script}-only-root/`.
+ * what "no sibling's" must prove). This suite exercises the minimal,
+ * single-adapter-only root fixtures WI-2.1 (skill/wiki/script) and WI-2.2
+ * (workflow/task) add under
+ * `tests/fixtures/stashes/{skill,wiki,script,workflow,task}-only-root/`.
  */
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { scriptAdapter } from "../../../src/core/adapter/adapters/script-adapter";
 import { skillAdapter } from "../../../src/core/adapter/adapters/skill-adapter";
+import { taskAdapter } from "../../../src/core/adapter/adapters/task-adapter";
 import { wikiAdapter } from "../../../src/core/adapter/adapters/wiki-adapter";
+import { workflowAdapter } from "../../../src/core/adapter/adapters/workflow-adapter";
 
 const STASHES_ROOT = path.resolve(__dirname, "../../fixtures/stashes");
 const SKILL_ONLY_ROOT = path.join(STASHES_ROOT, "skill-only-root");
 const WIKI_ONLY_ROOT = path.join(STASHES_ROOT, "wiki-only-root");
 const SCRIPT_ONLY_ROOT = path.join(STASHES_ROOT, "script-only-root");
+const WORKFLOW_ONLY_ROOT = path.join(STASHES_ROOT, "workflow-only-root");
+const TASK_ONLY_ROOT = path.join(STASHES_ROOT, "task-only-root");
 
-const ADAPTERS = [skillAdapter, wikiAdapter, scriptAdapter] as const;
+const ADAPTERS = [skillAdapter, wikiAdapter, scriptAdapter, workflowAdapter, taskAdapter] as const;
 const GOLDEN_ROOTS: Record<string, string> = {
   skill: SKILL_ONLY_ROOT,
   wiki: WIKI_ONLY_ROOT,
   script: SCRIPT_ONLY_ROOT,
+  workflow: WORKFLOW_ONLY_ROOT,
+  task: TASK_ONLY_ROOT,
 };
 
 describe("looksLikeRoot — fires on its own golden root, not on any sibling's (D2-6)", () => {
@@ -54,9 +61,9 @@ describe("looksLikeRoot — fires on its own golden root, not on any sibling's (
     }
   });
 
-  test("the combined all-types fixture is deliberately the WRONG shape for this gate: all 3 fire at once (documents why single-adapter roots were needed, anchors.md §D.2)", () => {
+  test("the combined all-types fixture is deliberately the WRONG shape for this gate: every registered adapter fires at once (documents why single-adapter roots were needed, anchors.md §D.2)", () => {
     const allTypesRoot = path.join(STASHES_ROOT, "all-types");
     const firing = ADAPTERS.filter((a) => a.looksLikeRoot?.(allTypesRoot) === true).map((a) => a.id);
-    expect(firing.sort()).toEqual(["script", "skill", "wiki"]);
+    expect(firing.sort()).toEqual(["script", "skill", "task", "wiki", "workflow"]);
   });
 });

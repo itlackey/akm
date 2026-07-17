@@ -3,9 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-2.1 — `src/core/adapter/registry.ts` (D2-2): register/get/lookup API,
- * plus `adapters/index.ts#registerBuiltinAdapters` wiring the 3 adapters
- * this WI mints (skill/wiki/script) through it.
+ * WI-2.1/2.2 — `src/core/adapter/registry.ts` (D2-2): register/get/lookup
+ * API, plus `adapters/index.ts#registerBuiltinAdapters` wiring the adapters
+ * minted so far (WI-2.1: skill/wiki/script; WI-2.2: workflow/task) through
+ * it.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -116,20 +117,22 @@ describe("registry — resetAdapterRegistryForTests", () => {
   });
 });
 
-describe("adapters/index.ts — registerBuiltinAdapters wires the 3 WI-2.1 adapters", () => {
-  test("BUILTIN_ADAPTERS lists exactly skill, wiki, script", () => {
-    expect(BUILTIN_ADAPTERS.map((a) => a.id)).toEqual(["skill", "wiki", "script"]);
+describe("adapters/index.ts — registerBuiltinAdapters wires the 5 WI-2.1/2.2 adapters", () => {
+  test("BUILTIN_ADAPTERS lists exactly skill, wiki, script, workflow, task", () => {
+    expect(BUILTIN_ADAPTERS.map((a) => a.id)).toEqual(["skill", "wiki", "script", "workflow", "task"]);
   });
 
-  test("registerBuiltinAdapters() registers all 3, each keyed by its own id as its owned type", () => {
+  test("registerBuiltinAdapters() registers all 5, each keyed by its own id as its owned type", () => {
     registerBuiltinAdapters();
     expect(
       getAdapters()
         .map((a) => a.id)
         .sort(),
-    ).toEqual(["script", "skill", "wiki"]);
+    ).toEqual(["script", "skill", "task", "wiki", "workflow"]);
     expect(adapterForType("skill")?.id).toBe("skill");
     expect(adapterForType("wiki")?.id).toBe("wiki");
     expect(adapterForType("script")?.id).toBe("script");
+    expect(adapterForType("workflow")?.id).toBe("workflow");
+    expect(adapterForType("task")?.id).toBe("task");
   });
 });

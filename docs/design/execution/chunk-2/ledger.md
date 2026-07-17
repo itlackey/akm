@@ -114,3 +114,75 @@ remaining WI + Chunk 3's wiring, so it is pinned here explicitly:
   byte-identical to `markdown-insertion.ts`'s table/HTML-aware version); the
   `refs:`-frontmatter authoritative-list carve-out (memory/session-specific) is NOT
   ported — WI-2.4 extends it. Neither is exercised by skill/wiki/script fixtures.
+
+## WI-2.2 — workflow + task adapters (Sonnet impl; Opus review + one correction, all gates re-verified)
+
+Landed the two YAML-adjacent adapters. Additive only. Files: new
+`src/core/adapter/adapters/{workflow-adapter,task-adapter}.ts`,
+`tests/core/adapter/{workflow,task}-adapter.test.ts`,
+`tests/fixtures/stashes/{workflow-only-root,task-only-root,workflow-non-workflow-md}/`;
+additive edits `src/core/adapter/types.ts` (new `IndexDocument.rendererName?`),
+`src/core/adapter/adapters/index.ts`, `src/core/type-presentation.ts`
+(`workflow.rendererName = "workflow-md"`), `tests/core/adapter/{looks-like-root,registry}.test.ts`.
+
+### Gates (Opus re-ran each un-piped AFTER the correction below)
+- `bunx tsc --noEmit` → 0. `bun scripts/lint-import-cycles.ts` → 18 (unchanged; the
+  new `core/adapter → workflows/parser` + `→ workflows/program/project` value imports
+  add no participant). `bun run lint` → 0. `bun test tests/core/adapter` → 67/0.
+  Live goldens (recognition-placement + lint + renderer) → 19/0.
+
+### The renderer wrinkle — resolved (additive `IndexDocument.rendererName?: string`)
+workflow is ONE type with TWO renderers (`workflow-md` + `workflow-program-yaml`), but
+WI-2.1's `TYPE_PRESENTATION.rendererName` is per-TYPE. Resolved by a new optional
+per-DOCUMENT `IndexDocument.rendererName` set in `recognize()` per form — the exact
+`BundleAdapter`-shaped analog of how legacy `workflowProgramMatcher` names its renderer
+directly on the per-file `MatchResult` rather than via the type-keyed lookup. Additive,
+no existing consumer reads it, cross-asserted against the recognition golden's `renderer`
+field for BOTH forms. `TYPE_PRESENTATION.workflow.rendererName = "workflow-md"` (the
+type-level default/primary form). This is the smallest mechanism preserving both names.
+
+### OPUS CORRECTION — workflow Form A recognition made POSITIONAL (parity regression fix)
+The worker's Form A (`.md`) recognition gated on `looksLikeWorkflow(content)` — a
+self-flagged "deliberate divergence" from the D2-8 positional precedent. **Opus review
+caught this as a parity regression against the legacy matcher and corrected it in the
+review pass** (standing defect-fix directive; firm understanding from reading
+`matchers.ts:62-66` at HEAD):
+- The legacy `workflows` dir-hint rule is `test: (ext) => ext === ".md"` — PURE
+  positional. It already classifies EVERY non-README `.md` under `workflows/` as type
+  `workflow`. `looksLikeWorkflow` (specificity 19) is a SEPARATE, higher-specificity
+  matcher whose role in the legacy WHOLE-STASH walk was to claim workflow-shaped `.md`
+  OUTSIDE `workflows/` and win cross-type ties — a role that D2-8's mount-based routing
+  (component root scopes the adapter to `workflows/`, no per-file competition) REPLACES.
+- Gating recognize() on `looksLikeWorkflow` therefore UNDER-recognized (silently dropped
+  plain `.md` under `workflows/` that legacy calls `workflow`) and made workflow the lone
+  content-gated exception among the positional dir-scoped adapters (wiki/task/script).
+- Fix: `isWorkflowMdFile` = `ext === ".md" && !isTypedDirDocFile` (positional, matching
+  the dir-hint + D2-8). Removed the now-unused `looksLikeWorkflow` import (kept
+  `parseWorkflow`, still used by validate's `invalid-workflow-structure`). Rewrote the
+  file header's Form-A section + flipped the `workflow-non-workflow-md` negative test to
+  assert the correct positional behavior (a plain-prose `.md` under `workflows/` IS
+  claimed as `workflow`; validity is validate()'s job, not recognize()'s). Root cause
+  partly mine: the WI-2.2 dispatch said "port looksLikeWorkflow's body probe" — imprecise;
+  the faithful port under D2-8 is the dir-hint floor.
+- Note: this only changes the untested-edge region; the fixture parity was unaffected
+  either way (the golden's workflow.md is a real workflow), and the adapter carries no
+  `specificity` field, so the golden's captured specificity (19) is irrelevant to parity.
+
+### Form B (`.yaml`/`.yml`) validate — no diagnostics, deliberately (reachability gap preserved)
+The lint golden's `perType.workflowProgramYaml` is `{correctnessCheck: "parseWorkflowProgram",
+result}`, NOT `{issues}` — there is no `Diagnostic[]` shape to reproduce, and legacy
+`WorkflowLinter` never sees `.yaml` in production (`collectMarkdownFiles` filters `.md`).
+Adapter produces zero diagnostics for `.yaml`/`.yml`, preserving the gap per anchors §E.2
+(don't "fix" reachability this chunk). The parity test reproduces `parseWorkflowProgram`'s
+result directly (the golden's own capture mechanism), not through validate(). Flagged.
+
+### Metadata contributors — workflow DEFERRED, task FOLDED (refined-D2-7 in action)
+- workflow's 2 contributors NOT folded (three independent reasons): recognition golden
+  pins no contributor output; `workflow-document-metadata` calls `cacheWorkflowDocument`
+  (a DB-cache side effect illegal in a pure read-only recognize); `entry.parameters` has
+  no carrying `IndexDocument` field.
+- task's `applyTaskMetadata` FOLDED (verified byte-faithful to output/renderers.ts:764-780):
+  `tags` unconditionally gains `task`/`scheduled`; `searchHints` gains
+  `schedule:`/`workflow:`/`prompt:` for present fields. Worker correctly followed the ACTUAL
+  contributor (tags+searchHints, NO description) over the WI-2.2 brief's imprecise
+  "name/description" paraphrase.

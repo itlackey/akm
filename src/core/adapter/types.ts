@@ -134,6 +134,36 @@ export interface IndexDocument {
   links?: string[];
   /** Opaque adapter extras ONLY (arbitrary OKF frontmatter keys); not FTS, never parsed by core. */
   documentJson?: unknown;
+
+  /**
+   * ADDITIVE chunk-2 extension (WI-2.2, the "workflow renderer wrinkle" —
+   * `docs/design/execution/chunk-2/brief.md` WI-2.2 scope). Per-DOCUMENT
+   * renderer identity, distinct from `type-presentation.ts`'s
+   * `TYPE_PRESENTATION[type].rendererName` (which is per-TYPE — one name per
+   * `KnownType`, minted WI-2.1).
+   *
+   * Why this exists: `workflow` is ONE type with TWO on-disk forms that each
+   * need their OWN renderer name (`workflow-md` vs `workflow-program-yaml` —
+   * chunk-2 anchors.md §C.3), and a per-type table structurally cannot name
+   * two renderers for one type key. The legacy system solved the identical
+   * problem the same way: `classifyByWorkflowProgram`'s `MatchResult` names
+   * `WORKFLOW_PROGRAM_RENDERER_NAME` DIRECTLY rather than going through the
+   * type-keyed `rendererNameFor` lookup (`matchers.ts`'s
+   * `workflowProgramMatcher`, cross-confirmed anchors.md §B.1/§C.3) — this
+   * field is the `BundleAdapter`-shaped translation of that same per-file
+   * override, at the natural granularity (`IndexDocument` is already the
+   * per-file artifact).
+   *
+   * `undefined` = fall back to `TYPE_PRESENTATION[type].rendererName` (the
+   * type's default/primary form — set to `"workflow-md"` for `workflow`,
+   * mirroring `asset-spec.ts`'s `workflow` entry). Only the `workflow`
+   * adapter's program-yaml form sets this today
+   * (`core/adapter/adapters/workflow-adapter.ts`); every other WI-2.1/2.2
+   * adapter leaves it `undefined` and is unaffected. Optional and additive:
+   * no existing consumer reads this field, no behavior change to anything
+   * that predates chunk-2 WI-2.2.
+   */
+  rendererName?: string;
 }
 
 // ── §12.1 (normative) — ValidateContext ─────────────────────────────────────
