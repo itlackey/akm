@@ -34,7 +34,14 @@ import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
+import { sanitizeCommitMessage } from "./git-message";
 import { warn } from "./warn";
+
+// Re-exported so existing `import { sanitizeCommitMessage } from
+// "./core/write-source"` sites are unaffected by the KILL 6 sever (the
+// helper moved to git-message.ts to break the write-source.ts → git.ts →
+// git-stash.ts → write-source.ts 3-file import cycle).
+export { sanitizeCommitMessage };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,14 +72,6 @@ export interface WriteTargetSource {
  */
 const REJECTED_WRITABLE_KINDS: ReadonlySet<string> = new Set(["website", "npm"]);
 
-/**
- * Maximum length of a sanitized git commit message. Git itself imposes no
- * fixed limit, but message strings come from refs and `--message` flags that
- * can be supplied by users or upstream config. A 4096-char clamp keeps audit
- * trails readable and prevents pathological payloads from bloating the log
- * stream a downstream consumer parses.
- */
-const COMMIT_MESSAGE_MAX_LENGTH = 4096;
 const pendingGitPaths = new Map<string, Set<string>>();
 
 function gitTargetKey(source: WriteTargetSource): string {
@@ -97,42 +96,6 @@ function takeGitTargetPaths(source: WriteTargetSource): string[] {
   return [...absolutePaths]
     .map((filePath) => path.relative(repoDir, filePath).replaceAll(path.sep, "/"))
     .filter((filePath) => filePath && filePath !== ".." && !filePath.startsWith("../"));
-}
-
-/**
- * Sanitize a string before passing it as `git commit -m <message>`.
- *
- * Defenses, in order:
- *   1. Strip NUL bytes (`\0`) — git rejects them anyway, but we never want
- *      them in argv.
- *   2. Replace any CR/LF (`\r`, `\n`) and other ASCII control chars with a
- *      single space. This collapses newline-injection attempts that would
- *      otherwise turn a single-line commit subject into a forged trailer
- *      block.
- *   3. Collapse runs of whitespace into a single space and trim.
- *   4. Clamp to {@link COMMIT_MESSAGE_MAX_LENGTH} characters.
- *
- * If the result is empty after sanitization the caller should substitute a
- * default — this helper returns `""` rather than throwing because not every
- * callsite has a sensible "invalid input" exit code, and "empty" is a
- * recoverable signal.
- */
-export function sanitizeCommitMessage(input: string): string {
-  if (typeof input !== "string") return "";
-  // 1. Strip NULs outright.
-  let out = input.replace(/\0/g, "");
-  // 2. Replace CR/LF + other C0 control characters (0x00-0x1F, 0x7F) with a
-  //    space. Tab (0x09) is included intentionally — commit subjects should
-  //    be a single visual line.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitization
-  out = out.replace(/[\x00-\x1F\x7F]/g, " ");
-  // 3. Collapse whitespace runs and trim.
-  out = out.replace(/\s+/g, " ").trim();
-  // 4. Clamp length.
-  if (out.length > COMMIT_MESSAGE_MAX_LENGTH) {
-    out = out.slice(0, COMMIT_MESSAGE_MAX_LENGTH).trimEnd();
-  }
-  return out;
 }
 
 // ── Portability advisory (review 13, D1) ────────────────────────────────────

@@ -6,7 +6,7 @@ import type { Database } from "../../storage/database";
 import type { ScopedUtilityRow, UtilityScoreRow } from "../db/db";
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
-import type { RankedEntryInput } from "./ranking";
+import type { RankedEntryInput } from "./ranking-types";
 
 const TYPE_BOOST: Record<string, number> = {
   skill: 0.4,

@@ -39,7 +39,7 @@ import {
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type NodeFs, nodeFs, throwIfNotOk } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./index";
+import type { InstalledTaskRef, TaskBackend } from "./types";
 
 export type CronExecResult = { status: number; stdout: string; stderr: string };
 

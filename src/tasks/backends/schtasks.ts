@@ -54,7 +54,7 @@ import {
   normalizeXmlForUtf16File,
   runOrThrow,
 } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./index";
+import type { InstalledTaskRef, TaskBackend } from "./types";
 
 export type SchtasksExec = BackendExec;
 

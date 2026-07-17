@@ -925,5 +925,10 @@ export async function extractGraphFromBody(
   });
 }
 
-// deduplicateGraph moved to src/indexer/graph-dedup.ts (pure utility, no LLM calls).
-export { deduplicateGraph } from "../indexer/graph/graph-dedup";
+// deduplicateGraph lives in src/indexer/graph/graph-dedup.ts (pure utility, no
+// LLM calls) — import it from there directly. The re-export that used to live
+// here created a value edge back to graph-dedup.ts, which (via its type-only
+// import of GraphExtraction/GraphRelation below) formed a 2-file import cycle
+// (chunk 9 WI-9.8 KILL 4 sever). No src or test consumer used this re-export
+// (graph-extraction.ts and the test suite already import graph-dedup.ts
+// directly), so it is deleted outright rather than repointed.

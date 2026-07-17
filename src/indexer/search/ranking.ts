@@ -20,24 +20,13 @@ import {
   defaultRankingContributors,
   defaultUtilityRankingContributors,
 } from "./ranking-contributors";
+import type { RankedEntryInput } from "./ranking-types";
 
-export interface RankedEntryInput {
-  id: number;
-  entry: StashEntry;
-  filePath: string;
-  score: number;
-  rankingMode: "hybrid" | "semantic" | "fts";
-  utilityBoosted?: boolean;
-  /**
-   * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
-   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
-   * `minScore` floor in db-search checks this instead of the clamped score,
-   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
-   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
-   * a result that would otherwise have listed.
-   */
-  preCeilingScore?: number;
-}
+// Re-exported so existing `import type { RankedEntryInput } from
+// "./indexer/search/ranking"` sites are unaffected by the KILL 2 sever (type
+// moved to ranking-types.ts to break the ranking.ts ↔ ranking-contributors.ts
+// import cycle).
+export type { RankedEntryInput };
 
 export interface RankEntriesOptions {
   db: Database;

@@ -17,8 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { HarnessConfigImporter } from "../../../setup/harness-config-import";
-import { homeDir } from "../shared";
+import { type HarnessConfigImporter, homeDir } from "../shared";
 
 /**
  * Imports LLM config from an OpenCode installation.

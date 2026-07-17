@@ -21,47 +21,16 @@
 
 import { claudeCodeImporter } from "../integrations/harnesses/claude/config-import";
 import { openCodeImporter } from "../integrations/harnesses/opencode/config-import";
+import type { HarnessConfigImporter, HarnessLLMConfig } from "../integrations/harnesses/shared";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/**
- * LLM/provider config extracted from an agent harness.
- * API key VALUES are never stored — only env var names.
- */
-export interface HarnessLLMConfig {
-  /** Human-readable source label, e.g. "Claude Code" */
-  harnessName: string;
-  /** Provider identifier, e.g. "anthropic", "openai" */
-  provider?: string;
-  /** Model identifier, e.g. "claude-sonnet-4-5" */
-  model?: string;
-  /** Base URL for the provider API */
-  baseUrl?: string;
-  /** Env var name (not value) that holds the API key */
-  apiKeyEnvVar?: string;
-  /** Additional detected models available from this harness */
-  extraModels?: string[];
-}
-
-/**
- * A pluggable harness config importer.
- *
- * Importers are pure filesystem readers — no network calls, no side effects.
- */
-export interface HarnessConfigImporter {
-  /** Display name shown to user, e.g. "Claude Code" */
-  harnessName: string;
-  /**
-   * Check if this harness is installed.
-   * Must be fast: filesystem stat only, no network.
-   */
-  detect: () => boolean;
-  /**
-   * Read and parse harness config.
-   * Returns `null` when config is absent or unreadable.
-   */
-  importConfig: () => HarnessLLMConfig | null;
-}
+// Re-exported so existing `import { type HarnessLLMConfig, ... } from
+// "./setup/harness-config-import"` sites are unaffected by the KILL 8 sever
+// (types moved to integrations/harnesses/shared.ts — a dependency sink — to
+// break the harness-config-import.ts ↔ {claude,opencode}/config-import.ts
+// import cycle).
+export type { HarnessConfigImporter, HarnessLLMConfig };
 
 // The Claude Code importer was migrated to its harness directory in #563
 // (`harnesses/claude/config-import.ts`) and the OpenCode importer in #564

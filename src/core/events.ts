@@ -30,9 +30,15 @@ import path from "node:path";
 import type { Database } from "../storage/database";
 import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
 import { rethrowIfTestIsolationError } from "./errors";
+import type { EventEnvelope } from "./events-types";
 import { getDataDir } from "./paths";
 import { openStateDatabase, withStateDb } from "./state-db";
 import { error } from "./warn";
+
+// Re-exported so existing `import type { EventEnvelope } from "./core/events"`
+// sites are unaffected by the KILL 1 sever (type moved to events-types.ts to
+// break the events.ts ↔ events-repository.ts import cycle).
+export type { EventEnvelope };
 
 /**
  * Stable, machine-readable event types. New types may be added freely.
@@ -156,15 +162,6 @@ export interface AppendEventInput {
   /** Asset ref like `memory:alpha`. Optional for stash-wide events. */
   ref?: string;
   /** Free-form structured payload. Must be JSON-serialisable. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface EventEnvelope {
-  schemaVersion: 1;
-  id: number;
-  ts: string;
-  eventType: string;
-  ref?: string;
   metadata?: Record<string, unknown>;
 }
 

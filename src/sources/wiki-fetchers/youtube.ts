@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { fetchWithRetry } from "../../core/common";
-import type { WikiSnapshotFetcher, WikiSnapshotResult } from "./registry";
+import type { WikiSnapshotFetcher, WikiSnapshotResult } from "./types";
 
 type YoutubeCaptionTrack = {
   baseUrl?: unknown;

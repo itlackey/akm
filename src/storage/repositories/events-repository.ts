@@ -11,7 +11,7 @@
  * @module events-repository
  */
 
-import type { EventEnvelope } from "../../core/events";
+import type { EventEnvelope } from "../../core/events-types";
 import { error } from "../../core/warn";
 import type { Database, SqlValue } from "../database";
 

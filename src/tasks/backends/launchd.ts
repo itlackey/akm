@@ -38,7 +38,7 @@ import {
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type BackendExec, escapeXml, type NodeFs, nodeExec, nodeFs, runOrThrow } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./index";
+import type { InstalledTaskRef, TaskBackend } from "./types";
 
 export type LaunchdExec = BackendExec<{ uid(): number }>;
 

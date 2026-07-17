@@ -6,27 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { warn } from "../../core/warn";
+import type { FetcherContext, WikiSnapshotFetcher, WikiSnapshotResult } from "./types";
 import youtubeFetcher from "./youtube";
 
-export interface WikiSnapshotResult {
-  url: string;
-  title: string;
-  markdown: string;
-  preferredName?: string;
-  tags?: string[];
-}
-
-export interface FetcherContext {
-  stashDir: string;
-  timeoutMs: number;
-  signal?: AbortSignal;
-}
-
-export interface WikiSnapshotFetcher {
-  name: string;
-  matches(url: URL, context: FetcherContext): boolean;
-  fetch(url: URL, context: FetcherContext): Promise<WikiSnapshotResult | null>;
-}
+// Re-exported so existing `import { type FetcherContext, ... } from
+// "./sources/wiki-fetchers/registry"` sites are unaffected by the KILL 3
+// sever (types moved to types.ts to break the registry.ts ↔ youtube.ts
+// import cycle).
+export type { FetcherContext, WikiSnapshotFetcher, WikiSnapshotResult };
 
 const FETCHER_DIR = path.join("scripts", "wiki-fetchers");
 const FETCHER_FILE_PATTERN = /\.(?:ts|js|mjs)$/i;

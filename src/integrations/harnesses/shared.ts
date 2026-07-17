@@ -82,3 +82,56 @@ export function caps(c: Partial<HarnessCapabilityFlags> & { sessionLogs?: boolea
 export function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";
 }
+
+// ── Harness config-import contract (chunk 9 WI-9.8 KILL 8) ─────────────────
+//
+// `HarnessLLMConfig`/`HarnessConfigImporter` used to live in
+// `setup/harness-config-import.ts`, which imports the per-harness importers
+// (`claude/config-import.ts`, `opencode/config-import.ts`) BY VALUE to build
+// `HARNESS_CONFIG_IMPORTERS`. Those importer modules, in turn, needed the
+// `HarnessConfigImporter` TYPE to annotate their exported importer object —
+// a type-only import back into `harness-config-import.ts` that still formed
+// a 3-file static-graph cycle (import type does not sever a cycle; only
+// moving the type does). Both types have zero external type deps, so they
+// live here — this module is a dependency SINK (see the file-level doc
+// comment above) — instead of a separate leaf. `harness-config-import.ts`
+// re-exports both so existing import sites are unaffected.
+
+/**
+ * LLM/provider config extracted from an agent harness.
+ * API key VALUES are never stored — only env var names.
+ */
+export interface HarnessLLMConfig {
+  /** Human-readable source label, e.g. "Claude Code" */
+  harnessName: string;
+  /** Provider identifier, e.g. "anthropic", "openai" */
+  provider?: string;
+  /** Model identifier, e.g. "claude-sonnet-4-5" */
+  model?: string;
+  /** Base URL for the provider API */
+  baseUrl?: string;
+  /** Env var name (not value) that holds the API key */
+  apiKeyEnvVar?: string;
+  /** Additional detected models available from this harness */
+  extraModels?: string[];
+}
+
+/**
+ * A pluggable harness config importer.
+ *
+ * Importers are pure filesystem readers — no network calls, no side effects.
+ */
+export interface HarnessConfigImporter {
+  /** Display name shown to user, e.g. "Claude Code" */
+  harnessName: string;
+  /**
+   * Check if this harness is installed.
+   * Must be fast: filesystem stat only, no network.
+   */
+  detect: () => boolean;
+  /**
+   * Read and parse harness config.
+   * Returns `null` when config is absent or unreadable.
+   */
+  importConfig: () => HarnessLLMConfig | null;
+}

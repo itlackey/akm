@@ -9,7 +9,7 @@ import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { sanitizeCommitMessage } from "../../core/write-source";
+import { sanitizeCommitMessage } from "../../core/git-message";
 import { runGit } from "./git-install";
 import { getCachePaths, parseGitRepoUrl } from "./git-provider";
 
