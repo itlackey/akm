@@ -8,8 +8,8 @@
     "src/sources/website-ingest.ts — snapshot pages; the `website` type value the adapter emits"
   ],
   "notes": [
-    "SPECIFICATION golden. FLAG (ambiguity): `website` is NOT in KNOWN_TYPES (the 14: skill/command/agent/knowledge/workflow/script/memory/env/secret/wiki/lesson/task/session/fact). presentationFor('website') therefore returns DEFAULT_PRESENTATION = {label:'Asset'}, renderer=null, generic action `akm show <ref>` (spec §3.4). Third-party/foreign types are never dropped — they stay searchable and render generically.",
-    "OPEN QUESTION for the adapter author: whether to ADD a `website` presentation entry (e.g. a read-only 'open the snapshot / visit the source URL' renderer) or accept the generic fallback. Recorded default: generic fallback. See the methodology doc."
+    "SPECIFICATION golden. `website` is NOT in KNOWN_TYPES (the added 15th type was `instruction`, not `website`). presentationFor('website') therefore returns DEFAULT_PRESENTATION = {label:'Asset'}, renderer=null, generic action `akm show <ref>` (spec §3.4). Third-party/foreign types are never dropped — they stay searchable and render generically.",
+    "RESOLVED (open question 4, maintainer resolution 2026-07): `website` gets NO dedicated presentation entry — the generic fallback is CONFIRMED (in contrast to `instruction`, which DID get its own entry under open question 1). Website snapshot pages render generically. No longer open."
   ],
   "byRelPath": {
     "stash/knowledge/example-com/index.md": {

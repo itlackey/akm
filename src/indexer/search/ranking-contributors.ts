@@ -29,6 +29,10 @@ export const TYPE_BOOST: Record<KnownType, number> = {
   // Facts are authoritative, durable declarations about the stash — rank them
   // alongside knowledge so they surface reliably when relevant.
   fact: 0.22,
+  // Instruction files (CLAUDE.md / AGENTS.md) are project instructions read
+  // like knowledge (maintainer resolution 2026-07) — rank them alongside
+  // knowledge so they surface reliably when relevant.
+  instruction: 0.22,
   memory: -0.02,
   // Chunk 1.5: previously-absent entries, all defaulted to 0 pre-chunk —
   // explicit now, unchanged in effect.

@@ -122,9 +122,12 @@ the **§7 adapter table**; presentation comes from `src/core/type-presentation.t
   `pageKind`; xrefs/citations → links; native wiki validation (§6/§7, §0.2, §9).
 
 Where the spec names a **rule** but not a diagnostic **code** (the Agent Skills
-field checks, the wiki checks), the code strings are **proposed, spec-aligned**
-and the golden says so; the `missing-skill-md`, `dangerous-vault-key`, and
-`invalid-task-yaml` codes ARE code-grounded and reused verbatim.
+field checks, the wiki checks), the code strings are now **APPROVED** (maintainer
+resolution 2026-07; see §5.7) — no longer proposed. Code-grounded and reused
+verbatim TODAY: `missing-skill-md`, `dangerous-vault-key`, `invalid-task-yaml`,
+and `broken-xref` (in the existing `akm wiki lint`); the remaining approved codes
+(`skill-name-invalid`, `skill-description-too-long`, `skill-unknown-frontmatter`,
+`uncited-raw`, `missing-description`, `orphan`) are approved-but-not-yet-coded.
 
 ---
 
@@ -163,16 +166,28 @@ and the golden says so; the `missing-skill-md`, `dangerous-vault-key`, and
 
 ---
 
-## 5. Open questions / ambiguities (flagged, NOT silently guessed)
+## 5. Open questions / ambiguities — ALL RESOLVED (maintainer, 2026-07)
 
-Each has a recorded best-reasoned default in the golden; the adapter author
-resolves it when the adapter lands.
+All seven questions below were resolved by the maintainer on 2026-07 and the
+resolutions have been applied to the goldens (and, for #1, to live code). The
+original question text is kept for provenance; the **RESOLVED** line records the
+binding decision that was applied. These are no longer open.
 
 1. **`instruction` presentation (claude/opencode).** `instruction`
    (`CLAUDE.md`/`AGENTS.md`) is a NEW type (§7) but has NO `TYPE_PRESENTATION`
    entry (not in `KNOWN_TYPES`). **Default:** generic fallback (`{label:'Asset'}`,
    `akm show <ref>`). **Open:** add an `instruction` presentation entry (e.g. a
    "read the project instructions" renderer)?
+   **RESOLVED — ADD the type.** `instruction` is now the 15th `KNOWN_TYPE`
+   (`src/core/recognition-util.ts`) with its own presentation
+   (`src/core/type-presentation.ts`): label `Instruction`, renderer REUSES
+   `knowledge-md` (instruction files are markdown read exactly like knowledge),
+   action `akm show <ref> -> read the project instructions` (mirrors knowledge's
+   read action). Its `TYPE_BOOST` mirrors knowledge (0.22); the legacy
+   `asset-registry.ts` `TYPE_TO_RENDERER`/`ACTION_BUILDERS` were kept in sync
+   (parity guard). The claude/opencode recognition + renderer goldens now pin the
+   Instruction presentation, NOT the generic fallback. (This is the only live-code
+   change; everything else here is golden/doc data.)
 2. **llm-wiki page `type` (CENTRAL, Chunk 4).** Spec §6 says wiki pages carry
    "its own type values" and §0.2 retires the `wiki` asset-type. **Default
    (reading A):** page `type` = frontmatter `pageKind` (concept/entity/note/…),
@@ -180,24 +195,54 @@ resolves it when the adapter lands.
    `wiki-md` renderer goes unused). **Alternative (reading B):** emit a single
    `type` = `wiki` (reuse `wiki-md`) and carry `pageKind` as metadata — contradicts
    §0.2. Both are recorded in the recognition/renderer goldens.
+   **RESOLVED — READING A is correct.** Page `type` = frontmatter `pageKind`
+   (concept/entity/note/…), raw sources `type` = `wiki-source`, all render
+   GENERICALLY (`wiki-md` unused). Reading B was considered and rejected because
+   it contradicts §0.2. The reading-B `alternativeRenderer` blocks were removed
+   from `llm-wiki/renderer.json`; the goldens now record reading A as the single
+   finalized form (one line notes B was rejected).
 3. **website-snapshot re-typing + conceptId.** On-disk pages are knowledge-shaped
    (no `type:` field, tagged `website`); the adapter re-types them to `website`.
    **Open:** is the re-type unconditional or gated on the `website` tag/`sourceUrl`?
    And does the conceptId strip the `stash/knowledge/` prefix? Both forms recorded.
+   **RESOLVED — GATED, keep sourceUrl, strip the prefix.** The re-type to
+   `website` is GATED on the `website` tag / `sourceUrl` presence (NOT
+   unconditional); the document KEEPS its `sourceUrl` (surfaced as `sourceRef`);
+   the conceptId STRIPS the `stash/knowledge/` prefix (e.g. `example-com/index`).
+   The "both forms recorded" alternative was removed from `website-snapshot`
+   recognition/placement — this is now the single resolved form.
 4. **`website` / `document` / `file` have no presentation entries.** Generic
    fallback is the default; the adapter author may add entries.
+   **RESOLVED — generic fallback CONFIRMED.** No dedicated presentation entries
+   for `website`/`document`/`file` (in contrast to `instruction`, which DID get
+   one in #1). They render generically. Confirmed in the website-snapshot and
+   generic-files renderer goldens.
 5. **generic-files classification predicate + placement.** Spec names
    document/script/file but not the exact rules. **Default:** SCRIPT_EXTENSIONS →
    script; markdown/text → document; else → file; placement = identity (keep the
    natural path). Open for the adapter author.
+   **RESOLVED — DEFAULT CONFIRMED.** SCRIPT_EXTENSIONS → `script`; markdown/text
+   → `document`; else → `file`; placement = identity (natural path). This is the
+   finalized predicate; the `generic-files` goldens drop "open for the adapter
+   author".
 6. **OpenCode singular vs plural dirs.** **Resolved to PLURAL** (spec §7 +
    canonical OpenCode); singular is a backwards-compat alias the adapter should
    also accept.
+   **RESOLVED — accept BOTH forms.** Plural (`commands/`/`agents/`/`skills/`) is
+   canonical AND singular (`command/`/`agent/`/`skill/`) is accepted as a
+   backwards-compat alias (writes normalize to the canonical plural). The
+   `opencode` bundle now includes a singular-dir fixture (`command/legacy.md`)
+   exercising the alias, pinned in the recognition + renderer goldens.
 7. **Proposed diagnostic codes.** The Agent Skills field codes
    (`skill-name-invalid`, `skill-description-too-long`, `skill-unknown-frontmatter`)
    and the wiki codes (`broken-xref`, `uncited-raw`, `missing-description`,
    `orphan`) are PROPOSED — the spec names the rules, not the codes. Finalize when
    the checks are built.
+   **RESOLVED — APPROVED.** These are now the approved, final code strings. The
+   `agent-skills` + `llm-wiki` lint goldens drop the "PROPOSED"/"the adapter
+   author finalizes" caveats. Code-verbatim TODAY: only `missing-skill-md`,
+   `dangerous-vault-key`, `invalid-task-yaml`, and `broken-xref` (in the existing
+   `akm wiki lint`) are implemented; the rest are approved-but-not-yet-coded.
 
 ---
 

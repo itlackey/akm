@@ -9,7 +9,7 @@
   ],
   "notes": [
     "SPECIFICATION golden. Native wiki validation (from the schema template's Lint contract): (1) broken-xref — an xref/link target that does not resolve to an existing page; (2) uncited-raw — a raw/ source not cited by any page's `sources:`; (3) missing-description — a page without a description; (4) orphan — a page with no inbound/outbound valid links. Broken links are TOLERATED (warning, non-blocking) per spec §9.",
-    "issue codes (`broken-xref`, `uncited-raw`, `missing-description`, `orphan`) are PROPOSED, aligned to the schema template's wording; Chunk 4 finalizes the exact strings. `detail` strings are illustrative.",
+    "issue codes (`broken-xref`, `uncited-raw`, `missing-description`, `orphan`) are APPROVED (open question 7 RESOLVED, maintainer resolution 2026-07) — no longer proposed. `detail` strings are illustrative. CODE STATUS: `broken-xref` is code-grounded in the existing `akm wiki lint` (src/wiki/wiki.ts); `uncited-raw`/`missing-description`/`orphan` are APPROVED-BUT-NOT-YET-CODED in validate() (they land when Chunk 4 ports the checks into the adapter).",
     "In this fixture: raw/2026-07-http-rfc is cited by two pages → NOT uncited; http-caching + varnish are well-formed (valid reciprocal xrefs, descriptions, citations) → []; orphan.md has a broken xref (pages/does-not-exist) and no citations → broken-xref (warning)."
   ],
   "perType": {
@@ -53,12 +53,12 @@
   "edgeCases": {
     "orphanFindingIsOptional": {
       "scenario": "a page with no inbound/outbound VALID links (orphan.md qualifies once its one xref is dropped as broken)",
-      "proposedIssue": {
+      "approvedIssue": {
         "issue": "orphan",
         "detail": "page has no valid cross-references in or out (link orphan) — wiki schema Lint check.",
         "fixed": false
       },
-      "note": "Whether the adapter emits BOTH broken-xref AND orphan for the same page, or suppresses orphan while a broken xref is present, is an open Chunk-4 decision. Recorded default: emit broken-xref only (the actionable finding); surface orphan after the xref is fixed."
+      "note": "The `orphan` issue CODE is APPROVED (open question 7 RESOLVED). Separately, whether the adapter emits BOTH broken-xref AND orphan for the same page, or suppresses orphan while a broken xref is present, remains a Chunk-4 BEHAVIOR decision (not part of the code-approval resolution). Recorded default: emit broken-xref only (the actionable finding); surface orphan after the xref is fixed."
     }
   }
 }

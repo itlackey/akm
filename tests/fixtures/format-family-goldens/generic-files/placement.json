@@ -8,7 +8,7 @@
     "AKM-native fallback family — generic-files has no TYPE_DIRS; it places by identity"
   ],
   "notes": [
-    "SPECIFICATION golden. Because generic-files has no per-type subdir convention, placement is an IDENTITY join: the conceptId maps to its own path. `document` (markdown) appends .md; `script` and `file` keep the natural extension. FLAG: this identity-placement is the best-reasoned default (spec does not specify a placement convention for generic-files) — see the methodology doc."
+    "SPECIFICATION golden. Because generic-files has no per-type subdir convention, placement is an IDENTITY join: the conceptId maps to its own path. `document` (markdown) appends .md; `script` and `file` keep the natural extension. RESOLVED (open question 5, maintainer resolution 2026-07): identity placement (natural path) is the FINALIZED convention for generic-files — no longer open for the adapter author."
   ],
   "byType": {
     "document": {

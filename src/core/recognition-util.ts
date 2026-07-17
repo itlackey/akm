@@ -77,10 +77,15 @@ export const DERIVED_SUFFIX = ".derived";
 // import, so it lives here without breaking the D1-5 import-free invariant.
 
 /**
- * The 14 AKM-owned built-in asset type keys (exactly the deleted
- * `common.ts` `ASSET_TYPES` set, same order). `wiki` is expected to be
- * removed from this tuple by a later chunk ("the wiki ASSET-TYPE dies") —
- * not a chunk 1.5 concern.
+ * The AKM-owned built-in asset type keys. The first 14 are exactly the
+ * deleted `common.ts` `ASSET_TYPES` set (same order); `instruction`
+ * (CLAUDE.md / AGENTS.md project-instruction files) is the 15th, added for the
+ * format-family adapters (spec §6/§7 instruction row, maintainer resolution
+ * 2026-07). An instruction file is a read-like-knowledge markdown document, so
+ * it reuses knowledge's presentation shape (label "Instruction", `knowledge-md`
+ * renderer, a "read the project instructions" action) rather than the generic
+ * fallback. `wiki` is expected to be removed from this tuple by a later chunk
+ * ("the wiki ASSET-TYPE dies") — not a chunk 1.5 concern.
  */
 export const KNOWN_TYPES = [
   "skill",
@@ -97,6 +102,7 @@ export const KNOWN_TYPES = [
   "task",
   "session",
   "fact",
+  "instruction",
 ] as const;
 
 export type KnownType = (typeof KNOWN_TYPES)[number];

@@ -9,7 +9,8 @@
   ],
   "notes": [
     "SPECIFICATION golden — no opencode adapter exists yet. Every fixture file is CONFORMANT → []. The opencode adapter, like claude, is a tool-dir translator and tolerates OpenCode's documented frontmatter fields. The strict-unknown-frontmatter behavior belongs to `agent-skills`, not to the tool-dir adapters (spec §6 skill row).",
-    "The changelog skill has a valid SKILL.md with name (charset OK, == dir) + description (< 1024) → no `missing-skill-md`, no Agent Skills hard-rule violations."
+    "The changelog skill has a valid SKILL.md with name (charset OK, == dir) + description (< 1024) → no `missing-skill-md`, no Agent Skills hard-rule violations.",
+    "The `command` perType entry represents both the canonical plural commands/test.md AND the singular-dir alias command/legacy.md (open question 6 RESOLVED: both dir forms accepted). Validation keys on the derived `type`, not the dir spelling, so both are conformant → []."
   ],
   "perType": {
     "instruction": {

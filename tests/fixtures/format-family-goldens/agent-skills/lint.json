@@ -10,7 +10,7 @@
   ],
   "notes": [
     "SPECIFICATION golden — Diagnostic shape is src/core/adapter/types.ts Diagnostic ({file, issue, detail, fixed}).",
-    "ISSUE-CODE STATUS: the spec names the RULES but NOT the diagnostic `issue` codes. The codes below (`skill-name-invalid`, `skill-description-too-long`, `missing-skill-md`) are PROPOSED, spec-aligned names; `missing-skill-md` is the one already used in code. The adapter author finalizes the exact code strings when the §4.5 checks are built — flagged in the methodology doc.",
+    "ISSUE-CODE STATUS — RESOLVED (open question 7, maintainer resolution 2026-07): the codes `skill-name-invalid`, `skill-description-too-long`, and `skill-unknown-frontmatter` are APPROVED (final). CODE-VERBATIM TODAY: only `missing-skill-md` is implemented in code (src/commands/lint/skill-linter.ts, src/core/adapter/adapters/akm-lint.ts). The three approved field-level codes are APPROVED-BUT-NOT-YET-CODED — they land when the §4.5 checks are built. No longer proposed/open.",
     "PER-ADAPTER STRICTNESS: agent-skills ERRORS on unknown frontmatter (skills-ref behavior); the conformant pdf-processing skill uses only recognized fields (name, description, license, metadata) so it passes. Under the `claude` adapter the same fields plus Claude Code extension fields would be tolerated (see claude/lint.json).",
     "`detail` strings are illustrative, human-readable messages a validator SHOULD emit; the load-bearing assertions are (file, issue, fixed) and the violation each entry pins.",
     "The `missing-skill-md` directory-level check (the one implemented code path) is documented under edgeCases (an empty skill dir), not as a fixture directory (git cannot track an empty dir; adding a placeholder would defeat the check)."
@@ -70,7 +70,7 @@
         "detail": "unknown frontmatter key '<key>' — the agent-skills adapter errors on unknown fields (skills-ref strictness, spec §6)",
         "fixed": false
       },
-      "note": "PROPOSED code. This is the per-adapter-strictness distinction: agent-skills ERRORS here where claude/opencode would tolerate the key."
+      "note": "APPROVED code `skill-unknown-frontmatter` (open question 7 RESOLVED), approved-but-not-yet-coded. This is the per-adapter-strictness distinction: agent-skills ERRORS here where claude/opencode would tolerate the key."
     }
   }
 }

@@ -9,7 +9,7 @@
   ],
   "notes": [
     "SPECIFICATION golden — no opencode adapter exists yet. Presentation is keyed on the open `type`, so command/agent/skill render identically to the akm/claude equivalents.",
-    "SAME FLAG as claude: `instruction` (AGENTS.md) has no TYPE_PRESENTATION entry → generic fallback {label:'Asset'}, renderer=null, action `akm show <ref>`. Open question for the adapter author (see methodology doc)."
+    "SAME RESOLUTION as claude (open question 1, maintainer resolution 2026-07): `instruction` (AGENTS.md) is now a first-class KNOWN_TYPE with its OWN TYPE_PRESENTATION entry — label 'Instruction', renderer 'knowledge-md' (REUSED: instruction files are markdown read exactly like knowledge), action `akm show <ref> -> read the project instructions`. presentationFor('instruction') returns this type-specific presentation, NOT the generic {label:'Asset'} fallback."
   ],
   "byRelPath": {
     "commands/test.md": {
@@ -18,6 +18,14 @@
       "label": "Command",
       "renderer": "command-md",
       "action": "akm show sample-opencode//commands/test -> fill placeholders and dispatch"
+    },
+    "command/legacy.md": {
+      "type": "command",
+      "ref": "sample-opencode//command/legacy",
+      "label": "Command",
+      "renderer": "command-md",
+      "action": "akm show sample-opencode//command/legacy -> fill placeholders and dispatch",
+      "note": "Singular-dir alias (open question 6 RESOLVED) — presentation is keyed on the open `type` (command), so it renders identically to the plural commands/test.md; only the ref/conceptId differ (command/ vs commands/)."
     },
     "agents/explorer.md": {
       "type": "agent",
@@ -36,10 +44,10 @@
     "AGENTS.md": {
       "type": "instruction",
       "ref": "sample-opencode//AGENTS",
-      "label": "Asset",
-      "renderer": null,
-      "action": "akm show sample-opencode//AGENTS",
-      "flag": "GENERIC FALLBACK — `instruction` has no TYPE_PRESENTATION entry. OPEN QUESTION (see notes / methodology doc)."
+      "label": "Instruction",
+      "renderer": "knowledge-md",
+      "action": "akm show sample-opencode//AGENTS -> read the project instructions",
+      "resolved": "RESOLVED (open question 1) — `instruction` is a first-class KNOWN_TYPE with its own TYPE_PRESENTATION entry: label 'Instruction', renderer 'knowledge-md' (reused — read exactly like knowledge), action mirrors knowledge's read action. NOT the generic fallback."
     }
   }
 }

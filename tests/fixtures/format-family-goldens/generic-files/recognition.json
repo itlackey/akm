@@ -10,7 +10,7 @@
   ],
   "notes": [
     "SPECIFICATION golden — no generic-files adapter module exists. This adapter is EXPLICIT-CONFIG ONLY: it is never in the §1.2 auto-probe order, and its looksLikeRoot must NOT fire on any root (a user opts in deliberately).",
-    "TYPE MAPPING (FLAG — spec names the three types 'document/script/file' but does NOT define the exact classification rules). Best-reasoned default recorded here and in the methodology doc: files with a SCRIPT_EXTENSIONS extension → `script` (conceptId keeps the extension, like the akm script type); markdown/plain-text files → `document`; everything else (binary, data, unknown) → `file`. The adapter author finalizes the exact predicate.",
+    "TYPE MAPPING — RESOLVED (open question 5, maintainer resolution 2026-07): files with a SCRIPT_EXTENSIONS extension → `script` (conceptId keeps the extension, like the akm script type); markdown/plain-text files → `document`; everything else (binary, data, unknown) → `file`. This is the FINALIZED classification predicate — no longer open for the adapter author.",
     "conceptId: `document` follows OKF markdown convention when applicable, but generic-files generally KEEPS the file's natural path/extension (it indexes what it was pointed at); `script` and `file` keep the extension. Recorded per-file below."
   ],
   "byRelPath": {

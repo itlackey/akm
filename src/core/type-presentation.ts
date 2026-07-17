@@ -12,7 +12,7 @@
  *
  * The open type token (chunk 1.5) trades the deleted closed asset-type
  * union's exhaustiveness checking for a runtime lookup. `TYPE_PRESENTATION`
- * restores that exhaustiveness for AKM's OWN 14 known types (the compiler
+ * restores that exhaustiveness for AKM's OWN known types (the compiler
  * demands an entry whenever {@link KnownType} gains a member), while
  * {@link presentationFor} stays open over `string` so foreign/adapter types
  * still resolve to a sane generic fallback instead of `undefined`/a throw.
@@ -20,9 +20,11 @@
  * ── renderer/action provenance (WI-C, §2) ──
  *
  * The `renderer` NAMES and `action` builders below reproduce
- * `core/asset/asset-registry.ts`'s `TYPE_TO_RENDERER` (`:21-36`) and
- * `ACTION_BUILDERS` (`:39-58`) VERBATIM for all 14 built-in types — INCLUDING
- * the 6 "static-only" mappings (script/skill/command/agent/knowledge/memory)
+ * `core/asset/asset-registry.ts`'s `TYPE_TO_RENDERER` and `ACTION_BUILDERS`
+ * VERBATIM for all built-in types — INCLUDING the 15th type `instruction`
+ * (a read-like-knowledge markdown doc added for the format-family adapters,
+ * kept in sync in both maps) and the 6 "static-only" mappings
+ * (script/skill/command/agent/knowledge/memory)
  * that carried no `rendererName` on their old asset-spec and lived only in
  * those maps (§6 "6 renderer mappings"). This module is ADDITIVE: it does NOT
  * touch `asset-registry.ts` (Chunk 3 repoints consumers off the legacy globals
@@ -123,6 +125,17 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     label: "Fact",
     renderer: "fact-md",
     action: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
+  },
+  // `instruction` (CLAUDE.md / AGENTS.md) is a read-like-knowledge markdown
+  // doc (spec §6/§7 instruction row, maintainer resolution 2026-07): it REUSES
+  // the `knowledge-md` renderer and mirrors knowledge's read action, so an
+  // instruction hit renders exactly like knowledge instead of the generic
+  // fallback. Kept in sync with asset-registry.ts's TYPE_TO_RENDERER /
+  // ACTION_BUILDERS (the parity guard in akm-presentation.test.ts).
+  instruction: {
+    label: "Instruction",
+    renderer: "knowledge-md",
+    action: (ref) => `akm show ${ref} -> read the project instructions`,
   },
 };
 

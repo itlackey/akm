@@ -12,8 +12,9 @@
   ],
   "notes": [
     "SPECIFICATION golden — no opencode adapter exists in src/. Same byRelPath shape and shape-adaptation rationale as the claude recognition golden (recognize() projection, or {recognized:false, reason} for abstentions).",
-    "DIRECTORY PLURALITY (resolved): the spec §7 says 'plural commands/agents/ dirs', and OpenCode's current canonical layout uses PLURAL subdirectories (agents/, commands/, skills/, …); SINGULAR forms (command/, agent/) are supported only as backwards-compat aliases (opencode.ai docs). The fixture uses the canonical PLURAL dirs; the adapter SHOULD also accept the singular aliases — see the methodology doc's open-questions section.",
-    "type derivation (spec §6/§7): commands/*.md → command; agents/*.md → agent; skills/<name>/SKILL.md → skill (first-class OpenCode skill; item = the dir); AGENTS.md → instruction.",
+    "DIRECTORY PLURALITY — RESOLVED (open question 6, maintainer resolution 2026-07): BOTH forms are accepted. PLURAL commands/agents/skills/ is CANONICAL (spec §7 + OpenCode's canonical layout); SINGULAR command/agent/skill/ is ACCEPTED as a backwards-compat alias. The adapter recognizes files under either spelling as the same type; conceptId reflects the actual on-disk path (e.g. command/legacy under the singular dir). The bundle now includes a singular-dir fixture (command/legacy.md) to exercise the alias directly, alongside the canonical plural dirs.",
+    "type derivation (spec §6/§7): commands/*.md (or singular command/*.md alias) → command; agents/*.md (or agent/*.md) → agent; skills/<name>/SKILL.md (or skill/<name>/SKILL.md) → skill (first-class OpenCode skill; item = the dir); AGENTS.md → instruction.",
+    "RESOLVED (open question 1, maintainer resolution 2026-07): `instruction` is now a first-class KNOWN_TYPE (src/core/recognition-util.ts) with its OWN TYPE_PRESENTATION entry (label 'Instruction', renderer 'knowledge-md' reused — AGENTS.md is markdown read exactly like knowledge; see renderer.json). Recognition already derives type='instruction' for AGENTS.md; the resolution is that this type now renders type-specifically instead of via the generic {label:'Asset'} fallback.",
     "OpenCode also READS .claude/skills/*/SKILL.md (spec §7). That cross-read is a component-selection/config concern (the same shared SKILL.md codec recognizes those files); it is documented here and in the README but not duplicated as a fixture file to keep the bundle minimal.",
     "opencode.json (also opencode.jsonc / config.json) is runtime config — NEVER indexed (spec §7)."
   ],
@@ -38,6 +39,17 @@
       "name": "test",
       "description": "Run the test suite for the given package and summarize failures.",
       "derivation": ".md under commands/ + $ARGUMENTS body probe / `agent` frontmatter probe (spec §6 command row)"
+    },
+    "command/legacy.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "command",
+      "conceptId": "command/legacy",
+      "ref": "sample-opencode//command/legacy",
+      "name": "legacy",
+      "description": "Legacy migration command living under the SINGULAR command/ dir — exercises the backwards-compat directory alias.",
+      "derivation": "SINGULAR command/ dir → command via the backwards-compat alias (open question 6 RESOLVED: BOTH plural commands/ and singular command/ are accepted). Same command derivation as commands/test.md (spec §6 command row: .md + $ARGUMENTS body probe / `agent` frontmatter); the only difference is the singular dir name, which the conceptId preserves (command/legacy)."
     },
     "agents/explorer.md": {
       "recognized": true,

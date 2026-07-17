@@ -9,7 +9,7 @@
   ],
   "notes": [
     "SPECIFICATION golden — no claude adapter exists yet. Presentation is keyed on the open `type`, NOT on the adapter (spec §2), so a claude `command` renders identically to an akm `command`: the value here is presentationFor(type) = {label, renderer, action(ref)} from src/core/type-presentation.ts, with the concrete `ref` substituted into the action.",
-    "OPEN QUESTION / FLAG (ambiguity): `instruction` is NOT in KNOWN_TYPES (src/core/recognition-util.ts lists 14 types; instruction is not one). presentationFor('instruction') therefore returns DEFAULT_PRESENTATION = {label: 'Asset'} with NO renderer and NO action — i.e. the generic fallback `akm show <ref>` (spec §3.4). The claude/opencode adapters introduce `instruction` as a NEW type (spec §7 'Instruction files (CLAUDE.md/AGENTS.md) are NEW'), but no TYPE_PRESENTATION entry was added for it. Best-reasoned default recorded below: generic fallback. The adapter author must decide whether to add an `instruction` presentation entry (e.g. a knowledge-md-like 'read the project instructions' renderer) — see the methodology doc's open-questions section.",
+    "RESOLVED (open question 1, maintainer resolution 2026-07): `instruction` (CLAUDE.md/AGENTS.md) is now a first-class KNOWN_TYPE (src/core/recognition-util.ts) with its OWN TYPE_PRESENTATION entry — label 'Instruction', renderer 'knowledge-md' (REUSED: instruction files are markdown read exactly like knowledge), action `akm show <ref> -> read the project instructions` (mirrors knowledge's read action). presentationFor('instruction') therefore returns this type-specific presentation, NOT the generic {label:'Asset'} fallback. The CLAUDE.md entry below is pinned to that presentation.",
     "action strings are the src/core/type-presentation.ts forms (`akm show <ref> -> …`); the longer buildShowResponse action strings in renderer/all-types.json are the OLD src/output/renderers.ts surface — the format-neutral presentation table is the forward-looking one the new adapters key on."
   ],
   "byRelPath": {
@@ -37,10 +37,10 @@
     "CLAUDE.md": {
       "type": "instruction",
       "ref": "sample-claude//CLAUDE",
-      "label": "Asset",
-      "renderer": null,
-      "action": "akm show sample-claude//CLAUDE",
-      "flag": "GENERIC FALLBACK — `instruction` has no TYPE_PRESENTATION entry (not in KNOWN_TYPES). renderer=null → DEFAULT_PRESENTATION {label:'Asset'}; action is the generic `akm show <ref>`. OPEN QUESTION for the adapter author (see notes)."
+      "label": "Instruction",
+      "renderer": "knowledge-md",
+      "action": "akm show sample-claude//CLAUDE -> read the project instructions",
+      "resolved": "RESOLVED (open question 1) — `instruction` is a first-class KNOWN_TYPE with its own TYPE_PRESENTATION entry: label 'Instruction', renderer 'knowledge-md' (reused — instruction files are markdown read exactly like knowledge), action mirrors knowledge's read action. NOT the generic fallback."
     }
   }
 }

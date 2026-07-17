@@ -14,11 +14,15 @@ runtime config and is never indexed.
   https://opencode.ai/docs/rules/
 
 Files: `AGENTS.md` (instruction), `commands/test.md` (command),
+`command/legacy.md` (command via the SINGULAR-dir backwards-compat alias),
 `agents/explorer.md` (agent), `skills/changelog/SKILL.md` (skill; item = the
 dir), `opencode.json` (runtime config — NOT indexed).
 
-**Directory plurality:** canonical OpenCode uses PLURAL `commands/`/`agents/`/
-`skills/` (spec §7); singular `command/`/`agent/` are backwards-compat aliases
-the adapter should also accept. **Cross-read:** OpenCode also reads
-`.claude/skills/*/SKILL.md` via the shared SKILL.md codec (documented, not
+**Directory plurality (open question 6 — RESOLVED, maintainer 2026-07):** BOTH
+forms are accepted. Canonical OpenCode uses PLURAL `commands/`/`agents/`/
+`skills/` (spec §7); singular `command/`/`agent/`/`skill/` are backwards-compat
+aliases the adapter also accepts on read. The `command/legacy.md` fixture
+exercises the singular alias directly. Writes normalize to the canonical plural
+(placeNew emits `commands/`/`agents/`/`skills/`). **Cross-read:** OpenCode also
+reads `.claude/skills/*/SKILL.md` via the shared SKILL.md codec (documented, not
 duplicated as a fixture file).

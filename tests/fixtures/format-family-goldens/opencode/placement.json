@@ -9,7 +9,8 @@
   ],
   "notes": [
     "SPECIFICATION golden — no opencode adapter exists yet. Component-root-relative POSIX paths. Same subdir layout as claude but the instruction file is AGENTS.md (not CLAUDE.md).",
-    "Plural dirs are canonical (spec §7). skill placement is the directory form <name>/SKILL.md."
+    "Plural dirs are canonical (spec §7). skill placement is the directory form <name>/SKILL.md.",
+    "DIRECTORY PLURALITY (open question 6 RESOLVED): reads accept BOTH plural and singular dirs, but WRITES normalize to the CANONICAL plural — placeNew always emits commands/agents/skills/ (never the singular command/agent/skill/ alias). So a new command placed by the adapter lands at commands/<name>.md even though a legacy singular command/<name>.md is still recognized on read."
   ],
   "byType": {
     "command": {

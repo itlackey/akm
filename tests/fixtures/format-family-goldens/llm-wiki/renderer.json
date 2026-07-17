@@ -1,5 +1,5 @@
 {
-  "scenario": "presentationFor(type) for llm-wiki content. Under the recorded default (pageKind = the open type), the page kinds (concept/entity/note) and wiki-source are NOT in KNOWN_TYPES → generic fallback. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden (llm-wiki adapter = Chunk 4).",
+  "scenario": "presentationFor(type) for llm-wiki content. Under the RESOLVED reading A (pageKind = the open type), the page kinds (concept/entity/note) and wiki-source are NOT in KNOWN_TYPES → generic fallback. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden (llm-wiki adapter = Chunk 4).",
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — llm-wiki adapter is built in CHUNK 4.",
@@ -8,10 +8,9 @@
     "src/output/renderers.ts wiki-md renderer (still present in code); src/wiki/wiki.ts page model"
   ],
   "notes": [
-    "SPECIFICATION golden. FLAG — this renderer golden depends directly on the CENTRAL AMBIGUITY flagged in recognition.json (what `type` a wiki page carries):",
-    "  • Recorded DEFAULT (reading A, pageKind = type): concept/entity/note/wiki-source are NOT in KNOWN_TYPES → presentationFor returns DEFAULT_PRESENTATION {label:'Asset'}, renderer=null, generic action `akm show <ref>`. Wiki pages would render generically — the pre-existing `wiki-md` renderer (still in src/output/renderers.ts) would go UNUSED.",
-    "  • ALTERNATIVE (reading B): Chunk 4 maps all wiki page kinds to the `wiki-md` renderer (label 'Wiki', action `akm show <ref> -> read the wiki page`), carrying pageKind as metadata. This keeps wiki rendering but reuses the retired-per-§0.2 `wiki` presentation. The `wiki-md` branch is shown per-entry as `alternativeRenderer` so Chunk 4 can adopt it without re-authoring.",
-    "This is the primary renderer decision for Chunk 4. The reserved files (schema/index/log) are not rendered as concepts."
+    "SPECIFICATION golden. RESOLVED (open question 2, maintainer resolution 2026-07) — wiki page `type` = frontmatter pageKind (reading A). concept/entity/note/wiki-source are NOT in KNOWN_TYPES → presentationFor returns DEFAULT_PRESENTATION {label:'Asset'}, renderer=null, generic action `akm show <ref>`. Wiki pages render GENERICALLY; the pre-existing `wiki-md` renderer (still in src/output/renderers.ts) goes UNUSED under this resolution.",
+    "Reading B (map all wiki page kinds to the `wiki-md` renderer / label 'Wiki', carrying pageKind as metadata) was CONSIDERED and REJECTED because it reuses the retired-per-§0.2 `wiki` presentation. The per-entry `alternativeRenderer` blocks that recorded reading B have been removed — reading A is the single finalized form.",
+    "The reserved files (schema/index/log) are not rendered as concepts."
   ],
   "byRelPath": {
     "pages/http-caching.md": {
@@ -20,8 +19,7 @@
       "label": "Asset",
       "renderer": null,
       "action": "akm show sample-wiki//pages/http-caching",
-      "flag": "GENERIC FALLBACK under reading A (concept ∉ KNOWN_TYPES).",
-      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/http-caching -> read the wiki page" }
+      "note": "RESOLVED (reading A): concept ∉ KNOWN_TYPES → generic render (renderer=null, label 'Asset')."
     },
     "pages/entities/varnish.md": {
       "type": "entity",
@@ -29,8 +27,7 @@
       "label": "Asset",
       "renderer": null,
       "action": "akm show sample-wiki//pages/entities/varnish",
-      "flag": "GENERIC FALLBACK under reading A (entity ∉ KNOWN_TYPES).",
-      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/entities/varnish -> read the wiki page" }
+      "note": "RESOLVED (reading A): entity ∉ KNOWN_TYPES → generic render."
     },
     "pages/orphan.md": {
       "type": "note",
@@ -38,8 +35,7 @@
       "label": "Asset",
       "renderer": null,
       "action": "akm show sample-wiki//pages/orphan",
-      "flag": "GENERIC FALLBACK under reading A (note ∉ KNOWN_TYPES).",
-      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/orphan -> read the wiki page" }
+      "note": "RESOLVED (reading A): note ∉ KNOWN_TYPES → generic render."
     },
     "raw/2026-07-http-rfc.md": {
       "type": "wiki-source",
@@ -47,7 +43,7 @@
       "label": "Asset",
       "renderer": null,
       "action": "akm show sample-wiki//raw/2026-07-http-rfc",
-      "flag": "GENERIC FALLBACK (wiki-source ∉ KNOWN_TYPES). Raw sources are source material; a generic reader is the recorded default."
+      "note": "RESOLVED (reading A): wiki-source ∉ KNOWN_TYPES → generic render. Raw sources are source material; a generic reader is the finalized behavior."
     }
   }
 }

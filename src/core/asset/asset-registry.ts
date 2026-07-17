@@ -33,6 +33,10 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   task: "task-yaml",
   session: "session-md",
   fact: "fact-md",
+  // Instruction files (CLAUDE.md / AGENTS.md) read like knowledge — reuse the
+  // knowledge renderer. Kept in sync with type-presentation.ts's
+  // TYPE_PRESENTATION.instruction (the parity guard in akm-presentation.test.ts).
+  instruction: "knowledge-md",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -55,6 +59,8 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   session: (ref) =>
     `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   fact: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
+  // Kept byte-identical to TYPE_PRESENTATION.instruction.action (parity guard).
+  instruction: (ref) => `akm show ${ref} -> read the project instructions`,
 };
 
 /**

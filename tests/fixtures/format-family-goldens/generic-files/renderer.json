@@ -9,7 +9,7 @@
   ],
   "notes": [
     "SPECIFICATION golden. `script` IS a known type → renderer 'script-source', action `akm show <ref> -> execute the run command`. `document` and `file` are NOT in KNOWN_TYPES → generic fallback {label:'Asset'}, renderer=null, action `akm show <ref>` (spec §3.4).",
-    "FLAG (ambiguity): the spec introduces `document`/`file` as generic-files types (spec §7) but adds no TYPE_PRESENTATION entries for them. Best-reasoned default: generic fallback (searchable, generic render). The adapter author may add `document`/`file` presentation entries (e.g. a knowledge-md-like reader for `document`) — see the methodology doc."
+    "RESOLVED (open question 4, maintainer resolution 2026-07): `document` and `file` get NO dedicated presentation entries — the generic fallback is CONFIRMED (in contrast to `instruction`, which DID get its own entry under open question 1). `script` keeps its type-specific presentation (script-source). No longer open."
   ],
   "byRelPath": {
     "build.sh": {
