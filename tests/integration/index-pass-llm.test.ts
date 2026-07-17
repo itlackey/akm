@@ -255,12 +255,21 @@ describe("config loader: `index` block parsing", () => {
     expect(() => loadUserConfig()).toThrow(/Unknown key `index\.enrichment\.foo`/);
   });
 
-  test("rejects invalid graphExtractionIncludeTypes values", () => {
+  test("accepts arbitrary graphExtractionIncludeTypes values (WI-9.6c: accept-any until Chunk 2)", () => {
+    // The hardcoded type allowlist (GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED) was
+    // deleted — it had already drifted from the runtime consumer's own
+    // supported-type set (stale `wiki` entry, missing `fact`). The field is
+    // now an array of arbitrary non-empty strings; an unrecognized type is
+    // handled gracefully at runtime (silently yields zero eligible files for
+    // that type — see src/indexer/graph/graph-extraction.ts's
+    // SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES / collectEligibleFiles), not
+    // rejected at config-load time.
     writeUserConfig({
       configVersion: "0.9.0",
       index: { graph: { graphExtractionIncludeTypes: ["memory", "bogus-type"] } },
     });
-    expect(() => loadUserConfig()).toThrow(/unsupported type/);
+    const config = loadUserConfig();
+    expect(config.index?.graph?.graphExtractionIncludeTypes).toEqual(["memory", "bogus-type"]);
   });
 
   test("rejects array-shaped `index` block", () => {
