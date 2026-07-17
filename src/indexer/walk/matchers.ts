@@ -90,7 +90,10 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
   {
     dir: "tasks",
     type: "task",
-    test: (ext) => ext === ".md",
+    // Tasks migrated from `.md` to `.yml` in 0.8.0 (commit 031c659f updated
+    // asset-spec, asset-registry, renderers, and the task-linter, but missed
+    // this matcher — tasks/*.yml were unrecognized until this fix).
+    test: (ext) => ext === ".yml",
   },
   {
     // #561 — agent session assets live under `sessions/<harness>/<id>.md`.

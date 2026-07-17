@@ -20,7 +20,7 @@
   },
   "notes": [
     "workflow count is 2: workflows/all-types-workflow.md (workflow-md renderer) and workflows/all-types-workflow-program.yaml (workflow-program-yaml renderer).",
-    "tasks/all-types-task.yml is placed per asset-spec.ts's task placement rule (<stashDir>/<name>.yml) but does NOT recognize as type \"task\" via runMatchers() at HEAD b8fbc3a9 — DIR_TYPE_MAP's \"tasks\" dir rule (src/indexer/walk/matchers.ts:91-94) tests `ext === \".md\"` instead of `\".yml\"`, a stale rule left over from the pre-0.8.0 markdown task format (see tests/integration/tasks-legacy-md-warning.test.ts). This is a genuine production recognition gap, not a fixture placement issue; captured as-is per chunk-0b's capture-only scope. See the chunk-0b WI-0b.2 report for detail."
+    "tasks/all-types-task.yml is placed per asset-spec.ts's task placement rule (<stashDir>/<name>.yml) and recognizes as type \"task\" (renderer task-yaml) via runMatchers(). Prior to WI-0b.1 (chunk-0b) it did NOT recognize — DIR_TYPE_MAP's \"tasks\" dir rule (src/indexer/walk/matchers.ts) tested `ext === \".md\"` instead of `\".yml\"`, a stale rule left over from the pre-0.8.0 markdown task format (see tests/integration/tasks-legacy-md-warning.test.ts). WI-0b.1 fixed the rule to test `\".yml\"`; this note is updated to reflect the fixed state. See the chunk-0b WI-0b.2 report for the original capture and the WI-0b.1 fix for detail."
   ],
   "consumers": ["future WI-0b.3/WI-0b.4 recognition/placement/renderer/lint parity goldens"]
 }

@@ -78,11 +78,13 @@ The "14 formats" are the `ASSET_SPECS_INTERNAL` keys (`src/core/asset/asset-spec
 | secret | `secrets` | dir-hint (any file except `.lock`/`.sensitive`) — matchers.ts:83-89 | asset-spec.ts:192 (identity path) | `secret-file` — output/renderers.ts:479 | none dedicated |
 | wiki | `wikis` | `classifyByWiki` — matchers.ts:251 (`.md` under a `wikis` ancestor dir) | markdownSpec | `wiki-md` — output/renderers.ts:332 | none dedicated |
 | lesson | `lessons` | dir-hint `.md` — matchers.ts:73-76 | markdownSpec | `lesson-md` — output/renderers.ts:352 | `DefaultLinter`, explicitly keyed `"lessons"` — lint/registry.ts:39 |
-| task | `tasks` | dir-hint (`.yml`) — matchers.ts:91-94 | asset-spec.ts:226 (`<name>.yml`) | `task-yaml` — output/renderers.ts:499 | `TaskLinter` — lint/task-linter.ts:23 |
+| task | `tasks` | dir-hint (`.yml`) — matchers.ts:90-97 (see note below the table) | asset-spec.ts:226 (`<name>.yml`) | `task-yaml` — output/renderers.ts:499 | `TaskLinter` — lint/task-linter.ts:23 |
 | session | `sessions` | dir-hint `.md` — matchers.ts:100-103 | markdownSpec | `session-md` — output/renderers.ts:524 | none dedicated |
 | fact | `facts` | dir-hint `.md` — matchers.ts:109-112 | markdownSpec | `fact-md` — output/renderers.ts:575 | `FactLinter` — lint/fact-linter.ts:21 |
 
 `DIR_TYPE_MAP` (matchers.ts:41-113) covers 12/14 types by directory rule; `skill` is a filename special-case (`SKILL.md`, matchers.ts:133,152) and `wiki` is the dedicated `classifyByWiki` (matchers.ts:251) — both excluded from `DIR_TYPE_MAP` deliberately (skill needs the exact filename in any nested dir; wiki needs the `wikis` ancestor check, and its dir literal `wikis` is NOT in `DIR_TYPE_MAP` to avoid double-claiming with `classifyBySmartMd`).
+
+**Note on the `task` row (post-WI-0b.1 correction):** this table's `task` row reads `.yml`, and at capture HEAD (`b8fbc3a9`) that was a **census transcription error** — the code at that HEAD actually tested `test: (ext) => ext === ".md"` (a stale rule left over from the pre-0.8.0 markdown task format; every other consumer — asset-spec, asset-registry, renderers, task-linter — was updated for the `.yml` migration but this matcher was missed). That meant `tasks/*.yml` never recognized: `runMatchers()` returned `null` for every task file, `akm show task:<name>` threw "unrecognized layout", the flat indexer silently dropped tasks, and the `task-yaml` metadata contributor was dead code. Per the maintainer's "fix now in 0b" decision, **WI-0b.1 fixed `matchers.ts`'s `tasks` `DIR_TYPE_MAP` rule to test `ext === ".yml"`** (matchers.ts:90-97), so the table's `.yml` claim is now true of the actual code, not just the doc. `tests/fixtures/stashes/all-types/MANIFEST.json`'s task note and `tests/integration/file-context.test.ts` were updated to match.
 
 ### B.2 Split-brain renderer/action confirmed (§2.3 gap-fill)
 

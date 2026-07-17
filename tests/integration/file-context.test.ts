@@ -244,6 +244,20 @@ describe("runMatchers", () => {
     expect(result?.type).toBe("script");
   });
 
+  test("directoryMatcher matches .yml under tasks/ as 'task' (tasks migrated .md -> .yml in 0.8.0)", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "tasks", "nightly-report.yml");
+    writeFile(filePath, ['schedule: "@daily"', "enabled: false", 'prompt: "Say hello"'].join("\n"));
+
+    const ctx = buildFileContext(root, filePath);
+    const result = directoryMatcher(ctx);
+
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("task");
+    expect(result?.specificity).toBe(10);
+    expect(result?.renderer).toBe("task-yaml");
+  });
+
   test("smartMdMatcher matches .md with 'model' frontmatter as 'agent' at specificity 8 (weak signal)", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "assistant.md");
@@ -425,6 +439,29 @@ describe("runMatchers", () => {
     const ctx = buildFileContext(root, filePath);
     const result = await runMatchers(ctx);
     expect(result).toBeNull();
+  });
+
+  // Regression test for the task-matcher defect (chunk-0b, WI-0b.1): the
+  // "tasks" DIR_TYPE_MAP rule in matchers.ts tested `ext === ".md"`, a
+  // leftover from before tasks migrated to `.yml` in 0.8.0 (commit
+  // 031c659f updated every other consumer — asset-spec, asset-registry,
+  // renderers, task-linter — but missed this matcher). As a result
+  // tasks/*.yml never recognized: runMatchers() returned null for every
+  // task file, `akm show task:<name>` threw "unrecognized layout", the
+  // flat indexer silently dropped tasks (never indexed/searchable), and
+  // the task-yaml metadata contributor was dead code. This test must FAIL
+  // if the "tasks" rule regresses back to `.md`.
+  test("runMatchers recognizes tasks/<name>.yml as type 'task' with renderer 'task-yaml'", async () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "tasks", "nightly-report.yml");
+    writeFile(filePath, ['schedule: "@daily"', "enabled: false", 'prompt: "Say hello"'].join("\n"));
+
+    const ctx = buildFileContext(root, filePath);
+    const result = await runMatchers(ctx);
+
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("task");
+    expect(result?.renderer).toBe("task-yaml");
   });
 });
 
