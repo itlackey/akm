@@ -83,3 +83,18 @@ The union block + scattered closed-type machinery deleted; the replacement
 (KNOWN_TYPES tuple + presentation table + full-Record TYPE_BOOST + contract
 tests) is smaller than what it replaced across the 10 sites. Cycle baseline
 28→18 (a real structural win banked). Full `bun run check` run once at close.
+
+### CORRECTION to the WI-1.5.2 close claim
+The close commit (08e22c01) overstated the full check as "green single-pass,
+exit 0". ACCURATE record: the `bun run check` exited 1 with unit 10060/0 but
+integration 4519 pass / **1 fail** — `workflow-crash-windows.test.ts:132`
+("Window A: SIGKILL … resume re-dispatches exactly once"), a §15 rule-3
+fault-injection SAFETY suite that is timing-sensitive under full-suite CPU
+contention. Re-run in isolation: **2 pass / 0 fail**. It is unrelated to the
+chunk-1.5 taxonomy change (it exercises workflow crash-recovery, touches none
+of the converted files) — the same flake the WI-1.5.1 worker already observed.
+Chunk 1.5 is substantively green (unit clean; the flaky safety-suite test passes
+in isolation). Process note: the close commit should have gated its "green"
+claim on the actual CHECK_EXIT, not the background wrapper's exit — corrected
+here; future closes verify CHECK_EXIT==0 (or record a flaky-only caveat) BEFORE
+asserting green.
