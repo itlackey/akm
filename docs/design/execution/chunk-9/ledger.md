@@ -580,3 +580,80 @@ bundle supersession of stashDir). §10.1's −250 item is partially
 realized (improve unification + improve-scoped stashDir); the ambient-DI
 seam retirement + CLI-wide resolveStashDir remain outstanding under the
 general-threading follow-on.
+
+## WI-9.11 — chunk-9 close (2f7ea1bb + this entry)
+
+### Four manifest gates — verified
+1. **resolveStashDir residual only in the builder (IMPROVE SCOPE).** `grep
+   resolveStashDir src/commands/improve/` → run-context.ts only. The
+   CLI-wide sweep (non-improve commands + shared leaves) is the documented
+   WI-9.10d/e deferral (maintainer decision). Gate read at improve scope.
+2. **Cycle baseline == later-owned knots exactly.** Baseline = 28 entries,
+   all C3/C5/C8-owned: the renderers-hub taxonomy residual (output/
+   renderers.ts hub + config chain + asset core + workflows/program +
+   indexer metadata/file-context + env), the indexer-db trio
+   (db/entry-mapper/schema, C5), and the workflows-runtime trio
+   (step-work/runs/unit-checkin, C8). No chunk-9-owned participant remains.
+   Matches the WI-9.8 ledgered exit state; SCC #8 sever (9.10a) took 31→28.
+3. **ImproveRunContext → 0 (adoption ratchet absolute).** The interface is
+   deleted; the run-context-adoption ratchet (word-boundary identifier
+   match) reads 0 and is absolute + anti-revival-guarded. NOTE: a naive
+   substring `grep ImproveRunContext` returns 6 BENIGN hits — all the
+   `buildImproveRunContext` builder function (mints the improve RunContext),
+   not the deleted context; the authoritative ratchet distinguishes them.
+4. **createRunContext at every improve verb entry.** `createRunContext(`
+   present once each in improve.ts/reflect.ts/distill.ts/extract.ts/
+   consolidate.ts; asserted by the adoption ratchet's per-verb-file check.
+
+### Full `bun run check` — ONCE, green
+lint (biome + all lint-* + schema up-to-date) ✓; tsc ✓; unit 9480 pass /
+0 fail across 4 process-shards; integration 4450 pass / 0 fail (Ran 4505
+across 334 files, 478s); exit 0. Chunk-0a CLI output goldens green within
+the suites. Frozen txn oracles byte-green (re-run every transaction-
+adjacent item this chunk).
+
+### Net-LOC report — HONEST DIVERGENCE FROM TARGET
+Manifest target: **~−2000** (core, fold-ins ledgered separately). Actual:
+**+1995 src `.ts`** (added 8205, deleted 6210; 29 files added, 3 deleted) —
+a ~+4000 swing in the WRONG direction, reported faithfully, not massaged.
+
+Why chunk 9 is net-POSITIVE against a net-negative target:
+- It is fundamentally a RESTRUCTURING chunk. The big deletions the −2000
+  assumed (the taxonomy/renderers-hub dismantling) are DEFERRED to Chunk 3
+  by the DoD-11 ownership map — the cycle baseline is trimmed to exactly
+  those later-owned knots, not deleted here.
+- Additive-by-design work dominates: 29 new typed leaf modules (WI-9.8
+  type-leaf severs with old-home re-exports; WI-9.2 typed-error classes;
+  WI-9.5 H2 view-model + BackendExec; WI-9.9 invocation.ts 306 +
+  lint-process-argv 209; WI-9.10 run-context/improve-run-types), each
+  carrying header + imports + interface boilerplate.
+- WI-9.6 config discriminated schemas were ADDED while the wide monolith
+  was RETAINED (session decision — TS type/$defs still source from it);
+  the plan's −LOC assumed monolith REPLACEMENT. This alone is a large
+  positive-vs-planned-negative swing.
+- The fold-in negatives don't land in src `.ts`: echarts −1MB is a
+  vendored asset delete; rank-metrics MOVED to scripts/ (not deleted from
+  repo); html-template trim is small.
+
+Per-area net (src .ts): integrations +288, cli +240, output +219,
+improve +158, health +147, proposal +144, config +127, indexer +45,
+cli.ts −34. Every area net-positive.
+
+The LOC PAYDOWN for this chunk's architecture is deferred, not lost:
+taxonomy/renderers deletion → C3; config monolith retirement + CLI-wide
+RunContext threading + the 13 ambient-DI seam retirements → the
+general-threading follow-on (WI-9.10d/e deferral). Chunk 9 delivered its
+ARCHITECTURE goals (cycle 107→28, typed errors, RunContext unification +
+5-verb adoption, health/tasks/config/output god decomposition,
+ParsedInvocation, H1 union, process.argv confinement) with all gates
+green; it did NOT hit the −2000 simplification target and is +1995
+instead. Flagged for maintainer: whether to pull the taxonomy deletions
+forward or revisit the WI-9.6 monolith-retention decision.
+
+### Deferred out of chunk 9 (named, not silently dropped)
+- WI-9.10e ambient-DI seam retirements (13 seams) — see the WI-9.10e entry.
+- CLI-wide resolveStashDir sweep (~13 non-improve sites + shared leaves).
+- Both fold into the general CLI-boundary RunContext workstream (plan §2).
+- Crash-window seams (#1–3, #16–17) RETAINED per Decision 1.
+
+Chunk 9 CLOSED at HEAD (36 commits from base 365f5b09).
