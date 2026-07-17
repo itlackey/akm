@@ -13,11 +13,14 @@
  */
 
 import { registerAdapter } from "../registry";
+import { akmAdapter } from "./akm-adapter";
 import { okfAdapter } from "./okf-adapter";
 
+export { akmAdapter } from "./akm-adapter";
 export { okfAdapter } from "./okf-adapter";
 
 /** Register every built-in adapter onto the shared registry (idempotent — re-registering an id replaces in place). */
 export function registerBuiltinAdapters(): void {
   registerAdapter(okfAdapter);
+  registerAdapter(akmAdapter);
 }

@@ -49,9 +49,48 @@ Files (additive): `src/core/adapter/registry.ts`, `src/core/adapter/adapters/{ok
 - `links` stored as bare conceptIds (matches §9's `dst_concept_id`), not bundle-prefixed refs.
 - `Diagnostic` has no severity field → info/warning encoded in `issue` + `detail` text.
 
+## WI-B — `akm` adapter: recognition + placement (Opus impl; Opus review, all gates re-verified)
+
+Files (additive): `src/core/adapter/adapters/akm-adapter.ts`, `adapters/index.ts` (registers
+`akmAdapter`), `tests/core/adapter/akm-adapter.test.ts`. The behavior-preserving port per §5.1.
+
+- **recognize** — `recognizeMatch(file)` reproduces `runMatchers`'s arbitration SYNCHRONOUSLY:
+  the SAME six builtin matcher functions (`extensionMatcher`/`directoryMatcher`/
+  `parentDirHintMatcher`/`smartMdMatcher`/`wikiMatcher`/`workflowProgramMatcher`, imported
+  from `matchers.ts`) in registration order, winner by specificity-desc then later-index-wins
+  — byte-identical to `runMatchers`'s comparator. **Component root = the STASH ROOT** (not a
+  per-type subdir); the matchers' own dir-hints do the classification, exactly as today. This
+  is the correct model — the opposite of the reverted per-subdir/positional approach.
+- conceptId via `deriveCanonicalAssetNameFromStashRoot(type, root, absPath)` (per-type
+  canonical name reproduced); `type` carried separately (§0.2). Winner's renderer carried on
+  `documentJson.renderer` for WI-C (no new IndexDocument field).
+- **placeNew** — recovers type from the conceptId's leading `<stash-subdir>/<name>` segment
+  (reverse-maps `TYPE_DIRS`) → `resolveAssetPathFromName` (unchanged); unqualified → `<root>/<id>.md`.
+- **directoryList** = `TYPE_DIRS` values; **looksLikeRoot** = `detectStashRoot` logic
+  (`.stash` marker or any `TYPE_DIRS` subdir present).
+- **validate** = base checks only; per-type linters marked `// WI-C`.
+
+### Fidelity proof + gates
+- Parity test drives the akm adapter over the EXISTING all-types fixture: recognize().type +
+  carried renderer match `recognition/all-types.json` for all 15 files (totality-asserted);
+  placeNew matches `placement/all-types.json` (14 byType + edges). A fidelity test asserts
+  `recognizeMatch` `toEqual` async `runMatchers` on all 15 fixture contexts + 4 hand-built
+  out-of-type-dir contexts (every matcher wins ≥1) — proves the sync reproduction is exact.
+- Gates (Opus re-ran un-piped): tsc 0 · cycle 18 (no copy-to-leaf needed — akm-adapter is a
+  downstream-only leaf; matchers/asset-spec edges add no back-path) · lint 0 · tests/core/adapter
+  69/0 · live recognition-placement golden 8/0. Nothing live touched (delegation via imports).
+
+### Flagged (worker, grounded — for maintainer)
+- **conceptId spelling asymmetry:** recognize emits the BARE per-type canonical name (type
+  carried separately, §0.2); placeNew consumes the QUALIFIED `<stash-subdir>/<name>` form
+  (placement is type-driven; a bare name can't recover a type). Reconciling both onto one
+  canonical stored spelling is a downstream index-persistence/ref concern (Chunk 3/5).
+- `extensions` on akm is a non-exhaustive HINT — recognition is `recognize()`-driven (e.g. a
+  bare extensionless `secrets/<x>` is a secret), so `recognize()` is the source of truth.
+- Non-`.md` types never read their body for `name` (secret/env value safety); only `hash`
+  reads bytes, opaquely.
+
 ## Remaining
-- **WI-B** — `akm` adapter (behavior-preserving port over the existing matcher stack, §5.1);
-  parity = existing Chunk-0b all-types goldens byte-for-byte.
 - **WI-C** — `TYPE_PRESENTATION` (renderer/action keyed on `type`, §2) + conformance
   (`looksLikeRoot` own-root-only) + full golden replay + close.
 - Other format families (`llm-wiki`→Chunk 4; `claude`/`opencode`/`akm-workflow`/`akm-task`/
