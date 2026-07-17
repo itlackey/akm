@@ -60,6 +60,35 @@ describe("decodeImproveResult", () => {
     ).toThrow(/stalenessDetection/);
   });
 
+  test("accepts known persisted fields after their producers are retired", () => {
+    expect(() =>
+      decodeImproveResult({
+        schemaVersion: 1,
+        profile: "nightly",
+        ...common,
+        executionLogCandidates: [],
+        recombination: {},
+        proceduralCompilation: {},
+      }),
+    ).not.toThrow();
+    expect(() =>
+      decodeImproveResult({
+        schemaVersion: 2,
+        strategy: "default",
+        ...common,
+        recombination: {},
+        proceduralCompilation: {},
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, executionLogCandidates: [] }),
+    ).toThrow(/executionLogCandidates/);
+    expect(() => decodeImproveResult({ schemaVersion: 1, profile: "nightly", ...common, recombination: [] })).toThrow(
+      /recombination/,
+    );
+  });
+
   test("rejects malformed published stalenessDetection near-misses", () => {
     const { warnings: _warnings, ...withoutWarnings } = publishedStalenessDetection;
     for (const stalenessDetection of [

@@ -146,6 +146,14 @@ describe("registerDefaultTasks (#552)", () => {
     }
   });
 
+  test("scheduled improve tasks are staggered and lock-aware", () => {
+    const scheduled = DEFAULT_IMPROVE_TASKS.filter((task) => task.schedule !== null);
+    const scheduledMinutes = scheduled.map((task) => task.schedule?.split(" ")[0]);
+
+    expect(new Set(scheduledMinutes).size).toBe(scheduled.length);
+    for (const task of DEFAULT_IMPROVE_TASKS) expect(task.command).toContain("--skip-if-locked");
+  });
+
   test("every effective default schedule translates on every backend", async () => {
     const deps = makeFakeDeps();
     await registerDefaultTasks({ serverInstall: true, deps });

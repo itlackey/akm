@@ -50,13 +50,22 @@ const COMMON_FIELDS = [
   "gateAutoAcceptFailedCount",
   "triage",
   "proactiveMaintenance",
+  // Retired producers still exist in the persisted 90-day improve-run ledger.
+  "recombination",
+  "proceduralCompilation",
   "cycleMetrics",
   "runId",
   "sync",
   "terminated",
 ] as const;
 
-const V1_FIELDS = new Set<string>([...COMMON_FIELDS, "profile", "profileFilteredRefs", "stalenessDetection"]);
+const V1_FIELDS = new Set<string>([
+  ...COMMON_FIELDS,
+  "profile",
+  "profileFilteredRefs",
+  "stalenessDetection",
+  "executionLogCandidates",
+]);
 const V2_FIELDS = new Set<string>([...COMMON_FIELDS, "strategy", "strategyFilteredRefs"]);
 const STALENESS_DETECTION_FIELDS = new Set([
   "considered",
@@ -131,6 +140,7 @@ function validateCommon(value: Record<string, unknown>): void {
     "extract",
     "coverageGaps",
     "deadUrls",
+    "executionLogCandidates",
   ] as const) {
     if (value[field] !== undefined && !Array.isArray(value[field])) fail(`${field} must be an array`);
   }
@@ -164,6 +174,8 @@ function validateCommon(value: Record<string, unknown>): void {
     "graphExtraction",
     "triage",
     "proactiveMaintenance",
+    "recombination",
+    "proceduralCompilation",
     "cycleMetrics",
     "sync",
     "terminated",
