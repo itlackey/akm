@@ -350,6 +350,27 @@
       "consumers": ["tests/commands/goldens-cli-output.test.ts"],
       "notes": "WI-07, plan §11 Chunk 0a / R4. Family F `--format bogus` → UsageError envelope key-set + code (INVALID_FORMAT_VALUE), exit 2. Chunk 9 oracle; no production ref literals.",
       "sha256": "7e974424210492860282f00b2166af144a6af3dfc96b9c89f705f73953cbbd11"
+    },
+    {
+      "path": "tests/fixtures/goldens/recognition/all-types.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/integration/goldens-recognition-placement.test.ts"],
+      "notes": "WI-0b.3a, chunk-0b brief / docs/design/execution/chunk-0b/anchors.md Section B (the 14-format producer table). Chunk-0b BEHAVIOR-PARITY oracle -- NOT a migration input in the Chunk 6/7/9 sense, but a FROZEN preservation oracle for `runMatchers(buildFileContext(...))`'s recognition result (type/specificity/renderer/meta) across all 14 ASSET_SPECS_INTERNAL types plus the workflow-program-yaml renderer form, captured against the WI-0b.2 `tests/fixtures/stashes/all-types/` fixture stash (MANIFEST.json excluded, not an asset). Per D0b-1/D0b-3 this reuses the existing `frozen-migration-input` designation/sha256-pin semantics under its broader load-bearing meaning (a chunk that touches the recognition surface must reproduce this byte-for-byte) rather than adding a new designation string -- the minimal-change resolution of D0b-3. anchors.md Section B.3 confirms this is 100% greenfield capture (no prior recognition golden existed to re-baseline). Chunk 2's format adapters must reproduce this classification byte-for-byte. Keyed by stash-relative POSIX relPath only -- no absolute paths, no timestamps/ids (normalization is a no-op here).",
+      "sha256": "00f446bbe337cff09f8c1aacfb706de18274c784a30fb3ddfdc37b7a85592145"
+    },
+    {
+      "path": "tests/fixtures/goldens/placement/all-types.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/integration/goldens-recognition-placement.test.ts"],
+      "notes": "WI-0b.3b, chunk-0b brief / anchors.md Section B (the 14-format producer table's Placement column). Chunk-0b BEHAVIOR-PARITY oracle (same D0b-1/D0b-3 designation-reuse rationale as recognition/all-types.json in this same registry) -- FROZEN preservation oracle for `ASSET_SPECS[type].toAssetPath(typeRoot, name)` across all 14 types, round-tripped against the real WI-0b.2 `tests/fixtures/stashes/all-types/` fixture layout (byType uses the SAME canonical name the fixture already places on disk) plus documented edge-case branches (env's \"default\" bare-.env alias, the already-suffixed-name idempotent alias shared by env/task/markdownSpec-family toAssetPath, the workflow multi-extension fs.existsSync probe's explicit-extension short-circuit / no-candidate fallback-to-.md / real-YAML-only-candidate hit, and a nested secret name). Chunk 2's format adapters must reproduce this placement mapping byte-for-byte. All paths are stash-relative POSIX strings -- no absolute paths.",
+      "sha256": "44d79f501c4a15936396fefcdb0d5517c26872b437c9de0545ffe2e66aaca22d"
+    },
+    {
+      "path": "tests/fixtures/goldens/minting/oracle.json",
+      "designation": "frozen-migration-input",
+      "consumers": ["tests/integration/goldens-minting-oracle.test.ts"],
+      "notes": "WI-0b.3c, chunk-0b brief / anchors.md Section C (`deriveCanonicalAssetNameFromStashRoot`, def asset-spec.ts:338-353, call sites mv-cli.ts:739/1239). Chunk-0b BEHAVIOR-PARITY oracle (same D0b-1/D0b-3 designation-reuse rationale as this registry's other two new WI-0b.3 entries) -- FROZEN minting oracle Chunk 8's full-table re-key pass leans on. pureFunction pins BOTH branches (canonical-typeRoot: first relPath segment matches TYPE_DIRS[type]; fallback: custom top-level dir, preserving the full relative path -- the function's own doc-comment example tools/agents/svelte-file-editor) for all 14 ASSET_SPECS_INTERNAL types (28 base cases) plus extra documented sub-branches (workflow's multi-extension strip, memory's .derived.md twin suffix behavior, env's \"default\" alias in both branches, secret's nested-name identity join) -- inputs are synthetic literal /stash paths since every ASSET_SPECS_INTERNAL.toCanonicalName implementation is fs-free. callSiteBehavior pins BOTH mv-cli.ts:739 reject sub-branches (steersToCanonicalSpelling: derived canonical name differs from the typed ref and round-trips back to the resolved file, so mv names the canonical ref in its UsageError; genericOutsideTypeRootReject: derived canonical name equals the typed ref, so mv falls through to the generic \"outside the type root\" error instead), captured via real `akm mv` invocations against a sandboxed stash (deterministic outcome booleans/exit-code/error-code/error-substring only, no journal bytes). mv-cli.ts:1239 (the ordinary-move call site) is intentionally NOT re-captured here -- every accepted-move scenario in this registry's tests/fixtures/goldens/journal/move-txn.json entry already exercises it to derive fromRef, so that existing frozen fixture is this oracle's call-site-2 coverage by cross-reference, not duplication.",
+      "sha256": "682b7eef49eaf2b46a796e193c137cdf743bd52e3a60b4a2706579c9469880e7"
     }
   ]
 }

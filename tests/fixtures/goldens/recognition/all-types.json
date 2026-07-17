@@ -1,0 +1,85 @@
+{
+  "byRelPath": {
+    "agents/all-types-agent.md": {
+      "renderer": "agent-md",
+      "specificity": 15,
+      "type": "agent"
+    },
+    "commands/all-types-command.md": {
+      "renderer": "command-md",
+      "specificity": 15,
+      "type": "command"
+    },
+    "env/all-types-env.env": {
+      "renderer": "env-file",
+      "specificity": 15,
+      "type": "env"
+    },
+    "facts/all-types-fact.md": {
+      "renderer": "fact-md",
+      "specificity": 15,
+      "type": "fact"
+    },
+    "knowledge/all-types-knowledge.md": {
+      "renderer": "knowledge-md",
+      "specificity": 15,
+      "type": "knowledge"
+    },
+    "lessons/all-types-lesson.md": {
+      "renderer": "lesson-md",
+      "specificity": 15,
+      "type": "lesson"
+    },
+    "memories/all-types-memory.md": {
+      "renderer": "memory-md",
+      "specificity": 15,
+      "type": "memory"
+    },
+    "scripts/all-types-script.sh": {
+      "renderer": "script-source",
+      "specificity": 15,
+      "type": "script"
+    },
+    "secrets/all-types-secret": {
+      "renderer": "secret-file",
+      "specificity": 15,
+      "type": "secret"
+    },
+    "sessions/all-types-harness/all-types-session.md": {
+      "renderer": "session-md",
+      "specificity": 10,
+      "type": "session"
+    },
+    "skills/all-types-skill/SKILL.md": {
+      "renderer": "skill-md",
+      "specificity": 25,
+      "type": "skill"
+    },
+    "tasks/all-types-task.yml": {
+      "renderer": "task-yaml",
+      "specificity": 15,
+      "type": "task"
+    },
+    "wikis/all-types-space/all-types-wiki.md": {
+      "renderer": "wiki-md",
+      "specificity": 20,
+      "type": "wiki"
+    },
+    "workflows/all-types-workflow-program.yaml": {
+      "renderer": "workflow-program-yaml",
+      "specificity": 15,
+      "type": "workflow"
+    },
+    "workflows/all-types-workflow.md": {
+      "renderer": "workflow-md",
+      "specificity": 19,
+      "type": "workflow"
+    }
+  },
+  "capturedAtHead": "ff7ee5975e915c11d3799cdf5454c8bc494a304b",
+  "notes": [
+    "Keyed by stash-relative POSIX relPath (never an absolute path). Walked via walkStashFlat, the same git-ls-files-based walker the real indexer uses; MANIFEST.json (fixture metadata, not an asset) is excluded. Values are the raw MatchResult ({type, specificity, renderer, meta?}) runMatchers returns, or null if no matcher claims the file (does not occur for any file in this fixture).",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): Chunk 2's format adapters must reproduce this classification byte-for-byte. anchors.md Section B.3 confirms zero prior recognition golden coverage existed before this capture -- greenfield, not a re-baseline."
+  ],
+  "scenario": "runMatchers(buildFileContext(...)) recognition result for every asset in tests/fixtures/stashes/all-types/ (WI-0b.3a, all 14 ASSET_SPECS_INTERNAL types + the workflow-program-yaml renderer form)"
+}
