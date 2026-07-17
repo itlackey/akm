@@ -141,3 +141,56 @@ frontmatter reference path (§5). Both verified.
   `akm-task`/`dotenv`/`website-snapshot`/`generic-files` are format families for NON-akm-workspace
   bundles (no Chunk-0b golden coverage — the only fixture is akm-native all-types). Scope/sequencing
   for these vs. deferral is a maintainer decision (flag for review).
+
+## WI-D — cross-adapter conformance suite (Opus impl; gates re-verified) — the Chunk-2 CLOSE
+
+File (additive): `tests/core/adapter/conformance.test.ts`. No `src/` touched; no frozen
+fixture/golden modified. Drives both properties off `getAdapters()` (after
+`registerBuiltinAdapters()`), so the suite tracks whatever built-ins are actually registered
+(currently exactly `[okf, akm]`, asserted) rather than a hand-picked pair.
+
+- **`looksLikeRoot` own-root-only (§4)** — the full 2×2 matrix over the two frozen golden roots:
+  the `okf` reference bundle (`tests/fixtures/bundles/okf-sample/`) and the `akm` workspace stash
+  (`tests/fixtures/stashes/all-types/`). For each registered adapter, `looksLikeRoot` returns
+  `true` on its OWN golden root and `false` on the sibling's — i.e. exactly the owning adapter fires,
+  making §1.2's ordered install-time probe unambiguous. **The two frozen fixtures already separate
+  cleanly, so NO new single-adapter root fixtures were needed:** `okf-sample`'s only subdirs are
+  `guides`/`metrics`/`tables` (none a `TYPE_DIRS` value) and it has a root `index.md`, so
+  `okf.looksLikeRoot`=true / `akm.looksLikeRoot`=false on it; `all-types` carries the 14 `TYPE_DIRS`
+  subdirs and NO root `index.md` (verified) and no `.stash` marker, so `akm.looksLikeRoot`=true /
+  `okf.looksLikeRoot`=false on it. Diagonal confirmed both by direct-handle tests and by the
+  data-driven loop over `getAdapters()`.
+- **`index() == fold(recognize)` (§12.3)** — NEITHER `okf` NOR `akm` overrides `index()`
+  (`okfAdapter.index === undefined && akmAdapter.index === undefined`, and asserted `undefined` for
+  every registered adapter), so the §12.3 conformance is VACUOUSLY satisfied — the core
+  `scanComponent` walk × `recognize` IS the index. Exercised CONCRETELY: `scanComponent(inst, c,
+  adapter)` over each golden root yields the identical `IndexDocument` stream (compared by
+  `ref`/`type`, order-preserving) to mapping `recognize` over the same `walkStashFlat(root)` files
+  directly — akm over all-types (15 docs) and okf over okf-sample (4 docs) both match exactly,
+  proving `scanComponent == fold(recognize)` for the non-`index()` adapters.
+
+### Chunk-2 CLOSE gate (Opus, un-piped, real exit captured)
+- `bunx tsc --noEmit` → **0**
+- `bun scripts/lint-import-cycles.ts` → **18** (ratchet held; the additive test file adds no edge —
+  `src/core/adapter/` graph unchanged)
+- `bun run lint` → **0** (biome 1117 files + all 7 project linters green; MPL header present in all
+  515 `src/**/*.ts`; the new test file carries its MPL header)
+- `bun test tests/core/adapter --timeout=60000` → **101 pass / 0 fail** (94 prior + 7 new conformance)
+- `bun run check` → **CHECK_EXIT=0** — unit **10408 pass / 0 fail** (4 shards); integration
+  **4520 pass / 55 skip / 0 fail** across 339 files. Clean green: the known-flaky
+  `tests/integration/workflow-crash-windows.test.ts` §15 chaos test did NOT flake this run, so no
+  isolated re-run was needed and there is no documented-modulo.
+
+### What conformance verified (close claim)
+The `okf` + `akm` adapters satisfy the full Chunk-2 parity gate: recognition/placement/renderer/lint
+parity vs the frozen Chunk-0b `all-types` goldens (WI-A/B/C), the OKF frontmatter reference path
+(§5), AND the cross-adapter conformance contract (WI-D): unambiguous own-root-only `looksLikeRoot`
+(§4) and `index()==fold(recognize)` (§12.3, vacuous-but-concretely-exercised). Additive only — no
+live global touched (globals stay live until Chunk 3 repoints consumers).
+
+### Deferred to later chunks (per the decided Chunk-2 scope)
+The other §4 format families are NOT built here: `llm-wiki` → Chunk 4; the NON-akm-workspace bundle
+families (`claude`/`opencode`/`agent-skills`/`akm-workflow`/`akm-task`/`dotenv`/`website-snapshot`/
+`generic-files`) have no Chunk-0b golden coverage (the only conformance fixture is the akm-native
+`all-types` stash), so their scope/sequencing is a later-chunk maintainer decision. Chunk 2 closes
+with the two adapters that fully satisfy the parity + conformance gate.
