@@ -1,0 +1,3 @@
+schedule: "@daily"
+enabled: false
+prompt: "Say hello from the all-types fixture task."

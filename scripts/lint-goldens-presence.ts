@@ -71,7 +71,7 @@ try {
 }
 
 if (entries.length === 0) {
-  fail("the registry is empty — Chunk 0a landed 51 designated assets; an empty registry means they were deleted.");
+  fail("the registry is empty — Chunk 0a landed 50 designated assets; an empty registry means they were deleted.");
 }
 
 const problems: string[] = [];
