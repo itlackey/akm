@@ -10,8 +10,8 @@
  * `MatchResult` shape expected by the rest of the indexer.
  */
 
-import { defaultRendererRegistry } from "../../core/asset/asset-registry";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
+import { presentationFor } from "../../core/type-presentation";
 import { looksLikeWorkflow } from "../../workflows/parser";
 import { looksLikeWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
@@ -266,7 +266,11 @@ function classifyByWiki(ctx: FileContext): MatchFact | null {
 function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFact | null): MatchResult | null {
   const fact = classify(ctx);
   if (!fact) return null;
-  const renderer = defaultRendererRegistry.rendererNameFor(fact.type);
+  // Renderer name resolved via TYPE_PRESENTATION (core leaf) rather than
+  // asset-registry, so matchers.ts carries no edge into the taxonomy SCC
+  // (chunk-3 cutover enabler). TYPE_PRESENTATION.renderer holds the same
+  // values TYPE_TO_RENDERER did (ported verbatim), so this is behavior-identical.
+  const renderer = presentationFor(fact.type).renderer;
   if (!renderer) return null;
   return {
     type: fact.type,
