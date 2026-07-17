@@ -34,23 +34,30 @@ export type {
 // ([claude-code, opencode] — visible in e.g. `extract --auto` result order)
 // is preserved deterministically, independent of HARNESS_REGISTRY declaration
 // order (which is pinned for JSON-schema enum stability).
+//
+// WI-9.7 (H1): `SESSION_LOG_HARNESSES` is `HARNESS_REGISTRY` narrowed by the
+// `isSessionLogHarness` type-predicate (see `../harnesses/types.ts`), so every
+// element's `capabilities.sessionLogs` is the literal `true` and
+// `sessionLogProvider` is a required (non-optional) field — a harness
+// declaring `sessionLogs: true` without a provider is now a compile error at
+// its `HARNESS_REGISTRY` entry, not a throw here. The load-time throw this
+// used to guard (`h.sessionLogProvider?.()` returning undefined) is gone;
+// `h.sessionLogProvider()` cannot be called with no provider to invoke.
 const HARNESSES: SessionLogHarness[] = [...SESSION_LOG_HARNESSES]
   .sort((a, b) => a.id.localeCompare(b.id))
-  .map((h) => {
-    const provider = h.sessionLogProvider?.();
-    if (!provider) {
-      throw new Error(
-        `[akm] harness "${h.id}" declares capabilities.sessionLogs but no sessionLogProvider factory (src/integrations/harnesses). Add one to its descriptor.`,
-      );
-    }
-    return provider;
-  });
+  .map((h) => h.sessionLogProvider());
 
-// Reverse invariant (kept from #562): every derived provider's runtime name
-// must resolve back — via the id-normalization bridge, so a provider named
-// "claude-code" still maps to the canonical "claude" harness — to a registry
-// harness whose `sessionLogs` capability is set. Catches a descriptor whose
-// factory returns a provider named for a different/unregistered harness.
+// Reverse invariant (kept from #562): every derived provider's runtime `name`
+// — a plain string the provider implementation sets independently of the
+// harness registry (e.g. `ClaudeCodeProvider`'s `"claude-code"`) — must
+// resolve back, via the id-normalization bridge, to a registry harness whose
+// `sessionLogs` capability is set. This is NOT expressible as a compile-time
+// type constraint: `SessionLogHarness.name` is a runtime string with no
+// static link to the `AkmHarness` that produced it, so a typo'd or
+// stale `name` (e.g. copy-pasted from another provider, or renamed on one
+// side only) would only ever surface as a wrong/silent lookup miss much later
+// (health scans, `extract --auto` attribution) rather than here at load time.
+// Kept as a runtime guard for that reason.
 for (const provider of HARNESSES) {
   const harness = getHarness(provider.name);
   if (!harness?.capabilities.sessionLogs) {

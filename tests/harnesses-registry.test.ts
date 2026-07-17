@@ -141,24 +141,19 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     expect(sdk.identityEnv).toBeUndefined();
   });
 
-  it("every sessionLogs-capable harness supplies a sessionLogProvider whose name resolves back to it", () => {
-    // The session-logs index derives its provider array from this factory;
-    // a sessionLogs harness without one would throw at import time there.
+  // WI-9.7 (H1): the sessionLogs↔sessionLogProvider PAIRING (a session-log-
+  // capable harness has a provider factory, and a non-session-log harness has
+  // none) is now enforced by the `AkmHarness` discriminated union at compile
+  // time — `HARNESS_REGISTRY`'s `satisfies readonly AkmHarness[]` check would
+  // fail to build if any entry got this wrong. What's left to test at runtime
+  // is the part the type system can't see: whether a provider's own `name`
+  // string actually points back to the harness that produced it.
+  it("every sessionLogs-capable harness's provider name resolves back to it", () => {
     for (const h of SESSION_LOG_HARNESSES) {
-      expect(h.sessionLogProvider).toBeDefined();
-      const provider = h.sessionLogProvider?.();
-      if (!provider) throw new Error(`harness ${h.id} returned no provider`);
+      const provider = h.sessionLogProvider();
       // Provider runtime name (e.g. 'claude-code') must normalize to the
       // harness's canonical id via the #562 bridge.
       expect(normalizeHarnessId(provider.name)).toBe(h.id);
-    }
-  });
-
-  it("harnesses without sessionLogs capability do not carry a provider factory", () => {
-    for (const h of HARNESS_REGISTRY) {
-      if (!h.capabilities.sessionLogs) {
-        expect(h.sessionLogProvider).toBeUndefined();
-      }
     }
   });
 

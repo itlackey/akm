@@ -18,13 +18,10 @@
  */
 
 /**
- * Capability flags describing which of akm's six integration surfaces a
- * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
- * relevant flag instead of maintaining its own list.
+ * The four capability flags that vary independently of `sessionLogs` (which
+ * is split out below into a discriminant — see {@link HarnessCapabilities}).
  */
-export interface HarnessCapabilities {
-  /** Has readable native session logs (`akm extract`, session-logs index). */
-  readonly sessionLogs: boolean;
+interface HarnessCapabilityFlags {
   /** Can be spawned as an agent CLI / SDK (`akm propose`, reflect, tasks). */
   readonly agentDispatch: boolean;
   /** Participates in PATH/env detection during `akm setup`. */
@@ -36,10 +33,41 @@ export interface HarnessCapabilities {
 }
 
 /**
+ * Capability flags describing which of akm's six integration surfaces a
+ * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
+ * relevant flag instead of maintaining its own list.
+ *
+ * `sessionLogs` is a discriminant (WI-9.7, H1): a plain `boolean` field here
+ * used to let a harness declare `sessionLogs: true` with no
+ * `sessionLogProvider`, caught only by a load-time throw in
+ * `session-logs/index.ts`. Splitting this into a two-member union — each
+ * member pinning `sessionLogs` to a literal `true`/`false` — lets
+ * `./types.ts` discriminate `AkmHarness` on this field so a `true` harness is
+ * REQUIRED to carry a `sessionLogProvider` at compile time; see
+ * `SessionLogCapableHarness` / `NonSessionLogHarness` there.
+ */
+export type HarnessCapabilities =
+  | (HarnessCapabilityFlags & { readonly sessionLogs: true })
+  | (HarnessCapabilityFlags & { readonly sessionLogs: false });
+
+/**
  * Build a complete {@link HarnessCapabilities} record from the flags a
  * harness actually declares — every omitted surface defaults to `false`.
+ *
+ * Overloaded (rather than generic) so the two call shapes every harness
+ * literal already uses — `caps({ sessionLogs: true, ... })` and
+ * `caps({ ...without sessionLogs... })` — resolve to the precise union
+ * member instead of the widened `HarnessCapabilities` union, which is what
+ * lets `./types.ts`'s discriminated `AkmHarness` union narrow on a harness's
+ * `capabilities` field without any `as const`/cast at the call site.
  */
-export function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
+export function caps(
+  c: Partial<HarnessCapabilityFlags> & { sessionLogs: true },
+): Extract<HarnessCapabilities, { sessionLogs: true }>;
+export function caps(
+  c: Partial<HarnessCapabilityFlags> & { sessionLogs?: false },
+): Extract<HarnessCapabilities, { sessionLogs: false }>;
+export function caps(c: Partial<HarnessCapabilityFlags> & { sessionLogs?: boolean }): HarnessCapabilities {
   return {
     sessionLogs: false,
     agentDispatch: false,
@@ -47,7 +75,7 @@ export function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
     configImport: false,
     runtimeIdentity: false,
     ...c,
-  };
+  } as HarnessCapabilities;
 }
 
 /** Home directory used for filesystem-only harness config detection. */

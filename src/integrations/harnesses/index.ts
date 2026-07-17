@@ -35,8 +35,10 @@ import { OpencodeSdkHarness } from "./opencode-sdk/harness";
 import { OpenhandsHarness } from "./openhands";
 import { PiHarness } from "./pi";
 import type { AkmHarness } from "./types";
+import { isSessionLogHarness } from "./types";
 
-export type { AkmHarness, HarnessCapabilities } from "./types";
+export type { AkmHarness, HarnessCapabilities, NonSessionLogHarness, SessionLogCapableHarness } from "./types";
+export { isSessionLogHarness } from "./types";
 
 // Each harness descriptor (ClaudeHarness, OpencodeHarness, OpencodeSdkHarness)
 // lives in its own per-harness directory alongside that harness's session-log
@@ -97,8 +99,13 @@ export const VALID_HARNESS_IDS = Object.freeze(HARNESS_REGISTRY.map((h) => h.id)
   ...(typeof HARNESS_REGISTRY)[number]["id"][],
 ];
 
-/** Harnesses that expose readable native session logs. */
-export const SESSION_LOG_HARNESSES = HARNESS_REGISTRY.filter((h) => h.capabilities.sessionLogs);
+/**
+ * Harnesses that expose readable native session logs. Narrowed via the
+ * {@link isSessionLogHarness} type-predicate (rather than a plain boolean
+ * callback) so `sessionLogProvider` is known-present on every element — see
+ * that function's doc comment for why a plain predicate doesn't narrow here.
+ */
+export const SESSION_LOG_HARNESSES = HARNESS_REGISTRY.filter(isSessionLogHarness);
 /** Harnesses that can be dispatched as an agent CLI / SDK. */
 export const AGENT_DISPATCH_HARNESSES = HARNESS_REGISTRY.filter((h) => h.capabilities.agentDispatch);
 /** Harnesses that can import an existing harness config into akm. */
