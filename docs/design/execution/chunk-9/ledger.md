@@ -353,3 +353,47 @@ Gates (worker + reviewer): tsc; biome; cycles 107/107; architecture
 28/28; harness/agent/session-log suites 420/0 (reviewer re-ran 64/0
 core subset); grep-verified exactly one remaining throw (the kept
 reverse guard).
+
+## WI-9.8 — import-cycle kills (bca3cd8d + 3ac33ffd)
+
+Baseline 107 → 31. Batch A (eight small knots, −20): type-leaf severs
+with old-home re-exports — events-types, ranking-types,
+wiki-fetchers/types, graph-types (+ graph-db dependency inversion),
+core/git-message (sanitizeCommitMessage), backends/types,
+HarnessConfigImporter → harnesses/shared sink (the Decision-2 adopted
+trio); the graph pair needed only deleting an unused re-export. Batch B
+(three big knots, −56): (1) proposal-types.ts leaf frees the proposal
+engine + validators + 5 improve satellites; frozen txn oracles
+byte-green throughout; EligibilitySource moved leaf-ward as a Proposal
+dependency (old home re-exports — could re-home to improve-types later,
+zero-consumer churn either way); (2) the four verb result types moved
+DOWN into core/improve-types (the §10.7 inversion ends); improve trio
+(SCC #8) deliberately left for WI-9.10; (3) harnesses/ids.ts
+dependency-free id table with a loud construction-time registry assert;
+requireLlmConfig/getDefaultLlmConfig relocated to engine-resolution
+(API move — config.ts cannot re-export without keeping the graph edge;
+5 src + 2 test call sites repointed).
+
+TECHNIQUE NOTE (recorded for maintainer visibility): four residual
+type-only back-edges (builder-shared→spawn, engine-resolution↔runner,
+workflows/program/{schema,parser}→agent-runtime) were converted to
+inline `import("...")` TYPE QUERIES rather than moved — the same idiom
+config-types.ts has used since #565 ("unambiguously type-only …
+creates no runtime import cycle"). These are erased at compile time and
+invisible to the static-graph lint BY the lint's own parsing rules (it
+counts top-level import declarations); the philosophically-pure
+alternative (moving AgentRunResult/RunnerSpec/LlmInvocationOverrides/
+AgentFailureReason to leaves) remains available if the maintainer
+prefers — candidates for Chunk 3's renderers-hub dismantling. No
+`await import()` anywhere; dynamic-import baseline untouched (verified
+0 additions in the diff).
+
+Exit state matches Decision 3 EXACTLY: 31 = renderers-hub taxonomy blob
+(C3) + indexer-db trio (C5) + workflows-runtime trio (C8) + improve trio
+(WI-9.10) — and BETTER than predicted: no config file remains held via
+the agent-runtime bridge, only via renderers. Gates (workers + reviewer):
+tsc; biome; cycle lint 31/31 with pure-deletion baseline diffs (20+56);
+architecture 28/28; frozen oracles 22/0 re-run after EACH
+repository-touching kill and by the reviewer; proposal family 233/0;
+improve 396/0 + 333/0 integration; config/contracts 140/0;
+agent/harness 373/0; workflows 170/0; setup suites green.
