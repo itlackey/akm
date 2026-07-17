@@ -20,6 +20,27 @@
  * with real renderer/action wiring (asset-registry's `TYPE_TO_RENDERER`/
  * `ACTION_BUILDERS` still own that job until then — this module does not
  * replace them yet).
+ *
+ * ── `rendererName` (added chunk-2, WI-2.1) ──
+ *
+ * `BundleAdapter` (`core/adapter/bundle-adapter.ts`) has NO render/
+ * presentation method — it was transcribed verbatim from the adapter spec's
+ * §2 interface, which has no such member. Per the chunk-2 brief ("if the
+ * BundleAdapter interface has no render method, the adapter declares its
+ * renderer/presentation via the registry / TYPE_PRESENTATION, additive —
+ * flag your mechanism"), this file (already the designated "durable home"
+ * per the paragraph above) is where a per-adapter renderer NAME is recorded
+ * — an optional field, so every pre-existing hand-written `TYPE_PRESENTATION`
+ * entry stays valid without modification. Only skill/wiki/script are filled
+ * in by WI-2.1 (matching `asset-registry.ts#TYPE_TO_RENDERER`'s
+ * `skill-md`/`wiki-md`/`script-source` values, and the chunk-0b recognition
+ * golden's `renderer` field for those three types byte-for-byte); the
+ * other 11 types are left `undefined` for WI-2.2..2.5 to fill in as their
+ * adapters land. This is presentation NAMING only — no `buildShowResponse`-
+ * equivalent renderer FUNCTION is ported here (see the skill/wiki/script
+ * adapters' own file headers): no interface hook exists for one, and it is
+ * out of WI-2.1's gated scope (recognition/placement/lint parity, not
+ * renderer-output parity).
  */
 
 import { isKnownType, type KnownType } from "./recognition-util";
@@ -27,6 +48,13 @@ import { isKnownType, type KnownType } from "./recognition-util";
 export interface Presentation {
   /** Human-readable label for this asset type (e.g. "Skill", "Knowledge"). */
   label: string;
+  /**
+   * The renderer name this type's adapter presents with (matches
+   * `MatchResult.renderer`/`AssetRenderer.name` in the legacy system, e.g.
+   * "skill-md"). `undefined` until the owning chunk-2 WI mints that type's
+   * adapter.
+   */
+  rendererName?: string;
 }
 
 /**
@@ -37,16 +65,16 @@ export interface Presentation {
  * plan describes for later — "adding a KNOWN_TYPE forces a decision").
  */
 export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
-  skill: { label: "Skill" },
+  skill: { label: "Skill", rendererName: "skill-md" },
   command: { label: "Command" },
   agent: { label: "Agent" },
   knowledge: { label: "Knowledge" },
   workflow: { label: "Workflow" },
-  script: { label: "Script" },
+  script: { label: "Script", rendererName: "script-source" },
   memory: { label: "Memory" },
   env: { label: "Env" },
   secret: { label: "Secret" },
-  wiki: { label: "Wiki" },
+  wiki: { label: "Wiki", rendererName: "wiki-md" },
   lesson: { label: "Lesson" },
   task: { label: "Task" },
   session: { label: "Session" },

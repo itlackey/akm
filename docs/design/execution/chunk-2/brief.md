@@ -51,6 +51,27 @@ anchors in §B; trust it over the spec's aspirational §4 registry).
   each type's `applyXMetadata` contributor (output/renderers.ts) folds into its
   adapter's `recognize` so the returned IndexDocument matches the recognition
   golden (which already includes the contributor output). Behavior-preserving.
+  **REFINED by WI-2.1:** fold in ONLY contributors whose output has a carriable
+  `IndexDocument` field AND that the recognition golden actually pins. `toc-metadata`
+  (no `IndexDocument` TOC field) and `script-comment-metadata` (cycle-adjacent
+  `indexer/passes/metadata.ts` home) were correctly NOT folded — the recognition
+  golden pins only `{type, specificity, renderer, meta?}`, none of it contributor
+  output. This bites for real in WI-2.4 (memory/note frontmatter contributors ARE
+  carriable). Don't add an `IndexDocument` field or a cycle edge just to fold.
+- **D2-8 — ROOT CONVENTION (set by WI-2.1, binding for all remaining WIs +
+  Chunk 3).** A component's `c.root` (what `scanComponent` walks; what
+  `recognize`/`placeNew` resolve relative paths against) = **the type's own stash
+  SUBDIRECTORY** (skill component roots at `<stash>/skills`, not `<stash>`) — one
+  adapter per root, no per-file competition. `directoryList()`/`looksLikeRoot(root)`
+  instead operate at the **stash-root** granularity (install probe + git-stash
+  pathspecs are repo-root-relative): they name/probe the stash-relative subdir names
+  (`["skills"]`, `exists(root/skills)`). directoryList = "the stash subdirs that
+  become component roots when mounted" — NOT "dirs relative to c.root." Two roots by
+  design; do not "reconcile" them. Consequence: positional (not identity) recognition
+  for dir-scoped types (see wiki) — faithful under the subdir mount, flagged for
+  maintainer in the ledger. Every remaining adapter: `recognize`/`placeNew` treat
+  `c.root` as the type subdir; `directoryList` returns stash-relative subdir names;
+  `looksLikeRoot(root)` probes `root/<subdir>`.
 
 ## Cycle-safety watch (census finding 8 — ratchet at 18, zero-tolerance)
 Adapters need new outward edges from `src/core/adapter/` into workflows/parser,
