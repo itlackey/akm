@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { StashEntry } from "../../src/indexer/passes/metadata";
+import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
 import {
   buildFileContext,
   buildRenderContext,
@@ -462,6 +464,61 @@ describe("runMatchers", () => {
     expect(result).not.toBeNull();
     expect(result?.type).toBe("task");
     expect(result?.renderer).toBe("task-yaml");
+  });
+});
+
+// ── 2b. task-yaml metadata contributor ──────────────────────────────────────
+//
+// Regression test for the applyTaskMetadata() defect: it called
+// applyFrontmatterDescriptionAndTags(), which parses `---`-fenced frontmatter
+// via parseFrontmatter(). Real task assets (src/tasks/schema.ts TaskDocument)
+// are PLAIN YAML documents with no `---` fences, so that parse silently
+// returned `{}` and the schedule/workflow/prompt searchHints never populated
+// -- only the static "task"/"scheduled" tags were ever emitted. This test
+// must FAIL (searchHints missing schedule:/workflow:/prompt: entries) if the
+// contributor regresses back to the frontmatter parser.
+describe("task-yaml metadata contributor", () => {
+  const TASK_MATCH = { type: "task", specificity: 10, renderer: "task-yaml" };
+
+  test("populates schedule/workflow/prompt searchHints and task/scheduled tags from plain YAML", async () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "tasks", "nightly-report.yml");
+    writeFile(
+      filePath,
+      ["schedule: '0 9 * * *'", "enabled: true", "workflow: workflow:daily-backup", "prompt: agent:my-agent"].join(
+        "\n",
+      ),
+    );
+
+    const ctx = buildFileContext(root, filePath);
+    const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
+    const entry: StashEntry = { name: "nightly-report", type: "task" };
+    await applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx });
+
+    expect(entry.tags).toContain("task");
+    expect(entry.tags).toContain("scheduled");
+    expect(entry.searchHints).toBeDefined();
+    expect(entry.searchHints).toContain("schedule:0 9 * * *");
+    expect(entry.searchHints).toContain("workflow:workflow:daily-backup");
+    expect(entry.searchHints).toContain("prompt:agent:my-agent");
+  });
+
+  test("still applies task/scheduled tags without throwing when the YAML is unparseable", async () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "tasks", "broken.yml");
+    writeFile(filePath, "schedule: [unterminated\n");
+
+    const ctx = buildFileContext(root, filePath);
+    const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
+    const entry: StashEntry = { name: "broken", type: "task" };
+
+    await expect(
+      applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx }),
+    ).resolves.toBeUndefined();
+
+    expect(entry.tags).toContain("task");
+    expect(entry.tags).toContain("scheduled");
+    expect(entry.searchHints ?? []).toEqual([]);
   });
 });
 

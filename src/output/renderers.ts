@@ -13,6 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { listKeys as listVaultKeys } from "../commands/env/env";
 import { parseFrontmatter } from "../core/asset/frontmatter";
 import {
@@ -750,20 +751,31 @@ function applySecretMetadata(entry: StashEntry, _ctx: RenderContext): void {
   entry.tags = Array.from(new Set([...(entry.tags ?? []), "secret", "sensitive"]));
 }
 
+/**
+ * Task metadata: task assets are PLAIN YAML documents (`<stash>/tasks/<id>.yml`,
+ * see {@link TaskDocument} in `src/tasks/schema.ts`) — no `---` frontmatter
+ * fences — so they must be parsed with the generic `yaml` package rather than
+ * {@link applyFrontmatterDescriptionAndTags} (which expects a fenced block and
+ * silently returns `{}` for a fenceless document). The `task`/`scheduled` tags
+ * are applied unconditionally, before the parse, so a malformed task file
+ * still gets tagged; the YAML parse/read is best-effort and never throws out
+ * of a metadata contributor.
+ */
 function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
+  entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
   try {
-    const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
-    entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
+    const doc = parseYaml(ctx.content());
+    const data = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : {};
     const hints = new Set<string>(entry.searchHints ?? []);
-    const schedule = asNonEmptyString(fm.schedule);
+    const schedule = asNonEmptyString(data.schedule);
     if (schedule) hints.add(`schedule:${schedule}`);
-    const workflow = asNonEmptyString(fm.workflow);
+    const workflow = asNonEmptyString(data.workflow);
     if (workflow) hints.add(`workflow:${workflow}`);
-    const prompt = asNonEmptyString(fm.prompt);
+    const prompt = asNonEmptyString(data.prompt);
     if (prompt) hints.add(`prompt:${prompt}`);
     if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
   } catch {
-    // Non-fatal: skip metadata extraction on error
+    // Non-fatal: skip metadata extraction on parse error
   }
 }
 registerMetadataContributor({
