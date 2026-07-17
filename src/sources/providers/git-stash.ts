@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
@@ -237,8 +238,16 @@ function stageScopedChanges(repoDir: string, paths?: string[]): { ok: boolean; p
     return { ok, pathspecs: ok ? listStagedPaths(repoDir, explicit) : [] };
   }
 
-  // Precedence 2: managed pathspecs that exist on disk (TYPE_DIRS + `.akm`).
-  const managed = [...Object.values(TYPE_DIRS), ".akm"].filter((dir) => fs.existsSync(path.join(repoDir, dir)));
+  // Precedence 2: managed pathspecs that exist on disk (adapter-owned stash
+  // subdirs + `.akm`). WI-3.1: the owned subdirs are now sourced from the `akm`
+  // adapter's `directoryList()` — behavior-identical to the prior
+  // `Object.values(TYPE_DIRS)` derivation (directoryList() returns the same
+  // stash-subdir set), with the TYPE_DIRS global kept live as the fallback so
+  // a later WI can delete the global safely.
+  const ownedDirs =
+    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ??
+    Object.values(TYPE_DIRS);
+  const managed = [...ownedDirs, ".akm"].filter((dir) => fs.existsSync(path.join(repoDir, dir)));
   if (managed.length > 0) {
     const ok = addPathspecsChunked(repoDir, managed);
     return { ok, pathspecs: ok ? listStagedPaths(repoDir, managed) : [] };
