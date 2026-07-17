@@ -17,7 +17,10 @@ import { getOutputMode, type OutputMode } from "../output/context";
 import { deliverRendered } from "../output/html-render";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
+import { parseAllFlagValues } from "./invocation";
 import { hasSubcommand } from "./parse-args";
+
+export { parseAllFlagValues };
 
 // ── Exit codes ───────────────────────────────────────────────────────────────
 /**
@@ -213,25 +216,6 @@ export function output(command: string, result: unknown): void {
   }
 }
 
-/**
- * Collect all occurrences of a repeatable flag from process.argv.
- * Citty's StringArgDef only exposes the last value when a flag is repeated,
- * so for repeatable CLI args (like `--tag foo --tag bar`) we read argv directly.
- * Supports both `--flag value` and `--flag=value` forms.
- */
-export function parseAllFlagValues(flag: string): string[] {
-  const values: string[] = [];
-  for (let i = 0; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    if (arg === flag && i + 1 < process.argv.length) {
-      values.push(process.argv[i + 1] as string);
-      // BUG-M4: skip the value index so `--tag --tag` (literal `--tag`
-      // value) does not double-count the second `--tag` as a separate
-      // flag occurrence.
-      i++;
-    } else if (arg.startsWith(`${flag}=`)) {
-      values.push(arg.slice(flag.length + 1));
-    }
-  }
-  return values;
-}
+// parseAllFlagValues moved to ./invocation (chunk-9 WI-9.9 argv-normalization
+// fold); re-exported above so every existing importer of this module is
+// unaffected.

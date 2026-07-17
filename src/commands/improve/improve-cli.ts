@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
+import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parseAutoAcceptFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -15,7 +16,6 @@ import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { parseFlagValue } from "../../output/context";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
@@ -167,7 +167,7 @@ export const improveCommand = defineCommand({
       return;
     }
     await runWithJsonErrors(async () => {
-      const formatFlagValue = parseFlagValue(process.argv, "--format");
+      const formatFlagValue = getParsedInvocation().getFlagValue("--format");
       if (formatFlagValue !== undefined) {
         throw new UsageError(
           `akm improve does not accept --format. That flag controls output formatting for other commands (search, show, etc.).\n` +

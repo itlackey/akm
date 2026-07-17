@@ -10,6 +10,7 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
+import { getParsedInvocation } from "../cli/invocation";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config/config";
@@ -19,7 +20,6 @@ import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
 import { getDefaultLlmConfig } from "../integrations/agent/engine-resolution";
-import { parseFlagValue } from "../output/context";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
@@ -312,7 +312,9 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
 export function resolveRememberContentArg(content: string | undefined): string | undefined {
   if (content === undefined) return undefined;
 
-  const parsedFormat = parseFlagValue(process.argv, "--format");
+  const invocation = getParsedInvocation();
+
+  const parsedFormat = invocation.getFlagValue("--format");
   if (
     parsedFormat !== undefined &&
     content === parsedFormat &&
@@ -321,7 +323,7 @@ export function resolveRememberContentArg(content: string | undefined): string |
     return undefined;
   }
 
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  const parsedDetail = invocation.getFlagValue("--detail");
   if (
     parsedDetail !== undefined &&
     content === parsedDetail &&
@@ -338,7 +340,7 @@ function wasRememberFlagValueConsumedAsContent(
   flagValue: string,
   flagName: "--format" | "--detail",
 ): boolean {
-  const argv = process.argv.slice(2);
+  const argv = getParsedInvocation().userArgs;
   const rememberIndex = argv.indexOf("remember");
   const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
 

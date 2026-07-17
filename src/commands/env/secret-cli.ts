@@ -20,6 +20,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { deriveCanonicalAssetName } from "../../core/asset/asset-spec";
@@ -194,11 +195,10 @@ const secretRunCommand = defineJsonCommand({
       );
     }
 
-    const dashIndex = process.argv.indexOf("--");
-    if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+    const command = getParsedInvocation().passthroughArgs();
+    if (command.length === 0) {
       throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
     }
-    const command = process.argv.slice(dashIndex + 1);
 
     const { name, absPath, source } = resolveSecretPath(args.ref);
     if (!fs.existsSync(absPath)) {

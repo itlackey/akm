@@ -21,6 +21,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
@@ -31,7 +32,6 @@ import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../co
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { parseFlagValue } from "../../output/context";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -229,11 +229,10 @@ async function runEnvInjected(
   target: string,
   opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[] },
 ): Promise<void> {
-  const dashIndex = process.argv.indexOf("--");
-  if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+  const command = getParsedInvocation().passthroughArgs();
+  if (command.length === 0) {
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
   }
-  const command = process.argv.slice(dashIndex + 1);
 
   const { name, absPath, source } = resolveEnvPath(target);
   if (!fs.existsSync(absPath)) {
@@ -472,9 +471,10 @@ const envUnsetCommand = defineJsonCommand({
     // are the remaining positionals. citty also mis-captures the space-separated
     // value of a global flag (`--format json`) as a positional, so drop any
     // token that is actually a global flag's value (cli.ts:1335 documents this).
+    const invocation = getParsedInvocation();
     const globalFlagValues = new Set(
       ["--format", "--shape", "--detail", "--scope", "--filter", "--target"]
-        .map((flag) => parseFlagValue(process.argv, flag))
+        .map((flag) => invocation.getFlagValue(flag))
         .filter((v): v is string => typeof v === "string"),
     );
     const keys = (Array.isArray(args._) ? (args._ as unknown[]).map(String) : [])

@@ -14,6 +14,7 @@
  */
 
 import { defineCommand } from "citty";
+import { getParsedInvocation } from "../cli/invocation";
 import { getStringArg } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -22,7 +23,6 @@ import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { hasBooleanFlag } from "../output/context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";
 import {
@@ -84,10 +84,10 @@ const workflowNextCommand = defineJsonCommand({
   },
   async run({ args }) {
     // `--dry-run` is intentionally NOT a declared arg (so it stays out of
-    // --help). The guard reads it straight from process.argv so existing
-    // callers still get a clear, actionable error instead of a generic
-    // "unknown flag" from citty.
-    if (hasBooleanFlag(process.argv, "--dry-run")) {
+    // --help). The guard reads it straight from the invocation singleton so
+    // existing callers still get a clear, actionable error instead of a
+    // generic "unknown flag" from citty.
+    if (getParsedInvocation().hasFlag("--dry-run")) {
       throw new UsageError(
         "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
         "INVALID_FLAG_VALUE",

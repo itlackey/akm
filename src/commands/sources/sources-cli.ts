@@ -19,12 +19,12 @@
  * `runWithJsonErrors` wrapper) rather than wrapping inline.
  */
 import { defineCommand } from "citty";
+import { getParsedInvocation } from "../../cli/invocation";
 import { defineJsonCommand, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { parseFlagValue } from "../../output/context";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import type { SourceKind } from "../../sources/types";
 import { pkgVersion } from "../../version";
@@ -155,7 +155,7 @@ async function runSyncBody(args: { name?: string; message?: string; push?: boole
     // before any standalone occurrence of the same value in the sync
     // subcommand's argv slice. This preserves legitimate invocations
     // like `akm sync json --format json`.
-    const parsedFormat = parseFlagValue(process.argv, "--format");
+    const parsedFormat = getParsedInvocation().getFlagValue("--format");
     const effectiveName =
       args.name !== undefined &&
       parsedFormat !== undefined &&
@@ -222,7 +222,7 @@ export const syncCommand = defineCommand({
  * primary-stash sync. `verb` is the subcommand token to anchor on.
  */
 function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "sync"): boolean {
-  const argv = process.argv.slice(2);
+  const argv = getParsedInvocation().userArgs;
   const verbIndex = argv.indexOf(verb);
   const tokens = verbIndex >= 0 ? argv.slice(verbIndex + 1) : argv;
 

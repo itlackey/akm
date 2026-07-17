@@ -14,13 +14,14 @@
  * form.
  */
 
+import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
 import type { UsageEventSource } from "../../indexer/usage/usage-events";
-import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
+import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import type { KnowledgeView, ShowDetailLevel } from "../../sources/types";
 import { akmCurate } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
@@ -190,12 +191,13 @@ export const showCommand = defineJsonCommand({
     // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
     // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
     // by `normalizeShowArgv` before citty parses argv. We read those values
-    // directly via `parseFlagValue` so the flags don't surface as user-facing
-    // options in `akm show --help`.
-    const akmView = parseFlagValue(process.argv, "--akmView");
-    const akmHeading = parseFlagValue(process.argv, "--akmHeading");
-    const akmStart = parseFlagValue(process.argv, "--akmStart");
-    const akmEnd = parseFlagValue(process.argv, "--akmEnd");
+    // directly via `getParsedInvocation()` so the flags don't surface as
+    // user-facing options in `akm show --help`.
+    const invocation = getParsedInvocation();
+    const akmView = invocation.getFlagValue("--akmView");
+    const akmHeading = invocation.getFlagValue("--akmHeading");
+    const akmStart = invocation.getFlagValue("--akmStart");
+    const akmEnd = invocation.getFlagValue("--akmEnd");
     let view: KnowledgeView | undefined;
     if (akmView) {
       switch (akmView) {
@@ -219,7 +221,7 @@ export const showCommand = defineJsonCommand({
       }
     }
     const cliShape = getOutputMode().shape;
-    const explicitDetail = parseFlagValue(process.argv, "--detail");
+    const explicitDetail = invocation.getFlagValue("--detail");
     // `--shape summary` selects the compact metadata projection for show
     // (the legacy `--detail summary` spelling still maps here via the
     // back-compat path in resolveOutputMode). `--detail brief` forces the

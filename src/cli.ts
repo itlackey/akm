@@ -75,8 +75,14 @@ process.on("uncaughtException", (err) => {
 import fs from "node:fs";
 import path from "node:path";
 import { type ArgsDef, defineCommand, runMain } from "citty";
-import { findCittyTopLevelCommand, findCittyTopLevelCommandIndex } from "./cli/parse-args";
-import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
+import {
+  findCittyTopLevelCommand,
+  findCittyTopLevelCommandIndex,
+  parseAllFlagValues,
+  resolveHelpMigrateVersionArg,
+  setParsedInvocation,
+} from "./cli/invocation";
+import { EXIT_CODES, emitJsonError, output, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { backupCommand } from "./commands/backup-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -122,7 +128,7 @@ import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
-import { getHyphenatedBoolean, getOutputMode, initOutputMode, parseFlagValue } from "./output/context";
+import { getHyphenatedBoolean, getOutputMode, initOutputMode } from "./output/context";
 import { deliverRendered, renderHtml, resolveTemplatePath } from "./output/html-render";
 import { pkgVersion } from "./version";
 
@@ -135,54 +141,9 @@ function applyEarlyStderrFlags(argv: string[]): void {
   }
 }
 
-function resolveHelpMigrateVersionArg(version: string | undefined): string | undefined {
-  if (version === undefined) return undefined;
-
-  const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (
-    parsedFormat !== undefined &&
-    version === parsedFormat &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedFormat, "--format")
-  ) {
-    return undefined;
-  }
-
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (
-    parsedDetail !== undefined &&
-    version === parsedDetail &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedDetail, "--detail")
-  ) {
-    return undefined;
-  }
-
-  return version;
-}
-
-function wasHelpMigrateFlagValueConsumedAsVersion(
-  version: string,
-  flagValue: string,
-  flagName: "--format" | "--detail",
-): boolean {
-  const argv = process.argv.slice(2);
-  const helpIndex = argv.indexOf("help");
-  const tokens = helpIndex >= 0 ? argv.slice(helpIndex + 1) : argv;
-  const migrateIndex = tokens.indexOf("migrate");
-  const relevant = migrateIndex >= 0 ? tokens.slice(migrateIndex + 1) : tokens;
-
-  let flagIndex = -1;
-  for (let i = 0; i < relevant.length; i += 1) {
-    const token = relevant[i];
-    if (token === flagName || token === `${flagName}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
-  }
-
-  if (flagIndex === -1) return false;
-  if (relevant.slice(0, flagIndex).includes(version)) return false;
-  return relevant[flagIndex] === flagName ? relevant[flagIndex + 1] === version : true;
-}
+// resolveHelpMigrateVersionArg moved to ./cli/invocation (chunk-9 WI-9.9
+// argv-normalization fold — it re-scanned process.argv, same as
+// findCittyTopLevelCommand and parseAllFlagValues below).
 
 /**
  * Stderr-only human-friendly hint after a non-interactive `setup` invocation.
@@ -642,6 +603,11 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // citty reads process.argv directly and does not accept a custom argv array,
   // so we must replace process.argv with the normalized version before runMain.
   process.argv = normalizeShowArgv(process.argv);
+  // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
+  // place argv is parsed for the whole process (plan §10.7 / chunk-9 WI-9.9).
+  // Every out-of-cli.ts command module reads argv state through
+  // `getParsedInvocation()` from here on instead of re-scanning process.argv.
+  setParsedInvocation(process.argv);
   // Resolve output mode once at startup from the (normalized) argv and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are
