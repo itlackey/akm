@@ -31,7 +31,15 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { BundleComponent } from "../../../src/core/adapter/types";
-import { buildFileContext, type FileContext, runMatchers } from "../../../src/indexer/walk/file-context";
+import { deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-spec";
+import type { StashEntry } from "../../../src/indexer/passes/metadata";
+import { applyMetadataContributors } from "../../../src/indexer/passes/metadata-contributors";
+import {
+  buildFileContext,
+  buildRenderContext,
+  type FileContext,
+  runMatchers,
+} from "../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../src/indexer/walk/walker";
 
 const ALL_TYPES_ROOT = path.resolve(__dirname, "../../fixtures/stashes/all-types");
@@ -208,6 +216,84 @@ describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement
     expect(relFromRoot(akmAdapter.placeNew?.(component(), "workflows/all-types-workflow-program") as string)).toBe(
       "workflows/all-types-workflow-program.yaml",
     );
+  });
+});
+
+// ── 3b. recognize folds the 11 metadata contributors (§2) ────────────────────
+
+describe("akm adapter — recognize folds the index-time metadata contributors (§2)", () => {
+  /** The contributor-produced fields the fold mirrors onto the IndexDocument (first-class + documentJson extras). */
+  const FIELDS = ["tags", "searchHints", "description", "confidence", "source", "toc", "parameters"] as const;
+
+  /** Pull the folded metadata back off an IndexDocument: first-class fields + the documentJson extras. */
+  function foldedFromDoc(doc: NonNullable<ReturnType<typeof akmAdapter.recognize>>): Record<string, unknown> {
+    const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
+    const merged: Record<string, unknown> = {
+      tags: doc.tags,
+      searchHints: doc.searchHints,
+      description: doc.description,
+      confidence: doc.confidence,
+      source: extras.source,
+      toc: extras.toc,
+      parameters: extras.parameters,
+    };
+    const out: Record<string, unknown> = {};
+    for (const f of FIELDS) if (merged[f] !== undefined) out[f] = merged[f];
+    return out;
+  }
+
+  /** The reference: today's contributors applied to a MINIMAL (name+type) seed, exactly what the fold isolates. */
+  async function referenceMetadata(ctx: FileContext): Promise<Record<string, unknown>> {
+    const match = await runMatchers(ctx);
+    if (!match) return {};
+    const rc = buildRenderContext(ctx, match, [ALL_TYPES_ROOT]);
+    const name = deriveCanonicalAssetNameFromStashRoot(match.type, ALL_TYPES_ROOT, ctx.absPath) ?? ctx.relPath;
+    const entry: StashEntry = { name, type: match.type };
+    await applyMetadataContributors(entry, { rendererName: match.renderer, renderContext: rc });
+    const rec = entry as unknown as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const f of FIELDS) if (rec[f] !== undefined) out[f] = rec[f];
+    return out;
+  }
+
+  test("folded metadata matches the live contributors' output for every fixture file", async () => {
+    let asserted = 0;
+    for (const ctx of allTypesContexts()) {
+      const reference = await referenceMetadata(ctx);
+      const doc = akmAdapter.recognize(component(), ctx);
+      expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
+      if (!doc) continue;
+      expect(foldedFromDoc(doc), `folded metadata for ${ctx.relPath}`).toEqual(reference);
+      asserted += 1;
+    }
+    expect(asserted).toBe(15);
+  });
+
+  test("the winning renderer is still carried on documentJson.renderer (WI-B contract intact)", () => {
+    for (const ctx of allTypesContexts()) {
+      const doc = akmAdapter.recognize(component(), ctx);
+      expect((doc?.documentJson as { renderer?: string })?.renderer).toBeDefined();
+    }
+  });
+
+  test("a few representative folds land on the expected IndexDocument fields", () => {
+    const byRel = new Map(allTypesContexts().map((c) => [c.relPath, c]));
+
+    const env = akmAdapter.recognize(component(), byRel.get("env/all-types-env.env") as FileContext);
+    expect(env?.tags).toEqual(["env", "secrets"]);
+    expect(env?.searchHints).toEqual(["FIXTURE_GREETING", "FIXTURE_LOG_LEVEL"]);
+
+    const knowledge = akmAdapter.recognize(component(), byRel.get("knowledge/all-types-knowledge.md") as FileContext);
+    // toc has no first-class IndexDocument home → carried on documentJson.
+    expect((knowledge?.documentJson as { toc?: unknown[] }).toc?.length).toBeGreaterThan(0);
+
+    const task = akmAdapter.recognize(component(), byRel.get("tasks/all-types-task.yml") as FileContext);
+    expect(task?.tags).toEqual(["task", "scheduled"]);
+    expect(task?.searchHints).toContain("schedule:@daily");
+
+    const script = akmAdapter.recognize(component(), byRel.get("scripts/all-types-script.sh") as FileContext);
+    expect(script?.confidence).toBe(0.7);
+    expect((script?.documentJson as { source?: string }).source).toBe("comments");
   });
 });
 

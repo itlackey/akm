@@ -90,8 +90,54 @@ Files (additive): `src/core/adapter/adapters/akm-adapter.ts`, `adapters/index.ts
 - Non-`.md` types never read their body for `name` (secret/env value safety); only `hash`
   reads bytes, opaquely.
 
+## WI-C — `akm` adapter: validate + presentation + metadata contributors (Opus impl; Opus review, gates re-verified)
+
+Completes the `akm` adapter's four surfaces. Files: `type-presentation.ts` (extended),
+`akm-adapter.ts` (validate + recognize metadata fold), new leaves `akm-lint.ts`/`akm-metadata.ts`,
+tests `akm-validate.test.ts`/`akm-presentation.test.ts` (+ `akm-adapter.test.ts` extended).
+
+- **presentation (§2)** — `Presentation` extended to `{label, renderer?, action?}` (typed over
+  `KNOWN_TYPES`, exhaustive); populated for all 14 types VERBATIM from `TYPE_TO_RENDERER` +
+  `ACTION_BUILDERS` (incl. the 6 static-only: script/skill/command/agent/knowledge/memory). The
+  one function-valued builder (`workflow`→`buildWorkflowAction`) inlined to keep the leaf
+  import-free. `presentationFor` open fallback unchanged. Renderer buildShowResponse stays in the
+  live renderers (Chunk 3 repoints) — this WI is the type→renderer/action NAMING table.
+- **per-type validate (§6)** — `akm-lint.ts`: recover type via `recognizeMatch` over an OVERLAY
+  FileContext (`change.after ?? ctx.readFile`, no live-FS), then the winning type's extra checks
+  reproduced from the linters (command/agent `missing-name-or-type`, fact `missing-category`, task
+  `invalid-task-yaml`, workflow[.md-only] `placeholder-stub`+`invalid-workflow-structure`, memory
+  `orphaned-stub`, skill `missing-skill-md` as a change-set dir pass, env/secret dangerous-key).
+  **READ-ONLY:** placeholder-stub/orphaned-stub emit non-fixable Diagnostics, never delete.
+  **Security:** `isDangerousVaultKey` is IMPORTED from `env-key-rules` (not copied — the 40+ key
+  set must not drift); the `.env`-suffix scan narrowness is preserved exactly (bare `secrets/<x>`
+  not scanned). Lint-golden `perType` parity: `[]` for all 15 fixture files; positive findings
+  (missing-skill-md/invalid-task-yaml/dangerous-vault-key/…) verified firing.
+- **metadata contributors (§2)** — `akm-metadata.ts`: all 11 `registerMetadataContributor` sites
+  (9 + 2 workflow) folded into recognize keyed on the winning renderer name, importing the exact
+  pure parsers so the fold can't drift; parity proof = 0 mismatches vs live
+  `applyMetadataContributors` on all 15 files. Homeless extras (toc/parameters/source) ride
+  `documentJson`; first-class fields (tags/searchHints/description/confidence) land directly.
+
+### Gates (Opus re-ran un-piped): tsc 0 · cycle 18 · lint 0 · tests/core/adapter 94/0 · live lint+renderer+recognition goldens 19/0. Nothing live touched.
+
+### Flagged (worker, grounded)
+- `missing-skill-md` is a directory-structure check → reproduced as a `skills/<name>/`-keyed
+  change-set pass (can't be per-file-type-keyed); `file`/`detail` identical to `SkillLinter`.
+- workflow `.yaml` gets base checks only (production `collectMarkdownFiles` never lints `.yaml`;
+  the golden pins it via `parseWorkflowProgram`, not a lint path).
+- metadata comparison isolates the 11 contributors (minimal `{name,type}` seed) — `applyCuratedFrontmatter`
+  is a separate concern (§2 scopes only the contributor sites).
+
+## Chunk-2 parity gate status
+The **`akm` adapter alone satisfies the recognition/placement/renderer/lint parity gate for all 14
+akm-native formats** (byte-for-byte vs the Chunk-0b all-types goldens), and `okf` adds the
+frontmatter reference path (§5). Both verified.
+
 ## Remaining
-- **WI-C** — `TYPE_PRESENTATION` (renderer/action keyed on `type`, §2) + conformance
-  (`looksLikeRoot` own-root-only) + full golden replay + close.
-- Other format families (`llm-wiki`→Chunk 4; `claude`/`opencode`/`akm-workflow`/`akm-task`/
-  `dotenv`/`agent-skills`/`website-snapshot`/`generic-files`) — scope per manifest.
+- **WI-D** — conformance suite (`looksLikeRoot` fires on own golden root, no sibling's; the
+  `index()==fold(recognize)` §12.3 gate — vacuous for these non-`index()` adapters, still asserted)
+  + full golden replay through the adapters + chunk close (full `bun run check`, gate CHECK_EXIT==0).
+- Other format families — `llm-wiki`→Chunk 4; `claude`/`opencode`/`agent-skills`/`akm-workflow`/
+  `akm-task`/`dotenv`/`website-snapshot`/`generic-files` are format families for NON-akm-workspace
+  bundles (no Chunk-0b golden coverage — the only fixture is akm-native all-types). Scope/sequencing
+  for these vs. deferral is a maintainer decision (flag for review).

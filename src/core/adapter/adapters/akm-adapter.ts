@@ -73,6 +73,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { AssetMatcher, FileContext, MatchResult } from "../../../indexer/walk/file-context";
 import {
   directoryMatcher,
@@ -83,10 +84,13 @@ import {
   workflowProgramMatcher,
 } from "../../../indexer/walk/matchers";
 import { deriveCanonicalAssetNameFromStashRoot, resolveAssetPathFromName, TYPE_DIRS } from "../../asset/asset-spec";
+import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { hashContent, nonEmptyString, validateChangesWithBaseChecks } from "./shared";
+import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
+import { foldRecognizedMetadata } from "./akm-metadata";
+import { hashContent, nonEmptyString, type ParsedForValidate, runBaseValidateChecks } from "./shared";
 
 /**
  * The six builtin matchers, in the SAME order `matchers.ts#registerBuiltinMatchers`
@@ -177,18 +181,135 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
     adapterId: "akm",
     type: match.type,
     name: deriveName(file, conceptId),
-    // Carry the winner's renderer for WI-C's presentation wiring (do NOT invent
-    // a new IndexDocument field — WI-C owns TYPE_PRESENTATION). Opaque extras.
-    documentJson: { renderer: match.renderer },
   };
+
+  // WI-C (spec §2): fold the 11 index-time metadata contributors into
+  // `recognize`, keyed on the winning renderer NAME (`documentJson.renderer`).
+  // First-class contributor fields land on the IndexDocument; the extras with
+  // no first-class home (toc/parameters/source) ride `documentJson` alongside
+  // the renderer name (do NOT invent new IndexDocument fields).
+  const folded = foldRecognizedMetadata(match.renderer, file);
+  if (folded.tags !== undefined) doc.tags = folded.tags;
+  if (folded.searchHints !== undefined) doc.searchHints = folded.searchHints;
+  if (folded.description !== undefined) doc.description = folded.description;
+  if (folded.confidence !== undefined) doc.confidence = folded.confidence;
+
+  const extras: Record<string, unknown> = { renderer: match.renderer };
+  if (folded.toc !== undefined) extras.toc = folded.toc;
+  if (folded.parameters !== undefined) extras.parameters = folded.parameters;
+  if (folded.source !== undefined) extras.source = folded.source;
+  doc.documentJson = extras;
+
   return doc;
 }
 
+/**
+ * A read-only {@link FileContext} backed by an OVERLAY string (a pending
+ * change's content) instead of the live filesystem — the `validate` contract
+ * ({@link BundleAdapter.validate} doc comment / adapter-spec §12.1) forbids
+ * reading the live FS. It mirrors `buildFileContext`'s eager path-field
+ * derivation exactly (so the matchers classify identically) and serves the
+ * overlay bytes from `content()`/`frontmatter()`. `stat()` throws: no matcher
+ * calls it, and there is no snapshot mtime to serve.
+ */
+function buildOverlayContext(root: string, relPathInput: string, raw: string): FileContext {
+  const absPath = path.join(root, relPathInput);
+  const relPath = path.relative(root, absPath).replace(/\\/g, "/");
+  const ext = path.extname(absPath).toLowerCase();
+  const fileName = path.basename(absPath);
+  const parentDirAbs = path.dirname(absPath);
+  const parentDir = path.basename(parentDirAbs);
+  const relDir = path.dirname(relPath).replace(/\\/g, "/");
+  const ancestorDirs = relDir === "." ? [] : relDir.split("/").filter((seg) => seg.length > 0);
+
+  let cachedFrontmatter: Record<string, unknown> | null | undefined;
+  let frontmatterComputed = false;
+
+  return {
+    absPath,
+    relPath,
+    ext,
+    fileName,
+    parentDir,
+    parentDirAbs,
+    ancestorDirs,
+    stashRoot: root,
+    content: () => raw,
+    frontmatter: () => {
+      if (!frontmatterComputed) {
+        const parsed = parseFrontmatter(raw);
+        cachedFrontmatter = Object.keys(parsed.data).length > 0 ? parsed.data : null;
+        frontmatterComputed = true;
+      }
+      return cachedFrontmatter ?? null;
+    },
+    stat: () => {
+      throw new Error("stat() is unavailable in a validate overlay FileContext");
+    },
+  };
+}
+
+/**
+ * `validate` (spec §6) = shared base checks + the winning `type`'s per-type
+ * extra checks, reproducing today's `akmLint`/`getLinterForType` dispatch
+ * byte-for-byte (the FROZEN `lint/all-types.json` `perType` golden is the gate).
+ *
+ * Per change (non-delete, readable): the `type` is recovered by running the
+ * SAME sync matcher arbitration ({@link recognizeMatch}) over an OVERLAY
+ * FileContext ({@link buildOverlayContext}) — no live-FS read. `task` files are
+ * parsed as pure YAML (mirroring `lint/index.ts`'s `subdir === "tasks"` branch)
+ * so the TaskLinter's field checks see real data and `missing-updated` never
+ * fires (frontmatter is `null`); everything else parses via `parseFrontmatter`.
+ * Base checks (shared) then the per-type extra checks run; a `skills/` directory
+ * pass reproduces `SkillLinter.lintDirectory` across the change set.
+ */
 async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  // WI-C: per-type validate — the SkillLinter / WorkflowLinter / TaskLinter /
-  // env-secret dangerous-key scans keyed on the winning `type` land in WI-C.
-  // WI-B ships base checks only (shared port of BaseLinter.runBaseChecks).
-  return validateChangesWithBaseChecks(c, changes, ctx);
+  const diagnostics: Diagnostic[] = [];
+  const seenSkillDirs = new Set<string>();
+
+  for (const change of changes) {
+    if (change.op === "delete") continue;
+    const raw = change.after ?? (await ctx.readFile(change.path));
+    if (typeof raw !== "string") continue;
+
+    const overlay = buildOverlayContext(c.root, change.path, raw);
+    const match = recognizeMatch(overlay);
+    const type = match?.type;
+
+    // Parse strategy per `lint/index.ts`: `task` → pure YAML (frontmatter null),
+    // everything else → `parseFrontmatter`.
+    let parsed: ParsedForValidate;
+    if (type === "task") {
+      let data: Record<string, unknown> = {};
+      try {
+        const doc = parseYaml(raw);
+        if (doc && typeof doc === "object" && !Array.isArray(doc)) data = doc as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+      parsed = { data, content: raw, frontmatter: null };
+    } else {
+      const p = parseFrontmatter(raw);
+      parsed = { data: p.data, content: p.content, frontmatter: p.frontmatter };
+    }
+
+    diagnostics.push(...(await runBaseValidateChecks(change.path, parsed, c.root, ctx)));
+    diagnostics.push(
+      ...(await perTypeValidateChecks({
+        type,
+        relPath: change.path,
+        raw,
+        data: parsed.data,
+        frontmatter: parsed.frontmatter,
+        body: parsed.content,
+        ext: overlay.ext,
+        ctx,
+      })),
+    );
+    diagnostics.push(...(await skillDirectoryDiagnostics(change.path, seenSkillDirs, ctx)));
+  }
+
+  return diagnostics;
 }
 
 export const akmAdapter: BundleAdapter = {
