@@ -447,3 +447,29 @@ imports); dynamic-import baseline untouched; full `bun run lint` green
 (goldens-presence 50/47-frozen, schema up to date); architecture +
 cli-goldens + show-argv suites 63/63; worker's full commands sweep
 1379/0.
+
+## WI-9.10a — RunContext unification + SCC #8 sever (8e182d44)
+
+Sonnet worker implemented; reviewer verified gates + applied one
+correctness fix. New leaf improve-run-types.ts: 7 shared types moved
+verbatim (improve.ts re-exports; 3 stage-fn test seams use inline
+typeof import() queries, #565 precedent) + ImproveLoopState wrapping
+the minted RunContext. ImproveRunContext DELETED; adoption ratchet
+baseline emptied → absolute, with a permanent anti-revival guard.
+createRunContext at the akmImprove entry from already-resolved setup
+values; eventsCtx blocker closed (built post-resolution, D14 shape
+untouched); ctx.signal is the identical watchdog-stamped AbortSignal.
+Cycle baseline 31→28 (improve/loop-stages/preparation out).
+
+REVIEWER FIX (behavior preservation): worker mapped primaryStashDir? →
+ctx.stashDir with a truthy "." fallback — on the rare unresolvable-
+primary path (resolveSourceEntries throws/empty) every downstream
+`if (primaryStashDir)` guard would have FIRED against "." or a
+rejected path instead of skipping. ImproveLoopState keeps an explicit
+`primaryStashDir: string | undefined`; ctx.stashDir stays best-effort
+and unread on that path. Documented in-code; collapse awaits a
+maintainer decision on retiring the unresolvable path.
+
+Gates (worker + reviewer): tsc; full lint; cycles 28/28; fn-size both;
+architecture 28/28; improve family + frozen txn oracles 535/0
+(reviewer, single un-piped run) and 557/0 + 22/0 (worker).
