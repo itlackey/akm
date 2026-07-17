@@ -397,3 +397,53 @@ architecture 28/28; frozen oracles 22/0 re-run after EACH
 repository-touching kill and by the reviewer; proposal family 233/0;
 improve 396/0 + 333/0 integration; config/contracts 140/0;
 agent/harness 373/0; workflows 170/0; setup suites green.
+
+## WI-9.9 — ParsedInvocation: argv parsed once (a550ed12)
+
+New `src/cli/invocation.ts` (306 lines, ZERO imports — a true leaf):
+`ParsedInvocation { argv, userArgs, getFlagValue, hasFlag,
+getAllFlagValues, passthroughArgs }`. `cli.ts` calls
+`setParsedInvocation` exactly once, immediately after
+`normalizeShowArgv` rewrites `process.argv` — so every consumer sees
+the POST-normalization view, same as before. Semantics preserved
+verbatim: `getFlagValue` is first-occurrence with both `--flag value`
+and `--flag=value` forms; `getAllFlagValues` folds in the old
+`parseAllFlagValues` INCLUDING the BUG-M4 skip-index quirk (a `--flag
+--otherflag` sequence consumes the next token unconditionally) —
+behavior-preserving, not a bug fix. `passthroughArgs` extracts the
+`-- <command>` tail used by env/secret exec.
+
+FALLBACK SEMANTICS (the load-bearing design point): when the singleton
+is unset, accessors fall back to reading `process.argv` LAZILY and
+UNCACHED on every call. The in-process CLI test harness never runs
+`main` (so never sets the singleton) and mutates `process.argv` between
+invocations; caching the fallback would freeze the first test's argv
+into all later tests. Production always sets the singleton, so the
+uncached path is test-only. `_resetParsedInvocationForTests` provided
+for explicit isolation.
+
+Folded in verbatim: `parseAllFlagValues` (from cli/shared.ts, now a
+re-export), `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex`
+and `resolveHelpMigrateVersionArg` (from cli/parse-args.ts, re-exported
+likewise) — zero importer churn.
+
+Converted sites (14 across 9 modules): remember.ts, stash-cli.ts,
+sources-cli.ts, search-cli.ts, improve-cli.ts (flag reads);
+env-cli.ts + secret-cli.ts (`passthroughArgs()` for the `-- <command>`
+tails); workflow-cli.ts (`hasFlag("--dry-run")`); plus cli.ts itself
+and parse-args.ts internal uses.
+
+New ABSOLUTE lint `scripts/lint-process-argv.ts` (wired into the
+package.json lint chain): `process.argv` may appear only in
+`src/cli.ts` and `src/cli/invocation.ts`. One narrow exemption:
+`src/runtime.ts` `process.argv[1]` main-path check (runtime bootstrap
+runs before any invocation exists; reads the script path, not user
+args). Any new raw argv read anywhere else fails lint outright — no
+baseline, no ratchet.
+
+Gates (worker + reviewer independently): tsc clean; lint-process-argv
+OK; import-cycle ratchet 31/31 (invocation.ts adds no edges — zero
+imports); dynamic-import baseline untouched; full `bun run lint` green
+(goldens-presence 50/47-frozen, schema up to date); architecture +
+cli-goldens + show-argv suites 63/63; worker's full commands sweep
+1379/0.
