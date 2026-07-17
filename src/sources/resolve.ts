@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { recognizeMatch } from "../core/adapter/adapters/akm-adapter";
 import {
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
@@ -12,7 +13,6 @@ import {
 } from "../core/asset/asset-spec";
 import { hasErrnoCode, isWithin } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
-import { runMatchers } from "../indexer/walk/file-context";
 import { walkStashFlat } from "../indexer/walk/walker";
 
 /**
@@ -92,7 +92,7 @@ async function resolveByCanonicalName(stashDir: string, type: string, name: stri
   const normalizedName = name.replace(/\\/g, "/");
 
   for (const ctx of walkStashFlat(stashDir)) {
-    const match = await runMatchers(ctx);
+    const match = recognizeMatch(ctx);
     if (!match || match.type !== type) continue;
 
     const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, stashDir, ctx.absPath);

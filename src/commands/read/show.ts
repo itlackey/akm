@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
+import { recognizeMatch } from "../../core/adapter/adapters/akm-adapter";
 import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
@@ -43,7 +44,7 @@ import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/walk/file-context";
+import { buildFileContext, buildRenderContext, getRenderer } from "../../indexer/walk/file-context";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
@@ -429,7 +430,7 @@ export async function showLocal(input: {
     parsed.type === "wiki" && source?.wikiName && parsed.name.startsWith(`${source.wikiName}/`)
       ? { type: "wiki", specificity: 20, renderer: "wiki-md", meta: {} }
       : undefined;
-  const match = forcedWikiMatch ?? (await runMatchers(fileCtx));
+  const match = forcedWikiMatch ?? recognizeMatch(fileCtx);
   if (!match) {
     throw new UsageError(
       `Could not display asset "${displayType}:${parsed.name}" — unsupported file type or unrecognized layout`,

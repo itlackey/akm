@@ -15,8 +15,7 @@ import { presentationFor } from "../../core/type-presentation";
 import { looksLikeWorkflow } from "../../workflows/parser";
 import { looksLikeWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
-import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
-import { registerMatcher } from "./file-context";
+import type { FileContext, MatchResult } from "./file-context";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -311,17 +310,8 @@ export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
   return { type: fact.type, specificity: fact.specificity, renderer: WORKFLOW_PROGRAM_RENDERER_NAME };
 }
 
-const builtinMatchers: AssetMatcher[] = [
-  extensionMatcher,
-  directoryMatcher,
-  parentDirHintMatcher,
-  smartMdMatcher,
-  wikiMatcher,
-  workflowProgramMatcher,
-];
-
-export function registerBuiltinMatchers(): void {
-  for (const matcher of builtinMatchers) {
-    registerMatcher(matcher);
-  }
-}
+// The six matcher functions above are consumed directly by the akm adapter's
+// synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
+// holds the same registration-order array for tie-breaking). The chunk-3 cutover
+// removed the file-context matcher registry, so there is no `registerBuiltinMatchers`
+// glue any more — recognition is adapter-driven, not registry-driven.

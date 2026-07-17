@@ -8,21 +8,17 @@
  *
  * `initIndexer()` replaces the two ad-hoc lazy `builtinsPromise` gates that
  * previously lived in `walk/file-context.ts` and `passes/metadata-contributors.ts`.
- * These tests prove that a single call wires BOTH built-in sets (matchers +
- * renderers AND metadata contributors) and that the call is idempotent.
+ * These tests prove that a single call wires the built-in renderer set AND the
+ * metadata contributors and that the call is idempotent. (Recognition is no
+ * longer registry-driven — the chunk-3 cutover moved it to the akm adapter's
+ * synchronous `recognizeMatch()`, so init no longer registers matchers.)
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { describe, expect, test } from "bun:test";
 
 import { initIndexer } from "../../../src/indexer/init";
 import { getMetadataContributors } from "../../../src/indexer/passes/metadata-contributors";
-import { buildFileContext, getAllRenderers, getRenderer, runMatchers } from "../../../src/indexer/walk/file-context";
-
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-init-test-"));
-afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+import { getAllRenderers, getRenderer } from "../../../src/indexer/walk/file-context";
 
 describe("initIndexer composition root", () => {
   test("registers BOTH builtin sets after init (renderers + metadata contributors)", async () => {
@@ -40,20 +36,6 @@ describe("initIndexer composition root", () => {
     const names = contributors.map((c) => c.name);
     expect(names).toContain("toc-metadata");
     expect(names).toContain("workflow-document-metadata");
-  });
-
-  test("registers builtin matchers (file classification works after init)", async () => {
-    await initIndexer();
-    // The matcher registry is exercised directly: a shell script must classify
-    // to the script renderer, which requires registerBuiltinMatchers() to have
-    // run inside the same composition root.
-    const scriptPath = path.join(tmpRoot, "scripts", "deploy.sh");
-    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
-    fs.writeFileSync(scriptPath, "#!/bin/bash\necho deploy\n");
-    const ctx = buildFileContext(tmpRoot, scriptPath);
-    const match = await runMatchers(ctx);
-    expect(match).not.toBeNull();
-    expect(match?.renderer).toBe("script-source");
   });
 
   test("is idempotent: repeated calls do not duplicate registrations", async () => {

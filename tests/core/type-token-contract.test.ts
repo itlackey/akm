@@ -23,33 +23,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { parseAssetRef } from "../../src/core/asset/asset-ref";
 import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES, type KnownType } from "../../src/core/recognition-util";
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
-import { generateMetadataFlat, validateStashEntry } from "../../src/indexer/passes/metadata";
+import { validateStashEntry } from "../../src/indexer/passes/metadata";
 import { TYPE_BOOST, typeBoostFor } from "../../src/indexer/search/ranking-contributors";
-import { registerMatcher } from "../../src/indexer/walk/file-context";
-
-// Distinctive marker extension for a throwaway test-only matcher registered
-// below. `registerMatcher` is a process-lifetime singleton (no unregister
-// API), so this uses an extension no other file/test in the suite will ever
-// produce — registering it is a permanent, but inert, no-op for every other
-// test's fixtures.
-const CONTRACT_MARKER_EXT = ".akm-type-token-contract-marker";
-const CONTRACT_FOREIGN_TYPE = "contract-test-foreign-type";
-
-registerMatcher((ctx) => {
-  if (!ctx.absPath.endsWith(CONTRACT_MARKER_EXT)) return null;
-  // The matched "type" is itself test-controlled: the filename's basename
-  // (minus the marker extension) becomes the matched type, so one matcher
-  // can exercise both the open-token accept path and the deny-list reject
-  // path by varying the fixture filename.
-  const matchedType = path.basename(ctx.absPath, CONTRACT_MARKER_EXT);
-  return { type: matchedType, specificity: 1000, renderer: "knowledge" };
-});
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 
@@ -72,41 +50,14 @@ describe("open type token — accepted as data (D1.5-1)", () => {
     expect(validateStashEntry({ name: "x" })).toBeNull(); // no type at all
   });
 
-  test("generateMetadataFlat indexes a matcher-returned foreign type instead of silently skipping it", async () => {
-    // Direct successor to §B's pre-chunk gap: metadata.ts's flat-walk
-    // `isAssetType` check silently dropped any matcher-returned type outside
-    // the closed 14 — untested pre-chunk (chunk-1.5 anchors §A.5/§B). This
-    // exercises the real `generateMetadataFlat` pipeline end to end via the
-    // test-only matcher registered above.
-    const stashRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-type-token-contract-"));
-    try {
-      const filePath = path.join(stashRoot, `${CONTRACT_FOREIGN_TYPE}${CONTRACT_MARKER_EXT}`);
-      fs.writeFileSync(filePath, "contract test fixture\n", "utf8");
-
-      const result = await generateMetadataFlat(stashRoot, [filePath]);
-
-      expect(result.entries).toHaveLength(1);
-      expect(result.entries[0].type).toBe(CONTRACT_FOREIGN_TYPE);
-    } finally {
-      fs.rmSync(stashRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("generateMetadataFlat still short-circuits the deny-listed tool/vault types (D1.5-6)", async () => {
-    const stashRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-type-token-contract-"));
-    try {
-      const toolPath = path.join(stashRoot, `tool${CONTRACT_MARKER_EXT}`);
-      const vaultPath = path.join(stashRoot, `vault${CONTRACT_MARKER_EXT}`);
-      fs.writeFileSync(toolPath, "contract test fixture\n", "utf8");
-      fs.writeFileSync(vaultPath, "contract test fixture\n", "utf8");
-
-      const result = await generateMetadataFlat(stashRoot, [toolPath, vaultPath]);
-
-      expect(result.entries).toEqual([]);
-    } finally {
-      fs.rmSync(stashRoot, { recursive: true, force: true });
-    }
-  });
+  // NOTE (chunk-3 cutover): the two `generateMetadataFlat`-via-`registerMatcher`
+  // cases that exercised the indexer's open-token accept / deny-list reject were
+  // removed together with the file-context matcher registry. The akm flat-walk now
+  // recognizes only the built-in types (`recognizeMatch`), so a FOREIGN type can no
+  // longer be injected through it without a test-only matcher. That contract is now
+  // proven where foreign types actually flow: adapter recognition (okf-adapter.test.ts
+  // reads a free-form `type` verbatim from frontmatter) and `validateStashEntry`'s
+  // accept/reject — covered directly above and in the deny-list section below.
 });
 
 // ── (b) KNOWN_TYPES exhaustiveness ──────────────────────────────────────────

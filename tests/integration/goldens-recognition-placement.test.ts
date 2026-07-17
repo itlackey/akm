@@ -55,8 +55,8 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import { ASSET_SPECS } from "../../src/core/asset/asset-spec";
-import { runMatchers } from "../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { expectGolden } from "../_helpers/golden";
 
@@ -104,7 +104,7 @@ describe("recognition parity: all 14 all-types fixture assets classify as docume
     for (const ctx of contexts) {
       const expectedType = EXPECTED_TYPE_BY_REL_PATH[ctx.relPath];
       expect(expectedType, `no expected type registered for ${ctx.relPath}`).toBeDefined();
-      const result = await runMatchers(ctx);
+      const result = recognizeMatch(ctx);
       expect(result, `runMatchers returned null for ${ctx.relPath}`).not.toBeNull();
       expect(result?.type).toBe(expectedType);
     }
@@ -117,8 +117,8 @@ describe("recognition parity: all 14 all-types fixture assets classify as docume
     expect(md).toBeDefined();
     expect(yaml).toBeDefined();
     if (!md || !yaml) throw new Error("unreachable: asserted defined above");
-    const mdResult = await runMatchers(md);
-    const yamlResult = await runMatchers(yaml);
+    const mdResult = recognizeMatch(md);
+    const yamlResult = recognizeMatch(yaml);
     expect(mdResult?.renderer).toBe("workflow-md");
     expect(yamlResult?.renderer).toBe("workflow-program-yaml");
   });
@@ -187,7 +187,7 @@ describe("golden fixture: recognition + placement parity (WI-0b.3a/b)", () => {
     const contexts = allTypesFileContexts();
     const byRelPath: Record<string, unknown> = {};
     for (const ctx of contexts) {
-      byRelPath[ctx.relPath] = await runMatchers(ctx);
+      byRelPath[ctx.relPath] = recognizeMatch(ctx);
     }
 
     expectGolden(RECOGNITION_GOLDEN_PATH, {

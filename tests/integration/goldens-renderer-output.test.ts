@@ -65,7 +65,8 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../src/indexer/walk/file-context";
+import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext, buildRenderContext, getRenderer } from "../../src/indexer/walk/file-context";
 import type { ShowResponse } from "../../src/sources/types";
 import { expectGolden } from "../_helpers/golden";
 
@@ -126,7 +127,7 @@ async function renderFixture(relPath: string): Promise<ShowResponse> {
   if (!name) throw new Error(`no canonical name registered for ${relPath}`);
   const absPath = path.join(STASH_ROOT, relPath);
   const fileCtx = buildFileContext(STASH_ROOT, absPath);
-  const match = await runMatchers(fileCtx);
+  const match = recognizeMatch(fileCtx);
   if (!match) throw new Error(`runMatchers returned null for ${relPath}`);
   match.meta = { ...match.meta, name };
   const renderer = await getRenderer(match.renderer);

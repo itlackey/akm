@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
 import {
@@ -10,7 +10,6 @@ import {
   buildRenderContext,
   getAllRenderers,
   getRenderer,
-  runMatchers,
 } from "../../src/indexer/walk/file-context";
 import { directoryMatcher, smartMdMatcher } from "../../src/indexer/walk/matchers";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
@@ -155,9 +154,9 @@ describe("buildFileContext", () => {
   });
 });
 
-// ── 2. runMatchers tests ────────────────────────────────────────────────────
+// ── 2. recognizeMatch tests ────────────────────────────────────────────────────
 
-describe("runMatchers", () => {
+describe("recognizeMatch", () => {
   test("directoryMatcher matches .sh file under scripts/ as 'script'", () => {
     const root = tmpDir();
     const filePath = path.join(root, "scripts", "deploy.sh");
@@ -409,8 +408,8 @@ describe("runMatchers", () => {
     expect(smartResult?.type).toBe("agent");
     expect(smartResult?.specificity).toBe(20);
 
-    // runMatchers should pick the higher specificity
-    const best = await runMatchers(ctx);
+    // recognizeMatch should pick the higher specificity
+    const best = recognizeMatch(ctx);
     expect(best).not.toBeNull();
     expect(best?.type).toBe("agent");
     expect(best?.specificity).toBe(20);
@@ -428,18 +427,18 @@ describe("runMatchers", () => {
     // smartMdMatcher says "knowledge" at specificity 5
     expect(smartMdMatcher(ctx)?.specificity).toBe(5);
 
-    // runMatchers should pick specificity 10
-    const best = await runMatchers(ctx);
+    // recognizeMatch should pick specificity 10
+    const best = recognizeMatch(ctx);
     expect(best?.specificity).toBeGreaterThanOrEqual(10);
   });
 
-  test("runMatchers returns null for unmatched file types", async () => {
+  test("recognizeMatch returns null for unmatched file types", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "data", "config.json");
     writeFile(filePath, '{"key": "value"}');
 
     const ctx = buildFileContext(root, filePath);
-    const result = await runMatchers(ctx);
+    const result = recognizeMatch(ctx);
     expect(result).toBeNull();
   });
 
@@ -448,18 +447,18 @@ describe("runMatchers", () => {
   // leftover from before tasks migrated to `.yml` in 0.8.0 (commit
   // 031c659f updated every other consumer — asset-spec, asset-registry,
   // renderers, task-linter — but missed this matcher). As a result
-  // tasks/*.yml never recognized: runMatchers() returned null for every
+  // tasks/*.yml never recognized: recognizeMatch() returned null for every
   // task file, `akm show task:<name>` threw "unrecognized layout", the
   // flat indexer silently dropped tasks (never indexed/searchable), and
   // the task-yaml metadata contributor was dead code. This test must FAIL
   // if the "tasks" rule regresses back to `.md`.
-  test("runMatchers recognizes tasks/<name>.yml as type 'task' with renderer 'task-yaml'", async () => {
+  test("recognizeMatch recognizes tasks/<name>.yml as type 'task' with renderer 'task-yaml'", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "tasks", "nightly-report.yml");
     writeFile(filePath, ['schedule: "@daily"', "enabled: false", 'prompt: "Say hello"'].join("\n"));
 
     const ctx = buildFileContext(root, filePath);
-    const result = await runMatchers(ctx);
+    const result = recognizeMatch(ctx);
 
     expect(result).not.toBeNull();
     expect(result?.type).toBe("task");

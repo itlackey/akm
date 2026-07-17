@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { recognizeMatch } from "../../core/adapter/adapters/akm-adapter";
 import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
@@ -15,7 +16,7 @@ import { asNonEmptyString, writeFileAtomic } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
 import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
+import { buildFileContext, buildRenderContext, getRenderer } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -1312,9 +1313,10 @@ async function buildEntryFromFile(
   }
 
   // Priority 3: Renderer metadata extraction
-  // When no pre-resolved match is available (generateMetadata path), run
-  // matchers now so the renderer can extract type-specific metadata.
-  const resolvedMatch = match ?? (await runMatchers(ctx));
+  // When no pre-resolved match is available (generateMetadata path), classify
+  // now via the akm adapter's recognition so the renderer can extract
+  // type-specific metadata.
+  const resolvedMatch = match ?? recognizeMatch(ctx);
   if (resolvedMatch) {
     const renderer = await getRenderer(resolvedMatch.renderer);
     if (renderer) {
@@ -1405,8 +1407,8 @@ export async function generateMetadata(
  * Generate metadata for files using the matcher system instead of a fixed asset type.
  *
  * This is the flat-walk counterpart of `generateMetadata`. It classifies each
- * file via `runMatchers()` and uses the matched type for canonical naming.
- * Files that no matcher claims are silently skipped.
+ * file via the akm adapter's `recognizeMatch()` and uses the matched type for
+ * canonical naming. Files that no matcher claims are silently skipped.
  */
 export async function generateMetadataFlat(stashRoot: string, files: string[]): Promise<StashFile> {
   const entries: StashEntry[] = [];
@@ -1416,14 +1418,14 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
   for (const file of files) {
     if (!shouldIndexStashFile(stashRoot, file)) continue;
 
-    // Step 1: determine type and canonical name via the matcher system.
+    // Step 1: determine type and canonical name via the akm adapter recognition.
     const ctx = buildFileContext(stashRoot, file);
-    const match = await runMatchers(ctx);
+    const match = recognizeMatch(ctx);
     if (!match) continue;
 
     const assetType = match.type;
-    // Open type token (chunk 1.5): a matcher-returned foreign/adapter type is
-    // now indexed instead of silently skipped — only the deliberately-removed
+    // Open type token (chunk 1.5): a recognized foreign/adapter type is
+    // indexed instead of silently skipped — only the deliberately-removed
     // deny-list (`tool`/`vault`) still short-circuits the flat-walk path.
     if (!assetType || DEPRECATED_REJECTED_TYPES.has(assetType)) continue;
 

@@ -174,9 +174,6 @@ export interface AssetRenderer {
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
-/** Ordered list of registered matchers. Later registrations win ties. */
-const matchers: AssetMatcher[] = [];
-
 /** Renderer lookup by name. */
 const renderers = new Map<string, AssetRenderer>();
 
@@ -186,21 +183,11 @@ const renderers = new Map<string, AssetRenderer>();
  * Delegates to the single `initIndexer()` composition root (see
  * `src/indexer/init.ts`). Imported dynamically to keep this a lazy gate and to
  * avoid a static import cycle (init -> renderers -> file-context). Called on
- * first use of runMatchers/getRenderer/getAllRenderers; idempotent.
+ * first use of getRenderer/getAllRenderers; idempotent.
  */
 async function ensureBuiltinsRegistered(): Promise<void> {
   const { initIndexer } = await import("../init.js");
   await initIndexer();
-}
-
-/**
- * Register an AssetMatcher.
- *
- * Matchers are evaluated in registration order. When two matchers produce
- * the same specificity score, the one registered later wins.
- */
-export function registerMatcher(matcher: AssetMatcher): void {
-  matchers.push(matcher);
 }
 
 /**
@@ -226,42 +213,6 @@ export async function getRenderer(name: string): Promise<AssetRenderer | undefin
 export async function getAllRenderers(): Promise<AssetRenderer[]> {
   await ensureBuiltinsRegistered();
   return Array.from(renderers.values());
-}
-
-/**
- * Run every registered matcher against a FileContext and return the
- * highest-specificity result.
- *
- * Resolution rules:
- * 1. Every matcher is invoked; null returns are discarded.
- * 2. Results are ranked by specificity (descending).
- * 3. Ties are broken by registration order: the matcher registered later wins
- *    (this lets user-registered matchers override built-in ones).
- * 4. Returns null when no matcher claims the file.
- */
-export async function runMatchers(ctx: FileContext): Promise<MatchResult | null> {
-  await ensureBuiltinsRegistered();
-
-  // Collect (result, registrationIndex) pairs from all matchers.
-  const hits: Array<{ result: MatchResult; index: number }> = [];
-
-  for (let i = 0; i < matchers.length; i++) {
-    const result = matchers[i](ctx);
-    if (result !== null) {
-      hits.push({ result, index: i });
-    }
-  }
-
-  if (hits.length === 0) return null;
-
-  // Sort by specificity descending, then by registration index descending (later wins ties).
-  hits.sort((a, b) => {
-    const specDiff = b.result.specificity - a.result.specificity;
-    if (specDiff !== 0) return specDiff;
-    return b.index - a.index;
-  });
-
-  return hits[0].result;
 }
 
 /**

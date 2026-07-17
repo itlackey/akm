@@ -11,15 +11,19 @@
  * on first use. That implicit, order-dependent wiring is the M1/M2 finding in
  * `docs/technical/code-health-brittleness-audit.md`.
  *
- * `initIndexer()` folds both into a single deterministic, idempotent entry
- * point. It registers, exactly once:
+ * `initIndexer()` folds the renderer/contributor registration into a single
+ * deterministic, idempotent entry point. It registers, exactly once:
  *
- *  1. Built-in matchers   — `registerBuiltinMatchers()` (`walk/matchers.ts`).
- *  2. Built-in renderers  — `registerBuiltinRenderers()` (`output/renderers.ts`).
- *  3. Metadata contributors — top-level registration side-effects that run when
+ *  1. Built-in renderers  — `registerBuiltinRenderers()` (`output/renderers.ts`).
+ *  2. Metadata contributors — top-level registration side-effects that run when
  *     `output/renderers.ts` and `workflows/renderer.ts` are imported.
  *
- * Importing `output/renderers.ts` satisfies both (2) and the renderer-owned
+ * Recognition is no longer registry-driven: the chunk-3 cutover replaced the
+ * `registerBuiltinMatchers()`/`runMatchers()` competition with the akm adapter's
+ * synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`), so no
+ * matcher registration happens here.
+ *
+ * Importing `output/renderers.ts` satisfies both (1) and the renderer-owned
  * metadata contributors; `workflows/renderer.ts` is imported explicitly for the
  * workflow contributor (it is already transitively pulled in by renderers, but
  * the explicit import preserves the original gate's import set and keeps the
@@ -34,8 +38,8 @@
 let initPromise: Promise<void> | undefined;
 
 /**
- * Idempotently register every built-in indexer contributor (matchers,
- * renderers, and metadata contributors).
+ * Idempotently register every built-in indexer contributor (renderers and
+ * metadata contributors).
  *
  * Safe to call repeatedly and concurrently: the registration work runs at most
  * once; subsequent calls await the same resolved promise.
@@ -43,13 +47,11 @@ let initPromise: Promise<void> | undefined;
 export function initIndexer(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
-      const { registerBuiltinMatchers } = await import("./walk/matchers.js");
       // Importing renderers registers the built-in metadata contributors as a
       // load-time side-effect and exposes registerBuiltinRenderers().
       const { registerBuiltinRenderers } = await import("../output/renderers.js");
       // Imported for the workflow metadata contributor's load-time side-effect.
       await import("../workflows/renderer.js");
-      registerBuiltinMatchers();
       registerBuiltinRenderers();
     })();
   }
