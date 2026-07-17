@@ -32,7 +32,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
-import type { ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
@@ -74,6 +74,7 @@ import { runReflectQualityJudge } from "./distill/quality-gate";
 import { findAssetFilePath } from "./eligibility";
 import { emitProposal } from "./proposal-envelope";
 import { classifyReflectChange } from "./reflect-noise";
+import { createRunContext, type RunContext } from "./run-context";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
@@ -336,6 +337,7 @@ function hasRelatedSkillSource(content: string, skillRef: string): boolean {
 }
 
 async function readRelatedLessons(
+  ctx: RunContext,
   stash: string,
   ref: string,
   parsedRef: { type: string; name: string },
@@ -348,7 +350,10 @@ async function readRelatedLessons(
   const candidateRefs = new Set<string>([derivedLessonRef]);
   const derivedLessonPath = path.join(stash, "lessons", `${derivedLessonRef.slice("lesson:".length)}.md`);
   if (fs.existsSync(derivedLessonPath)) {
-    related.set(derivedLessonRef, { ref: derivedLessonRef, content: fs.readFileSync(derivedLessonPath, "utf8") });
+    // WI-9.10: genuine content read — routed through the per-invocation asset
+    // memo (D6). No write to this same path happens later in this invocation,
+    // so memoizing is safe (see run-context.ts's D6 seam docblock).
+    related.set(derivedLessonRef, { ref: derivedLessonRef, content: ctx.readAsset(derivedLessonPath) });
   }
 
   try {
@@ -365,7 +370,7 @@ async function readRelatedLessons(
     try {
       const filePath = await findAssetFilePath(durableImproveRef(candidateRef, sourceName), stash);
       if (!filePath || !fs.existsSync(filePath)) continue;
-      const content = fs.readFileSync(filePath, "utf8");
+      const content = ctx.readAsset(filePath);
       related.set(candidateRef, { ref: candidateRef, content });
     } catch {
       // Index miss is non-fatal.
@@ -377,7 +382,7 @@ async function readRelatedLessons(
     if (fs.existsSync(lessonsDir)) {
       for (const fileName of fs.readdirSync(lessonsDir)) {
         if (!fileName.endsWith(".md")) continue;
-        const content = fs.readFileSync(path.join(lessonsDir, fileName), "utf8");
+        const content = ctx.readAsset(path.join(lessonsDir, fileName));
         if (!hasRelatedSkillSource(content, ref)) continue;
         const lessonName = fileName.slice(0, -3);
         const lessonRef = `lesson:${lessonName}`;
@@ -1597,10 +1602,60 @@ async function runReflectRefineIterations(args: {
   return { result, lastDraftPath };
 }
 
-export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
-  const stash = options.stashDir ?? resolveStashDir();
+/**
+ * WI-9.10: build one `akm reflect` invocation's {@link RunContext} purely
+ * from values `akmReflect` has already resolved by the time it calls this
+ * (stash, config, runnerSpec) plus the caller-supplied seams on `options` —
+ * no second config load, no new db handle. reflect has no `dryRun` option
+ * (it never writes source assets directly, only the proposal queue — see the
+ * module docblock) so `dryRun` is always `false` here. reflect also has no
+ * `sourceRun` option; the value below mirrors the same `reflect-${Date.now()}`
+ * convention already used inline at proposal creation time (see
+ * `createInput` further down this file), as a fresh, independent token —
+ * nothing yet reads `ctx.sourceRun`.
+ */
+function buildReflectRunContext(args: {
+  options: AkmReflectOptions;
+  stash: string;
+  config: AkmConfig;
+  runnerSpec: RunnerSpec;
+}): RunContext {
+  const { options, stash, config, runnerSpec } = args;
+  return createRunContext({
+    stashDir: stash,
+    config,
+    eventsCtx: options.eventsCtx ?? {},
+    // Not yet wired into any proposal call site this stage (mirrors
+    // buildImproveRunContext's proposalsCtx comment in improve.ts).
+    proposalsCtx: options.ctx ?? {},
+    chat: options.chat,
+    getLlmConfig: () => (runnerIsLlm(runnerSpec) ? materializeLlmRunnerConnection(runnerSpec) : null),
+    sourceRun: `reflect-${Date.now()}`,
+    dryRun: false,
+    signal: options.signal,
+  });
+}
 
-  // 1. Always emit `reflect_invoked` at command entry — observers see the
+/**
+ * Emit `reflect_invoked` at command entry, then build the `reflect_completed`
+ * failure emitter every failure path in `akmReflect` uses (Fix #3 /
+ * observability 0.8.0). Extracted verbatim (fn-size decomposition, R31) — see
+ * the original inline comments preserved below for the "why".
+ *
+ * Fix #3 (observability 0.8.0): every failure path below MUST emit
+ * `reflect_completed` so observers can close the invoke/complete loop. The
+ * three success-side `reflect_completed` emit sites carry rich metadata
+ * (qualityRejected, sanitized, proposalId, etc.); the failure-side emits
+ * carry `{ok: false, reason}` plus the ref when known. Stable failure
+ * reasons line up with `AgentFailureReason`: "parse_error", "non_zero_exit",
+ * "cooldown", "timeout", "spawn_failed", "llm_*", plus the synthetic
+ * "ref_mismatch" / "enoent" / "draft_missing" subtypes for cases the agent
+ * surface conflates as "parse_error". Sub-reasons land in `subreason`.
+ */
+function emitReflectInvokedAndBuildFailureEmitter(
+  options: AkmReflectOptions,
+): (reason: AgentFailureReason, subreason: string, ref?: string, extra?: Record<string, unknown>) => void {
+  // Always emit `reflect_invoked` at command entry — observers see the
   // attempt regardless of downstream success/failure.
   appendEvent(
     {
@@ -1617,21 +1672,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     options.eventsCtx,
   );
 
-  // Fix #3 (observability 0.8.0): every failure path below MUST emit
-  // `reflect_completed` so observers can close the invoke/complete loop. The
-  // three success-side `reflect_completed` emit sites carry rich metadata
-  // (qualityRejected, sanitized, proposalId, etc.); the failure-side emits
-  // carry `{ok: false, reason}` plus the ref when known. Stable failure
-  // reasons line up with `AgentFailureReason`: "parse_error", "non_zero_exit",
-  // "cooldown", "timeout", "spawn_failed", "llm_*", plus the synthetic
-  // "ref_mismatch" / "enoent" / "draft_missing" subtypes for cases the agent
-  // surface conflates as "parse_error". Sub-reasons land in `subreason`.
-  const emitReflectFailed = (
-    reason: AgentFailureReason,
-    subreason: string,
-    ref?: string,
-    extra?: Record<string, unknown>,
-  ): void => {
+  return (reason, subreason, ref, extra): void => {
     appendEvent(
       {
         eventType: "reflect_completed",
@@ -1647,6 +1688,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       options.eventsCtx,
     );
   };
+}
+
+export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
+  const stash = options.stashDir ?? resolveStashDir();
+
+  // 1. Emit reflect_invoked + build the reflect_completed failure emitter
+  // every failure path below uses.
+  const emitReflectFailed = emitReflectInvokedAndBuildFailureEmitter(options);
 
   // 2. Resolve target asset content (if a ref is supplied).
   const sourceResolved = await resolveReflectSource(options, stash, emitReflectFailed);
@@ -1658,6 +1707,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // An incompatible explicit engine is an error and never falls through.
   const { config, activeStrategy, runnerSpec, engineName } = resolveReflectRunner(options);
 
+  // WI-9.10: RunContext, built only once config/runnerSpec exist so engine
+  // resolution's existing error-priority ordering is undisturbed (see
+  // buildReflectRunContext's docblock). D6: assetCtx is a fresh,
+  // per-invocation memo — readRelatedLessons below is its genuine
+  // content-read consumer.
+  const ctx = buildReflectRunContext({ options, stash, config, runnerSpec });
+  const assetCtx = ctx.withFreshAssetMemo();
+
   // 4. Build the shared prompt inputs — feedback, hints, lessons, rejected
   // proposals. These are stable across refinement iterations; only the
   // `priorDraft` field changes per-iteration (R-1 / #372).
@@ -1667,7 +1724,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   );
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const relatedLessons =
-    options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef, options.sourceName) : [];
+    options.ref && parsedRef
+      ? await readRelatedLessons(assetCtx, stash, options.ref, parsedRef, options.sourceName)
+      : [];
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
   const rejectedProposals = readRejectedProposals(stash, options.ref);

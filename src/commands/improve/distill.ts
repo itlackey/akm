@@ -100,6 +100,7 @@ import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { emitProposal } from "./proposal-envelope";
+import { createRunContext, type RunContext } from "./run-context";
 import { computeSalience, upsertAssetSalience } from "./salience";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
@@ -620,8 +621,18 @@ async function loadAndScoreInputSalience(args: {
   config: AkmConfig;
   outcomeWeightEnabled: boolean;
   lookup: (ref: string) => Promise<string | null>;
+  /**
+   * WI-9.10: this invocation's fresh asset memo (D6). The salience stamp
+   * below reads the source asset then, when the frontmatter delta is
+   * non-empty, writes the stamped bytes back to the SAME path and keeps
+   * using the in-memory copy — the exact read/rewrite-in-place shape the
+   * D6 memo exists for (run-context.ts's docblock cites this site).
+   * `ctx.writeAsset` refreshes the memo so a later `ctx.readAsset` of this
+   * path (none exists yet in this invocation) would see the stamped bytes.
+   */
+  ctx: RunContext;
 }): Promise<{ assetContent: string | null; existingRefVocabulary: Set<string> }> {
-  const { inputRef, durableInputRef, stash, config, outcomeWeightEnabled, lookup } = args;
+  const { inputRef, durableInputRef, stash, config, outcomeWeightEnabled, lookup, ctx } = args;
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
   let assetContent: string | null = null;
@@ -630,7 +641,7 @@ async function loadAndScoreInputSalience(args: {
     const filePath = await lookup(durableInputRef);
     if (filePath && fs.existsSync(filePath)) {
       assetFilePath = filePath;
-      assetContent = fs.readFileSync(filePath, "utf8");
+      assetContent = ctx.readAsset(filePath);
     }
   } catch {
     assetContent = null;
@@ -682,7 +693,7 @@ async function loadAndScoreInputSalience(args: {
       // 1. Write salience to the source asset frontmatter (idempotent).
       const updatedContent = writeSalienceToFrontmatter(assetContent, salienceResult.score, salienceResult);
       if (updatedContent !== assetContent) {
-        fs.writeFileSync(assetFilePath, updatedContent, "utf8");
+        ctx.writeAsset(assetFilePath, updatedContent);
         assetContent = updatedContent;
       }
 
@@ -801,6 +812,32 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const fetchSimilarLessonsFn =
     options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
 
+  // WI-9.10: construct this invocation's RunContext from values already
+  // resolved above — no second config load, no new db handle. distill has no
+  // `dryRun` option (only the best-effort salience stamp below writes a
+  // source asset, routed through `ctx.writeAsset`); `sourceRun` has no
+  // existing run-level convention here (unlike extract/consolidate, distill
+  // simply forwards `options.sourceRun` verbatim wherever it is set — see
+  // the `promoteMemoryToKnowledge` call below), so this is a fresh,
+  // independent token following the same `<verb>-<ms>` shape.
+  const ctx = createRunContext({
+    stashDir: stash,
+    config,
+    eventsCtx: options.eventsCtx ?? {},
+    // Not yet wired into any proposal call site this stage (mirrors
+    // buildImproveRunContext's proposalsCtx comment in improve.ts).
+    proposalsCtx: options.ctx ?? {},
+    chat,
+    getLlmConfig: () => distillLlm ?? null,
+    sourceRun: options.sourceRun ?? `distill-${Date.now()}`,
+    dryRun: false,
+    signal: options.signal,
+  });
+  // D6: a fresh, per-invocation memo. loadAndScoreInputSalience below is the
+  // genuine content-read + write-back consumer (run-context.ts's D6 seam
+  // docblock cites this exact site).
+  const assetCtx = ctx.withFreshAssetMemo();
+
   const { assetContent, existingRefVocabulary } = await loadAndScoreInputSalience({
     inputRef,
     durableInputRef,
@@ -808,6 +845,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     config,
     outcomeWeightEnabled,
     lookup,
+    ctx: assetCtx,
   });
 
   const { filteredEvents, exclusionSet, filteredFeedbackCount, feedbackFullyFiltered } = readDistillFeedback({

@@ -18,8 +18,11 @@
  *      (manifest gate: `grep ImproveRunContext → 0`, satisfied by
  *      construction).
  *   2. The minted `createRunContext` seam must not be deleted as "dead
- *      code" — it is now load-bearing: `akmImprove` constructs it at the
- *      run entry (`src/commands/improve/improve.ts`).
+ *      code" — it is now load-bearing at EVERY improve verb entry (manifest
+ *      gate 4): `akmImprove` (improve.ts), `akmReflect` (reflect.ts),
+ *      `akmDistill` (distill.ts), `akmExtract` (extract.ts), and
+ *      `akmConsolidate` (consolidate.ts) each construct their own
+ *      run-scoped `RunContext` via `createRunContext(` at their entry.
  *   3. The legacy interface must never come back under the same name, in
  *      ANY file — a rename-and-redefine would slip past a naive grep of
  *      the OLD identifier only if it also changed the name; this ratchet
@@ -27,7 +30,8 @@
  *      revival under the same name fails immediately, absolutely.
  *
  * Baseline measured at the chunk-7 completion HEAD (43d6f10); emptied and
- * flipped absolute at WI-9.10 (chunk-9).
+ * flipped absolute at WI-9.10 (chunk-9). Gate 4 (real per-verb adoption
+ * assertions replacing the bare existence pin) landed at WI-9.10 stage C.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -81,14 +85,37 @@ describe("RunContext adoption ratchet", () => {
     expect(problems).toEqual([]);
   });
 
-  test("the minted createRunContext seam stays in place — it is load-bearing at the akmImprove entry", () => {
-    // Guard against a well-meaning dead-code sweep deleting the seam. It is no
-    // longer merely "pinned for a future adoption chunk" — akmImprove
-    // constructs it directly (src/commands/improve/improve.ts).
+  /**
+   * Manifest gate 4 ("createRunContext at every improve verb entry"). WI-9.10
+   * stage C converted the last four verb entries (reflect/distill/extract/
+   * consolidate) onto `createRunContext`, joining `akmImprove` (WI-9.10a) —
+   * this REPLACES the old bare existence pin (which only checked that the
+   * seam file existed and exported `createRunContext`) with a real per-file
+   * adoption assertion: every one of the 5 verb entry files must actually
+   * CALL `createRunContext(` at its entry, not merely be able to import it.
+   * Guards against both a well-meaning dead-code sweep deleting the seam AND
+   * a future edit silently dropping one verb's construction call.
+   */
+  test("every improve verb entry file constructs its own RunContext via createRunContext(", () => {
     const seamPath = path.join(SRC_ROOT, "commands", "improve", "run-context.ts");
     expect(fs.existsSync(seamPath)).toBe(true);
-    const src = fs.readFileSync(seamPath, "utf8");
-    expect(/export function createRunContext\b/.test(src)).toBe(true);
+    const seamSrc = fs.readFileSync(seamPath, "utf8");
+    expect(/export function createRunContext\b/.test(seamSrc)).toBe(true);
+
+    const VERB_ENTRY_FILES = ["improve.ts", "reflect.ts", "distill.ts", "extract.ts", "consolidate.ts"];
+    const missing: string[] = [];
+    for (const file of VERB_ENTRY_FILES) {
+      const filePath = path.join(SRC_ROOT, "commands", "improve", file);
+      const src = fs.readFileSync(filePath, "utf8");
+      if (!/\bcreateRunContext\(/.test(src)) missing.push(file);
+    }
+    if (missing.length > 0) {
+      throw new Error(
+        `RunContext adoption ratchet — manifest gate 4 requires createRunContext( at every improve verb entry; ` +
+          `missing a construction call in: ${missing.join(", ")}`,
+      );
+    }
+    expect(missing).toEqual([]);
   });
 
   test("the legacy interface can never come back under its own name, in any file (absolute anti-rename/anti-regression guard)", () => {

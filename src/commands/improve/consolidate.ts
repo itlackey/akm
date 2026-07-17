@@ -46,6 +46,7 @@ import {
 import { cacheHash, stripFrontmatterBody } from "./content-hash";
 import { writeContradictEdge } from "./memory/memory-belief";
 import { emitProposal } from "./proposal-envelope";
+import { createRunContext, type RunContext } from "./run-context";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
@@ -810,9 +811,43 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   opts = { ...opts, improveProfile: opts.improveProfile ?? resolveImproveStrategy(undefined, config).config };
   const stashDir = writeTarget.source.path;
 
+  // WI-9.10: construct this run's RunContext from values already resolved
+  // above (sourceRun, config, stashDir) — no second config load, no new db
+  // handle. consolidate.ts has no `eventsCtx`/proposals-`ctx` option at all
+  // (WS-3a retired its only appendEvent usage; `emitProposal` here is always
+  // called with the default, seam-less ProposalsContext — see
+  // handlePromoteOp below), so both get the safe empty-object default,
+  // behaviorally identical to `undefined` (EventsContext/ProposalsContext
+  // fields are all optional-chained by their consumers). `getLlmConfig`
+  // mirrors `planConsolidation`'s own resolution (`resolveConsolidateLlmConfig`)
+  // verbatim but lazily and independently — nothing calls `ctx.getLlmConfig`
+  // yet this stage, so this never duplicates real work, only the (pure,
+  // side-effect-free) resolution logic if invoked. consolidate has no `chat`
+  // seam (it drives the LLM directly via the HTTP client path, never through
+  // `chatCompletion`), so that field is left to its default.
+  const runContext: RunContext = createRunContext({
+    stashDir,
+    config,
+    eventsCtx: {},
+    proposalsCtx: {},
+    getLlmConfig: (): import("../../core/config/config").LlmConnectionConfig | null => {
+      const resolved = Object.hasOwn(opts, "llmConfig")
+        ? (opts.llmConfig ?? undefined)
+        : resolveConsolidateLlmConfig(config, opts.improveProfile);
+      return resolved ?? null;
+    },
+    sourceRun,
+    dryRun: opts.dryRun ?? false,
+    signal: opts.signal,
+  });
+
   if (!resolveProcessEnabled("consolidate", opts.improveProfile ?? resolveImproveStrategy(undefined, config).config)) {
     return makeConsolidateResult({
-      dryRun: opts.dryRun ?? false,
+      // Sourced from runContext (identical value to `opts.dryRun ?? false`)
+      // so the constructed RunContext has a genuine downstream reference —
+      // consolidate's own content-read sites are out of this stage's stated
+      // item-2 scope (reflect + distill only; see the WI-9.10c report).
+      dryRun: runContext.dryRun,
       target: opts.target ?? stashDir,
       durationMs: Date.now() - startMs,
     });

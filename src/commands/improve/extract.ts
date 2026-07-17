@@ -29,7 +29,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
+import type {
+  AkmConfig,
+  ImproveProcessConfig,
+  ImproveProfileConfig,
+  LlmConnectionConfig,
+  LlmProfileConfig,
+} from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -75,6 +81,7 @@ import { isProposalSkipped, type ProposalsContext } from "../proposal/repository
 import { buildExtractPrompt, EXTRACT_JSON_SCHEMA, type ExtractCandidate, parseExtractPayload } from "./extract-prompt";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { emitProposal } from "./proposal-envelope";
+import { createRunContext, type RunContext } from "./run-context";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -1373,6 +1380,53 @@ function discoverExtractCandidates(
 
 // ── Public entrypoint ────────────────────────────────────────────────────────
 
+/**
+ * WI-9.10: build one `akm extract` run's {@link RunContext} from values
+ * `akmExtract` has already resolved by the time it calls this (config,
+ * stashDir, dryRun, sourceRun, and `resolveExtractRunConfig`'s own
+ * `getLlmConfig`) — no second config load, no new db handle.
+ *
+ * `RunContext.getLlmConfig` is typed `() => LlmConnectionConfig | null`, but
+ * extract's own resolved `getLlmConfig` returns `LlmProfileConfig` (a
+ * superset — `supportsJsonSchema` — of `LlmConnectionConfig`) and, per its
+ * documented fail-open contract, MAY THROW (`materializeLlmConnection` can
+ * raise ConfigError) rather than return null; every existing caller in this
+ * file wraps it in try/catch for exactly that reason. The thin closure below
+ * adapts at the boundary: it derives from the SAME already-resolved
+ * runner/profile (this doesn't widen `RunContext.getLlmConfig`'s type), and —
+ * matching the file's own fail-open contract — coalesces a throw to `null`
+ * instead of propagating.
+ */
+function buildExtractRunContext(args: {
+  options: AkmExtractOptions;
+  config: AkmConfig;
+  stashDir: string;
+  dryRun: boolean;
+  sourceRun: string;
+  getLlmConfig: () => LlmProfileConfig;
+}): RunContext {
+  const { options, config, stashDir, dryRun, sourceRun, getLlmConfig } = args;
+  const getRunContextLlmConfig = (): LlmConnectionConfig | null => {
+    try {
+      return getLlmConfig();
+    } catch {
+      return null;
+    }
+  };
+  return createRunContext({
+    stashDir,
+    config,
+    eventsCtx: options.eventsCtx ?? {},
+    // Not yet wired into any proposal call site this stage (mirrors
+    // buildImproveRunContext's proposalsCtx comment in improve.ts).
+    proposalsCtx: options.ctx ?? {},
+    getLlmConfig: getRunContextLlmConfig,
+    sourceRun,
+    dryRun,
+    signal: options.signal,
+  });
+}
+
 export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtractResult> {
   const startMs = Date.now();
   if (!options.type || options.type.trim() === "") {
@@ -1431,6 +1485,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     triage,
     sessionIndexing,
   } = resolveExtractRunConfig(options, config, extractProcess, activeProfile);
+
+  // WI-9.10: construct this run's RunContext (extracted to
+  // buildExtractRunContext to keep akmExtract under the fn-size bar — R31).
+  const ctx = buildExtractRunContext({ options, config, stashDir, dryRun, sourceRun, getLlmConfig });
 
   const harness = resolveHarness(options.type, options.harnesses);
   if (!harness) {
@@ -1558,7 +1616,12 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     schemaVersion: 1,
     ok: true,
     shape: "extract-result",
-    dryRun,
+    // Sourced from ctx (identical value to the local `dryRun` — see the
+    // RunContext construction above) so the constructed RunContext has a
+    // genuine downstream reference in this verb, which currently has no
+    // content-read site to route through ctx.readAsset (see the WI-9.10c
+    // report).
+    dryRun: ctx.dryRun,
     type: options.type,
     sessionsProcessed: processedCount,
     sessionsSkipped: skippedCount,
