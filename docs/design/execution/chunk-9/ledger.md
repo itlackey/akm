@@ -297,3 +297,38 @@ architecture 28/28; health suite 78/0; tasks suites 133/0;
 html-output-cli 6/0; ZERO test files modified. Reviewer re-ran tsc,
 fn-size, architecture + both html/cli oracles (52/0) and verified the
 backend-throw byte-preservation claim against the diff directly.
+
+## Decision 6 recorded + WI-9.6 landed (two commits)
+
+DECISION 6 (session): pushOnCommit becomes warn-and-IGNORE for one
+minor (schema field + one-time warning stay; ALL behavior mapping
+deleted; field removed in 0.10) — consistent with chunk-6's
+--auto-accept precedent. BEHAVIOR: pushOnCommit:false no longer
+suppresses improve's default sync push (the write-source half of the
+mapping was a proven no-op — analysis in the commit).
+
+WI-9.6: (a) nine narrow per-process schemas replace the monolith at the
+process-map keys; the wide schema stays as TS-type/$defs source with
+identical accepted shape (drift-contract green); field→process map
+derived from comments CROSS-CHECKED against consumers — two
+comment/code mismatches caught (qualityGate also on reflect; limit on
+reflect/distill/consolidate/proactiveMaintenance); NO .default()s
+(deliberate deviation from the brief's "real .default()s" phrasing —
+materialized defaults would shift downstream ?? fallbacks; recorded).
+BEHAVIOR: wrong-process fields now rejected (intended §4.2 narrowing;
+all repo fixtures parse unmodified). mergeInformationFloor comment
+corrected (live-gates the measurement; outcome advisory);
+outcomeWeightEnabled stale default-false claim corrected (default-on).
+(c) graph-extraction type allowlist deleted (accept-any until Chunk 2);
+the schema allowlist had ALREADY drifted from the runtime's own
+supported-types set; unknown types are silently skipped at runtime.
+BEHAVIOR: previously rejected type strings now parse. (d) wikiName +
+migrations.ts zero-diff verified. schemas/akm-config.json regenerated
+(−8951/+2903 — the narrowing dominates). Test changes: 2 behavioral
+updates justified by the ledgered changes, 2 rewordings, 0 weakenings.
+
+Gates (worker + reviewer): tsc; biome 1064; cycles 107/107; regen
+check green; full lint; architecture 28/28; config suites incl.
+drift-contract green unmodified; improve sweep 872/0 across 63 files.
+Reviewer verified the pushOnCommit diffs line-by-line and re-ran
+tsc + full lint.
