@@ -17,6 +17,26 @@
  * `rekey-prng.ts`), so the same seed produces byte-identical rows on every
  * call (`Math.random()`/`Date.now()`/`new Date()` never appear here).
  *
+ * ## Perf: template-db cache
+ *
+ * The migrated EMPTY schema (before any row is seeded) is identical on every
+ * call -- migrations are pure DDL with no per-build randomness or timestamps
+ * -- so paying the full 19-migration chain on every single `generateRekeyState`
+ * call is pure waste (it's what made the property smoke suite exceed
+ * `bun test:unit`'s 30s-per-test timeout under parallel-shard contention).
+ * `templateDbPath()` below runs the migration chain into a cached template db
+ * exactly ONCE per process (lazily, on first use); every call then cheap
+ * file-copies that template (`copyStateDb`, the same WAL-tolerant copy
+ * `rekey-invariants.ts` already uses for disposable working copies) instead of
+ * re-migrating from scratch. `openStateDatabase` is still called on every
+ * copy afterward -- it still re-verifies the migration ledger
+ * (`assertMigrationLedger`); `runMigrations` just no-ops each migration's
+ * `up` SQL because `schema_migrations` already lists it -- so the safety
+ * check is not skipped, only the redundant DDL re-execution. Each seed's db
+ * is still a fully independent file (a real copy, never shared/reused across
+ * calls), and the resulting rows are unchanged from the old per-seed-build
+ * behavior -- `seedModel` itself, and everything it writes, is untouched.
+ *
  * ## Table coverage (enumerated from `src/core/state/migrations.ts` at this
  * capture HEAD -- see the WI-0b.7 report for the full table census):
  *
@@ -62,6 +82,7 @@ import {
   type SpellingPattern,
 } from "./rekey-model";
 import { chance, mulberry32, pick, type Rng } from "./rekey-prng";
+import { copyStateDb } from "./rekey-snapshot";
 import { insertAssetOutcomeRow, insertAssetSalienceRow } from "./seed-rows";
 
 /** Fixed, deterministic candidate origins a generated db's logical assets are drawn from (cycled by index, never randomized in count/order). */
@@ -91,8 +112,10 @@ export interface GeneratedRekeyState {
 /**
  * Build a deterministic, randomized state.db for `seed` and return its path
  * plus the ground-truth model describing every logical asset seeded into it.
- * Applies the FULL real migration chain via `openStateDatabase` -- no
- * hand-written DDL.
+ * The schema is produced by the FULL real migration chain via
+ * `openStateDatabase` -- no hand-written DDL -- but only once per process (see
+ * the "Perf: template-db cache" module doc above); this call itself only pays
+ * a fast file copy of that template plus its own row inserts.
  *
  * Requires the caller's environment to have `XDG_DATA_HOME`/`AKM_DATA_DIR`
  * set under `bun test` (same `openStateDatabase` test-isolation guard
@@ -101,6 +124,10 @@ export interface GeneratedRekeyState {
 export function generateRekeyState(seed: number, opts: GenerateRekeyStateOptions = {}): GeneratedRekeyState {
   const dbPath = opts.dbPath ?? defaultDbPath(seed);
   const model = buildModel(seed, opts);
+
+  // Independent copy of the cached template -- never the template itself, and
+  // never shared with any other seed's db -- then seed this copy's own rows.
+  copyStateDb(templateDbPath(), dbPath);
 
   const db = openStateDatabase(dbPath);
   try {
@@ -115,6 +142,26 @@ export function generateRekeyState(seed: number, opts: GenerateRekeyStateOptions
 function defaultDbPath(seed: number): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-rekey-gen-${seed}-`));
   return path.join(dir, "state.db");
+}
+
+/**
+ * Path to a state.db that has been migrated through the full real migration
+ * chain and nothing else -- built once per process (module-level cache, built
+ * lazily on first use, never rebuilt). Callers must NEVER open/mutate this
+ * path directly; always `copyStateDb` it to a fresh per-seed path first (see
+ * `generateRekeyState`). Lives under `os.tmpdir()`, independent of any single
+ * test's isolated storage sandbox, so it survives across every test in the
+ * process that calls `generateRekeyState`.
+ */
+let cachedTemplateDbPath: string | undefined;
+
+function templateDbPath(): string {
+  if (cachedTemplateDbPath) return cachedTemplateDbPath;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rekey-template-"));
+  const freshTemplatePath = path.join(dir, "state.db");
+  openStateDatabase(freshTemplatePath).close();
+  cachedTemplateDbPath = freshTemplatePath;
+  return cachedTemplateDbPath;
 }
 
 // ── Model construction (pure, deterministic) ────────────────────────────────
