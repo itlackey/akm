@@ -520,3 +520,63 @@ import-cycles 28/28 + dynamic within baseline; improve + src fn-size
 exit 0; architecture 28/28 (1162 expect); frozen txn oracles 22/22
 byte-green; improve command+integration family 485/0; D6 run-context
 memo contract 7/7.
+
+## WI-9.10d — resolveStashDir into the improve builder (improve-scoped) (2bfa0a34)
+
+Sonnet worker; Opus inline review (diff is a definitional no-op —
+proportionate to a 4-line semantic swap, no 6-agent workflow) + two
+fast gates re-run independently by the reviewer.
+
+New resolveRunStashDir(explicitStashDir?) in run-context.ts (the improve
+builder module) ≡ `explicitStashDir ?? resolveStashDir()`. akmDistill
+(:798)/akmReflect (:1694)/akmExtract (:1440) call it instead of
+resolveStashDir() and drop the core/common resolveStashDir import — so
+the ambient read is confined to the builder module on the improve path.
+
+MAINTAINER DECISION (recorded): scope is improve verb entries ONLY. The
+CLI-wide resolveStashDir sweep is DEFERRED — see the WI-9.10e/deferral
+entry below. Manifest gate 1 ("resolveStashDir residual only in the
+RunContext builder") is read at IMPROVE scope this chunk: on the improve
+path, resolveStashDir now appears only in run-context.ts. The ~13
+non-improve call sites (health, lint, mv-cli, proposal ×3, sources ×2,
+tasks/tasks, wiki-cli) and the shared leaves reached by improve as
+params-not-ambient (write-source, indexer, search-source, manifest,
+filesystem, tasks/runner, tasks/validator, workflows/authoring) still
+call resolveStashDir directly and are booked in the deferral.
+
+Gates (worker + reviewer): tsc; import-cycles 28/28 (the new core/common
+value import into run-context.ts adds no participant — common imports
+only asset-spec/errors/paths) + dynamic within baseline; improve fn-size
+clean; full lint (one Biome import-order autofix on the ./run-context
+line, no behavior); architecture 28/28; improve command+integration
+family 485/0; frozen txn oracles 22/22 byte-green.
+
+## WI-9.10e — ambient-DI seam retirement: DEFERRED (consequence of the WI-9.10d scope decision)
+
+NOT LANDED THIS CHUNK — recorded as a named deferral, not silently
+skipped. Grounding finding: of the seam inventory (anchors A.1), the
+crash-window seams (#1–3 fs-txn/proposal/mv, #16–17 migration hooks) are
+RETAINED per Decision 1. The remaining 13 ambient-DI seams
+(_setChatCompletionForTests, _setWarnSinkForTests, _setClackForTests,
+_setAkmInitForTests, _setAkmIndexForTests, _setAgentDetectForTests,
+_setEmbedderForTests, _setDetectForTests, _setDefaultTasksForTests,
+_setLoadSetupStashesForTests, _setTransformersLoaderForTests,
+_setBackendsForTests, _setAkmImproveForTests) ALL live in NON-improve
+modules — llm/client, llm/embedder(s), core/warn, cli/clack, setup/*,
+indexer, integrations/agent, tasks/*, commands/sources/init,
+commands/improve/improve-cli (a subprocess-spawn seam, crash-window-
+shaped). None sits on the improve RunContext path: the improve verbs
+call chatCompletion DIRECTLY (they do not read ctx.chat), so even
+_setChatCompletionForTests is not retired by the improve RunContext
+without converting every improve chat call to ctx.chat — and that seam
+would still not delete (non-improve consumers remain).
+
+"Retire the seams as their call sites convert" (brief WI-9.10e) is
+therefore gated on the SAME general CLI-boundary RunContext threading
+that the WI-9.10d maintainer decision deferred. Retiring these seams is
+folded into that follow-on workstream (plan §2's general RunContext
+{config, stashDir, dbs, adapters, clock, logger}; aligns with ch8/ch10
+bundle supersession of stashDir). §10.1's −250 item is partially
+realized (improve unification + improve-scoped stashDir); the ambient-DI
+seam retirement + CLI-wide resolveStashDir remain outstanding under the
+general-threading follow-on.
