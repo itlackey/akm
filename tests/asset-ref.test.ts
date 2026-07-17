@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type AssetRef, makeAssetRef, parseAssetRef, refToString } from "../src/core/asset/asset-ref";
-import { type AkmAssetType, ASSET_TYPES } from "../src/core/common";
+import { KNOWN_TYPES } from "../src/core/recognition-util";
 
 // ── makeAssetRef ────────────────────────────────────────────────────────────
 
@@ -185,12 +185,18 @@ describe("parseAssetRef", () => {
     expect(ref.name).toBe("dir/file.sh");
   });
 
-  test("throws for invalid type", () => {
-    expect(() => parseAssetRef("widget:foo")).toThrow("Invalid asset type");
+  test("accepts a foreign/unknown type as an open token (chunk 1.5)", () => {
+    const ref = parseAssetRef("widget:foo");
+    expect(ref.type).toBe("widget");
+    expect(ref.name).toBe("foo");
   });
 
-  test("throws for removed tool type", () => {
+  test("throws for removed tool type (deny-list, D1.5-6)", () => {
     expect(() => parseAssetRef("tool:deploy.sh")).toThrow("Invalid asset type");
+  });
+
+  test("throws for removed vault type with its migration-hint message", () => {
+    expect(() => parseAssetRef("vault:prod")).toThrow(/vault.*removed in 0\.9\.0/);
   });
 
   test("throws for missing colon", () => {
@@ -230,33 +236,42 @@ describe("parseAssetRef", () => {
   });
 });
 
-// ── AkmAssetType literal union (#492) ───────────────────────────────────────
+// ── Open type token (chunk 1.5, D1.5-1/D1.5-6) ──────────────────────────────
+//
+// Replaces the deleted closed `AkmAssetType` literal union (#492). `type` is
+// now a plain `string` on `AssetRef` — any non-empty token is valid ref data
+// EXCEPT the deny-listed deprecated set (`tool`/`vault`, see the
+// `parseAssetRef` describe block above). `KNOWN_TYPES` (recognition-util.ts)
+// replaces `ASSET_TYPES` as the AKM-owned-type enumeration, but it is a
+// HINT/exhaustiveness tuple, not a validation gate.
 
-describe("AkmAssetType literal union", () => {
-  test("parseAssetRef returns a typed AssetRef for skill:foo", () => {
+describe("open type token", () => {
+  test("parseAssetRef returns an AssetRef for skill:foo", () => {
     const ref: AssetRef = parseAssetRef("skill:foo");
-    // ref.type must be a narrowed AkmAssetType literal
-    const t: AkmAssetType = ref.type;
-    expect(t).toBe("skill");
+    expect(ref.type).toBe("skill");
     expect(ref.name).toBe("foo");
     expect(ref.origin).toBeUndefined();
   });
 
-  test("parseAssetRef returns typed refs for every canonical asset type", () => {
-    for (const type of ASSET_TYPES) {
+  test("parseAssetRef returns refs for every known (AKM-owned) type", () => {
+    for (const type of KNOWN_TYPES) {
       const ref: AssetRef = parseAssetRef(`${type}:sample`);
       expect(ref.type).toBe(type);
       expect(ref.name).toBe("sample");
     }
   });
 
-  test("parseAssetRef throws for an unknown asset type", () => {
-    expect(() => parseAssetRef("nonexistent:foo")).toThrow("Invalid asset type");
+  test("parseAssetRef accepts a foreign/unknown type, not in KNOWN_TYPES", () => {
+    const ref = parseAssetRef("nonexistent:foo");
+    expect(ref.type).toBe("nonexistent");
+    expect(ref.name).toBe("foo");
   });
 
-  test("parseAssetRef throws for dynamic unknown type (not in ASSET_TYPES)", () => {
-    const unknown = "bogus-type";
-    expect(() => parseAssetRef(`${unknown}:bar`)).toThrow("Invalid asset type");
+  test("parseAssetRef accepts a dynamic/adapter-shaped unknown type", () => {
+    const unknown = "custom-adapter-type";
+    const ref = parseAssetRef(`${unknown}:bar`);
+    expect(ref.type).toBe(unknown);
+    expect(ref.name).toBe("bar");
   });
 });
 

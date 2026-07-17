@@ -65,3 +65,70 @@ export function canonicalizeWorkflowName(name: string): string {
 
 /** Structural marker suffix for a derived (inferred) memory's canonical name. */
 export const DERIVED_SUFFIX = ".derived";
+
+// ── Known-type taxonomy (chunk 1.5, D1.5-4) ─────────────────────────────────
+//
+// `KNOWN_TYPES` replaces the deleted `common.ts` closed asset-type union.
+// It is a HINT/exhaustiveness tuple, NOT a validation gate: unknown/foreign
+// `type` strings are still valid `IndexDocument`/`StashEntry`/`AssetRef` DATA
+// (plan §2.3/§15.4) — this tuple only anchors compile-time completeness for
+// AKM's OWN presentation/ranking tables (`Record<KnownType, X>` fails to
+// compile if a key is missing). A plain `as const` literal tuple adds no
+// import, so it lives here without breaking the D1-5 import-free invariant.
+
+/**
+ * The 14 AKM-owned built-in asset type keys (exactly the deleted
+ * `common.ts` `ASSET_TYPES` set, same order). `wiki` is expected to be
+ * removed from this tuple by a later chunk ("the wiki ASSET-TYPE dies") —
+ * not a chunk 1.5 concern.
+ */
+export const KNOWN_TYPES = [
+  "skill",
+  "command",
+  "agent",
+  "knowledge",
+  "workflow",
+  "script",
+  "memory",
+  "env",
+  "secret",
+  "wiki",
+  "lesson",
+  "task",
+  "session",
+  "fact",
+] as const;
+
+export type KnownType = (typeof KNOWN_TYPES)[number];
+
+/**
+ * Returns true when `type` is one of AKM's own known type keys
+ * ({@link KNOWN_TYPES}). Unlike the deleted `isAssetType`, this is NOT a
+ * validation gate — a `false` result does not mean `type` is invalid data,
+ * only that it is not AKM-owned (a foreign/adapter type is still a valid
+ * ref/entry). Used to index `Record<KnownType, X>` tables safely from an
+ * open `string` and, later, for cross-surface known-type spelling checks.
+ */
+export function isKnownType(type: string): type is KnownType {
+  return (KNOWN_TYPES as readonly string[]).includes(type);
+}
+
+/**
+ * Type keys deliberately REMOVED from AKM (chunk 1.5, D1.5-6 — the key
+ * correctness call in the open-token change). The open type token accepts
+ * any non-empty string as valid ref/entry DATA except this set: silently
+ * re-admitting a retired type as an ordinary "foreign" type would defeat the
+ * guard that removed it in the first place.
+ *
+ *   - `vault` — removed in 0.9.0 in favor of `env`/`secret`; carries its own
+ *     migration-hint `UsageError` in `asset-ref.ts` (checked before this
+ *     set) and interacts with the dangerous-env-key lint
+ *     (`commands/lint/env-key-rules.ts`) — vaults must never be silently
+ *     re-admitted as an ordinary indexed/ref-able type.
+ *   - `tool` — retired outright, no replacement.
+ *
+ * Consulted by `asset-ref.ts`'s `parseAssetRef` and `metadata.ts`'s
+ * `validateStashEntry`/`generateMetadataFlat` gates so the rejection lives
+ * in one place instead of three closed-union-shaped copies.
+ */
+export const DEPRECATED_REJECTED_TYPES: ReadonlySet<string> = new Set(["tool", "vault"]);

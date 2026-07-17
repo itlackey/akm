@@ -49,7 +49,6 @@
 
 import path from "node:path";
 import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { AkmAssetType } from "../../core/common";
 import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
 import type { Database, Database as IndexDatabase } from "../../storage/database";
 import { WARM_START_CAP } from "./outcome-loop";
@@ -647,7 +646,7 @@ export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashD
   const idToRef = new Map<number, string>();
   for (const indexed of allEntries) {
     if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
-    const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+    const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }
 

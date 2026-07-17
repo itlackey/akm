@@ -2,13 +2,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isKnownType, type KnownType } from "../../core/recognition-util";
 import type { Database } from "../../storage/database";
 import type { ScopedUtilityRow, UtilityScoreRow } from "../db/db";
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
 import type { RankedEntryInput } from "./ranking-types";
 
-const TYPE_BOOST: Record<string, number> = {
+/**
+ * Chunk 1.5 (D1.5-5) — retyped from `Record<string, number>` to a FULL
+ * `Record<KnownType, number>`. Only 8/14 types carried an entry before this
+ * chunk (`env`, `secret`, `wiki`, `lesson`, `task`, `session` silently fell
+ * through to the `?? 0` fallback at the sole consumer,
+ * {@link typeRankingContributor}). The 6 additions below are explicit `0`
+ * entries — behavior-preserving (they already defaulted to `0`), but now
+ * compile-time-exhaustive: adding a new `KNOWN_TYPE` forces an explicit
+ * boost decision instead of silently defaulting.
+ */
+export const TYPE_BOOST: Record<KnownType, number> = {
   skill: 0.4,
   command: 0.35,
   workflow: 0.35,
@@ -19,7 +30,26 @@ const TYPE_BOOST: Record<string, number> = {
   // alongside knowledge so they surface reliably when relevant.
   fact: 0.22,
   memory: -0.02,
+  // Chunk 1.5: previously-absent entries, all defaulted to 0 pre-chunk —
+  // explicit now, unchanged in effect.
+  env: 0,
+  secret: 0,
+  wiki: 0,
+  lesson: 0,
+  task: 0,
+  session: 0,
 };
+
+/**
+ * Open-string accessor over {@link TYPE_BOOST} (plan §2.3 "ranking
+ * accessor"). Foreign/unknown types (outside `KNOWN_TYPES`) fall back to `0`
+ * — identical to the old `TYPE_BOOST[item.entry.type] ?? 0` behavior on a
+ * loosely-typed `Record<string, number>`, now expressed safely over the
+ * exhaustive `Record<KnownType, number>`.
+ */
+export function typeBoostFor(type: string): number {
+  return isKnownType(type) ? TYPE_BOOST[type] : 0;
+}
 
 const MAX_BOOST_SUM = 3.0;
 const UTILITY_WEIGHT = 0.5;
@@ -199,7 +229,7 @@ const typeRankingContributor: RankingContributor = {
   name: "type-ranking",
   appliesTo: () => true,
   adjust(item) {
-    return TYPE_BOOST[item.entry.type] ?? 0;
+    return typeBoostFor(item.entry.type);
   },
 };
 

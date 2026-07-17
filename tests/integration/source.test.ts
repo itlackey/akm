@@ -269,10 +269,26 @@ describe("source commands and resolution", () => {
     }
   });
 
-  test("akmShow rejects invalid asset type in ref", async () => {
+  test("akmShow accepts a foreign/unknown type in ref (open token, chunk 1.5)", async () => {
     const stashDir = createTmpDir("akm-stash-");
     process.env.AKM_STASH_DIR = stashDir;
-    await expect(akmShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/);
+    // `parseAssetRef` no longer rejects "widget" — the type token is open at
+    // the validation/data layer. Resolution still fails, but the rejection
+    // now comes from a DIFFERENT, still-closed gate one layer down:
+    // `asset-spec.ts`'s `ASSET_SPECS`/`TYPE_DIRS`-keyed `resolveAssetPathFromName`
+    // (reached via path-resolver.ts's on-disk fallback) throws its own
+    // "Unknown asset type" for anything outside the closed 14 — that gate is
+    // untouched until a later chunk (chunk-1.5 anchors §E.3 phasing note: "a
+    // foreign type accepted post-1.5 can still fail at those gates"). So the
+    // observable change is the REJECTION REASON/message, not success.
+    await expect(akmShow({ ref: "widget:foo" })).rejects.toThrow(/Unknown asset type/);
+  });
+
+  test("akmShow still rejects the deny-listed tool/vault types", async () => {
+    const stashDir = createTmpDir("akm-stash-");
+    process.env.AKM_STASH_DIR = stashDir;
+    await expect(akmShow({ ref: "tool:deploy.sh" })).rejects.toThrow(/Invalid asset type/);
+    await expect(akmShow({ ref: "vault:prod" })).rejects.toThrow(/vault.*removed in 0\.9\.0/i);
   });
 
   test("akmShow rejects traversal and absolute path refs", async () => {

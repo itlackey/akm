@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AkmAssetType, isAssetType } from "../../core/common";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
@@ -35,15 +34,26 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
   try {
     parseAssetRef(trimmed);
     return { mode: "ref", value: trimmed };
-  } catch {
-    if (!isAssetType(trimmed)) {
-      throw new UsageError(
-        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, env, secret, task.\n` +
-          `If you passed --format to akm improve, that flag is not supported — use it with akm search or akm show instead.`,
-        "INVALID_FLAG_VALUE",
-      );
+  } catch (err) {
+    // Open type token (chunk 1.5, D1.5-1): a bare word with no `type:name`
+    // shape (no colon) is a `--scope <type>` filter attempt, not a ref — ANY
+    // such word is now accepted, including foreign/unknown type strings,
+    // which simply match zero entries downstream (a read-only query filter,
+    // not a data-acceptance gate, so no deny-list is needed here: an
+    // unrecognized type just matches nothing, since nothing is ever indexed
+    // with it). No test pinned the old "Unknown asset type" rejection for
+    // this case (chunk-1.5 anchors §A.5 — 0 hits).
+    //
+    // A colon-shaped value that still fails `parseAssetRef` is a genuinely
+    // malformed ref attempt (bad name, path traversal, or a deny-listed
+    // deliberately-removed type like tool/vault, D1.5-6) — that must still
+    // surface as a real error, not be silently absorbed into a type filter
+    // that will never match anything.
+    if (!trimmed.includes(":")) {
+      return { mode: "type", value: trimmed };
     }
-    return { mode: "type", value: trimmed };
+    const message = err instanceof Error ? err.message : String(err);
+    throw new UsageError(`Invalid --scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
   }
 }
 
@@ -166,7 +176,7 @@ async function collectEligibleRefsFromIndex(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories are LLM-inferred and intentionally skip reflect
       // (see the synthetic `derived-memory-reflect-skipped` branch in the
@@ -475,7 +485,7 @@ export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number>
     const allDbEntries = getAllEntries(db);
     const idToRef = new Map<number, string>();
     for (const indexed of allDbEntries) {
-      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     const ids = [...idToRef.keys()];

@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import {
   hasErrnoCode,
-  isAssetType,
   isWithin,
   jsonWithByteCap,
   ResponseTooLargeError,
@@ -158,24 +157,11 @@ describe("hasErrnoCode", () => {
   });
 });
 
-// ── isAssetType ──────────────────────────────────────────────────────────────
-
-describe("isAssetType", () => {
-  test("returns true for all valid types", () => {
-    expect(isAssetType("skill")).toBe(true);
-    expect(isAssetType("command")).toBe(true);
-    expect(isAssetType("agent")).toBe(true);
-    expect(isAssetType("knowledge")).toBe(true);
-    expect(isAssetType("script")).toBe(true);
-  });
-
-  test("returns false for invalid strings", () => {
-    expect(isAssetType("widget")).toBe(false);
-    expect(isAssetType("")).toBe(false);
-    expect(isAssetType("tool")).toBe(false);
-    expect(isAssetType("plugin")).toBe(false);
-  });
-});
+// isAssetType (the closed-union validation gate) was deleted in chunk 1.5 —
+// `common.ts` no longer owns a type-taxonomy predicate at all. Its successor,
+// `isKnownType` (a HINT, not a validation gate — unknown types are valid
+// data), lives in `core/recognition-util.ts` and is covered by
+// `tests/core/type-token-contract.test.ts`.
 
 // ── isWithin ────────────────────────────────────────────────────────────────
 

@@ -129,8 +129,19 @@ test("validateStashEntry rejects entries without name", () => {
   expect(validateStashEntry({ type: "script" })).toBeNull();
 });
 
-test("validateStashEntry rejects entries without valid type", () => {
-  expect(validateStashEntry({ name: "x", type: "invalid" })).toBeNull();
+test("validateStashEntry accepts a foreign/unknown type as an open token (chunk 1.5)", () => {
+  const result = validateStashEntry({ name: "x", type: "invalid" });
+  expect(result).not.toBeNull();
+  expect(result?.type).toBe("invalid");
+});
+
+test("validateStashEntry rejects an empty type", () => {
+  expect(validateStashEntry({ name: "x", type: "" })).toBeNull();
+});
+
+test("validateStashEntry still rejects the deny-listed tool/vault types (D1.5-6)", () => {
+  expect(validateStashEntry({ name: "x", type: "tool" })).toBeNull();
+  expect(validateStashEntry({ name: "x", type: "vault" })).toBeNull();
 });
 
 test("validateStashEntry accepts minimal valid entry", () => {

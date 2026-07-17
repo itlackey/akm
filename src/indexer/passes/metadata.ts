@@ -11,8 +11,9 @@ import {
 } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
-import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
+import { asNonEmptyString, writeFileAtomic } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
+import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
 import { applyMetadataContributors } from "./metadata-contributors";
@@ -284,16 +285,17 @@ export function writeStashFile(dirPath: string, stash: StashFile): void {
 /**
  * Validate and normalize a raw object into a `StashEntry`.
  *
- * **Ordering dependency:** Uses `isAssetType()` to check `entry.type`, which
- * only recognizes custom types registered via `registerAssetType()`. If this
- * function is called before custom types are registered, those entries will be
- * rejected as invalid.
+ * Open type token (chunk 1.5, D1.5-1/D1.5-6): `entry.type` accepts any
+ * non-empty string — foreign/adapter types are valid `StashEntry` data, not
+ * just AKM's own built-in set — EXCEPT `DEPRECATED_REJECTED_TYPES`
+ * (`tool`/`vault`), which stay rejected so a hand-edited `.stash.json` can't
+ * silently resurrect a deliberately-retired type.
  */
 export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof entry !== "object" || entry === null) return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.name !== "string" || !e.name) return null;
-  if (typeof e.type !== "string" || !isAssetType(e.type)) return null;
+  if (typeof e.type !== "string" || !e.type || DEPRECATED_REJECTED_TYPES.has(e.type)) return null;
 
   const result: StashEntry = {
     name: e.name,
@@ -1420,7 +1422,10 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     if (!match) continue;
 
     const assetType = match.type;
-    if (!isAssetType(assetType)) continue;
+    // Open type token (chunk 1.5): a matcher-returned foreign/adapter type is
+    // now indexed instead of silently skipped — only the deliberately-removed
+    // deny-list (`tool`/`vault`) still short-circuits the flat-walk path.
+    if (!assetType || DEPRECATED_REJECTED_TYPES.has(assetType)) continue;
 
     // If the file lives under a known type directory, use that as the root
     // for canonical naming so names don't include the type prefix.

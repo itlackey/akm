@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { AkmAssetType } from "../../core/common";
 import { acquireMaintenanceActivitySync } from "../../core/maintenance-barrier";
 import { getStateDbPath } from "../../core/state-db";
 import { type Database, openDatabase } from "../../storage/database";
@@ -93,7 +92,7 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     const idByRef = new Map<string, number>();
     try {
       for (const item of items) {
-        idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
+        idByRef.set(makeAssetRef(item.entry.type, item.entry.name), item.id);
       }
       const stateDb = openDatabase(dbPath, { readonly: true });
       try {

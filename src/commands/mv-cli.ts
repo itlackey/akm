@@ -48,7 +48,7 @@ import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { parseAssetRef, refToString } from "../core/asset/asset-ref";
 import { deriveCanonicalAssetNameFromStashRoot, TYPE_DIRS } from "../core/asset/asset-spec";
-import { type AkmAssetType, isWithin, resolveStashDir, toPosix } from "../core/common";
+import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import {
@@ -157,7 +157,7 @@ interface RewriteContext {
   patterns: RegExp[];
   /** Matches `<type>:<slug>` tokens, optionally `local//`-prefixed. */
   aliasScan: RegExp;
-  type: AkmAssetType;
+  type: string;
   toRef: string;
   /** Root the moved file lives in (alias tokens are resolved against it). */
   scanRoot: string;
@@ -166,7 +166,7 @@ interface RewriteContext {
 }
 
 function buildRewriteContext(opts: {
-  type: AkmAssetType;
+  type: string;
   fromRef: string;
   toRef: string;
   isBaseMemory: boolean;
@@ -707,12 +707,7 @@ export function deriveOnDiskCasedRelPath(root: string, relPath: string): string 
  *   - throws `UsageError` (exit 2) — the ref resolves ONLY via a fallback
  *     spelling; the message names the canonical ref when one is derivable.
  */
-function resolveMoveSourcePath(
-  stashDir: string,
-  relPath: string,
-  refType: AkmAssetType,
-  refName: string,
-): string | null {
+function resolveMoveSourcePath(stashDir: string, relPath: string, refType: string, refName: string): string | null {
   const resolved = resolveRefPathInStash(relPath, refType, refName, stashDir);
   if (!resolved) return null;
   if (resolved.endsWith(".derived.md") && !refName.endsWith(".derived")) return null;

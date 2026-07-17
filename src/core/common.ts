@@ -5,45 +5,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getAssetTypes, TYPE_DIRS } from "./asset/asset-spec";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir } from "./paths";
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-/**
- * The canonical catalog of built-in asset types.
- *
- * SINGLE SOURCE OF TRUTH: derived from the {@link ASSET_SPECS} registry in
- * `asset-spec.ts` rather than hand-maintained here. Before #490/WS7 this was a
- * hand-written literal array that had DRIFTED from the registry (it omitted
- * `task`, which the registry has always carried). Deriving from the registry
- * kills that drift — see `tests/asset-type-union-source.test.ts` for the
- * intentional-`task`-delta guard.
- *
- * Note: `AkmAssetType` stays a static literal union of the BUILT-IN types
- * (those present at module-eval time). Dynamically `registerAssetType`-d types
- * are accepted at runtime via {@link isAssetType} but are not part of the
- * static union — identical to the pre-WS7 contract.
- */
-export const ASSET_TYPES = Object.freeze([...getAssetTypes()] as [
-  "skill",
-  "command",
-  "agent",
-  "knowledge",
-  "workflow",
-  "script",
-  "memory",
-  "env",
-  "secret",
-  "wiki",
-  "lesson",
-  "task",
-  "session",
-  "fact",
-]);
-export type AkmAssetType = (typeof ASSET_TYPES)[number];
-export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -70,21 +33,6 @@ export function isRemoteUrl(value: string | undefined): boolean {
     value.startsWith("ssh://") ||
     value.startsWith("git://")
   );
-}
-
-// ── Validators ──────────────────────────────────────────────────────────────
-
-/**
- * Returns true if `type` is a known asset type — either a built-in from
- * {@link ASSET_TYPES} or one dynamically registered via `registerAssetType`.
- *
- * The type guard narrows to `AkmAssetType` for all built-in types. Dynamic
- * types (e.g. registered by plugins) are also accepted at runtime, but the
- * type system treats them as `AkmAssetType` via assertion since they are not
- * part of the static union.
- */
-export function isAssetType(type: string): type is AkmAssetType {
-  return Object.hasOwn(TYPE_DIRS, type);
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

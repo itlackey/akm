@@ -20,7 +20,6 @@ import { buildActionFromContributors, defaultActionContributors } from "../../co
 import { makeAssetRef } from "../../core/asset/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
 import { getAssetTypes } from "../../core/asset/asset-spec";
-import type { AkmAssetType } from "../../core/common";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
@@ -92,9 +91,9 @@ export function buildLocalAction(
 
 function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
   if (source?.wikiName) {
-    return makeAssetRef(entry.type as AkmAssetType, entry.name);
+    return makeAssetRef(entry.type, entry.name);
   }
-  return makeAssetRef(entry.type as AkmAssetType, refName, source?.registryId);
+  return makeAssetRef(entry.type, refName, source?.registryId);
 }
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {

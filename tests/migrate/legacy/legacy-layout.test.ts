@@ -309,7 +309,13 @@ describe("legacy-layout.ts — faithfulness: parseAssetRef/makeAssetRef match as
 
   for (const ref of REF_CASES) {
     test(`parseAssetRef("${ref}") agrees with the live parser`, () => {
-      expect(frozenParseAssetRef(ref)).toEqual(parseAssetRef(ref));
+      // Compared as (live, frozen) rather than (frozen, live): chunk 1.5
+      // widened the live `AssetRef.type` to a plain `string` (open token),
+      // while the frozen snapshot keeps its own closed `LegacyAssetType`
+      // literal union — a value typed to the closed union is assignable to
+      // the open `string` field, not the other way around, so `expected`
+      // must be the frozen (narrower-typed) side for this to type-check.
+      expect(parseAssetRef(ref)).toEqual(frozenParseAssetRef(ref));
     });
   }
 
@@ -321,14 +327,14 @@ describe("legacy-layout.ts — faithfulness: parseAssetRef/makeAssetRef match as
     expect(frozenMakeAssetRef("skill", "code-review", "local")).toBe(makeAssetRef("skill", "code-review", "local"));
   });
 
-  const INVALID_REF_CASES = [
-    "",
-    "vault:credentials",
-    "notatype:example",
-    "skill:../escape",
-    "skill:/absolute",
-    "skill:",
-  ];
+  // "notatype:example" deliberately excluded from this list since chunk 1.5
+  // (below): the live parser now accepts unknown types as an open token,
+  // while the frozen snapshot keeps rejecting them (it is a permanent
+  // pre-1.5 closed-union snapshot, by design — see the file header). `vault`
+  // stays in both lists: it is a deny-listed deprecated type in the LIVE
+  // parser too (D1.5-6), not merely an unknown one, so both still throw with
+  // the same migration-hint message.
+  const INVALID_REF_CASES = ["", "vault:credentials", "skill:../escape", "skill:/absolute", "skill:"];
 
   for (const ref of INVALID_REF_CASES) {
     test(`parseAssetRef("${ref}") throws in BOTH the frozen copy and the live parser`, () => {
@@ -354,6 +360,11 @@ describe("legacy-layout.ts — faithfulness: parseAssetRef/makeAssetRef match as
       expect(frozenMessage).toBe(liveMessage);
     });
   }
+
+  test('parseAssetRef("notatype:example") deliberately DIVERGES post-chunk-1.5: frozen (closed) still throws, live (open token) now accepts it', () => {
+    expect(() => frozenParseAssetRef("notatype:example")).toThrow("Invalid asset type");
+    expect(parseAssetRef("notatype:example")).toEqual({ type: "notatype", name: "example", origin: undefined });
+  });
 });
 
 describe("legacy-layout.ts — faithfulness: isDerivedMemory/resolveParentRef match derived-ref.ts live", () => {

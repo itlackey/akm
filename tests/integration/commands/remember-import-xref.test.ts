@@ -350,9 +350,21 @@ describe("--xref root set and resolver parity", () => {
     expect(remoteJson.error).toContain("origin");
     expect(remoteJson.error).not.toContain("did not resolve");
 
+    // Chunk 1.5 opened the type token: "notatype" is no longer rejected by
+    // parseAssetRef, so this xref reaches `isFailOpenRefType`
+    // (base-linter.ts's `refToRelPath` — "unknown type — skip", pre-existing
+    // code that was unreachable pre-chunk since parseAssetRef gated unknown
+    // types out first). A foreign type's existence can't be checked against
+    // AKM's own TYPE_DIRS layout, so it fails OPEN (accepted, unverified) —
+    // consistent with "foreign/adapter types are valid data" (D1.5-1), not a
+    // resolution bug. `tool`/`vault` stay on the deny-list (D1.5-6), so they
+    // still get the original structured parse error.
     const badType = await runCliCapture(["remember", "x", "--xref", "notatype:foo"]);
-    expect(badType.code).toBe(2);
-    expect((JSON.parse(badType.stderr) as { error: string }).error.toLowerCase()).toContain("invalid asset type");
+    expect(badType.code).toBe(0);
+
+    const deniedType = await runCliCapture(["remember", "x", "--xref", "tool:foo"]);
+    expect(deniedType.code).toBe(2);
+    expect((JSON.parse(deniedType.stderr) as { error: string }).error.toLowerCase()).toContain("invalid asset type");
 
     // local// names the same local resolution this validator performs —
     // accepted, and persisted in the canonical bare form (the prefix is

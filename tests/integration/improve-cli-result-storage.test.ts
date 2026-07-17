@@ -256,7 +256,16 @@ describe("akm improve CLI dry-run artifact boundary", () => {
   test("runtime exceptions create no artifact and never persist a dry-run result", () => {
     // Strategy resolution succeeds before runImproveSession. This invalid scope
     // throws from akmImprove after the session's signal handlers are installed.
-    const result = runCli(["improve", "not-an-asset-type", "--dry-run"], stashDir);
+    //
+    // Chunk 1.5 opened the type token: a bare, colon-free scope word (the
+    // original "not-an-asset-type" fixture) no longer throws — it is now a
+    // valid (if empty-matching) `--scope <type>` filter (D1.5-1). A
+    // colon-shaped scope value naming a deny-listed, deliberately-removed
+    // type (`tool`/`vault`, D1.5-6) still throws the same
+    // UsageError/INVALID_FLAG_VALUE, so this regression guard is retargeted
+    // to that instead — its real contract (no artifact/persistence survives
+    // a runtime exception raised after signal handlers install) is unchanged.
+    const result = runCli(["improve", "tool:deploy.sh", "--dry-run"], stashDir);
     expect(result.status).toBe(2);
     expect(result.stdout).toBe("");
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });

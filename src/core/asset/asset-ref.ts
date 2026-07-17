@@ -3,13 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { type AkmAssetType, isAssetType } from "../common";
 import { UsageError } from "../errors";
+import { DEPRECATED_REJECTED_TYPES } from "../recognition-util";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface AssetRef {
-  type: AkmAssetType;
+  /**
+   * Open string token (chunk 1.5, D1.5-1/D1.5-6): any non-empty asset type
+   * is valid ref data EXCEPT `DEPRECATED_REJECTED_TYPES` — foreign/adapter
+   * types round-trip through `parseAssetRef`/`makeAssetRef` unrejected.
+   */
+  type: string;
   name: string;
   /**
    * Where to find this asset.
@@ -22,7 +27,7 @@ export interface AssetRef {
 }
 
 /** Accepted spelling aliases mapping to a canonical asset type. */
-const TYPE_ALIASES: Record<string, AkmAssetType> = {
+const TYPE_ALIASES: Record<string, string> = {
   environment: "env",
 };
 
@@ -41,7 +46,7 @@ const TYPE_ALIASES: Record<string, AkmAssetType> = {
  *   makeAssetRef("script", "db/migrate/run.sh", "owner/repo")
  *     → "owner/repo//script:db/migrate/run.sh"
  */
-export function makeAssetRef(type: AkmAssetType, name: string, origin?: string): string {
+export function makeAssetRef(type: string, name: string, origin?: string): string {
   validateName(name);
   const normalized = normalizeName(name);
   const asset = `${type}:${normalized}`;
@@ -106,7 +111,13 @@ export function parseAssetRef(ref: string): AssetRef {
   // `env:` type.
   const resolvedType = TYPE_ALIASES[rawType] ?? rawType;
 
-  if (!isAssetType(resolvedType)) {
+  // Open type token (chunk 1.5, D1.5-6): any other non-empty type is valid
+  // ref data (foreign/adapter types included) EXCEPT the deliberately-removed
+  // set — silently re-admitting one of those as an ordinary foreign type
+  // would defeat the guard that removed it. `vault` is already caught above
+  // with its own migration-hint message; this catches the rest of the
+  // deny-list (currently just `tool`).
+  if (DEPRECATED_REJECTED_TYPES.has(resolvedType)) {
     throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
   }
 

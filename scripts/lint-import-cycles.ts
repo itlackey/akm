@@ -185,36 +185,39 @@ export function measureCycleParticipants(): string[] {
  * ownership per plan DoD 11: Chunk 9 → named + unowned knots, Chunk 3 →
  * taxonomy, Chunk 5 → indexer-db trio, Chunk 8 → workflows-runtime trio,
  * emptying it). Never add an entry.
+ *
+ * Trimmed 28 → 18 by chunk 1.5 (WI-1.5.1, D1.5-7): deleting `common.ts`'s
+ * closed asset-type union severed its `import { getAssetTypes, TYPE_DIRS
+ * } from "./asset/asset-spec"` edge (the union's only reason to import
+ * asset-spec.ts) and `asset-ref.ts`'s now-fully-dead `common.ts` import,
+ * clearing 10 participants as a pure side effect: `commands/env/env.ts`,
+ * `core/asset/asset-ref.ts`, `core/config/config-io.ts`, `core/file-lock.ts`,
+ * `core/migration-operation.ts`, `indexer/walk/file-context.ts`,
+ * `sources/types.ts`, `workflows/parser.ts`, `workflows/program/project.ts`,
+ * `workflows/validator.ts`. `common.ts` itself stays a participant via a
+ * separate `common.ts <-> paths.ts` round trip. Empirically re-verified
+ * against the live tree (`bun scripts/lint-import-cycles.ts` → 18), not just
+ * reasoned about — see `docs/design/execution/chunk-1.5/anchors.md` §E.1.
  */
 export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
-  "src/commands/env/env.ts",
-  "src/core/asset/asset-ref.ts",
   "src/core/asset/asset-registry.ts",
   "src/core/asset/asset-spec.ts",
   "src/core/common.ts",
-  "src/core/config/config-io.ts",
   "src/core/config/config-schema.ts",
   "src/core/config/config.ts",
-  "src/core/file-lock.ts",
-  "src/core/migration-operation.ts",
   "src/core/paths.ts",
   "src/indexer/db/db.ts",
   "src/indexer/db/entry-mapper.ts",
   "src/indexer/db/schema.ts",
   "src/indexer/passes/metadata-contributors.ts",
   "src/indexer/passes/metadata.ts",
-  "src/indexer/walk/file-context.ts",
   "src/output/renderers.ts",
   "src/registry/types.ts",
-  "src/sources/types.ts",
   "src/workflows/exec/step-work.ts",
-  "src/workflows/parser.ts",
-  "src/workflows/program/project.ts",
   "src/workflows/renderer.ts",
   "src/workflows/runtime/document-cache.ts",
   "src/workflows/runtime/runs.ts",
   "src/workflows/runtime/unit-checkin.ts",
-  "src/workflows/validator.ts",
 ];
 
 /** Files in a cycle now that are not in the baseline (empty = green). */

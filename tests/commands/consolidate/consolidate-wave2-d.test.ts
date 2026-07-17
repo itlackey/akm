@@ -37,14 +37,27 @@ describe("parseAssetRef error codes (#15)", () => {
     }
   });
 
-  test("ref with invalid type throws UsageError with MISSING_REQUIRED_ARGUMENT", () => {
+  // Chunk 1.5 opened the type token: a foreign/unknown type like "badtype"
+  // no longer throws (it round-trips as ordinary ref data). Only the
+  // deliberately-removed deny-list (`tool`/`vault`, D1.5-6) still does, so
+  // this regression guard is retargeted to one of those instead of being
+  // deleted outright — #15's real contract ("a REJECTED ref throws
+  // UsageError/MISSING_REQUIRED_ARGUMENT", not "any non-canonical type
+  // throws") still holds.
+  test("ref with a deny-listed (deliberately-removed) type throws UsageError with MISSING_REQUIRED_ARGUMENT", () => {
     try {
-      parseAssetRef("badtype:name");
+      parseAssetRef("tool:name");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       expect((err as UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
     }
+  });
+
+  test("ref with a foreign/unknown type is accepted as an open token (chunk 1.5) — does not throw", () => {
+    const ref = parseAssetRef("badtype:name");
+    expect(ref.type).toBe("badtype");
+    expect(ref.name).toBe("name");
   });
 
   test("valid ref parses correctly", () => {

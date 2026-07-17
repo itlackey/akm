@@ -80,8 +80,14 @@ describe("createProposal validation", () => {
       caught = err as { code?: string; message?: string };
     }
     expect(caught?.code).toBe("INVALID_PROPOSAL");
-    // parseAssetRef catches the bad type prefix first → invalid_ref reason
-    expect(caught?.message).toMatch(/Invalid (proposal ref|asset type)/i);
+    // Chunk 1.5 opened parseAssetRef's type token: "bogusType" no longer
+    // fails there (invalid_ref reason). Rejection now comes one check later,
+    // from this function's OWN `TYPE_DIRS`-keyed gate (repository.ts:411,
+    // `unknown_type` reason) — that gate is untouched by chunk 1.5 (anchors
+    // §E.3 phasing note: a foreign type accepted at the ref-parsing layer
+    // can still fail at a TYPE_DIRS-gated placement check). Same rejection
+    // code, different reason/message.
+    expect(caught?.message).toMatch(/Unknown asset type/i);
   });
 
   test("rejects empty content", () => {
