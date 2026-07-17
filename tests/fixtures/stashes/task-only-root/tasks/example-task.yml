@@ -1,3 +1,0 @@
-schedule: "@daily"
-enabled: false
-prompt: "Say hello from the task-only-root fixture."
