@@ -59,16 +59,18 @@
  * — the ported unquoted-colon / missing-updated / stale-path / missing-ref).
  * The per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) are WI-C.
  *
- * ── Cycle-safety (chunk-2 ratchet, baseline 18) ──
+ * ── Cycle-safety (chunk-3 cutover, baseline 18) ──
  *
- * This module VALUE-imports `matchers.ts` (indexer/walk) and `asset-spec.ts`
- * (core/asset) — the whole point of WI-B is to DELEGATE to the existing
- * classification/placement, not re-implement it. `asset-spec.ts`,
- * `asset-registry.ts`, and `output/renderers.ts` are already baseline cycle
- * participants; `matchers.ts` / `file-context.ts` are not. Nothing in `src/`
- * imports this leaf module back (only the test-only `adapters/index.ts` barrel
- * imports it, and nothing in `src/` imports THAT), so these edges add no NEW
- * cycle participant — verified: `bun scripts/lint-import-cycles.ts` stays at 18.
+ * This module VALUE-imports `matchers.ts` (indexer/walk) for classification and
+ * `asset-placement.ts` (core/asset) for placement — delegating to the existing
+ * logic, not re-implementing it. Neither is a taxonomy import-cycle (SCC)
+ * participant: `matchers.ts` resolves renderers via `type-presentation.ts`
+ * (chunk-3 sever, not `asset-registry`), and `asset-placement.ts` is the pure
+ * leaf extracted from `asset-spec.ts` precisely so this adapter avoids the
+ * `asset-spec` → `asset-registry`/`output-renderers` SCC. Nothing in `src/`
+ * imports this adapter back (only the test-only `adapters/index.ts` barrel does,
+ * and nothing in `src/` imports THAT), so the adapter is itself a leaf — verified:
+ * `bun scripts/lint-import-cycles.ts` stays at 18 and this module is NOT a participant.
  */
 
 import fs from "node:fs";
@@ -83,7 +85,11 @@ import {
   wikiMatcher,
   workflowProgramMatcher,
 } from "../../../indexer/walk/matchers";
-import { deriveCanonicalAssetNameFromStashRoot, resolveAssetPathFromName, TYPE_DIRS } from "../../asset/asset-spec";
+import {
+  deriveCanonicalAssetNameFromStashRoot,
+  resolveAssetPathFromName,
+  TYPE_DIRS,
+} from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
