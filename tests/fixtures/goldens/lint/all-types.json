@@ -1,0 +1,141 @@
+{
+  "akmLintFullSweep": {
+    "fixed": [],
+    "flagged": [],
+    "ok": true,
+    "summary": {
+      "fixed": 0,
+      "flagged": 0
+    }
+  },
+  "capturedAtHead": "25df0a859ebb0094c1b2f4e5e0c3071864d20e85",
+  "notes": [
+    "perType: one entry per type (workflow split into workflowMd + workflowProgramYaml, so 14 keys mapping to 15 fixture files' worth of coverage -- see module docstring for the split rationale). Each non-workflow entry is {subdir, relPath, linterUsed (the dispatched linter's constructor name), issues (LintIssue[] from a direct getLinterForType(subdir).lint(ctx) call, ctx built via the exact LintContext construction lint/index.ts's per-file loop uses)}. `skill` additionally carries `lintDirectoryIssues` (SkillLinter's directory-level missing-skill-md check). `workflowMd` is a real lint path (WorkflowLinter). `workflowProgramYaml` is NOT a lint path -- WorkflowLinter never sees .yaml files in production (collectMarkdownFiles filters .md only), so its only correctness surface is parseWorkflowProgram's own {ok, program|errors} result, captured under `result` with `correctnessCheck: \"parseWorkflowProgram\"` to make the distinction explicit rather than silently reusing the `issues` shape for a different kind of check.",
+    "script/env/secret/wiki/session have no dedicated linter and dispatch to the shared DefaultLinter via getLinterForType's fallback (`?? DEFAULT_LINTER`); lesson dispatches to the SAME DefaultLinter instance via an explicit registry.ts entry (`LINTER_MAP.set(\"lessons\", DEFAULT_LINTER)`) rather than the fallback -- both paths land on `DefaultLinter`, which this golden's `linterUsed` field pins for all six.",
+    "akmLintFullSweep: the real akmLint({dir: STASH_ROOT}) result ({ok, fixed, flagged, summary}), pinning the CLI entry point's ACTUAL reachable surface for this fixture stash. akmLint()'s STASH_SUBDIRS walk list (lint/index.ts) is [\"agents\",\"commands\",\"memories\",\"skills\",\"workflows\",\"lessons\",\"tasks\",\"knowledge\",\"facts\"] -- 9 of the 14 type dirs; script/secret/wiki/session are never visited by the per-file loop for ANY file. A separate env-dangerous-key pass additionally scans env/ and secrets/, but only .env-suffixed filenames (collectEnvFiles) -- it reaches env/all-types-env.env (matches) but NOT secrets/all-types-secret (bare filename, no .env suffix). Net result for this fixture stash: script, secret, wiki, and session are 100% unreached by akmLint() in production; workflows/all-types-workflow-program.yaml is unreached (its .md sibling is reached). This is the lint-surface analogue of the WI-0b.2-documented tasks/*.yml recognition gap (fixed by WI-0b.1) -- here it is a CAPTURED FINDING, not a fix (capture-only scope; no src/ changes).",
+    "Determinism: LintIssue.file is always ctx.relPath (never absPath) in every linter under src/commands/lint/*.ts, and parseWorkflowProgram is invoked with {path: relPath} (mirroring src/workflows/renderer.ts's loadProgram). No absolute path appears anywhere in this golden -- normalization is a no-op, same as tests/fixtures/goldens/recognition/all-types.json's pure-path data.",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): Chunk 2's format adapters must reproduce this lint dispatch byte-for-byte. anchors.md Section B.3 confirms zero prior lint golden coverage existed before this capture -- greenfield, not a re-baseline. Sibling of WI-0b.4a's renderer/all-types.json."
+  ],
+  "perType": {
+    "agent": {
+      "issues": [],
+      "linterUsed": "AgentLinter",
+      "relPath": "agents/all-types-agent.md",
+      "subdir": "agents"
+    },
+    "command": {
+      "issues": [],
+      "linterUsed": "CommandLinter",
+      "relPath": "commands/all-types-command.md",
+      "subdir": "commands"
+    },
+    "env": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "env/all-types-env.env",
+      "subdir": "env"
+    },
+    "fact": {
+      "issues": [],
+      "linterUsed": "FactLinter",
+      "relPath": "facts/all-types-fact.md",
+      "subdir": "facts"
+    },
+    "knowledge": {
+      "issues": [],
+      "linterUsed": "KnowledgeLinter",
+      "relPath": "knowledge/all-types-knowledge.md",
+      "subdir": "knowledge"
+    },
+    "lesson": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "lessons/all-types-lesson.md",
+      "subdir": "lessons"
+    },
+    "memory": {
+      "issues": [],
+      "linterUsed": "MemoryLinter",
+      "relPath": "memories/all-types-memory.md",
+      "subdir": "memories"
+    },
+    "script": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "scripts/all-types-script.sh",
+      "subdir": "scripts"
+    },
+    "secret": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "secrets/all-types-secret",
+      "subdir": "secrets"
+    },
+    "session": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "sessions/all-types-harness/all-types-session.md",
+      "subdir": "sessions"
+    },
+    "skill": {
+      "issues": [],
+      "lintDirectoryIssues": [],
+      "linterUsed": "SkillLinter",
+      "relPath": "skills/all-types-skill/SKILL.md",
+      "subdir": "skills"
+    },
+    "task": {
+      "issues": [],
+      "linterUsed": "TaskLinter",
+      "relPath": "tasks/all-types-task.yml",
+      "subdir": "tasks"
+    },
+    "wiki": {
+      "issues": [],
+      "linterUsed": "DefaultLinter",
+      "relPath": "wikis/all-types-space/all-types-wiki.md",
+      "subdir": "wikis"
+    },
+    "workflowMd": {
+      "issues": [],
+      "linterUsed": "WorkflowLinter",
+      "relPath": "workflows/all-types-workflow.md",
+      "subdir": "workflows"
+    },
+    "workflowProgramYaml": {
+      "correctnessCheck": "parseWorkflowProgram",
+      "relPath": "workflows/all-types-workflow-program.yaml",
+      "result": {
+        "ok": true,
+        "program": {
+          "description": "Minimal YAML workflow program fixture used by the all-types parity stash",
+          "name": "all-types-workflow-program",
+          "source": {
+            "path": "workflows/all-types-workflow-program.yaml"
+          },
+          "steps": [
+            {
+              "id": "announce",
+              "source": {
+                "end": 7,
+                "path": "workflows/all-types-workflow-program.yaml",
+                "start": 5
+              },
+              "unit": {
+                "instructions": "Print a single fixture line and stop.",
+                "source": {
+                  "end": 7,
+                  "path": "workflows/all-types-workflow-program.yaml",
+                  "start": 7
+                }
+              }
+            }
+          ],
+          "version": 2
+        }
+      },
+      "subdir": "workflows"
+    }
+  },
+  "scenario": "Lint dispatch parity for every asset in tests/fixtures/stashes/all-types/ (WI-0b.4b, all 14 ASSET_SPECS_INTERNAL types), capturing BOTH the direct getLinterForType(subdir).lint(ctx) dispatch per type AND the real akmLint({dir: STASH_ROOT}) CLI-entry-point full sweep"
+}

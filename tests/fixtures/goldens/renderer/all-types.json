@@ -1,0 +1,143 @@
+{
+  "byRelPath": {
+    "agents/all-types-agent.md": {
+      "action": "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
+      "description": "Minimal agent fixture used by the all-types parity stash",
+      "name": "all-types-agent",
+      "path": "<STASH>/agents/all-types-agent.md",
+      "prompt": "# All Types Agent\n\nA minimal agent persona used to exercise the \"agent\" asset type end to end.\nIt owns no tools, makes no external calls, and returns a single fixed line\nwhen dispatched.\n",
+      "type": "agent"
+    },
+    "commands/all-types-command.md": {
+      "action": "Fill $ARGUMENTS placeholders in the template, then dispatch",
+      "description": "Minimal command fixture used by the all-types parity stash",
+      "name": "all-types-command",
+      "path": "<STASH>/commands/all-types-command.md",
+      "template": "# All Types Command\n\nPrint a fixed fixture line to stdout. Used as a sanity check that the\ncommand type recognizes, renders, and lints correctly. Takes no arguments.\n",
+      "type": "command"
+    },
+    "env/all-types-env.env": {
+      "action": "Environment — key names only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
+      "keys": [
+        "FIXTURE_GREETING",
+        "FIXTURE_LOG_LEVEL"
+      ],
+      "name": "all-types-env",
+      "path": "<STASH>/env/all-types-env.env",
+      "type": "env"
+    },
+    "facts/all-types-fact.md": {
+      "action": "Durable stash fact — apply it as background context.\ncategory: meta",
+      "content": "# All Types Fact\n\nA durable, stash-level fact used to exercise the \"fact\" asset type end to\nend (recognition, placement, rendering, lint). It records a fixture-only\nconvention, not a real project detail.\n",
+      "description": "Minimal fact fixture used by the all-types parity stash",
+      "name": "all-types-fact",
+      "path": "<STASH>/facts/all-types-fact.md",
+      "type": "fact"
+    },
+    "knowledge/all-types-knowledge.md": {
+      "action": "Reference material - read the content below. Use 'toc' view for large documents.",
+      "content": "---\ndescription: Minimal knowledge fixture used by the all-types parity stash\nupdated: 2025-06-01\n---\n# All Types Knowledge\n\nA one-paragraph reference document used to exercise the \"knowledge\" asset\ntype end to end (recognition, placement, rendering, lint). It contains no\noperational guidance and represents nothing about a real project.\n\n## Background\n\nThis section exists only so the knowledge renderer's table-of-contents and\nsection views have more than one heading to work with.\n",
+      "name": "all-types-knowledge",
+      "path": "<STASH>/knowledge/all-types-knowledge.md",
+      "type": "knowledge"
+    },
+    "lessons/all-types-lesson.md": {
+      "action": "Apply this lesson when: When you need a trivial, deterministic lesson asset for tests",
+      "content": "# All Types Lesson\n\nA one-paragraph lesson used to exercise the \"lesson\" asset type end to end\n(recognition, placement, rendering, lint). It teaches nothing operational.\n",
+      "description": "Minimal lesson fixture used by the all-types parity stash",
+      "name": "all-types-lesson",
+      "path": "<STASH>/lessons/all-types-lesson.md",
+      "type": "lesson"
+    },
+    "memories/all-types-memory.md": {
+      "action": "Recall context — read the content below",
+      "content": "---\ndescription: Minimal memory fixture used by the all-types parity stash\nupdated: 2025-06-01\n---\n# All Types Memory\n\nA short recollection-style note used to exercise the \"memory\" asset type end\nto end (recognition, placement, rendering, lint). It records nothing about a\nreal session or user.\n",
+      "name": "all-types-memory",
+      "path": "<STASH>/memories/all-types-memory.md",
+      "type": "memory"
+    },
+    "scripts/all-types-script.sh": {
+      "action": "Execute the run command below",
+      "name": "all-types-script.sh",
+      "path": "<STASH>/scripts/all-types-script.sh",
+      "run": "bash all-types-script.sh",
+      "type": "script"
+    },
+    "secrets/all-types-secret": {
+      "action": "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm secret path <ref>` for the file path, or `akm secret run <ref> <VAR> -- <command>` to run with the value injected into $VAR.",
+      "name": "all-types-secret",
+      "path": "<STASH>/secrets/all-types-secret",
+      "type": "secret"
+    },
+    "sessions/all-types-harness/all-types-session.md": {
+      "action": "Prior agent session — read the summary below.\nOpen the raw log:\nlog: sessions/all-types-harness/all-types-session.log\nread-only",
+      "content": "# All Types Session\n\nA short generated session summary used to exercise the \"session\" asset type\nend to end (recognition, placement, rendering). It does not reference a real\ntranscript.\n",
+      "description": "Minimal session fixture used by the all-types parity stash",
+      "name": "all-types-harness/all-types-session",
+      "path": "<STASH>/sessions/all-types-harness/all-types-session.md",
+      "type": "session"
+    },
+    "skills/all-types-skill/SKILL.md": {
+      "action": "Read and follow the instructions below",
+      "content": "# All Types Skill\n\nA placeholder skill used to exercise the \"skill\" asset type end to end\n(recognition, placement, rendering, lint). It documents nothing operational\nbeyond existing so the indexer has a SKILL.md to walk.\n\nWhen invoked, the skill prints a single fixture line and exits. There is no\nconfiguration, no dependencies, and no side effects beyond the print.\n",
+      "description": "Minimal skill fixture used by the all-types parity stash",
+      "name": "all-types-skill",
+      "path": "<STASH>/skills/all-types-skill/SKILL.md",
+      "type": "skill"
+    },
+    "tasks/all-types-task.yml": {
+      "action": "Scheduled task — `akm tasks show <id>` for parsed details, `akm tasks run <id>` to invoke now.",
+      "content": "schedule: \"@daily\"\nenabled: false\nprompt: \"Say hello from the all-types fixture task.\"\n",
+      "name": "all-types-task",
+      "path": "<STASH>/tasks/all-types-task.yml",
+      "type": "task"
+    },
+    "wikis/all-types-space/all-types-wiki.md": {
+      "action": "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.",
+      "content": "---\ndescription: Minimal wiki fixture used by the all-types parity stash\nupdated: 2025-06-01\n---\n# All Types Wiki\n\nA one-paragraph wiki page used to exercise the \"wiki\" asset type end to end\n(recognition, placement, rendering). It lives under a namespaced `wikis/`\nsubdirectory, which is required for the wiki matcher to claim it.\n",
+      "name": "all-types-space/all-types-wiki",
+      "path": "<STASH>/wikis/all-types-space/all-types-wiki.md",
+      "type": "wiki"
+    },
+    "workflows/all-types-workflow-program.yaml": {
+      "action": "Resume the active run or start a new run with `akm workflow next 'workflow:all-types-workflow-program'`.",
+      "description": "Minimal YAML workflow program fixture used by the all-types parity stash",
+      "name": "all-types-workflow-program",
+      "path": "<STASH>/workflows/all-types-workflow-program.yaml",
+      "steps": [
+        {
+          "id": "announce",
+          "instructions": "Print a single fixture line and stop.",
+          "sequenceIndex": 0,
+          "title": "announce"
+        }
+      ],
+      "type": "workflow",
+      "workflowTitle": "all-types-workflow-program"
+    },
+    "workflows/all-types-workflow.md": {
+      "action": "Resume the active run or start a new run with `akm workflow next 'workflow:all-types-workflow'`.",
+      "description": "Minimal linear workflow fixture used by the all-types parity stash",
+      "name": "all-types-workflow",
+      "path": "<STASH>/workflows/all-types-workflow.md",
+      "steps": [
+        {
+          "id": "announce",
+          "instructions": "Print a single fixture line and stop.",
+          "sequenceIndex": 0,
+          "title": "Announce"
+        }
+      ],
+      "type": "workflow",
+      "workflowTitle": "All Types Fixture"
+    }
+  },
+  "capturedAtHead": "25df0a859ebb0094c1b2f4e5e0c3071864d20e85",
+  "notes": [
+    "Keyed by stash-relative POSIX relPath (never an absolute path) -- the same 15-key set as tests/fixtures/goldens/recognition/all-types.json. match.meta.name is injected per-file using the SAME canonical name tests/fixtures/goldens/placement/all-types.json's byType round-trip uses, mirroring show.ts:439's `match.meta = { ...match.meta, name: parsed.name, view: input.view }` (view left undefined, so knowledge/wiki exercise their default \"full\" view branch). The capture stops at the renderer's own buildShowResponse output -- it does not include showLocal's post-processing (related/editable/editHint/activeRun/toolPolicy ceiling), which is CLI composition, not renderer behavior, and depends on index/db state this suite does not stand up.",
+    "NORMALIZATION: every renderer's `path` field is `ctx.absPath` -- an absolute filesystem path, the ONLY non-deterministic value any of the 14 renderers emit (verified by reading every implementation in src/output/renderers.ts and src/workflows/renderer.ts). expectGolden's roots:{stash:STASH_ROOT} substitutes the literal fixture-stash absolute prefix with the placeholder \"<STASH>\" (see tests/_helpers/golden.ts) so the golden is byte-stable across checkouts. No other field required normalization: content/description/action/steps/keys/run/workflowTitle are all derived purely from the fixture's committed bytes plus the injected canonical name.",
+    "Two documented asymmetries this golden PINS byte-for-byte (not fixed, per capture-only scope): (1) skill/command/agent/lesson/fact/session renderers return frontmatter-STRIPPED content (via parseFrontmatter(ctx.content()).content), while memory-md AND knowledge-md/wiki-md's default \"full\" view return the RAW content INCLUDING the frontmatter fence (memory-md's buildShowResponse returns ctx.content() directly; buildMarkdownViewResponse's default branch does the same for knowledge/wiki) -- Chunk 2's memory/knowledge/wiki adapters must reproduce this, not silently \"fix\" it. (2) workflow-md derives a step's displayed title from its parsed heading (\"Announce\"), while workflow-program-yaml falls back to the step id when no `title` key is set (\"announce\") -- same fixture semantics, different renderer, different title casing.",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): Chunk 2's format adapters must reproduce every renderer's output byte-for-byte. anchors.md Section B.3 confirms zero prior renderer golden coverage existed before this capture -- greenfield, not a re-baseline. Sibling of WI-0b.3's recognition/placement/minting goldens; this is WI-0b.4a."
+  ],
+  "scenario": "AssetRenderer.buildShowResponse(renderCtx) output for every asset in tests/fixtures/stashes/all-types/ (WI-0b.4a, all 14 ASSET_SPECS_INTERNAL types + the workflow-program-yaml renderer form), invoked via the same buildFileContext -> runMatchers -> getRenderer -> buildRenderContext call shape src/commands/read/show.ts's showLocal uses"
+}
