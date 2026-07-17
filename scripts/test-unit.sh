@@ -34,11 +34,12 @@ paths=(./tests --path-ignore-patterns=tests/integration)
 
 # ── Slow-test skip (0.9.0 refactor, temporary) ───────────────────────────────
 # The heaviest unit files (goldens/property suites, each 3-17s in-suite) are
-# skipped by default so the per-iteration `check:fast` gate stays fast during the
-# 0.9.0 bundle-adapter refactor. Set AKM_RUN_SLOW_TESTS=1 to include them (CI and
-# chunk-boundary full runs do this); any single file can still be run directly
-# with `bun test <file>`. REMOVE this block (and restore full-suite defaults)
-# when the refactor closes — tracked in docs/design/execution/.
+# skipped in the LOCAL per-iteration gate so `check:fast` stays fast during the
+# 0.9.0 bundle-adapter refactor. They are NEVER skipped in CI (CI=true) — the
+# regression net stays complete there — and AKM_RUN_SLOW_TESTS=1 forces them in
+# for chunk-boundary full runs; any single file can still be run directly with
+# `bun test <file>`. REMOVE this block (restore full-suite defaults) when the
+# refactor closes — tracked in docs/design/execution/.
 SLOW_TESTS=(
   "**/goldens-proposal-txn.test.ts"
   "**/goldens-signal-delta-gate.test.ts"
@@ -49,11 +50,11 @@ SLOW_TESTS=(
   "**/goldens-cli-health-tasks.test.ts"
   "**/goldens-consolidate-ops.test.ts"
 )
-if [ "${AKM_RUN_SLOW_TESTS:-0}" != "1" ]; then
+if [ "${AKM_RUN_SLOW_TESTS:-0}" != "1" ] && [ "${CI:-}" != "true" ]; then
   for pat in "${SLOW_TESTS[@]}"; do
     paths+=(--path-ignore-patterns="$pat")
   done
-  echo "── unit: skipping ${#SLOW_TESTS[@]} slow file(s) (set AKM_RUN_SLOW_TESTS=1 to include)"
+  echo "── unit: skipping ${#SLOW_TESTS[@]} slow file(s) locally (CI/AKM_RUN_SLOW_TESTS=1 run them)"
 fi
 declare -a pids tmps
 for k in $(seq 1 "$N"); do
