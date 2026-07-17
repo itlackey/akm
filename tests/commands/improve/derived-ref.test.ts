@@ -14,12 +14,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  DERIVED_SUFFIX,
-  isDerivedMemory,
-  parseMemoryRef,
-  resolveParentRef,
-} from "../../../src/commands/improve/memory/derived-ref";
+import { isDerivedMemory, parseMemoryRef, resolveParentRef } from "../../../src/commands/improve/memory/derived-ref";
+import { DERIVED_SUFFIX } from "../../../src/core/recognition-util";
 
 describe("isDerivedMemory", () => {
   test("true for the .derived name suffix", () => {

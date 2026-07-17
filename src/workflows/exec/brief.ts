@@ -32,8 +32,8 @@
  */
 
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { NotFoundError, UsageError } from "../../core/errors";
+import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-runs-repository";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";

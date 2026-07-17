@@ -4,10 +4,10 @@
 
 import { randomUUID } from "node:crypto";
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import type {
   WorkflowRunStatus,

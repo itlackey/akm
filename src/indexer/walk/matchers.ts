@@ -11,7 +11,7 @@
  */
 
 import { defaultRendererRegistry } from "../../core/asset/asset-registry";
-import { SCRIPT_EXTENSIONS } from "../../core/asset/asset-spec";
+import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { looksLikeWorkflow } from "../../workflows/parser";
 import { looksLikeWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";

@@ -32,9 +32,7 @@
 
 import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
 import { asNonEmptyString } from "../../../core/common";
-
-/** Structural marker suffix for a derived (inferred) memory's canonical name. */
-export const DERIVED_SUFFIX = ".derived";
+import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 
 /**
  * Normalise an arbitrary `source:`/edge string to a canonical `memory:<name>`

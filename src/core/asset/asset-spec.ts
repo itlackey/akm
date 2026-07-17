@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildWorkflowAction } from "../../output/renderers";
+import { SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recognition-util";
 import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 
 function toPosix(input: string): string {
@@ -31,33 +32,6 @@ export interface AssetSpec {
    * `ACTION_BUILDERS` in the asset-registry singleton.
    */
   actionBuilder?: (ref: string) => string;
-}
-
-/**
- * Recognized workflow asset extensions, in resolution-priority order.
- * `.md` (classic linear markdown workflows — the stable contract) stays
- * FIRST for back-compat; `.yaml`/`.yml` hold YAML workflow *programs*
- * (redesign addendum, R1). `workflow:<name>` refs resolve against this list.
- */
-export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
-
-/**
- * Strip a recognized workflow extension (`.md`/`.yaml`/`.yml`) from a workflow
- * asset *name* so `foo`, `foo.yaml`, `foo.yml`, and `foo.md` collapse to one
- * canonical identity — the same collapse `workflowSpec.toCanonicalName`
- * performs on a resolved file path. Callers that turn a `workflow:<name>` ref
- * into run identity (the active-run guard, list/status filters) MUST route the
- * name through this so an aliased spelling (`workflow:foo.yaml`) and the
- * canonical `workflow:foo` cannot start or hide parallel runs of the same
- * workflow. Names without a recognized workflow extension pass through
- * unchanged.
- */
-export function canonicalizeWorkflowName(name: string): string {
-  const lower = name.toLowerCase();
-  for (const ext of WORKFLOW_EXTENSIONS) {
-    if (lower.endsWith(ext)) return name.slice(0, -ext.length);
-  }
-  return name;
 }
 
 const workflowSpec: Omit<AssetSpec, "stashDir" | "rendererName" | "actionBuilder"> = {
@@ -99,26 +73,6 @@ const markdownSpec: Omit<AssetSpec, "stashDir"> = {
     return path.join(typeRoot, withExt);
   },
 };
-
-/** All recognized script extensions for the script asset type */
-export const SCRIPT_EXTENSIONS = new Set([
-  ".sh",
-  ".ts",
-  ".js",
-  ".ps1",
-  ".cmd",
-  ".bat",
-  ".py",
-  ".rb",
-  ".go",
-  ".pl",
-  ".php",
-  ".lua",
-  ".r",
-  ".swift",
-  ".kt",
-  ".kts",
-]);
 
 const scriptSpec: Omit<AssetSpec, "stashDir"> = {
   isRelevantFile: (fileName) => SCRIPT_EXTENSIONS.has(path.extname(fileName).toLowerCase()),

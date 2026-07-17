@@ -8,7 +8,8 @@ import { makeAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
-import { DERIVED_SUFFIX, isDerivedMemory, parseMemoryRef, resolveParentRef } from "./derived-ref";
+import { DERIVED_SUFFIX } from "../../../core/recognition-util";
+import { isDerivedMemory, parseMemoryRef, resolveParentRef } from "./derived-ref";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";

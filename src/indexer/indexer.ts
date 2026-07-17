@@ -4,12 +4,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { SCRIPT_EXTENSIONS } from "../core/asset/asset-spec";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
+import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 /**
