@@ -332,3 +332,24 @@ check green; full lint; architecture 28/28; config suites incl.
 drift-contract green unmodified; improve sweep 872/0 across 63 files.
 Reviewer verified the pushOnCommit diffs line-by-line and re-ran
 tsc + full lint.
+
+## WI-9.7 — H1 capability union (one commit)
+
+Design: discriminated union on capabilities.sessionLogs (two-member
+HarnessCapabilities union + overloaded caps() returning the precise
+member — zero changes to the ten harness declarations) with
+isSessionLogHarness type-predicate narrowing for the registry filter.
+Forward load-time throw (sessionLogs:true without provider) DELETED —
+now a compile error; its duplicated test assertion removed, the
+name-resolution assertion kept. Reverse-invariant throw KEPT with
+documented justification: provider runtime name → harness resolution is
+not expressible in types and guards against silent downstream
+misattribution. BaseHarness implements the common core and no longer
+declares sessionLogProvider at all (an optional declaration would
+violate the false-branch's undefined-only field). No 3-object split
+(plan-rejected). Types-only; zero runtime delta.
+
+Gates (worker + reviewer): tsc; biome; cycles 107/107; architecture
+28/28; harness/agent/session-log suites 420/0 (reviewer re-ran 64/0
+core subset); grep-verified exactly one remaining throw (the kept
+reverse guard).
