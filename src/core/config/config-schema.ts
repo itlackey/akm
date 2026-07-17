@@ -37,7 +37,7 @@
 import { z } from "zod";
 import type { InstalledStashEntry } from "../../registry/types";
 import { validateExtraParams } from "../extra-params";
-import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "./config-types";
+import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "./config-types";
 import {
   BUILTIN_IMPROVE_STRATEGY_NAMES,
   ENGINE_NAME_PATTERN_SOURCE,
@@ -260,12 +260,9 @@ const LlmEngineSchema = z
 const AgentEngineSchema = z
   .object({
     kind: z.literal("agent"),
-    platform: AgentPlatformSchema.refine(
-      (platform) => HARNESS_BY_ID.get(platform)?.capabilities.agentDispatch === true,
-      {
-        message: "platform does not support agent dispatch",
-      },
-    ),
+    platform: AgentPlatformSchema.refine((platform) => HARNESS_AGENT_DISPATCH_IDS.has(platform), {
+      message: "platform does not support agent dispatch",
+    }),
     bin: nonEmptyString.optional(),
     args: z.array(z.string()).optional(),
     workspace: nonEmptyString.optional(),

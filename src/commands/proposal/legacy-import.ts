@@ -24,7 +24,7 @@ import {
   insertProposalIfAbsent,
   recordFsProposalsImport,
 } from "../../storage/repositories/proposals-repository";
-import type { Proposal } from "./repository";
+import type { Proposal } from "./proposal-types";
 
 /** Legacy (pre-0.9.0) proposal directory: `<stashDir>/.akm/proposals[/archive]`. */
 function legacyProposalsRoot(stashDir: string, archive: boolean): string {

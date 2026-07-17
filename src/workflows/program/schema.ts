@@ -20,9 +20,21 @@
  * existing IR uses.
  */
 
-import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
-import type { AgentFailureReason } from "../../integrations/agent/spawn";
 import type { SourceRef, WorkflowError } from "../schema";
+
+// LlmInvocationOverrides / AgentFailureReason referenced via inline
+// `import("...")` TYPE QUERIES (WI-9.8 KILL 3) rather than top-level
+// `import type` statements: both are self-contained, zero-dependency shapes
+// living in the (heavy) agent-runtime modules, and this file is reached from
+// `output/renderers.ts` (via `workflows/renderer.ts`) — a top-level import
+// here would route the renderers hub straight back into the agent-runtime /
+// harness-barrel cluster KILL 3 severs. Same pattern as `core/config`'s
+// `typeof import("./config-schema")` and `spawn.ts`'s
+// `import("./builders").AgentCommandBuilder`: erased at compile time, so it
+// carries zero runtime footprint and is invisible to the static import graph
+// (unlike `import type`, which the cycle ratchet DOES count — see trap list).
+type LlmInvocationOverrides = import("../../integrations/agent/engine-resolution").LlmInvocationOverrides;
+type AgentFailureReason = import("../../integrations/agent/spawn").AgentFailureReason;
 
 export const WORKFLOW_PROGRAM_VERSION = 2;
 /** @deprecated source v2 rejects runner; retained for TypeScript migration only. */

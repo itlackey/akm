@@ -11,7 +11,7 @@
  * @module proposals-repository
  */
 
-import type { Proposal } from "../../commands/proposal/repository";
+import type { Proposal } from "../../commands/proposal/proposal-types";
 import type { FileChange } from "../../core/file-change";
 import type { Database, SqlValue } from "../database";
 

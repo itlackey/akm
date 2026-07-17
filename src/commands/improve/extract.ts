@@ -41,6 +41,7 @@ import {
   releaseLock,
   tryAcquireLockSync,
 } from "../../core/file-lock";
+import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { tryAcquireMaintenanceBarrier } from "../../core/maintenance-barrier";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
@@ -341,52 +342,11 @@ export function resolveStandaloneExtractPlan(
   });
 }
 
-export interface ExtractedSessionResult {
-  sessionId: string;
-  harness: string;
-  candidateCount: number;
-  proposalIds: string[];
-  /** When candidates was empty, the LLM's explanation. */
-  rationaleIfEmpty?: string;
-  /** Pre-filter stats for the session. */
-  preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
-  warnings: string[];
-  skipped?: boolean;
-  skipReason?:
-    | "read_failed"
-    | "llm_unavailable"
-    | "exception"
-    | "already_extracted"
-    | "too_short"
-    | "triaged_out"
-    | "locked_concurrent";
-  /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
-  sessionAssetRef?: string;
-  /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
-  sessionLogPath?: string;
-  /**
-   * #602 — sha256 (hex) of the normalized session content computed at process
-   * time. Undefined only when the session failed to read (read_failed) before a
-   * hash could be computed; the caller persists `contentHash ?? null` so such
-   * rows stay eligible for retry.
-   */
-  contentHash?: string;
-}
-
-export interface AkmExtractResult {
-  schemaVersion: 1;
-  ok: boolean;
-  shape: "extract-result";
-  dryRun: boolean;
-  type: string;
-  sessionsProcessed: number;
-  sessionsSkipped: number;
-  candidatesCreated: number;
-  proposals: string[];
-  sessions: ExtractedSessionResult[];
-  warnings: string[];
-  durationMs: number;
-}
+// ExtractedSessionResult / AkmExtractResult moved DOWN to core/improve-types.ts
+// (WI-9.8 KILL 2 — the §10.7 layering inversion: core/improve-types.ts
+// imported AkmExtractResult UP from this module). Re-exported here verbatim
+// so existing import sites (`from "./extract"`) are unchanged.
+export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

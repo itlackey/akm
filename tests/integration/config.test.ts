@@ -4,12 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
-  getDefaultLlmConfig,
   getImproveProcessConfig,
   type ImproveProfileConfig,
   loadConfig,
   loadUserConfig,
-  requireLlmConfig,
   resetConfigCache,
   saveConfig,
   updateConfig,
@@ -18,6 +16,7 @@ import { backupExistingConfig } from "../../src/core/config/config-io";
 import { ConfigError } from "../../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../../src/core/paths";
 import { setQuiet } from "../../src/core/warn";
+import { getDefaultLlmConfig, requireLlmConfig } from "../../src/integrations/agent/engine-resolution";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));

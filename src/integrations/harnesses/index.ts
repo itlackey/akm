@@ -24,6 +24,7 @@ import { ClaudeHarness } from "./claude";
 import { CodexHarness } from "./codex";
 import { CopilotHarness } from "./copilot";
 import { GeminiHarness } from "./gemini";
+import { HARNESS_ID_TABLE } from "./ids";
 import { OpencodeHarness } from "./opencode";
 // Import the descriptor from its LEAF module, not the per-harness barrel: the
 // barrel re-exports `./sdk-runner` (which imports `core/config`, and
@@ -71,6 +72,28 @@ export const HARNESS_REGISTRY = Object.freeze([
   new AmazonqHarness(),
   new OpenhandsHarness(),
 ] as const) satisfies readonly AkmHarness[];
+
+// Construction-time drift guard (WI-9.8 KILL 3, D.3 edge B): ./ids.ts's
+// HARNESS_ID_TABLE is config's dependency-free mirror of (id, agentDispatch)
+// for every registered harness, kept out of core/config's import graph so
+// config doesn't have to import this (heavier) barrel. Assert they match so
+// the mirror can never silently drift — a new/reordered/recapability'd
+// harness that forgets to update ./ids.ts fails loudly here instead of
+// quietly breaking config's platform validation.
+if (HARNESS_REGISTRY.length !== HARNESS_ID_TABLE.length) {
+  throw new Error(
+    `harnesses/ids.ts HARNESS_ID_TABLE has ${HARNESS_ID_TABLE.length} entries but HARNESS_REGISTRY has ${HARNESS_REGISTRY.length} — update ids.ts to match.`,
+  );
+}
+HARNESS_REGISTRY.forEach((h, i) => {
+  const expected = HARNESS_ID_TABLE[i];
+  if (!expected || expected.id !== h.id || expected.agentDispatch !== h.capabilities.agentDispatch) {
+    throw new Error(
+      `harnesses/ids.ts HARNESS_ID_TABLE[${i}] (${expected?.id ?? "<missing>"}, agentDispatch=${expected?.agentDispatch}) ` +
+        `does not match HARNESS_REGISTRY[${i}] (${h.id}, agentDispatch=${h.capabilities.agentDispatch}) — update ids.ts to match.`,
+    );
+  }
+});
 
 /** Lookup by canonical id. */
 export const HARNESS_BY_ID: ReadonlyMap<string, AkmHarness> = new Map(HARNESS_REGISTRY.map((h) => [h.id, h]));

@@ -36,7 +36,7 @@ import type { ImproveProfileConfig, LlmProfileConfig } from "../../core/config/c
 import { loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
-import type { EligibilitySource } from "../../core/improve-types";
+import type { AkmReflectFailure, AkmReflectResult, EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
@@ -179,28 +179,12 @@ export interface AkmReflectOptions {
   legacyBareState?: boolean;
 }
 
-export interface AkmReflectFailure {
-  schemaVersion: 2;
-  ok: false;
-  reason: AgentFailureReason;
-  error: string;
-  ref?: string;
-  engine?: string;
-  exitCode: number | null;
-  stdout?: string;
-  stderr?: string;
-}
-
-export interface AkmReflectSuccess {
-  schemaVersion: 2;
-  ok: true;
-  proposal: Proposal;
-  ref: string;
-  engine: string;
-  durationMs: number;
-}
-
-export type AkmReflectResult = AkmReflectSuccess | AkmReflectFailure;
+// AkmReflectFailure / AkmReflectSuccess / AkmReflectResult moved DOWN to
+// core/improve-types.ts (WI-9.8 KILL 2 — the §10.7 layering inversion:
+// core/improve-types.ts imported AkmReflectResult UP from this module).
+// Re-exported here verbatim so existing import sites (`from "./reflect"`)
+// are unchanged.
+export type { AkmReflectFailure, AkmReflectResult, AkmReflectSuccess } from "../../core/improve-types";
 
 const MAX_FEEDBACK_LINES = 10;
 const MAX_GLOBAL_FEEDBACK_LINES = 20;

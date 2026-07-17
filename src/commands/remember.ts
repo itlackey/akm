@@ -12,12 +12,13 @@
 
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
-import { getDefaultLlmConfig, loadConfig } from "../core/config/config";
+import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
+import { getDefaultLlmConfig } from "../integrations/agent/engine-resolution";
 import { parseFlagValue } from "../output/context";
 
 /**

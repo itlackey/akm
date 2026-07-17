@@ -70,7 +70,7 @@ import {
 } from "../../../core/authoring-rules";
 import { proposalContent } from "../../../core/file-change";
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
-import type { ProposalValidator } from "./proposal-validators";
+import type { ProposalValidator } from "../proposal-types";
 
 // ── Description / when_to_use shape ─────────────────────────────────────────
 

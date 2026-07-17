@@ -12,7 +12,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import {
   advanceTxn,
@@ -68,6 +68,7 @@ import {
   getNeighborsByEntryId,
   openExistingDatabase,
 } from "../../indexer/db/db";
+import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { callStructured } from "../../llm/structured-call";
@@ -128,137 +129,13 @@ import { isValidOp, mergePlans } from "./consolidate/merge";
 
 export { mergePlans } from "./consolidate/merge";
 
-export interface ConsolidateResult {
-  schemaVersion: 1;
-  ok: boolean;
-  shape: "consolidate-result";
-  dryRun: boolean;
-  previewOnly: boolean;
-  target: string;
-  processed: number;
-  merged: number;
-  deleted: number;
-  promoted: string[];
-  /** Number of contradiction edges written (C-3 / #382). */
-  contradicted: number;
-  /**
-   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
-   * (provenance shrank or specificity retention below the configured floor).
-   * The merges still proceeded in v1; the count feeds the collapse detector's
-   * cycle metrics and the health advisory.
-   */
-  mergeFloorViolations?: number;
-  /**
-   * Number of LLM chunks that failed (HTTP error, empty/invalid plan, etc.)
-   * during this run. Counterpart to {@link processed}, which counts INPUT
-   * memories — `failedChunks` is the visibility signal for silent LLM
-   * failures so they surface in `akm health` instead of being absorbed into
-   * a misleadingly healthy `processed` count.
-   *
-   * Backstory: 2026-05-26 incident — 21/21 runs reported `processed: 118` /
-   * `merged: 0` / `deleted: 0` while every chunk was actually being rejected
-   * with `n_keep > n_ctx`. The "OK + warnings" envelope hid the fact that
-   * the pass was a no-op. See
-   * `/tmp/akm-health-investigations/consolidation-no-op.md`.
-   */
-  failedChunks?: number;
-  /** Total chunks attempted this run; lets callers compute a failure rate. */
-  totalChunks?: number;
-  /**
-   * Memories the LLM saw inside a chunk but proposed no op for. Per chunk:
-   * `chunk.length − unique(ops.targetRefs)`. Pre-2026-05-26 this was a pure
-   * silent drop — 66% of consolidate memories had no warning, event, or
-   * counter. Without it, no consolidate prompt tuning is possible.
-   * See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-   */
-  judgedNoAction?: number;
-  /**
-   * Structured per-op skip reasons emitted at every deterministic post-LLM
-   * rejection site. Replaces the regex-on-`warnings[]` smell with a typed
-   * histogram input. Codes intentionally use snake_case; see
-   * `ConsolidateSkipReason` in health.ts for the vocabulary.
-   */
-  skipReasons?: Array<{
-    ref: string;
-    skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
-  }>;
-  /**
-   * Secondary memories absorbed into successful merge operations. 2026-05-26
-   * accounting-leak fix: `merged` is an OP-LEVEL counter (1 per merge op), but
-   * each successful merge actions `1 + secondaries.length` memories. Without
-   * `mergedSecondaries`, those secondaries are excluded from `judgedNoAction`
-   * (their refs land in the chunk's `targetRefs`) and never accounted for
-   * elsewhere, producing the small "processed − actioned − noAction − skips
-   * = N missing" gap observed in the 2026-05-27 02:07 run (11 unaccounted)
-   * and prior runs. Required for the invariant
-   * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
-   *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
-   */
-  mergedSecondaries?: number;
-  /**
-   * Memories belonging to chunks whose LLM call failed (HTTP error / empty
-   * response / invalid plan / consolidation-aborted by failure-rate threshold).
-   * 2026-05-26 accounting-leak fix: these memories never reach the per-chunk
-   * `judgedNoAction` computation (it lives after the success-path continue
-   * guards) and never enter `skipReasons` either, so they were a pure silent
-   * drop on every `failedChunks > 0` run. Required for the accounting
-   * invariant.
-   */
-  failedChunkMemories?: number;
-  planned?: ConsolidateOperation[];
-  warnings: string[];
-  durationMs: number;
-  /**
-   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
-   * these are health VIEWS of the pipeline, not truth sources. Omitted on the
-   * early-exit paths (no memories, all judged-unchanged) to keep the envelope
-   * tidy.
-   */
-  perfTelemetry?: ConsolidatePerfTelemetry;
-}
+// ConsolidateResult / ConsolidatePerfTelemetry / ConsolidateOpKind moved DOWN
+// to core/improve-types.ts (WI-9.8 KILL 2 — the §10.7 layering inversion:
+// core/improve-types.ts imported these UP from this module). Re-exported here
+// verbatim so existing import sites (`from "./consolidate"`) are unchanged.
+import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 
-/**
- * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
- * All fields are optional so existing callers that spread ConsolidateResult
- * can adopt the shape incrementally.
- */
-export interface ConsolidatePerfTelemetry {
-  /**
-   * Pool size BEFORE incremental/limit narrowing.
-   * Measures the raw candidate set loaded from disk this run.
-   */
-  dedupPoolSize?: number;
-  /**
-   * Pool size AFTER incremental and limit filtering — the memories actually
-   * sent to the LLM for a fresh judgment.
-   */
-  llmPoolSize?: number;
-  /**
-   * Wall-clock milliseconds spent in the embedding stage (cluster
-   * reordering). Extracted from timing around embedBatch calls so the LLM
-   * wall-clock accounts only for LLM calls.
-   */
-  embedMs?: number;
-  /**
-   * Number of body-embedding cache hits (content_hash found in body_embeddings).
-   * Healthy incremental run: >95% hits once the cache is warm.
-   */
-  embedCacheHits?: number;
-  /**
-   * Number of body-embedding cache misses (content_hash not found; embedBatch
-   * was called). High misses signal a cold cache or high corpus churn.
-   */
-  embedCacheMisses?: number;
-  /**
-   * Fraction of the run budget consumed by consolidation alone:
-   * `consolidation.durationMs / budgetMs`. Values >1.0 mean this consolidation
-   * pass alone exceeded the caller's declared budget — a SIGTERM risk signal.
-   */
-  estimatedBudgetFractionUsed?: number;
-}
-
-/** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
-type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
+export type { ConsolidateOpKind, ConsolidatePerfTelemetry, ConsolidateResult } from "../../core/improve-types";
 
 export interface AkmConsolidateOptions {
   /**

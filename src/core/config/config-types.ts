@@ -23,20 +23,25 @@
  * have no schema counterpart.
  */
 import type { z } from "zod";
-// VALID_HARNESS_IDS now derives from the unified HARNESS_REGISTRY (#562), which
-// is the single source of truth replacing the previously-disconnected
-// registries. config ← harnesses is the only import direction (harnesses/ is a
-// dependency-graph leaf), so there is no cycle.
-import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "../../integrations/harnesses";
+// VALID_HARNESS_IDS / HARNESS_AGENT_DISPATCH_IDS derive from the dependency-free
+// harnesses/ids.ts leaf (WI-9.8 KILL 3), NOT the full HARNESS_REGISTRY barrel
+// (`../../integrations/harnesses`) — that barrel transitively pulls in every
+// harness's agent-builder and the agent runtime, which is what fused config
+// into the same import-cycle SCC as `integrations/agent/*`. `harnesses/index.ts`
+// asserts at construction time that its registry matches this leaf, so the two
+// cannot silently drift (see `tests/harnesses-registry.test.ts` for the
+// value-level pin). config ← harnesses/ids is the only import direction (the
+// leaf imports nothing), so there is no cycle.
+import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses/ids";
 
 /**
- * Canonical list of valid agent harness / platform ids. Re-exported from the
- * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
- * agent-engine platform union, and setup's `DetectedHarness` union all
- * derive from one place and cannot drift. Add a harness in
- * `src/integrations/harnesses/index.ts`.
+ * Canonical list of valid agent harness / platform ids. Derived from the
+ * dependency-free harness-id leaf (#562/WI-9.8) so the Zod `AgentPlatformSchema`
+ * enum, the agent-engine platform union, and setup's `DetectedHarness` union
+ * all derive from one place and cannot drift. Add a harness in
+ * `src/integrations/harnesses/index.ts` (and its `ids.ts` mirror entry).
  */
-export { HARNESS_BY_ID, VALID_HARNESS_IDS };
+export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];

@@ -5,11 +5,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getDefaultLlmConfig, loadUserConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { loadUserConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { validateConfigShape } from "../../src/core/config/config-schema";
 import { configSet } from "../../src/core/config/config-walker";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
+import { getDefaultLlmConfig } from "../../src/integrations/agent/engine-resolution";
 
 beforeEach(() => resetConfigCache());
 afterEach(() => resetConfigCache());

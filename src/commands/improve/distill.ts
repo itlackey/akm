@@ -58,10 +58,10 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
-import type { EligibilitySource } from "../../core/improve-types";
+import type { AkmDistillResult, EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
@@ -69,6 +69,7 @@ import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
 import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
@@ -109,32 +110,13 @@ export { runLessonQualityJudge };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-/**
- * Outcome reported on every `distill` invocation. Mirrors the metadata stored
- * on the corresponding `distill_invoked` event so observers can read either
- * the command result or the events stream and see the same picture.
- *
- *   - `queued`           — LLM returned valid lesson content; proposal created.
- *   - `skipped`          — Feature gate disabled OR LLM call failed/timed out.
- *                          No proposal. Exit 0.
- *   - `validation_failed`— LLM returned content but it failed lesson lint.
- *                          No proposal. Exit non-zero (UsageError).
- */
-/**
- * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
- * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
- * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
- * The review-needed band converts uncertain cases into explicit human review
- * requests rather than opaque auto-decisions.
- */
-export type DistillOutcome =
-  | "queued"
-  | "skipped"
-  | "config_disabled"
-  | "llm_failed"
-  | "validation_failed"
-  | "quality_rejected"
-  | "review_needed";
+// DistillOutcome / AkmDistillResult moved DOWN to core/improve-types.ts
+// (WI-9.8 KILL 2 — the §10.7 layering inversion: core/improve-types.ts
+// imported AkmDistillResult UP from this module, and distill/promote-memory.ts
+// + distill/quality-gate.ts each imported it back from here too, forming a
+// sub-cycle). Re-exported here verbatim so existing import sites
+// (`from "./distill"`) are unchanged.
+export type { AkmDistillResult, DistillOutcome } from "../../core/improve-types";
 
 /**
  * Asset-ref types that `akm distill` structurally refuses as inputs.
@@ -262,64 +244,6 @@ export interface AkmDistillOptions {
   sourceName?: string;
   /** Read pre-source-qualification feedback only for the historical local stash. */
   legacyBareState?: boolean;
-}
-
-export interface AkmDistillResult {
-  schemaVersion: 1;
-  ok: boolean;
-  outcome: DistillOutcome;
-  /** Original input ref (verbatim). */
-  inputRef: string;
-  /**
-   * Historical field name kept for compatibility. Carries the queued proposal
-   * ref, which may now be a `knowledge:` ref when memory promotion fires.
-   */
-  lessonRef: string;
-  /** Explicit queued proposal ref. Mirrors `lessonRef`. */
-  proposalRef?: string;
-  /** Type of proposal the invocation targeted or queued. */
-  proposalKind?: "lesson" | "knowledge";
-  /** Proposal id when `outcome === "queued"`. */
-  proposalId?: string;
-  /** Human-readable hint surfaced when the call was skipped. */
-  message?: string;
-  /** Validation findings when `outcome === "validation_failed"`. */
-  findings?: { kind: string; field: string; message: string }[];
-  /** The full proposal object when `outcome === "queued"`. */
-  proposal?: Proposal;
-  /**
-   * Diagnostic — number of feedback events filtered out by
-   * `excludeFeedbackFromRefs` (#267). Always present when the option was
-   * supplied, even when the count is 0. Callers (e.g. `bench evolve`) use
-   * this to surface filter-applied notes in their `warnings[]`.
-   */
-  filteredFeedbackCount?: number;
-  /**
-   * True when `excludeFeedbackFromRefs` reduced the feedback set to empty
-   * AND there were originally events for the target ref. Lets callers
-   * distinguish "no feedback was ever recorded" from "we suppressed all
-   * recorded feedback" — the LLM-input contract is identical (no feedback
-   * shown) but the operator-visible meaning differs.
-   */
-  feedbackFullyFiltered?: boolean;
-  /**
-   * Judge score (1–5 float) when `outcome === "quality_rejected"`.
-   * Present as -1 when the judge could not run (no LLM / timeout / parse
-   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
-   * not minted.
-   */
-  score?: number;
-  /**
-   * One-sentence reason from the LLM judge when `outcome === "quality_rejected"`.
-   */
-  reason?: string;
-  /**
-   * Count of description ↔ when_to_use auto-swaps performed during this
-   * distill run (0 or 1 today; reserved as a counter so callers and health
-   * dashboards can track how often the swap-normalization guard triggers).
-   * Only present when at least one swap was applied.
-   */
-  descriptionSwapped?: number;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────

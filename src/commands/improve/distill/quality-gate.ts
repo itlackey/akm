@@ -14,15 +14,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { timestampForFilename } from "../../../core/common";
-import { type AkmConfig, getDefaultLlmConfig, type LlmConnectionConfig } from "../../../core/config/config";
+import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { appendEvent, type EventsContext } from "../../../core/events";
-import type { EligibilitySource } from "../../../core/improve-types";
+import type { AkmDistillResult, DistillOutcome, EligibilitySource } from "../../../core/improve-types";
 import { withStateDb } from "../../../core/state-db";
+import { getDefaultLlmConfig } from "../../../integrations/agent/engine-resolution";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import type { LlmFeatureKey } from "../../../llm/feature-gate";
 import { callStructured } from "../../../llm/structured-call";
 import { akmSearch } from "../../read/search";
-import type { AkmDistillResult, DistillOutcome } from "../distill";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { computeSalience, upsertAssetSalience } from "../salience";
 

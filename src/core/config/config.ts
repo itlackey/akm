@@ -21,7 +21,6 @@ import type {
   ImproveProfileConfig,
   IndexConfig,
   IndexPassConfig,
-  LlmConnectionConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
@@ -29,7 +28,13 @@ import { deepMergeConfig } from "./deep-merge";
 
 export { stripJsonComments } from "./config-io";
 
-import { materializeLlmConnection, resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
+// requireLlmConfig / getDefaultLlmConfig moved to
+// integrations/agent/engine-resolution.ts (WI-9.8 KILL 3, D.3 edge A) — they
+// called that module's materializeLlmConnection/resolveLlmEngineUse, and that
+// module imported LlmConnectionConfig back from this file, closing a 2-file
+// cycle that also fused config.ts into the harness/agent-runtime SCC. This
+// file can no longer re-export them (a re-export is still a graph edge to
+// engine-resolution.ts) — import them from there directly.
 import { getConfigPath } from "../paths";
 import { warn } from "../warn";
 
@@ -222,20 +227,6 @@ export function getSources(config: AkmConfig): SourceConfigEntry[] {
 
 export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[] {
   return config.registries ?? DEFAULT_CONFIG.registries ?? [];
-}
-
-/** Resolve and materialize the configured default LLM engine at dispatch time. */
-export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
-  return materializeLlmConnection(resolveLlmEngineUse(config, []));
-}
-
-/**
- * Like {@link requireLlmConfig} but returns `undefined` instead of throwing
- * when no LLM is configured. Use in code paths where the LLM is optional.
- */
-export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
-  const resolved = resolveLlmEngineUse(config, [], { optional: true });
-  return resolved ? materializeLlmConnection(resolved) : undefined;
 }
 
 type NamedKeys<T> = keyof {

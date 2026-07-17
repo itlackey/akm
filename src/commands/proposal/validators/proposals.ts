@@ -12,22 +12,16 @@
  */
 
 import { repairTruncatedDescription } from "../../../core/text-truncation";
-import type { Proposal } from "../repository";
+import type { Proposal, ProposalValidationReport } from "../proposal-types";
 import { runProposalValidators } from "./proposal-validators";
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
-export interface ProposalValidationFinding {
-  kind: string;
-  message: string;
-  /** "warn" findings are surfaced but do not block proposal acceptance. Defaults to error-level when absent. */
-  severity?: "warn";
-}
-
-export interface ProposalValidationReport {
-  ok: boolean;
-  findings: ProposalValidationFinding[];
-}
+// ProposalValidationFinding / ProposalValidationReport moved to
+// ../proposal-types.ts (WI-9.8 KILL 1 — sever the validators-internal cycle
+// through proposal-validators.ts, which needed these types back). Re-exported
+// here so existing import sites are unchanged.
+export type { ProposalValidationFinding, ProposalValidationReport } from "../proposal-types";
 
 /**
  * Validate a proposal payload before promotion. Generic by default — any

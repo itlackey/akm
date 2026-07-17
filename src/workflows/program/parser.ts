@@ -27,7 +27,6 @@
 import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
-import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import {
   jsonBytes,
   utf8Bytes,
@@ -63,6 +62,14 @@ import {
   type WorkflowProgram,
   type WorkflowProgramParseResult,
 } from "./schema";
+
+// LlmInvocationOverrides referenced via an inline `import("...")` TYPE QUERY
+// (WI-9.8 KILL 3) rather than a top-level `import type` — this file is
+// reached from `output/renderers.ts` (via `workflows/renderer.ts`), and a
+// top-level import of the agent-runtime here would route the renderers hub
+// back into the agent-runtime / harness-barrel cluster KILL 3 severs. Same
+// rationale as `./schema.ts`'s identical query.
+type LlmInvocationOverrides = import("../../integrations/agent/engine-resolution").LlmInvocationOverrides;
 
 const TOP_LEVEL_KEYS = ["version", "name", "description", "params", "defaults", "budget", "steps"];
 const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];

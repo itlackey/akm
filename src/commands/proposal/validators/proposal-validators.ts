@@ -2,38 +2,26 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AssetRef } from "../../../core/asset/asset-ref";
 import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
-import type { Proposal } from "../repository";
+import type {
+  Proposal,
+  ProposalValidationContext,
+  ProposalValidationFinding,
+  ProposalValidationReport,
+  ProposalValidator,
+} from "../proposal-types";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
-import type { ProposalValidationFinding, ProposalValidationReport } from "./proposals";
 
-export interface ProposalValidationContext {
-  parsedRef?: AssetRef;
-  stop?: boolean;
-  /**
-   * Optional source-asset context for validators that need to compare the
-   * proposed payload against the asset it was derived from (improve-stage
-   * validators: reflect size guard, consolidate source-superseded guard).
-   *
-   * Populated by improve-stage call sites before invoking
-   * {@link runProposalValidators}; the `proposal accept` path leaves this
-   * absent and source-context-aware validators no-op.
-   */
-  source?: {
-    content?: string;
-    frontmatter?: Record<string, unknown>;
-  };
-}
-
-export interface ProposalValidator {
-  name: string;
-  appliesTo(proposal: Proposal, ctx: ProposalValidationContext): boolean;
-  validate(proposal: Proposal, ctx: ProposalValidationContext): ProposalValidationFinding[];
-}
+// ProposalValidationContext / ProposalValidator moved to ../proposal-types.ts
+// (WI-9.8 KILL 1 — proposal-quality-validators.ts needed ProposalValidator
+// back, and this module needs defaultProposalQualityValidators from
+// proposal-quality-validators.ts as a value; hoisting the shared interface to
+// the dependency-free leaf breaks that back-edge). Re-exported here so
+// existing import sites are unchanged.
+export type { ProposalValidationContext, ProposalValidator } from "../proposal-types";
 
 const genericProposalValidator: ProposalValidator = {
   name: "generic-proposal-validator",
