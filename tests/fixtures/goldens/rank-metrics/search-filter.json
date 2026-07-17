@@ -1,0 +1,90 @@
+{
+  "capturedAtHead": "cd25a769443f4dbe566a418316b67e843ba1dbb9",
+  "caseA": {
+    "judgment": {
+      "banned": [
+        "memory:archived-memory",
+        "memory:base-memory"
+      ],
+      "id": "search-filter-case-a-real-search",
+      "idealOrder": [
+        "memory:active-memory",
+        "memory:asserted-memory"
+      ],
+      "limit": 10,
+      "query": "gridlock",
+      "relevant": [
+        "memory:active-memory",
+        "memory:asserted-memory"
+      ]
+    },
+    "metrics": {
+      "bannedLeapfrogCount": 0,
+      "mrr": 1,
+      "ndcg": 1,
+      "noBannedAboveRequired": 1,
+      "recall": 1,
+      "score": 1
+    },
+    "returned": [
+      "memory:active-memory",
+      "memory:asserted-memory",
+      "memory:plain-memory",
+      "memory:proposed-memory",
+      "memory:deprecated-memory",
+      "memory:superseded-memory",
+      "knowledge:contradicted-knowledge",
+      "memory:base-memory.derived",
+      "memory:base-memory",
+      "memory:silent-twin-base",
+      "memory:archived-memory"
+    ]
+  },
+  "caseB": {
+    "judgment": {
+      "banned": [
+        "memory:archived-memory"
+      ],
+      "id": "search-filter-case-b-synthetic-leapfrog",
+      "idealOrder": [
+        "memory:active-memory",
+        "memory:asserted-memory"
+      ],
+      "limit": 5,
+      "query": "synthetic-leapfrog",
+      "relevant": [
+        "memory:active-memory",
+        "memory:asserted-memory"
+      ]
+    },
+    "metrics": {
+      "bannedLeapfrogCount": 1,
+      "mrr": 0.3333333333333333,
+      "ndcg": 0.5706417189553201,
+      "noBannedAboveRequired": 0,
+      "recall": 1,
+      "score": 0.5186541928109935
+    },
+    "returned": [
+      "memory:archived-memory",
+      "memory:plain-memory",
+      "memory:active-memory",
+      "memory:asserted-memory"
+    ]
+  },
+  "determinism": [
+    "scoreCurateCase/summarizeCurateMetrics (scripts/akm-eval/src/rank-metrics.ts) are PURE functions over string[] refs and a CurateJudgment -- no IO, no clock, no RNG -- so both cases are byte-stable given fixed inputs.",
+    "Case A's 'returned' list comes from a real akmSearch call, made deterministic by: semanticSearchMode='off' (no embedding provider, no vector scores, rankingMode is always 'fts', the minScore floor never applies); disableProjectContext=true (no CWD-derived token boost); disableScopedUtility=true (no workflow-scope-keyed utility lookup); skipLogging=true (no usage-event write feeding back into utility scores); no improve.utilityDecay configured (the only Date.now() call in the ranking pipeline, ranking-contributors.ts:406, is gated behind that opt-in and never executes here); and no graph.json in the fixture (graphContext is always null). FTS5 BM25 over fixed, committed fixture content is itself deterministic, and searchDatabase's final sort has an explicit name tiebreaker (db-search.ts:500) precisely so no residual floating-point epsilon can flip result order run-to-run (Issue #14, cited in that file).",
+    "Case B's 'returned' list is a literal hand-authored array (no search call at all) -- included as a leapfrog-violation contrast so this golden differentiates a good ranking from a bad one regardless of what case A's real search order turns out to be."
+  ],
+  "scenario": "Rank-metric snapshot via scripts/akm-eval/src/rank-metrics.ts's scoreCurateCase/summarizeCurateMetrics (ndcgAtK/recallAtK/mrr/noBannedAboveRequired) over one real-search-derived case and one hand-built synthetic leapfrog case (WI-0b.5c)",
+  "summary": {
+    "caseCount": 2,
+    "meanMrr": 0.6666666666666666,
+    "meanNdcg": 0.7853208594776601,
+    "meanNoBannedAboveRequired": 0.5,
+    "meanRecall": 1,
+    "meanScore": 0.7593270964054968,
+    "totalBannedLeapfrog": 1
+  }
+}

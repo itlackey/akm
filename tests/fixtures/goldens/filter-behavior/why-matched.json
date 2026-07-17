@@ -1,0 +1,175 @@
+{
+  "byRef": {
+    "knowledge:contradicted-knowledge": {
+      "beliefState": "contradicted",
+      "name": "contradicted-knowledge",
+      "quality": "curated",
+      "score": 0.2,
+      "type": "knowledge",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "curated metadata boost",
+        "metadata confidence boost",
+        "contradicted belief state"
+      ]
+    },
+    "memory:active-memory": {
+      "beliefState": "active",
+      "name": "active-memory",
+      "quality": "curated",
+      "score": 1,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched searchHints",
+        "matched aliases",
+        "matched description",
+        "curated metadata boost",
+        "metadata confidence boost",
+        "active belief state"
+      ]
+    },
+    "memory:archived-memory": {
+      "beliefState": "archived",
+      "name": "archived-memory",
+      "quality": "generated",
+      "score": 0.15,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "archived belief state"
+      ]
+    },
+    "memory:asserted-memory": {
+      "beliefState": "asserted",
+      "name": "asserted-memory",
+      "quality": "generated",
+      "score": 1,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "asserted belief state"
+      ]
+    },
+    "memory:base-memory": {
+      "beliefState": "contradicted",
+      "name": "base-memory",
+      "quality": "generated",
+      "score": 0.2,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "metadata confidence boost",
+        "contradicted belief state"
+      ]
+    },
+    "memory:base-memory.derived": {
+      "beliefState": "contradicted",
+      "name": "base-memory.derived",
+      "quality": "generated",
+      "score": 0.2,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "contradicted belief state"
+      ]
+    },
+    "memory:deprecated-memory": {
+      "beliefState": "deprecated",
+      "name": "deprecated-memory",
+      "quality": "generated",
+      "score": 0.28,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "deprecated belief state"
+      ]
+    },
+    "memory:plain-memory": {
+      "name": "plain-memory",
+      "quality": "generated",
+      "score": 1,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost"
+      ]
+    },
+    "memory:silent-twin-base": {
+      "beliefState": "contradicted",
+      "name": "silent-twin-base",
+      "quality": "generated",
+      "score": 0.2,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "contradicted belief state"
+      ]
+    },
+    "memory:superseded-memory": {
+      "beliefState": "superseded",
+      "name": "superseded-memory",
+      "quality": "generated",
+      "score": 0.25,
+      "type": "memory",
+      "whyMatched": [
+        "fts bm25 relevance",
+        "matched tags",
+        "matched aliases",
+        "matched description",
+        "metadata confidence boost",
+        "superseded belief state"
+      ]
+    }
+  },
+  "capturedAtHead": "cd25a769443f4dbe566a418316b67e843ba1dbb9",
+  "notes": [
+    "buildWhyMatched is called once per hit from buildDbHit (:784). Per anchors.md Section D.2 (§14.2 finding A2, Chunk-5-owned), it re-scans matches and recomputes boost constants that duplicate metadataRankingContributor (ranking-contributors.ts:288) -- a drift-prone parallel scorer. This golden is the byte-level oracle a future consolidation must reproduce.",
+    "memory:active-memory is this fixture's richest signal case (see MANIFEST.json): curated quality, active belief state, and tags/searchHints/aliases/description all sharing the query token 'gridlock', so its whyMatched array exercises nearly every reason branch in one hit (fts ranking mode, matched name tokens/tags/searchHints/aliases/description, curated metadata boost, metadata confidence boost, active belief state) except the skill/command/agent type boost and the utility/graph boosts (this fixture has no usage history and no graph.json).",
+    "rankedRefOrder is the scored-path (searchDatabase) ordering; byRef is keyed by ref (not array order) so a future diff against this fixture reads per-entry, not by fragile array index.",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): Chunk 5's consolidation of buildWhyMatched with metadataRankingContributor must reproduce this byte-for-byte."
+  ],
+  "query": "gridlock",
+  "rankedRefOrder": [
+    "memory:active-memory",
+    "memory:asserted-memory",
+    "memory:plain-memory",
+    "memory:deprecated-memory",
+    "memory:superseded-memory",
+    "knowledge:contradicted-knowledge",
+    "memory:base-memory.derived",
+    "memory:base-memory",
+    "memory:silent-twin-base",
+    "memory:archived-memory"
+  ],
+  "scenario": "buildWhyMatched output (db-search.ts:837) alongside the ranked hit set for query='gridlock' against tests/fixtures/stashes/search-filter/, default filters (includeProposed=false, belief=all) (WI-0b.5b)"
+}
