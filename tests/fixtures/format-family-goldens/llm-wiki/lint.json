@@ -1,0 +1,64 @@
+{
+  "scenario": "llm-wiki adapter validate → native wiki checks (broken-xref, uncited-raw, missing-description, orphan). Valid pages → []; the orphan page has a BROKEN xref. Mirrors lint/all-types.json's perType shape. SPECIFICATION golden (llm-wiki adapter = Chunk 4).",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED as an adapter — but `akm wiki lint` exists (src/wiki/wiki.ts) and defines the structural checks. Chunk 4 ports them into validate().",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (wiki-page validation: 'native wiki validation (§7)'), §7 (llm-wiki row: xrefs + citations), §9 (broken links tolerated → warning). Diagnostic {file, issue, detail, fixed}.",
+  "realWorldSource": [
+    "src/wiki/wiki.ts + src/assets/wiki/schema-template.md 'Lint' section — the deterministic structural checks: link orphans, broken xrefs, missing descriptions, uncited raws, refresh the index"
+  ],
+  "notes": [
+    "SPECIFICATION golden. Native wiki validation (from the schema template's Lint contract): (1) broken-xref — an xref/link target that does not resolve to an existing page; (2) uncited-raw — a raw/ source not cited by any page's `sources:`; (3) missing-description — a page without a description; (4) orphan — a page with no inbound/outbound valid links. Broken links are TOLERATED (warning, non-blocking) per spec §9.",
+    "issue codes (`broken-xref`, `uncited-raw`, `missing-description`, `orphan`) are PROPOSED, aligned to the schema template's wording; Chunk 4 finalizes the exact strings. `detail` strings are illustrative.",
+    "In this fixture: raw/2026-07-http-rfc is cited by two pages → NOT uncited; http-caching + varnish are well-formed (valid reciprocal xrefs, descriptions, citations) → []; orphan.md has a broken xref (pages/does-not-exist) and no citations → broken-xref (warning)."
+  ],
+  "perType": {
+    "reservedFiles": {
+      "relPaths": ["schema.md", "index.md", "log.md"],
+      "issues": [],
+      "note": "reserved files are not concepts; validate does not run page checks on them (base checks only, non-blocking)."
+    },
+    "rawSource": {
+      "relPath": "raw/2026-07-http-rfc.md",
+      "type": "wiki-source",
+      "issues": [],
+      "note": "cited by pages/http-caching and pages/entities/varnish → no uncited-raw finding."
+    },
+    "conceptPage": {
+      "relPath": "pages/http-caching.md",
+      "type": "concept",
+      "issues": [],
+      "note": "valid xref → pages/entities/varnish (exists), has description, cites a raw source → clean."
+    },
+    "entityPage": {
+      "relPath": "pages/entities/varnish.md",
+      "type": "entity",
+      "issues": [],
+      "note": "valid reciprocal xref → pages/http-caching (exists), has description, cites a raw source → clean."
+    },
+    "orphanPageBrokenXref": {
+      "relPath": "pages/orphan.md",
+      "type": "note",
+      "issues": [
+        {
+          "file": "pages/orphan.md",
+          "issue": "broken-xref",
+          "detail": "warning: cross-reference target not found: pages/does-not-exist (non-blocking; cross-references must point at pages that actually exist — wiki schema hard rule).",
+          "fixed": false
+        }
+      ],
+      "note": "PRIMARY lint finding: the xref target pages/does-not-exist does not resolve. This page is also a link orphan (no inbound xrefs, no valid outbound + no sources); whether `orphan` is emitted as a separate finding is a Chunk-4 decision (recorded under edgeCases below)."
+    }
+  },
+  "edgeCases": {
+    "orphanFindingIsOptional": {
+      "scenario": "a page with no inbound/outbound VALID links (orphan.md qualifies once its one xref is dropped as broken)",
+      "proposedIssue": {
+        "issue": "orphan",
+        "detail": "page has no valid cross-references in or out (link orphan) — wiki schema Lint check.",
+        "fixed": false
+      },
+      "note": "Whether the adapter emits BOTH broken-xref AND orphan for the same page, or suppresses orphan while a broken xref is present, is an open Chunk-4 decision. Recorded default: emit broken-xref only (the actionable finding); surface orphan after the xref is fixed."
+    }
+  }
+}

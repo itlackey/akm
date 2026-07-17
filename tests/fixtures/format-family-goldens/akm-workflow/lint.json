@@ -1,0 +1,39 @@
+{
+  "scenario": "akm-workflow adapter validate for the markdown workflow, plus the parseWorkflowProgram correctness result for the YAML program. Mirrors lint/all-types.json's workflowMd + workflowProgramYaml split. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item). The underlying WorkflowLinter (src/commands/lint/*) and parseWorkflowProgram (src/workflows/program/) exist; the adapter wrapper does not.",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (workflow validation column: 'placeholder-stub, invalid-workflow-structure'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
+  "realWorldSource": [
+    "AKM-native; mirrors the frozen lint/all-types.json workflowMd (WorkflowLinter) + workflowProgramYaml (parseWorkflowProgram result) split rationale"
+  ],
+  "notes": [
+    "SPECIFICATION golden. Two distinct correctness surfaces, exactly as the frozen all-types lint golden documents: (1) the MARKDOWN workflow is a real validate/lint path (issues[] from a WorkflowLinter-equivalent — checks placeholder-stub, invalid-workflow-structure); (2) the YAML PROGRAM is NOT a markdown-lint path — its correctness is parseWorkflowProgram's own {ok, program|errors} result (captured under `result` with correctnessCheck='parseWorkflowProgram').",
+    "The parsed program's `source` line-position fields (start/end offsets the parser computes) are OMITTED here — a specification golden does not run the parser, so only the semantic shape (ok, name, description, version, step ids + instructions) is pinned. The adapter's captured golden will add the exact positions when it lands."
+  ],
+  "perType": {
+    "workflowMd": {
+      "relPath": "release.md",
+      "type": "workflow",
+      "issues": [],
+      "note": "conformant: two well-formed steps (tag, publish) each with instructions; no placeholder-stub, valid structure."
+    },
+    "workflowProgramYaml": {
+      "relPath": "deploy.yaml",
+      "type": "workflow",
+      "correctnessCheck": "parseWorkflowProgram",
+      "result": {
+        "ok": true,
+        "program": {
+          "version": 2,
+          "name": "deploy",
+          "description": "Minimal YAML workflow program (the program form is an AKM extension).",
+          "steps": [
+            { "id": "build", "unit": { "instructions": "Build the release artifact." } },
+            { "id": "ship", "unit": { "instructions": "Upload the artifact and record the deployment." } }
+          ]
+        }
+      }
+    }
+  }
+}

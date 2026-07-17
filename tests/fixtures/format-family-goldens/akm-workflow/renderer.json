@@ -1,0 +1,31 @@
+{
+  "scenario": "presentationFor('workflow') — renderer + action for the markdown workflow and the YAML program. Both are type=workflow but render via different renderers. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §2 / §3.4; src/core/type-presentation.ts TYPE_PRESENTATION['workflow'] (renderer 'workflow-md', action buildWorkflowAction). The workflow-program-yaml renderer form is selected by the adapter for the YAML program (src/workflows/renderer.ts).",
+  "realWorldSource": [
+    "AKM-native; mirrors the frozen renderer/all-types.json workflow + workflow-program-yaml entries"
+  ],
+  "notes": [
+    "SPECIFICATION golden. TYPE_PRESENTATION keys `workflow` to renderer 'workflow-md' with buildWorkflowAction. The YAML program form additionally has its own renderer name 'workflow-program-yaml' (the adapter picks it for the program form) — same `type`, same action, different renderer, exactly as the frozen all-types renderer golden documents.",
+    "action = buildWorkflowAction(ref) = \"Resume the active run or start a new run with `akm workflow next '<ref>'`.\" (src/core/type-presentation.ts)."
+  ],
+  "byRelPath": {
+    "release.md": {
+      "type": "workflow",
+      "ref": "sample-akm-workflow//release",
+      "label": "Workflow",
+      "renderer": "workflow-md",
+      "action": "Resume the active run or start a new run with `akm workflow next 'sample-akm-workflow//release'`."
+    },
+    "deploy.yaml": {
+      "type": "workflow",
+      "ref": "sample-akm-workflow//deploy",
+      "label": "Workflow",
+      "renderer": "workflow-program-yaml",
+      "action": "Resume the active run or start a new run with `akm workflow next 'sample-akm-workflow//deploy'`.",
+      "note": "same type + action as the markdown form; renderer differs (program form)."
+    }
+  }
+}

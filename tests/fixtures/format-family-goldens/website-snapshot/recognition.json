@@ -1,0 +1,53 @@
+{
+  "scenario": "website-snapshot adapter recognize/index for a materialized crawl snapshot. Reads manifest.json for provenance; recognizes stash/knowledge/**.md pages as type=website (read-only). SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED as an adapter — but the on-disk snapshot ARTIFACT is real (src/sources/website-ingest.ts writes it). The website-snapshot adapter that re-types those pages to `website` is a future Chunk-2 format-adapter work item.",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (website-snapshot adapter row: 'crawl snapshot (website-ingest.ts:180) — read-only (Mode A); export (Mode B) routes content through the destination adapter'), §6 (website row: 'website crawl snapshot; base (read-only)').",
+  "realWorldSource": [
+    "src/sources/website-ingest.ts — the actual snapshot writer: manifest.json = {url, fetchedAt} (0o600); pages at <root>/stash/knowledge/<slug>.md with knowledge-shaped frontmatter (name, description, sourceUrl, title, tags:[website, host]); crawl caps MAX_PAGES=50, MAX_DEPTH=3, 5MB/page, 10min wall-clock, 8 redirects",
+    "https://example.com/ — the canonical illustrative host used for the fixture pages"
+  ],
+  "notes": [
+    "SPECIFICATION golden. FLAG — SPEC-vs-ARTIFACT nuance: the on-disk snapshot pages are KNOWLEDGE-shaped markdown (NO `type:` frontmatter field; the string 'website' appears only as the FIRST tag). The website-snapshot ADAPTER RE-TYPES them to the open `type` = 'website' (spec §6/§7). So recognize() emits type='website' even though the file itself carries no type. The adapter author must decide whether the re-type is unconditional (any page under a website-snapshot component) or gated on the `website` tag / sourceUrl frontmatter — see the methodology doc's open-questions section.",
+    "manifest.json is snapshot PROVENANCE (url + fetchedAt), not a concept — the adapter reads it (sourceRef/fetchedAt) but does not index it as an item.",
+    "CONCEPTID normalization is an OPEN QUESTION: pages live under stash/knowledge/<slug>.md. The faithful conceptId is the page path − .md (e.g. stash/knowledge/example-com/index); the adapter MAY strip the stash/knowledge/ prefix to yield example-com/index. Both are recorded below; the adapter author picks one. Read-only ⇒ these refs are never written.",
+    "read-only (Mode A): the component is writable:false; export (Mode B) routes the page `content` through the DESTINATION adapter + a FileChange transaction (spec §7)."
+  ],
+  "byRelPath": {
+    "manifest.json": {
+      "recognized": false,
+      "role": "snapshot-manifest",
+      "reason": "Provenance metadata {url, fetchedAt} read by the adapter for sourceRef/freshness — NOT indexed as a concept.",
+      "provenance": { "url": "https://example.com/", "fetchedAt": "2026-07-17T00:00:00.000Z" }
+    },
+    "stash/knowledge/example-com/index.md": {
+      "recognized": true,
+      "adapterId": "website-snapshot",
+      "component": "main",
+      "type": "website",
+      "conceptId": "stash/knowledge/example-com/index",
+      "conceptIdIfPrefixStripped": "example-com/index",
+      "ref": "sample-website//stash/knowledge/example-com/index",
+      "name": "Example Domain",
+      "description": "Snapshot of https://example.com/",
+      "sourceRef": "https://example.com/",
+      "readOnly": true,
+      "derivation": "crawl page under stash/knowledge/ → RE-TYPED to type='website' by the adapter (spec §6/§7). name ← title, description ← description, sourceRef ← sourceUrl. On disk this file has NO type: field (knowledge-shaped, tag 'website')."
+    },
+    "stash/knowledge/example-com/about.md": {
+      "recognized": true,
+      "adapterId": "website-snapshot",
+      "component": "main",
+      "type": "website",
+      "conceptId": "stash/knowledge/example-com/about",
+      "conceptIdIfPrefixStripped": "example-com/about",
+      "ref": "sample-website//stash/knowledge/example-com/about",
+      "name": "About Example",
+      "description": "Snapshot of https://example.com/about",
+      "sourceRef": "https://example.com/about",
+      "readOnly": true,
+      "derivation": "second crawled page, one link deep. Same re-type to type='website'."
+    }
+  }
+}

@@ -15,7 +15,13 @@
     }
   },
   "files": {
-    "includes": ["src/**", "tests/**", "!src/assets/templates/html", "!tests/fixtures/goldens/**/*.json"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "!src/assets/templates/html",
+      "!tests/fixtures/goldens/**/*.json",
+      "!tests/fixtures/format-family-goldens/**/*.json"
+    ]
   },
   "overrides": [
     {

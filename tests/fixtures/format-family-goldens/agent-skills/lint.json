@@ -1,0 +1,76 @@
+{
+  "scenario": "agent-skills adapter validate(component, changes, ctx) → Diagnostic[] for each SKILL.md — the Agent Skills contract (spec §4.5). One conformant skill (→[]) and two HARD-RULE violations (bad name charset, over-length description). Mirrors lint/all-types.json's perType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item). The ONLY skill check coded today is `missing-skill-md` (src/commands/lint/skill-linter.ts, src/core/adapter/adapters/akm-lint.ts). The field-level Agent Skills checks below are SPEC-DEFINED (§4.5), not yet coded.",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §4.5 / §6 (skill validation column): 'hard: name 1-64 (^[a-z0-9]+(-[a-z0-9]+)*$, NFKC, == parent dir name), description 1-1024, compatibility ≤500, metadata string→string map, YAML-mapping frontmatter; soft (warnings): body <500 lines / instructions <5k tokens, lowercase skill.md filename, allowed-tools portability. Strictness is per-adapter: agent-skills errors on unknown frontmatter (skills-ref behavior).'",
+  "realWorldSource": [
+    "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — name: max 64, only lowercase letters/numbers/hyphens, no XML tags, no reserved words 'anthropic'/'claude'; description: non-empty, max 1024, no XML tags",
+    "skills-ref validator (vendored, 0.1.0) per spec References — compatibility ≤500, metadata string→string map, name == parent dir name"
+  ],
+  "notes": [
+    "SPECIFICATION golden — Diagnostic shape is src/core/adapter/types.ts Diagnostic ({file, issue, detail, fixed}).",
+    "ISSUE-CODE STATUS: the spec names the RULES but NOT the diagnostic `issue` codes. The codes below (`skill-name-invalid`, `skill-description-too-long`, `missing-skill-md`) are PROPOSED, spec-aligned names; `missing-skill-md` is the one already used in code. The adapter author finalizes the exact code strings when the §4.5 checks are built — flagged in the methodology doc.",
+    "PER-ADAPTER STRICTNESS: agent-skills ERRORS on unknown frontmatter (skills-ref behavior); the conformant pdf-processing skill uses only recognized fields (name, description, license, metadata) so it passes. Under the `claude` adapter the same fields plus Claude Code extension fields would be tolerated (see claude/lint.json).",
+    "`detail` strings are illustrative, human-readable messages a validator SHOULD emit; the load-bearing assertions are (file, issue, fixed) and the violation each entry pins.",
+    "The `missing-skill-md` directory-level check (the one implemented code path) is documented under edgeCases (an empty skill dir), not as a fixture directory (git cannot track an empty dir; adding a placeholder would defeat the check)."
+  ],
+  "perType": {
+    "conformant": {
+      "relPath": "pdf-processing/SKILL.md",
+      "type": "skill",
+      "issues": [],
+      "lintDirectoryIssues": [],
+      "note": "name 'pdf-processing' matches ^[a-z0-9]+(-[a-z0-9]+)*$ and == dir; description length 167 (≤1024); metadata is a string→string map; license recognized. No violations."
+    },
+    "badName": {
+      "relPath": "Data_Analysis/SKILL.md",
+      "type": "skill",
+      "issues": [
+        {
+          "file": "Data_Analysis/SKILL.md",
+          "issue": "skill-name-invalid",
+          "detail": "skill name 'Data_Analysis' must match ^[a-z0-9]+(-[a-z0-9]+)*$ (lowercase letters, digits, hyphen-separated), NFKC-normalized, 1-64 chars, and equal to the parent directory name (Agent Skills hard rule, spec §4.5). 'Data_Analysis' contains uppercase letters and an underscore.",
+          "fixed": false
+        }
+      ],
+      "lintDirectoryIssues": [],
+      "note": "The directory name equals the frontmatter name (both 'Data_Analysis'), so the name==dir rule holds; ONLY the charset/case rule is violated. Single, isolated hard-rule failure."
+    },
+    "overlongDescription": {
+      "relPath": "overlong-summary/SKILL.md",
+      "type": "skill",
+      "issues": [
+        {
+          "file": "overlong-summary/SKILL.md",
+          "issue": "skill-description-too-long",
+          "detail": "skill description is 1237 characters; the Agent Skills hard limit is 1-1024 characters (spec §4.5).",
+          "fixed": false
+        }
+      ],
+      "lintDirectoryIssues": [],
+      "note": "name 'overlong-summary' is valid and matches the dir; the sole violation is the >1024-char description (measured 1237 chars)."
+    }
+  },
+  "edgeCases": {
+    "missingSkillMd": {
+      "scenario": "a skill package directory that contains resources but NO SKILL.md",
+      "expected": {
+        "file": "<skill-dir>",
+        "issue": "missing-skill-md",
+        "detail": "no SKILL.md in <skill-dir>/",
+        "fixed": false
+      },
+      "note": "This is the ONE skill check implemented in code today (src/commands/lint/skill-linter.ts lintDirectory + src/core/adapter/adapters/akm-lint.ts skillDirectoryDiagnostics, gate: segments[0]==='skills' && length>=3). Recorded as an edge case (not a fixture dir) because git cannot commit an empty directory."
+    },
+    "unknownFrontmatterUnderStrictAdapter": {
+      "scenario": "a SKILL.md carrying a frontmatter key the Agent Skills schema does not define",
+      "expected": {
+        "issue": "skill-unknown-frontmatter",
+        "detail": "unknown frontmatter key '<key>' — the agent-skills adapter errors on unknown fields (skills-ref strictness, spec §6)",
+        "fixed": false
+      },
+      "note": "PROPOSED code. This is the per-adapter-strictness distinction: agent-skills ERRORS here where claude/opencode would tolerate the key."
+    }
+  }
+}

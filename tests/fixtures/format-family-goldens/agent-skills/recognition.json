@@ -1,0 +1,56 @@
+{
+  "scenario": "agent-skills adapter recognize(component, file) for every file in tests/fixtures/bundles/agent-skills/ — standalone SKILL.md packages. Emits type=skill; item = the package directory. Recognition does NOT gate on validity (invalid skills are still recognized; violations surface in validate). SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future agent-skills adapter must reproduce (future Chunk-2 format-adapter work item). SKILL.md codec shared with claude/opencode as functions (spec §8).",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (agent-skills adapter row: 'standalone SKILL.md packages'), §6 (skill row: SKILL.md → skill, item = the dir), §4.5 (Agent Skills contract), §1.2 (looksLikeRoot: root SKILL.md).",
+  "realWorldSource": [
+    "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — SKILL.md package structure; required fields name + description; name max 64, lowercase letters/numbers/hyphens, no XML tags, no reserved words 'anthropic'/'claude'; description non-empty max 1024; progressive disclosure metadata/instructions/resources",
+    "https://github.com/anthropics/skills — the reference skills repository (a collection of SKILL.md packages)"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no agent-skills adapter exists in src/. The bundle models a COLLECTION of skill packages (like github.com/anthropics/skills): each */SKILL.md is one skill item whose conceptId is the package DIRECTORY; bundled resources under the package (reference/FORMS.md) are part of the item, not standalone concepts.",
+    "RECOGNITION ≠ VALIDATION: the Data_Analysis and overlong-summary skills are RECOGNIZED as type=skill even though they violate Agent Skills hard rules — recognition emits the IndexDocument, and validate()/lint surfaces the violations (see lint.json). This mirrors how the okf adapter recognizes content and defers leniency to validate.",
+    "The name field (frontmatter) is projected to IndexDocument.name; for the invalid skills the recognized name is the raw (invalid) value, so the violation is inspectable downstream."
+  ],
+  "byRelPath": {
+    "pdf-processing/SKILL.md": {
+      "recognized": true,
+      "adapterId": "agent-skills",
+      "component": "main",
+      "type": "skill",
+      "conceptId": "pdf-processing",
+      "ref": "sample-agent-skills//pdf-processing",
+      "name": "pdf-processing",
+      "description": "Extract text and tables from PDF files, fill forms, and merge documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.",
+      "item": "directory",
+      "derivation": "SKILL.md → skill; item = the parent directory pdf-processing (conceptId, NOT .../SKILL.md). Conformant."
+    },
+    "pdf-processing/reference/FORMS.md": {
+      "recognized": false,
+      "reason": "Bundled Level-3 resource inside the pdf-processing skill package — part of the skill item, not a standalone concept (item-scoped incrementality, spec §4)."
+    },
+    "Data_Analysis/SKILL.md": {
+      "recognized": true,
+      "adapterId": "agent-skills",
+      "component": "main",
+      "type": "skill",
+      "conceptId": "Data_Analysis",
+      "ref": "sample-agent-skills//Data_Analysis",
+      "name": "Data_Analysis",
+      "item": "directory",
+      "derivation": "SKILL.md → skill. RECOGNIZED despite the invalid name; the charset violation is reported by validate() (see lint.json), not by recognize()."
+    },
+    "overlong-summary/SKILL.md": {
+      "recognized": true,
+      "adapterId": "agent-skills",
+      "component": "main",
+      "type": "skill",
+      "conceptId": "overlong-summary",
+      "ref": "sample-agent-skills//overlong-summary",
+      "name": "overlong-summary",
+      "item": "directory",
+      "derivation": "SKILL.md → skill. Name is valid; the over-length description is reported by validate() (see lint.json)."
+    }
+  }
+}

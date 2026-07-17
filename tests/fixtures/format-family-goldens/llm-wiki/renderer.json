@@ -1,0 +1,53 @@
+{
+  "scenario": "presentationFor(type) for llm-wiki content. Under the recorded default (pageKind = the open type), the page kinds (concept/entity/note) and wiki-source are NOT in KNOWN_TYPES → generic fallback. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden (llm-wiki adapter = Chunk 4).",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — llm-wiki adapter is built in CHUNK 4.",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §2 / §3.4 (unknown type ⇒ generic renderer + `akm show <ref>`); §0.2 (the `wiki` asset-type dies); src/core/type-presentation.ts (TYPE_PRESENTATION has a 'wiki' entry → wiki-md, but 'wiki' is retired per §0.2); src/core/recognition-util.ts KNOWN_TYPES.",
+  "realWorldSource": [
+    "src/output/renderers.ts wiki-md renderer (still present in code); src/wiki/wiki.ts page model"
+  ],
+  "notes": [
+    "SPECIFICATION golden. FLAG — this renderer golden depends directly on the CENTRAL AMBIGUITY flagged in recognition.json (what `type` a wiki page carries):",
+    "  • Recorded DEFAULT (reading A, pageKind = type): concept/entity/note/wiki-source are NOT in KNOWN_TYPES → presentationFor returns DEFAULT_PRESENTATION {label:'Asset'}, renderer=null, generic action `akm show <ref>`. Wiki pages would render generically — the pre-existing `wiki-md` renderer (still in src/output/renderers.ts) would go UNUSED.",
+    "  • ALTERNATIVE (reading B): Chunk 4 maps all wiki page kinds to the `wiki-md` renderer (label 'Wiki', action `akm show <ref> -> read the wiki page`), carrying pageKind as metadata. This keeps wiki rendering but reuses the retired-per-§0.2 `wiki` presentation. The `wiki-md` branch is shown per-entry as `alternativeRenderer` so Chunk 4 can adopt it without re-authoring.",
+    "This is the primary renderer decision for Chunk 4. The reserved files (schema/index/log) are not rendered as concepts."
+  ],
+  "byRelPath": {
+    "pages/http-caching.md": {
+      "type": "concept",
+      "ref": "sample-wiki//pages/http-caching",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/http-caching",
+      "flag": "GENERIC FALLBACK under reading A (concept ∉ KNOWN_TYPES).",
+      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/http-caching -> read the wiki page" }
+    },
+    "pages/entities/varnish.md": {
+      "type": "entity",
+      "ref": "sample-wiki//pages/entities/varnish",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/entities/varnish",
+      "flag": "GENERIC FALLBACK under reading A (entity ∉ KNOWN_TYPES).",
+      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/entities/varnish -> read the wiki page" }
+    },
+    "pages/orphan.md": {
+      "type": "note",
+      "ref": "sample-wiki//pages/orphan",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/orphan",
+      "flag": "GENERIC FALLBACK under reading A (note ∉ KNOWN_TYPES).",
+      "alternativeRenderer": { "reading": "B", "label": "Wiki", "renderer": "wiki-md", "action": "akm show sample-wiki//pages/orphan -> read the wiki page" }
+    },
+    "raw/2026-07-http-rfc.md": {
+      "type": "wiki-source",
+      "ref": "sample-wiki//raw/2026-07-http-rfc",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//raw/2026-07-http-rfc",
+      "flag": "GENERIC FALLBACK (wiki-source ∉ KNOWN_TYPES). Raw sources are source material; a generic reader is the recorded default."
+    }
+  }
+}

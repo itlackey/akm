@@ -1,0 +1,70 @@
+{
+  "scenario": "opencode adapter recognize(component, file) for every file in tests/fixtures/bundles/opencode/ — a .opencode tool dir. Derives the open `type` from directory + frontmatter (spec §6/§7), emits IndexDocument, ABSTAINS on runtime config. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future opencode adapter must reproduce (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (opencode adapter row: 'AGENTS.md=instruction; config.json not indexed; OpenCode has first-class skills (.opencode/skills/<name>/SKILL.md) and reads .claude/skills/ — plural commands/agents/ dirs'), §6 (type-derivation conventions, shared with claude).",
+  "realWorldSource": [
+    "https://opencode.ai/docs/commands/ — custom commands in .opencode/commands/*.md; frontmatter description/agent/model; $ARGUMENTS / $1 substitution",
+    "https://opencode.ai/docs/agents/ — custom agents in .opencode/agents/*.md; frontmatter description/mode/model/temperature/tools",
+    "https://opencode.ai/docs/skills/ — OpenCode loads .opencode/skills/*/SKILL.md AND .claude/skills/*/SKILL.md; first-skill-with-a-name wins",
+    "https://opencode.ai/docs/rules/ — AGENTS.md is the project instruction file; if both AGENTS.md and CLAUDE.md exist only AGENTS.md is used"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no opencode adapter exists in src/. Same byRelPath shape and shape-adaptation rationale as the claude recognition golden (recognize() projection, or {recognized:false, reason} for abstentions).",
+    "DIRECTORY PLURALITY (resolved): the spec §7 says 'plural commands/agents/ dirs', and OpenCode's current canonical layout uses PLURAL subdirectories (agents/, commands/, skills/, …); SINGULAR forms (command/, agent/) are supported only as backwards-compat aliases (opencode.ai docs). The fixture uses the canonical PLURAL dirs; the adapter SHOULD also accept the singular aliases — see the methodology doc's open-questions section.",
+    "type derivation (spec §6/§7): commands/*.md → command; agents/*.md → agent; skills/<name>/SKILL.md → skill (first-class OpenCode skill; item = the dir); AGENTS.md → instruction.",
+    "OpenCode also READS .claude/skills/*/SKILL.md (spec §7). That cross-read is a component-selection/config concern (the same shared SKILL.md codec recognizes those files); it is documented here and in the README but not duplicated as a fixture file to keep the bundle minimal.",
+    "opencode.json (also opencode.jsonc / config.json) is runtime config — NEVER indexed (spec §7)."
+  ],
+  "byRelPath": {
+    "AGENTS.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "instruction",
+      "conceptId": "AGENTS",
+      "ref": "sample-opencode//AGENTS",
+      "name": "AGENTS",
+      "derivation": "root AGENTS.md → instruction (spec §7: 'AGENTS.md=instruction'; §6 instruction row)"
+    },
+    "commands/test.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "command",
+      "conceptId": "commands/test",
+      "ref": "sample-opencode//commands/test",
+      "name": "test",
+      "description": "Run the test suite for the given package and summarize failures.",
+      "derivation": ".md under commands/ + $ARGUMENTS body probe / `agent` frontmatter probe (spec §6 command row)"
+    },
+    "agents/explorer.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "agent",
+      "conceptId": "agents/explorer",
+      "ref": "sample-opencode//agents/explorer",
+      "name": "explorer",
+      "description": "Read-only repository explorer. Use to locate code across many files.",
+      "derivation": ".md under agents/ + tools/model frontmatter probe (spec §6 agent row)"
+    },
+    "skills/changelog/SKILL.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "skill",
+      "conceptId": "skills/changelog",
+      "ref": "sample-opencode//skills/changelog",
+      "name": "changelog",
+      "description": "Draft and update CHANGELOG entries from a set of merged commits. Use when preparing a release or when the user asks for release notes.",
+      "item": "directory",
+      "derivation": "SKILL.md → skill; item = the parent directory (conceptId = skills/changelog). Shared SKILL.md codec with claude + agent-skills (spec §8)."
+    },
+    "opencode.json": {
+      "recognized": false,
+      "reason": "Runtime config (model/providers/instructions) — NEVER indexed (spec §7: 'config.json not indexed'). Applies equally to opencode.jsonc."
+    }
+  }
+}

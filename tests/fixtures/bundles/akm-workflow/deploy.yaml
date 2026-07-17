@@ -1,0 +1,10 @@
+version: 2
+name: deploy
+description: Minimal YAML workflow program (the program form is an AKM extension).
+steps:
+  - id: build
+    unit:
+      instructions: "Build the release artifact."
+  - id: ship
+    unit:
+      instructions: "Upload the artifact and record the deployment."

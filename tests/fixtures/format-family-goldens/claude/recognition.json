@@ -1,0 +1,76 @@
+{
+  "scenario": "claude adapter recognize(component, file) for every file in tests/fixtures/bundles/claude/ — a .claude tool dir. Derives the open `type` from directory + frontmatter (spec §6), emits IndexDocument, and ABSTAINS (null) on runtime-config files. SPECIFICATION golden: the claude adapter does not exist in src/ yet.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future claude adapter must reproduce (adapter lands in a future Chunk-2 format-adapter work item).",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (type-derivation conventions: command/agent/skill/instruction rows), §7 (claude adapter row), §8 (one adapter per tool dir), §1.2/§1.3 (component = .claude, conceptId = path − ext, skill item = the dir).",
+  "realWorldSource": [
+    "https://code.claude.com/docs/en/claude-directory — CLAUDE.md at root; .claude/commands/*.md ($ARGUMENTS, argument-hint/allowed-tools frontmatter); .claude/agents/*.md (description/tools/model frontmatter); .claude/skills/<name>/SKILL.md; settings.json/.mcp.json = runtime config",
+    "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — SKILL.md skill package; skill folder name == skill name"
+  ],
+  "notes": [
+    "SPECIFICATION golden (authored from the spec + real-world layout), NOT captured from code — no claude adapter exists in src/core/adapter/adapters/ (only okf + akm are built). Grounding for the field shape: src/core/adapter/types.ts IndexDocument + the okf-adapter's recognize() field projection.",
+    "Shape adaptation from tests/fixtures/goldens/recognition/all-types.json: that FROZEN golden pins the OLD runMatchers MatchResult ({type, specificity, renderer}); these format families are served by NEW IndexDocument-producing adapters, so each byRelPath value is the recognize() projection ({recognized, adapterId, type, conceptId, ref, name, ...}) or {recognized:false, reason} for an abstention. `specificity` does not apply (it is a runMatchers concept, not an adapter concept).",
+    "type derivation (spec §6): commands/*.md → command (dir gate + $ARGUMENTS / agent-frontmatter probe); agents/*.md → agent (dir gate + tools/model probe); skills/<name>/SKILL.md → skill (item = the DIRECTORY, item-scoped incrementality §4, conceptId = the dir); CLAUDE.md → instruction. A file bundled INSIDE a skill dir (reference.md) is part of the skill item, not a standalone concept → abstain.",
+    "settings.json and .mcp.json are runtime config, NEVER indexed (spec §7 final paragraph: 'tool config files are runtime-config, never indexed'). The adapter abstains on them.",
+    "conceptId keeps NO type prefix — type is derived and NEVER appears in the ref (spec §1.3 invariants). Component id '.claude' is PROVENANCE (derived), not a ref segment."
+  ],
+  "byRelPath": {
+    "CLAUDE.md": {
+      "recognized": true,
+      "adapterId": "claude",
+      "component": ".claude",
+      "type": "instruction",
+      "conceptId": "CLAUDE",
+      "ref": "sample-claude//CLAUDE",
+      "name": "CLAUDE",
+      "derivation": "root CLAUDE.md → instruction (spec §6 lesson/fact/session/instruction row: CLAUDE.md·AGENTS.md → instruction)"
+    },
+    "commands/deploy.md": {
+      "recognized": true,
+      "adapterId": "claude",
+      "component": ".claude",
+      "type": "command",
+      "conceptId": "commands/deploy",
+      "ref": "sample-claude//commands/deploy",
+      "name": "deploy",
+      "description": "Deploy the project to the named environment.",
+      "derivation": ".md under commands/ + $ARGUMENTS body probe (spec §6 command row: '.md under commands/ + $ARGUMENTS/agent-fm probe')"
+    },
+    "agents/reviewer.md": {
+      "recognized": true,
+      "adapterId": "claude",
+      "component": ".claude",
+      "type": "agent",
+      "conceptId": "agents/reviewer",
+      "ref": "sample-claude//agents/reviewer",
+      "name": "reviewer",
+      "description": "Read-only code reviewer. Delegate when a diff needs a careful correctness pass.",
+      "derivation": ".md under agents/ + tools/model frontmatter probe (spec §6 agent row: '.md under agents/ + tools/toolPolicy/model probe')"
+    },
+    "skills/pdf-processing/SKILL.md": {
+      "recognized": true,
+      "adapterId": "claude",
+      "component": ".claude",
+      "type": "skill",
+      "conceptId": "skills/pdf-processing",
+      "ref": "sample-claude//skills/pdf-processing",
+      "name": "pdf-processing",
+      "description": "Extract text and tables from PDF files, fill forms, and merge documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.",
+      "item": "directory",
+      "derivation": "SKILL.md → skill; item = the parent directory (conceptId = skills/pdf-processing, NOT .../SKILL.md); name = frontmatter `name` (== dir name). Spec §6 skill row + §4.5 Agent Skills contract; SKILL.md codec shared with agent-skills."
+    },
+    "skills/pdf-processing/reference.md": {
+      "recognized": false,
+      "reason": "Bundled Level-3 resource INSIDE a skill directory — part of the skill item (skills/pdf-processing), not a standalone concept. Item-scoped incrementality (spec §4): every file of the skill item re-recognizes together under the SKILL.md primary."
+    },
+    "settings.json": {
+      "recognized": false,
+      "reason": "Runtime config — NEVER indexed (spec §7: 'tool config files are runtime-config, never indexed'). config.json/settings.json = runtime config, not content."
+    },
+    ".mcp.json": {
+      "recognized": false,
+      "reason": "Runtime config (MCP server declarations) — NEVER indexed (spec §7). Not knowledge content."
+    }
+  }
+}

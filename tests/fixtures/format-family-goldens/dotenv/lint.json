@@ -1,0 +1,55 @@
+{
+  "scenario": "dotenv adapter validate(component, changes, ctx) → Diagnostic[] — the dangerous-key scan. One clean env (→[]), one env with dangerous keys (PATH + NODE_OPTIONS), and the secret files (bare secret NOT scanned; secret .env scanned but clean). Mirrors lint/all-types.json's perType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED as a dotenv adapter — but the dangerous-key scan IS coded (src/commands/lint/env-key-rules.ts isDangerousVaultKey + src/core/adapter/adapters/akm-lint.ts dangerousEnvKeyDiagnostics). The `issue` code and scan narrowness below are code-grounded.",
+  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (env validation column: 'dangerous-key warn scan'; secret: 'dangerous-key scan; classifyBySmartMd bails on secrets/'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
+  "realWorldSource": [
+    "DANGEROUS_VAULT_KEYS set (src/commands/lint/env-key-rules.ts) — LD_PRELOAD/PATH/NODE_OPTIONS/BASH_ENV/GIT_SSH_COMMAND/… + patterns /^BASH_FUNC_/, /^GIT_CONFIG_/ (Shellshock/CVE-class process-hijack vectors)",
+    "dotenv security guidance — https://www.dotenv.org/docs/security/env"
+  ],
+  "notes": [
+    "SPECIFICATION golden. SCAN NARROWNESS (code-grounded, preserved by the adapter port): the dangerous-key scan runs ONLY on *.env-suffixed files. So env/dangerous.env is scanned (ref prefix env:), secrets/ci.env is scanned (ref prefix secret:, because it ends .env), but secrets/deploy-key (BARE filename, no .env suffix) is NOT scanned at all — its whole content is an opaque secret value that is never read.",
+    "`dangerous-vault-key` is the exact code the akm-lint port emits; the `detail` here mirrors src/commands/lint/env-key-rules.ts checkVaultForDangerousKeys (suppressible with a `# akm-lint-ok: dangerous-vault-key` comment on the preceding line).",
+    "The scan reads KEY NAMES only; env values are never read even to check them (only the key identifier matters for the hijack vector)."
+  ],
+  "perType": {
+    "envClean": {
+      "relPath": "env/app.env",
+      "type": "env",
+      "issues": [],
+      "note": "FIXTURE_GREETING, LOG_LEVEL are not in DANGEROUS_VAULT_KEYS → no findings."
+    },
+    "envDangerous": {
+      "relPath": "env/dangerous.env",
+      "type": "env",
+      "issues": [
+        {
+          "file": "env/dangerous.env",
+          "issue": "dangerous-vault-key",
+          "detail": "Env key `PATH` can be used to hijack process execution when injected via `akm env run`. Review this file before running `akm env run` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-vault-key on the previous line)",
+          "fixed": false
+        },
+        {
+          "file": "env/dangerous.env",
+          "issue": "dangerous-vault-key",
+          "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected via `akm env run`. Review this file before running `akm env run` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-vault-key on the previous line)",
+          "fixed": false
+        }
+      ],
+      "note": "PATH and NODE_OPTIONS are in DANGEROUS_VAULT_KEYS; APP_TOKEN is not. Two findings, one per dangerous key, in file order."
+    },
+    "secretBareNotScanned": {
+      "relPath": "secrets/deploy-key",
+      "type": "secret",
+      "issues": [],
+      "note": "BARE filename (no .env suffix) → NOT scanned. The whole file is the secret value and is never read (dangerousEnvKeyDiagnostics returns [] when !endsWith('.env'))."
+    },
+    "secretEnvScannedClean": {
+      "relPath": "secrets/ci.env",
+      "type": "secret",
+      "issues": [],
+      "note": "ends .env → scanned (ref prefix secret:), but CI_DEPLOY_TOKEN / REGISTRY_USER are not dangerous → []. NOTE: only the dangerous-key SCAN reads key names here; the RENDERER still redacts this to name-only (type=secret), see renderer.json."
+    }
+  }
+}
