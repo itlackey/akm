@@ -14,13 +14,24 @@
 
 import { registerAdapter } from "../registry";
 import { akmAdapter } from "./akm-adapter";
+import { llmWikiAdapter } from "./llm-wiki-adapter";
 import { okfAdapter } from "./okf-adapter";
 
 export { akmAdapter } from "./akm-adapter";
+export { llmWikiAdapter } from "./llm-wiki-adapter";
 export { okfAdapter } from "./okf-adapter";
 
-/** Register every built-in adapter onto the shared registry (idempotent — re-registering an id replaces in place). */
+/**
+ * Register every built-in adapter onto the shared registry (idempotent —
+ * re-registering an id replaces in place).
+ *
+ * `llm-wiki` is registered BEFORE `okf` so the §1.2 ordered probe prefers the
+ * more-specific wiki probe (schema.md + pages/) over okf's loose root-`index.md`
+ * probe — an LLM Wiki root also carries a root `index.md`, so the two probes
+ * legitimately overlap and order (specific-first) resolves it.
+ */
 export function registerBuiltinAdapters(): void {
+  registerAdapter(llmWikiAdapter);
   registerAdapter(okfAdapter);
   registerAdapter(akmAdapter);
 }

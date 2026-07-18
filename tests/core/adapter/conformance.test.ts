@@ -44,7 +44,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { akmAdapter, okfAdapter, registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
+import { akmAdapter, llmWikiAdapter, okfAdapter, registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
 import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
 import { getAdapters, resetAdapterRegistryForTests } from "../../../src/core/adapter/registry";
 import { scanComponent } from "../../../src/core/adapter/scan-component";
@@ -55,12 +55,31 @@ import { walkStashFlat } from "../../../src/indexer/walk/walker";
 const OKF_ROOT = path.resolve(__dirname, "../../fixtures/bundles/okf-sample");
 /** The `akm` workspace stash's own root (`TYPE_DIRS` subdirs, no root `index.md`). */
 const AKM_ROOT = path.resolve(__dirname, "../../fixtures/stashes/all-types");
+/** The `llm-wiki` bundle's own root (root `schema.md` + `pages/`; ALSO carries a root `index.md`). */
+const LLM_WIKI_ROOT = path.resolve(__dirname, "../../fixtures/bundles/llm-wiki");
 
-/** adapter id → its OWN golden root. Every registered adapter's `looksLikeRoot` must fire on its own root and no sibling's. */
+/** adapter id → its OWN golden root. Every registered adapter's `looksLikeRoot` must fire on its own root. */
 const OWN_ROOT_BY_ID: Record<string, string> = {
   okf: OKF_ROOT,
   akm: AKM_ROOT,
+  "llm-wiki": LLM_WIKI_ROOT,
 };
+
+/**
+ * Whether `adapterId`'s `looksLikeRoot` is expected to fire on `root`.
+ *
+ * The base rule is own-root-only (§4). The ONE documented exception is the §1.2
+ * ordered-probe overlap: `okf`'s deliberately loose root-`index.md` probe also
+ * matches an LLM Wiki root (a wiki carries a root `index.md` as a reserved file),
+ * so `okf.looksLikeRoot(LLM_WIKI_ROOT)` is `true`. Recognition stays unambiguous
+ * because `registerBuiltinAdapters` orders the more-specific `llm-wiki` probe
+ * (schema.md + pages/) ahead of `okf` — the overlap is benign, not a defect.
+ */
+function expectedFires(adapterId: string, root: string): boolean {
+  if (root === OWN_ROOT_BY_ID[adapterId]) return true;
+  if (adapterId === "okf" && root === LLM_WIKI_ROOT) return true;
+  return false;
+}
 
 beforeAll(() => {
   // Deterministic registry snapshot: reset the module-level singleton, then
@@ -101,31 +120,35 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 // ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
 describe("conformance — looksLikeRoot own-root-only (§4)", () => {
-  test("the built-in registry is exactly [okf, akm] — the roots this matrix covers", () => {
+  test("the built-in registry is exactly [llm-wiki, okf, akm] — the roots this matrix covers", () => {
     // Pins the fixture set: every registered adapter has a golden root in
-    // OWN_ROOT_BY_ID, so the own-root-only matrix below is complete.
+    // OWN_ROOT_BY_ID, so the own-root matrix below is complete.
     const ids = getAdapters().map((a) => a.id);
-    expect(ids.sort()).toEqual(["akm", "okf"]);
+    expect(ids.sort()).toEqual(["akm", "llm-wiki", "okf"]);
     for (const id of ids) expect(OWN_ROOT_BY_ID[id]).toBeDefined();
   });
 
-  test("for each registered adapter, looksLikeRoot fires on its OWN golden root and NO sibling's", () => {
+  test("for each registered adapter, looksLikeRoot fires on its OWN golden root (+ the documented okf/wiki overlap)", () => {
     const adapters = getAdapters();
-    const allRoots = Object.entries(OWN_ROOT_BY_ID); // [ownerId, root][]
+    const allRoots = Object.values(OWN_ROOT_BY_ID);
     for (const adapter of adapters) {
       expect(typeof adapter.looksLikeRoot).toBe("function");
-      const ownRoot = OWN_ROOT_BY_ID[adapter.id];
-      for (const [ownerId, root] of allRoots) {
-        // Exactly the owning adapter fires: true iff this root is the adapter's own.
-        expect(adapter.looksLikeRoot?.(root)).toBe(root === ownRoot);
-        // Redundant, explicit framing for readability.
-        if (ownerId === adapter.id) {
-          expect(adapter.looksLikeRoot?.(root)).toBe(true);
-        } else {
-          expect(adapter.looksLikeRoot?.(root)).toBe(false);
-        }
+      for (const root of allRoots) {
+        // Own-root-only (§4), plus the single documented §1.2 okf/index.md
+        // overlap on the wiki root — see expectedFires().
+        expect(adapter.looksLikeRoot?.(root)).toBe(expectedFires(adapter.id, root));
       }
     }
+  });
+
+  test("llm-wiki fires on its own root (schema.md + pages/), NOT on the okf/akm roots", () => {
+    expect(llmWikiAdapter.looksLikeRoot?.(LLM_WIKI_ROOT)).toBe(true);
+    expect(llmWikiAdapter.looksLikeRoot?.(OKF_ROOT)).toBe(false);
+    expect(llmWikiAdapter.looksLikeRoot?.(AKM_ROOT)).toBe(false);
+  });
+
+  test("akm abstains on the llm-wiki root (no .stash marker, no placement stash-subdir)", () => {
+    expect(akmAdapter.looksLikeRoot?.(LLM_WIKI_ROOT)).toBe(false);
   });
 
   test("okf.looksLikeRoot fires on the okf-sample root, NOT on the akm/all-types root", () => {
@@ -142,13 +165,14 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
 // ── 2. index() == fold(recognize) (§12.3) ────────────────────────────────────
 
 describe("conformance — index() == fold(recognize) (§12.3)", () => {
-  test("neither okf nor akm overrides index() — the conformance is vacuously satisfied", () => {
+  test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
     // §12.3: an adapter overriding index() MUST keep it == fold(recognize).
-    // These two adapters do NOT override it, so the core scanComponent walk ×
+    // None of the built-ins override it, so the core scanComponent walk ×
     // recognize IS the index; the equality holds vacuously.
     expect(okfAdapter.index).toBeUndefined();
     expect(akmAdapter.index).toBeUndefined();
-    // Documented over the whole registry, not just the two named handles.
+    expect(llmWikiAdapter.index).toBeUndefined();
+    // Documented over the whole registry, not just the named handles.
     for (const adapter of getAdapters()) expect(adapter.index).toBeUndefined();
   });
 
@@ -165,6 +189,15 @@ describe("conformance — index() == fold(recognize) (§12.3)", () => {
     const c = component("okf-sample", "okf", OKF_ROOT);
     const scanned = await drain(scanComponent(installation(c), c, okfAdapter));
     const folded = foldRecognize(okfAdapter, c);
+
+    expect(scanned.length).toBeGreaterThan(0);
+    expect(refType(scanned)).toEqual(refType(folded));
+  });
+
+  test("llm-wiki: scanComponent(llm-wiki) == fold(recognize) over the same walk (by ref/type)", async () => {
+    const c = component("sample-wiki", "llm-wiki", LLM_WIKI_ROOT);
+    const scanned = await drain(scanComponent(installation(c), c, llmWikiAdapter));
+    const folded = foldRecognize(llmWikiAdapter, c);
 
     expect(scanned.length).toBeGreaterThan(0);
     expect(refType(scanned)).toEqual(refType(folded));
