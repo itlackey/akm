@@ -56,6 +56,7 @@
 
 import crypto from "node:crypto";
 import path from "node:path";
+import { isSourceWriteActivated } from "../core/activation-policy";
 import { getAdapters } from "../core/adapter/registry";
 import type { BundleInstallation } from "../core/adapter/types";
 import type { SearchSource } from "./search/search-source";
@@ -115,7 +116,7 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
     const id = ensureUniqueId(preferred, source.path, usedIds);
     usedIds.add(id);
 
-    const writable = source.writable === true;
+    const writable = isSourceWriteActivated(source);
     const adapter = detectAdapterId(source.path);
 
     installations.push({

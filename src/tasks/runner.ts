@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { shouldSkipUnactivatedTask } from "../core/activation-policy";
 import { assertNever } from "../core/assert";
 import { parseAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
@@ -156,7 +157,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     const startedIso = startedAt.toISOString();
     const logPath = resolveTaskLogPath(options.logDir, id, startedIso);
 
-    if (!task.enabled && options.scheduled === true) {
+    if (shouldSkipUnactivatedTask({ enabled: task.enabled, scheduled: options.scheduled === true })) {
       const finishedAt = finishAttempt(startedAt, now());
       const disabledTarget: TaskRunResult["target"] =
         task.target.kind === "workflow"

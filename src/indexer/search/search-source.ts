@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isSourceWriteActivated } from "../../core/activation-policy";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
@@ -29,6 +30,8 @@ export interface SearchSource {
    * Whether this source accepts writes. The primary stash is always writable.
    * Filesystem/git sources with `writable: true` in config are also writable.
    * Registry-cached sources (installed without writable: true) are read-only.
+   * The write-activation decision itself lives in the workspace activation
+   * policy — see `isSourceWriteActivated` in `core/activation-policy.ts`.
    */
   writable?: boolean;
 }
@@ -189,7 +192,7 @@ export function resolveAllStashDirs(overrideStashDir?: string): string[] {
  */
 export function getWritableStashDirs(overrideStashDir?: string, existingConfig?: AkmConfig): string[] {
   return resolveSourceEntries(overrideStashDir, existingConfig)
-    .filter((s) => s.writable === true)
+    .filter((s) => isSourceWriteActivated(s))
     .map((s) => s.path);
 }
 

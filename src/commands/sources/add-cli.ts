@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "../../cli/clack";
 import { defineJsonCommand, output } from "../../cli/shared";
+import { decideDangerousKeyInstall } from "../../core/activation-policy";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
@@ -127,9 +128,15 @@ export async function auditInstalledStashForDangerousKeys(opts: {
     return { blocked: false };
   }
 
-  if (allFindings.length === 0) return { blocked: false };
+  // The workspace activation policy fixes the baseline stance; the interactive
+  // confirm / rollback below is layered on top of the `"gate"` stance only.
+  const stance = decideDangerousKeyInstall({
+    findingsPresent: allFindings.length > 0,
+    allowInsecure: allowDangerousKeys,
+  });
+  if (stance === "allow") return { blocked: false };
 
-  if (allowDangerousKeys) {
+  if (stance === "warn-allow") {
     // Operator has explicitly accepted the risk — warn and continue.
     for (const f of allFindings) {
       warn(
