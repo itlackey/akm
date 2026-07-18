@@ -1,5 +1,11 @@
 # Critical review — `improve-reconciliation-plan.md`
 
+> **ARCHIVED (2026-07-18) — superseded.** This is the three-reviewer critical
+> review of `improve-reconciliation-plan.md`, which itself shipped in 0.9.0
+> (WS-0…WS-5) and is archived alongside it here. Retained as a design-decision
+> record. Current truth: the shipped improve pipeline (`src/commands/improve/`)
+> and `docs/design/improve-self-learning-analysis.md`.
+
 > Consolidated, deduplicated, and verified findings from three independent
 > critical reviews (goal-alignment lens, code-accuracy lens, executability lens),
 > 2026-06-15. Each finding notes which reviewers raised it, my independent

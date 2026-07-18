@@ -1,5 +1,11 @@
 # Engine and Strategy Refactor
 
+> **ARCHIVED (2026-07-18) — shipped in 0.9.0.** The engine/strategy/workflow
+> cutover this plan specified is live: named `engines` (`src/core/config/`),
+> `improve.strategies` (`src/assets/improve-strategies/`), and workflow IR
+> compile/freeze (`src/workflows/ir/`). `profiles.llm`/`profiles.agent` are gone.
+> Current truth: `docs/technical/architecture.md` + `docs/technical/configuration.md`.
+
 **Status:** Implementation-ready proposal
 **Target:** AKM 0.9.0
 **Verified against:** `980e8d0a` (`0.9.0-rc.1`)
