@@ -63,9 +63,9 @@ describe("open type token — accepted as data (D1.5-1)", () => {
 // ── (b) KNOWN_TYPES exhaustiveness ──────────────────────────────────────────
 
 describe("KNOWN_TYPES exhaustiveness — typed tables compile-cover all 14", () => {
-  test("KNOWN_TYPES has exactly the 15 AKM-owned type keys", () => {
-    expect(KNOWN_TYPES.length).toBe(15);
-    expect(new Set(KNOWN_TYPES).size).toBe(15); // no duplicates
+  test("KNOWN_TYPES has exactly the 14 AKM-owned type keys", () => {
+    expect(KNOWN_TYPES.length).toBe(14);
+    expect(new Set(KNOWN_TYPES).size).toBe(14); // no duplicates
   });
 
   test("TYPE_BOOST (ranking-contributors.ts) has an entry for every KNOWN_TYPE", () => {
@@ -73,11 +73,12 @@ describe("KNOWN_TYPES exhaustiveness — typed tables compile-cover all 14", () 
       expect(Object.hasOwn(TYPE_BOOST, type)).toBe(true);
       expect(typeof TYPE_BOOST[type]).toBe("number");
     }
-    expect(Object.keys(TYPE_BOOST).length).toBe(15);
+    expect(Object.keys(TYPE_BOOST).length).toBe(14);
   });
 
-  test("TYPE_BOOST's 6 previously-absent types are explicit 0 entries (behavior-preserving, D1.5-5)", () => {
-    for (const type of ["env", "secret", "wiki", "lesson", "task", "session"] as const) {
+  test("TYPE_BOOST's previously-absent types are explicit 0 entries (behavior-preserving, D1.5-5)", () => {
+    // `wiki` left this set in chunk 4 (the wiki asset-type is retired).
+    for (const type of ["env", "secret", "lesson", "task", "session"] as const) {
       expect(TYPE_BOOST[type]).toBe(0);
     }
   });
@@ -95,7 +96,7 @@ describe("KNOWN_TYPES exhaustiveness — typed tables compile-cover all 14", () 
       expect(typeof TYPE_PRESENTATION[type].label).toBe("string");
       expect(TYPE_PRESENTATION[type].label.length).toBeGreaterThan(0);
     }
-    expect(Object.keys(TYPE_PRESENTATION).length).toBe(15);
+    expect(Object.keys(TYPE_PRESENTATION).length).toBe(14);
   });
 
   test("a KNOWN_TYPE always satisfies isKnownType", () => {

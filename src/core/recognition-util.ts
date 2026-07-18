@@ -77,15 +77,16 @@ export const DERIVED_SUFFIX = ".derived";
 // import, so it lives here without breaking the D1-5 import-free invariant.
 
 /**
- * The AKM-owned built-in asset type keys. The first 14 are exactly the
- * deleted `common.ts` `ASSET_TYPES` set (same order); `instruction`
- * (CLAUDE.md / AGENTS.md project-instruction files) is the 15th, added for the
+ * The AKM-owned built-in asset type keys — the deleted `common.ts` `ASSET_TYPES`
+ * set (same order) minus the retired `wiki` type (chunk 4); `instruction`
+ * (CLAUDE.md / AGENTS.md project-instruction files) is the newest, added for the
  * format-family adapters (spec §6/§7 instruction row, maintainer resolution
  * 2026-07). An instruction file is a read-like-knowledge markdown document, so
  * it reuses knowledge's presentation shape (label "Instruction", `knowledge-md`
  * renderer, a "read the project instructions" action) rather than the generic
- * fallback. `wiki` is expected to be removed from this tuple by a later chunk
- * ("the wiki ASSET-TYPE dies") — not a chunk 1.5 concern.
+ * fallback. `wiki` was removed here in chunk 4 ("the wiki ASSET-TYPE dies", plan
+ * §11 Chunk 4 / §7.4): the LLM Wiki structure now lives in the first-class
+ * `llm-wiki` adapter whose page kinds are open (foreign) types, not AKM-owned.
  */
 export const KNOWN_TYPES = [
   "skill",
@@ -97,7 +98,6 @@ export const KNOWN_TYPES = [
   "memory",
   "env",
   "secret",
-  "wiki",
   "lesson",
   "task",
   "session",

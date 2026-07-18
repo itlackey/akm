@@ -11,7 +11,7 @@
  * winning RENDERER name (exactly how each contributor's `appliesTo({ rendererName })`
  * selects):
  *
- *   - `output/renderers.ts` (9): toc-metadata (knowledge-md/wiki-md),
+ *   - `output/renderers.ts` (9): toc-metadata (knowledge-md),
  *     lesson-frontmatter-metadata, memory-frontmatter-metadata,
  *     script-comment-metadata, env-file-metadata, secret-file-metadata,
  *     task-yaml-metadata, session-md-metadata, fact-md-metadata;
@@ -164,9 +164,8 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
   const out: FoldedMetadata = {};
 
   switch (rendererName) {
-    // ── toc-metadata (knowledge-md / wiki-md) ──
-    case "knowledge-md":
-    case "wiki-md": {
+    // ── toc-metadata (knowledge-md) ──
+    case "knowledge-md": {
       try {
         const toc = parseMarkdownToc(file.content());
         if (toc.headings.length > 0) out.toc = toc.headings;

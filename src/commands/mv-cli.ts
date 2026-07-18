@@ -26,7 +26,6 @@
  *     before anything is keyed off them) — lint-resolver FALLBACK spellings
  *     are rejected with the canonical ref named (see
  *     {@link resolveMoveSourcePath});
- *   - wiki refs are rejected (wikis have their own xref + lint system);
  *   - a memory's `.derived.md` twin moves together and keeps its
  *     `entry_key === <base entry_key> + ".derived"` coupling; a twin ref
  *     cannot be moved alone, and target names ending `.derived` are rejected
@@ -89,7 +88,6 @@ import {
  * layout is one flat `.md` file per name (the `markdownSpec` family), so a
  * rename is a single-file move and inbound refs are rewritable by complete-ref
  * matching. Deliberately excluded:
- *   - `wiki` — wikis carry their own xref + lint system (`akm wiki lint`);
  *   - `skill` — the canonical layout is a multi-file `skills/<name>/SKILL.md`
  *     directory (a directory rename, out of v1 scope);
  *   - `script` — unresolvable by the slug resolver (contract-pinned);
@@ -1063,7 +1061,7 @@ export const mvCommand = defineJsonCommand({
       "never written; their citing files are reported in `readOnlyCiters` as manual follow-ups. Operates on the " +
       "primary writable stash only. The source ref (and the target name) may carry the .md-suffixed alias " +
       "spelling — both are canonicalized — but resolver-fallback source spellings are rejected, naming the " +
-      "canonical ref. Wiki refs are not supported (use `akm wiki lint` after a manual wiki rename); workflow " +
+      "canonical ref. Workflow " +
       "refs cannot be MOVED in v1 (workflows may be .yaml programs — rename the file manually and verify with " +
       "`akm lint`), though workflow files ARE rewritten as citers.",
   },
@@ -1101,13 +1099,6 @@ export const mvCommand = defineJsonCommand({
       if (source.origin && source.origin !== "local") {
         throw new UsageError(
           `akm mv operates on the primary writable stash only — the origin prefix "${source.origin}//" is not supported.`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
-      if (source.type === "wiki") {
-        throw new UsageError(
-          "akm mv does not support wiki refs — wiki pages have their own xref + lint system. " +
-            "Rename the page manually, fix citations in the same pass, and verify with `akm wiki lint <name>`.",
           "INVALID_FLAG_VALUE",
         );
       }

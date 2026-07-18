@@ -17,16 +17,15 @@
  *
  * `file-context.ts#runMatchers` (`:242-265`) is async ONLY because of its lazy
  * `ensureBuiltinsRegistered()` dynamic import; its ARBITRATION is pure and
- * synchronous. We reproduce it here by importing the SAME six builtin matcher
+ * synchronous. We reproduce it here by importing the SAME five builtin matcher
  * functions (`matchers.ts` `extensionMatcher` / `directoryMatcher` /
- * `parentDirHintMatcher` / `smartMdMatcher` / `wikiMatcher` /
- * `workflowProgramMatcher`) in the SAME order they are registered
- * (`builtinMatchers`, `matchers.ts:310-317`), collecting every non-null
+ * `parentDirHintMatcher` / `smartMdMatcher` / `workflowProgramMatcher`) in the
+ * SAME order they are registered, collecting every non-null
  * `MatchResult` and picking the winner by **specificity descending, ties broken
  * by later-registered (higher index) winning** — byte-identical to
  * `runMatchers`'s `b.specificity - a.specificity` then `b.index - a.index`.
  * Because the matcher functions (which resolve renderer names via the static
- * `TYPE_PRESENTATION` table in `type-presentation.ts`, all 15 built-in types
+ * `TYPE_PRESENTATION` table in `type-presentation.ts`, all built-in types
  * present at load) are the exact ones `runMatchers` uses, {@link recognizeMatch}
  * agrees with the async `runMatchers` on `type` / `specificity` / `renderer` for
  * every input. This is "use the existing matchers" literally — same functions,
@@ -82,7 +81,6 @@ import {
   extensionMatcher,
   parentDirHintMatcher,
   smartMdMatcher,
-  wikiMatcher,
   workflowProgramMatcher,
 } from "../../../indexer/walk/matchers";
 import {
@@ -101,16 +99,16 @@ import { foldRecognizedMetadata } from "./akm-metadata";
 import { hashContent, nonEmptyString, type ParsedForValidate, runBaseValidateChecks } from "./shared";
 
 /**
- * The six builtin matchers, in the SAME order `matchers.ts#registerBuiltinMatchers`
- * registers them (`builtinMatchers`, `matchers.ts:310-317`). The array index IS
- * the registration index `runMatchers` uses for tie-breaking.
+ * The five builtin matchers, in registration order. The array index IS the
+ * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
+ * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
+ * served by the first-class `llm-wiki` adapter, not the akm adapter.)
  */
 const AKM_MATCHERS: readonly AssetMatcher[] = [
   extensionMatcher,
   directoryMatcher,
   parentDirHintMatcher,
   smartMdMatcher,
-  wikiMatcher,
   workflowProgramMatcher,
 ];
 
@@ -324,7 +322,7 @@ export const akmAdapter: BundleAdapter = {
   id: "akm",
   version: "0.9.0",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
-  // `.md` (markdown types + skill + wiki), `.yaml`/`.yml` (workflow programs,
+  // `.md` (markdown types + skill), `.yaml`/`.yml` (workflow programs,
   // task YAML), `.env` (env files), and the 16 SCRIPT_EXTENSIONS. This is a
   // NON-EXHAUSTIVE hint for the akm adapter: recognition is directory-driven
   // via `recognize()` (e.g. a bare `secrets/<anything>` file with no extension

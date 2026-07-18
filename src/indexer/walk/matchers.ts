@@ -151,7 +151,7 @@ function matchDirectoryHint(dirName: string, ctx: FileContext, specificity: numb
 }
 
 function classifyByExtension(ctx: FileContext): MatchFact | null {
-  if (ctx.fileName === "SKILL.md" && !ctx.ancestorDirs.includes("wikis")) {
+  if (ctx.fileName === "SKILL.md") {
     return { type: "skill", specificity: 25 };
   }
 
@@ -250,14 +250,6 @@ function classifyByWorkflowProgram(ctx: FileContext): MatchFact | null {
   return null;
 }
 
-function classifyByWiki(ctx: FileContext): MatchFact | null {
-  if (ctx.ext !== ".md") return null;
-  const idx = ctx.ancestorDirs.indexOf("wikis");
-  if (idx < 0) return null;
-  if (idx + 1 >= ctx.ancestorDirs.length) return null;
-  return { type: "wiki", specificity: 20 };
-}
-
 // ---------------------------------------------------------------------------
 // Adapter: MatchFact → MatchResult
 // ---------------------------------------------------------------------------
@@ -298,10 +290,6 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
   return toMatchResult(ctx, classifyBySmartMd);
 }
 
-export function wikiMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, classifyByWiki);
-}
-
 export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
   const fact = classifyByWorkflowProgram(ctx);
   if (!fact) return null;
@@ -309,7 +297,7 @@ export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
   return { type: fact.type, specificity: fact.specificity, renderer: WORKFLOW_PROGRAM_RENDERER_NAME };
 }
 
-// The six matcher functions above are consumed directly by the akm adapter's
+// The five matcher functions above are consumed directly by the akm adapter's
 // synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
 // holds the same registration-order array for tie-breaking). The chunk-3 cutover
 // removed the file-context matcher registry, so there is no `registerBuiltinMatchers`

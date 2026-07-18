@@ -235,7 +235,6 @@ export const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
   "knowledge",
   "memory",
   "lesson",
-  "wiki",
   "skill",
   "agent",
   "command",
@@ -1729,8 +1728,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
   const rejectedProposals = readRejectedProposals(stash, options.ref);
-  // Standards "rulebook" for this target — wiki schema (wiki page) or stash
-  // convention/meta facts (non-wiki asset); empty when neither fires.
+  // Standards "rulebook" for this target — stash convention/meta facts; empty
+  // when none fire.
   const standardsContext = resolveStandardsContext(options.ref, stash);
 
   // 5. Spawn the agent — with the optional Self-Refine loop (R-1 / #372),

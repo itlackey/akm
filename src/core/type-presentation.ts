@@ -99,7 +99,6 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     action: (ref) =>
       `akm show ${ref} -> name only (value never shown); akm secret path ${ref} -> file path; akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
   },
-  wiki: { label: "Wiki", renderer: "wiki-md", action: (ref) => `akm show ${ref} -> read the wiki page` },
   lesson: {
     label: "Lesson",
     renderer: "lesson-md",

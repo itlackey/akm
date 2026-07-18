@@ -271,70 +271,44 @@ const agentMdRenderer: AssetRenderer = {
   },
 };
 
-// ── 4. knowledge-md / wiki-md shared helper ───────────────────────────────────
+// ── 4. knowledge-md ──────────────────────────────────────────────────────────
 
 const KNOWLEDGE_ACTION = "Reference material - read the content below. Use 'toc' view for large documents.";
-const WIKI_PAGE_ACTION = "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.";
-
-/**
- * Shared implementation for knowledge-md and wiki-md `buildShowResponse`.
- *
- * Both renderers handle the same set of view modes (toc, frontmatter, section,
- * lines, full). The only differences are the `type` discriminant and the
- * section-not-found message. Extracting this helper eliminates ~90 lines of
- * byte-for-byte duplication.
- */
-function buildMarkdownViewResponse(ctx: RenderContext, type: "knowledge" | "wiki", action: string): ShowResponse {
-  const name = deriveName(ctx);
-  const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
-  const content = ctx.content();
-
-  switch (v.mode) {
-    case "toc": {
-      const toc = parseMarkdownToc(content);
-      return { type, name, path: ctx.absPath, action, content: formatToc(toc) };
-    }
-    case "frontmatter": {
-      const fm = extractFrontmatterOnly(content);
-      return { type, name, path: ctx.absPath, action, content: fm ?? "(no frontmatter)" };
-    }
-    case "section": {
-      const section = extractSection(content, v.heading);
-      if (!section) {
-        const notFoundMsg =
-          type === "wiki"
-            ? `Section "${v.heading}" not found in ${name}. Try \`akm show wiki:${name} toc\` to discover available headings.`
-            : `Section "${v.heading}" not found in ${name}. Try \`akm show <ref> toc\` to discover available headings.`;
-        return { type, name, path: ctx.absPath, action, content: notFoundMsg };
-      }
-      return { type, name, path: ctx.absPath, action, content: section.content };
-    }
-    case "lines": {
-      return { type, name, path: ctx.absPath, action, content: extractLineRange(content, v.start, v.end) };
-    }
-    default: {
-      return { type, name, path: ctx.absPath, action, content };
-    }
-  }
-}
-
-// ── 4. knowledge-md ──────────────────────────────────────────────────────────
 
 const knowledgeMdRenderer: AssetRenderer = {
   name: "knowledge-md",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
-    return buildMarkdownViewResponse(ctx, "knowledge", KNOWLEDGE_ACTION);
-  },
-};
+    const type = "knowledge";
+    const name = deriveName(ctx);
+    const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
+    const content = ctx.content();
+    const action = KNOWLEDGE_ACTION;
 
-// ── 4b. wiki-md ──────────────────────────────────────────────────────────────
-
-const wikiMdRenderer: AssetRenderer = {
-  name: "wiki-md",
-
-  buildShowResponse(ctx: RenderContext): ShowResponse {
-    return buildMarkdownViewResponse(ctx, "wiki", WIKI_PAGE_ACTION);
+    switch (v.mode) {
+      case "toc": {
+        const toc = parseMarkdownToc(content);
+        return { type, name, path: ctx.absPath, action, content: formatToc(toc) };
+      }
+      case "frontmatter": {
+        const fm = extractFrontmatterOnly(content);
+        return { type, name, path: ctx.absPath, action, content: fm ?? "(no frontmatter)" };
+      }
+      case "section": {
+        const section = extractSection(content, v.heading);
+        if (!section) {
+          const notFoundMsg = `Section "${v.heading}" not found in ${name}. Try \`akm show <ref> toc\` to discover available headings.`;
+          return { type, name, path: ctx.absPath, action, content: notFoundMsg };
+        }
+        return { type, name, path: ctx.absPath, action, content: section.content };
+      }
+      case "lines": {
+        return { type, name, path: ctx.absPath, action, content: extractLineRange(content, v.start, v.end) };
+      }
+      default: {
+        return { type, name, path: ctx.absPath, action, content };
+      }
+    }
   },
 };
 
@@ -780,7 +754,7 @@ function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
 }
 registerMetadataContributor({
   name: "toc-metadata",
-  appliesTo: ({ rendererName }) => rendererName === "knowledge-md" || rendererName === "wiki-md",
+  appliesTo: ({ rendererName }) => rendererName === "knowledge-md",
   contribute: (entry, ctx) => applyTocMetadata(entry, ctx.renderContext),
 });
 registerMetadataContributor({
@@ -839,7 +813,6 @@ const builtinRenderers: AssetRenderer[] = [
   commandMdRenderer,
   agentMdRenderer,
   knowledgeMdRenderer,
-  wikiMdRenderer,
   lessonMdRenderer,
   memoryMdRenderer,
   workflowMdRenderer,
@@ -877,7 +850,6 @@ export {
   scriptSourceRenderer,
   secretFileRenderer,
   skillMdRenderer,
-  wikiMdRenderer,
   workflowMdRenderer,
   workflowProgramRenderer,
 };

@@ -38,7 +38,6 @@ export const TYPE_BOOST: Record<KnownType, number> = {
   // explicit now, unchanged in effect.
   env: 0,
   secret: 0,
-  wiki: 0,
   lesson: 0,
   task: 0,
   session: 0,

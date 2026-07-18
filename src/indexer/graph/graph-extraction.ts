@@ -193,7 +193,6 @@ const SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES = new Set([
   "workflow",
   "lesson",
   "task",
-  "wiki",
 ]);
 
 type GraphCacheShape = {

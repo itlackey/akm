@@ -35,7 +35,7 @@ export interface SelectedStrategy {
 }
 
 export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate", string[]> = {
-  reflect: ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"],
+  reflect: ["agent", "command", "knowledge", "lesson", "memory", "skill", "workflow"],
   distill: ["memory"],
   consolidate: ["memory"],
 };
@@ -60,7 +60,6 @@ export function shouldSkipRef(
   const parsed = parseAssetRef(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
-  if (parsed.type === "wiki" && parsed.name.split("/")[1] === "raw") return { skip: true, reason: "raw-wiki" };
   return { skip: false, reason: "" };
 }
 
