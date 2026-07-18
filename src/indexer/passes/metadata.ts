@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { recognizeMatch } from "../../core/adapter/adapters/akm-adapter";
+import { recognizeMatch } from "../../core/adapter/recognize-match";
 import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,

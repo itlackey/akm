@@ -75,14 +75,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { AssetMatcher, FileContext, MatchResult } from "../../../indexer/walk/file-context";
-import {
-  directoryMatcher,
-  extensionMatcher,
-  parentDirHintMatcher,
-  smartMdMatcher,
-  workflowProgramMatcher,
-} from "../../../indexer/walk/matchers";
+import type { FileContext } from "../../../indexer/walk/file-context";
 import {
   assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
@@ -93,48 +86,18 @@ import {
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
+import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
 import { foldRecognizedMetadata } from "./akm-metadata";
 import { hashContent, nonEmptyString, type ParsedForValidate, runBaseValidateChecks } from "./shared";
 
-/**
- * The five builtin matchers, in registration order. The array index IS the
- * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
- * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
- * served by the first-class `llm-wiki` adapter, not the akm adapter.)
- */
-const AKM_MATCHERS: readonly AssetMatcher[] = [
-  extensionMatcher,
-  directoryMatcher,
-  parentDirHintMatcher,
-  smartMdMatcher,
-  workflowProgramMatcher,
-];
-
-/**
- * Synchronous reproduction of `file-context.ts#runMatchers`'s arbitration
- * (`:242-265`), minus its `ensureBuiltinsRegistered()` dynamic import. Runs
- * every builtin matcher in registration order, collects the non-null
- * `MatchResult`s, and returns the highest-specificity one (ties broken by the
- * later-registered matcher — higher index — winning). Returns null when no
- * matcher claims the file. Exported for the fidelity parity test that asserts
- * this agrees with the async `runMatchers`.
- */
-export function recognizeMatch(file: FileContext): MatchResult | null {
-  const hits: Array<{ result: MatchResult; index: number }> = [];
-  for (let i = 0; i < AKM_MATCHERS.length; i++) {
-    const result = AKM_MATCHERS[i](file);
-    if (result !== null) hits.push({ result, index: i });
-  }
-  if (hits.length === 0) return null;
-  hits.sort((a, b) => {
-    const specDiff = b.result.specificity - a.result.specificity;
-    if (specDiff !== 0) return specDiff;
-    return b.index - a.index;
-  });
-  return hits[0].result;
-}
+// `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
+// `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
+// metadata pass import it without closing a metadata ↔ adapter cycle. Re-exported
+// here so existing `akm-adapter` importers (tests, sibling modules) are
+// unaffected.
+export { recognizeMatch } from "../recognize-match";
 
 /** Reverse the placement map (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
 function stashDirToType(stashDir: string): string | undefined {

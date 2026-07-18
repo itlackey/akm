@@ -19,7 +19,7 @@
 
 import fs from "node:fs";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
-import { recognizeMatch } from "../../core/adapter/adapters/akm-adapter";
+import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
