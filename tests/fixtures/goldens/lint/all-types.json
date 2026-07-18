@@ -90,12 +90,6 @@
       "relPath": "tasks/all-types-task.yml",
       "subdir": "tasks"
     },
-    "wiki": {
-      "issues": [],
-      "linterUsed": "DefaultLinter",
-      "relPath": "wikis/all-types-space/all-types-wiki.md",
-      "subdir": "wikis"
-    },
     "workflowMd": {
       "issues": [],
       "linterUsed": "WorkflowLinter",

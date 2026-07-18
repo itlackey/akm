@@ -94,8 +94,8 @@ describe("akm adapter — metadata (§7)", () => {
 describe("akm adapter — recognize reproduces runMatchers classification (§5.1 BINDING)", () => {
   test("every fixture file recognizes as its golden type + carries its golden renderer", () => {
     const contexts = allTypesContexts();
-    // 15 assets: 14 types + the extra workflow-program-yaml renderer form.
-    expect(contexts.length).toBe(15);
+    // 14 assets: 13 types (wiki retired in chunk 4) + the extra workflow-program-yaml renderer form.
+    expect(contexts.length).toBe(14);
 
     let asserted = 0;
     for (const ctx of contexts) {
@@ -129,7 +129,6 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
       ["tasks/all-types-task.yml", "all-types-task"], // task strips .yml
       ["env/all-types-env.env", "all-types-env"], // env strips .env
       ["sessions/all-types-harness/all-types-session.md", "all-types-harness/all-types-session"],
-      ["wikis/all-types-space/all-types-wiki.md", "all-types-space/all-types-wiki"],
       ["secrets/all-types-secret", "all-types-secret"],
     ];
     for (const [relPath, conceptId] of cases) {
@@ -245,7 +244,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
       expect(foldedFromDoc(doc), `folded metadata for ${ctx.relPath}`).toEqual(reference);
       asserted += 1;
     }
-    expect(asserted).toBe(15);
+    expect(asserted).toBe(14);
   });
 
   test("the winning renderer is still carried on documentJson.renderer (WI-B contract intact)", () => {
@@ -294,7 +293,6 @@ describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {
       "tasks",
       "sessions",
       "facts",
-      "wikis",
       "scripts",
     ]) {
       expect(dirs.has(d), `directoryList missing ${d}`).toBe(true);

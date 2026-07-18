@@ -93,7 +93,6 @@ const CANONICAL_NAME_BY_REL_PATH: Record<string, string> = {
   "sessions/all-types-harness/all-types-session.md": "all-types-harness/all-types-session",
   "skills/all-types-skill/SKILL.md": "all-types-skill",
   "tasks/all-types-task.yml": "all-types-task",
-  "wikis/all-types-space/all-types-wiki.md": "all-types-space/all-types-wiki",
   "workflows/all-types-workflow-program.yaml": "all-types-workflow-program",
   "workflows/all-types-workflow.md": "all-types-workflow",
 };
@@ -112,7 +111,6 @@ const EXPECTED_TYPE_BY_REL_PATH: Record<string, string> = {
   "sessions/all-types-harness/all-types-session.md": "session",
   "skills/all-types-skill/SKILL.md": "skill",
   "tasks/all-types-task.yml": "task",
-  "wikis/all-types-space/all-types-wiki.md": "wiki",
   "workflows/all-types-workflow-program.yaml": "workflow",
   "workflows/all-types-workflow.md": "workflow",
 };

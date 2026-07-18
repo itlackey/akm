@@ -105,7 +105,6 @@ const NON_WORKFLOW_CASES: Array<[type: string, subdir: string, relPath: string]>
   ["memory", "memories", "memories/all-types-memory.md"],
   ["env", "env", "env/all-types-env.env"],
   ["secret", "secrets", "secrets/all-types-secret"],
-  ["wiki", "wikis", "wikis/all-types-space/all-types-wiki.md"],
   ["lesson", "lessons", "lessons/all-types-lesson.md"],
   ["task", "tasks", "tasks/all-types-task.yml"],
   ["session", "sessions", "sessions/all-types-harness/all-types-session.md"],
@@ -161,8 +160,8 @@ describe("lint parity: all 14 all-types fixture assets lint clean via their disp
     }
   });
 
-  test("script/env/secret/wiki/session (no dedicated linter) AND lesson (explicitly keyed) all dispatch to DefaultLinter", () => {
-    for (const subdir of ["scripts", "env", "secrets", "wikis", "sessions", "lessons"]) {
+  test("script/env/secret/session (no dedicated linter) AND lesson (explicitly keyed) all dispatch to DefaultLinter", () => {
+    for (const subdir of ["scripts", "env", "secrets", "sessions", "lessons"]) {
       expect(getLinterForType(subdir).constructor.name, subdir).toBe("DefaultLinter");
     }
   });

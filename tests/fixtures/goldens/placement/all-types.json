@@ -60,11 +60,6 @@
       "name": "all-types-task",
       "stashDir": "tasks"
     },
-    "wiki": {
-      "assetPath": "wikis/all-types-space/all-types-wiki.md",
-      "name": "all-types-space/all-types-wiki",
-      "stashDir": "wikis"
-    },
     "workflow": {
       "assetPath": "workflows/all-types-workflow.md",
       "name": "all-types-workflow",

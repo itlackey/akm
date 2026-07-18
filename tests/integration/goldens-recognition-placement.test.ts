@@ -91,7 +91,6 @@ const EXPECTED_TYPE_BY_REL_PATH: Record<string, string> = {
   "sessions/all-types-harness/all-types-session.md": "session",
   "skills/all-types-skill/SKILL.md": "skill",
   "tasks/all-types-task.yml": "task",
-  "wikis/all-types-space/all-types-wiki.md": "wiki",
   "workflows/all-types-workflow-program.yaml": "workflow",
   "workflows/all-types-workflow.md": "workflow",
 };
@@ -110,8 +109,8 @@ function relFromStash(absPath: string): string {
 describe("recognition parity: all 14 all-types fixture assets classify as documented (WI-0b.3a)", () => {
   test("every fixture file (except MANIFEST.json) recognizes as its documented type", async () => {
     const contexts = allTypesFileContexts();
-    // 15 assets: 14 types + the extra workflow-program-yaml renderer form.
-    expect(contexts.length).toBe(15);
+    // 14 assets: 13 types (wiki retired in chunk 4) + the extra workflow-program-yaml renderer form.
+    expect(contexts.length).toBe(14);
 
     for (const ctx of contexts) {
       const expectedType = EXPECTED_TYPE_BY_REL_PATH[ctx.relPath];
@@ -150,7 +149,6 @@ describe("placement parity: toAssetPath round-trips onto the real all-types fixt
       ["memory", "all-types-memory", "memories/all-types-memory.md"],
       ["env", "all-types-env", "env/all-types-env.env"],
       ["secret", "all-types-secret", "secrets/all-types-secret"],
-      ["wiki", "all-types-space/all-types-wiki", "wikis/all-types-space/all-types-wiki.md"],
       ["lesson", "all-types-lesson", "lessons/all-types-lesson.md"],
       ["task", "all-types-task", "tasks/all-types-task.yml"],
       ["session", "all-types-harness/all-types-session", "sessions/all-types-harness/all-types-session.md"],
@@ -233,7 +231,6 @@ describe("golden fixture: recognition + placement parity (WI-0b.3a/b)", () => {
       memory: "all-types-memory",
       env: "all-types-env",
       secret: "all-types-secret",
-      wiki: "all-types-space/all-types-wiki",
       lesson: "all-types-lesson",
       task: "all-types-task",
       session: "all-types-harness/all-types-session",

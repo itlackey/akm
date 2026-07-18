@@ -60,11 +60,6 @@
       "specificity": 15,
       "type": "task"
     },
-    "wikis/all-types-space/all-types-wiki.md": {
-      "renderer": "wiki-md",
-      "specificity": 20,
-      "type": "wiki"
-    },
     "workflows/all-types-workflow-program.yaml": {
       "renderer": "workflow-program-yaml",
       "specificity": 15,

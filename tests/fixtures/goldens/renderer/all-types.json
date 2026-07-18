@@ -92,13 +92,6 @@
       "path": "<STASH>/tasks/all-types-task.yml",
       "type": "task"
     },
-    "wikis/all-types-space/all-types-wiki.md": {
-      "action": "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.",
-      "content": "---\ndescription: Minimal wiki fixture used by the all-types parity stash\nupdated: 2025-06-01\n---\n# All Types Wiki\n\nA one-paragraph wiki page used to exercise the \"wiki\" asset type end to end\n(recognition, placement, rendering). It lives under a namespaced `wikis/`\nsubdirectory, which is required for the wiki matcher to claim it.\n",
-      "name": "all-types-space/all-types-wiki",
-      "path": "<STASH>/wikis/all-types-space/all-types-wiki.md",
-      "type": "wiki"
-    },
     "workflows/all-types-workflow-program.yaml": {
       "action": "Resume the active run or start a new run with `akm workflow next 'workflow:all-types-workflow-program'`.",
       "description": "Minimal YAML workflow program fixture used by the all-types parity stash",
