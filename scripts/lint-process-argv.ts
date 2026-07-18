@@ -71,7 +71,11 @@ function collectTs(dir: string): string[] {
     if (entry.isDirectory()) {
       if (entry.name === "dist" || entry.name === "schemas") continue;
       results.push(...collectTs(full));
-    } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) && !entry.name.endsWith(".d.ts")) {
+    } else if (
+      entry.isFile() &&
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+      !entry.name.endsWith(".d.ts")
+    ) {
       results.push(full);
     }
   }
@@ -196,7 +200,9 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  console.error(`lint-process-argv: ${violations.length} violation(s) — process.argv read outside the allowed boundary\n`);
+  console.error(
+    `lint-process-argv: ${violations.length} violation(s) — process.argv read outside the allowed boundary\n`,
+  );
   console.error(
     `Only ${[...ALLOWED_FILES].join(" and ")} may read process.argv directly. Use getParsedInvocation() from src/cli/invocation.ts instead.\n`,
   );

@@ -580,7 +580,11 @@ function noteRegistryIndexCache(ctx: MigrationContext): StepResult {
   const src = path.join(ctx.paths.cacheDir, "registry-index");
 
   if (!fs.existsSync(src)) {
-    return { name: "registry-index/ (note)", status: "skipped", detail: "no old $CACHE/registry-index/ directory found" };
+    return {
+      name: "registry-index/ (note)",
+      status: "skipped",
+      detail: "no old $CACHE/registry-index/ directory found",
+    };
   }
 
   const legacyFiles = fs.readdirSync(src).filter((f) => f.endsWith(".json") && !f.startsWith("website-"));
@@ -667,7 +671,8 @@ function findLegacyGraphFile(ctx: MigrationContext): string | null {
         .readdirSync(graphDir)
         .filter((f) => f.endsWith(".json"))
         .map((f) => path.join(graphDir, f));
-      if (json.length > 0) return json[0]!;
+      const [first] = json;
+      if (first) return first;
     } catch {
       // ignored
     }
@@ -699,7 +704,9 @@ interface LegacyGraphSnapshotShape {
   };
 }
 
-function validateGraphSnapshot(parsed: unknown): { ok: true; data: LegacyGraphSnapshotShape } | { ok: false; reason: string } {
+function validateGraphSnapshot(
+  parsed: unknown,
+): { ok: true; data: LegacyGraphSnapshotShape } | { ok: false; reason: string } {
   if (parsed == null || typeof parsed !== "object") return { ok: false, reason: "root is not an object" };
   const obj = parsed as LegacyGraphSnapshotShape;
   if (typeof obj.stashRoot !== "string" || obj.stashRoot.length === 0) {
@@ -759,10 +766,10 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<StepResult> 
       };
     }
     const snapshot = validation.data;
+    // validateGraphSnapshot guarantees stashRoot is a non-empty string (see the guard above).
+    const stashRoot = snapshot.stashRoot as string;
 
-    const { openExistingDatabase, closeDatabase } = await import(
-      "../src/storage/repositories/index-connection"
-    );
+    const { openExistingDatabase, closeDatabase } = await import("../src/storage/repositories/index-connection");
     const { replaceStoredGraph, loadStoredGraphMeta } = await import("../src/indexer/db/graph-db");
 
     const db = openExistingDatabase(ctx.paths.indexDbPath);
@@ -770,7 +777,7 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<StepResult> 
       const graph = {
         schemaVersion: snapshot.schemaVersion ?? 2,
         generatedAt: snapshot.generatedAt ?? new Date().toISOString(),
-        stashRoot: snapshot.stashRoot!,
+        stashRoot,
         files: (snapshot.files ?? []).map((f) => ({
           path: f.path,
           type: f.type,
@@ -817,12 +824,12 @@ async function migrateGraphFileToDb(ctx: MigrationContext): Promise<StepResult> 
       // orphans (no matching entries row), the import is effectively a no-op
       // and we must not consume the source file.
       const importedCount = (
-        db.prepare("SELECT COUNT(*) AS cnt FROM graph_files WHERE stash_root = ?").get(snapshot.stashRoot!) as {
+        db.prepare("SELECT COUNT(*) AS cnt FROM graph_files WHERE stash_root = ?").get(stashRoot) as {
           cnt: number;
         }
       ).cnt;
 
-      const meta = loadStoredGraphMeta(snapshot.stashRoot!, db);
+      const meta = loadStoredGraphMeta(stashRoot, db);
       if (!meta) {
         return {
           name,
@@ -928,7 +935,8 @@ function chmodTreeSecure(dir: string): { ok: boolean; detail?: string } {
         return { ok: false, detail: `mode verification failed for ${full}` };
       }
     } catch (err) {
-      if (!isWin) return { ok: false, detail: `chmod 0600 ${full} failed: ${err instanceof Error ? err.message : err}` };
+      if (!isWin)
+        return { ok: false, detail: `chmod 0600 ${full} failed: ${err instanceof Error ? err.message : err}` };
     }
   }
   return { ok: true };
@@ -1142,7 +1150,9 @@ Next step — repopulate graph data (if migrating from 0.7):
 
 // ── Runner ───────────────────────────────────────────────────────────────────
 
-export async function runMigrations(opts: { dryRun: boolean; paths?: ResolvedPaths } = { dryRun: DRY_RUN }): Promise<VersionRunReport[]> {
+export async function runMigrations(
+  opts: { dryRun: boolean; paths?: ResolvedPaths } = { dryRun: DRY_RUN },
+): Promise<VersionRunReport[]> {
   const paths = opts.paths ?? PATHS;
   const reports: VersionRunReport[] = [];
 

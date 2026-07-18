@@ -40,10 +40,7 @@ const srcDir = path.join(repoRoot, "src");
  * The ONLY files permitted to touch the runtime primitives. Relative to the
  * repo root, POSIX separators. This allowlist must NOT grow.
  */
-const BOUNDARY_FILES: ReadonlySet<string> = new Set([
-  "src/storage/database.ts",
-  "src/runtime.ts",
-]);
+const BOUNDARY_FILES: ReadonlySet<string> = new Set(["src/storage/database.ts", "src/runtime.ts"]);
 
 interface Rule {
   id: string;
@@ -64,8 +61,7 @@ const RULES: readonly Rule[] = [
   {
     id: "sqlite-driver-import",
     // import ... from 'bun:sqlite' | "better-sqlite3", or require('better-sqlite3')
-    pattern:
-      /(?:from\s*|require\s*\(\s*)["'](?:bun:sqlite|better-sqlite3)["']/,
+    pattern: /(?:from\s*|require\s*\(\s*)["'](?:bun:sqlite|better-sqlite3)["']/,
     message:
       "imports a SQLite driver directly — import { openDatabase, type Database } from src/storage/database instead",
     keepStrings: true,
@@ -74,14 +70,12 @@ const RULES: readonly Rule[] = [
     id: "bun-namespace",
     // Any Bun.<member> reference: Bun.spawn, Bun.write, Bun.main, etc.
     pattern: /\bBun\.[A-Za-z_$]/,
-    message:
-      "references the Bun.* global — use the named exports in src/runtime.ts instead",
+    message: "references the Bun.* global — use the named exports in src/runtime.ts instead",
   },
   {
     id: "import-meta-dir",
     pattern: /\bimport\.meta\.dir\b/,
-    message:
-      "uses import.meta.dir — use getDirname(import.meta.url) from src/runtime.ts instead",
+    message: "uses import.meta.dir — use getDirname(import.meta.url) from src/runtime.ts instead",
   },
 ];
 
@@ -93,11 +87,7 @@ function collectTs(dir: string): string[] {
     if (entry.isDirectory()) {
       if (entry.name === "dist" || entry.name === "schemas") continue;
       results.push(...collectTs(full));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".ts") &&
-      !entry.name.endsWith(".d.ts")
-    ) {
+    } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
       results.push(full);
     }
   }

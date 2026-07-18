@@ -79,13 +79,7 @@ import path from "node:path";
 // ── Configuration ────────────────────────────────────────────────────────────
 
 /** AKM-specific env vars that should be managed via sandbox helpers. */
-const AKM_ENV_VARS: readonly string[] = [
-  "AKM_STASH_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_CACHE_HOME",
-  "HOME",
-];
+const AKM_ENV_VARS: readonly string[] = ["AKM_STASH_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HOME"];
 
 /**
  * Rule 2 exemptions: files that assign AKM/XDG/HOME env vars without going
@@ -373,7 +367,13 @@ function lintFile(filePath: string): Violation[] {
     if (foundVars.length > 0) {
       const lines = src.split("\n");
       const lineNum = lines.findIndex((l) => l.includes("mkdtempSync")) + 1;
-      violations.push({ file: rel, rule: "mkdtemp-env", detail: `env vars: ${foundVars.join(", ")}`, line: lineNum, envVars: foundVars });
+      violations.push({
+        file: rel,
+        rule: "mkdtemp-env",
+        detail: `env vars: ${foundVars.join(", ")}`,
+        line: lineNum,
+        envVars: foundVars,
+      });
     }
   }
 

@@ -50,10 +50,7 @@ function isFunctionLike(node: ts.Node): boolean {
  * passed to, so the id survives edits elsewhere in the file.
  */
 function localName(node: ts.Node, sf: ts.SourceFile): string {
-  if (
-    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isFunctionExpression(node)) &&
-    node.name
-  ) {
+  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isFunctionExpression(node)) && node.name) {
     return node.name.getText(sf);
   }
   const parent = node.parent;

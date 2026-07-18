@@ -18,6 +18,7 @@
     "includes": [
       "src/**",
       "tests/**",
+      "scripts/*.ts",
       "!src/assets/templates/html",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json"
@@ -37,6 +38,10 @@
         "tests/integration/workflows/conformance/conformance.test.ts"
       ],
       "linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
+    },
+    {
+      "includes": ["scripts/lint-devto-posts.ts"],
+      "linter": { "rules": { "suspicious": { "noControlCharactersInRegex": "off" } } }
     }
   ]
 }

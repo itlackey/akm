@@ -108,7 +108,7 @@ for (const entry of entries) {
 
   const referenced = (entry.consumers ?? []).some((c) => {
     const src = readConsumer(c);
-    return src !== null && src.includes(entry.path);
+    return src?.includes(entry.path) ?? false;
   });
   if (!referenced) {
     problems.push(`no consumer suite references the fixture path string: ${entry.path} (gutted or rewired suite?)`);

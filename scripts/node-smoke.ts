@@ -112,7 +112,12 @@ function step(label: string, args: string[], opts: StepOptions = {}): string {
   }
   // A Node-branch regression in the runtime boundary surfaces as these messages
   // even when the command still prints a result — treat them as hard failures.
-  for (const marker of ["appendEvent failed", "ERR_MODULE_NOT_FOUND", "ERR_UNKNOWN_FILE_EXTENSION", "Bun is not defined"]) {
+  for (const marker of [
+    "appendEvent failed",
+    "ERR_MODULE_NOT_FOUND",
+    "ERR_UNKNOWN_FILE_EXTENSION",
+    "Bun is not defined",
+  ]) {
     if (err.includes(marker) || out.includes(marker)) {
       ok = false;
       problems.push(`runtime-boundary marker in output: ${marker}`);

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { chmodSync, statSync } from "node:fs";
 // Build-time asset step:
 //   1. Mirror src/assets/ → dist/assets/ after tsc.
 //      All runtime assets (profiles, task templates, backend templates,
@@ -15,8 +16,7 @@
 //      dist/scripts/ so globally-installed users (npm / prebuilt binary)
 //      can run them without `../src/...` import paths breaking (#469).
 import { mkdir } from "node:fs/promises";
-import { chmodSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 
 const assetGlob = new Bun.Glob("src/assets/**/*");
 for await (const src of assetGlob.scan(".")) {
@@ -81,7 +81,7 @@ for (const entry of migrationEntrypoints) {
     entrypoints: [entry],
     target: "node",
     outdir: dirname(outfile),
-    naming: outfile.split("/").pop()!,
+    naming: basename(outfile),
     minify: false,
     // Bun.build preserves the source file's shebang; no banner needed.
   });
