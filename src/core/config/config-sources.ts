@@ -4,7 +4,7 @@
 
 /**
  * Runtime helpers that derive {@link ConfiguredSource} values from the
- * persisted {@link SourceConfigEntry} / {@link InstalledStashEntry} shapes
+ * persisted {@link SourceConfigEntry} / {@link InstalledBundle} shapes
  * in an {@link AkmConfig}.
  */
 import { createHash } from "node:crypto";
@@ -15,7 +15,7 @@ import type { AkmConfig, ConfiguredSource, SourceConfigEntry, SourceSpec } from 
  * `name`. Uses a short hash of the discriminating fields so two equivalent
  * entries collapse to the same generated name.
  */
-function deriveStashEntryName(entry: SourceConfigEntry): string {
+function deriveBundleName(entry: SourceConfigEntry): string {
   if (entry.name) return entry.name;
   const seed = JSON.stringify({
     type: entry.type,
@@ -100,7 +100,7 @@ function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): C
   const source = parseSourceSpec(persisted);
   if (!source) return undefined;
   return {
-    name: deriveStashEntryName(persisted),
+    name: deriveBundleName(persisted),
     type: persisted.type,
     source,
     ...(persisted.enabled !== undefined ? { enabled: persisted.enabled } : {}),

@@ -28,7 +28,7 @@ export const DEFAULT_SELECTED_STASH_IDS: readonly string[] = ["itlackey/akm-stas
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** A stash entry normalised for display in the setup wizard. */
-export interface SetupStashEntry {
+export interface SetupBundleEntry {
   /** Unique registry identifier (matches `id` in the registry index). */
   id: string;
   /** Human-readable display name. */
@@ -49,7 +49,7 @@ export interface SetupStashEntry {
  * Hardcoded stash list used when the registry is unreachable.
  * Mirrors the previous RECOMMENDED_GITHUB_REPOS constant.
  */
-const FALLBACK_STASHES: SetupStashEntry[] = [
+const FALLBACK_STASHES: SetupBundleEntry[] = [
   {
     id: "itlackey/akm-stash",
     name: "itlackey/akm-stash",
@@ -80,7 +80,7 @@ export function _setLoadSetupStashesForTests(fake?: typeof loadSetupStashesReal)
 // ── Loader ──────────────────────────────────────────────────────────────────
 
 /**
- * Fetch available stashes from the registry and map to SetupStashEntry[].
+ * Fetch available stashes from the registry and map to SetupBundleEntry[].
  *
  * Falls back to FALLBACK_STASHES on network failure, parse error, or
  * empty response — setup never crashes due to a registry outage.
@@ -88,12 +88,12 @@ export function _setLoadSetupStashesForTests(fake?: typeof loadSetupStashesReal)
  * @param registryUrl  URL of the registry index JSON.
  * @param timeoutMs    Fetch timeout in ms (default: 4000).
  */
-export async function loadSetupStashes(registryUrl: string, timeoutMs = 4000): Promise<SetupStashEntry[]> {
+export async function loadSetupStashes(registryUrl: string, timeoutMs = 4000): Promise<SetupBundleEntry[]> {
   if (loadSetupStashesOverride) return loadSetupStashesOverride(registryUrl, timeoutMs);
   return loadSetupStashesReal(registryUrl, timeoutMs);
 }
 
-async function loadSetupStashesReal(registryUrl: string, timeoutMs = 4000): Promise<SetupStashEntry[]> {
+async function loadSetupStashesReal(registryUrl: string, timeoutMs = 4000): Promise<SetupBundleEntry[]> {
   try {
     const response = await fetch(registryUrl, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -104,7 +104,7 @@ async function loadSetupStashesReal(registryUrl: string, timeoutMs = 4000): Prom
     const raw = (await response.json()) as { stashes?: unknown[] };
     if (!Array.isArray(raw.stashes) || raw.stashes.length === 0) return FALLBACK_STASHES;
 
-    const entries: SetupStashEntry[] = raw.stashes.flatMap((item): SetupStashEntry[] => {
+    const entries: SetupBundleEntry[] = raw.stashes.flatMap((item): SetupBundleEntry[] => {
       if (!item || typeof item !== "object") return [];
       const s = item as Record<string, unknown>;
       const id = typeof s.id === "string" ? s.id : "";

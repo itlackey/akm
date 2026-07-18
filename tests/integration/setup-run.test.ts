@@ -9,7 +9,7 @@ import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { _setDetectForTests } from "../../src/setup/detect";
-import { _setLoadSetupStashesForTests, type SetupStashEntry } from "../../src/setup/registry-stash-loader";
+import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../../src/setup/registry-stash-loader";
 import { runSetupWizard } from "../../src/setup/setup";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
@@ -242,7 +242,7 @@ function installSetupSeams(): void {
   // registry index over the network (options would drift with its content).
   overrideSeam(
     _setLoadSetupStashesForTests,
-    async (): Promise<SetupStashEntry[]> => [
+    async (): Promise<SetupBundleEntry[]> => [
       {
         id: "itlackey/akm-stash",
         name: "itlackey/akm-stash",

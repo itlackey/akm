@@ -24,10 +24,10 @@ const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 export interface RegistryIndex {
   version: number;
   updatedAt: string;
-  stashes: RegistryStashEntry[];
+  stashes: RegistryBundleEntry[];
 }
 
-export interface RegistryStashEntry {
+export interface RegistryBundleEntry {
   id: string;
   name: string;
   description?: string;
@@ -69,8 +69,8 @@ class StaticIndexProvider implements RegistryProvider {
 
   // ── Internals ───────────────────────────────────────────────────────────
 
-  private async loadAllKits(warnings: string[]): Promise<Array<{ stash: RegistryStashEntry; registryName?: string }>> {
-    const allKits: Array<{ stash: RegistryStashEntry; registryName?: string }> = [];
+  private async loadAllKits(warnings: string[]): Promise<Array<{ stash: RegistryBundleEntry; registryName?: string }>> {
+    const allKits: Array<{ stash: RegistryBundleEntry; registryName?: string }> = [];
     try {
       const index = await loadIndex(this.config);
       if (index) {
@@ -139,8 +139,8 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
   if (typeof obj.updatedAt !== "string") return null;
   if (!Array.isArray(obj.stashes)) return null;
 
-  const stashes = obj.stashes.flatMap((raw): RegistryStashEntry[] => {
-    const stash = parseStashEntry(raw);
+  const stashes = obj.stashes.flatMap((raw): RegistryBundleEntry[] => {
+    const stash = parseBundleEntry(raw);
     return stash ? [stash] : [];
   });
 
@@ -149,7 +149,7 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
 
 // ── Stash entry parsing ───────────────────────────────────────────────────────
 
-function parseStashEntry(raw: unknown): RegistryStashEntry | null {
+function parseBundleEntry(raw: unknown): RegistryBundleEntry | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
 
@@ -181,13 +181,13 @@ function parseStashEntry(raw: unknown): RegistryStashEntry | null {
 // ── Scoring ─────────────────────────────────────────────────────────────────
 
 function scoreKits(
-  stashes: Array<{ stash: RegistryStashEntry; registryName?: string }>,
+  stashes: Array<{ stash: RegistryBundleEntry; registryName?: string }>,
   query: string,
   limit: number,
 ): RegistrySearchHit[] {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
 
-  const scored: Array<{ stash: RegistryStashEntry; registryName?: string; score: number }> = [];
+  const scored: Array<{ stash: RegistryBundleEntry; registryName?: string; score: number }> = [];
 
   for (const { stash, registryName } of stashes) {
     const score = scoreStash(stash, tokens);
@@ -201,7 +201,7 @@ function scoreKits(
   return scored.slice(0, limit).map(({ stash, registryName, score }) => toSearchHit(stash, score, registryName));
 }
 
-function scoreStash(stash: RegistryStashEntry, tokens: string[]): number {
+function scoreStash(stash: RegistryBundleEntry, tokens: string[]): number {
   let score = 0;
   const nameLower = stash.name.toLowerCase();
   const descLower = (stash.description ?? "").toLowerCase();
@@ -237,7 +237,7 @@ function scoreStash(stash: RegistryStashEntry, tokens: string[]): number {
   return tokens.length > 0 ? score / tokens.length : 0;
 }
 
-function toSearchHit(stash: RegistryStashEntry, score: number, registryName?: string): RegistrySearchHit {
+function toSearchHit(stash: RegistryBundleEntry, score: number, registryName?: string): RegistrySearchHit {
   const metadata: Record<string, string> = {};
   if (stash.latestVersion) metadata.version = stash.latestVersion;
   if (stash.author) metadata.author = stash.author;
@@ -289,7 +289,7 @@ function parseAssetEntry(raw: unknown): RegistryAssetEntry | null {
 // ── Asset-level scoring ─────────────────────────────────────────────────────
 
 function scoreAssets(
-  stashes: Array<{ stash: RegistryStashEntry; registryName?: string }>,
+  stashes: Array<{ stash: RegistryBundleEntry; registryName?: string }>,
   query: string,
   limit: number,
 ): RegistryAssetSearchHit[] {

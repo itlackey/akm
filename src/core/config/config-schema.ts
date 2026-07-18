@@ -35,7 +35,7 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import type { InstalledStashEntry } from "../../registry/types";
+import type { InstalledBundle } from "../../registry/types";
 import { validateExtraParams } from "../extra-params";
 import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "./config-types";
 import {
@@ -1201,14 +1201,14 @@ export const AkmConfigShape = {
   semanticSearchMode: z.enum(["off", "auto"]).default("auto"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
-  // The `installed[]` shape is OWNED by the registry (`InstalledStashEntry`):
+  // The `installed[]` shape is OWNED by the registry (`InstalledBundle`):
   // its `source` is the 4-value `InstallKind` produced by the registry ref
   // parser, and installed entries never carry the extra passthrough keys. The
   // schema still validates entries at runtime, but its OUTPUT type is pinned to
-  // the domain type so config consumers get the registry `InstalledStashEntry`
+  // the domain type so config consumers get the registry `InstalledBundle`
   // (not a looser schema-local mirror) — the single-source-of-truth boundary.
   installed: z.array(InstalledStashEntrySchema).optional() as unknown as z.ZodOptional<
-    z.ZodArray<z.ZodType<InstalledStashEntry>>
+    z.ZodArray<z.ZodType<InstalledBundle>>
   >,
   registries: z.array(RegistryConfigEntrySchema).optional(),
   sources: z.array(SourceConfigEntrySchema).optional(),

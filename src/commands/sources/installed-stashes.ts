@@ -17,7 +17,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
-import type { InstalledStashEntry } from "../../registry/types";
+import type { InstalledBundle } from "../../registry/types";
 import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import {
@@ -218,7 +218,7 @@ async function updateWebsiteSource(
 
 /** Sync a single installed registry entry and return the processed record. */
 async function updateRegistryEntry(
-  entry: InstalledStashEntry,
+  entry: InstalledBundle,
   force: boolean,
 ): Promise<UpdateResponse["processed"][number]> {
   if (force && shouldCleanupCache(entry)) {
@@ -226,7 +226,7 @@ async function updateRegistryEntry(
   }
   const synced = await syncFromRef(entry.ref, { force });
 
-  const installedEntry: InstalledStashEntry = {
+  const installedEntry: InstalledBundle = {
     id: synced.id,
     // Preserve the original source classification. syncFromRef() re-derives the
     // source type from the ref scheme (e.g. "github:" → source: "github"), but
@@ -333,11 +333,7 @@ export async function akmUpdate(input?: {
   return buildUpdateResponse(stashDir, target, all, processed);
 }
 
-function selectTargets(
-  installed: InstalledStashEntry[],
-  target: string | undefined,
-  all: boolean,
-): InstalledStashEntry[] {
+function selectTargets(installed: InstalledBundle[], target: string | undefined, all: boolean): InstalledBundle[] {
   if (all && target) {
     throw new UsageError("Specify either <target> or --all, not both.", "MISSING_OR_AMBIGUOUS_TARGET");
   }
@@ -380,7 +376,7 @@ function selectTargets(
   throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
 }
 
-function tryResolveInstalledTarget(installed: InstalledStashEntry[], target: string): InstalledStashEntry | undefined {
+function tryResolveInstalledTarget(installed: InstalledBundle[], target: string): InstalledBundle | undefined {
   const byId = installed.find((entry) => entry.id === target);
   if (byId) return byId;
 
@@ -409,7 +405,7 @@ function cleanupDirectoryBestEffort(target: string): void {
   }
 }
 
-function shouldCleanupCache(entry: InstalledStashEntry): boolean {
+function shouldCleanupCache(entry: InstalledBundle): boolean {
   return entry.source !== "local";
 }
 

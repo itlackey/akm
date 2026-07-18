@@ -62,7 +62,7 @@ export interface ResolvedRegistryArtifact {
   resolvedRevision?: string;
 }
 
-export interface InstalledStashEntry {
+export interface InstalledBundle {
   id: string;
   source: InstallKind;
   ref: string;
@@ -75,7 +75,7 @@ export interface InstalledStashEntry {
   writable?: boolean;
 }
 
-export interface StashInstallResult extends InstalledStashEntry {
+export interface StashInstallResult extends InstalledBundle {
   extractedDir: string;
   integrity?: string;
 }

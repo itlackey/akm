@@ -10,7 +10,7 @@ import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "../_helpe
 
 // One entry intentionally carries the legacy `curated` boolean to exercise
 // the v1 parse-and-ignore rule (spec §4.2). The cast is necessary because
-// `curated` was removed from `RegistryStashEntry` in v1.
+// `curated` was removed from `RegistryBundleEntry` in v1.
 const FIXTURE_INDEX: RegistryIndex = {
   version: 3,
   updatedAt: "2026-03-09T00:00:00Z",

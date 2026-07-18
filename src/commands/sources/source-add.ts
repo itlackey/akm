@@ -11,7 +11,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
 import { upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
-import type { InstalledStashEntry } from "../../registry/types";
+import type { InstalledBundle } from "../../registry/types";
 import { detectStashRoot } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import {
@@ -255,7 +255,7 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
 }
 
 /** Persist or replace an installed stash entry in the user config. */
-export function upsertInstalledRegistryEntry(entry: InstalledStashEntry) {
+export function upsertInstalledRegistryEntry(entry: InstalledBundle) {
   return mutateConfig((current) => {
     const withoutExisting = (current.installed ?? []).filter((item) => item.id !== entry.id);
     return { ...current, installed: [...withoutExisting, normalizeInstalledEntry(entry)] };
@@ -272,7 +272,7 @@ export function removeInstalledRegistryEntry(id: string) {
   }).config;
 }
 
-function normalizeInstalledEntry(entry: InstalledStashEntry): InstalledStashEntry {
+function normalizeInstalledEntry(entry: InstalledBundle): InstalledBundle {
   return {
     ...entry,
     stashRoot: path.resolve(entry.stashRoot),

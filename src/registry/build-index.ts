@@ -23,7 +23,7 @@ import { writeResponseToFile } from "../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/include";
 import { detectStashRoot } from "../sources/providers/provider-utils";
 import { extractTarGzSecure } from "../sources/providers/tar-utils";
-import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
+import { parseRegistryIndex, type RegistryBundleEntry, type RegistryIndex } from "./providers/static-index";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
 const REQUIRED_KEYWORDS = ["akm-stash"];
@@ -85,7 +85,7 @@ interface PackageInspection {
   license?: string;
   tags?: string[];
   assetTypes?: string[];
-  assets?: RegistryStashEntry["assets"];
+  assets?: RegistryBundleEntry["assets"];
 }
 
 const EMPTY_INSPECTION: PackageInspection = {};
@@ -137,8 +137,8 @@ export function writeRegistryIndex(index: RegistryIndex, outPath?: string): stri
   return resolved;
 }
 
-async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
-  const stashes: RegistryStashEntry[] = [];
+async function scanNpm(npmRegistryBase: string): Promise<RegistryBundleEntry[]> {
+  const stashes: RegistryBundleEntry[] = [];
   const seen = new Set<string>();
 
   for (const keyword of REQUIRED_KEYWORDS) {
@@ -224,8 +224,8 @@ async function inspectNpmPackage(
   };
 }
 
-async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> {
-  const stashes: RegistryStashEntry[] = [];
+async function scanGithub(githubApiBase: string): Promise<RegistryBundleEntry[]> {
+  const stashes: RegistryBundleEntry[] = [];
   const seen = new Set<string>();
   const headers = githubHeaders();
 
@@ -393,7 +393,7 @@ function applyIncludeConfigForInspection(stashRoot: string, tempDir: string, sea
   return selectedDir;
 }
 
-async function loadManualEntries(manualEntriesPath: string): Promise<RegistryStashEntry[]> {
+async function loadManualEntries(manualEntriesPath: string): Promise<RegistryBundleEntry[]> {
   try {
     const raw = JSON.parse(fs.readFileSync(manualEntriesPath, "utf8"));
     const candidateKits = Array.isArray(raw) ? raw : asRecord(raw).stashes;
@@ -423,8 +423,8 @@ async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   return jsonWithByteCap<T>(response, BUILD_INDEX_JSON_BYTE_CAP);
 }
 
-function deduplicateStashes(stashes: RegistryStashEntry[]): RegistryStashEntry[] {
-  const byId = new Map<string, RegistryStashEntry>();
+function deduplicateStashes(stashes: RegistryBundleEntry[]): RegistryBundleEntry[] {
+  const byId = new Map<string, RegistryBundleEntry>();
   for (const stash of stashes) {
     const existing = byId.get(stash.id);
     byId.set(stash.id, existing ? mergeEntries(existing, stash) : stash);
@@ -432,7 +432,7 @@ function deduplicateStashes(stashes: RegistryStashEntry[]): RegistryStashEntry[]
   return [...byId.values()];
 }
 
-function mergeEntries(a: RegistryStashEntry, b: RegistryStashEntry): RegistryStashEntry {
+function mergeEntries(a: RegistryBundleEntry, b: RegistryBundleEntry): RegistryBundleEntry {
   const assets = mergeAssets(a.assets, b.assets);
   const assetTypes = mergeStrings(a.assetTypes, b.assetTypes, assets ? deriveAssetTypes(assets) : undefined);
   return normalizeStash({
@@ -452,11 +452,11 @@ function mergeEntries(a: RegistryStashEntry, b: RegistryStashEntry): RegistrySta
 }
 
 function mergeAssets(
-  a?: RegistryStashEntry["assets"],
-  b?: RegistryStashEntry["assets"],
-): RegistryStashEntry["assets"] | undefined {
+  a?: RegistryBundleEntry["assets"],
+  b?: RegistryBundleEntry["assets"],
+): RegistryBundleEntry["assets"] | undefined {
   if (!a && !b) return undefined;
-  const merged = new Map<string, NonNullable<RegistryStashEntry["assets"]>[number]>();
+  const merged = new Map<string, NonNullable<RegistryBundleEntry["assets"]>[number]>();
   for (const asset of [...(a ?? []), ...(b ?? [])]) {
     const key = `${asset.type}:${asset.name}`;
     if (!merged.has(key)) merged.set(key, asset);
@@ -470,7 +470,7 @@ function mergeStrings(...values: Array<string[] | undefined>): string[] | undefi
   return merged.length > 0 ? merged : undefined;
 }
 
-function deriveAssetTypes(assets?: RegistryStashEntry["assets"]): string[] | undefined {
+function deriveAssetTypes(assets?: RegistryBundleEntry["assets"]): string[] | undefined {
   return mergeStrings(assets?.map((asset) => asset.type));
 }
 
@@ -484,7 +484,7 @@ function extractNonReservedKeywords(value: unknown): string[] | undefined {
   return filtered.length > 0 ? filtered : undefined;
 }
 
-function normalizeStash(stash: RegistryStashEntry): RegistryStashEntry {
+function normalizeStash(stash: RegistryBundleEntry): RegistryBundleEntry {
   const assets = stash.assets ? sortAssets(stash.assets) : undefined;
   return {
     ...stash,
@@ -494,7 +494,7 @@ function normalizeStash(stash: RegistryStashEntry): RegistryStashEntry {
   };
 }
 
-function sortAssets(assets: NonNullable<RegistryStashEntry["assets"]>): NonNullable<RegistryStashEntry["assets"]> {
+function sortAssets(assets: NonNullable<RegistryBundleEntry["assets"]>): NonNullable<RegistryBundleEntry["assets"]> {
   return [...assets].sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
 }
 

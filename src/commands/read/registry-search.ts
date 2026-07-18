@@ -14,7 +14,7 @@ import "../../registry/providers/index";
 
 // ── Re-exports for backward compatibility ───────────────────────────────────
 
-export type { RegistryIndex, RegistryStashEntry } from "../../registry/providers/static-index";
+export type { RegistryBundleEntry, RegistryIndex } from "../../registry/providers/static-index";
 export type { RegistryAssetSearchHit } from "../../registry/types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
