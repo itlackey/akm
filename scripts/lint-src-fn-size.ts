@@ -52,7 +52,7 @@ export type SrcFnOffender = FnOffender;
 export const SRC_FN_SIZE_BASELINE: readonly SrcFnOffender[] = [
   { id: "src/indexer/graph/graph-extraction.ts :: runGraphExtractionPass", lines: 458 },
   { id: "src/workflows/exec/report.ts :: reportWorkflowUnitWithBarrier", lines: 438 },
-  { id: "src/indexer/db/schema.ts :: ensureSchema", lines: 348 },
+  { id: "src/storage/repositories/index-schema.ts :: ensureSchema", lines: 348 },
   { id: "src/workflows/exec/run-workflow.ts :: driveRun", lines: 327 },
   { id: "src/integrations/agent/spawn.ts :: runAgent", lines: 298 },
   { id: "src/commands/mv-cli.ts :: run", lines: 294 },

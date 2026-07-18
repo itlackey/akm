@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import { getUsageEvents, insertUsageEvent } from "../../src/indexer/usage/usage-events";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

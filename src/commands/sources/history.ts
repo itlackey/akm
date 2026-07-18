@@ -22,9 +22,9 @@ import { parseAssetRef } from "../../core/asset/asset-ref";
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
 import type { Database } from "../../storage/database";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { listProposals } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────

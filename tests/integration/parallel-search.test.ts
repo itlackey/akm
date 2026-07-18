@@ -4,20 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
-import {
-  closeDatabase,
-  openIndexDatabase,
-  rebuildFts,
-  searchFts,
-  setMeta,
-  upsertEmbedding,
-  upsertEntry,
-} from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../../src/llm/embedder";
 import type { SourceSearchHit } from "../../src/sources/types";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
+import { upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import {
   type Cleanup,
   sandboxStashDir,

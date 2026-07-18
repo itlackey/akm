@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
-import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import type { Database } from "../database";
+import { closeDatabase, openIndexDatabase } from "./index-connection";
 import { getRegistryIndexCache, upsertRegistryIndexCache } from "./registry-index-cache-repository";
 
 /**

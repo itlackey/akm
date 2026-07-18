@@ -60,21 +60,16 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import type { DbIndexedEntry } from "../../indexer/db/db";
-import {
-  closeDatabase,
-  findEntryIdByRef,
-  getAllEntries,
-  getEntryById,
-  getNeighborsByEntryId,
-  openExistingDatabase,
-} from "../../indexer/db/db";
 import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { callStructured } from "../../llm/structured-call";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
+import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
+import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 
 // ── Types ───────────────────────────────────────────────────────────────────

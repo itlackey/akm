@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
 import { resetQuiet, resetVerbose, setVerbose } from "../../../src/core/warn";
-import { closeDatabase, openIndexDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
 let envCleanup: Cleanup = () => {};

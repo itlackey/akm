@@ -20,9 +20,10 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, getIndexedFilePaths, openExistingDatabase } from "../../../src/indexer/db/db";
 import { ensureIndex } from "../../../src/indexer/ensure-index";
 import * as indexerModule from "../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { getIndexedFilePaths } from "../../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
   sandboxEnvDir,

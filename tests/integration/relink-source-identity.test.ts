@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getRetrievalCounts, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
+import { getRetrievalCounts } from "../../src/storage/repositories/index-utility-repository";
 import { type Cleanup, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};

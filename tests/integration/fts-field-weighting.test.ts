@@ -2,11 +2,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openIndexDatabase, rebuildFts, searchFts, upsertEntry } from "../../src/indexer/db/db";
-import { DB_VERSION } from "../../src/indexer/db/schema";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { buildSearchFields, buildSearchText } from "../../src/indexer/search/search-fields";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { DB_VERSION } from "../../src/storage/repositories/index-schema";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────

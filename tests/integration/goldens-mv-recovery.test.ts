@@ -48,10 +48,10 @@ import { readEvents } from "../../src/core/events";
 import { txnNamespaceDir } from "../../src/core/fs-txn";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { insertUsageEvent } from "../../src/indexer/usage/usage-events";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { expectGolden, fileTreeManifest } from "../_helpers/golden";
 import {

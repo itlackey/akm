@@ -28,14 +28,6 @@ import { akmSearch } from "../../src/commands/read/search";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import {
-  closeDatabase,
-  openExistingDatabase,
-  openIndexDatabase,
-  rebuildFts,
-  setMeta,
-  upsertEntry,
-} from "../../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import {
   computeGraphBoost,
@@ -52,6 +44,14 @@ import {
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../../src/indexer/graph/graph-extraction";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
+import {
+  closeDatabase,
+  openExistingDatabase,
+  openIndexDatabase,
+} from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
   sandboxStashDir,

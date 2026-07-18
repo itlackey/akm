@@ -42,33 +42,35 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
  * See docs/technical/index-consistency-adr.md for the full analysis.
  */
 import type { Database } from "../storage/database";
-import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
+import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../storage/repositories/index-connection";
 import {
-  clearStaleCacheEntries,
-  closeDatabase,
   deleteEntriesByDir,
   deleteEntriesByIds,
   deleteEntriesByStashDir,
-  deleteIndexDirStatesByStashDir,
-  getAllEntriesForEmbedding,
   getEmbeddableEntryCount,
-  getEmbeddingCount,
   getEntryCount,
-  getMeta,
-  isVecAvailable,
-  openExistingDatabase,
-  openIndexDatabase,
-  purgeEmbeddings,
-  rebuildFts,
   relinkUsageEvents,
-  setMeta,
-  upsertEmbedding,
   upsertEntry,
-  upsertIndexDirState,
-  upsertUtilityScore,
   upsertWorkflowDocument,
+} from "../storage/repositories/index-entries-repository";
+import { rebuildFts } from "../storage/repositories/index-fts-repository";
+import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
+import {
+  deleteIndexDirStatesByStashDir,
+  getMeta,
+  setMeta,
+  upsertIndexDirState,
+} from "../storage/repositories/index-meta-repository";
+import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
+import {
+  getAllEntriesForEmbedding,
+  getEmbeddingCount,
+  isVecAvailable,
+  purgeEmbeddings,
+  upsertEmbedding,
   warnIfVecMissing,
-} from "./db/db";
+} from "../storage/repositories/index-vec-repository";
+import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { deleteStoredGraph } from "./db/graph-db";
 import { withIndexWriterLease } from "./index-writer-lock";
 import {
@@ -1544,7 +1546,9 @@ async function enhanceStashWithLlm(
   onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
-  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db/db.js");
+  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import(
+    "../storage/repositories/index-llm-cache-repository"
+  );
 
   const results = await concurrentMap(
     stash.entries,

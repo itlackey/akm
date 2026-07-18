@@ -21,13 +21,13 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { computeBodyHash } from "../../indexer/db/db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 

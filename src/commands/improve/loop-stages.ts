@@ -13,7 +13,6 @@ import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
-import { closeDatabase, openIndexDatabase } from "../../indexer/db/db";
 import {
   DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES,
   type GraphExtractionResult,
@@ -33,6 +32,7 @@ import type { Database } from "../../storage/database";
 import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
+import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
 import { expireStaleProposals, listProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl } from "../url-checker";
 import { DEFAULT_RETENTION_DAYS as CYCLE_METRICS_RETENTION_DAYS, runCollapseDetector } from "./collapse-detector";

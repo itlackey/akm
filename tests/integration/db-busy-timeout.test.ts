@@ -25,8 +25,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { openStateDatabase } from "../../src/core/state-db";
-import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import type { Database } from "../../src/storage/database";
+import {
+  closeDatabase,
+  openExistingDatabase,
+  openIndexDatabase,
+} from "../../src/storage/repositories/index-connection";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 
 const EXPECTED_BUSY_TIMEOUT_MS = 30_000;

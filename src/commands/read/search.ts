@@ -18,10 +18,11 @@ import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
-import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db/db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
+import { getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
+import { bumpUtilityScoresBatch } from "../../storage/repositories/index-utility-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.

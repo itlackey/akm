@@ -6,10 +6,13 @@ import fs from "node:fs";
 import { placementTypes } from "../../core/asset/asset-placement";
 import { getSources, loadConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
-import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../../indexer/search/semantic-status";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { getEntryCount } from "../../storage/repositories/index-entries-repository";
+import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { isVecAvailable } from "../../storage/repositories/index-vec-repository";
 import { pkgVersion } from "../../version";
 
 /**

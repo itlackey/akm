@@ -13,9 +13,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath, getIndexWriterLockPath } from "../../../src/core/paths";
-import { closeDatabase, openExistingDatabase } from "../../../src/indexer/db/db";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import {
   type Cleanup,
   sandboxEnvDir,

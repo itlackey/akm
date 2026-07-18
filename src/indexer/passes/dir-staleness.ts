@@ -22,7 +22,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Database } from "../../storage/database";
-import { type DbIndexedEntry, getEntriesByDir, getIndexDirState } from "../db/db";
+import { getEntriesByDir } from "../../storage/repositories/index-entries-repository";
+import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
+import { getIndexDirState } from "../../storage/repositories/index-meta-repository";
 import type { StashFile } from "./metadata";
 
 /**

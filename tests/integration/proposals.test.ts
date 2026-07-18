@@ -29,9 +29,9 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { getDbPath, getIndexWriterLockPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 

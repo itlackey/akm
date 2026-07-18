@@ -13,16 +13,11 @@ import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import {
-  applyFeedbackToUtilityScore,
-  closeDatabase,
-  findEntryIdByRef,
-  getEntryById,
-  getEntryFilePathById,
-  openExistingDatabase,
-} from "../indexer/db/db";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { findEntryIdByRef, getEntryById, getEntryFilePathById } from "../storage/repositories/index-entries-repository";
+import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 

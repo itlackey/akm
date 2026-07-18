@@ -27,11 +27,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openIndexDatabase, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { loadGraphBoostContext, resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────

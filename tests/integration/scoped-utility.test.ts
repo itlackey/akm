@@ -13,18 +13,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  bumpUtilityScoresBatch,
-  closeDatabase,
-  getUtilityScoresByIds,
-  openIndexDatabase,
-  type ScopedUtilityRow,
-  type UtilityScoreRow,
-} from "../../src/indexer/db/db";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../../src/indexer/search/ranking-contributors";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import type { ScopedUtilityRow, UtilityScoreRow } from "../../src/storage/repositories/index-entry-types";
+import { bumpUtilityScoresBatch, getUtilityScoresByIds } from "../../src/storage/repositories/index-utility-repository";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

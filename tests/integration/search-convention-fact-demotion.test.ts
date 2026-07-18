@@ -36,9 +36,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { closeDatabase, getAllEntries, openExistingDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
+import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,

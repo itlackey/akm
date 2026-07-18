@@ -15,18 +15,14 @@ import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import {
-  closeDatabase,
-  getEmbeddableEntryCount,
-  getEmbeddingCount,
-  getEntryCount,
-  getMeta,
-  openIndexDatabase,
-} from "../../src/indexer/db/db";
-import { EMBEDDING_DIM } from "../../src/indexer/db/schema";
 import { akmIndex } from "../../src/indexer/indexer";
 import { searchLocal } from "../../src/indexer/search/db-search";
 import { clearEmbeddingCache } from "../../src/llm/embedder";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getEmbeddableEntryCount, getEntryCount } from "../../src/storage/repositories/index-entries-repository";
+import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { EMBEDDING_DIM } from "../../src/storage/repositories/index-schema";
+import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────

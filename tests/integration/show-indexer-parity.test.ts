@@ -19,8 +19,10 @@ import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { parseAssetRef } from "../../src/core/asset/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { closeDatabase, getMeta, openIndexDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { searchVec } from "../../src/storage/repositories/index-vec-repository";
 import "../../src/sources/providers/index";
 import {
   type Cleanup,

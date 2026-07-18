@@ -23,7 +23,6 @@ import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
-import { closeDatabase, getEntryCount, openExistingDatabase } from "../../indexer/db/db";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { akmIndex } from "../../indexer/indexer";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -37,6 +36,8 @@ import {
   resolveWritableOverride,
   saveGitStash,
 } from "../../sources/providers/git";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import { resolveDrainPolicy } from "../proposal/drain-policies";
 import type { ConsolidateResult } from "./consolidate";

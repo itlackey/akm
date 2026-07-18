@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openIndexDatabase } from "../../../src/indexer/db/db";
 import { getUsageEvents, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { withIndexDb } from "../../../src/storage/repositories/index-db";
 
 /**

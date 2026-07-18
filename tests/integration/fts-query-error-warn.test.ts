@@ -11,9 +11,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { closeDatabase, openIndexDatabase, rebuildFts, searchFts, upsertEntry } from "../../src/indexer/db/db";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 

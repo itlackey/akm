@@ -12,7 +12,11 @@
 
 import { bestEffort } from "../../core/best-effort";
 import type { Database } from "../../storage/database";
-import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import {
+  computeBodyHash,
+  getLlmCacheEntry,
+  upsertLlmCacheEntry,
+} from "../../storage/repositories/index-llm-cache-repository";
 
 /**
  * Optional cache-event sink. Passes that want to track cache hit rate

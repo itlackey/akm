@@ -14,13 +14,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-
-import { closeDatabase, computeBodyHash, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
 import * as graphDb from "../../src/indexer/db/graph-db";
 import { loadGraphFilesOnly, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type { GraphFile } from "../../src/indexer/graph/graph-extraction";
 import * as graphExtraction from "../../src/indexer/graph/graph-extraction";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { computeBodyHash } from "../../src/storage/repositories/index-llm-cache-repository";
 import { makeStashDir, type SandboxedDir } from "../_helpers/sandbox";
 
 // ── Deferred (not-yet-exported) P3 symbols ───────────────────────────────────

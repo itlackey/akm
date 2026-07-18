@@ -4,16 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../../src/commands/sources/info";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import {
-  closeDatabase,
-  openIndexDatabase,
-  rebuildFts,
-  searchVec,
-  setMeta,
-  upsertEmbedding,
-  upsertEntry,
-} from "../../src/indexer/db/db";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
+import { searchVec, upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,

@@ -4,9 +4,9 @@
 
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { relinkUsageEvents } from "../../../src/indexer/db/db";
 import { ensureUsageEventsSchema } from "../../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
+import { relinkUsageEvents } from "../../../src/storage/repositories/index-entries-repository";
 
 /**
  * Focused tests for {@link relinkUsageEvents}.

@@ -32,9 +32,13 @@ import path from "node:path";
 
 import { openLogsDatabase } from "../../src/core/logs-db";
 import { openStateDatabase } from "../../src/core/state-db";
-import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import type { Database } from "../../src/storage/database";
 import { openDatabase as openRawDatabase } from "../../src/storage/database";
+import {
+  closeDatabase,
+  openExistingDatabase,
+  openIndexDatabase,
+} from "../../src/storage/repositories/index-connection";
 import {
   applyStandardPragmas,
   isNetworkFilesystem,

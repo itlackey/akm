@@ -25,20 +25,18 @@ import { defaultRendererRegistry, type RendererRegistry } from "../../core/type-
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import {
-  closeDatabase,
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
   getEntryById,
   getEntryCount,
-  getMeta,
   getPositiveFeedbackCountsByIds,
-  openExistingDatabase,
-  sanitizeFtsQuery,
-  searchFts,
-  searchVec,
-} from "../db/db";
+} from "../../storage/repositories/index-entries-repository";
+import { searchFts } from "../../storage/repositories/index-fts-repository";
+import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { searchVec } from "../../storage/repositories/index-vec-repository";
+import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { ensureIndex } from "../ensure-index";
 import {
   collectGraphRelatedHit,
@@ -48,7 +46,7 @@ import {
 } from "../graph/graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "../passes/metadata";
 import { resolveProjectContext } from "../walk/project-context";
-import { parseRefPrefixQuery } from "./fts-query";
+import { parseRefPrefixQuery, sanitizeFtsQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";

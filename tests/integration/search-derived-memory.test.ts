@@ -17,9 +17,12 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
   sandboxStashDir,

@@ -15,9 +15,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openExistingDatabase, setMeta } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { searchLocal } from "../../../src/indexer/search/db-search";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
   sandboxEnvDir,

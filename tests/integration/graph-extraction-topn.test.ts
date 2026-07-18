@@ -14,9 +14,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { closeDatabase, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
 import * as graphExtraction from "../../src/indexer/graph/graph-extraction";
 import { collectEligibleFiles } from "../../src/indexer/graph/graph-extraction";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 
 type Candidate = { absPath: string; type: string; body: string };
 

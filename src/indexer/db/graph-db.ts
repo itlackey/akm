@@ -7,8 +7,8 @@ import { rethrowIfTestIsolationError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import type { GraphRelation } from "../../llm/graph-extract";
 import type { Database } from "../../storage/database";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "../graph/graph-types";
-import { closeDatabase, openExistingDatabase } from "./db";
 
 export interface StoredGraphSnapshot {
   stashPath: string;

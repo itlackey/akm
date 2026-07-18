@@ -28,7 +28,6 @@ import {
 } from "../../../../src/commands/improve/collapse-detector";
 import { saveConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../../../src/indexer/db/db";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { Database as IndexDatabase, Database as StateDatabase } from "../../../../src/storage/database";
 import {
@@ -36,6 +35,7 @@ import {
   insertCycleMetrics,
   queryRecentCycleMetrics,
 } from "../../../../src/storage/repositories/canaries-repository";
+import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 

@@ -14,9 +14,11 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
-import { closeDatabase, getAllEntries, openIndexDatabase, searchFts } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
+import { searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

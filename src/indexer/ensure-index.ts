@@ -26,7 +26,9 @@ import path from "node:path";
 import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { getEntryCount, getIndexedFilePaths } from "../storage/repositories/index-entries-repository";
+import { getMeta } from "../storage/repositories/index-meta-repository";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";

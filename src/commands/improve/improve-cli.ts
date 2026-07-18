@@ -14,9 +14,9 @@ import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {

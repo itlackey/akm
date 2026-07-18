@@ -208,9 +208,15 @@ export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
   "src/core/config/config-schema.ts",
   "src/core/config/config.ts",
   "src/core/paths.ts",
-  "src/indexer/db/db.ts",
-  "src/indexer/db/entry-mapper.ts",
-  "src/indexer/db/schema.ts",
+  // chunk-5 (WI-5a) drove the count 13 → 10: db.ts was split into cohesive
+  // `src/storage/repositories/index-*` repos and schema.ts / entry-mapper.ts
+  // were relocated there, with the shared row/option TYPES lifted into the leaf
+  // `index-entry-types.ts`. The `indexer/db/db.ts` / `entry-mapper.ts` /
+  // `schema.ts` trio (a self-contained SCC: db↔entry-mapper via `DbIndexedEntry`,
+  // db↔schema via the meta/vec helpers) no longer exists, so those three paths
+  // leave the knot. The storage↔indexer arrow inverts with them: the storage
+  // loan helpers now open index.db from a storage sibling, not by reaching up
+  // into the indexer.
   "src/indexer/passes/metadata-contributors.ts",
   "src/indexer/passes/metadata.ts",
   "src/registry/types.ts",

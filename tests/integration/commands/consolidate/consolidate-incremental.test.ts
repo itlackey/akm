@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { narrowToIncrementalCandidates } from "../../../../src/commands/improve/consolidate";
 import { getDbPath } from "../../../../src/core/paths";
-import { closeDatabase, openIndexDatabase, upsertEmbedding, upsertEntry } from "../../../../src/indexer/db/db";
 import type { StashEntry } from "../../../../src/indexer/passes/metadata";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
+import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
 import { type Cleanup, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
 // NOTE: the first `describe` block exercises the two pre-DB branches of

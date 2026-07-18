@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { openExistingDatabase } from "../../indexer/db/db";
 import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 import { withManagedDb } from "../managed-db";
+import { openExistingDatabase } from "./index-connection";
 
 /**
  * Busy-timeout (ms) for read-path telemetry writers. Small on purpose: a

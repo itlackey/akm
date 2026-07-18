@@ -15,10 +15,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../../src/indexer/db/db";
 import { replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
 import { type Cleanup, sandboxStashDir } from "../../_helpers/sandbox";
 

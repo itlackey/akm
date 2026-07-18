@@ -13,9 +13,10 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getUtilityScore, openIndexDatabase, upsertUtilityScore } from "../../src/indexer/db/db";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 import { recordUsageEvent } from "../_helpers/usage-events";
 

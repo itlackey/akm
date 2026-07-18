@@ -4,8 +4,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getLastUseMsByRef } from "../../src/commands/improve/salience";
-import { getRetrievalCounts, openIndexDatabase, upsertEntry, upsertUtilityScore } from "../../src/indexer/db/db";
 import type { Database as AkmDatabase } from "../../src/storage/database";
+import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 
 /**
  * Unit coverage for getRetrievalCounts (db.ts).

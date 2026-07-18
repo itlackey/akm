@@ -10,16 +10,16 @@ import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
-import {
-  closeDatabase,
-  getAllEntries,
-  getUtilityScoresByIds,
-  openExistingDatabase,
-  openReadonlyExistingDatabase,
-} from "../../indexer/db/db";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
+import {
+  closeDatabase,
+  openExistingDatabase,
+  openReadonlyExistingDatabase,
+} from "../../storage/repositories/index-connection";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
 import { improveStateReadRefs } from "./source-identity";

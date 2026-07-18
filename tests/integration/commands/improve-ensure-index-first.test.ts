@@ -19,8 +19,9 @@ import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, getEntryCount, openExistingDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
 import { writeLesson } from "../../_helpers/assets";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 

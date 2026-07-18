@@ -4,9 +4,9 @@
 
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { getMeta, setMeta } from "../../../src/indexer/db/db";
 import { reconcileBodyOpeningIndexState } from "../../../src/indexer/indexer";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
+import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 
 /**
  * SPEC-8 finalize-phase state tracking: the index_meta key `indexBodyOpening`

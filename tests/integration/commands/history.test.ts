@@ -5,9 +5,9 @@ import { akmHistory } from "../../../src/commands/sources/history";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openIndexDatabase } from "../../../src/indexer/db/db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../../_helpers/cli";
 import { type Cleanup, makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../../_helpers/sandbox";
 

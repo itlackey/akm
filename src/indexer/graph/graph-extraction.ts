@@ -50,15 +50,15 @@ import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from
 import * as graphExtract from "../../llm/graph-extract";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import type { Database } from "../../storage/database";
+import type { LlmCacheEntry } from "../../storage/repositories/index-entry-types";
 import {
   computeBodyHash,
   getLlmCacheEntriesByRefs,
   getLlmCacheEntry,
-  type LlmCacheEntry,
   upsertLlmCacheEntry,
-} from "../db/db";
+} from "../../storage/repositories/index-llm-cache-repository";
+import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import { drainExtractionQueue, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
-import { GRAPH_SCHEMA_VERSION } from "../db/schema";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import { deduplicateGraph } from "./graph-dedup";

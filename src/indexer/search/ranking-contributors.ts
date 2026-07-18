@@ -4,7 +4,7 @@
 
 import { isKnownType, type KnownType } from "../../core/recognition-util";
 import type { Database } from "../../storage/database";
-import type { ScopedUtilityRow, UtilityScoreRow } from "../db/db";
+import type { ScopedUtilityRow, UtilityScoreRow } from "../../storage/repositories/index-entry-types";
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
 import type { RankedEntryInput } from "./ranking-types";

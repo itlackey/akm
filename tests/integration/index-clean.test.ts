@@ -12,8 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getAllEntries, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 
 let testConfigDir = "";
 let testCacheDir = "";

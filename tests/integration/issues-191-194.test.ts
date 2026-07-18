@@ -172,7 +172,7 @@ describe("issue #193 — database is locked under contention", () => {
   test("openIndexDatabase sets PRAGMA busy_timeout so contended writers wait", async () => {
     // Use the actual openIndexDatabase helper via dynamic import so we exercise
     // the same code path the CLI uses.
-    const { openIndexDatabase, closeDatabase } = await import("../../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase } = await import("../../src/storage/repositories/index-connection");
     const tmp = path.join(makeTempDir("akm-issue-193-"), "test.db");
     const db = openIndexDatabase(tmp);
     try {
@@ -187,7 +187,7 @@ describe("issue #193 — database is locked under contention", () => {
   });
 
   test("WAL journal mode is preserved (regression guard)", async () => {
-    const { openIndexDatabase, closeDatabase } = await import("../../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase } = await import("../../src/storage/repositories/index-connection");
     const tmp = path.join(makeTempDir("akm-issue-193-wal-"), "test.db");
     const db = openIndexDatabase(tmp);
     try {

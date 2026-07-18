@@ -6,7 +6,7 @@ import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { getDerivedForParent } from "../db/db";
+import { getDerivedForParent } from "../../storage/repositories/index-entries-repository";
 import { getRenderer } from "../walk/file-context";
 
 export interface SearchHitContext {

@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, getAllEntries, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
 import { extractCommandParameters, generateMetadataFlat } from "../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
   sandboxStashDir,

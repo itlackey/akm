@@ -27,13 +27,6 @@ import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import {
-  closeDatabase,
-  computeBodyHash,
-  findEntryIdByRef,
-  getEntryIdByFilePath,
-  openExistingDatabase,
-} from "../../indexer/db/db";
 import { hasGraphData } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
@@ -47,7 +40,10 @@ import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveStorageLocations } from "../../storage/locations";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { findEntryIdByRef, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
+import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../../sources/types";

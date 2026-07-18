@@ -15,8 +15,10 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, getEntryCount, openIndexDatabase, setMeta } from "../../../src/indexer/db/db";
 import { countUsageEventsByType, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
+import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 
 describe("#664 Step A — index.db preserves data across a stale version marker (no nuclear drop)", () => {
   test("an older DB_VERSION marker does not wipe entries or usage_events on reopen", () => {

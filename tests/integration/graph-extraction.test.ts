@@ -18,10 +18,11 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../../src/core/config/config";
-import { closeDatabase, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { SearchSource } from "../../src/indexer/search/search-source";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 
 // ── Local LLM server ────────────────────────────────────────────────────────
 

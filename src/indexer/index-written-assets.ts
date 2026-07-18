@@ -26,16 +26,15 @@ import path from "node:path";
 import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
-import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
-  closeDatabase,
   deleteEntriesByIds,
   getEntryCount,
-  openExistingDatabase,
-  rebuildFts,
   upsertEntry,
   upsertWorkflowDocument,
-} from "./db/db";
+} from "../storage/repositories/index-entries-repository";
+import { rebuildFts } from "../storage/repositories/index-fts-repository";
+import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { withIndexWriterLease } from "./index-writer-lock";
 import { generateMetadataFlat } from "./passes/metadata";
 import { buildSearchText } from "./search/search-fields";

@@ -9,14 +9,6 @@ import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
-import {
-  closeDatabase,
-  findEntryIdByRef,
-  getEntryById,
-  getEntryRefRowsForStashRoot,
-  openExistingDatabase,
-  openIndexDatabase,
-} from "../../indexer/db/db";
 import { loadStoredGraphSnapshot } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import type {
@@ -30,6 +22,12 @@ import { withIndexWriterLease } from "../../indexer/index-writer-lock";
 import { lookup } from "../../indexer/indexer";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
+import {
+  findEntryIdByRef,
+  getEntryById,
+  getEntryRefRowsForStashRoot,
+} from "../../storage/repositories/index-entries-repository";
 
 export interface GraphSummaryResult {
   schemaVersion: 1;

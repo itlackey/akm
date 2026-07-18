@@ -49,8 +49,9 @@
 
 import path from "node:path";
 import { makeAssetRef } from "../../core/asset/asset-ref";
-import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
 import type { Database, Database as IndexDatabase } from "../../storage/database";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { WARM_START_CAP } from "./outcome-loop";
 
 // ── One day in ms ─────────────────────────────────────────────────────────────

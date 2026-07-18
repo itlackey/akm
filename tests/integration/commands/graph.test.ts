@@ -13,10 +13,13 @@ import {
 } from "../../../src/commands/graph/graph";
 import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../../src/indexer/db/db";
 import { deleteStoredGraph, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;

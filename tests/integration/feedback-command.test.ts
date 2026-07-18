@@ -4,10 +4,10 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { closeDatabase, openIndexDatabase } from "../../src/indexer/db/db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 

@@ -21,18 +21,16 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-
-import {
-  closeDatabase,
-  deleteEntriesByIds,
-  getEntryIdByFilePath,
-  getMeta,
-  openIndexDatabase,
-  upsertEntry,
-} from "../../src/indexer/db/db";
 import * as graphDb from "../../src/indexer/db/graph-db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
-import { DB_VERSION, GRAPH_SCHEMA_VERSION } from "../../src/indexer/db/schema";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  deleteEntriesByIds,
+  getEntryIdByFilePath,
+  upsertEntry,
+} from "../../src/storage/repositories/index-entries-repository";
+import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { DB_VERSION, GRAPH_SCHEMA_VERSION } from "../../src/storage/repositories/index-schema";
 
 // hasGraphData (P1 deliverable) is referenced via the namespace for ESM-safety;
 // the cast resolves to the real export from graph-db.ts.

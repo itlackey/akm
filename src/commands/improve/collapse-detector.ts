@@ -33,13 +33,6 @@ import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import {
-  closeDatabase,
-  type DbIndexedEntry,
-  getAllEntries,
-  openExistingDatabase,
-  searchFts,
-} from "../../indexer/db/db";
 import type { Database as IndexDatabase, Database as StateDatabase } from "../../storage/database";
 import {
   type CanaryQueryRow,
@@ -52,6 +45,10 @@ import {
   listActiveCanarySetIds,
   queryRecentCycleMetrics,
 } from "../../storage/repositories/canaries-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
+import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./anti-collapse";
 import { getAllRankScores } from "./salience";
 

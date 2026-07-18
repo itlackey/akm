@@ -68,11 +68,13 @@ import {
 import { getDbPath } from "../core/paths";
 import { getStateDbPath, openStateDatabase } from "../core/state-db";
 import { warnVerbose } from "../core/warn";
-import { closeDatabase, openExistingDatabase, rebuildFts, rekeyEntryInPlace } from "../indexer/db/db";
 import { withAssetMutationLease } from "../indexer/index-writer-lock";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { insertEventOnce } from "../storage/repositories/events-repository";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { rekeyEntryInPlace } from "../storage/repositories/index-entries-repository";
+import { rebuildFts } from "../storage/repositories/index-fts-repository";
 import { shouldReadLegacyBareImproveState } from "./improve/source-identity";
 import {
   REF_BOUNDARY_PREFIX_CLASS_SRC,
