@@ -887,6 +887,28 @@ async function scanSourceDirs(
 }
 
 /**
+ * #624-P1 zero-document preflight probe. A source root counts as "readable"
+ * when it exists on disk as a directory whose listing can be read. A root that
+ * is missing or unreadable (a transient mount failure, a permission race, or a
+ * source that vanished mid-run) makes a zero-document scan untrustworthy: the
+ * walk saw nothing not because the stash is empty but because it could not be
+ * read. Returns true only when EVERY root is readable, so a single unreadable
+ * root blocks the full-rebuild wipe.
+ */
+function allSourceRootsReadable(roots: readonly string[]): boolean {
+  for (const root of roots) {
+    try {
+      const st = fs.statSync(root);
+      if (!st.isDirectory()) return false;
+      fs.readdirSync(root); // probe readability, not just existence
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Phase 2 (sync): write all pre-generated scan records inside a single
  * transaction, returning the directories that still need LLM enrichment.
  */
@@ -895,8 +917,28 @@ function persistDirRecords(
   dirRecords: DirRecord[],
   doFullDelete: boolean,
   warnings: string[],
+  sourceRoots: readonly string[],
 ): { dirsNeedingLlm: DirNeedingLlm[] } {
   const dirsNeedingLlm: DirNeedingLlm[] = [];
+
+  // #624-P1 zero-document preflight (spec §4). A full-rebuild wipe is a
+  // legitimate mass-delete ONLY when the scan legitimately found nothing. If
+  // the walk produced zero documents AND any configured source root is missing
+  // or unreadable, the empty result is almost certainly a transient scan
+  // failure, not an emptied stash — wiping here would cascade-destroy the
+  // last-known-good index (entries + embeddings + utility/usage). Preserve it
+  // and warn instead; the next successful run reconciles. A genuinely empty
+  // stash whose roots ARE readable still wipes, as before.
+  if (doFullDelete) {
+    const incomingDocCount = dirRecords.reduce((n, r) => n + (r.skip ? 0 : (r.stash?.entries.length ?? 0)), 0);
+    if (incomingDocCount === 0 && !allSourceRootsReadable(sourceRoots)) {
+      warn(
+        "[index] --full produced zero documents while one or more source roots are missing or unreadable — " +
+          "preserving the existing index (last-known-good) rather than wiping it. Re-run once the sources are available.",
+      );
+      return { dirsNeedingLlm };
+    }
+  }
 
   // Cross-stash dedup: track indexed assets by content identity
   // (type + filename + description) so the same asset from a lower-priority
@@ -1058,7 +1100,10 @@ async function indexEntries(
   );
 
   // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
-  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, doFullDelete, warnings);
+  // Source roots feed the #624-P1 zero-document preflight (a full-rebuild wipe
+  // is suppressed when the scan is empty because roots are unreadable).
+  const sourceRoots = allSourceEntries.map((s) => s.path);
+  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, doFullDelete, warnings, sourceRoots);
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
 }
