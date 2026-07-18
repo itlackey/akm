@@ -59,6 +59,7 @@
 import fs from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { listKeys } from "../../../commands/env/env";
+import type { StashEntry } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseWorkflow } from "../../../workflows/parser";
 import { parseWorkflowProgram } from "../../../workflows/program/parser";
@@ -363,4 +364,47 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
       // agent-md — the static-only mappings carry no metadata contributor).
       return out;
   }
+}
+
+/**
+ * Apply {@link foldRecognizedMetadata}'s output onto a `StashEntry` with the
+ * SAME precedence the live in-place renderer contributors use (Chunk 5 M-b), so
+ * `entry.applyPreContributorFields → applyFoldedMetadata → applyPostContributorFields`
+ * reproduces `buildEntryFromFile`'s `P1/P2 → contributors → P4` byte-for-byte.
+ *
+ * Precedence, verified against every case in {@link foldRecognizedMetadata}:
+ *  - description/source/confidence travel together and only when the entry has
+ *    no description yet (contributors gate on `!entry.description`); a
+ *    contributor that sets description WITHOUT source/confidence
+ *    (workflow-program-yaml) leaves those untouched — mirrored by the
+ *    `folded.source`/`folded.confidence` guards below;
+ *  - tags UNION into the existing set (order-preserving Set dedup), matching the
+ *    contributors' `Array.from(new Set([...entry.tags, ...added]))`;
+ *  - searchHints / toc / parameters are SET (overwrite), matching the
+ *    contributors' direct assignment.
+ *
+ * The fold computes each field unconditionally from an empty seed; re-gating on
+ * `entry` state here is what recovers the in-place precedence (the fold ≡
+ * contributors-on-a-minimal-seed is pinned by the akm-adapter fold-parity test).
+ */
+export function applyFoldedMetadata(entry: StashEntry, folded: FoldedMetadata): void {
+  if (folded.description && !entry.description) {
+    entry.description = folded.description;
+    if (folded.source) entry.source = folded.source as StashEntry["source"];
+    if (folded.confidence !== undefined) entry.confidence = folded.confidence;
+  }
+  if (folded.tags && folded.tags.length > 0) {
+    entry.tags = Array.from(new Set([...(entry.tags ?? []), ...folded.tags]));
+  }
+  // searchHints MERGE (not overwrite): every live contributor seeds its hints
+  // from `new Set(entry.searchHints ?? [])` before adding, so a frontmatter
+  // `searchHints:` set by P2 (applyCuratedFrontmatter) survives and the
+  // contributor's hints append to it. The fold computes only the contributor's
+  // additions (from an empty seed), so unioning them onto the existing set —
+  // existing first, deduped, truthy-filtered — reproduces the live merge exactly.
+  if (folded.searchHints) {
+    entry.searchHints = Array.from(new Set([...(entry.searchHints ?? []), ...folded.searchHints])).filter(Boolean);
+  }
+  if (folded.toc) entry.toc = folded.toc;
+  if (folded.parameters) entry.parameters = folded.parameters;
 }

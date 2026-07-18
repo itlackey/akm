@@ -75,6 +75,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import {
+  applyPostContributorFields,
+  applyPreContributorFields,
+  extractPackageMetadata,
+  type StashEntry,
+} from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import {
   assetPathForName,
@@ -89,8 +95,8 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
-import { foldRecognizedMetadata } from "./akm-metadata";
-import { hashContent, nonEmptyString, type ParsedForValidate, runBaseValidateChecks } from "./shared";
+import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
+import { hashContent, type ParsedForValidate, runBaseValidateChecks } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
 // `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
@@ -108,22 +114,76 @@ function stashDirToType(stashDir: string): string | undefined {
 }
 
 /**
- * `name` = a sensible default (§ WI-B): a markdown concept's frontmatter
- * `title`/`name`, else the conceptId's last path segment. Non-markdown types
- * (env/secret/script/task) never have their body read for the name — the whole
- * file may be a secret value, so their name is the filename-derived last
- * segment only. Richer per-type metadata contributors are WI-C.
+ * The search-surface `StashEntry` fields that have NO first-class `IndexDocument`
+ * home (spec §3) and therefore ride `documentJson` so the persist-time fold
+ * (`search-fields.ts:28-33`) can still reach them — the exact set
+ * `buildSearchFields` folds into the `hints`/`content` FTS columns beyond the
+ * first-class name/description/tags/aliases/searchHints, plus the provenance the
+ * WI-C tests read (renderer/source). Kept as a named list so the fold surface and
+ * the mapping stay in lockstep.
  */
-function deriveName(file: FileContext, conceptId: string): string {
-  const lastSegment = conceptId.split("/").pop() ?? conceptId;
-  if (file.ext === ".md") {
-    const fm = file.frontmatter();
-    if (fm) {
-      const title = nonEmptyString(fm.title) ?? nonEmptyString(fm.name);
-      if (title !== undefined) return title;
-    }
+const DOCUMENT_JSON_CARRIED_FIELDS = [
+  "examples",
+  "usage",
+  "intent",
+  "xrefs",
+  "pageKind",
+  "whenToUse",
+  "toc",
+  "parameters",
+  "bodyOpening",
+  "source",
+  "category",
+  "supersededBy",
+  "contradictedBy",
+  "run",
+  "setup",
+  "cwd",
+  "wikiRole",
+  "sources",
+  "generation",
+  "sourceRefs",
+  "evidenceSources",
+] as const satisfies readonly (keyof StashEntry)[];
+
+/**
+ * Map the fully-assembled `StashEntry` (produced by the shared metadata
+ * pipeline) onto an `IndexDocument` (spec §3). First-class ranking/embedding
+ * fields land on named IndexDocument fields; every other search-surface or
+ * signal field rides `documentJson` (opaque adapter extras) so nothing the
+ * ranking/embedding/filter inputs read is lost — the M-b shadow-parity gate.
+ * The winning renderer name is carried on `documentJson.renderer` (WI-C contract).
+ */
+function indexDocumentFromEntry(
+  entry: StashEntry,
+  base: Pick<IndexDocument, "ref" | "bundle" | "component" | "conceptId" | "path" | "hash" | "adapterId" | "type">,
+  rendererName: string,
+): IndexDocument {
+  const extras: Record<string, unknown> = { renderer: rendererName };
+  for (const field of DOCUMENT_JSON_CARRIED_FIELDS) {
+    const value = entry[field];
+    if (value !== undefined) extras[field] = value;
   }
-  return lastSegment;
+
+  const doc: IndexDocument = {
+    ...base,
+    name: entry.name,
+    documentJson: extras,
+  };
+  // First-class search + signal fields (only when present).
+  if (entry.description !== undefined) doc.description = entry.description;
+  if (entry.tags !== undefined) doc.tags = entry.tags;
+  if (entry.aliases !== undefined) doc.aliases = entry.aliases;
+  if (entry.searchHints !== undefined) doc.searchHints = entry.searchHints;
+  if (entry.quality !== undefined) doc.quality = entry.quality;
+  if (entry.confidence !== undefined) doc.confidence = entry.confidence;
+  if (entry.beliefState !== undefined) doc.beliefState = entry.beliefState;
+  if (entry.currentBeliefRefs !== undefined) doc.currentBeliefRefs = entry.currentBeliefRefs;
+  if (entry.scope !== undefined) doc.scope = entry.scope as Record<string, string>;
+  if (entry.captureMode !== undefined) doc.captureMode = entry.captureMode;
+  if (entry.lessonStrength !== undefined) doc.lessonStrength = entry.lessonStrength;
+  if (entry.derivedFrom !== undefined) doc.derivedFrom = entry.derivedFrom;
+  return doc;
 }
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
@@ -136,40 +196,44 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // directly at the skills/ root with no name dir).
   const derived = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
   const conceptId = derived ?? file.relPath.replace(/\.[^./]+$/, "");
+  const dirPath = path.dirname(file.absPath);
 
-  const raw = file.content();
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: c.id,
-    conceptId,
-    path: file.absPath,
-    // Hash over the full raw bytes (incrementality/fingerprints, `types.ts`
-    // hash doc comment) — an opaque digest, not indexed content.
-    hash: hashContent(raw),
-    adapterId: "akm",
+  // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
+  // (spec §2/§3), reproducing `buildEntryFromFile`'s `generateMetadataFlat`
+  // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
+  // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
+  // in-place contributor precedence) for the async P3 renderer contributors.
+  // `entry.name` = the canonical name (= conceptId) so the FTS `name` column
+  // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
+  // title. Parity is by construction — the two paths differ only in the P3 step,
+  // pinned equal by the akm-adapter fold-parity test.
+  const entry: StashEntry = {
+    name: conceptId,
     type: match.type,
-    name: deriveName(file, conceptId),
+    quality: "generated",
+    confidence: 0.55,
+    source: "filename",
   };
+  applyPreContributorFields(entry, file.absPath, file, extractPackageMetadata(dirPath));
+  applyFoldedMetadata(entry, foldRecognizedMetadata(match.renderer, file));
+  applyPostContributorFields(entry, file.absPath, conceptId, dirPath);
 
-  // WI-C (spec §2): fold the 11 index-time metadata contributors into
-  // `recognize`, keyed on the winning renderer NAME (`documentJson.renderer`).
-  // First-class contributor fields land on the IndexDocument; the extras with
-  // no first-class home (toc/parameters/source) ride `documentJson` alongside
-  // the renderer name (do NOT invent new IndexDocument fields).
-  const folded = foldRecognizedMetadata(match.renderer, file);
-  if (folded.tags !== undefined) doc.tags = folded.tags;
-  if (folded.searchHints !== undefined) doc.searchHints = folded.searchHints;
-  if (folded.description !== undefined) doc.description = folded.description;
-  if (folded.confidence !== undefined) doc.confidence = folded.confidence;
-
-  const extras: Record<string, unknown> = { renderer: match.renderer };
-  if (folded.toc !== undefined) extras.toc = folded.toc;
-  if (folded.parameters !== undefined) extras.parameters = folded.parameters;
-  if (folded.source !== undefined) extras.source = folded.source;
-  doc.documentJson = extras;
-
-  return doc;
+  return indexDocumentFromEntry(
+    entry,
+    {
+      ref: `${c.id}//${conceptId}`,
+      bundle: c.id,
+      component: c.id,
+      conceptId,
+      path: file.absPath,
+      // Hash over the full raw bytes (incrementality/fingerprints, `types.ts`
+      // hash doc comment) — an opaque digest, not indexed content.
+      hash: hashContent(file.content()),
+      adapterId: "akm",
+      type: match.type,
+    },
+    match.renderer,
+  );
 }
 
 /**

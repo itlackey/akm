@@ -1228,26 +1228,24 @@ export function extractBodyOpening(body: string): string | undefined {
  * @returns The populated entry, or `{ skip: true, warning: string }` when the
  *          renderer throws and the file should be dropped.
  */
-async function buildEntryFromFile(
+/**
+ * Priorities 1-2 of the metadata pipeline — package.json (P1), `.md`
+ * frontmatter (P2), and script `@param`/comment metadata (P2b) — everything
+ * that runs BEFORE the renderer-contributor step (P3). Extracted (Chunk 5 M-b)
+ * so the `akm` adapter's synchronous `recognize` shares this exact assembly
+ * with the async {@link buildEntryFromFile}; the two paths differ ONLY in how
+ * they obtain the P3 renderer metadata (live: async in-place contributors;
+ * adapter: the synchronous `foldRecognizedMetadata`), guaranteeing P1/P2/P4
+ * parity by construction. Behavior-preserving: this is a verbatim lift of the
+ * former inline P1/P2/P2b block. Mutates `entry` in place.
+ */
+export function applyPreContributorFields(
+  entry: StashEntry,
   file: string,
-  assetType: string,
-  canonicalName: string,
-  dirPath: string,
+  ctx: Pick<ReturnType<typeof buildFileContext>, "content">,
   pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
-  stashRoot: string,
-  ctx: ReturnType<typeof buildFileContext>,
-  match: import("../walk/file-context").MatchResult | null,
-): Promise<StashEntry | { skip: true; warning: string }> {
+): void {
   const ext = path.extname(file).toLowerCase();
-  const baseName = path.basename(file, ext);
-
-  const entry: StashEntry = {
-    name: canonicalName,
-    type: assetType,
-    quality: "generated",
-    confidence: 0.55,
-    source: "filename",
-  };
 
   // Priority 1: Package.json metadata
   if (pkgMeta) {
@@ -1262,7 +1260,7 @@ async function buildEntryFromFile(
   // Priority 2: Frontmatter (for .md files -- overrides package.json description)
   // Secrets are excluded even when the file happens to be `.md`: the whole file
   // is the secret value and must never be read for frontmatter or any metadata.
-  if (ext === ".md" && assetType !== "secret") {
+  if (ext === ".md" && entry.type !== "secret") {
     const content = ctx.content();
     const parsed = parseFrontmatter(content);
     applyCuratedFrontmatter(entry, parsed.data);
@@ -1294,35 +1292,29 @@ async function buildEntryFromFile(
   // Env files (.env) and secret files (whole-file secrets) are deliberately
   // excluded — their contents are secrets and must never be parsed for @param
   // or any other metadata that could embed a value into the entry.
-  if (ext !== ".md" && assetType !== "env" && assetType !== "secret") {
+  if (ext !== ".md" && entry.type !== "env" && entry.type !== "secret") {
     const content = ctx.content();
     const scriptParams = extractScriptParameters(file, content);
     if (scriptParams) entry.parameters = scriptParams;
     applyCommentMetadata(entry, extractCommentMetadata(file, content));
   }
+}
 
-  // Priority 3: Renderer metadata extraction
-  // When no pre-resolved match is available (generateMetadata path), classify
-  // now via the akm adapter's recognition so the renderer can extract
-  // type-specific metadata.
-  const resolvedMatch = match ?? recognizeMatch(ctx);
-  if (resolvedMatch) {
-    const renderer = await getRenderer(resolvedMatch.renderer);
-    if (renderer) {
-      const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
-      try {
-        await applyMetadataContributors(entry, {
-          rendererName: renderer.name,
-          renderContext: renderCtx,
-        });
-      } catch (error) {
-        return {
-          skip: true,
-          warning: buildMetadataSkipWarning(file, assetType, error),
-        };
-      }
-    }
-  }
+/**
+ * Priority 4 of the metadata pipeline — filename-heuristic fallbacks (P4) that
+ * run AFTER the renderer-contributor step (P3): a filename description when none
+ * was set, path/dir-derived tags, tag normalization, and alias generation.
+ * Extracted (Chunk 5 M-b) alongside {@link applyPreContributorFields} so both
+ * pipeline paths share it. Behavior-preserving verbatim lift. Mutates `entry`.
+ */
+export function applyPostContributorFields(
+  entry: StashEntry,
+  file: string,
+  canonicalName: string,
+  dirPath: string,
+): void {
+  const ext = path.extname(file).toLowerCase();
+  const baseName = path.basename(file, ext);
 
   // Priority 4: Filename heuristics (fallback)
   if (!entry.description) {
@@ -1353,6 +1345,55 @@ async function buildEntryFromFile(
   // Heuristic search hints are too noisy to be useful for search quality
 
   entry.filename = path.basename(file);
+}
+
+async function buildEntryFromFile(
+  file: string,
+  assetType: string,
+  canonicalName: string,
+  dirPath: string,
+  pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
+  stashRoot: string,
+  ctx: ReturnType<typeof buildFileContext>,
+  match: import("../walk/file-context").MatchResult | null,
+): Promise<StashEntry | { skip: true; warning: string }> {
+  const entry: StashEntry = {
+    name: canonicalName,
+    type: assetType,
+    quality: "generated",
+    confidence: 0.55,
+    source: "filename",
+  };
+
+  // Priorities 1-2 (shared with the akm adapter's recognize).
+  applyPreContributorFields(entry, file, ctx, pkgMeta);
+
+  // Priority 3: Renderer metadata extraction (LIVE path — async in-place
+  // contributors, preserving the throw→skip drop of a broken workflow/program).
+  // When no pre-resolved match is available (generateMetadata path), classify
+  // now via the akm adapter's recognition so the renderer can extract
+  // type-specific metadata.
+  const resolvedMatch = match ?? recognizeMatch(ctx);
+  if (resolvedMatch) {
+    const renderer = await getRenderer(resolvedMatch.renderer);
+    if (renderer) {
+      const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
+      try {
+        await applyMetadataContributors(entry, {
+          rendererName: renderer.name,
+          renderContext: renderCtx,
+        });
+      } catch (error) {
+        return {
+          skip: true,
+          warning: buildMetadataSkipWarning(file, assetType, error),
+        };
+      }
+    }
+  }
+
+  // Priority 4 (shared with the akm adapter's recognize).
+  applyPostContributorFields(entry, file, canonicalName, dirPath);
   return entry;
 }
 

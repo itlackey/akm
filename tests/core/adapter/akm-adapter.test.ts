@@ -203,23 +203,6 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   /** The contributor-produced fields the fold mirrors onto the IndexDocument (first-class + documentJson extras). */
   const FIELDS = ["tags", "searchHints", "description", "confidence", "source", "toc", "parameters"] as const;
 
-  /** Pull the folded metadata back off an IndexDocument: first-class fields + the documentJson extras. */
-  function foldedFromDoc(doc: NonNullable<ReturnType<typeof akmAdapter.recognize>>): Record<string, unknown> {
-    const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
-    const merged: Record<string, unknown> = {
-      tags: doc.tags,
-      searchHints: doc.searchHints,
-      description: doc.description,
-      confidence: doc.confidence,
-      source: extras.source,
-      toc: extras.toc,
-      parameters: extras.parameters,
-    };
-    const out: Record<string, unknown> = {};
-    for (const f of FIELDS) if (merged[f] !== undefined) out[f] = merged[f];
-    return out;
-  }
-
   /** The reference: today's contributors applied to a MINIMAL (name+type) seed, exactly what the fold isolates. */
   async function referenceMetadata(ctx: FileContext): Promise<Record<string, unknown>> {
     const match = recognizeMatch(ctx);
@@ -234,14 +217,25 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
     return out;
   }
 
-  test("folded metadata matches the live contributors' output for every fixture file", async () => {
+  // Chunk 5 M-b: recognize now carries the FULL metadata surface (P1/P2/P4 +
+  // the contributor fold), so `foldedFromDoc(doc)` is no longer the isolated
+  // minimal-seed fold — it includes filename/frontmatter description + tags.
+  // The contributor-EXCLUSIVE fields (searchHints/toc/parameters) are still
+  // folded verbatim, which is what this test now pins; the full-surface parity
+  // to `generateMetadataFlat` is proven by tests/integration/shadow-scan-parity.
+  test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", async () => {
     let asserted = 0;
     for (const ctx of allTypesContexts()) {
       const reference = await referenceMetadata(ctx);
       const doc = akmAdapter.recognize(component(), ctx);
       expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
       if (!doc) continue;
-      expect(foldedFromDoc(doc), `folded metadata for ${ctx.relPath}`).toEqual(reference);
+      const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
+      if (reference.searchHints !== undefined)
+        expect(doc.searchHints, `searchHints for ${ctx.relPath}`).toEqual(reference.searchHints as string[]);
+      if (reference.toc !== undefined) expect(extras.toc, `toc for ${ctx.relPath}`).toEqual(reference.toc);
+      if (reference.parameters !== undefined)
+        expect(extras.parameters, `parameters for ${ctx.relPath}`).toEqual(reference.parameters);
       asserted += 1;
     }
     expect(asserted).toBe(14);
