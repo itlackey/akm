@@ -138,7 +138,6 @@ const PLACEMENT_SPECS: Record<string, AssetSpec> = {
     toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
     toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
   },
-  wiki: { stashDir: "wikis", ...markdownSpec },
   // v1 spec §13 — `lesson` asset type. Required frontmatter fields are
   // `description` and `when_to_use`; lint enforces both.
   lesson: { stashDir: "lessons", ...markdownSpec },

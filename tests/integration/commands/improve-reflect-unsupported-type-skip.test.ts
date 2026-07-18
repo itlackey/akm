@@ -131,7 +131,7 @@ describe("REFLECT_ALLOWED_TYPES export", () => {
   });
 
   test("includes all markdown-canonical types", () => {
-    for (const t of ["knowledge", "memory", "lesson", "wiki", "skill", "agent", "command", "workflow"]) {
+    for (const t of ["knowledge", "memory", "lesson", "skill", "agent", "command", "workflow"]) {
       expect(REFLECT_ALLOWED_TYPES.has(t)).toBe(true);
     }
   });

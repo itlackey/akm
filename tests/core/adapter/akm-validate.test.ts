@@ -12,9 +12,10 @@
  * `perType`) is the conformance gate. This suite asserts:
  *
  *   1. CLEAN parity — validate over every all-types fixture file produces
- *      EXACTLY the golden's `perType` issues (all empty), for all 14 types
- *      (incl. the DefaultLinter-only script/secret/wiki/session and the
- *      workflow-program-yaml form), plus skill's empty `lintDirectoryIssues`;
+ *      EXACTLY the golden's `perType` issues (all empty), for all 13 types
+ *      (incl. the DefaultLinter-only script/secret/session and the
+ *      workflow-program-yaml form; wiki retired in chunk 4), plus skill's empty
+ *      `lintDirectoryIssues`;
  *   2. POSITIVE per-type findings — a dirty input per representative linter
  *      fires its diagnostic (missing-skill-md / invalid-task-yaml /
  *      dangerous-vault-key + name-or-type / missing-category);
@@ -101,17 +102,16 @@ describe("akm adapter — validate reproduces the lint golden perType (clean, §
       }
       asserted += 1;
     }
-    // All 15 perType keys (14 types + workflowProgramYaml) exercised.
+    // All 14 perType keys (13 types + workflowProgramYaml; wiki retired in chunk 4) exercised.
     expect(asserted).toBe(Object.keys(LINT_GOLDEN.perType).length);
-    expect(asserted).toBe(15);
+    expect(asserted).toBe(14);
   });
 
-  test("the DefaultLinter-only types (script/secret/wiki/session/lesson) are clean via base checks only", async () => {
+  test("the DefaultLinter-only types (script/secret/session/lesson) are clean via base checks only", async () => {
     const ctx = diskCtx(ALL_TYPES_ROOT);
     for (const rel of [
       "scripts/all-types-script.sh",
       "secrets/all-types-secret",
-      "wikis/all-types-space/all-types-wiki.md",
       "sessions/all-types-harness/all-types-session.md",
       "lessons/all-types-lesson.md",
     ]) {

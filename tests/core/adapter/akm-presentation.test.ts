@@ -158,8 +158,9 @@ describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition
       expect(presentationFor(entry.type).renderer, `renderer for ${relPath} (${entry.type})`).toBe(entry.renderer);
       asserted += 1;
     }
-    // 14 type-representative entries pinned (the 15th is the program-form exception).
-    expect(asserted).toBe(14);
+    // 13 type-representative entries pinned (wiki retired in chunk 4; the
+    // workflow-program-yaml program-form is the skipped exception).
+    expect(asserted).toBe(13);
   });
 });
 

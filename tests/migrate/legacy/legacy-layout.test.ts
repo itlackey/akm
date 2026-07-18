@@ -211,6 +211,13 @@ describe("legacy-layout.ts — faithfulness: toCanonicalName/toAssetPath/isRelev
 
   for (const type of LEGACY_TYPE_KEYS) {
     test(`${type}: isRelevantFile/toCanonicalName agree with the live ASSET_SPECS`, () => {
+      // `wiki` was retired from the LIVE placement specs in chunk 4 (the wiki
+      // asset-type dies), but the FROZEN legacy copy retains it by design. There
+      // is no live spec to cross-check against, so assert the retirement instead.
+      if (type === "wiki") {
+        expect(ASSET_SPECS.wiki).toBeUndefined();
+        return;
+      }
       const sample = SAMPLE_BY_TYPE[type];
       const liveSpec = ASSET_SPECS[type];
       const frozenSpec = FROZEN_ASSET_SPECS_INTERNAL[type];
@@ -304,7 +311,10 @@ describe("legacy-layout.ts — faithfulness: deriveCanonicalAssetNameFromStashRo
       expect(relGot, `golden byType.${type}`).toBe(entry.assetPath);
       checked++;
     }
-    expect(checked).toBe(14);
+    // 13 golden byType entries (wiki retired from the live placement in chunk 4;
+    // the frozen legacy copy still carries its wiki spec by design, so it is
+    // simply no longer cross-checked here).
+    expect(checked).toBe(13);
   });
 });
 

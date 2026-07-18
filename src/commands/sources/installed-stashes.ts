@@ -11,7 +11,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir } from "../../core/common";
+import { resolveStashDir } from "../../core/common";
 import { getSources, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";

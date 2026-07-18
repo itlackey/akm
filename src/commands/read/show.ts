@@ -18,7 +18,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
 import { recognizeMatch } from "../../core/adapter/adapters/akm-adapter";
 import { parseAssetRef, refToString } from "../../core/asset/asset-ref";

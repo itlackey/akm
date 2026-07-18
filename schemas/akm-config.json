@@ -465,10 +465,6 @@
           "resolvedRevision": {
             "type": "string",
             "minLength": 1
-          },
-          "wikiName": {
-            "type": "string",
-            "minLength": 1
           }
         },
         "required": [
@@ -551,10 +547,6 @@
               }
             },
             "additionalProperties": true
-          },
-          "wikiName": {
-            "type": "string",
-            "minLength": 1
           }
         },
         "required": [
@@ -2157,10 +2149,6 @@
               "resolvedRevision": {
                 "type": "string",
                 "minLength": 1
-              },
-              "wikiName": {
-                "type": "string",
-                "minLength": 1
               }
             },
             "required": [
@@ -2243,10 +2231,6 @@
                   }
                 },
                 "additionalProperties": true
-              },
-              "wikiName": {
-                "type": "string",
-                "minLength": 1
               }
             },
             "required": [
@@ -4779,10 +4763,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "wikiName": {
-          "type": "string",
-          "minLength": 1
         }
       },
       "required": [
