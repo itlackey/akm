@@ -86,6 +86,103 @@ const REGISTRY_INDEX_CACHE_DDL = `
     ON registry_index_cache(fetched_at);
 `;
 
+/**
+ * Create the graph-extraction tables (`graph_meta`/`graph_files`/`graph_file_entities`/
+ * `graph_file_relations`/`graph_extraction_queue`). Extracted verbatim from
+ * {@link ensureSchema} (called at the same point, between `migrateGraphFilesSchema`
+ * and `migrateGraphDataFromLegacy`) — a pure, behavior-identical decomposition.
+ */
+function ensureGraphTables(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS graph_meta (
+      stash_root          TEXT PRIMARY KEY,
+      schema_version      INTEGER NOT NULL,
+      generated_at        TEXT NOT NULL,
+      considered_files    INTEGER NOT NULL DEFAULT 0,
+      extracted_files     INTEGER NOT NULL DEFAULT 0,
+      entity_count        INTEGER NOT NULL DEFAULT 0,
+      relation_count      INTEGER NOT NULL DEFAULT 0,
+      extraction_coverage REAL NOT NULL DEFAULT 0,
+      density             REAL NOT NULL DEFAULT 0,
+      extractor_id        TEXT,
+      extraction_run_id   TEXT,
+      model               TEXT,
+      prompt_version      TEXT,
+      batch_size          INTEGER,
+      cache_hits          INTEGER NOT NULL DEFAULT 0,
+      cache_misses        INTEGER NOT NULL DEFAULT 0,
+      truncation_count    INTEGER NOT NULL DEFAULT 0,
+      failure_count       INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_files (
+      stash_root        TEXT NOT NULL,
+      file_path         TEXT NOT NULL,
+      file_order        INTEGER NOT NULL,
+      file_type         TEXT NOT NULL,
+      body_hash         TEXT NOT NULL,
+      confidence        REAL,
+      status            TEXT NOT NULL DEFAULT 'extracted',
+      reason            TEXT,
+      extraction_run_id TEXT,
+      PRIMARY KEY (stash_root, file_path, body_hash)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_files_path
+      ON graph_files(stash_root, file_path);
+
+    CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
+      ON graph_files(stash_root, file_order);
+
+    CREATE TABLE IF NOT EXISTS graph_file_entities (
+      stash_root   TEXT NOT NULL,
+      file_path    TEXT NOT NULL,
+      body_hash    TEXT NOT NULL,
+      entity_order INTEGER NOT NULL,
+      entity_norm  TEXT NOT NULL,
+      entity       TEXT NOT NULL,
+      PRIMARY KEY (stash_root, file_path, body_hash, entity_order),
+      FOREIGN KEY (stash_root, file_path, body_hash)
+        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity_norm
+      ON graph_file_entities(stash_root, entity_norm);
+
+    CREATE TABLE IF NOT EXISTS graph_file_relations (
+      stash_root     TEXT NOT NULL,
+      file_path      TEXT NOT NULL,
+      body_hash      TEXT NOT NULL,
+      relation_order INTEGER NOT NULL,
+      from_entity_norm TEXT NOT NULL,
+      from_entity    TEXT NOT NULL,
+      to_entity_norm TEXT NOT NULL,
+      to_entity      TEXT NOT NULL,
+      relation_type  TEXT,
+      confidence     REAL,
+      PRIMARY KEY (stash_root, file_path, body_hash, relation_order),
+      FOREIGN KEY (stash_root, file_path, body_hash)
+        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
+    );
+
+    -- #624-P3: lazy graph-extraction queue. Standalone table (NO FK to
+    -- graph_files — a queued file by definition has no graph row yet).
+    -- Idempotent on (stash_root, file_path); drained highest-priority-first.
+    -- CREATE TABLE IF NOT EXISTS is the forward migration (no DB_VERSION bump).
+    CREATE TABLE IF NOT EXISTS graph_extraction_queue (
+      stash_root TEXT NOT NULL,
+      file_path  TEXT NOT NULL,
+      body_hash  TEXT NOT NULL,
+      queued_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      priority   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (stash_root, file_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_extraction_queue_drain
+      ON graph_extraction_queue(stash_root, priority DESC, queued_at);
+  `);
+}
+
 export function ensureSchema(db: Database, embeddingDim: number | undefined): void {
   // Create meta table first so we can check version
   db.exec(`
@@ -291,94 +388,7 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // (not re-extracted).
   migrateGraphFilesSchema(db);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS graph_meta (
-      stash_root          TEXT PRIMARY KEY,
-      schema_version      INTEGER NOT NULL,
-      generated_at        TEXT NOT NULL,
-      considered_files    INTEGER NOT NULL DEFAULT 0,
-      extracted_files     INTEGER NOT NULL DEFAULT 0,
-      entity_count        INTEGER NOT NULL DEFAULT 0,
-      relation_count      INTEGER NOT NULL DEFAULT 0,
-      extraction_coverage REAL NOT NULL DEFAULT 0,
-      density             REAL NOT NULL DEFAULT 0,
-      extractor_id        TEXT,
-      extraction_run_id   TEXT,
-      model               TEXT,
-      prompt_version      TEXT,
-      batch_size          INTEGER,
-      cache_hits          INTEGER NOT NULL DEFAULT 0,
-      cache_misses        INTEGER NOT NULL DEFAULT 0,
-      truncation_count    INTEGER NOT NULL DEFAULT 0,
-      failure_count       INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS graph_files (
-      stash_root        TEXT NOT NULL,
-      file_path         TEXT NOT NULL,
-      file_order        INTEGER NOT NULL,
-      file_type         TEXT NOT NULL,
-      body_hash         TEXT NOT NULL,
-      confidence        REAL,
-      status            TEXT NOT NULL DEFAULT 'extracted',
-      reason            TEXT,
-      extraction_run_id TEXT,
-      PRIMARY KEY (stash_root, file_path, body_hash)
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_files_path
-      ON graph_files(stash_root, file_path);
-
-    CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
-      ON graph_files(stash_root, file_order);
-
-    CREATE TABLE IF NOT EXISTS graph_file_entities (
-      stash_root   TEXT NOT NULL,
-      file_path    TEXT NOT NULL,
-      body_hash    TEXT NOT NULL,
-      entity_order INTEGER NOT NULL,
-      entity_norm  TEXT NOT NULL,
-      entity       TEXT NOT NULL,
-      PRIMARY KEY (stash_root, file_path, body_hash, entity_order),
-      FOREIGN KEY (stash_root, file_path, body_hash)
-        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity_norm
-      ON graph_file_entities(stash_root, entity_norm);
-
-    CREATE TABLE IF NOT EXISTS graph_file_relations (
-      stash_root     TEXT NOT NULL,
-      file_path      TEXT NOT NULL,
-      body_hash      TEXT NOT NULL,
-      relation_order INTEGER NOT NULL,
-      from_entity_norm TEXT NOT NULL,
-      from_entity    TEXT NOT NULL,
-      to_entity_norm TEXT NOT NULL,
-      to_entity      TEXT NOT NULL,
-      relation_type  TEXT,
-      confidence     REAL,
-      PRIMARY KEY (stash_root, file_path, body_hash, relation_order),
-      FOREIGN KEY (stash_root, file_path, body_hash)
-        REFERENCES graph_files(stash_root, file_path, body_hash) ON DELETE CASCADE
-    );
-
-    -- #624-P3: lazy graph-extraction queue. Standalone table (NO FK to
-    -- graph_files — a queued file by definition has no graph row yet).
-    -- Idempotent on (stash_root, file_path); drained highest-priority-first.
-    -- CREATE TABLE IF NOT EXISTS is the forward migration (no DB_VERSION bump).
-    CREATE TABLE IF NOT EXISTS graph_extraction_queue (
-      stash_root TEXT NOT NULL,
-      file_path  TEXT NOT NULL,
-      body_hash  TEXT NOT NULL,
-      queued_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      priority   INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (stash_root, file_path)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_graph_extraction_queue_drain
-      ON graph_extraction_queue(stash_root, priority DESC, queued_at);
-  `);
+  ensureGraphTables(db);
 
   // #624-P1 migration step 2: copy any renamed-aside legacy graph data into the
   // new-shape tables (just created above), then drop the legacy tables. No-op
