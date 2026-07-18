@@ -19,7 +19,13 @@ import type { StashEntry } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
-import type { DbIndexedEntry, EntryRefRow, RekeyEntryOptions, RelinkUsageEventsOptions } from "./index-entry-types";
+import type {
+  DbIndexedEntry,
+  EntryProvenance,
+  EntryRefRow,
+  RekeyEntryOptions,
+  RelinkUsageEventsOptions,
+} from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 import { isVecAvailable } from "./index-vec-repository";
 
@@ -40,6 +46,7 @@ export function upsertEntry(
   stashDir: string,
   entry: StashEntry,
   searchText: string,
+  provenance?: EntryProvenance,
 ): number {
   // Hot path during indexing — cache the two prepared statements per
   // database connection so we don't pay the SQL parse/compile cost on
@@ -51,6 +58,12 @@ export function upsertEntry(
   // does not have to scan + JSON-decode every memory row.
   const derivedFrom =
     typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
+  // Chunk-5 Step 2 (spec §14.4): populate the additive identity/provenance
+  // columns alongside the legacy ones. `type` mirrors `entry_type` (the open
+  // token) unconditionally; `item_ref`/bundle/component/concept/adapter come
+  // from the write-boundary derivation when available (NULL otherwise, healed
+  // by the next full index). `content_hash`/`document_json` stay NULL until the
+  // Step-3 writer swap that owns diff-persistence populates them.
   const result = stmts.upsert.get(
     entryKey,
     dirPath,
@@ -60,6 +73,12 @@ export function upsertEntry(
     searchText,
     entry.type,
     derivedFrom,
+    provenance?.itemRef ?? null,
+    provenance?.bundleId ?? null,
+    provenance?.componentId ?? null,
+    provenance?.conceptId ?? null,
+    provenance?.adapterId ?? null,
+    entry.type,
   ) as { id: number } | undefined;
   if (!result) throw new Error("upsertEntry: entry_key not found after upsert");
 
@@ -85,8 +104,11 @@ function getUpsertStmts(db: Database): UpsertStmts {
     // SELECT round-trip needed (last_insert_rowid() is unreliable for
     // ON CONFLICT). Use `.get()` so a single row comes back.
     upsert: db.prepare(`
-      INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO entries (
+        entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from,
+        item_ref, bundle_id, component_id, concept_id, adapter_id, type
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(entry_key) DO UPDATE SET
         dir_path = excluded.dir_path,
         file_path = excluded.file_path,
@@ -94,7 +116,13 @@ function getUpsertStmts(db: Database): UpsertStmts {
         entry_json = excluded.entry_json,
         search_text = excluded.search_text,
         entry_type = excluded.entry_type,
-        derived_from = excluded.derived_from
+        derived_from = excluded.derived_from,
+        item_ref = excluded.item_ref,
+        bundle_id = excluded.bundle_id,
+        component_id = excluded.component_id,
+        concept_id = excluded.concept_id,
+        adapter_id = excluded.adapter_id,
+        type = excluded.type
       RETURNING id
     `),
     markDirty: db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)"),

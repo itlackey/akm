@@ -18,6 +18,23 @@
 
 import type { StashEntry } from "../../indexer/passes/metadata";
 
+/**
+ * Chunk-5 Step 2 (spec §14.4): the durable bundle-adapter identity + provenance
+ * a writer attaches to an `entries` row, persisted to the additive `item_ref`/
+ * `bundle_id`/`component_id`/`concept_id`/`adapter_id` columns. Optional on the
+ * write path during the transition — a caller that cannot yet derive the bundle
+ * (e.g. the write-back fast-path) passes `undefined` and the columns stay NULL
+ * until the next full `akm index` repopulates them. `item_ref` is the canonical
+ * `<bundle>//<concept-id>` stored spelling (§1.3), equal to `IndexDocument.ref`.
+ */
+export interface EntryProvenance {
+  itemRef: string;
+  bundleId: string;
+  componentId: string;
+  conceptId: string;
+  adapterId: string;
+}
+
 /** A fully-materialised indexed entry mapped from an `entries` row. */
 export interface DbIndexedEntry {
   id: number;

@@ -28,7 +28,21 @@ import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 // older/partial DB forward without dropping data). Graph re-keying uses a
 // TARGETED, graph-only migration (migrateGraphFilesSchema) — the model for any
 // incompatible change: migrate in place, never wipe the whole index.
-export const DB_VERSION = 17;
+//
+// v17→v18 (Chunk-5 Step 2, spec §14.4): the `entries` table gains the durable
+// bundle-adapter identity/provenance columns — `item_ref` (`<bundle>//<concept
+// -id>` canonical stored spelling), `bundle_id`/`component_id`/`concept_id`/
+// `adapter_id` provenance, `type` (open token), and `content_hash`/`document
+// _json`. They land ADDITIVELY ALONGSIDE the legacy `entry_key`/`dir_path`/
+// `stash_dir`/`entry_json`/`entry_type` columns (dev-time transitional shape):
+// the writer populates the identity/provenance columns while every reader still
+// keys on the legacy columns, so the battery stays green while the reader
+// repoint + ref-grammar flip land incrementally. The legacy columns + this
+// coexistence are removed once every reader is repointed onto `item_ref`
+// (spec §3.3 — single clean shape, no dual read-path). The index is a
+// regenerable derived cache, so an `akm index` rebuild repopulates the new
+// columns on any DB opened at an older version.
+export const DB_VERSION = 18;
 export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4
 // as a marker; the actual migration is the targeted drop in migrateGraphFilesSchema.
@@ -102,13 +116,37 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
       entry_json  TEXT NOT NULL,
       search_text TEXT NOT NULL,
       entry_type  TEXT NOT NULL,
-      derived_from TEXT
+      derived_from TEXT,
+      -- Chunk-5 Step 2 / DB v18 (spec 14.4): bundle-adapter identity + provenance,
+      -- ADDITIVE alongside the legacy columns above. item_ref is the durable
+      -- <bundle>//<concept-id> spelling; nullable during the transition so a
+      -- pre-repoint reader path never trips a NOT NULL on a partially-migrated row.
+      item_ref     TEXT,
+      bundle_id    TEXT,
+      component_id TEXT,
+      concept_id   TEXT,
+      adapter_id   TEXT,
+      type         TEXT,
+      content_hash TEXT,
+      document_json TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_entries_dir ON entries(dir_path);
     CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(entry_type);
     CREATE INDEX IF NOT EXISTS idx_entries_file_path ON entries(file_path);
   `);
+
+  // v18: backfill the bundle-adapter identity/provenance columns on databases
+  // created against a pre-v18 binary (partial schema) — same PRAGMA-then-ALTER
+  // guard pattern as `ensureDerivedFromColumn`. Runs BEFORE the item_ref index
+  // so the CREATE INDEX below never references a not-yet-added column.
+  ensureBundleRefColumns(db);
+  // Non-unique lookup index for item_ref (the UNIQUE identity constraint lands
+  // with the reader repoint, once every writer emits item_ref for every row).
+  bestEffort(
+    () => db.exec("CREATE INDEX IF NOT EXISTS idx_entries_item_ref ON entries(item_ref)"),
+    "entries.item_ref index — column added by ensureBundleRefColumns above",
+  );
 
   // Phase 5A / DB v17: backfill `derived_from` column + index on databases
   // that were created at v17 fresh OR carry a partial v17 schema (a DB whose
@@ -438,6 +476,37 @@ function ensureDerivedFromColumn(db: Database): void {
     }
     // Index creation is idempotent on its own; safe to call unconditionally.
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_derived_from ON entries(derived_from)");
+  }, "entries table may not exist on a brand-new DB before CREATE — caller is responsible");
+}
+
+/**
+ * Chunk-5 Step 2 / DB v18 schema guard.
+ *
+ * Ensures the bundle-adapter identity/provenance columns exist on the open
+ * `entries` table. Called from `ensureSchema()` after the entries CREATE so a
+ * legacy database (created against a pre-v18 binary) gains the new columns
+ * without a rebuild. All columns are nullable and added ADDITIVELY — the
+ * writer populates `item_ref`/`bundle_id`/`component_id`/`concept_id`/
+ * `adapter_id`/`type` while readers still key on the legacy columns. Idempotent:
+ * a `PRAGMA table_info` lookup gates each ALTER.
+ */
+function ensureBundleRefColumns(db: Database): void {
+  bestEffort(() => {
+    const cols = db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>;
+    const have = new Set(cols.map((c) => c.name));
+    const additive: Array<[string, string]> = [
+      ["item_ref", "TEXT"],
+      ["bundle_id", "TEXT"],
+      ["component_id", "TEXT"],
+      ["concept_id", "TEXT"],
+      ["adapter_id", "TEXT"],
+      ["type", "TEXT"],
+      ["content_hash", "TEXT"],
+      ["document_json", "TEXT"],
+    ];
+    for (const [name, sqlType] of additive) {
+      if (!have.has(name)) db.exec(`ALTER TABLE entries ADD COLUMN ${name} ${sqlType}`);
+    }
   }, "entries table may not exist on a brand-new DB before CREATE — caller is responsible");
 }
 

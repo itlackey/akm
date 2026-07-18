@@ -325,15 +325,17 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
   // AC#5 — version + graph-schema lock --------------------------------------
   // The graph re-key is migrated via a TARGETED graph-only path, NOT a DB_VERSION
   // bump. index.db has no nuclear drop-and-rebuild path (a DB_VERSION mismatch is
-  // a forensic stamp only now), so DB_VERSION must stay 17; GRAPH_SCHEMA_VERSION 4
-  // marks the new graph shape.
-  test("AC#5: DB_VERSION stays 17 (no nuclear bump), GRAPH_SCHEMA_VERSION is 4, graph DDL is the new shape", () => {
-    expect(DB_VERSION).toBe(17);
+  // a forensic stamp only now), so the graph migration fires on schema shape and
+  // never wipes the index regardless of DB_VERSION. DB_VERSION is 18 (Chunk-5
+  // Step 2 / §14.4 additive column bump); GRAPH_SCHEMA_VERSION 4 marks the new
+  // graph shape.
+  test("AC#5: DB_VERSION is 18 (§14.4 bump, still no nuclear wipe), GRAPH_SCHEMA_VERSION is 4, graph DDL is the new shape", () => {
+    expect(DB_VERSION).toBe(18);
     expect(GRAPH_SCHEMA_VERSION).toBe(4);
 
     const db = openIndexDatabase(tmpDbPath());
     try {
-      expect(getMeta(db, "version")).toBe(String(17));
+      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
 
       // Lock the three graph table DDLs to the new (composite-key) shape.
       const ddl = (
@@ -430,9 +432,9 @@ describe("#624-P1 graph re-key on (stash_root, file_path, body_hash)", () => {
         "INSERT OR REPLACE INTO graph_meta (stash_root, schema_version, generated_at, extracted_files, entity_count, relation_count) VALUES (?, 3, ?, 1, 2, 1)",
       ).run(STASH, new Date().toISOString());
       expect(tableInfoColumns(db, "graph_files")).toContain("entry_id");
-      // Version is the SAME (17) — no nuclear upgrade path; the graph migration
-      // fires on schema shape, independent of DB_VERSION.
-      expect(getMeta(db, "version")).toBe(String(17));
+      // Version equals the current binary's DB_VERSION — no nuclear upgrade path;
+      // the graph migration fires on schema shape, independent of DB_VERSION.
+      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
       closeDatabase(db);
 
       // Reopen → ensureSchema → migrateGraphFilesSchema + migrateGraphDataFromLegacy.

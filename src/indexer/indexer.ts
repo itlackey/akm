@@ -73,6 +73,7 @@ import {
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { deleteStoredGraph } from "./db/graph-db";
 import { withIndexWriterLease } from "./index-writer-lock";
+import { deriveInstallations } from "./installations";
 import {
   canUseIncrementalSkip,
   computeDirFingerprint,
@@ -918,6 +919,7 @@ function persistDirRecords(
   doFullDelete: boolean,
   warnings: string[],
   sourceRoots: readonly string[],
+  bundleByRoot?: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
 ): { dirsNeedingLlm: DirNeedingLlm[] } {
   const dirsNeedingLlm: DirNeedingLlm[] = [];
 
@@ -1018,7 +1020,33 @@ function persistDirRecords(
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
 
-          const entryId = upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
+          // Chunk-5 Step 2 (spec §14.4): derive the durable bundle identity.
+          // conceptId == the pre-0.9.0 canonical name (`entry.name`) and
+          // item_ref == `<bundle>//<conceptId>` — the exact spelling
+          // `scanComponent` emits as `IndexDocument.ref` (proven by the
+          // shadow-scan parity gate). NULL provenance when the source root has
+          // no bundle mapping (e.g. write-back paths) — healed on next index.
+          const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
+          const provenance = bundle
+            ? {
+                itemRef: `${bundle.bundleId}//${entry.name}`,
+                bundleId: bundle.bundleId,
+                componentId: bundle.componentId,
+                conceptId: entry.name,
+                adapterId: bundle.adapterId,
+              }
+            : undefined;
+
+          const entryId = upsertEntry(
+            db,
+            entryKey,
+            dirPath,
+            entryPath,
+            currentStashDir,
+            entryWithSize,
+            searchText,
+            provenance,
+          );
           persistedRows++;
 
           if (entry.type === "workflow") {
@@ -1103,7 +1131,24 @@ async function indexEntries(
   // Source roots feed the #624-P1 zero-document preflight (a full-rebuild wipe
   // is suppressed when the scan is empty because roots are unreadable).
   const sourceRoots = allSourceEntries.map((s) => s.path);
-  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, doFullDelete, warnings, sourceRoots);
+  // Chunk-5 Step 2 (spec §14.4): map each source root → its durable bundle id so
+  // the writer can persist `item_ref = <bundle>//<conceptId>` and the component/
+  // adapter provenance alongside the legacy columns. `deriveInstallations`
+  // preserves source order, so a positional zip yields the SAME bundle id the
+  // Step-3 `scanComponent` swap will emit for that root (forward-exact).
+  const installations = deriveInstallations(allSourceEntries);
+  const bundleByRoot = new Map<string, { bundleId: string; componentId: string; adapterId: string }>();
+  allSourceEntries.forEach((source, i) => {
+    const inst = installations[i];
+    if (!inst) return;
+    const component = inst.components[0];
+    bundleByRoot.set(path.resolve(source.path), {
+      bundleId: inst.id,
+      componentId: component?.id ?? inst.id,
+      adapterId: component?.adapter ?? "akm",
+    });
+  });
+  const { dirsNeedingLlm } = persistDirRecords(db, dirRecords, doFullDelete, warnings, sourceRoots, bundleByRoot);
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
 }
