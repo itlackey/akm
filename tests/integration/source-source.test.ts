@@ -14,7 +14,7 @@ import {
 } from "../../src/indexer/search/search-source";
 import * as gitProvider from "../../src/sources/providers/git";
 import { NpmSourceProvider } from "../../src/sources/providers/npm";
-import * as websiteIngest from "../../src/sources/website-ingest";
+import * as websiteIngest from "../../src/sources/snapshot-fetchers/website-ingest";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;

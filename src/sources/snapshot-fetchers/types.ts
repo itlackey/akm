@@ -4,7 +4,7 @@
 
 /**
  * Leaf types for the wiki-fetcher plugin contract (see
- * `sources/wiki-fetchers/registry.ts`).
+ * `sources/snapshot-fetchers/registry.ts`).
  *
  * Split out of `registry.ts` so that `youtube.ts` (a built-in fetcher that
  * `registry.ts` imports by value) does not need a type-only import back into

@@ -6,14 +6,14 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir } from "../core/common";
-import type { SourceConfigEntry } from "../core/config/config";
-import { ConfigError, UsageError } from "../core/errors";
-import { getRegistryIndexCacheDir } from "../core/paths";
-import { warn } from "../core/warn";
-import { withFreshnessCache } from "./freshness";
-import { sanitizeString } from "./providers/provider-utils";
-import { type FetcherContext, loadWikiSnapshotFetchers, type WikiSnapshotResult } from "./wiki-fetchers/registry";
+import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir } from "../../core/common";
+import type { SourceConfigEntry } from "../../core/config/config";
+import { ConfigError, UsageError } from "../../core/errors";
+import { getRegistryIndexCacheDir } from "../../core/paths";
+import { warn } from "../../core/warn";
+import { withFreshnessCache } from "../freshness";
+import { sanitizeString } from "../providers/provider-utils";
+import { type FetcherContext, loadWikiSnapshotFetchers, type WikiSnapshotResult } from "./registry";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
 const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;

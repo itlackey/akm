@@ -19,7 +19,7 @@ import {
   ensureWebsiteMirror,
   shouldAllowPrivateWebsiteUrlForTests,
   validateWebsiteInputUrl,
-} from "../../sources/website-ingest";
+} from "../../sources/snapshot-fetchers/website-ingest";
 import { ensureWikiNameAvailable, validateWikiName } from "../../wiki/wiki";
 
 const VALID_OVERRIDE_TYPES = new Set(["wiki"]);

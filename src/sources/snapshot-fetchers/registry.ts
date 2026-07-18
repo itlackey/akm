@@ -10,7 +10,7 @@ import type { FetcherContext, WikiSnapshotFetcher, WikiSnapshotResult } from "./
 import youtubeFetcher from "./youtube";
 
 // Re-exported so existing `import { type FetcherContext, ... } from
-// "./sources/wiki-fetchers/registry"` sites are unaffected by the KILL 3
+// "./sources/snapshot-fetchers/registry"` sites are unaffected by the KILL 3
 // sever (types moved to types.ts to break the registry.ts ↔ youtube.ts
 // import cycle).
 export type { FetcherContext, WikiSnapshotFetcher, WikiSnapshotResult };

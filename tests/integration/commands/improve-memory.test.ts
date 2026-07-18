@@ -13,7 +13,7 @@ import { setQuiet } from "../../../src/core/warn";
 import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
-import { getWebsiteCachePaths } from "../../../src/sources/website-ingest";
+import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withTestImproveLlm } from "../../_helpers/improve-config";

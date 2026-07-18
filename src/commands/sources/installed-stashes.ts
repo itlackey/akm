@@ -21,7 +21,7 @@ import type { InstalledStashEntry } from "../../registry/types";
 import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../../sources/types";
-import { ensureWebsiteMirror, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
+import { ensureWebsiteMirror, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/snapshot-fetchers/website-ingest";
 import { listWikis, resolveWikisRoot } from "../../wiki/wiki";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
