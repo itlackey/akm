@@ -186,14 +186,6 @@ const CASES: MintingCase[] = [
     relFilePath: "tools/secrets/example-secret",
     expected: "tools/secrets/example-secret",
   },
-  // wiki -- markdownSpec, always nested under a namespace dir in practice.
-  { type: "wiki", label: "canonical", relFilePath: "wikis/space/example-wiki.md", expected: "space/example-wiki" },
-  {
-    type: "wiki",
-    label: "fallback",
-    relFilePath: "tools/wikis/space/example-wiki.md",
-    expected: "tools/wikis/space/example-wiki",
-  },
   // lesson -- markdownSpec.
   { type: "lesson", label: "canonical", relFilePath: "lessons/example-lesson.md", expected: "example-lesson" },
   {
@@ -240,7 +232,7 @@ function runCase(c: MintingCase): string | undefined {
 
 // ── 1. Pure-function assertions (pre-capture sanity) ────────────────────────
 
-describe("deriveCanonicalAssetNameFromStashRoot: canonical-typeRoot + fallback branches, all 14 types (WI-0b.3c)", () => {
+describe("deriveCanonicalAssetNameFromStashRoot: canonical-typeRoot + fallback branches, all 13 types (WI-0b.3c)", () => {
   for (const c of CASES) {
     test(`${c.type} / ${c.label}: ${c.relFilePath} -> ${c.expected}`, () => {
       expect(runCase(c)).toBe(c.expected);
@@ -249,7 +241,8 @@ describe("deriveCanonicalAssetNameFromStashRoot: canonical-typeRoot + fallback b
 
   test("every type is covered by at least one canonical-branch and one fallback-branch case", () => {
     const types = new Set(CASES.map((c) => c.type));
-    expect(types.size).toBe(14);
+    // wiki retired in chunk 4 (no longer a placement type) → 13 minted types.
+    expect(types.size).toBe(13);
     for (const type of types) {
       const hasCanonical = CASES.some((c) => c.type === type && c.label.startsWith("canonical"));
       const hasFallback = CASES.some((c) => c.type === type && c.label === "fallback");

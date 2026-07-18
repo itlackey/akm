@@ -159,16 +159,6 @@
         "relFilePath": "tools/tasks/example-task.yml"
       }
     },
-    "wiki": {
-      "canonical": {
-        "name": "space/example-wiki",
-        "relFilePath": "wikis/space/example-wiki.md"
-      },
-      "fallback": {
-        "name": "tools/wikis/space/example-wiki",
-        "relFilePath": "tools/wikis/space/example-wiki.md"
-      }
-    },
     "workflow": {
       "canonical": {
         "name": "example-workflow",

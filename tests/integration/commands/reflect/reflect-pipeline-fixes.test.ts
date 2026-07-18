@@ -44,7 +44,7 @@ function makeTempDir(prefix: string): string {
 
 function makeStashDir(): string {
   const stash = makeTempDir("akm-reflect-fixes-");
-  for (const dir of ["lessons", "skills", "memories", "knowledge", "scripts", "wikis"]) {
+  for (const dir of ["lessons", "skills", "memories", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;

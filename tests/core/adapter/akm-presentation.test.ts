@@ -38,7 +38,6 @@ const TYPE_TO_RENDERER: Record<string, string> = {
   workflow: "workflow-md",
   env: "env-file",
   secret: "secret-file",
-  wiki: "wiki-md",
   task: "task-yaml",
   session: "session-md",
   fact: "fact-md",
@@ -69,7 +68,6 @@ const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
     `akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with the whole .env injected (prefer --clean to minimize inherited parent env; child stdout is not redacted). akm env export ${ref} --out <file> writes a sourceable script (values to a file, not stdout).`,
   secret: (ref) =>
     `akm show ${ref} -> name only (value never shown); akm secret path ${ref} -> file path; akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
-  wiki: (ref) => `akm show ${ref} -> read the wiki page`,
   task: (ref) =>
     `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,
   session: (ref) =>

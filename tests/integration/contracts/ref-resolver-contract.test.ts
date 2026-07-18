@@ -40,7 +40,6 @@ function buildFixtureStash(root: string): void {
   touch(path.join(root, "knowledge", "release-notes.md"));
   touch(path.join(root, "lessons", "no-fine-tuning.md"));
   touch(path.join(root, "tasks", "ship-0.8.0.yml"));
-  touch(path.join(root, "wikis", "akm-internals.md"));
   touch(path.join(root, "agents", "release-captain.md"));
   touch(path.join(root, "commands", "akm-sync.md"));
   touch(path.join(root, "lessons", "ship-small.md"));
@@ -85,7 +84,9 @@ const CONTRACT_CASES: ContractCase[] = [
   { description: "existing knowledge (top level)", type: "knowledge", slug: "release-notes", reachable: true },
   { description: "existing lesson", type: "lesson", slug: "no-fine-tuning", reachable: true },
   { description: "existing task", type: "task", slug: "ship-0.8.0", reachable: true },
-  { description: "existing wiki", type: "wiki", slug: "akm-internals", reachable: true },
+  // `wiki` was retired in chunk 4 (no longer a placement type), so refToRelPath
+  // returns null for it — an unresolvable, retired type.
+  { description: "retired wiki type (unresolvable)", type: "wiki", slug: "akm-internals", reachable: false },
   { description: "existing agent (2)", type: "agent", slug: "release-captain", reachable: true },
   { description: "existing command (2)", type: "command", slug: "akm-sync", reachable: true },
   { description: "existing lesson (2)", type: "lesson", slug: "ship-small", reachable: true },
