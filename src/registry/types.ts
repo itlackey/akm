@@ -73,8 +73,6 @@ export interface InstalledStashEntry {
   cacheDir: string;
   installedAt: string;
   writable?: boolean;
-  /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
-  wikiName?: string;
 }
 
 export interface StashInstallResult extends InstalledStashEntry {

@@ -144,7 +144,9 @@ function parseWikiFrontmatter(raw: string): WikiPageFrontmatter {
   out.pageKind = nonEmptyString(data.pageKind);
   out.wikiRole = nonEmptyString(data.wikiRole);
   if (Array.isArray(data.xrefs)) {
-    out.xrefs = data.xrefs.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim());
+    out.xrefs = data.xrefs
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim());
   }
   if (Array.isArray(data.sources)) {
     out.sources = data.sources
@@ -169,13 +171,13 @@ function firstSegment(relPath: string): string {
 }
 
 /**
- * Resolve one xref token (`wiki:<wikiName>/<conceptId>`) to a same-wiki target
+ * Resolve one xref token (`wiki:<bundleId>/<conceptId>`) to a same-wiki target
  * conceptId, or `null` when it points at another wiki / is not a wiki xref.
- * `wikiName` is the bundle id (`c.id`); cross-wiki xrefs are left alone
+ * `bundleId` is the bundle id (`c.id`); cross-wiki xrefs are left alone
  * (wiki.ts#lintWiki: "a cross-wiki link is a feature, not a defect").
  */
-function resolveXref(xref: string, wikiName: string): string | null {
-  const prefix = `wiki:${wikiName}/`;
+function resolveXref(xref: string, bundleId: string): string | null {
+  const prefix = `wiki:${bundleId}/`;
   if (!xref.startsWith(prefix)) return null;
   const target = xref.slice(prefix.length).replace(/\.md$/i, "");
   return target.length > 0 ? target : null;
@@ -225,7 +227,7 @@ function resolveBodyLinks(body: string, fileRelPath: string): string[] {
 }
 
 /** Resolve a page's `xrefs` + body links into deduped target conceptIds (links = relationships, §9). */
-function resolvePageLinks(fm: WikiPageFrontmatter, body: string, fileRelPath: string, wikiName: string): string[] {
+function resolvePageLinks(fm: WikiPageFrontmatter, body: string, fileRelPath: string, bundleId: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const push = (conceptId: string) => {
@@ -235,7 +237,7 @@ function resolvePageLinks(fm: WikiPageFrontmatter, body: string, fileRelPath: st
     }
   };
   for (const xref of fm.xrefs) {
-    const resolved = resolveXref(xref, wikiName);
+    const resolved = resolveXref(xref, bundleId);
     if (resolved !== null) push(resolved);
   }
   for (const link of resolveBodyLinks(body, fileRelPath)) push(link);

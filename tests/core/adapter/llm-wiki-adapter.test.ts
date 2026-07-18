@@ -18,9 +18,9 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { llmWikiAdapter } from "../../../src/core/adapter/adapters/llm-wiki-adapter";
-import { presentationFor } from "../../../src/core/type-presentation";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
+import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/llm-wiki");
@@ -208,7 +208,10 @@ describe("llm-wiki adapter — lint golden (native wiki validation)", () => {
       for (const rel of relPaths) {
         const got = byFile.get(rel) ?? [];
         const expectedCodes = (entry.issues ?? []).map((i) => i.issue);
-        expect(got.map((d) => d.issue), rel).toEqual(expectedCodes);
+        expect(
+          got.map((d) => d.issue),
+          rel,
+        ).toEqual(expectedCodes);
       }
     }
   });

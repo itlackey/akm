@@ -114,8 +114,6 @@ export interface ConfiguredSource {
   primary?: boolean;
   /** Pass-through provider-specific options. */
   options?: Record<string, unknown>;
-  /** If set, .md files in this stash are indexed as wiki pages under this name. */
-  wikiName?: string;
 }
 
 /**

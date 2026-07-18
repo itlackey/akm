@@ -25,8 +25,6 @@ export interface SearchSource {
   path: string;
   /** For installed sources, the installed stash id */
   registryId?: string;
-  /** If set, all .md files in this source are indexed as wiki pages under this wiki name */
-  wikiName?: string;
   /**
    * Whether this source accepts writes. The primary stash is always writable.
    * Filesystem/git sources with `writable: true` in config are also writable.
@@ -60,7 +58,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   const sources: SearchSource[] = [{ path: stashDir, writable: true }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
-  const addSource = (dir: string, registryId?: string, wikiName?: string, writable?: boolean) => {
+  const addSource = (dir: string, registryId?: string, writable?: boolean) => {
     const resolved = path.resolve(dir);
     if (seen.has(resolved)) {
       // Already in the source list — typically the primary stash injected at
@@ -72,7 +70,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       const existing = sources.find((s) => s.path === resolved);
       if (existing) {
         if (registryId && !existing.registryId) existing.registryId = registryId;
-        if (wikiName && !existing.wikiName) existing.wikiName = wikiName;
         if (writable && !existing.writable) existing.writable = true;
       }
       return;
@@ -85,7 +82,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       sources.push({
         path: resolved,
         ...(registryId ? { registryId } : {}),
-        ...(wikiName ? { wikiName } : {}),
         ...(writable ? { writable: true } : {}),
       });
     }
@@ -110,13 +106,13 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     if (entry.enabled === false) continue;
     const dir = resolveEntryContentDir(entry);
     if (dir == null) continue;
-    addSource(dir, entry.name, entry.wikiName, entry.writable === true);
+    addSource(dir, entry.name, entry.writable === true);
   }
 
   // (3) Installed stashes (registry-managed). Always last.
   // Only installed entries explicitly marked writable: true are considered writable.
   for (const entry of config.installed ?? []) {
-    addSource(entry.stashRoot, entry.id, entry.wikiName, entry.writable === true);
+    addSource(entry.stashRoot, entry.id, entry.writable === true);
   }
 
   return sources;

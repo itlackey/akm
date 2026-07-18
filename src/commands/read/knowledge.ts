@@ -32,7 +32,10 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { fetchWebsiteMarkdownSnapshot, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/snapshot-fetchers/website-ingest";
+import {
+  fetchWebsiteMarkdownSnapshot,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 

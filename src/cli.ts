@@ -118,7 +118,6 @@ import {
 } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/sources/stash-cli";
 import { tasksCommand } from "./commands/tasks/tasks-cli";
-import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { bestEffort } from "./core/best-effort";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
@@ -550,7 +549,6 @@ export const main = defineCommand({
     completions: completionsCommand,
     env: envCommand,
     secret: secretCommand,
-    wiki: wikiCommand,
     tasks: tasksCommand,
   },
 });

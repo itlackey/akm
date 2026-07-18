@@ -90,7 +90,6 @@ export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] 
       source: { type: "filesystem", path: installed.stashRoot },
       enabled: true,
       writable: installed.writable,
-      ...(installed.wikiName ? { wikiName: installed.wikiName } : {}),
     });
   }
 
@@ -108,6 +107,5 @@ function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): C
     ...(persisted.writable !== undefined ? { writable: persisted.writable } : {}),
     ...(isPrimary || persisted.primary ? { primary: true } : {}),
     ...(persisted.options ? { options: persisted.options } : {}),
-    ...(persisted.wikiName ? { wikiName: persisted.wikiName } : {}),
   };
 }

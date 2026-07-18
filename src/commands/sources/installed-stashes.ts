@@ -20,9 +20,11 @@ import { parseRegistryRef } from "../../registry/resolve";
 import type { InstalledStashEntry } from "../../registry/types";
 import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
+import {
+  ensureWebsiteMirror,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../../sources/types";
-import { ensureWebsiteMirror, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/snapshot-fetchers/website-ingest";
-import { listWikis, resolveWikisRoot } from "../../wiki/wiki";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
 
@@ -45,7 +47,6 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     sources.push({
       name,
       kind,
-      wiki: stash.wikiName,
       path: stash.path,
       provider: stash.url != null ? stash.type : undefined,
       writable: stash.writable !== undefined ? stash.writable : writableDefault,
@@ -61,39 +62,12 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     sources.push({
       name: entry.id,
       kind,
-      wiki: entry.wikiName,
       path: entry.stashRoot,
       ref: entry.ref,
       version: entry.resolvedVersion,
       writable: entry.writable === true,
       status: { exists: directoryExists(entry.stashRoot) },
     });
-  }
-
-  if (!kindFilter || kindFilter.includes("filesystem")) {
-    const wikisRoot = resolveWikisRoot(stashDir);
-    const seenPaths = new Set(
-      sources
-        .map((source) => source.path)
-        .filter((sourcePath): sourcePath is string => typeof sourcePath === "string")
-        .map((sourcePath) => path.resolve(sourcePath)),
-    );
-    for (const wiki of listWikis(stashDir)) {
-      // `listWikis()` also includes externally-registered wikis. `akm list`
-      // should synthesize source entries here only for stash-owned wiki dirs.
-      if (!isWithin(wiki.path, wikisRoot)) continue;
-      const resolvedPath = path.resolve(wiki.path);
-      if (seenPaths.has(resolvedPath)) continue;
-      seenPaths.add(resolvedPath);
-      sources.push({
-        name: wiki.name,
-        kind: "filesystem",
-        wiki: wiki.name,
-        path: wiki.path,
-        writable: true,
-        status: { exists: directoryExists(wiki.path) },
-      });
-    }
   }
 
   return {
@@ -267,7 +241,6 @@ async function updateRegistryEntry(
     cacheDir: synced.cacheDir,
     installedAt: synced.syncedAt,
     writable: synced.writable ?? entry.writable,
-    ...(entry.wikiName ? { wikiName: entry.wikiName } : {}),
   };
   upsertInstalledRegistryEntry(installedEntry);
   await upsertLockEntry({

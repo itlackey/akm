@@ -757,7 +757,6 @@ export const SourceConfigEntrySchema = z
     writable: z.boolean().optional(),
     primary: z.boolean().optional(),
     options: SourceConfigEntryOptionsSchema.optional(),
-    wikiName: z.string().min(1).optional(),
   })
   .passthrough()
   .superRefine((entry, ctx) => {
@@ -803,7 +802,6 @@ export const InstalledStashEntrySchema = z
     writable: z.boolean().optional(),
     resolvedVersion: z.string().min(1).optional(),
     resolvedRevision: z.string().min(1).optional(),
-    wikiName: z.string().min(1).optional(),
   })
   .passthrough()
   .superRefine((entry, ctx) => {

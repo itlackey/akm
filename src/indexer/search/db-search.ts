@@ -90,14 +90,11 @@ export function buildLocalAction(
 }
 
 function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
-  if (source?.wikiName) {
-    return makeAssetRef(entry.type, entry.name);
-  }
   return makeAssetRef(entry.type, refName, source?.registryId);
 }
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {
-  return source?.wikiName ? null : (source?.registryId ?? null);
+  return source?.registryId ?? null;
 }
 
 /**

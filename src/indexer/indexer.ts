@@ -79,8 +79,6 @@ import {
   inferZeroRowReason,
 } from "./passes/dir-staleness";
 import {
-  applyCuratedFrontmatter,
-  applyWikiFrontmatter,
   generateMetadataFlat,
   isEnrichmentComplete,
   isWorkflowSkipWarning,
@@ -355,15 +353,6 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
     clearStaleCacheEntries(db);
   } catch {
     /* ignore */
-  }
-
-  // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort.
-  try {
-    onProgress({ phase: "finalize", message: "Regenerating wiki indexes." });
-    const { regenerateAllWikiIndexes } = await import("../wiki/wiki.js");
-    regenerateAllWikiIndexes(stashDir);
-  } catch {
-    /* best-effort */
   }
 
   throwIfAborted(signal);
@@ -772,7 +761,7 @@ async function scanSourceDirs(
     );
   };
 
-  // Duplicate-directory guard shared by the wiki-root and normal branches. A
+  // Duplicate-directory guard for the per-source scan. A
   // dir may surface via multiple stash roots; only the first occurrence is
   // indexed, and the later ones are recorded as skips. Returns true when the
   // dir was already seen (caller should skip further processing).
@@ -834,41 +823,6 @@ async function scanSourceDirs(
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
-
-    // Wiki-root stashes: all .md files are indexed as wiki pages under wikiName
-    if (sourceAdded.wikiName) {
-      const wikiName = sourceAdded.wikiName;
-      const wikiDirGroups = new Map<string, { files: string[]; entries: StashEntry[] }>();
-      for (const ctx of fileContexts) {
-        if (ctx.ext !== ".md") continue;
-        if (!shouldIndexStashFile(currentStashDir, ctx.absPath, { treatStashRootAsWikiRoot: true })) continue;
-        const relNoExt = ctx.relPath.replace(/\.md$/, "");
-        const frontmatter = ctx.frontmatter() ?? {};
-        const entry: StashEntry = {
-          name: `${wikiName}/${relNoExt}`,
-          type: "wiki",
-          filename: ctx.fileName,
-          quality: "generated",
-          confidence: 0.55,
-          source: "filename",
-        };
-        applyCuratedFrontmatter(entry, frontmatter);
-        applyWikiFrontmatter(entry, frontmatter);
-        const dir = ctx.parentDirAbs;
-        const group = wikiDirGroups.get(dir);
-        if (group) {
-          group.files.push(ctx.absPath);
-          group.entries.push(entry);
-        } else {
-          wikiDirGroups.set(dir, { files: [ctx.absPath], entries: [entry] });
-        }
-      }
-      for (const [dirPath, { files, entries }] of wikiDirGroups) {
-        if (markSeenOrSkipDuplicate(dirPath, currentStashDir, files)) continue;
-        recordFreshnessDecision(dirPath, currentStashDir, files, { entries });
-      }
-      continue;
-    }
 
     const dirGroups = new Map<string, string[]>();
     for (const ctx of fileContexts) {

@@ -680,18 +680,11 @@ export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, u
 const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
 
 /**
- * Apply wiki-specific index exclusions while leaving all other stash files
- * untouched.
- *
- * - In a normal stash, excludes wiki-root `schema.md`, `index.md`, `log.md`.
- * - In a wiki-root stash source (`wikiName`), excludes those same root-level
- *   infrastructure files.
+ * Apply wiki-directory index exclusions while leaving all other stash files
+ * untouched: inside a `wikis/<name>/` directory, the root-level infrastructure
+ * files `schema.md`, `index.md`, `log.md` are excluded.
  */
-export function shouldIndexStashFile(
-  stashRoot: string,
-  file: string,
-  options?: { treatStashRootAsWikiRoot?: boolean },
-): boolean {
+export function shouldIndexStashFile(stashRoot: string, file: string): boolean {
   const relPath = path.relative(stashRoot, file);
   if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) return true;
 
@@ -716,10 +709,6 @@ export function shouldIndexStashFile(
   if (segments[0] === "secrets") {
     if (file.endsWith(".sensitive") || file.endsWith(".lock")) return false;
     if (fs.existsSync(`${file}.sensitive`)) return false;
-  }
-
-  if (options?.treatStashRootAsWikiRoot) {
-    return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
   }
 
   const wikisIdx = segments.indexOf("wikis");

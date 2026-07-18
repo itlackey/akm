@@ -13,7 +13,7 @@ import { akmRemove } from "./installed-stashes";
 import { akmAdd } from "./source-add";
 import { addStash } from "./source-manage";
 
-// ── Shared website-options helper (also used by wikiRegisterCommand) ──────────
+// ── Shared website-options helper ──────────
 
 export function buildWebsiteOptions(args: Record<string, unknown>): Record<string, unknown> {
   const websiteOptions: Record<string, unknown> = {};
@@ -235,10 +235,6 @@ export const addCommand = defineJsonCommand({
       description: "Mark a git stash as writable so changes can be pushed back",
       default: false,
     },
-    type: {
-      type: "string",
-      description: "Override asset type for all files in this stash (currently supports: wiki)",
-    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
@@ -311,26 +307,9 @@ export const addCommand = defineJsonCommand({
     }
     const websiteOptions = buildWebsiteOptions(args);
 
-    if (args.type === "wiki") {
-      const { registerWikiSource } = await import("./source-add");
-      const result = await registerWikiSource({
-        ref,
-        name: args.name,
-        options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
-        writable: args.writable,
-      });
-      appendEvent({
-        eventType: "add",
-        metadata: { target: ref, type: "wiki", name: args.name ?? null, writable: args.writable === true },
-      });
-      output("add", result);
-      return;
-    }
-
     const result = await akmAdd({
       ref,
       name: args.name,
-      overrideType: args.type,
       options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
       writable: args.writable,
     });
@@ -339,7 +318,6 @@ export const addCommand = defineJsonCommand({
       metadata: {
         target: ref,
         name: args.name ?? null,
-        overrideType: args.type ?? null,
         writable: args.writable === true,
       },
     });
