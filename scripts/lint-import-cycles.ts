@@ -278,7 +278,7 @@ export const DYNAMIC_IMPORT_BASELINE: Readonly<Record<string, number>> = {
   "src/setup/detect.ts": 1,
   "src/setup/setup.ts": 1,
   "src/sources/providers/sync-from-ref.ts": 2,
-  "src/sources/wiki-fetchers/registry.ts": 1,
+  "src/sources/snapshot-fetchers/registry.ts": 1,
   "src/storage/repositories/events-repository.ts": 1,
   "src/workflows/exec/frozen-judge.ts": 1,
   "src/workflows/exec/native-executor.ts": 4,
