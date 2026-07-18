@@ -25,7 +25,7 @@ import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { assetPathForName, deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { isWithin, writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
@@ -113,7 +113,7 @@ const envCreateCommand = defineJsonCommand({
     parsed.name = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), parsed.name);
     const source = findEnvSource(parsed.origin);
     const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    const absPath = assetPathForName("env", envRoot, parsed.name);
     if (!isWithin(absPath, envRoot)) {
       throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
     }
@@ -360,7 +360,7 @@ const envRemoveCommand = defineJsonCommand({
     const parsed = parseEnvRef(args.ref);
     const source = findEnvSource(parsed.origin);
     const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    const absPath = assetPathForName("env", envRoot, parsed.name);
     if (!isWithin(absPath, envRoot)) {
       throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
     }
@@ -397,7 +397,7 @@ const envSetCommand = defineJsonCommand({
     const parsed = parseEnvRef(args.ref);
     const source = findEnvSource(parsed.origin);
     const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    const absPath = assetPathForName("env", envRoot, parsed.name);
     if (!isWithin(absPath, envRoot)) {
       throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
     }
@@ -460,7 +460,7 @@ const envUnsetCommand = defineJsonCommand({
     const parsed = parseEnvRef(args.ref);
     const source = findEnvSource(parsed.origin);
     const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+    const absPath = assetPathForName("env", envRoot, parsed.name);
     if (!isWithin(absPath, envRoot)) {
       throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
     }

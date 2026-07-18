@@ -99,7 +99,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const normalizedName = normalizeWorkflowName(input.name);
   // The write target is DEFINITIVE — the canonical name plus the chosen format's
   // extension (`.yaml`/`.yml` for a program, `.md` for markdown). We deliberately
-  // do NOT go through `resolveAssetPathFromName`, which PROBES existing files and
+  // do NOT go through `assetPathForName`, which PROBES existing files and
   // would redirect a markdown create onto an existing `foo.yaml` (writing
   // markdown into a `.yaml`). Computing the target directly makes a markdown
   // create always write `.md`, so the finding-C cross-extension check below sees

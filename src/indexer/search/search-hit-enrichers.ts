@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { RendererRegistry } from "../../core/asset/asset-registry";
+import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent } from "../db/db";

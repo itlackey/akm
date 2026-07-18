@@ -39,8 +39,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig } from "../../core/config/config";
 import type { EventsContext } from "../../core/events";
@@ -288,10 +288,10 @@ function deferReasonForSource(source: string): DrainDeferReason {
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
     const parsed = parseAssetRef(ref);
-    const typeDir = TYPE_DIRS[parsed.type];
+    const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return undefined;
     const typeRoot = path.join(stashDir, typeDir);
-    const assetPath = resolveAssetPathFromName(parsed.type, typeRoot, parsed.name);
+    const assetPath = assetPathForName(parsed.type, typeRoot, parsed.name);
     if (!fs.existsSync(assetPath)) return undefined;
     return fs.readFileSync(assetPath, "utf8");
   } catch {

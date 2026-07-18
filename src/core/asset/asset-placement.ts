@@ -8,28 +8,21 @@
  *
  * This module is the SINGLE SOURCE OF TRUTH for the `AssetSpec` filesystem
  * surface (`stashDir`/`isRelevantFile`/`toCanonicalName`/`toAssetPath`), the
- * `TYPE_DIRS` stash-subdir map, and the derive/resolve helpers built on them.
- * It was extracted VERBATIM from `asset-spec.ts` so the `akm` bundle adapter
- * (`adapter/adapters/akm-adapter.ts`) can consume placement WITHOUT importing
- * `asset-spec.ts` — which pulls in `output/renderers` + `asset-registry` and is
- * therefore a taxonomy import-cycle (SCC) participant. Depending on that leaf
- * from the adapter would drag the adapter into the SCC and block the chunk-3
- * cutover; depending on THIS leaf does not (it imports only Node builtins and
- * the `core/recognition-util` leaf).
+ * per-type stash-subdir map, and the derive/resolve helpers built on them.
+ * Chunk-3 deleted the mutable taxonomy globals that used to expose this data
+ * as ambient registries; the surface is now reached through the small typed
+ * accessors below (`stashDirFor`/`stashDirNames`/`placementTypes`/
+ * `assetPathForName`/`placementSpecFor`), which the `akm` bundle adapter
+ * (`adapter/adapters/akm-adapter.ts`) consumes for placement.
  *
- * ── Why `rendererName`/`actionBuilder` are absent from the built-in specs ──
+ * ── Cycle-safety ──
  *
- * The built-in per-type renderer names and action builders live in the STATIC
- * `TYPE_TO_RENDERER`/`ACTION_BUILDERS` maps in `asset-registry.ts` (and, for
- * recognition, `type-presentation.ts`). The `rendererName`/`actionBuilder`
- * fields on the live `ASSET_SPECS` were ONLY read by `registerAssetType`'s
- * auto-registration path for CUSTOM types (built-ins bypass it), so dropping
- * them here is behavior-preserving — proven by the frozen migrator copy
- * (`migrate/legacy/legacy-layout.ts`, which drops them identically) and its
- * faithfulness test. The optional fields remain on the {@link AssetSpec}
- * interface because `registerAssetType` still reads them off a caller-supplied
- * custom spec (that wiring stays in `asset-spec.ts`, which keeps the
- * asset-registry edge).
+ * This leaf imports only Node builtins and the `core/recognition-util` pure
+ * sink, so it is NOT an import-cycle (SCC) participant. Depending on it from
+ * the `akm` adapter keeps the adapter a leaf. Renderer NAMES and action
+ * builders for the built-in types live in the static `type-presentation.ts`
+ * table (`TYPE_PRESENTATION`); they are intentionally absent here — placement
+ * is a filesystem concern, presentation is a rendering concern.
  */
 
 import fs from "node:fs";
@@ -45,23 +38,9 @@ export interface AssetSpec {
   isRelevantFile: (fileName: string) => boolean;
   toCanonicalName: (typeRoot: string, filePath: string) => string | undefined;
   toAssetPath: (typeRoot: string, name: string) => string;
-  /**
-   * Optional renderer name to use for this asset type in search results and show.
-   * If provided, calling `registerAssetType` will automatically populate
-   * `TYPE_TO_RENDERER` in the asset-registry singleton. Absent on the built-in
-   * specs below — see the module header.
-   */
-  rendererName?: string;
-  /**
-   * Optional action builder for this asset type in search results.
-   * If provided, calling `registerAssetType` will automatically populate
-   * `ACTION_BUILDERS` in the asset-registry singleton. Absent on the built-in
-   * specs below — see the module header.
-   */
-  actionBuilder?: (ref: string) => string;
 }
 
-const workflowSpec: Omit<AssetSpec, "stashDir" | "rendererName" | "actionBuilder"> = {
+const workflowSpec: Omit<AssetSpec, "stashDir"> = {
   isRelevantFile: (fileName) =>
     (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),
   toCanonicalName: (typeRoot, filePath) => {
@@ -107,7 +86,7 @@ const scriptSpec: Omit<AssetSpec, "stashDir"> = {
   toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
 };
 
-const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
+const PLACEMENT_SPECS: Record<string, AssetSpec> = {
   skill: {
     stashDir: "skills",
     isRelevantFile: (fileName) => fileName === "SKILL.md",
@@ -187,38 +166,51 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   fact: { stashDir: "facts", ...markdownSpec },
 };
 
-export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;
+/** Live placement spec for a type, or `undefined` for an unknown type. */
+export function placementSpecFor(type: string): AssetSpec | undefined {
+  return PLACEMENT_SPECS[type];
+}
 
-export const TYPE_DIRS: Record<string, string> = Object.fromEntries(
-  Object.entries(ASSET_SPECS_INTERNAL).map(([type, spec]) => [type, spec.stashDir]),
-);
+/** Every registered placement spec (for whole-registry sweeps). */
+export function placementSpecList(): readonly AssetSpec[] {
+  return Object.values(PLACEMENT_SPECS);
+}
+
+/** Every registered placement type key (the set of types that have a stash subdir). */
+export function placementTypes(): readonly string[] {
+  return Object.keys(PLACEMENT_SPECS);
+}
+
+/** The stash subdir a type places into, or `undefined` for an unknown type. */
+export function stashDirFor(type: string): string | undefined {
+  return PLACEMENT_SPECS[type]?.stashDir;
+}
+
+/** All stash subdir names across the registered types. */
+export function stashDirNames(): string[] {
+  return Object.values(PLACEMENT_SPECS).map((spec) => spec.stashDir);
+}
 
 /**
- * Mutate the placement registry to add/replace a type's spec. Called only by
- * `asset-spec.ts#registerAssetType` (which additionally wires the renderer/
- * action into the asset-registry singleton). Keeps `TYPE_DIRS` in sync.
+ * Mutate the placement registry to add/replace a type's spec. Used by the
+ * custom-asset-type registration surface (extension types); built-ins are
+ * baked into {@link PLACEMENT_SPECS} above.
  */
 export function registerAssetSpec(type: string, spec: AssetSpec): void {
-  ASSET_SPECS_INTERNAL[type] = spec;
-  TYPE_DIRS[type] = spec.stashDir;
+  PLACEMENT_SPECS[type] = spec;
 }
 
-/** Remove a previously-registered type's spec. Called by `asset-spec.ts#deregisterAssetType`. */
+/** Remove a previously-registered type's spec. */
 export function deregisterAssetSpec(type: string): void {
-  delete ASSET_SPECS_INTERNAL[type];
-  delete TYPE_DIRS[type];
-}
-
-export function getAssetTypes(): readonly string[] {
-  return Object.keys(ASSET_SPECS_INTERNAL);
+  delete PLACEMENT_SPECS[type];
 }
 
 export function isRelevantAssetFile(assetType: string, fileName: string): boolean {
-  return ASSET_SPECS[assetType]?.isRelevantFile(fileName) ?? false;
+  return PLACEMENT_SPECS[assetType]?.isRelevantFile(fileName) ?? false;
 }
 
 export function deriveCanonicalAssetName(assetType: string, typeRoot: string, filePath: string): string | undefined {
-  return ASSET_SPECS[assetType]?.toCanonicalName(typeRoot, filePath);
+  return PLACEMENT_SPECS[assetType]?.toCanonicalName(typeRoot, filePath);
 }
 
 export function deriveCanonicalAssetNameFromStashRoot(
@@ -234,12 +226,12 @@ export function deriveCanonicalAssetNameFromStashRoot(
   // Otherwise fall back to stashRoot — this preserves the full relative path
   // as the canonical name, which is correct for installed stashes that live
   // under custom directories (e.g. "tools/agents/svelte-file-editor").
-  const typeRoot = firstSegment === TYPE_DIRS[assetType] ? path.join(stashRoot, firstSegment) : stashRoot;
+  const typeRoot = firstSegment === stashDirFor(assetType) ? path.join(stashRoot, firstSegment) : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);
 }
 
-export function resolveAssetPathFromName(assetType: string, typeRoot: string, name: string): string {
-  const spec = ASSET_SPECS[assetType];
+export function assetPathForName(assetType: string, typeRoot: string, name: string): string {
+  const spec = PLACEMENT_SPECS[assetType];
   if (!spec) throw new Error(`Unknown asset type: "${assetType}"`);
   return spec.toAssetPath(typeRoot, name);
 }

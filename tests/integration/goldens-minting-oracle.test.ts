@@ -65,7 +65,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetNameFromStashRoot } from "../../src/core/asset/asset-spec";
+import { deriveCanonicalAssetNameFromStashRoot } from "../../src/core/asset/asset-placement";
 import { runCliCapture } from "../_helpers/cli";
 import { expectGolden } from "../_helpers/golden";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";

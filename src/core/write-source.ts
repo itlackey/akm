@@ -27,9 +27,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
+import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/asset-ref";
 import { makeAssetRef } from "./asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "./asset/asset-spec";
 import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { resolveConfiguredSources } from "./config/config";
@@ -451,12 +451,12 @@ function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): v
 }
 
 function resolveAssetFilePath(source: WriteTargetSource, ref: AssetRef): string {
-  const typeDir = TYPE_DIRS[ref.type];
+  const typeDir = stashDirFor(ref.type);
   if (!typeDir) {
     throw new UsageError(`Unknown asset type "${ref.type}". Cannot resolve a write path.`, "INVALID_FLAG_VALUE");
   }
   const typeRoot = path.join(source.path, typeDir);
-  const assetPath = resolveAssetPathFromName(ref.type, typeRoot, ref.name);
+  const assetPath = assetPathForName(ref.type, typeRoot, ref.name);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(
       `Resolved asset path escapes its source: "${ref.name}" in source "${source.name}".`,

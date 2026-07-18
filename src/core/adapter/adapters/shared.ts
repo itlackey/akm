@@ -126,11 +126,11 @@ function stripFencedBlocksSimple(body: string): string {
 // `REF_BOUNDARY_PREFIX_CLASS_SRC`/`REF_SLUG_CHAR_CLASS_SRC` (values, not an
 // import — same cycle-avoidance rationale as the file header) plus a
 // type alternation built from `KNOWN_TYPES` (`core/recognition-util.ts`,
-// D1-5's guaranteed-import-free pure sink) rather than `getAssetTypes()`
-// (`core/asset/asset-spec.ts` — importing it would pull `output/renderers.ts`
-// transitively into `core/adapter/`'s graph). `KNOWN_TYPES` covers all
-// built-in types (15, incl. `instruction`); a custom `registerAssetType`-registered
-// extension type would not be recognized here — an accepted, flagged simplification.
+// D1-5's guaranteed-import-free pure sink) rather than the placement type set,
+// which would pull a heavier module transitively into `core/adapter/`'s graph.
+// `KNOWN_TYPES` covers all built-in types (15, incl. `instruction`); a custom
+// runtime-registered extension type would not be recognized here — an accepted,
+// flagged simplification.
 const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
 const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
 

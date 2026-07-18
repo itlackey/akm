@@ -13,8 +13,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
+import { assetPathForName } from "../../core/asset/asset-placement";
 import type { AssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -117,7 +117,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
 
-  const assetPath = resolveAssetPathFromName("task", typeRoot, id);
+  const assetPath = assetPathForName("task", typeRoot, id);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }

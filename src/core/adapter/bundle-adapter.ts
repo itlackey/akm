@@ -101,7 +101,7 @@ export interface BundleAdapter {
   validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   // OPTIONAL — placement / discovery
-  /** Replaces TYPE_DIRS + resolveAssetPathFromName. */
+  /** Replaces the per-type stash-subdir + name-to-path placement primitives. */
   placeNew?(c: BundleComponent, conceptId: string): string;
   /** Owned dirs; feeds git exact-path staging (git-stash.ts:241). */
   directoryList?(c: BundleComponent): string[];

@@ -6,13 +6,13 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { fetchWithRetry } from "../../core/common";
 import type { SourceSpec } from "../../core/config/config";
 import { writeResponseToFile } from "../../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
-const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
+const REGISTRY_STASH_DIR_NAMES = new Set<string>(stashDirNames());
 
 /** Strip terminal control characters from untrusted strings. */
 export function sanitizeString(value: unknown, maxLength = 255): string {
@@ -36,12 +36,12 @@ export function detectStashRoot(extractedDir: string): string {
 
   // WI-3.1: adapter-backed root probe. The `akm` adapter's `looksLikeRoot`
   // reproduces this function's top-level detection VERBATIM — a `.stash` marker
-  // directory OR any immediate `TYPE_DIRS` stash subdir — so it fires here
-  // exactly when the `.stash` + `hasStashDirs` checks below would, returning the
-  // same `root`. Wired additively: the two global checks stay live as the
-  // fallback (a later WI can delete them safely) and the shallowest-BFS fallback
-  // is untouched. Behavior-identical because looksLikeRoot's dir set is the
-  // adapter's directoryList() == Object.values(TYPE_DIRS).
+  // directory OR any immediate stash subdir — so it fires here exactly when the
+  // `.stash` + `hasStashDirs` checks below would, returning the same `root`.
+  // Wired additively: the two local checks stay live as the fallback (a later WI
+  // can delete them safely) and the shallowest-BFS fallback is untouched.
+  // Behavior-identical because looksLikeRoot's dir set is the adapter's
+  // directoryList() == the placement stash-subdir names.
   if (akmAdapter.looksLikeRoot?.(root)) {
     return root;
   }

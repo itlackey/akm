@@ -20,7 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { assetPathForName } from "../../core/asset/asset-placement";
 import { isWithin } from "../../core/common";
 import { makeEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -84,7 +84,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   // SAME stash. A missing secret is a hard error — inject NOTHING.
   const secretsRoot = path.join(source.path, "secrets");
   const resolveSecret = (secretName: string): string | undefined => {
-    const secretPath = resolveAssetPathFromName("secret", secretsRoot, secretName);
+    const secretPath = assetPathForName("secret", secretsRoot, secretName);
     // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
     if (!isWithin(secretPath, secretsRoot)) {
       throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);

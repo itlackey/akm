@@ -28,7 +28,7 @@ const WIKI_INFRA_BASENAMES: ReadonlySet<string> = new Set([SCHEMA_MD, INDEX_MD, 
  * Extract the asset type from a canonical ref (`[origin//]type:name`) without
  * throwing. Returns `undefined` for refs that have no `type:` prefix. Kept local
  * and lenient — the per-type resolver validates the result against
- * `getAssetTypes()`, so a bogus prefix here simply yields no convention.
+ * `placementTypes()`, so a bogus prefix here simply yields no convention.
  */
 function refType(ref: string | undefined): string | undefined {
   if (!ref) return undefined;
@@ -54,7 +54,7 @@ export function resolveStandardsContext(ref: string | undefined, stashRoot: stri
     const general = resolveStashStandards(stashRoot);
 
     const type = refType(ref);
-    // A non-empty body here guarantees `type` is a `getAssetTypes()`-validated
+    // A non-empty body here guarantees `type` is a `placementTypes()`-validated
     // string (the resolver returns "" otherwise).
     const typeConventions = type ? resolveTypeConventions(stashRoot, type) : "";
     if (!typeConventions || !type) return general;

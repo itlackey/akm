@@ -46,8 +46,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
+import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
 import { parseAssetRef, refToString } from "../core/asset/asset-ref";
-import { deriveCanonicalAssetNameFromStashRoot, TYPE_DIRS } from "../core/asset/asset-spec";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -281,8 +281,8 @@ function rewriteRefs(content: string, ctx: RewriteContext): { content: string; c
  * (lint/index.ts).
  */
 function collectCiterFiles(root: string): string[] {
-  const tasksRoot = path.join(root, TYPE_DIRS.task ?? "tasks");
-  const workflowsRoot = path.join(root, TYPE_DIRS.workflow ?? "workflows");
+  const tasksRoot = path.join(root, stashDirFor("task") ?? "tasks");
+  const workflowsRoot = path.join(root, stashDirFor("workflow") ?? "workflows");
   const results: string[] = [];
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -748,7 +748,7 @@ function resolveMoveSourcePath(stashDir: string, relPath: string, refType: strin
     );
   }
   throw new UsageError(
-    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, onDiskResolved))}, outside the ${TYPE_DIRS[refType]}/ ` +
+    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, onDiskResolved))}, outside the ${stashDirFor(refType)}/ ` +
       "type root — akm mv renames within a type directory only; nothing moved.",
     "INVALID_FLAG_VALUE",
   );
@@ -1203,7 +1203,7 @@ export const mvCommand = defineJsonCommand({
       const durableSourceName = primarySource?.registryId ?? "stash";
       const includeLegacyBare = shouldReadLegacyBareImproveState(durableSourceName, stashDir, config);
       await recoverInterruptedMoveTransactions(stashDir);
-      const typeDir = TYPE_DIRS[source.type];
+      const typeDir = stashDirFor(source.type) as string;
       const typeRoot = path.join(stashDir, typeDir);
 
       const oldRelPath = refToRelPath(source.type, source.name);

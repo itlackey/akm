@@ -29,10 +29,10 @@
 //   - script type (unresolvable by design — both must return false)
 //
 // As of 0.9 the type alternation in `REF_RE` and the path mapping in
-// `refToRelPath` are DERIVED FROM THE ASSET REGISTRY (`getAssetTypes()` /
-// `resolveAssetPathFromName` in `src/core/asset/asset-spec.ts`) rather than
-// hand-encoded, so they can no longer drift from the registry. The previously
-// hand-listed `vault` type was removed from the registry in 0.9 (replaced by
+// `refToRelPath` are DERIVED FROM THE PLACEMENT SPECS (`placementTypes()` /
+// `assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
+// hand-encoded, so they can no longer drift from the placement layer. The
+// previously hand-listed `vault` type was removed in 0.9 (replaced by
 // `env`); `vault:` refs are therefore no longer matched here. `env:`/`secret:`
 // refs are now matched and path-resolved. `script` stays unresolvable and
 // `task` keeps its legacy `.md` resolution (see refToRelPath for both).
@@ -40,7 +40,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getAssetTypes, resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { findFenceRegions, findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
@@ -139,14 +139,14 @@ function stripFencedBlocks(body: string): string {
 // ── missing-ref helpers ───────────────────────────────────────────────────────
 
 /**
- * Type alternation for {@link REF_RE}, derived from the asset registry at
- * module load so it can never drift from `ASSET_SPECS`. Longest-first ordering
- * is defensive (no built-in type is a prefix of another, but a future custom
- * `registerAssetType` one might be) so the alternation prefers the longest
- * match. Regex metacharacters are escaped in case a custom type introduces one.
+ * Type alternation for {@link REF_RE}, derived from the placement specs at
+ * module load so it can never drift from the placement layer. Longest-first
+ * ordering is defensive (no built-in type is a prefix of another, but a future
+ * custom-registered one might be) so the alternation prefers the longest match.
+ * Regex metacharacters are escaped in case a custom type introduces one.
  */
 function buildRefTypeAlternation(): string {
-  const types = [...getAssetTypes()].sort((a, b) => b.length - a.length);
+  const types = [...placementTypes()].sort((a, b) => b.length - a.length);
   return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 }
 
@@ -173,12 +173,12 @@ function buildRefTypeAlternation(): string {
 export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
 export const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
 
-// Only the TYPE alternation is registry-derived; the surrounding grammar
+// Only the TYPE alternation is placement-derived; the surrounding grammar
 // (boundary prefix, capture group, slug charset) is byte-identical to the
 // legacy hand-written pattern, except that the boundary prefix now also
-// admits `[`. Deriving the types from `getAssetTypes()` means `env`/`secret`
+// admits `[`. Deriving the types from `placementTypes()` means `env`/`secret`
 // (added in 0.9) are now matched, and the removed `vault` type is not — both
-// follow the registry automatically.
+// follow the placement layer automatically.
 const REF_RE = new RegExp(
   `(?:^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((${buildRefTypeAlternation()}):${REF_SLUG_CHAR_CLASS_SRC}+)`,
   "gm",
@@ -188,8 +188,8 @@ const REF_RE = new RegExp(
  * Map from ref type to relative path pattern within stashRoot. Returns null to
  * skip (type is unresolvable by the slug walker).
  *
- * Path layout is owned by the asset registry: we resolve through
- * `resolveAssetPathFromName(type, TYPE_DIRS[type], name)` so the linter and the
+ * Path layout is owned by the placement layer: we resolve through
+ * `assetPathForName(type, stashDirFor(type), name)` so the linter and the
  * rest of the CLI agree on where an asset lives. Two legacy carve-outs are
  * preserved to keep pre-0.9 behaviour byte-identical:
  *   - `script`: returns null (scripts live in nested dirs with arbitrary
@@ -203,14 +203,14 @@ export function refToRelPath(refType: string, refName: string): string | null {
   // script is intentionally unresolvable (contract-pinned).
   if (refType === "script") return null;
   // M1: tasks are stored as .yml on disk; resolve task: refs against tasks/<id>.yml.
-  if (refType === "task") return path.join(TYPE_DIRS.task ?? "tasks", `${refName}.yml`);
+  if (refType === "task") return path.join(stashDirFor("task") ?? "tasks", `${refName}.yml`);
 
-  const typeDir = TYPE_DIRS[refType];
+  const typeDir = stashDirFor(refType);
   if (!typeDir) return null; // unknown type — skip
-  // resolveAssetPathFromName returns a path rooted at the type dir we pass in,
+  // assetPathForName returns a path rooted at the type dir we pass in,
   // i.e. "<typeDir>/<...>" — exactly the stash-relative path this helper has
   // always returned.
-  return resolveAssetPathFromName(refType, typeDir, refName);
+  return assetPathForName(refType, typeDir, refName);
 }
 
 /**

@@ -77,7 +77,7 @@ export function buildPrefixQuery(ftsQuery: string): string | null {
  * stay ordinary searches (resolving one ref is `akm show` territory), and any
  * interior whitespace disqualifies (prose mentioning a ref is still prose).
  *
- * `knownTypes` is passed in by the caller (e.g. `getAssetTypes()`) to keep
+ * `knownTypes` is passed in by the caller (e.g. `placementTypes()`) to keep
  * this module dependency-free.
  *
  * Returns `null` when the query is not a ref-prefix request.

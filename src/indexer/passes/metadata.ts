@@ -9,7 +9,7 @@ import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
-} from "../../core/asset/asset-spec";
+} from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString, writeFileAtomic } from "../../core/common";

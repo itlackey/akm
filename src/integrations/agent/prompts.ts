@@ -27,7 +27,7 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { placementTypes } from "../../core/asset/asset-placement";
 import {
   authoringRulesForType,
   DESCRIPTION_MAX_CHARS,
@@ -81,7 +81,7 @@ function hintForType(type: string): string {
 }
 
 function knownTypeList(): string {
-  return Object.keys(TYPE_DIRS).sort().join(", ");
+  return [...placementTypes()].sort().join(", ");
 }
 
 /**

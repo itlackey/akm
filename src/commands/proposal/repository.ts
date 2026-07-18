@@ -35,7 +35,7 @@
  * The architectural rule "all writes go through `writeAssetToSource`" applies
  * to *assets*. Proposals are **not** assets — they live outside the asset
  * tree (in state.db, parallel to how events do). Routing them through
- * `writeAssetToSource` would force them into a `TYPE_DIRS` slot, would commit
+ * `writeAssetToSource` would force them into a placement stash-subdir slot, would commit
  * them to git, and would leak unaccepted drafts through the normal indexer.
  * The {@link promoteProposal} step is the bridge: it routes the accepted
  * payload through `writeAssetToSource` so the actual asset write still
@@ -45,9 +45,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import type { AssetRef } from "../../core/asset/asset-ref";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -410,10 +410,10 @@ export function createProposal(
       `Invalid proposal ref "${input.ref}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  if (!TYPE_DIRS[parsedRef.type]) {
+  if (!stashDirFor(parsedRef.type)) {
     return rejectProposal(
       "unknown_type",
-      `Unknown asset type "${parsedRef.type}" in proposal ref "${input.ref}". Known types: ${Object.keys(TYPE_DIRS).sort().join(", ")}.`,
+      `Unknown asset type "${parsedRef.type}" in proposal ref "${input.ref}". Known types: ${[...placementTypes()].sort().join(", ")}.`,
     );
   }
   if (!input.payload.content.trim()) {
@@ -444,13 +444,13 @@ export function createProposal(
   let targetRelPath: string;
   let mintBeforeContent: string | undefined;
   try {
-    const typeRoot = path.join(stashDir, TYPE_DIRS[parsedRef.type]);
-    const targetAbs = resolveAssetPathFromName(parsedRef.type, typeRoot, parsedRef.name);
+    const typeRoot = path.join(stashDir, stashDirFor(parsedRef.type) as string);
+    const targetAbs = assetPathForName(parsedRef.type, typeRoot, parsedRef.name);
     targetRelPath = path.relative(stashDir, targetAbs);
     if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
   } catch {
     // Resolution failure degrades to a best-effort create — never blocks the mint.
-    targetRelPath = path.join(TYPE_DIRS[parsedRef.type], parsedRef.name);
+    targetRelPath = path.join(stashDirFor(parsedRef.type) as string, parsedRef.name);
   }
   const mintedChanges: FileChange[] = [
     {
@@ -824,12 +824,12 @@ export function purgeOrphanProposals(
     }
     // Lessons are new-asset proposals by definition — they cannot be orphaned.
     if (parsed.type === "lesson") continue;
-    const spec = TYPE_DIRS[parsed.type];
+    const spec = stashDirFor(parsed.type);
     if (!spec) continue;
 
     const exists = sourceDirs.some((root) => {
       const typeRoot = path.join(root, spec);
-      const candidate = resolveAssetPathFromName(parsed.type, typeRoot, parsed.name);
+      const candidate = assetPathForName(parsed.type, typeRoot, parsed.name);
       return fs.existsSync(candidate);
     });
 
@@ -1543,7 +1543,7 @@ async function promoteProposalWithLease(
   }
 
   const ref = parseAssetRef(proposalToValidate.ref);
-  if (!TYPE_DIRS[ref.type]) {
+  if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
 
@@ -1657,7 +1657,7 @@ async function revertProposalWithLease(
 ): Promise<RevertResult> {
   let proposal = getProposal(stashDir, id, ctx);
   const ref = parseAssetRef(proposal.ref);
-  if (!TYPE_DIRS[ref.type]) {
+  if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
 
@@ -1898,11 +1898,11 @@ export function diffProposal(
 }
 
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): string | undefined {
-  const typeDir = TYPE_DIRS[ref.type];
+  const typeDir = stashDirFor(ref.type);
   if (!typeDir) return undefined;
   const typeRoot = path.join(source.path, typeDir);
   try {
-    return resolveAssetPathFromName(ref.type, typeRoot, ref.name);
+    return assetPathForName(ref.type, typeRoot, ref.name);
   } catch {
     return undefined;
   }

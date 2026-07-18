@@ -23,7 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
+import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
@@ -86,8 +86,8 @@ function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, i
   const builtAtMs = builtAt ? new Date(builtAt).getTime() : Number.NaN;
   const builtAtUsable = Number.isFinite(builtAtMs);
 
-  for (const [type, spec] of Object.entries(ASSET_SPECS)) {
-    const typeRoot = path.join(stashDir, TYPE_DIRS[type] ?? spec.stashDir);
+  for (const spec of placementSpecList()) {
+    const typeRoot = path.join(stashDir, spec.stashDir);
     const files = getIndexableFiles(typeRoot, spec);
     for (const file of files) {
       if (!indexedPaths.has(file)) return true;

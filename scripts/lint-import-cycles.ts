@@ -200,8 +200,10 @@ export function measureCycleParticipants(): string[] {
  * reasoned about — see `docs/design/execution/chunk-1.5/anchors.md` §E.1.
  */
 export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
-  "src/core/asset/asset-registry.ts",
-  "src/core/asset/asset-spec.ts",
+  // chunk-3 (taxonomy cutover) drove the count 18 → 13: the taxonomy trio
+  // (asset-registry.ts, asset-spec.ts — both deleted — and output/renderers.ts)
+  // left the knot, and with them workflows/renderer.ts +
+  // workflows/runtime/document-cache.ts. Baseline tightened to lock in the drop.
   "src/core/common.ts",
   "src/core/config/config-schema.ts",
   "src/core/config/config.ts",
@@ -211,11 +213,8 @@ export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
   "src/indexer/db/schema.ts",
   "src/indexer/passes/metadata-contributors.ts",
   "src/indexer/passes/metadata.ts",
-  "src/output/renderers.ts",
   "src/registry/types.ts",
   "src/workflows/exec/step-work.ts",
-  "src/workflows/renderer.ts",
-  "src/workflows/runtime/document-cache.ts",
   "src/workflows/runtime/runs.ts",
   "src/workflows/runtime/unit-checkin.ts",
 ];

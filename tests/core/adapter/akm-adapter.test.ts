@@ -31,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { BundleComponent } from "../../../src/core/adapter/types";
-import { deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-spec";
+import { deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-placement";
 import type { StashEntry } from "../../../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../../../src/indexer/passes/metadata-contributors";
 import { buildFileContext, buildRenderContext, type FileContext } from "../../../src/indexer/walk/file-context";

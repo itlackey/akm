@@ -16,8 +16,8 @@
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
+import { assetPathForName } from "./asset/asset-placement";
 import { parseAssetRef } from "./asset/asset-ref";
-import { resolveAssetPathFromName } from "./asset/asset-spec";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
@@ -64,7 +64,7 @@ export function resolveEnvPath(ref: string): {
   const source = findEnvSource(parsed.origin);
 
   const envRoot = path.join(source.path, "env");
-  const envPath = resolveAssetPathFromName("env", envRoot, parsed.name);
+  const envPath = assetPathForName("env", envRoot, parsed.name);
   // Defense-in-depth: ensure the resolved path stays inside the env directory.
   // validateName already rejects traversal patterns like "../../foo", but an
   // absolute-path override or symlink-based attack could still escape without
@@ -105,7 +105,7 @@ export function resolveSecretPath(
   // Source resolution is identical for every asset type; reuse the env helper.
   const source = findEnvSource(parsed.origin);
   const typeRoot = path.join(source.path, "secrets");
-  const absPath = resolveAssetPathFromName("secret", typeRoot, parsed.name);
+  const absPath = assetPathForName("secret", typeRoot, parsed.name);
   // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
   if (!isWithin(absPath, typeRoot)) {
     throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);

@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { isWithin } from "../../core/common";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { lookup } from "../indexer";
@@ -25,9 +25,9 @@ function normalizeRef(ref: string | AssetRef): AssetRef {
 }
 
 function buildDiskCandidates(sourcePath: string, ref: AssetRef, preserveDirectNameFallback: boolean): string[] {
-  const typeDir = path.join(sourcePath, TYPE_DIRS[ref.type] ?? `${ref.type}s`);
+  const typeDir = path.join(sourcePath, stashDirFor(ref.type) ?? `${ref.type}s`);
   const candidates = [
-    resolveAssetPathFromName(ref.type, typeDir, ref.name),
+    assetPathForName(ref.type, typeDir, ref.name),
     path.join(sourcePath, ref.type, `${ref.name}.md`),
     path.join(sourcePath, ref.type, ref.name),
   ];

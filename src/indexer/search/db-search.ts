@@ -17,11 +17,11 @@
 
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
+import { placementTypes } from "../../core/asset/asset-placement";
 import { makeAssetRef } from "../../core/asset/asset-ref";
-import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
-import { getAssetTypes } from "../../core/asset/asset-spec";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
+import { defaultRendererRegistry, type RendererRegistry } from "../../core/type-presentation";
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
@@ -316,7 +316,7 @@ async function searchDatabase(
   // `--type` flag expresses stronger intent and wins. The PARSED type is
   // itself explicit intent, so `defaultExcludeTypes` does not apply — a bare
   // `session:` enumerates sessions exactly like `--type session` does.
-  const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, getAssetTypes()) : null;
+  const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, placementTypes()) : null;
   if (refPrefix) {
     return enumerateEntries({
       db,

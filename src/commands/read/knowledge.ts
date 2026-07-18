@@ -14,9 +14,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { type AssetRef, makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -265,8 +265,8 @@ function isFailOpenRefType(type: string, name: string): boolean {
  */
 function locateWriteRefInRoot(type: string, name: string, root: string): string | null {
   if (type === "workflow") {
-    const typeRoot = path.join(root, TYPE_DIRS.workflow ?? "workflows");
-    const candidate = resolveAssetPathFromName("workflow", typeRoot, name);
+    const typeRoot = path.join(root, stashDirFor("workflow") ?? "workflows");
+    const candidate = assetPathForName("workflow", typeRoot, name);
     if (fs.existsSync(candidate)) return candidate;
   }
   const relPath = refToRelPath(type, name);
@@ -608,7 +608,7 @@ export async function writeMarkdownAsset(options: {
   // Pre-flight: existence + force semantics. The helper itself overwrites
   // unconditionally; the CLI surfaces a friendlier UsageError before any
   // disk activity when --force is absent.
-  const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
+  const assetPath = assetPathForName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
   }

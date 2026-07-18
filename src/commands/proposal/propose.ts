@@ -15,8 +15,8 @@
  */
 
 import fs from "node:fs";
+import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { parseAssetRef } from "../../core/asset/asset-ref";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -98,9 +98,9 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   if (!options.task?.trim()) {
     throw new UsageError("propose: --task is required.", "MISSING_REQUIRED_ARGUMENT");
   }
-  if (!TYPE_DIRS[options.type]) {
+  if (!stashDirFor(options.type)) {
     throw new UsageError(
-      `propose: unknown asset type "${options.type}". Known types: ${Object.keys(TYPE_DIRS).sort().join(", ")}.`,
+      `propose: unknown asset type "${options.type}". Known types: ${[...placementTypes()].sort().join(", ")}.`,
       "INVALID_FLAG_VALUE",
     );
   }

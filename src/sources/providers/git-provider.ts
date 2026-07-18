@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
@@ -187,12 +187,11 @@ function hasExtractedRepo(repoDir: string): boolean {
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
     // WI-3.1: the "any type dir present" test is now sourced from the `akm`
-    // adapter's directoryList() — behavior-identical to the prior
-    // Object.values(TYPE_DIRS) set (same stash-subdir names), kept live as the
-    // fallback. The content/ subdir check above is preserved verbatim.
+    // adapter's directoryList() — behavior-identical to the placement
+    // stash-subdir names, with `stashDirNames()` kept live as the fallback. The
+    // content/ subdir check above is preserved verbatim.
     const ownedDirs =
-      akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ??
-      Object.values(TYPE_DIRS);
+      akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;

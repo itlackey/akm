@@ -938,7 +938,7 @@ export const ImproveConfigSchema = z
 // Runtime consumers already handle unknown/unsupported type strings
 // gracefully — src/indexer/graph/graph-extraction.ts's
 // `SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES` set (and `collectEligibleFiles`)
-// silently skips any type it doesn't recognize (no TYPE_DIRS entry ⇒ zero
+// silently skips any type it doesn't recognize (no placement entry ⇒ zero
 // eligible files for that type; no crash). This is a permissive-direction
 // behavior change: configs with a previously-rejected type string now parse.
 

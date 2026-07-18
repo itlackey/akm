@@ -25,11 +25,12 @@
  * `MatchResult` and picking the winner by **specificity descending, ties broken
  * by later-registered (higher index) winning** — byte-identical to
  * `runMatchers`'s `b.specificity - a.specificity` then `b.index - a.index`.
- * Because the matcher functions and the static `TYPE_TO_RENDERER` literal
- * (`asset-registry.ts:21-36`, all 14 built-in types present at load) are the
- * exact ones `runMatchers` uses, {@link recognizeMatch} agrees with the async
- * `runMatchers` on `type` / `specificity` / `renderer` for every input. This is
- * "use the existing matchers" literally — same functions, same arbitration.
+ * Because the matcher functions (which resolve renderer names via the static
+ * `TYPE_PRESENTATION` table in `type-presentation.ts`, all 15 built-in types
+ * present at load) are the exact ones `runMatchers` uses, {@link recognizeMatch}
+ * agrees with the async `runMatchers` on `type` / `specificity` / `renderer` for
+ * every input. This is "use the existing matchers" literally — same functions,
+ * same arbitration.
  *
  * The winning `MatchResult.renderer` is carried on `documentJson.renderer` so
  * WI-C can wire presentation via `TYPE_PRESENTATION` without a new
@@ -38,19 +39,19 @@
  * ── conceptId (§5.1): per-`type` canonical name, reproduced ──
  *
  * conceptId = the winning type's canonical name, reproduced via
- * `asset-spec.ts#deriveCanonicalAssetNameFromStashRoot` (skill = its dir,
+ * `asset-placement.ts#deriveCanonicalAssetNameFromStashRoot` (skill = its dir,
  * script keeps its extension, markdown strips `.md`, env/task strip their ext,
  * secret/session keep the natural path). The `type` is carried separately on
  * `IndexDocument.type`, per §0.2 (type ≠ identity).
  *
  * ── placeNew / directoryList / looksLikeRoot: type-driven placement ──
  *
- * Placement is type-driven today (`path-resolver.ts#buildDiskCandidates`
- * `:27-38`: `resolveAssetPathFromName(ref.type, join(root, TYPE_DIRS[ref.type]),
+ * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
+ * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
  * ref.name)`). §5.1 removes `type` from the ref, so {@link placeNew} recovers
  * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
- * <name>` form of §1.3 — reverse-mapping that segment against `TYPE_DIRS` and
- * then delegating to the unchanged `resolveAssetPathFromName`. See the method
+ * <name>` form of §1.3 — reverse-mapping that segment against the placement
+ * stash-subdir map and then delegating to `assetPathForName`. See the method
  * doc for the recognize/place conceptId-spelling note.
  *
  * ── validate: base checks only (WI-B) ──
@@ -64,13 +65,12 @@
  * This module VALUE-imports `matchers.ts` (indexer/walk) for classification and
  * `asset-placement.ts` (core/asset) for placement — delegating to the existing
  * logic, not re-implementing it. Neither is a taxonomy import-cycle (SCC)
- * participant: `matchers.ts` resolves renderers via `type-presentation.ts`
- * (chunk-3 sever, not `asset-registry`), and `asset-placement.ts` is the pure
- * leaf extracted from `asset-spec.ts` precisely so this adapter avoids the
- * `asset-spec` → `asset-registry`/`output-renderers` SCC. Nothing in `src/`
- * imports this adapter back (only the test-only `adapters/index.ts` barrel does,
- * and nothing in `src/` imports THAT), so the adapter is itself a leaf — verified:
- * `bun scripts/lint-import-cycles.ts` stays at 18 and this module is NOT a participant.
+ * participant: `matchers.ts` resolves renderers via `type-presentation.ts`, and
+ * `asset-placement.ts` is a pure leaf (only Node builtins + `recognition-util`).
+ * Nothing in `src/` imports this adapter back (only the test-only
+ * `adapters/index.ts` barrel does, and nothing in `src/` imports THAT), so the
+ * adapter is itself a leaf — verified: `bun scripts/lint-import-cycles.ts` stays
+ * within baseline and this module is NOT a participant.
  */
 
 import fs from "node:fs";
@@ -86,9 +86,11 @@ import {
   workflowProgramMatcher,
 } from "../../../indexer/walk/matchers";
 import {
+  assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
-  resolveAssetPathFromName,
-  TYPE_DIRS,
+  placementTypes,
+  stashDirFor,
+  stashDirNames,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
@@ -136,10 +138,10 @@ export function recognizeMatch(file: FileContext): MatchResult | null {
   return hits[0].result;
 }
 
-/** Reverse `TYPE_DIRS` (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
+/** Reverse the placement map (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
 function stashDirToType(stashDir: string): string | undefined {
-  for (const [type, dir] of Object.entries(TYPE_DIRS)) {
-    if (dir === stashDir) return type;
+  for (const type of placementTypes()) {
+    if (stashDirFor(type) === stashDir) return type;
   }
   return undefined;
 }
@@ -354,15 +356,15 @@ export const akmAdapter: BundleAdapter = {
   validate,
 
   /**
-   * Type-driven placement (§5.1), reproducing `path-resolver.ts#buildDiskCandidates`
-   * (`:27-38`): the primary candidate today is
-   * `resolveAssetPathFromName(type, join(root, TYPE_DIRS[type]), name)`.
+   * Type-driven placement (§5.1), reproducing `path-resolver.ts#buildDiskCandidates`:
+   * the primary candidate is
+   * `assetPathForName(type, join(root, stashDirFor(type)), name)`.
    *
    * §5.1 removes `type` from the ref, so the winning type is recovered from the
    * conceptId's LEADING path segment — the §1.3 qualified `<stash-subdir>/<name>`
    * form (e.g. `knowledge/http-caching`, `workflows/release`, `skills/<dir>`).
-   * The leading segment is reverse-mapped against `TYPE_DIRS`; the remainder is
-   * the per-type name handed to the unchanged `resolveAssetPathFromName`. An
+   * The leading segment is reverse-mapped against the placement stash-subdir map;
+   * the remainder is the per-type name handed to `assetPathForName`. An
    * unqualified conceptId (no recognized leading stash-subdir) falls back to a
    * direct `<root>/<conceptId>.md` — the same `${name}.md` fallback
    * `buildDiskCandidates` carries (`preserveDirectNameFallback`).
@@ -384,22 +386,22 @@ export const akmAdapter: BundleAdapter = {
       const type = stashDirToType(head);
       if (type !== undefined && rest.length > 0) {
         const typeDir = path.join(c.root, head);
-        return resolveAssetPathFromName(type, typeDir, rest);
+        return assetPathForName(type, typeDir, rest);
       }
     }
     return path.join(c.root, `${posix}.md`);
   },
 
-  /** The AKM workspace's owned stash subdirs (§7): the `TYPE_DIRS` values, feeding git exact-path staging. */
+  /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */
   directoryList(_c: BundleComponent): string[] {
-    return [...new Set(Object.values(TYPE_DIRS))];
+    return [...new Set(stashDirNames())];
   },
 
   /**
    * Install-time probe (§1.2), reproducing today's stash-root detection
    * (`provider-utils.ts#detectStashRoot`/`hasStashDirs`): a root is an AKM
    * workspace root when it carries a `.stash` marker directory OR any immediate
-   * subdirectory named after a `TYPE_DIRS` stash subdir. Pure stat/readdir; a
+   * subdirectory named after a placement stash subdir. Pure stat/readdir; a
    * missing/unreadable root is not a root.
    */
   looksLikeRoot(root: string): boolean {
@@ -408,13 +410,13 @@ export const akmAdapter: BundleAdapter = {
     } catch {
       // no .stash marker — fall through to the type-dir probe
     }
-    const stashDirNames = new Set(Object.values(TYPE_DIRS));
+    const ownedDirNames = new Set(stashDirNames());
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(root, { withFileTypes: true });
     } catch {
       return false;
     }
-    return entries.some((entry) => entry.isDirectory() && stashDirNames.has(entry.name));
+    return entries.some((entry) => entry.isDirectory() && ownedDirNames.has(entry.name));
   },
 };

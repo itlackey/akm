@@ -29,19 +29,19 @@ const LINTERS: AssetLinter[] = [
 // handler and as the fallback for any unrecognised asset type.
 const DEFAULT_LINTER = new DefaultLinter();
 
-const LINTER_MAP = new Map<string, AssetLinter>();
+const LINTERS_BY_SUBDIR = new Map<string, AssetLinter>();
 for (const linter of LINTERS) {
   for (const t of linter.types) {
-    LINTER_MAP.set(t, linter);
+    LINTERS_BY_SUBDIR.set(t, linter);
   }
 }
 // Register "lessons" explicitly so there is only one DefaultLinter instance.
-LINTER_MAP.set("lessons", DEFAULT_LINTER);
+LINTERS_BY_SUBDIR.set("lessons", DEFAULT_LINTER);
 
 /**
  * Return the appropriate linter for the given stash subdirectory name.
  * Falls back to `DefaultLinter` for unknown types.
  */
 export function getLinterForType(subdir: string): AssetLinter {
-  return LINTER_MAP.get(subdir) ?? DEFAULT_LINTER;
+  return LINTERS_BY_SUBDIR.get(subdir) ?? DEFAULT_LINTER;
 }

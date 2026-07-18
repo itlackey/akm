@@ -30,10 +30,23 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { isDerivedMemory, resolveParentRef } from "../../../src/commands/improve/memory/derived-ref";
-import { makeAssetRef, parseAssetRef } from "../../../src/core/asset/asset-ref";
 // ── Live modules — imported ONLY here, to prove faithfulness by direct
 // comparison. legacy-layout.ts itself must never import these. ────────────
-import { ASSET_SPECS, deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-spec";
+import {
+  type AssetSpec,
+  deriveCanonicalAssetNameFromStashRoot,
+  placementSpecFor,
+  placementTypes,
+} from "../../../src/core/asset/asset-placement";
+import { makeAssetRef, parseAssetRef } from "../../../src/core/asset/asset-ref";
+
+/** The live per-type placement specs, keyed by type (chunk-3 replaced the ambient `ASSET_SPECS` map). */
+const ASSET_SPECS: Record<string, AssetSpec> = {};
+for (const t of placementTypes()) {
+  const s = placementSpecFor(t);
+  if (s) ASSET_SPECS[t] = s;
+}
+
 // ── Frozen copy under test ──────────────────────────────────────────────────
 import {
   ASSET_SPECS_INTERNAL as FROZEN_ASSET_SPECS_INTERNAL,

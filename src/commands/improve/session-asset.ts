@@ -25,8 +25,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import type { SessionData, SessionEvent } from "../../integrations/session-logs/types";
 
@@ -263,7 +263,7 @@ export function buildSessionAssetContent(
 
 /** Resolve `<stash>/sessions/<harness>/<session-id>.md`. */
 export function resolveSessionAssetPath(stashDir: string, harness: string, sessionId: string): string {
-  const dir = TYPE_DIRS.session ?? "sessions";
+  const dir = stashDirFor("session") ?? "sessions";
   return path.join(stashDir, dir, normalizeHarnessId(harness), `${sessionId}.md`);
 }
 

@@ -90,8 +90,8 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     dir: "tasks",
     type: "task",
     // Tasks migrated from `.md` to `.yml` in 0.8.0 (commit 031c659f updated
-    // asset-spec, asset-registry, renderers, and the task-linter, but missed
-    // this matcher — tasks/*.yml were unrecognized until this fix).
+    // the placement specs, renderers, and the task-linter, but missed this
+    // matcher — tasks/*.yml were unrecognized until this fix).
     test: (ext) => ext === ".yml",
   },
   {
@@ -265,10 +265,9 @@ function classifyByWiki(ctx: FileContext): MatchFact | null {
 function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFact | null): MatchResult | null {
   const fact = classify(ctx);
   if (!fact) return null;
-  // Renderer name resolved via TYPE_PRESENTATION (core leaf) rather than
-  // asset-registry, so matchers.ts carries no edge into the taxonomy SCC
-  // (chunk-3 cutover enabler). TYPE_PRESENTATION.renderer holds the same
-  // values TYPE_TO_RENDERER did (ported verbatim), so this is behavior-identical.
+  // Renderer name resolved via TYPE_PRESENTATION (core leaf), so matchers.ts
+  // carries no edge into the taxonomy SCC (chunk-3 cutover enabler).
+  // TYPE_PRESENTATION.renderer is the single source of truth for renderer names.
   const renderer = presentationFor(fact.type).renderer;
   if (!renderer) return null;
   return {

@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   findSourceForPath,
@@ -109,7 +109,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const sourceSource = findSourceForPath(sourcePath, allSources);
 
   const destName = options.newName ?? parsed.name;
-  const typeDir = TYPE_DIRS[parsed.type];
+  const typeDir = stashDirFor(parsed.type) as string;
 
   // Validate destName to prevent path traversal (parsed.name is already
   // validated by parseAssetRef, but newName comes directly from user input).

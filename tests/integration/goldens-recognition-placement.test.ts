@@ -56,9 +56,21 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
-import { ASSET_SPECS } from "../../src/core/asset/asset-spec";
+import { type AssetSpec, placementSpecFor, placementTypes } from "../../src/core/asset/asset-placement";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { expectGolden } from "../_helpers/golden";
+
+/**
+ * The live per-type placement specs, keyed by type — reconstructed from the
+ * `asset-placement` leaf (chunk-3 removed the old ambient `ASSET_SPECS` map).
+ * `spec.toAssetPath`/`spec.stashDir` are the exact placement primitives this
+ * golden pins, identical to the prior global.
+ */
+const ASSET_SPECS: Record<string, AssetSpec> = {};
+for (const t of placementTypes()) {
+  const s = placementSpecFor(t);
+  if (s) ASSET_SPECS[t] = s;
+}
 
 const STASH_ROOT = path.resolve(__dirname, "../fixtures/stashes/all-types");
 const RECOGNITION_GOLDEN_PATH = "tests/fixtures/goldens/recognition/all-types.json";

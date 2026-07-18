@@ -12,7 +12,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { mutateConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
@@ -128,7 +128,7 @@ async function akmInitReal(options?: {
     created = true;
   }
 
-  for (const sub of Object.values(TYPE_DIRS)) {
+  for (const sub of stashDirNames()) {
     const subDir = path.join(stashDir, sub);
     if (!fs.existsSync(subDir)) {
       fs.mkdirSync(subDir, { recursive: true });

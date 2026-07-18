@@ -13,8 +13,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-placement";
 import { makeAssetRef } from "../core/asset/asset-ref";
-import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-spec";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";

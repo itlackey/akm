@@ -5,8 +5,8 @@
 /**
  * The format-family adapter registry — akm 0.9.0 chunk-2, WI-A.
  *
- * Modeled on `src/core/asset/asset-registry.ts`'s renderer-registry singleton
- * (a plain module-level map + a handful of small mutator/lookup functions),
+ * Modeled on a plain module-level-map singleton (a map + a handful of small
+ * mutator/lookup functions),
  * NOT the spec's aspirational "static frozen `BUILTIN_ADAPTERS` map" (normative
  * §12.6): a frozen map can't accommodate later work-items registering their own
  * adapters incrementally, and the plan gates a *public* plugin ABI as deferred.
@@ -21,10 +21,9 @@
  * (an earlier draft carried a `type`-index; that reflected a wrong per-type
  * adapter model and is removed).
  *
- * ADDITIVE (chunk-2 "additive only"): this module coexists with every live
- * global (`matchers.ts`, `core/asset/asset-registry.ts`, `LINTER_MAP`,
- * `output/renderers.ts`) — nothing here is consulted by any production call
- * site yet. Chunk 3 repoints consumers off the globals onto this registry.
+ * ADDITIVE (chunk-2 "additive only"): this module coexists with the live
+ * classification/rendering paths (`matchers.ts`, `output/renderers.ts`) —
+ * nothing here is consulted by any production call site yet.
  */
 
 import type { BundleAdapter } from "./bundle-adapter";
@@ -36,10 +35,9 @@ const byId = new Map<string, BundleAdapter>();
 
 /**
  * Register a `BundleAdapter`, keyed by its own `id`. Re-registering the same
- * `adapter.id` replaces the prior entry IN PLACE (same replace-on-conflict
- * semantics as `asset-registry.ts#registerRenderer`), so re-importing an
- * adapter module during a test run is idempotent rather than accumulating
- * duplicates in `getAdapters()`.
+ * `adapter.id` replaces the prior entry IN PLACE (replace-on-conflict
+ * semantics), so re-importing an adapter module during a test run is idempotent
+ * rather than accumulating duplicates in `getAdapters()`.
  */
 export function registerAdapter(adapter: BundleAdapter): void {
   const existingIndex = entries.findIndex((e) => e.id === adapter.id);

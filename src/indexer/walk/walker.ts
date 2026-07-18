@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isRelevantAssetFile } from "../../core/asset/asset-spec";
+import { isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 

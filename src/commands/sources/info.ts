@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { getAssetTypes } from "../../core/asset/asset-spec";
+import { placementTypes } from "../../core/asset/asset-placement";
 import { getSources, loadConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db/db";
@@ -21,8 +21,8 @@ import { pkgVersion } from "../../version";
 export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   const config = loadConfig();
 
-  // Asset types (copy into a mutable array — `getAssetTypes()` returns readonly)
-  const assetTypes = [...getAssetTypes()];
+  // Asset types (copy into a mutable array — `placementTypes()` returns readonly)
+  const assetTypes = [...placementTypes()];
 
   const semanticRuntime = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, semanticRuntime);

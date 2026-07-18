@@ -39,7 +39,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
 import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from "../../core/config/config";
@@ -865,7 +865,7 @@ function inferGraphTypeForPath(stashRoot: string, absPath: string): string | und
   const firstSeg = rel.split(path.sep)[0];
   if (!firstSeg) return undefined;
   for (const type of SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES) {
-    if (TYPE_DIRS[type] === firstSeg) return type;
+    if (stashDirFor(type) === firstSeg) return type;
   }
   return undefined;
 }
@@ -1080,7 +1080,7 @@ export function collectEligibleFiles(
   for (const rawType of includeTypes) {
     const type = rawType.trim().toLowerCase();
     if (!SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES.has(type)) continue;
-    const stashDir = TYPE_DIRS[type];
+    const stashDir = stashDirFor(type);
     if (!stashDir) continue;
     const dir = path.join(stashRoot, stashDir);
     if (!fs.existsSync(dir)) continue;

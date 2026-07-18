@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
@@ -149,7 +149,7 @@ export function saveGitStash(
   //
   // Precedence:
   //   1. Explicit modified-file list (`options.paths`) — stage exactly those.
-  //   2. Managed pathspecs (TYPE_DIRS values + `.akm`) that exist on disk —
+  //   2. Managed pathspecs (placement stash-subdir names + `.akm`) that exist on disk —
   //      stages everything akm owns and, by construction, never stages non-akm
   //      WIP. This preserves the #476 protection WITHOUT refusing.
   //   3. No resolvable managed path — no commit. Broad staging is never safe
@@ -240,13 +240,10 @@ function stageScopedChanges(repoDir: string, paths?: string[]): { ok: boolean; p
 
   // Precedence 2: managed pathspecs that exist on disk (adapter-owned stash
   // subdirs + `.akm`). WI-3.1: the owned subdirs are now sourced from the `akm`
-  // adapter's `directoryList()` — behavior-identical to the prior
-  // `Object.values(TYPE_DIRS)` derivation (directoryList() returns the same
-  // stash-subdir set), with the TYPE_DIRS global kept live as the fallback so
-  // a later WI can delete the global safely.
+  // adapter's `directoryList()` — behavior-identical to the placement
+  // stash-subdir set, with `stashDirNames()` kept live as the fallback.
   const ownedDirs =
-    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ??
-    Object.values(TYPE_DIRS);
+    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
   const managed = [...ownedDirs, ".akm"].filter((dir) => fs.existsSync(path.join(repoDir, dir)));
   if (managed.length > 0) {
     const ok = addPathspecsChunked(repoDir, managed);

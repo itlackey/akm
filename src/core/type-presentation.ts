@@ -19,22 +19,18 @@
  *
  * ── renderer/action provenance (WI-C, §2) ──
  *
- * The `renderer` NAMES and `action` builders below reproduce
- * `core/asset/asset-registry.ts`'s `TYPE_TO_RENDERER` and `ACTION_BUILDERS`
- * VERBATIM for all built-in types — INCLUDING the 15th type `instruction`
- * (a read-like-knowledge markdown doc added for the format-family adapters,
- * kept in sync in both maps) and the 6 "static-only" mappings
- * (script/skill/command/agent/knowledge/memory)
- * that carried no `rendererName` on their old asset-spec and lived only in
- * those maps (§6 "6 renderer mappings"). This module is ADDITIVE: it does NOT
- * touch `asset-registry.ts` (Chunk 3 repoints consumers off the legacy globals
- * and deletes it). The parity is pinned by `tests/core/adapter/
- * akm-presentation.test.ts`, which asserts every entry equals the live
- * `TYPE_TO_RENDERER`/`ACTION_BUILDERS` value. The workflow action is the one
- * function-valued builder; its `buildWorkflowAction` body (`output/renderers.ts`
- * — a cycle-sensitive module) is reproduced inline here rather than imported, to
- * keep this leaf import-free (only `recognition-util`, D1-5's pure sink); the
- * parity test guards against drift.
+ * The `renderer` NAMES and `action` builders below are the SINGLE SOURCE OF
+ * TRUTH for search-hit rendering — chunk-3 folded the old mutable renderer/
+ * action registry singleton into this static table (reached via
+ * {@link defaultRendererRegistry}). They cover all built-in types — INCLUDING
+ * the 15th type `instruction` (a read-like-knowledge markdown doc added for the
+ * format-family adapters) and the 6 "static-only" mappings
+ * (script/skill/command/agent/knowledge/memory) — §6 "6 renderer mappings".
+ * The workflow action is the one function-valued builder; its
+ * `buildWorkflowAction` body (`output/renderers.ts` — a cycle-sensitive module)
+ * is reproduced inline here rather than imported, to keep this leaf import-free
+ * (only `recognition-util`, D1-5's pure sink); `tests/core/adapter/
+ * akm-presentation.test.ts` pins the renderer/action values against drift.
  */
 
 import { isKnownType, type KnownType } from "./recognition-util";
@@ -72,8 +68,8 @@ function buildWorkflowAction(ref: string): string {
  * (TypeScript's version of the `§7.3 shipped-assets lint` cross-check the
  * plan describes for later — "adding a KNOWN_TYPE forces a decision").
  *
- * `renderer`/`action` reproduce `asset-registry.ts`'s `TYPE_TO_RENDERER` /
- * `ACTION_BUILDERS` verbatim (WI-C, §2) — see the file header.
+ * `renderer`/`action` are the built-in search-hit rendering data (WI-C, §2) —
+ * see the file header.
  */
 export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
   skill: { label: "Skill", renderer: "skill-md", action: (ref) => `akm show ${ref} -> follow the instructions` },
@@ -130,8 +126,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
   // doc (spec §6/§7 instruction row, maintainer resolution 2026-07): it REUSES
   // the `knowledge-md` renderer and mirrors knowledge's read action, so an
   // instruction hit renders exactly like knowledge instead of the generic
-  // fallback. Kept in sync with asset-registry.ts's TYPE_TO_RENDERER /
-  // ACTION_BUILDERS (the parity guard in akm-presentation.test.ts).
+  // fallback (the parity guard in akm-presentation.test.ts pins this).
   instruction: {
     label: "Instruction",
     renderer: "knowledge-md",
@@ -152,3 +147,26 @@ export function presentationFor(type: string | undefined): Presentation {
   if (type !== undefined && isKnownType(type)) return TYPE_PRESENTATION[type];
   return DEFAULT_PRESENTATION;
 }
+
+/**
+ * Renderer-name / action-builder lookup surface for search-hit rendering.
+ *
+ * Chunk-3 folded the old mutable renderer/action registry singleton into this
+ * static presentation table. The registry indirection is kept as an interface
+ * so tests can inject an isolated lookup without mutating module state; the
+ * default implementation reads the built-in {@link TYPE_PRESENTATION} via
+ * {@link presentationFor}.
+ */
+export interface RendererRegistry {
+  rendererNameFor(type: string): string | undefined;
+  actionBuilderFor(type: string): ((ref: string) => string) | undefined;
+}
+
+export const defaultRendererRegistry: RendererRegistry = {
+  rendererNameFor(type) {
+    return presentationFor(type).renderer;
+  },
+  actionBuilderFor(type) {
+    return presentationFor(type).action;
+  },
+};

@@ -575,9 +575,9 @@ describe("akm propose", () => {
   });
 
   // ── #284 GAP-HIGH 3: registered custom type ──────────────────────────────
-  test("akmPropose accepts a custom type registered via registerAssetType", async () => {
-    const { registerAssetType, deregisterAssetType } = await import("../../../../src/core/asset/asset-spec");
-    registerAssetType("widget", {
+  test("akmPropose accepts a custom type registered via registerAssetSpec", async () => {
+    const { registerAssetSpec, deregisterAssetSpec } = await import("../../../../src/core/asset/asset-placement");
+    registerAssetSpec("widget", {
       stashDir: "widgets",
       isRelevantFile: (f: string) => f.endsWith(".md"),
       toCanonicalName: (_root: string, fp: string) => fp,
@@ -602,7 +602,7 @@ describe("akm propose", () => {
       if (!result.ok) throw new Error("expected ok");
       expect(result.proposal.ref).toBe("widget:gear");
     } finally {
-      deregisterAssetType("widget");
+      deregisterAssetSpec("widget");
     }
   });
 

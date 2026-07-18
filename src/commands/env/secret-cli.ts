@@ -23,7 +23,7 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { deriveCanonicalAssetName } from "../../core/asset/asset-spec";
+import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
