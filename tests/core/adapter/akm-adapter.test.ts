@@ -273,6 +273,44 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   });
 });
 
+// ── 3c. D-R6 reserved filenames (index.md / log.md) ──────────────────────────
+
+describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)", () => {
+  test("a knowledge/index.md is not recognized as an item", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-reserved-"));
+    tmpDirs.push(tmp);
+    const knowledgeDir = path.join(tmp, "knowledge");
+    fs.mkdirSync(knowledgeDir);
+    const file = path.join(knowledgeDir, "index.md");
+    // Without the D-R6 guard the directoryMatcher would classify this as
+    // `knowledge`; the reserved-file exclusion must veto it.
+    fs.writeFileSync(file, "# Directory listing\n\n- [a](all-types-knowledge.md)\n");
+    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+  });
+
+  test("a root-level log.md is not recognized as an item", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-reserved-log-"));
+    tmpDirs.push(tmp);
+    const file = path.join(tmp, "log.md");
+    fs.writeFileSync(file, "# Update history\n\n- 2026-07-19 did a thing\n");
+    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+  });
+
+  test("reserved matching is case-insensitive and exact — INDEX.md excluded, indexing.md kept", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-reserved-ci-"));
+    tmpDirs.push(tmp);
+    const knowledgeDir = path.join(tmp, "knowledge");
+    fs.mkdirSync(knowledgeDir);
+    const upper = path.join(knowledgeDir, "INDEX.md");
+    fs.writeFileSync(upper, "# listing\n");
+    const kept = path.join(knowledgeDir, "indexing.md");
+    fs.writeFileSync(kept, "# A real concept about indexing pipelines\n\nbody\n");
+    const c = component({ root: tmp });
+    expect(akmAdapter.recognize(c, buildFileContext(tmp, upper))).toBeNull();
+    expect(akmAdapter.recognize(c, buildFileContext(tmp, kept))).not.toBeNull();
+  });
+});
+
 // ── 4. directoryList / looksLikeRoot ─────────────────────────────────────────
 
 describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {

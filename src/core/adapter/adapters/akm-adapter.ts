@@ -109,6 +109,22 @@ import { hashContent, type ParsedForValidate, runBaseValidateChecks } from "./sh
 // unaffected.
 export { recognizeMatch } from "../recognize-match";
 
+/**
+ * OKF reserved structural files (ref-grammar decision D-R6, spec §5.1 /
+ * adapter-spec §5.1/§6): `index.md` (directory listing) and `log.md` (update
+ * history) are bundle structure at EVERY depth — never a concept document. The
+ * `okf` / `llm-wiki` adapters already exclude them (`okf-adapter.ts`
+ * `RESERVED_FILES`); this brings the `akm` adapter into conformance so a
+ * `knowledge/index.md` never classifies as a `knowledge` item. Case-insensitive,
+ * matched on the bare filename so the exclusion holds at any depth.
+ */
+const RESERVED_FILES = new Set(["index.md", "log.md"]);
+
+/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively (D-R6). */
+function isReservedFileName(name: string): boolean {
+  return RESERVED_FILES.has(name.toLowerCase());
+}
+
 /** Reverse the placement map (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
 function stashDirToType(stashDir: string): string | undefined {
   for (const type of placementTypes()) {
@@ -191,6 +207,10 @@ function indexDocumentFromEntry(
 }
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+  // D-R6 (spec §5.1): `index.md` / `log.md` are OKF reserved structural files at
+  // every depth — never items. Excluded BEFORE classification so a directory
+  // listing or update log never becomes a `knowledge` (or other) concept.
+  if (isReservedFileName(file.fileName)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
 
