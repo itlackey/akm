@@ -17,6 +17,15 @@
  *
  *   bun scripts/lint-test-ref-literals.ts            # gate (exit 1 if over ceiling)
  *   bun scripts/lint-test-ref-literals.ts --count    # just print the current count
+ *
+ * ── Substitution-token exclusion (Chunk-5 flip F4b, Ruling B1) ────────────────
+ *
+ * A `${type:NAME}` sequence (`${secret:API_KEY}`, `${env:...}`, …) is
+ * TEMPLATE-SUBSTITUTION SYNTAX — a placeholder resolved at env/secret injection
+ * time — NOT a legacy `type:name` ref literal. It survives the F5 grammar
+ * removal unchanged (it is not a ref), so it must not inflate the ratchet count.
+ * The {@link TOKEN} regex therefore excludes any `type:` immediately preceded by
+ * `${`. This is a MEASUREMENT fix only; the ceiling stays shrink-only.
  */
 
 import fs from "node:fs";
@@ -29,8 +38,9 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // Post-F2 ceiling: the legacy `type:name` literal tokens that remain in the
 // counted scope (origin-qualified skips + prose/ambiguous tokens the codemod
 // conservatively left). SHRINK-ONLY — lower this when F3/F4 removes more; never
-// raise it.
-const CEILING = 138;
+// raise it. Dropped 138 → 116 at F4b Ruling B1 (the `${type:...}` substitution-
+// token measurement fix — those 22 tokens were never refs).
+const CEILING = 116;
 
 const TYPES = [
   "skill",
@@ -48,8 +58,10 @@ const TYPES = [
   "fact",
 ] as const;
 // A legacy `type:name` token: a type keyword on a word boundary, a colon, then a
-// ref name char (so `key: value` YAML and prose colons do not count).
-const TOKEN = new RegExp(`(?:^|[^A-Za-z])(?:${TYPES.join("|")}):[A-Za-z0-9]`, "g");
+// ref name char (so `key: value` YAML and prose colons do not count). The
+// `(?<!\$\{)` guard (Ruling B1) drops `${type:NAME}` substitution tokens —
+// template syntax, not a ref — so they never count toward the ceiling.
+const TOKEN = new RegExp(`(?<![A-Za-z])(?<!\\$\\{)(?:${TYPES.join("|")}):[A-Za-z0-9]`, "g");
 
 const EXCLUDED_DIRS = ["tests/fixtures/goldens/", "tests/migrate/legacy/", "tests/_helpers/", "tests/_fixtures/"];
 
