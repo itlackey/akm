@@ -39,7 +39,7 @@
 
 import path from "node:path";
 import type { IndexDocument } from "../../core/adapter/types";
-import type { StashEntry, StashEntryScope, StashIntent } from "../passes/metadata";
+import type { StashEntry, StashIntent } from "../passes/metadata";
 
 /**
  * Reconstruct the `StashEntry` an `IndexDocument` was mapped from. First-class
@@ -52,10 +52,12 @@ export function indexDocumentToStashEntry(doc: IndexDocument): StashEntry {
 
   const entry: StashEntry = {
     name: doc.name,
-    type: doc.type ?? "",
+    // `type` is a required member of the merged IndexDocument (M-core-1), so no
+    // `?? ""` fallback is needed — `recognize` always sets it.
+    type: doc.type,
     // Dropped by indexDocumentFromEntry — recovered from the read path (= the
     // basename the old pipeline stored). Always present on a recognized doc.
-    filename: path.basename(doc.path),
+    filename: path.basename(doc.path ?? ""),
   };
 
   // ── First-class IndexDocument members (spec §3) ──
@@ -67,8 +69,8 @@ export function indexDocumentToStashEntry(doc: IndexDocument): StashEntry {
   if (doc.confidence !== undefined) entry.confidence = doc.confidence;
   if (doc.beliefState !== undefined) entry.beliefState = doc.beliefState;
   if (doc.currentBeliefRefs !== undefined) entry.currentBeliefRefs = doc.currentBeliefRefs;
-  if (doc.scope !== undefined) entry.scope = doc.scope as StashEntryScope;
-  if (doc.captureMode !== undefined) entry.captureMode = doc.captureMode as StashEntry["captureMode"];
+  if (doc.scope !== undefined) entry.scope = doc.scope;
+  if (doc.captureMode !== undefined) entry.captureMode = doc.captureMode;
   if (doc.lessonStrength !== undefined) entry.lessonStrength = doc.lessonStrength;
   if (doc.derivedFrom !== undefined) entry.derivedFrom = doc.derivedFrom;
 

@@ -103,7 +103,7 @@ async function drain(iterable: AsyncIterable<IndexDocument>): Promise<IndexDocum
 }
 
 /** `{ref, type}` projection of a doc stream — the comparison key for scan == fold. */
-function refType(docs: IndexDocument[]): Array<{ ref: string; type: string | undefined }> {
+function refType(docs: IndexDocument[]): Array<{ ref: string | undefined; type: string }> {
   return docs.map((d) => ({ ref: d.ref, type: d.type }));
 }
 

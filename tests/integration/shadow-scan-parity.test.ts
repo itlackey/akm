@@ -118,7 +118,8 @@ for (const { name, root } of STASHES) {
       for (const d of news) {
         const e = oldByName.get(newIdentity(d));
         expect(e, `no old entry for ${newIdentity(d)}`).toBeDefined();
-        expect(d.type).toBe(e?.type);
+        if (!e) continue;
+        expect(d.type).toBe(e.type);
       }
     });
 

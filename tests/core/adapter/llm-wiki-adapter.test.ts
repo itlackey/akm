@@ -140,7 +140,7 @@ describe("llm-wiki adapter — renderer golden (generic fallback, reading A)", (
       // The wiki page kinds + wiki-source are NOT in KNOWN_TYPES → generic.
       expect(presentation.label).toBe(expected.label as string);
       expect(presentation.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      const action = presentation.action ? presentation.action(doc.ref) : `akm show ${doc.ref}`;
+      const action = presentation.action ? presentation.action(doc.ref ?? "") : `akm show ${doc.ref}`;
       expect(action).toBe(expected.action as string);
     });
   }

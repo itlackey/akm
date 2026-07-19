@@ -5,6 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
+// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): `StashEntry` is now a deprecated
+// alias OF the merged `IndexDocument` (the spec's §3 type = StashEntry +
+// provenance). The interface body — and the sub-shapes it references — moved to
+// `core/adapter/types.ts` so `IndexDocument` can reference them without a
+// `metadata.ts ↔ types.ts` cycle; here we alias + re-export under the historical
+// names so every untouched consumer keeps compiling. `SCOPE_KEYS` (a value)
+// stays here.
+import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import {
   deriveCanonicalAssetName,
   deriveCanonicalAssetNameFromStashRoot,
@@ -21,174 +29,19 @@ import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
-export interface StashIntent {
-  when?: string;
-  input?: string;
-  output?: string;
-}
-
-export interface AssetParameter {
-  name: string;
-  type?: string;
-  description?: string;
-  required?: boolean;
-  default?: string;
-}
-
-/**
- * Multi-tenant / multi-agent scope keys. All four fields are optional;
- * persisted as the canonical top-level frontmatter keys
- * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`.
- *
- * This shape is the wire-level scope contract — the CLI's `--user`,
- * `--agent`, `--run`, `--channel` flags map into these fields, and
- * `akm search --filter user=…` queries against them.
- *
- * Memories written before scope flags shipped have no scope keys at all;
- * unfiltered queries continue to surface them.
- */
-export interface StashEntryScope {
-  user?: string;
-  agent?: string;
-  run?: string;
-  channel?: string;
-}
-
-/** Allowed keys in `--filter k=v` and `--scope k=v` flags. */
-export type ScopeKey = keyof StashEntryScope;
+export type { AssetParameter, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
 
-export interface StashEntry {
-  name: string;
-  type: string;
-  description?: string;
-  tags?: string[];
-  examples?: string[];
-  searchHints?: string[];
-  intent?: StashIntent;
-  filename?: string;
-  /**
-   * Asset quality marker (v1 spec §4.2). Four values are well-known:
-   * `"generated"` and `"curated"` are included in default search;
-   * `"enriched"` marks entries that have been LLM-enhanced (also included in
-   * default search, excluded from re-enrichment unless `--re-enrich` is set);
-   * `"proposed"` is excluded from default search and surfaced only with
-   * `--include-proposed`. Unknown string values parse with a one-time
-   * `console.warn` and remain searchable (treated as included-by-default).
-   */
-  quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
-  confidence?: number;
-  source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm";
-  aliases?: string[];
-  toc?: TocHeading[];
-  usage?: string[];
-  /** How to run this asset (e.g. "bash deploy.sh", "bun run.ts") */
-  run?: string;
-  /** Setup command to run before execution (e.g. "bun install") */
-  setup?: string;
-  /** Working directory for execution */
-  cwd?: string;
-  /** File size in bytes for output sizing hints */
-  fileSize?: number;
-  /** Structured parameter definitions extracted from the asset content */
-  parameters?: AssetParameter[];
-  /**
-   * Multi-tenant / multi-agent scope. Populated from the canonical
-   * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`
-   * frontmatter keys. Used by `akm search --filter` and
-   * `akm show --scope`.
-   */
-  scope?: StashEntryScope;
-  /**
-   * Wiki role for knowledge pages following the LLM Wiki pattern.
-   * `schema` / `index` / `log` are the special files at the top of the wiki;
-   * `raw` marks immutable ingested sources; `page` (default) is an LLM-authored page.
-   */
-  wikiRole?: "schema" | "index" | "log" | "raw" | "page";
-  /**
-   * Page archetype for wiki pages. Any non-empty string is accepted so users
-   * can introduce categories freely (e.g. `entity`, `concept`, `question`,
-   * `note`, `decision-record`). Wiki conventions live in `schema.md`.
-   */
-  pageKind?: string;
-  /** Cross-references to other knowledge entries by ref (e.g. "knowledge:auth-design"). */
-  xrefs?: string[];
-  /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
-  sources?: string[];
-  /**
-   * Asset category, surfaced from the `category:` frontmatter key. Primarily
-   * used by fact assets: `convention` marks house-rule facts delivered via
-   * resolveStashStandards prompt injection; `meta` marks stash-about-itself
-   * canon (e.g. active-projects slug lists). Any non-empty string is accepted
-   * — this is descriptive metadata, not a validated enum. Captured into
-   * entry_json so category-keyed policies (SPEC-6) are implementable.
-   */
-  category?: string;
-  beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
-  supersededBy?: string[];
-  contradictedBy?: string[];
-  /**
-   * R5 — merge depth counter (frontmatter `generation`), maintained by
-   * consolidate's injectGenerationFrontmatter. Absent = original asset.
-   */
-  generation?: number;
-  /**
-   * R5 — provenance pointers (frontmatter `source_refs`): the refs this asset
-   * was merged/distilled from. Lets the collapse detector's canary scoring
-   * follow a legitimately-merged anchor instead of reading it as collapse.
-   */
-  sourceRefs?: string[];
-  currentBeliefRefs?: string[];
-  /**
-   * How the memory was captured. `hot` indicates a user-driven write
-   * (the `akm remember` CLI path); `background` indicates an
-   * agent/derived write (e.g. memory-inference). Absent on legacy memories.
-   * Surfaced from the `captureMode:` frontmatter key.
-   */
-  captureMode?: "hot" | "background";
-  /**
-   * Free-form guidance describing when this asset should be applied.
-   * Surfaced from the `when_to_use:` frontmatter key. Indexed into the
-   * `hints` FTS column so retrieval can match query intent.
-   */
-  whenToUse?: string;
-  /**
-   * Strength signal for lessons: count of refs that have credited this
-   * lesson via `akm feedback --applied-to`. Extracted from frontmatter:
-   * an array stores its length here, a number stores directly.
-   */
-  lessonStrength?: number;
-  /**
-   * Source refs that this asset is derived from. Surfaced from the
-   * `evidenceSources:` frontmatter key.
-   */
-  evidenceSources?: string[];
-  /**
-   * For derived memories (Phase 5A / Advantage D5), the parent ref that this
-   * entry was distilled from. Surfaced from the `source:` frontmatter key
-   * (form: `"memory:<parent-name>"`) when the entry is recognized as a
-   * derived child (either by frontmatter `inferred: true` or by name suffix
-   * `.derived`). Absent on non-derived entries.
-   *
-   * The indexer mirrors this value into the dedicated `entries.derived_from`
-   * column so `getDerivedForParent()` can resolve the child by parent ref
-   * without a full table scan.
-   */
-  derivedFrom?: string;
-  /**
-   * First prose paragraph of the asset body — the conventions' self-situating
-   * opening (stash-conventions SPEC-8). Captured by the metadata pass only
-   * when the `index.indexBodyOpening` config flag is enabled (default off),
-   * capped at {@link BODY_OPENING_MAX_CHARS} chars (word-boundary truncation
-   * with a trailing ellipsis). `buildSearchFields` folds it into the
-   * lowest-weight `content` FTS column whenever present on an entry (the fold
-   * is unconditional so FTS rebuilds from stored entry_json stay faithful).
-   * Never captured for secret/env files or session-kind memories
-   * (`akm_memory_kind` marker in outer or inner nested frontmatter).
-   */
-  bodyOpening?: string;
-}
+/**
+ * F5: delete — deprecated alias. The durable indexed-entry shape is now the
+ * merged {@link IndexDocument} (spec §3 = StashEntry + provenance; provenance
+ * fields are optional so a metadata-pipeline entry literal still satisfies it,
+ * and are never serialized onto `entry_json`). Kept so the ~hundreds of
+ * `StashEntry` references outside this chunk's touch-set keep compiling; F5
+ * renames them away and deletes this line.
+ */
+export type StashEntry = IndexDocument;
 
 export interface StashFile {
   entries: StashEntry[];

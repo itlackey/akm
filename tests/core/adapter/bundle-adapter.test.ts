@@ -87,6 +87,8 @@ const stubAdapter: BundleAdapter = {
       path: file.absPath,
       hash: "deadbeef",
       adapterId: "stub",
+      // `type` is a required member of the merged IndexDocument (F4a M-core-1).
+      type: "knowledge",
       name: file.fileName,
     };
   },
