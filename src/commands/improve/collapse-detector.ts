@@ -27,7 +27,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -116,7 +115,7 @@ function buildMintList(
   const candidates = entries
     .filter((e) => LEARNING_TYPES.has(e.entry.type))
     .map((e) => {
-      const ref = makeAssetRef(e.entry.type, e.entry.name);
+      const ref = `${e.entry.type}:${e.entry.name}`;
       return { e, ref, score: rankScores.get(ref) ?? 0 };
     })
     .sort((a, b) => b.score - a.score || (a.ref < b.ref ? -1 : 1));
@@ -245,7 +244,7 @@ function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query
   const results = searchFts(indexDb, canary.query, k);
   for (let i = 0; i < Math.min(results.length, k); i++) {
     const r = results[i];
-    const ref = makeAssetRef(r.entry.type, r.entry.name);
+    const ref = `${r.entry.type}:${r.entry.name}`;
     if (ref === canary.anchor_ref) return i;
     if (r.entry.xrefs?.includes(canary.anchor_ref) || r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
   }

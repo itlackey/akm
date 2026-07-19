@@ -1859,7 +1859,7 @@ function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]):
 
 // ── lookup ─────────────────────────────────────────────────────────────────
 
-import type { AssetRef } from "../core/asset/asset-ref";
+import type { AssetRef } from "../migrate/legacy-ref-grammar";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */

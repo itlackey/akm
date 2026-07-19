@@ -9,8 +9,7 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
+import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -109,25 +108,19 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
 }
 
 /**
- * Bare-form candidates a bare `entry_ref` filter can match a stored row under,
- * spanning BOTH the legacy `type:name` spelling and the 0.9.0 conceptId spelling
- * the F4c re-key writes — so `akm history memory:x` finds a row now stored as
- * `bundle//<stash-subdir>/x`. Mirrors the retrieval-count reader's dual arm.
+ * Bare-form candidate a bare `entry_ref` filter matches a stored row under.
+ * Post-flip every stored row is conceptId-spelled, so the filter is normalized
+ * to its conceptId form (accepting a still-legacy `type:name` filter, which maps
+ * onto the same conceptId) and matched against that alone.
  *
- * F5: delete — after the flip every stored row is conceptId-spelled.
+ * Chunk-8: once the state.db re-key lands and every input is the new grammar,
+ * this reduces to the trimmed conceptId.
  */
 function usageEventBareCandidates(ref: string): string[] {
   const trimmed = ref.trim();
-  if (classifyRefGrammar(trimmed) === "bundle") {
-    // A conceptId filter → add its legacy `type:name` sibling.
-    const legacy = conceptIdToLegacy(trimmed);
-    return legacy ? [trimmed, `${legacy.type}:${legacy.name}`] : [trimmed];
-  }
   try {
-    const parsed = parseAssetRef(trimmed);
-    const legacy = `${parsed.type}:${parsed.name}`;
-    const concept = legacyConceptId(parsed.type, parsed.name);
-    return concept === legacy ? [legacy] : [legacy, concept];
+    const parsed = parseStoredRef(trimmed);
+    return [legacyConceptId(parsed.type, parsed.name)];
   } catch {
     return [trimmed];
   }
@@ -154,9 +147,8 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
       params.push(filters.entry_ref);
     } else {
       // Bare filter — match the stored bare form (everything after the first
-      // `//`, or the whole value when un-qualified) against BOTH spellings: the
-      // legacy `type:name` AND the conceptId the F4c re-key writes.
-      // F5: delete — after the flip only the conceptId candidate is needed.
+      // `//`, or the whole value when un-qualified) against the conceptId the
+      // filter normalizes to.
       const candidates = usageEventBareCandidates(filters.entry_ref);
       const placeholders = candidates.map(() => "?").join(", ");
       conditions.push(

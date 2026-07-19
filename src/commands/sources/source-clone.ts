@@ -114,7 +114,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const typeDir = stashDirFor(parsed.type) as string;
 
   // Validate destName to prevent path traversal (parsed.name is already
-  // validated by parseAssetRef, but newName comes directly from user input).
+  // validated by the ref parser, but newName comes directly from user input).
   // Run whenever newName is provided, including empty string.
   if (options.newName !== undefined) {
     if (destName === "") {

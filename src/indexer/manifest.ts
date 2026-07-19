@@ -14,7 +14,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-placement";
-import { makeAssetRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
@@ -53,7 +52,10 @@ function toManifestEntry(
   try {
     const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
     const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
-    const ref = makeAssetRef(entry.type, refName, registryId);
+    // Durable manifest key — the legacy `[origin//]type:name` spelling, built
+    // inline (Chunk-8: re-keyed with the state.db one-time re-key). refName is
+    // canonical, so no name normalization is needed.
+    const ref = registryId ? `${registryId}//${entry.type}:${refName}` : `${entry.type}:${refName}`;
 
     const result: ManifestEntry = {
       name: entry.name,

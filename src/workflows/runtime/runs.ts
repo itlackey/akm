@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { randomUUID } from "node:crypto";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type {
   WorkflowRunStatus,
   WorkflowRunStepState,
@@ -403,7 +403,7 @@ export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnl
     const scopeKey = getCurrentWorkflowScopeKey();
     let workflowRef: string | undefined;
     if (input?.workflowRef) {
-      const parsed = parseRefInput(input.workflowRef);
+      const parsed = parseStoredRef(input.workflowRef);
       if (parsed.type !== "workflow") {
         throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${input.workflowRef}".`);
       }
@@ -737,7 +737,7 @@ async function resolveRunSpecifier(
     throw new NotFoundError(`Workflow run "${specifier}" not found.`, "WORKFLOW_NOT_FOUND");
   }
 
-  const parsed = parseRefInput(specifier);
+  const parsed = parseStoredRef(specifier);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
   }

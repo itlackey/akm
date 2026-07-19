@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -12,6 +11,7 @@ import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import {
   closeDatabase,
@@ -32,7 +32,7 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
   const trimmed = scope?.trim();
   if (!trimmed) return { mode: "all" };
   try {
-    parseAssetRef(trimmed);
+    parseStoredRef(trimmed);
     return { mode: "ref", value: trimmed };
   } catch (err) {
     // Open type token (chunk 1.5, D1.5-1): a bare word with no `type:name`
@@ -44,7 +44,7 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
     // with it). No test pinned the old "Unknown asset type" rejection for
     // this case (chunk-1.5 anchors §A.5 — 0 hits).
     //
-    // A colon-shaped value that still fails `parseAssetRef` is a genuinely
+    // A colon-shaped value that still fails `parseStoredRef` is a genuinely
     // malformed ref attempt (bad name, path traversal, or a deny-listed
     // deliberately-removed type like tool/vault, D1.5-6) — that must still
     // surface as a real error, not be silently absorbed into a type filter
@@ -119,7 +119,7 @@ async function collectEligibleRefsFromIndex(
   readOnly: boolean,
 ): ReturnType<typeof collectEligibleRefs> {
   if (scope.mode === "ref" && scope.value) {
-    const parsed = parseAssetRef(scope.value);
+    const parsed = parseStoredRef(scope.value);
     const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
     const filePath = await findAssetFilePath(scope.value, stashDir, writableDirs);
     if (!filePath) {
@@ -176,7 +176,7 @@ async function collectEligibleRefsFromIndex(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      const ref = `${indexed.entry.type}:${indexed.entry.name}`;
       // Chunk-5 flip F5d (Step 4): the durable `item_ref` (`<bundle>//<concept-id>`),
       // reconstructed from the mapper-unlocked provenance columns with ZERO extra
       // queries (D-R3 — derived from the resolved index entry, never raw input).
@@ -275,7 +275,7 @@ export function memoryCleanupParentRef(
   stashDir?: string,
 ): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
-  const parsed = parseAssetRef(scope.value);
+  const parsed = parseStoredRef(scope.value);
   if (parsed.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return scope.value;
 
@@ -288,20 +288,20 @@ export function memoryCleanupParentRef(
     const sourceRef = typeof fm.source === "string" ? fm.source : undefined;
     if (sourceRef) {
       try {
-        const parent = parseAssetRef(sourceRef.trim());
-        if (parent.type === "memory") return makeAssetRef(parent.type, parent.name);
+        const parent = parseStoredRef(sourceRef.trim());
+        if (parent.type === "memory") return `${parent.type}:${parent.name}`;
       } catch {}
     }
   }
 
-  return makeAssetRef("memory", parsed.name.slice(0, -".derived".length));
+  return `memory:${parsed.name.slice(0, -".derived".length)}`;
 }
 
 export function isLessonCandidate(ref: string): boolean {
   // Only lesson assets need lesson-schema validation (description + when_to_use).
   // Memories have their own distill path via shouldDistillMemoryRef.
   // All other types go through reflect, not distill.
-  return parseAssetRef(ref).type === "lesson";
+  return parseStoredRef(ref).type === "lesson";
 }
 
 /**
@@ -325,13 +325,13 @@ export function isLessonCandidate(ref: string): boolean {
  * `tests/commands/improve-distill-planner-skip-lessons.test.ts`.
  */
 export function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   if (isDistillRefusedInputType(parsed.type)) return false;
   return shouldDistillMemoryRef(ref, stashDir);
 }
 
 export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   if (parsed.type !== "memory") return false;
   const sources = resolveSourceEntries(stashDir);
   for (const source of sources) {
@@ -490,7 +490,7 @@ export function shouldAnalyzeMemoryCleanup(
   if (scope.mode === "all") return true;
   if (scope.mode === "type") return scope.value === "memory";
   if (!scope.value) return false;
-  return parseAssetRef(scope.value).type === "memory";
+  return parseStoredRef(scope.value).type === "memory";
 }
 
 export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
@@ -503,7 +503,7 @@ export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number>
     const allDbEntries = getAllEntries(db);
     const idToRef = new Map<number, string>();
     for (const indexed of allDbEntries) {
-      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      const ref = `${indexed.entry.type}:${indexed.entry.name}`;
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     const ids = [...idToRef.keys()];

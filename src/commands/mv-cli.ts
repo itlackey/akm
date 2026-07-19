@@ -46,8 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
-import { refToString } from "../core/asset/asset-ref";
-import { isFullRefInput, legacyConceptId, parseRefInput } from "../core/asset/resolve-ref";
+import { isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -72,6 +71,7 @@ import { warnVerbose } from "../core/warn";
 import { withAssetMutationLease } from "../indexer/index-writer-lock";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
+import { legacyConceptId } from "../migrate/legacy-ref-grammar";
 import { insertEventOnce } from "../storage/repositories/events-repository";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { rekeyEntryInPlace } from "../storage/repositories/index-entries-repository";
@@ -136,7 +136,7 @@ interface RewritePattern {
  * Build the rewrite patterns for one old ref: the canonical spelling plus
  * the DETERMINISTIC alias spellings the resolver stack accepts for the same
  * asset — the `.md`-suffixed form (`markdownSpec.toAssetPath` accepts both)
- * and the `local//`-prefixed form (`makeAssetRef`/`parseAssetRef` round-trip
+ * and the `local//`-prefixed form (the legacy ref grammar round-trips
  * it). All spellings of ONE grammar rewrite to that grammar's NEW ref (legacy
  * spellings → `toRef`, conceptId spellings → `toConcept`) so a rewritten ref
  * keeps the grammar it was authored in. When the source is a base memory, the
@@ -163,7 +163,8 @@ function buildRewritePatterns(
   const legacyCore = escapeRegExp(fromRef);
   const conceptCore = escapeRegExp(fromConcept);
   return [
-    // F5: delete — legacy `type:name` spellings (canonical / `.md` / `local//`).
+    // Chunk-8: legacy `type:name` spellings (canonical / `.md` / `local//`) — inert
+    // for new-grammar content, kept until the state.db re-key.
     { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}${REF_SUFFIX_SRC}`, "gm"), to: toRef },
     { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"), to: toRef },
     { re: new RegExp(`${REF_PREFIX_SRC}local//${legacyCore}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"), to: toRef },
@@ -761,7 +762,7 @@ function resolveMoveSourcePath(stashDir: string, relPath: string, refType: strin
   }
 
   // Fallback hit — reject, steering to the canonical spelling when it exists.
-  const typedRef = refToString({ type: refType, name: refName });
+  const typedRef = `${refType}:${refName}`;
   const canonicalName = deriveCanonicalAssetNameFromStashRoot(refType, stashDir, onDiskResolved);
   const canonicalRelPath = canonicalName ? refToRelPath(refType, canonicalName) : null;
   if (
@@ -770,7 +771,7 @@ function resolveMoveSourcePath(stashDir: string, relPath: string, refType: strin
     canonicalRelPath &&
     path.resolve(stashDir, canonicalRelPath) === path.resolve(onDiskResolved)
   ) {
-    const canonicalRef = refToString({ type: refType, name: canonicalName });
+    const canonicalRef = `${refType}:${canonicalName}`;
     throw new UsageError(
       `"${typedRef}" resolves only through a fallback spelling — the asset's canonical ref is ${canonicalRef}. ` +
         "akm mv needs the canonical spelling so the citer rewrite and the index re-key target the same ref — nothing moved.",
@@ -904,8 +905,8 @@ function rekeyIndexForMove(opts: {
 /**
  * Re-key the state.db `asset_salience` / `asset_outcome` rows after a rename.
  *
- * Both tables are keyed by `asset_ref` TEXT (the bare `makeAssetRef`
- * `type:name` form — NOT entry_id; see core/state/migrations.ts 009/010), so
+ * Both tables are keyed by `asset_ref` TEXT (the bare legacy `type:name`
+ * form — NOT entry_id; see core/state/migrations.ts 009/010), so
  * the salience boost `loadSalienceRankScores` applies at search time and the
  * outcome-loop history would otherwise strand on the old ref until the next
  * improve run re-mints a type-weight stub row — losing a distill-written
@@ -1170,23 +1171,22 @@ export const mvCommand = defineJsonCommand({
       // no independent asset may squat on the suffix. The `.md`-suffixed alias
       // spelling of a twin ref names the same file, so it is caught here too.
       if (source.type === "memory" && /\.derived(\.md)?$/.test(source.name)) {
-        const baseRef = refToString({ type: "memory", name: source.name.replace(/\.derived(\.md)?$/, "") });
+        const baseRef = `memory:${source.name.replace(/\.derived(\.md)?$/, "")}`;
         throw new UsageError(
-          `"${refToString({ type: source.type, name: source.name })}" names a .derived.md distilled twin — a twin ` +
+          `"${`${source.type}:${source.name}`}" names a .derived.md distilled twin — a twin ` +
             "cannot be moved on its own without breaking its belief-inheritance coupling to the base memory. " +
             `Rename the base ref instead (akm mv ${baseRef} <new-name>); the twin moves with it.`,
           "INVALID_FLAG_VALUE",
         );
       }
 
-      // The target may be a bare name ("projectA/new-note") or a ref-shaped
-      // spelling (either grammar). Parsing the bare form through the same ref
-      // grammar gives it identical name validation (traversal, null bytes,
-      // absolute paths). A bare name's leading segment maps to no asset type
-      // (`isFullRefInput` is false), so it is qualified with the source type;
-      // a ref-shaped target (`memory:x` or the new-grammar `memories/x`) is
-      // parsed as-is.
-      const target = parseRefInput(isFullRefInput(targetArg) ? targetArg : `${source.type}:${targetArg}`);
+      // The target may be a bare name ("projectA/new-note") or a full
+      // new-grammar ref. Parsing the bare form through the same ref grammar
+      // gives it identical name validation (traversal, null bytes, absolute
+      // paths). A bare name's leading segment maps to no asset type
+      // (`isFullRefInput` is false), so it is qualified with the source type's
+      // conceptId prefix; a full new-grammar ref (`memories/x`) is parsed as-is.
+      const target = parseRefInput(isFullRefInput(targetArg) ? targetArg : legacyConceptId(source.type, targetArg));
       if (target.origin) {
         throw new UsageError(
           `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,
@@ -1195,7 +1195,7 @@ export const mvCommand = defineJsonCommand({
       }
       if (target.type !== source.type) {
         throw new UsageError(
-          `Cross-type move is not supported: "${refToString({ type: source.type, name: source.name })}" is a ` +
+          `Cross-type move is not supported: "${`${source.type}:${source.name}`}" is a ` +
             `${source.type}: asset but the target names the ${target.type}: type. akm mv renames within one asset type.`,
           "INVALID_FLAG_VALUE",
         );
@@ -1214,7 +1214,7 @@ export const mvCommand = defineJsonCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      // Reject empty path segments: `path.posix.normalize` (parseAssetRef's
+      // Reject empty path segments: `path.posix.normalize` (the ref parser's
       // name normalization) PRESERVES a trailing slash — "bar/" (and "bar\",
       // normalized to it) sails through the traversal checks, and the file
       // would land at e.g. memories/bar/.md: a dot-prefixed file the index
@@ -1237,7 +1237,7 @@ export const mvCommand = defineJsonCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const toRef = refToString({ type: source.type, name: newName });
+      const toRef = `${source.type}:${newName}`;
 
       const stashDir = resolveStashDir();
       const config = loadConfig();
@@ -1262,7 +1262,7 @@ export const mvCommand = defineJsonCommand({
       const oldPath = resolveMoveSourcePath(stashDir, oldRelPath, source.type, source.name);
       if (!oldPath) {
         throw new UsageError(
-          `Cannot resolve ${refToString({ type: source.type, name: source.name })} in the writable stash at ` +
+          `Cannot resolve ${`${source.type}:${source.name}`} in the writable stash at ` +
             `${stashDir} — nothing moved.`,
           "MISSING_REQUIRED_ARGUMENT",
           "akm mv renames assets in the primary writable stash only. Check the ref with `akm show <ref>` or `akm search`.",
@@ -1275,10 +1275,10 @@ export const mvCommand = defineJsonCommand({
       // the CANONICAL extensionless name derived from the resolved path, or the
       // real rows (keyed by the canonical spelling) are silently missed.
       const sourceName = deriveCanonicalAssetNameFromStashRoot(source.type, stashDir, oldPath) ?? source.name;
-      const fromRef = refToString({ type: source.type, name: sourceName });
+      const fromRef = `${source.type}:${sourceName}`;
 
       const newPath = path.join(stashDir, newRelPath);
-      // Defense-in-depth: parseAssetRef already rejects `../` traversal, but the
+      // Defense-in-depth: the ref parser already rejects `../` traversal, but the
       // computed target must land inside the type root regardless.
       if (!isWithin(newPath, typeRoot)) {
         throw new UsageError(

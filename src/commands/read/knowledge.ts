@@ -15,7 +15,6 @@ import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
-import { type AssetRef, makeAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
@@ -33,6 +32,7 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import type { AssetRef } from "../../migrate/legacy-ref-grammar";
 import {
   fetchWebsiteMarkdownSnapshot,
   shouldAllowPrivateWebsiteUrlForTests,
@@ -150,13 +150,13 @@ interface ParsedWriteRef {
   /**
    * The CANONICAL `type:name` spelling rebuilt from the parsed components —
    * what lands in frontmatter. Persisting the raw flag value instead would
-   * store spellings `parseAssetRef` accepts but later ref scanners (lint's
+   * store spellings the ref parser accepts but later ref scanners (lint's
    * registry-derived `REF_RE`, mv's rewriter) do not recognize: the
    * `environment:` alias of `env:`, backslash-separated names, and the
    * `local//` origin prefix (stripped here the same way lint strips it).
    */
   ref: string;
-  /** Canonical asset type (aliases resolved by `parseAssetRef`). */
+  /** Canonical asset type (aliases resolved by the ref parser). */
   type: string;
   /** Normalized asset name. */
   name: string;
@@ -164,7 +164,7 @@ interface ParsedWriteRef {
 
 /**
  * Parse a `--xref` / `--supersedes` value through the canonical ref parser
- * (`parseAssetRef`) so malformed and origin-prefixed spellings get a
+ * (`parseRefInput`) so malformed and origin-prefixed spellings get a
  * structured error instead of a misleading "did not resolve". A `local//`
  * origin is accepted (it names the same local resolution this validator
  * performs, mirroring lint's `local//` strip); any other origin is rejected —
@@ -191,7 +191,9 @@ function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWrit
   }
   // Canonical bare form: type alias resolved, name normalized, `local//`
   // dropped (it names the same local resolution this validator performs).
-  return { ref: makeAssetRef(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
+  // Canonical bare legacy key persisted to frontmatter (Chunk-8 re-key); the
+  // name is already normalized by the parser, so it is built inline.
+  return { ref: `${parsed.type}:${parsed.name}`, type: parsed.type, name: parsed.name };
 }
 
 /**

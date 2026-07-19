@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
@@ -134,7 +134,7 @@ function outcomeWriteKey(ref: string, itemRefByRef: Map<string, string | undefin
 function legacyTypeOf(ref: string): string {
   const tail = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
   if (tail.includes(":")) return tail.slice(0, tail.indexOf(":"));
-  return conceptIdToLegacy(tail)?.type ?? "";
+  return typeNameFromConceptId(tail)?.type ?? "";
 }
 
 // ── improve preparation stage ───────────────────────
@@ -2277,7 +2277,7 @@ function persistSalienceAndReportRanks(args: {
         //
         // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
         // Chunk-5 flip F5e — source-scope by PREFIX (`<bundle|source>//…`, works
-        // for BOTH grammars — no `parseAssetRef` throw on an item_ref row) and
+        // for BOTH grammars — no legacy-parser throw on an item_ref row) and
         // fold each in-pool asset's stored spelling onto its single write key so
         // the merge below never double-counts one asset across two spellings.
         const allStoredScores = getAllRankScores(stateDb);
@@ -2711,7 +2711,7 @@ function applyReplaySelection(args: {
           for (const [bareRef, itemRef] of itemRefByPlanned) if (itemRef) bareRefByItemRef.set(itemRef, bareRef);
           const allRankScores = options.sourceName
             ? (() => {
-                // Source-scope by PREFIX (both grammars — no `parseAssetRef` throw
+                // Source-scope by PREFIX (both grammars — no legacy-parser throw
                 // on an item_ref row), then re-key onto the bare ref: item_ref rows
                 // via the planned reverse map, legacy rows inline via bareImproveRef.
                 const m = new Map<string, number>();

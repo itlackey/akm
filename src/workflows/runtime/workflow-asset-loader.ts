@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+// Stored/resolved workflow refs may still be legacy-spelled → dual parser.
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import type { WorkflowParameter, WorkflowStepDefinition } from "../../sources/types";
@@ -56,7 +56,7 @@ export type WorkflowAsset = {
  * resolution.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const parsed = parseRefInput(ref);
+  const parsed = parseStoredRef(ref);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${ref}".`);
   }
@@ -109,7 +109,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
 export function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db
@@ -146,7 +146,7 @@ function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
 function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): WorkflowDocument | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db

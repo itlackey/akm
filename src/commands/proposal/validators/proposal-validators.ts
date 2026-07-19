@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { parseAssetRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
+import { parseStoredRef } from "../../../migrate/legacy-ref-grammar";
 import type {
   Proposal,
   ProposalValidationContext,
@@ -34,7 +34,7 @@ const genericProposalValidator: ProposalValidator = {
     }
 
     try {
-      ctx.parsedRef = parseAssetRef(proposal.ref);
+      ctx.parsedRef = parseStoredRef(proposal.ref);
     } catch (err) {
       findings.push({
         kind: "invalid-ref",

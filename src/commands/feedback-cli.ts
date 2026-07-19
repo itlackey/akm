@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { refToString } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseRefInput } from "../core/asset/resolve-ref";
@@ -295,17 +294,15 @@ export const feedbackCommand = defineJsonCommand({
       // in search results until after reindexing.
       const indexedEntry = getEntryById(db, entryId);
       const source = sources.find((candidate) => candidate.path === indexedEntry?.stashDir);
-      durableRef = refToString({
-        ...parsedRef,
-        origin: parsedRef.origin ?? source?.registryId ?? "stash",
-      });
+      // Legacy display spelling (Chunk-8 re-key), built inline — shown to the
+      // user and logged to the state.db events surface below.
+      const durableOrigin = parsedRef.origin ?? source?.registryId ?? "stash";
+      durableRef = `${durableOrigin}//${parsedRef.type}:${parsedRef.name}`;
       insertUsageEvent(db, {
         event_type: "feedback",
-        // F4c: the DURABLE usage_events key is the resolved entry's fully-qualified
-        // item_ref. `durableRef` (the legacy display spelling) remains the ref
-        // shown to the user and logged to the state.db events surface below.
-        // F5: delete — the legacy fallback for a NULL-item_ref straggler.
-        entry_ref: getItemRefById(db, entryId) ?? durableRef,
+        // The DURABLE usage_events key is the resolved entry's fully-qualified
+        // item_ref (`durableRef` above stays the user-facing legacy display).
+        entry_ref: getItemRefById(db, entryId) ?? undefined,
         entry_id: entryId,
         signal,
         metadata: metadataStr,

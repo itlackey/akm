@@ -22,8 +22,8 @@
  * existing import sites are unchanged.
  */
 
-import type { AssetRef } from "../../core/asset/asset-ref";
 import type { FileChange } from "../../core/file-change";
+import type { AssetRef } from "../../migrate/legacy-ref-grammar";
 
 /**
  * Which eligibility lane selected an asset for an improve run (attribution

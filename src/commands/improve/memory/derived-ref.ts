@@ -22,7 +22,7 @@
  * `tests/commands/improve/derived-ref.test.ts`:
  *   - `derivedFrom`-keyed families now resolve a parent (and so participate in
  *     contradiction detection); and
- *   - `source:` is normalised through `parseAssetRef` (trim + origin) so a
+ *   - `source:` is normalised through `parseStoredRef` (trim + origin) so a
  *     `source: " team//memory:parent "` resolves to `memory:parent` instead of
  *     silently degrading to the filename.
  *
@@ -30,21 +30,21 @@
  * consumer's prior behaviour exactly, so the consumer side is a pure move.
  */
 
-import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
+import { parseStoredRef } from "../../../migrate/legacy-ref-grammar";
 
 /**
  * Normalise an arbitrary `source:`/edge string to a canonical `memory:<name>`
  * ref, or `undefined` when it is empty, unparseable, or not a memory ref.
- * Trims whitespace and drops any origin prefix via {@link parseAssetRef}.
+ * Trims whitespace and drops any origin prefix via {@link parseStoredRef}.
  */
 export function parseMemoryRef(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
-    const parsed = parseAssetRef(value.trim());
+    const parsed = parseStoredRef(value.trim());
     if (parsed.type !== "memory") return undefined;
-    return makeAssetRef(parsed.type, parsed.name);
+    return `${parsed.type}:${parsed.name}`;
   } catch {
     return undefined;
   }
@@ -71,10 +71,10 @@ export function resolveParentRef(name: string, frontmatter: Record<string, unkno
   if (fromSource) return fromSource;
 
   const derivedFrom = asNonEmptyString(frontmatter.derivedFrom);
-  if (derivedFrom) return makeAssetRef("memory", derivedFrom);
+  if (derivedFrom) return `memory:${derivedFrom}`;
 
   if (name.endsWith(DERIVED_SUFFIX)) {
-    return makeAssetRef("memory", name.slice(0, -DERIVED_SUFFIX.length));
+    return `memory:${name.slice(0, -DERIVED_SUFFIX.length)}`;
   }
 
   return undefined;

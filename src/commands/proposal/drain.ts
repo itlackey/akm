@@ -40,7 +40,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
-import { parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig } from "../../core/config/config";
 import type { EventsContext } from "../../core/events";
@@ -50,6 +49,7 @@ import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { executeRunner, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import {
   listProposals,
@@ -287,7 +287,7 @@ function deferReasonForSource(source: string): DrainDeferReason {
 /** Read the live on-disk content of a proposal's target asset, if it exists. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const parsed = parseAssetRef(ref);
+    const parsed = parseStoredRef(ref);
     const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return undefined;
     const typeRoot = path.join(stashDir, typeDir);

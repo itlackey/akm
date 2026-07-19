@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
-import { classifyRefGrammar } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
+import { classifyRefGrammar, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 
 /** Key durable improve state by source without changing filesystem-facing refs. */
 export function durableImproveRef(ref: string, sourceName?: string): string {
@@ -15,8 +14,10 @@ export function durableImproveRef(ref: string, sourceName?: string): string {
   // window) is gone and every ref reaching here is the new grammar.
   if (classifyRefGrammar(ref) === "bundle") return ref;
   if (!sourceName) return ref;
-  const parsed = parseAssetRef(ref);
-  return refToString({ ...parsed, origin: parsed.origin ?? sourceName });
+  const parsed = parseStoredRef(ref);
+  // Durable legacy key (Chunk-8 re-key); built inline from the parsed parts.
+  const origin = parsed.origin ?? sourceName;
+  return `${origin}//${parsed.type}:${parsed.name}`;
 }
 
 /** Remove a durable source origin before filesystem/index lookups. */
@@ -27,8 +28,8 @@ export function bareImproveRef(ref: string): string {
     const boundary = ref.indexOf("//");
     return boundary >= 0 ? ref.slice(boundary + 2) : ref;
   }
-  const parsed = parseAssetRef(ref);
-  return refToString({ type: parsed.type, name: parsed.name });
+  const parsed = parseStoredRef(ref);
+  return `${parsed.type}:${parsed.name}`;
 }
 
 /**

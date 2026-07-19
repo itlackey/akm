@@ -130,7 +130,7 @@ export type ScopeKey = keyof StashEntryScope;
 // The spec's §3 `IndexDocument` IS `IndexDocument` + provenance (M1 decision). The
 // scan engine drains `IndexDocument`s; the durable `entry_json` column stays a
 // faithful `IndexDocument`, so `IndexDocument` is now a deprecated alias OF this type
-// (`metadata.ts`, `// F5: delete`). To let a metadata-pipeline entry literal
+// (`metadata.ts`; Chunk-8 cleanup). To let a metadata-pipeline entry literal
 // (`{ name, type, … }`, no provenance) satisfy the alias, the seven provenance
 // fields are OPTIONAL here; `recognize` and the scan writer fill them in, and
 // they are NEVER serialized onto `entry_json` (that durable shape is unchanged).

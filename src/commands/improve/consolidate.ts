@@ -7,7 +7,6 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { timestampForFilename } from "../../core/common";
@@ -28,6 +27,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { parseSinceToIsoLenient } from "../../core/time";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -641,7 +641,9 @@ export function injectGenerationFrontmatter(
     ];
     const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
       try {
-        return [refToString(parseAssetRef(ref))];
+        // Canonical legacy spelling of a stored provenance ref (Chunk-8 re-key).
+        const p = parseStoredRef(ref);
+        return [p.origin ? `${p.origin}//${p.type}:${p.name}` : `${p.type}:${p.name}`];
       } catch {
         return [];
       }
@@ -1894,7 +1896,7 @@ async function finalizeMerge(
 
   // Write merged primary
   try {
-    const parsedPrimary = parseAssetRef(op.primary);
+    const parsedPrimary = parseStoredRef(op.primary);
     await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
   } catch (e) {
     warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
@@ -1910,7 +1912,7 @@ async function finalizeMerge(
       archiveMemory(secEntry.filePath, stashDir, secRef, "merged into primary", opIndex, op.primary, warnings);
     }
     try {
-      const parsedSec = parseAssetRef(secRef);
+      const parsedSec = parseStoredRef(secRef);
       await deleteAssetFromSource(target.source, target.config, parsedSec);
       markJournalCompleted(ctx.txn, secRef);
     } catch (e) {
@@ -2140,7 +2142,7 @@ export async function handleDeleteOp(
   }
 
   try {
-    const parsedRef = parseAssetRef(op.ref);
+    const parsedRef = parseStoredRef(op.ref);
     await deleteAssetFromSource(target.source, target.config, parsedRef);
     markJournalCompleted(ctx.txn, op.ref);
     counts.deleted++;
@@ -2198,7 +2200,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     .replace(/^-|-$/g, "")
     .toLowerCase();
   const knowledgeRef = `knowledge:${slug}`;
-  parseAssetRef(knowledgeRef);
+  parseStoredRef(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef) {
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
@@ -2212,7 +2214,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
   }
 
   // Idempotency: check if knowledge asset already exists
-  const parsedKnowledgeRef = parseAssetRef(knowledgeRef);
+  const parsedKnowledgeRef = parseStoredRef(knowledgeRef);
   const destPath = path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`);
   if (fs.existsSync(destPath)) {
     warnings.push(`Skipping promote: ${knowledgeRef} already exists in source`);

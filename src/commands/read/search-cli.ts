@@ -186,7 +186,7 @@ export const showCommand = defineJsonCommand({
   async run({ args }) {
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
     // not a typed asset ref — skip ref validation and let akmShowUnified
-    // direct-read it. (`parseAssetRef` would reject the non-type `meta`.)
+    // direct-read it. (the ref parser would reject the non-type `meta`.)
     if (!parseMetaRef(args.ref)) parseRefInput(args.ref);
     // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
     // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`

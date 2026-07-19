@@ -16,7 +16,6 @@
 
 import fs from "node:fs";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -27,6 +26,7 @@ import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -255,9 +255,9 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const expectedRef = `${options.type}:${options.name}`;
   let ref = expectedRef;
   if (payload.ref) {
-    let parsedRef: ReturnType<typeof parseRefInput>;
+    let parsedRef: ReturnType<typeof parseStoredRef>;
     try {
-      parsedRef = parseRefInput(payload.ref);
+      parsedRef = parseStoredRef(payload.ref);
     } catch (err) {
       return {
         schemaVersion: 2,

@@ -28,21 +28,18 @@
 //   - non-existent refs
 //   - script type (unresolvable by design — both must return false)
 //
-// As of 0.9 the type alternation in `REF_RE` and the path mapping in
-// `refToRelPath` are DERIVED FROM THE PLACEMENT SPECS (`placementTypes()` /
-// `assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
-// hand-encoded, so they can no longer drift from the placement layer. The
-// previously hand-listed `vault` type was removed in 0.9 (replaced by
-// `env`); `vault:` refs are therefore no longer matched here. `env:`/`secret:`
-// refs are now matched and path-resolved. `script` stays unresolvable and
-// `task` keeps its legacy `.md` resolution (see refToRelPath for both).
+// As of 0.9 the path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
+// SPECS (`assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
+// hand-encoded, so it can no longer drift from the placement layer. `env`/
+// `secret` refs are path-resolved. `script` stays unresolvable and `task`
+// keeps its legacy `.md` resolution (see refToRelPath for both).
 // ----------------------------------------------------------------------------
 
 import fs from "node:fs";
 import path from "node:path";
-import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { BUNDLE_REF_RE } from "../../core/asset/asset-ref";
-import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { findFenceRegions, findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
@@ -141,18 +138,6 @@ function stripFencedBlocks(body: string): string {
 // ── missing-ref helpers ───────────────────────────────────────────────────────
 
 /**
- * Type alternation for {@link REF_RE}, derived from the placement specs at
- * module load so it can never drift from the placement layer. Longest-first
- * ordering is defensive (no built-in type is a prefix of another, but a future
- * custom-registered one might be) so the alternation prefers the longest match.
- * Regex metacharacters are escaped in case a custom type introduces one.
- */
-function buildRefTypeAlternation(): string {
-  const types = [...placementTypes()].sort((a, b) => b.length - a.length);
-  return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-}
-
-/**
  * Body-ref boundary grammar, shared with `akm mv`'s ref-rewrite pattern —
  * `src/commands/mv-cli.ts` imports these constants so the two grammars cannot
  * drift. Any character-class change here retargets both the lint missing-ref
@@ -174,17 +159,6 @@ function buildRefTypeAlternation(): string {
  */
 export const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
 export const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
-
-// Only the TYPE alternation is placement-derived; the surrounding grammar
-// (boundary prefix, capture group, slug charset) is byte-identical to the
-// legacy hand-written pattern, except that the boundary prefix now also
-// admits `[`. Deriving the types from `placementTypes()` means `env`/`secret`
-// (added in 0.9) are now matched, and the removed `vault` type is not — both
-// follow the placement layer automatically.
-const REF_RE = new RegExp(
-  `(?:^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((${buildRefTypeAlternation()}):${REF_SLUG_CHAR_CLASS_SRC}+)`,
-  "gm",
-);
 
 /**
  * Map from ref type to relative path pattern within stashRoot. Returns null to
@@ -314,44 +288,12 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 }
 
 /**
- * F5: delete — legacy `[local//]type:name` body-ref recognition (pre-0.9.0
- * grammar). Byte-identical to the pre-flip scan: strips a leading `local//`,
- * skips any other origin prefix, and resolves the `type`/`name` pair through the
- * shared existence check. After F5 the prose scan keeps only the
- * {@link scanBundleRefs} (`BUNDLE_REF_RE`) arm.
- */
-function scanLegacyRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
-  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
-  const re = new RegExp(REF_RE.source, REF_RE.flags);
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = re.exec(scanBody)) !== null) {
-    const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
-    if (fullRef.includes("$(") || fullRef.includes("${")) continue; // shell var
-    if (fullRef.includes("::")) continue; // ACP type notation agent::Type
-
-    let ref = fullRef;
-    if (ref.startsWith("local//")) {
-      ref = ref.slice("local//".length);
-    } else if (fullRef.includes("//")) {
-      continue; // remote origin prefix (npm:, github:, owner/repo//) — skip
-    }
-
-    const colonIdx = ref.indexOf(":");
-    if (colonIdx === -1) continue;
-    const relPath = localRefMissingRelPath(ref.slice(0, colonIdx), ref.slice(colonIdx + 1), allRoots);
-    if (relPath !== null) missing.push({ ref: fullRef, resolvedRelPath: relPath });
-  }
-  return missing;
-}
-
-/**
  * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
  * (`BUNDLE_REF_RE`, the anchored prose form — spec §11.1 / ref-grammar decision
  * D-R3). The conceptId is reverse-translated to its legacy `type`/`name` via the
- * D-R2 static table (`conceptIdToLegacy`) so the SAME on-disk existence check
- * applies; a conceptId whose leading segment names no known stash-subdir is not
- * a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
+ * D-R2 static table (`typeNameFromConceptId`) so the SAME on-disk existence
+ * check applies; a conceptId whose leading segment names no known stash-subdir
+ * is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
  */
 function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -378,7 +320,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
  */
 function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
   const conceptId = rawConceptId.split("#", 1)[0];
-  const legacy = conceptIdToLegacy(conceptId);
+  const legacy = typeNameFromConceptId(conceptId);
   if (legacy === undefined) return null; // foreign type / not a local asset ref
   return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
 }
@@ -386,11 +328,10 @@ function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | 
 /**
  * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
  * PROSE body that does not resolve to a real file under any of the provided
- * stash roots. Recognizes BOTH the legacy `type:name` grammar
- * ({@link scanLegacyRefs}, `// F5: delete`) and the 0.9.0 fully-qualified
- * `bundle//conceptId` grammar ({@link scanBundleRefs}). Bare short conceptIds
- * are NOT refs in prose (D-R3) — those are recognized only in the ref-list
- * channels ({@link checkMissingRefsInList}).
+ * stash roots. Recognizes the 0.9.0 fully-qualified `bundle//conceptId` grammar
+ * ({@link scanBundleRefs}). Bare short conceptIds are NOT refs in prose (D-R3) —
+ * those are recognized only in the ref-list channels
+ * ({@link checkMissingRefsInList}).
  */
 function checkMissingRefs(
   body: string,
@@ -400,7 +341,7 @@ function checkMissingRefs(
   const allRoots = [stashRoot, ...extraStashRoots];
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
   const scanBody = stripFencedBlocks(body);
-  return dedupeMissing([...scanLegacyRefs(scanBody, allRoots), ...scanBundleRefs(scanBody, allRoots)]);
+  return dedupeMissing(scanBundleRefs(scanBody, allRoots));
 }
 
 /**
@@ -410,7 +351,6 @@ function checkMissingRefs(
  * IS a ref here (the value's whole purpose is to name one asset), so the flipped
  * short-conceptId frontmatter the 0.9.0 output emits is no longer invisible.
  * Recognizes, per value:
- *   - legacy `[local//]type:name`               (`// F5: delete`);
  *   - fully-qualified `bundle//conceptId`;
  *   - bare short `conceptId` (`<stash-subdir>/<name>`).
  */
@@ -426,33 +366,17 @@ function checkMissingRefsInList(
     if (!value || value.includes("$(") || value.includes("${") || value.includes("::")) continue;
     const boundary = value.indexOf("//");
     if (boundary >= 0) {
-      // Qualified: `local//type:name` (legacy) or `bundle//conceptId` (0.9.0).
+      // Qualified: `bundle//conceptId` (0.9.0). A colon in the tail marks a
+      // legacy/remote `origin//type:name` — not the new grammar, so skip it.
       const tail = value.slice(boundary + 2);
-      const prefix = value.slice(0, boundary);
-      if (prefix === "local") {
-        // F5: delete — legacy `local//type:name`.
-        const colon = tail.indexOf(":");
-        if (colon === -1) continue;
-        const rel = localRefMissingRelPath(tail.slice(0, colon), tail.slice(colon + 1), allRoots);
-        if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-      } else if (tail.includes(":")) {
-        continue; // remote origin `origin//type:name` — skip (as body scan does)
-      } else {
-        const rel = classifyConceptRef(tail, allRoots);
-        if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-      }
+      if (tail.includes(":")) continue;
+      const rel = classifyConceptRef(tail, allRoots);
+      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
       continue;
     }
-    // Un-prefixed: legacy bare `type:name`, or a 0.9.0 short `conceptId`.
-    const colon = value.indexOf(":");
-    if (colon > 0) {
-      // F5: delete — legacy bare `type:name`.
-      const rel = localRefMissingRelPath(value.slice(0, colon), value.slice(colon + 1), allRoots);
-      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-    } else {
-      const rel = classifyConceptRef(value, allRoots);
-      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-    }
+    // Un-prefixed: a 0.9.0 short `conceptId`.
+    const rel = classifyConceptRef(value, allRoots);
+    if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
   }
   return dedupeMissing(missing);
 }

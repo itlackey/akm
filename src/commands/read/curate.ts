@@ -16,7 +16,6 @@
  */
 
 import fs from "node:fs";
-import { refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
@@ -176,16 +175,9 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
           // a rebuild via the id join.
           const entryId = findEntryIdByRef(db, item.ref);
           const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
-          let entryRef: string;
-          if (itemRef !== null) {
-            entryRef = itemRef;
-          } else {
-            // F5: delete — unresolved / NULL-item_ref straggler: keep the legacy
-            // spelling so the dual-arm retrieval-count reader still sees it.
-            const parsed = parseRefInput(item.ref);
-            const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
-            entryRef = refToString({ ...parsed, ...(parsed.origin || !itemOrigin ? {} : { origin: itemOrigin }) });
-          }
+          // Post-flip the resolved row carries `item_ref`; fall back to the
+          // item's own (new-grammar) ref for an unresolved straggler.
+          const entryRef = itemRef ?? item.ref;
           insertUsageEvent(db, {
             event_type: "curate",
             query,
@@ -576,8 +568,8 @@ function computeCurateTypeNudge(type: string, intent: CurateIntent): number {
 function getCurateFamily(ref: string): CurateFamily | undefined {
   try {
     // F4b: `ref` is a search-hit ref in the 0.9.0 conceptId grammar — parse via
-    // the dual-grammar parseRefInput so skill/reference family grouping still
-    // recognizes it (parseAssetRef would throw on the new spelling).
+    // the new-grammar `parseRefInput` so skill/reference family grouping still
+    // recognizes it.
     const parsed = parseRefInput(ref);
     if (parsed.type === "skill") {
       return { key: parsed.name, role: "root" };

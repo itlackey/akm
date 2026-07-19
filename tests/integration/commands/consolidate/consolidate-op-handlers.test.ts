@@ -22,8 +22,8 @@ import type {
   ConsolidatePromoteOp,
   MemoryEntry,
 } from "../../../../src/commands/improve/consolidate/types";
-import { parseAssetRef, refToString } from "../../../../src/core/asset/asset-ref";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
+import { parseAssetRef, refToString } from "../../../../src/migrate/legacy-ref-grammar";
 
 // Direct unit tests for the op-handlers extracted out of `akmConsolidateInner`'s
 // former ~600-LOC op-execution loop. These pin the deterministic pre-flight

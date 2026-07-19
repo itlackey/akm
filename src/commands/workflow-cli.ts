@@ -96,7 +96,7 @@ const workflowNextCommand = defineJsonCommand({
     const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
     // If the target looks like a UUID-style run id (no `:` and matches the
     // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
-    // error before parseAssetRef gets to throw an unhelpful ref-parse error.
+    // error before the ref parser throws an unhelpful ref-parse error.
     if (looksLikeWorkflowRunId(args.target)) {
       const { hasWorkflowRun } = await import("../workflows/runtime/runs.js");
       if (!(await hasWorkflowRun(args.target))) {
@@ -116,7 +116,7 @@ const workflowNextCommand = defineJsonCommand({
  * Heuristic: a workflow run id is a UUID-shaped or hex-id-shaped string with
  * no `:` separator (refs always contain a colon: `workflow:<name>` or
  * `<origin>//workflow:<name>`). When this matches we can give a much better
- * error than parseAssetRef's "Invalid asset type" failure.
+ * error than the ref parser's "Invalid asset type" failure.
  */
 function looksLikeWorkflowRunId(target: string): boolean {
   if (target.includes(":")) return false;

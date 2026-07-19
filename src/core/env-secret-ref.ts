@@ -15,9 +15,9 @@
 
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
+import type { AssetRef } from "../migrate/legacy-ref-grammar";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName } from "./asset/asset-placement";
-import type { AssetRef } from "./asset/asset-ref";
 import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
@@ -26,11 +26,11 @@ import { NotFoundError, UsageError } from "./errors";
 export type { IndexSearchSource };
 
 export function parseEnvRef(ref: string): AssetRef {
-  // Accept a bare env name (`prod`, `sub/prod`), a legacy `env:`/`environment:`
-  // ref, or the new-grammar `[bundle//]env/name` conceptId. A bare name's
-  // leading segment maps to no asset type, so it is qualified with `env:`;
-  // anything already a full ref (either grammar) is parsed as-is.
-  return parseRefInput(isFullRefInput(ref) ? ref : `env:${ref}`);
+  // Accept a bare env name (`prod`, `sub/prod`) or the new-grammar
+  // `[bundle//]env/name` conceptId. A bare name's leading segment maps to no
+  // asset type, so it is qualified with the `env/` conceptId prefix; anything
+  // already a full new-grammar ref is parsed as-is.
+  return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
 }
 
 export function findEnvSource(origin: string | undefined): IndexSearchSource {
@@ -84,8 +84,9 @@ export function resolveEnvPath(ref: string): {
 }
 
 export function parseSecretRef(ref: string): AssetRef {
-  // Same bare-name-vs-full-ref rule as parseEnvRef, defaulting to `secret:`.
-  return parseRefInput(isFullRefInput(ref) ? ref : `secret:${ref}`);
+  // Same bare-name-vs-full-ref rule as parseEnvRef; a bare name is qualified
+  // with the `secrets/` conceptId prefix (secret's stash subdir).
+  return parseRefInput(isFullRefInput(ref) ? ref : `secrets/${ref}`);
 }
 
 export function makeSecretRef(name: string, source?: IndexSearchSource): string {

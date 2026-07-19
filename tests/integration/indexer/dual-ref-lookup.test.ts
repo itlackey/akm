@@ -3,15 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk-5 flip F1 (ref-grammar decision D-R1/D-R4): the repository readers are
- * dual-keyed on `item_ref`. This proves — over a REAL indexed fixture — that a
- * new-grammar `bundle//conceptId` ref (and the short conceptId form, both
- * directly and via `resolveRef`) finds the SAME `entries` row the pre-flip
- * `type:name` lookup finds, and that a NULL-`item_ref` row stays findable via
- * the legacy fallback (never dropped).
- *
- * ADDITIVE-stage coverage: the old suite never exercises the new grammar, so
- * every assertion here is net-new.
+ * Post-F5 ref lookup (ref-grammar decision D-R1/D-R4): the repository readers
+ * key on the canonical stored `item_ref`. This proves — over a REAL indexed
+ * fixture — that a new-grammar `bundle//conceptId` ref (and the short conceptId
+ * form, both directly and via `resolveRef`) finds the intended `entries` row,
+ * and that a NULL-`item_ref` row is NOT findable by ref (it heals on the next
+ * full index) now that the transitional legacy `entry_key` fallback is gone.
  */
 
 import { Database } from "bun:sqlite";
@@ -155,21 +152,20 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     }
   });
 
-  test("getEntryByRef accepts both the ref-shaped and (type, name) forms", () => {
+  test("getEntryByRef resolves a new-grammar ref (short and qualified)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const legacyId = findEntryIdByRef(db, "memories/first");
-      expect(getEntryByRef(db, "memory", "first")).toEqual({ id: legacyId as number });
-      expect(getEntryByRef(db, `${bundle}//memories/first`)).toEqual({ id: legacyId as number });
-      expect(getEntryByRef(db, "memories/first")).toEqual({ id: legacyId as number });
+      const targetId = findEntryIdByRef(db, "memories/first");
+      expect(getEntryByRef(db, `${bundle}//memories/first`)).toEqual({ id: targetId as number });
+      expect(getEntryByRef(db, "memories/first")).toEqual({ id: targetId as number });
       expect(getEntryByRef(db, "memories/does-not-exist")).toBeNull();
     } finally {
       db.close();
     }
   });
 
-  test("NULL-item_ref rows stay findable via BOTH grammars (legacy fallback)", () => {
+  test("a NULL-item_ref row is no longer findable by ref (heals on next index)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
@@ -181,11 +177,10 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
         targetId as number,
       );
 
-      // Legacy lookup still finds it (entry_key intact).
-      expect(findEntryIdByRef(db, "memories/second"), "legacy after NULL item_ref").toBe(targetId);
-      // New-grammar lookup finds it via the legacy fallback (item_ref is NULL).
-      expect(findEntryIdByRef(db, `${bundle}//memories/second`), "qualified new ref via fallback").toBe(targetId);
-      expect(findEntryIdByRef(db, "memories/second"), "short new ref via fallback").toBe(targetId);
+      // With the transitional legacy `entry_key` fallback gone, an item_ref-only
+      // lookup no longer resolves the row until the next full index re-writes it.
+      expect(findEntryIdByRef(db, `${bundle}//memories/second`), "qualified new ref").toBeUndefined();
+      expect(findEntryIdByRef(db, "memories/second"), "short new ref").toBeUndefined();
     } finally {
       db.close();
     }

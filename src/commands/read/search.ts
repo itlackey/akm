@@ -13,8 +13,6 @@
  * Provider `search()` methods do not exist.
  */
 
-import { refToString } from "../../core/asset/asset-ref";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -290,12 +288,6 @@ function resolveEntryIds(
         const itemRef = getItemRefById(db, entryId);
         if (itemRef !== null) {
           results.push({ entryId, ref: itemRef });
-        } else {
-          // F5: delete — NULL-item_ref write-back straggler (healed on the next
-          // full index): keep the legacy spelling so the dual-arm readers see it.
-          const parsed = parseRefInput(hit.ref);
-          const origin = parsed.origin ?? hit.origin ?? undefined;
-          results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
         }
       }
     } catch {

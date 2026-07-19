@@ -38,7 +38,7 @@ import {
   placementSpecFor,
   placementTypes,
 } from "../../../src/core/asset/asset-placement";
-import { makeAssetRef, parseAssetRef } from "../../../src/core/asset/asset-ref";
+import { makeAssetRef, parseAssetRef } from "../../../src/migrate/legacy-ref-grammar";
 
 /** The live per-type placement specs, keyed by type (chunk-3 replaced the ambient `ASSET_SPECS` map). */
 const ASSET_SPECS: Record<string, AssetSpec> = {};

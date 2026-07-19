@@ -14,7 +14,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { assetPathForName } from "../../core/asset/asset-placement";
-import type { AssetRef } from "../../core/asset/asset-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -25,6 +24,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
+import type { AssetRef } from "../../migrate/legacy-ref-grammar";
 import { resolveAssetPath } from "../../sources/resolve";
 import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { findBareAkmExecutableIndex } from "../../tasks/command-executable";

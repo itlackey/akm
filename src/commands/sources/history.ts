@@ -161,7 +161,7 @@ function isoToSqliteTimestamp(ts: string): string {
 
 /**
  * Read mutation/usage history. When `ref` is provided, results are filtered to
- * that asset (validated via `parseAssetRef`). Always returns chronological
+ * that asset (validated via the ref parser). Always returns chronological
  * order (oldest first) so consumers can display a lifecycle trail.
  *
  * When `includeProposals` is true, proposal lifecycle events (`promoted`,

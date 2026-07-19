@@ -18,7 +18,7 @@
  *     step (runner/model, `fanOut.over` expression, route table).
  */
 
-import { makeAssetRef } from "../core/asset/asset-ref";
+import { displayRef } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
@@ -66,7 +66,7 @@ export const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const doc = loadDocument(ctx);
-    const ref = makeAssetRef("workflow", name, ctx.origin);
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     return {
       type: "workflow",
       name,
@@ -101,7 +101,7 @@ export const workflowProgramRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const program = loadProgram(ctx);
-    const ref = makeAssetRef("workflow", name, ctx.origin);
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     const parameters = projectProgramParameters(program);
     return {
       type: "workflow",

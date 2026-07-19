@@ -91,7 +91,7 @@ function resolveSearchHitRef(entry: IndexDocument, refName: string, source?: Sea
   // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the hit's
   // user-facing ref (short conceptId in the primary bundle, `bundle//conceptId`
   // for a slug-clean non-default source). `displayRef` prefers the row's stored
-  // conceptId and derives `stashDir/name` (== the old makeAssetRef body) when it
+  // conceptId and derives `stashDir/name` (== the old `stashDir/name` body) when it
   // is absent, so this is a pure ref-spelling change over the old output.
   return displayRef({
     type: entry.type,

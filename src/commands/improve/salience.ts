@@ -48,7 +48,6 @@
  */
 
 import path from "node:path";
-import { makeAssetRef } from "../../core/asset/asset-ref";
 import type { Database, Database as IndexDatabase } from "../../storage/database";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
@@ -647,7 +646,7 @@ export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashD
   const idToRef = new Map<number, string>();
   for (const indexed of allEntries) {
     if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
-    const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+    const ref = `${indexed.entry.type}:${indexed.entry.name}`; // durable salience key (legacy spelling, Chunk-8 re-key)
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }
 

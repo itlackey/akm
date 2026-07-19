@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
@@ -746,7 +745,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
     const signalKey = normalizeSignal(firstNonEmpty([title, description, searchHints[0]]));
 
     records.push({
-      ref: makeAssetRef("memory", name),
+      ref: `memory:${name}`,
       name,
       filePath,
       parentRef,

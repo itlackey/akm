@@ -17,11 +17,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import type { AssetRef } from "../../src/core/asset/asset-ref";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { findAbsoluteHomePaths, type WriteTargetSource, writeAssetToSource } from "../../src/core/write-source";
+import type { AssetRef } from "../../src/migrate/legacy-ref-grammar";
 
 describe("findAbsoluteHomePaths", () => {
   test("flags an absolute Linux home path", () => {

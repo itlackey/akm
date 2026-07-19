@@ -25,19 +25,19 @@
  * installation list and hand it in. Keeping the resolver free of I/O is what
  * lets it stay out of every import cycle.
  *
- * ── Dual-grammar input shim (TRANSIENT — F5 deletes it) ──
+ * ── Input-boundary parser (new-grammar only) ──
  *
- * During the Chunk-5 flip the repository readers accept BOTH the new
- * `[bundle//]conceptId` grammar and the pre-0.9.0 `[origin//]type:name` grammar
- * at the input edge. {@link classifyRefGrammar} is the clean discriminator and
- * {@link legacyConceptId} is the D-R2 static-table translation. Every legacy
- * branch is marked `F5: delete` — it all disappears once the codemod (F2/F3)
- * re-keys the test literals and the old grammar is removed (F5).
+ * {@link parseRefInput} parses a RAW user/CLI/API ref in the 0.9.0
+ * `[bundle//]conceptId` grammar and returns today's {@link AssetRef} shape via
+ * the permanent D-R2 reverse table {@link typeNameFromConceptId}. STORED durable
+ * refs keep the pre-0.9.0 spelling until the Chunk-8 re-key and are parsed by
+ * `parseStoredRef` (src/migrate/legacy-ref-grammar.ts), NOT here.
  */
 
+import type { AssetRef } from "../../migrate/legacy-ref-grammar";
 import { NotFoundError, UsageError } from "../errors";
 import { stashDirFor, typeForStashDir } from "./asset-placement";
-import { type AssetRef, type BundleRef, isBundleSlug, makeAssetRef, parseAssetRef, parseBundleRef } from "./asset-ref";
+import { type BundleRef, isBundleSlug, parseBundleRef } from "./asset-ref";
 
 // ── Resolution surface (D-R4) ───────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ export interface DisplayRefItem {
  * D-R2 conceptId derivation from a legacy `type`/`name` pair
  * (`stashDirFor(type)/name`; bare name for a foreign type with no placement
  * stash-subdir). Kept self-contained so {@link displayRef} — a PERMANENT display
- * rule — does not depend on the `F5: delete` legacy shims below.
+ * rule — does not depend on the transient legacy shims.
  */
 function conceptIdFromTypeName(type: string, name: string): string {
   const stashDir = stashDirFor(type);
@@ -200,57 +200,13 @@ export function displayRef(item: DisplayRefItem, defaultBundleId?: string): stri
   // Slug-clean non-default bundle (e.g. a named filesystem source) → the new
   // fully-qualified grammar.
   if (isBundleSlug(bundleId)) return `${bundleId}//${conceptId}`;
-  // Registry origin whose registryId is not a legal bundle slug (`:` / `.` / `/`).
-  return makeAssetRef(item.type, item.name, bundleId); // Chunk-8: config bundle key
+  // Registry origin whose registryId is not a legal bundle slug (`:` / `.` / `/`)
+  // keeps the legacy `origin//type:name` display (Chunk-8: config bundle key).
+  // Index item names are already canonical, so the legacy spelling is inline.
+  return `${bundleId}//${item.type}:${item.name}`;
 }
 
-// ── Dual-grammar input dispatch (TRANSIENT SHIM — F5 deletes all of this) ─────
-
-/** Which ref grammar a raw input string is written in. */
-export type RefGrammar = "bundle" | "legacy";
-
-/**
- * Classify a raw ref string as the new `[bundle//]conceptId` grammar or the
- * pre-0.9.0 `[origin//]type:name` grammar (D-R5 charset dispatch).
- *
- * NEW grammar iff EITHER:
- *   - it has a `prefix//tail` split whose `prefix` is a LEGAL bundle slug (no
- *     `/ : . #` or whitespace) AND `tail` carries no `type:`-style colon; OR
- *   - it is a bare conceptId (no `//`, no `:`).
- *
- * LEGACY otherwise. This cleanly routes the tricky both-`//`-and-`:` shapes to
- * legacy: `owner/repo//skill:x` and `npm:@scope/pkg//skill:x` have ILLEGAL
- * bundle-slug prefixes (they contain `/`, `:`, or `.`), and `local//skill:x`
- * has a legal prefix but a colon in the tail — all three land as legacy.
- *
- * F5: delete — after the flip every ref is the new grammar and this dispatch,
- * with its whole legacy arm, is removed.
- */
-export function classifyRefGrammar(raw: string): RefGrammar {
-  const trimmed = raw.trim();
-  const boundary = trimmed.indexOf("//");
-  if (boundary >= 0) {
-    const prefix = trimmed.slice(0, boundary);
-    const tail = trimmed.slice(boundary + 2);
-    // Legal slug prefix + colon-free tail ⇒ new grammar; anything else legacy.
-    return isBundleSlug(prefix) && !tail.includes(":") ? "bundle" : "legacy";
-  }
-  // No `//`: a bare conceptId has no colon; a `type:name` legacy ref does.
-  return trimmed.includes(":") ? "legacy" : "bundle";
-}
-
-/**
- * D-R2 static-table translation of a legacy `type`/`name` pair to its qualified
- * conceptId `<stash-subdir>/<name>` (bare-name fallback for a foreign type with
- * no placement stash-subdir — the same edge the indexer's `item_ref` writer
- * handles). Mirrors `indexer.ts`'s conceptId derivation exactly.
- *
- * F5: delete — the codemod re-keys `type:name` literals to conceptIds directly.
- */
-export function legacyConceptId(type: string, name: string): string {
-  const stashDir = stashDirFor(type);
-  return stashDir !== undefined ? `${stashDir}/${name}` : name;
-}
+// ── D-R2 reverse table + input-boundary parser (new grammar only) ────────────
 
 /** The legacy `type`/`name` a qualified conceptId maps back to, or `undefined`. */
 export interface LegacyRefParts {
@@ -259,16 +215,14 @@ export interface LegacyRefParts {
 }
 
 /**
- * Reverse of {@link legacyConceptId}: split a qualified conceptId
- * (`<stash-subdir>/<name>`) back to its legacy `type`/`name`, or `undefined`
- * when the leading segment is not a known stash subdir (a bare-name conceptId
- * from a foreign type — no legacy predicate applies).
- *
- * F5: delete — the dual-keyed readers use this only to keep NULL-`item_ref`
- * rows findable by a new-grammar ref; after the flip every row carries
- * `item_ref` and the legacy fallback is gone.
+ * Split a qualified conceptId (`<stash-subdir>/<name>`) back to its legacy
+ * `type`/`name`, or `undefined` when the leading segment is not a known stash
+ * subdir (a bare-name conceptId from a foreign type — no legacy predicate
+ * applies). The PERMANENT D-R2 reverse table: the input boundary uses it to map
+ * a new-grammar conceptId onto today's {@link AssetRef} shape. (The migrate home
+ * keeps a private transient copy for stored-ref parsing.)
  */
-export function conceptIdToLegacy(conceptId: string): LegacyRefParts | undefined {
+export function typeNameFromConceptId(conceptId: string): LegacyRefParts | undefined {
   const slash = conceptId.indexOf("/");
   if (slash <= 0) return undefined;
   const type = typeForStashDir(conceptId.slice(0, slash));
@@ -277,64 +231,25 @@ export function conceptIdToLegacy(conceptId: string): LegacyRefParts | undefined
 }
 
 /**
- * Translate a raw legacy `[origin//]type:name` ref to its {@link BundleRef}
- * spelling: conceptId via {@link legacyConceptId}, and `bundle` from the origin
- * when the origin is a legal bundle slug (a `registryId`, D-R5 rule 2). A
- * `local`/`stash`/path origin is not a stored bundle id, so it stays short
- * (`bundle` undefined) for the caller to resolve.
- *
- * F5: delete.
- */
-export function legacyRefToBundleRef(raw: string): BundleRef {
-  const parsed = parseAssetRef(raw);
-  const conceptId = legacyConceptId(parsed.type, parsed.name);
-  const bundle =
-    parsed.origin !== undefined && parsed.origin !== "local" && parsed.origin !== "stash" && isBundleSlug(parsed.origin)
-      ? parsed.origin
-      : undefined;
-  return { bundle, conceptId };
-}
-
-// ── Input-boundary parser (TRANSIENT SHIM — F5 deletes it) ───────────────────
-
-/**
- * Parse a RAW user / CLI / API ref string that may be written in EITHER the new
- * `[bundle//]conceptId` grammar OR the pre-0.9.0 `[origin//]type:name` grammar,
- * returning it in today's {@link AssetRef} value-object shape (Chunk-5 flip
- * stage F1b, ref-grammar decision D-R1 / D-R4).
- *
- * This is the ADDITIVE bridge that lets an input boundary accept both grammars
- * without changing what its downstream consumers see: every existing call site
- * that parses a user-typed ref and then reads `{ type, name, origin }` keeps
- * working, and F2's re-keyed test literals (`knowledge/guide`,
- * `bundle//knowledge/guide`) no longer THROW at the parse edge before reaching
- * the F1 dual-keyed readers.
+ * Parse a RAW user / CLI / API ref string in the 0.9.0 `[bundle//]conceptId`
+ * grammar, returning it in today's {@link AssetRef} value-object shape
+ * (ref-grammar decision D-R1 / D-R4). Input boundaries are NEW-GRAMMAR ONLY: a
+ * legacy `type:name` input now fails as an unknown-conceptId not-found. STORED
+ * durable refs keep the legacy spelling until the Chunk-8 re-key and are parsed
+ * by `parseStoredRef` (src/migrate/legacy-ref-grammar.ts) instead.
  *
  * Mapping (new grammar → {@link AssetRef}):
- *   - `conceptId` → `type`/`name` via {@link conceptIdToLegacy} (the D-R2 static
- *     stash-subdir table). A conceptId whose leading segment is not a known
- *     stash subdir has no legacy `type` predicate — that is the same outcome an
- *     unknown asset type produces today (a not-found), so we raise a
- *     {@link NotFoundError} naming the ref rather than inventing a bare-name row.
- *   - `bundle` → `origin`. A new-grammar bundle slug is a registryId-shaped id
- *     by construction (D-R5: the workspace bundle id is `registryId` /
- *     `slugForPath`, both legal origin tokens), so it flows straight into the
- *     legacy origin channel that `resolveSourcesForOrigin` already matches on
- *     `registryId`. The SHORT form (no bundle) leaves `origin` undefined =
- *     search-all-sources, matching D-R4's defaultBundle-then-priority order.
- *   - `#fragment` → rejected. No input boundary consumes an export fragment
- *     today; a clear usage error beats silently folding it into the name.
- *
- * Legacy input is handed to {@link parseAssetRef} unchanged (byte-identical) —
- * the existing suite is the proof.
- *
- * F5: delete — once F2/F3 re-key the literals and the old grammar is removed,
- * boundaries parse `parseBundleRef` directly.
+ *   - `conceptId` → `type`/`name` via {@link typeNameFromConceptId} (the D-R2
+ *     static stash-subdir table). A conceptId whose leading segment is not a
+ *     known stash subdir has no legacy `type` predicate — the same outcome an
+ *     unknown asset type produces today (a not-found).
+ *   - `bundle`    → `origin`. A new-grammar bundle slug is a registryId-shaped
+ *     id by construction, so it flows straight into the legacy origin channel
+ *     that `resolveSourcesForOrigin` matches on `registryId`. The SHORT form (no
+ *     bundle) leaves `origin` undefined = search-all-sources.
+ *   - `#fragment` → rejected. No input boundary consumes an export fragment.
  */
 export function parseRefInput(raw: string): AssetRef {
-  if (classifyRefGrammar(raw) === "legacy") {
-    return parseAssetRef(raw);
-  }
   const ref = parseBundleRef(raw);
   if (ref.fragment !== undefined) {
     throw new UsageError(
@@ -342,7 +257,7 @@ export function parseRefInput(raw: string): AssetRef {
       "INVALID_FLAG_VALUE",
     );
   }
-  const legacy = conceptIdToLegacy(ref.conceptId);
+  const legacy = typeNameFromConceptId(ref.conceptId);
   if (legacy === undefined) {
     throw new NotFoundError(
       `Unrecognized asset ref "${raw.trim()}": conceptId "${ref.conceptId}" has no known asset-type prefix.`,
@@ -353,24 +268,20 @@ export function parseRefInput(raw: string): AssetRef {
 }
 
 /**
- * Does `raw` already read as a COMPLETE asset ref (in either grammar), as
- * opposed to a bare asset name that a boundary would prefix with a default type
- * (the `env`/`secret`/`akm mv` "bare name" convenience)?
+ * Does `raw` already read as a COMPLETE new-grammar asset ref, as opposed to a
+ * bare asset name that a boundary would prefix with a default type (the
+ * `env`/`secret`/`akm mv` "bare name" convenience)?
  *
- * True when `raw` is a legacy `[origin//]type:name` (it carries a `type:`
- * colon) OR a new-grammar `[bundle//]conceptId` whose conceptId leads with a
- * KNOWN stash subdir (`conceptIdToLegacy` resolves it). A bare name like
+ * True when `raw` is a `[bundle//]conceptId` whose conceptId leads with a KNOWN
+ * stash subdir ({@link typeNameFromConceptId} resolves it). A bare name like
  * `prod` or `projectA/new-note` is neither — its leading segment maps to no
  * type — so it stays a bare name for the caller to qualify.
- *
- * F5: delete — folds into each caller once the old grammar is gone.
  */
 export function isFullRefInput(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
-  if (classifyRefGrammar(trimmed) === "legacy") return true;
   try {
-    return conceptIdToLegacy(parseBundleRef(trimmed).conceptId) !== undefined;
+    return typeNameFromConceptId(parseBundleRef(trimmed).conceptId) !== undefined;
   } catch {
     return false;
   }

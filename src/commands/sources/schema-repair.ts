@@ -16,7 +16,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { authoringRulesForType } from "../../core/authoring-rules";
@@ -26,6 +25,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { info } from "../../core/warn";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { createProposal, isProposalSkipped } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ export async function runSchemaRepairPass(
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
-      const assetType = parseAssetRef(failure.ref).type;
+      const assetType = parseStoredRef(failure.ref).type;
       const authoringRules = authoringRulesForType(assetType);
       const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       const llmResponse = await chatFn(llmConfig, [
@@ -265,7 +265,7 @@ export async function runSchemaRepairPass(
 
 function defaultIsLessonCandidate(ref: string): boolean {
   try {
-    const parsed = parseAssetRef(ref);
+    const parsed = parseStoredRef(ref);
     return parsed.type === "lesson";
   } catch {
     return false;

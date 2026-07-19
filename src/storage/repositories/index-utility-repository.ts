@@ -12,9 +12,8 @@
  */
 
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
 import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
+import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, ScopedUtilityRow, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
@@ -164,19 +163,15 @@ function bareRef(ref: string): string {
  * `…//memory:foo` AND re-keyed `…//memories/foo`). Ranking is invariant to the
  * durable spelling by construction.
  *
- * F5: delete — after the re-key every stored row is conceptId-spelled and only
- * the conceptId candidate remains.
+ * Chunk-8: after the §11.4 state.db re-key every stored row is conceptId-spelled
+ * and only the conceptId candidate remains.
  */
 function bareRefCandidates(ref: string): string[] {
   const bare = bareRef(ref.trim());
-  if (classifyRefGrammar(bare) === "bundle") {
-    // conceptId → add its legacy `type:name` sibling.
-    const legacy = conceptIdToLegacy(bare);
-    return legacy ? [bare, `${legacy.type}:${legacy.name}`] : [bare];
-  }
-  // legacy `type:name` → add its conceptId sibling.
+  // `parseStoredRef` accepts either grammar; emit BOTH the legacy `type:name`
+  // and the conceptId siblings so a stored row under either spelling matches.
   try {
-    const parsed = parseAssetRef(bare);
+    const parsed = parseStoredRef(bare);
     const legacy = `${parsed.type}:${parsed.name}`;
     const concept = legacyConceptId(parsed.type, parsed.name);
     return concept === legacy ? [legacy] : [legacy, concept];

@@ -221,7 +221,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // `?? baseName` fallback (metadata.ts `generateMetadata`), so `entry.name`
   // stays the BARE canonical name — never the stash-root-relative path, which
   // would re-embed the `<stash-subdir>/` type prefix and double-prefix every
-  // downstream `makeAssetRef(type, entry.name)` ref (e.g. `skill:skills/x`).
+  // downstream legacy `type:name` ref (e.g. `skill:skills/x`).
   const derived = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
   const canonicalName = derived ?? path.basename(file.absPath).replace(/\.[^./]+$/, "");
   // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling

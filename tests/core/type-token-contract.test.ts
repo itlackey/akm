@@ -23,11 +23,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { parseAssetRef } from "../../src/core/asset/asset-ref";
 import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES, type KnownType } from "../../src/core/recognition-util";
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
 import { validateStashEntry } from "../../src/indexer/passes/metadata";
 import { TYPE_BOOST, typeBoostFor } from "../../src/indexer/search/ranking-contributors";
+import { parseAssetRef } from "../../src/migrate/legacy-ref-grammar";
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 

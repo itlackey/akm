@@ -20,9 +20,8 @@
 import fs from "node:fs";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
-import { refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
@@ -223,7 +222,9 @@ function logShowEvent(
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
   const parsed = parseRefInput(ref);
-  const eventRef = refToString({ ...parsed, ...(parsed.origin || !origin ? {} : { origin }) });
+  // New-grammar display ref: also the lookup key below, which `findEntryIdByRef`
+  // resolves against `item_ref`.
+  const eventRef = displayRef({ type: parsed.type, name: parsed.name, bundleId: parsed.origin ?? origin ?? undefined });
   appendEvent({ eventType: "show", ref: eventRef, metadata: { type: parsed.type, name: parsed.name } });
 
   // Detect if this show is a selection from a recent search result.
@@ -258,9 +259,9 @@ function logShowEvent(
     withIndexDb(
       (db) => {
         const entryId = filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef);
-        // F4c: the DURABLE usage-event key is the resolved entry's fully-qualified
-        // `item_ref`; `eventRef` is only the fallback for a NULL-item_ref straggler
-        // (or an unresolved ref). // F5: delete — eventRef fallback.
+        // The DURABLE usage-event key is the resolved entry's fully-qualified
+        // `item_ref`; the new-grammar `eventRef` is the fallback for an
+        // unresolved / not-yet-indexed show.
         const entryRef = (entryId !== undefined ? getItemRefById(db, entryId) : null) ?? eventRef;
         insertUsageEvent(db, {
           event_type: "show",

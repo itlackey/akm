@@ -11,20 +11,23 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { parseAssetRef } from "../src/core/asset/asset-ref";
 import {
-  classifyRefGrammar,
-  conceptIdToLegacy,
   displayRef,
   isFullRefInput,
-  legacyConceptId,
-  legacyRefToBundleRef,
   parseRefInput,
   type RefContext,
   type RefResolutionBundle,
   resolveRef,
+  typeNameFromConceptId,
 } from "../src/core/asset/resolve-ref";
 import { NotFoundError, UsageError } from "../src/core/errors";
+// The legacy grammar + dual-grammar shims now live in the Chunk-8 migrate home.
+import {
+  classifyRefGrammar,
+  legacyConceptId,
+  legacyRefToBundleRef,
+  parseAssetRef,
+} from "../src/migrate/legacy-ref-grammar";
 
 /** Build a bundle whose membership set is a fixed list of conceptIds. */
 function bundle(id: string, concepts: string[]): RefResolutionBundle {
@@ -147,7 +150,7 @@ describe("classifyRefGrammar", () => {
 
 // ── D-R2 static-table translation ───────────────────────────────────────────
 
-describe("legacyConceptId / conceptIdToLegacy", () => {
+describe("legacyConceptId / typeNameFromConceptId", () => {
   test("type:name → <stash-subdir>/name via the static placement table", () => {
     expect(legacyConceptId("skill", "code-review")).toBe("skills/code-review");
     expect(legacyConceptId("knowledge", "guide")).toBe("knowledge/guide");
@@ -159,15 +162,15 @@ describe("legacyConceptId / conceptIdToLegacy", () => {
     expect(legacyConceptId("madeuptype", "thing")).toBe("thing");
   });
 
-  test("conceptIdToLegacy is the inverse for known stash subdirs", () => {
-    expect(conceptIdToLegacy("skills/code-review")).toEqual({ type: "skill", name: "code-review" });
-    expect(conceptIdToLegacy("scripts/db/migrate/run.sh")).toEqual({ type: "script", name: "db/migrate/run.sh" });
-    expect(conceptIdToLegacy("workflows/release")).toEqual({ type: "workflow", name: "release" });
+  test("typeNameFromConceptId is the inverse for known stash subdirs", () => {
+    expect(typeNameFromConceptId("skills/code-review")).toEqual({ type: "skill", name: "code-review" });
+    expect(typeNameFromConceptId("scripts/db/migrate/run.sh")).toEqual({ type: "script", name: "db/migrate/run.sh" });
+    expect(typeNameFromConceptId("workflows/release")).toEqual({ type: "workflow", name: "release" });
   });
 
-  test("conceptIdToLegacy → undefined for a bare/unknown leading segment", () => {
-    expect(conceptIdToLegacy("no-slash-here")).toBeUndefined();
-    expect(conceptIdToLegacy("notatype/thing")).toBeUndefined();
+  test("typeNameFromConceptId → undefined for a bare/unknown leading segment", () => {
+    expect(typeNameFromConceptId("no-slash-here")).toBeUndefined();
+    expect(typeNameFromConceptId("notatype/thing")).toBeUndefined();
   });
 
   test("legacyRefToBundleRef maps a registryId origin to the bundle slug", () => {
@@ -185,19 +188,6 @@ describe("legacyConceptId / conceptIdToLegacy", () => {
 // ── parseRefInput (F1b input-boundary parser) ───────────────────────────────
 
 describe("parseRefInput", () => {
-  test("legacy grammar → byte-identical to parseAssetRef", () => {
-    for (const raw of [
-      "skill:code-review",
-      "knowledge:guide.md",
-      "script:db/migrate/run.sh",
-      "mycatalog//skill:review",
-      "local//knowledge:auth-flow",
-      "environment:prod", // the `environment` alias of `env`
-    ]) {
-      expect(parseRefInput(raw)).toEqual(parseAssetRef(raw));
-    }
-  });
-
   test("new-grammar bare conceptId → same AssetRef an origin-less type:name yields", () => {
     // The whole point: a re-keyed literal resolves to the SAME value-object the
     // old spelling did, so every downstream consumer is unaffected.
@@ -234,9 +224,7 @@ describe("parseRefInput", () => {
 // ── isFullRefInput (bare-name-vs-typed-ref disambiguation) ──────────────────
 
 describe("isFullRefInput", () => {
-  test("legacy type:name and new-grammar typed conceptId → full ref", () => {
-    expect(isFullRefInput("env:prod")).toBe(true);
-    expect(isFullRefInput("mycatalog//env:prod")).toBe(true);
+  test("new-grammar typed conceptId → full ref", () => {
     expect(isFullRefInput("env/prod")).toBe(true);
     expect(isFullRefInput("mycatalog//env/prod")).toBe(true);
     expect(isFullRefInput("secrets/api-token")).toBe(true);

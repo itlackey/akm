@@ -4,128 +4,6 @@
 
 import path from "node:path";
 import { UsageError } from "../errors";
-import { DEPRECATED_REJECTED_TYPES } from "../recognition-util";
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-export interface AssetRef {
-  /**
-   * Open string token (chunk 1.5, D1.5-1/D1.5-6): any non-empty asset type
-   * is valid ref data EXCEPT `DEPRECATED_REJECTED_TYPES` — foreign/adapter
-   * types round-trip through `parseAssetRef`/`makeAssetRef` unrejected.
-   */
-  type: string;
-  name: string;
-  /**
-   * Where to find this asset.
-   *   - undefined: search all sources (primary → search paths → installed)
-   *   - "local": primary stash only
-   *   - registry ref: e.g. "npm:@scope/pkg", "owner/repo", "github:owner/repo#v1"
-   *   - filesystem path: e.g. "/mnt/shared-stash"
-   */
-  origin?: string;
-}
-
-/** Accepted spelling aliases mapping to a canonical asset type. */
-const TYPE_ALIASES: Record<string, string> = {
-  environment: "env",
-};
-
-// ── Construction ────────────────────────────────────────────────────────────
-
-/**
- * Build a ref string from components.
- *
- * Examples:
- *   makeAssetRef("script", "deploy.sh")
- *     → "script:deploy.sh"
- *   makeAssetRef("script", "deploy.sh", "npm:@scope/pkg")
- *     → "npm:@scope/pkg//script:deploy.sh"
- *   makeAssetRef("skill", "code-review", "local")
- *     → "local//skill:code-review"
- *   makeAssetRef("script", "db/migrate/run.sh", "owner/repo")
- *     → "owner/repo//script:db/migrate/run.sh"
- */
-export function makeAssetRef(type: string, name: string, origin?: string): string {
-  validateName(name);
-  const normalized = normalizeName(name);
-  const asset = `${type}:${normalized}`;
-  if (!origin) return asset;
-  return `${origin}//${asset}`;
-}
-
-/**
- * Serialize a parsed {@link AssetRef} value-object back to its canonical
- * `[origin//]type:name` string form. The single formatter for refs — call
- * this instead of hand-building `${type}:${name}` template strings so the
- * serialization rules (origin prefix, name normalization) live in one place
- * and stay in lockstep with {@link parseAssetRef}.
- *
- * `refToString(parseAssetRef(s))` round-trips for any `s` that
- * `parseAssetRef` accepts.
- */
-export function refToString(ref: AssetRef): string {
-  return makeAssetRef(ref.type, ref.name, ref.origin);
-}
-
-// ── Parsing ─────────────────────────────────────────────────────────────────
-
-/**
- * Parse a ref string in the format `[origin//]type:name`.
- */
-export function parseAssetRef(ref: string): AssetRef {
-  const trimmed = ref.trim();
-  if (!trimmed) throw new UsageError("Empty ref.", "MISSING_REQUIRED_ARGUMENT");
-
-  let origin: string | undefined;
-  let body = trimmed;
-
-  const boundary = trimmed.indexOf("//");
-  if (boundary >= 0) {
-    origin = trimmed.slice(0, boundary);
-    body = trimmed.slice(boundary + 2);
-    if (!origin) throw new UsageError("Empty origin in ref.", "MISSING_REQUIRED_ARGUMENT");
-  }
-
-  const colon = body.indexOf(":");
-  if (colon <= 0) {
-    throw new UsageError(
-      `Invalid ref "${trimmed}". Expected [origin//]type:name, e.g. skill:deploy or knowledge:guide.md`,
-      "MISSING_REQUIRED_ARGUMENT",
-    );
-  }
-
-  const rawType = body.slice(0, colon);
-  const rawName = body.slice(colon + 1);
-
-  // The `vault` asset type was removed in 0.9.0. Point callers at its
-  // replacements rather than failing with a generic unknown-type error.
-  if (rawType === "vault") {
-    throw new UsageError(
-      "The `vault` asset type was removed in 0.9.0 — use `env:` (whole .env config) or `secret:` (a single value).",
-      "MISSING_REQUIRED_ARGUMENT",
-    );
-  }
-
-  // Type aliases: `environment:` is an accepted spelling of the canonical
-  // `env:` type.
-  const resolvedType = TYPE_ALIASES[rawType] ?? rawType;
-
-  // Open type token (chunk 1.5, D1.5-6): any other non-empty type is valid
-  // ref data (foreign/adapter types included) EXCEPT the deliberately-removed
-  // set — silently re-admitting one of those as an ordinary foreign type
-  // would defeat the guard that removed it. `vault` is already caught above
-  // with its own migration-hint message; this catches the rest of the
-  // deny-list (currently just `tool`).
-  if (DEPRECATED_REJECTED_TYPES.has(resolvedType)) {
-    throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
-  }
-
-  validateName(rawName);
-  const name = normalizeName(rawName);
-
-  return { type: resolvedType, name, origin: origin || undefined };
-}
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
@@ -153,10 +31,9 @@ function normalizeName(name: string): string {
 // ── Bundle-scoped ref grammar (0.9.0, spec §11.1 / §3.4) ─────────────────────
 //
 // The 0.9.0 identity is `[<bundle>//]<concept-id>[#<fragment>]` (path identity;
-// `type` is no longer part of identity). This API is ADDITIVE — it lands
-// alongside `parseAssetRef`/`makeAssetRef`/`refToString` (the pre-0.9.0
-// `[origin//]type:name` grammar) so both spellings resolve during the Chunk-5
-// cutover. The old API is deleted only after every ref site is repointed here.
+// `type` is no longer part of identity). This is the surviving ref grammar; the
+// pre-0.9.0 `[origin//]type:name` grammar now lives in the Chunk-8 migrate home
+// (`src/migrate/legacy-ref-grammar.ts`), consumed only for stored-ref parsing.
 //
 //   - `bundle`   — workspace bundle slug; the OPTIONAL prefix. Short refs
 //                  (no `bundle//`) resolve to the containing bundle (§11.1).

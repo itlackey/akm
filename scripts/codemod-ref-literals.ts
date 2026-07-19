@@ -42,7 +42,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { legacyConceptId } from "../src/core/asset/resolve-ref";
+import { legacyConceptId } from "../src/migrate/legacy-ref-grammar";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const TESTS_DIR = path.join(REPO_ROOT, "tests");

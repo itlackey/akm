@@ -12,7 +12,6 @@ import proactiveMaintenance from "../../assets/improve-strategies/proactive-main
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
-import { parseAssetRef } from "../../core/asset/asset-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -25,6 +24,7 @@ import {
   resolveImproveProcessRunner,
   resolveTriageJudgmentRunner,
 } from "../../integrations/agent/runner";
+import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 
 /** 0.9 public name for the improve preset configuration. */
 export type ImproveStrategyConfig = ImproveProfileConfig;
@@ -57,7 +57,7 @@ export function shouldSkipRef(
   const process = strategy.processes?.[processName];
   if (process?.enabled === false) return { skip: true, reason: "process-disabled" };
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
   return { skip: false, reason: "" };

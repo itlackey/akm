@@ -105,7 +105,7 @@ export interface RekeyEntryOptions {
   /** Absolute path of the renamed file (feeds `file_path` / `dir_path`). */
   newFilePath: string;
   /**
-   * Old canonical bare ref (`type:oldName`, `makeAssetRef` form). Together
+   * Old canonical bare ref (`type:oldName` legacy form). Together
    * with {@link newRef} this drives the `usage_events.entry_ref` rewrite —
    * `entry_ref` (not `entry_id`) is the STABLE column `relinkUsageEvents`
    * uses to re-attach events after a full rebuild re-mints every entry id,
@@ -113,7 +113,7 @@ export interface RekeyEntryOptions {
    * history at the first `akm index --full`.
    */
   oldRef: string;
-  /** New canonical bare ref (`type:newName`, `makeAssetRef` form). */
+  /** New canonical bare ref (`type:newName` legacy form). */
   newRef: string;
   /** Configured source identity owning the moved entry. */
   sourceName?: string;

@@ -10,7 +10,7 @@
  * step-id format, and the frontmatter key whitelist.
  */
 
-import { parseAssetRef, refToString } from "../core/asset/asset-ref";
+import { parseStoredRef } from "../migrate/legacy-ref-grammar";
 import { utf8Bytes, WORKFLOW_MAX_INSTRUCTION_BYTES, WORKFLOW_MAX_PARAMS, WORKFLOW_MAX_STEPS } from "./resource-limits";
 import type { WorkflowDocument, WorkflowError } from "./schema";
 
@@ -38,7 +38,12 @@ function checkXrefs(value: unknown, line: number, errors: WorkflowError[]): void
   }
   for (const ref of value) {
     try {
-      if (typeof ref !== "string" || refToString(parseAssetRef(ref)) !== ref) throw new Error("non-canonical ref");
+      if (typeof ref !== "string") throw new Error("non-canonical ref");
+      // Canonicity = round-trip through the legacy `type:name` grammar (workflow
+      // xrefs keep the legacy spelling until the Chunk-8 re-key).
+      const p = parseStoredRef(ref);
+      const canonical = p.origin ? `${p.origin}//${p.type}:${p.name}` : `${p.type}:${p.name}`;
+      if (canonical !== ref) throw new Error("non-canonical ref");
     } catch {
       errors.push({
         line,

@@ -46,9 +46,6 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import type { AssetRef } from "../../core/asset/asset-ref";
-import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -84,6 +81,7 @@ import {
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { type AssetRef, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -402,9 +400,9 @@ export function createProposal(
     throw new UsageError(message, "INVALID_PROPOSAL");
   };
 
-  let parsedRef: ReturnType<typeof parseRefInput>;
+  let parsedRef: ReturnType<typeof parseStoredRef>;
   try {
-    parsedRef = parseRefInput(input.ref);
+    parsedRef = parseStoredRef(input.ref);
   } catch (err) {
     return rejectProposal(
       "invalid_ref",
@@ -435,7 +433,9 @@ export function createProposal(
     }
   }
 
-  const normalizedRef = makeAssetRef(parsedRef.type, parsedRef.name, parsedRef.origin);
+  const normalizedRef = parsedRef.origin
+    ? `${parsedRef.origin}//${parsedRef.type}:${parsedRef.name}`
+    : `${parsedRef.type}:${parsedRef.name}`; // durable proposal key (Chunk-8 re-key)
 
   // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
   // target is resolved against the proposal's OWN stash (a local snapshot —
@@ -655,7 +655,7 @@ export function listProposals(
     }).filter((p) => {
       if (!options.type) return true;
       try {
-        return parseAssetRef(p.ref).type === options.type;
+        return parseStoredRef(p.ref).type === options.type;
       } catch {
         return false;
       }
@@ -817,9 +817,9 @@ export function purgeOrphanProposals(
   const reflectPending = pending.filter((p) => p.source === "reflect");
 
   for (const p of reflectPending) {
-    let parsed: ReturnType<typeof parseAssetRef>;
+    let parsed: ReturnType<typeof parseStoredRef>;
     try {
-      parsed = parseAssetRef(p.ref);
+      parsed = parseStoredRef(p.ref);
     } catch {
       continue;
     }
@@ -1543,7 +1543,7 @@ async function promoteProposalWithLease(
     });
   }
 
-  const ref = parseAssetRef(proposalToValidate.ref);
+  const ref = parseStoredRef(proposalToValidate.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
@@ -1657,7 +1657,7 @@ async function revertProposalWithLease(
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
   let proposal = getProposal(stashDir, id, ctx);
-  const ref = parseAssetRef(proposal.ref);
+  const ref = parseStoredRef(proposal.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
@@ -1863,7 +1863,7 @@ export function diffProposal(
   ctx?: ProposalsContext,
 ): ProposalDiff {
   const proposal = getProposal(stashDir, id, ctx);
-  const ref = parseAssetRef(proposal.ref);
+  const ref = parseStoredRef(proposal.ref);
 
   let targetPath: string | undefined;
   let existing: string | null = null;

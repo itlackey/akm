@@ -12,7 +12,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { appendEvent, type EventsContext } from "../../../core/events";
@@ -22,6 +21,7 @@ import { getDefaultLlmConfig } from "../../../integrations/agent/engine-resoluti
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
 import type { LlmFeatureKey } from "../../../llm/feature-gate";
 import { callStructured } from "../../../llm/structured-call";
+import { parseStoredRef } from "../../../migrate/legacy-ref-grammar";
 import { akmSearch } from "../../read/search";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { computeSalience, upsertAssetSalience } from "../salience";
@@ -381,7 +381,7 @@ export function persistOutputEncodingSalience(
   outcomeWeightEnabled: boolean,
 ): void {
   try {
-    const parsedRef = parseRefInput(ref);
+    const parsedRef = parseStoredRef(ref);
     const salienceResult = scoreEncodingSalience({
       body,
       type: parsedRef.type,

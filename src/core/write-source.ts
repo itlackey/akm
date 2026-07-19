@@ -26,9 +26,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { AssetRef } from "../migrate/legacy-ref-grammar";
 import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
-import type { AssetRef } from "./asset/asset-ref";
 import { displayRef } from "./asset/resolve-ref";
 import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";

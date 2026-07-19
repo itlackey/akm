@@ -12,12 +12,12 @@
  */
 
 import path from "node:path";
-import { type AssetRef, makeAssetRef, parseAssetRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { bestEffort } from "../../core/best-effort";
 import { warn } from "../../core/warn";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
+import { type AssetRef, classifyRefGrammar, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type {
@@ -260,8 +260,8 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * full `akm index` picks the file up as a fresh entry).
  */
 export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number | null {
-  // F5: delete — the row is located by its legacy `entry_key`; the caller (mv)
-  // always has it and it is the UNIQUE identity column during the F1 window.
+  // Chunk-8: the row is located by its legacy `entry_key`; the caller (mv)
+  // always has it and it is the UNIQUE identity column until the re-key.
   const row = db
     .prepare("SELECT id, stash_dir, entry_json, search_text, entry_type, item_ref FROM entries WHERE entry_key = ?")
     .get(opts.oldEntryKey) as
@@ -619,25 +619,15 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 }
 
 /**
- * Resolve a single `entries.id` from a ref string, accepting BOTH the new
- * `[bundle//]conceptId` grammar and the pre-0.9.0 `[origin//]type:name` grammar
- * at the input edge (Chunk-5 flip F1, ref-grammar decision D-R1/D-R4).
- *
- * A new-grammar ref keys on `item_ref` (the canonical stored spelling) —
- * preferred but never sole: rows whose `item_ref` is still NULL (write-back
- * fast-path, healed on next full index) stay findable via the legacy
- * `entry_key` predicate reached by reverse-translating the conceptId. A legacy
- * ref keeps the EXACT pre-flip `entry_key`-suffix behavior (the green suite is
- * the proof). The optional `stashDir` scopes the match to one source root, as
- * before.
+ * Resolve a single `entries.id` from a new-grammar `[bundle//]conceptId` ref,
+ * keying on the canonical stored `item_ref` (ref-grammar decision D-R1/D-R4).
+ * Public callers pass the new grammar; the legacy `[origin//]type:name`
+ * resolution survives only inside the Chunk-8 §11.4 re-key machinery
+ * ({@link findEntryIdByLegacyRef}). The optional `stashDir` scopes the match to
+ * one source root.
  */
 export function findEntryIdByRef(db: Database, ref: string, stashDir?: string): number | undefined {
-  if (classifyRefGrammar(ref) === "bundle") {
-    return findEntryIdByBundleRef(db, ref, stashDir);
-  }
-  // F5: delete — legacy `[origin//]type:name` grammar path (exact pre-flip
-  // behavior; the whole existing suite exercises this branch).
-  return findEntryIdByLegacyRef(db, ref, stashDir);
+  return findEntryIdByBundleRef(db, ref, stashDir);
 }
 
 /** `name` plus its `.md`-toggled sibling — the markdown ext-keep/strip ambiguity. */
@@ -654,16 +644,9 @@ function findEntryIdByBundleRef(db: Database, ref: string, stashDir?: string): n
   const parsed = parseBundleRef(ref);
   const conceptVariants = withMdVariants(parsed.conceptId);
 
-  // Prefer item_ref.
+  // item_ref is the canonical stored spelling post-flip.
   for (const conceptId of conceptVariants) {
     const id = matchIdByItemRef(db, parsed.bundle, conceptId, stashDir);
-    if (id !== undefined) return id;
-  }
-  // F5: delete — legacy fallback so NULL-item_ref rows stay findable by new refs.
-  for (const conceptId of conceptVariants) {
-    const legacy = conceptIdToLegacy(conceptId);
-    if (!legacy) continue;
-    const id = matchIdByLegacyEntryKey(db, legacy.type, legacy.name, stashDir);
     if (id !== undefined) return id;
   }
   return undefined;
@@ -718,12 +701,13 @@ function matchIdByLegacyEntryKey(db: Database, type: string, name: string, stash
 }
 
 /**
- * F5: delete — legacy `[origin//]type:name` id lookup, extracted verbatim from
- * the pre-flip `findEntryIdByRef` so the old grammar keeps byte-identical
- * behavior during the additive F1 window.
+ * Legacy `[origin//]type:name` id lookup by `entry_key` suffix — retained ONLY
+ * for the Chunk-8 §11.4 usage-event re-key, which resolves each historical
+ * legacy `entry_ref` to its live entry. Public lookups use the new-grammar
+ * {@link findEntryIdByRef}. Chunk-8: delete with the state.db re-key.
  */
 function findEntryIdByLegacyRef(db: Database, ref: string, stashDir?: string): number | undefined {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseStoredRef(ref);
   for (const name of withMdVariants(parsed.name)) {
     const id = matchIdByLegacyEntryKey(db, parsed.type, name, stashDir);
     if (id !== undefined) return id;
@@ -895,22 +879,10 @@ export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
 }
 
 /**
- * Look up an entry `id` by ref, dual-keyed on `item_ref` (Chunk-5 flip F1).
- *
- * Two shapes:
- *   - `getEntryByRef(db, ref)`         — a ref string in EITHER grammar.
- *   - `getEntryByRef(db, type, name)`  — a legacy `type`/`name` pair (kept for
- *                                        the pre-flip call convention).
- *
- * Both route through {@link findEntryIdByRef}, so a `bundle//conceptId` ref
- * resolves against `item_ref` and a legacy `type:name` ref against `entry_key`,
- * with the same NULL-`item_ref` legacy fallback. Returns `{ id }` or `null`.
+ * Look up an entry `id` by a new-grammar `[bundle//]conceptId` ref, resolving
+ * against the canonical stored `item_ref`. Returns `{ id }` or `null`.
  */
-export function getEntryByRef(db: Database, ref: string): { id: number } | null;
-export function getEntryByRef(db: Database, type: string, name: string): { id: number } | null;
-export function getEntryByRef(db: Database, refOrType: string, name?: string): { id: number } | null {
-  // F5: delete — the (type, name) overload; new callers pass a single ref.
-  const ref = name === undefined ? refOrType : makeAssetRef(refOrType, name);
+export function getEntryByRef(db: Database, ref: string): { id: number } | null {
   const id = findEntryIdByRef(db, ref);
   return id === undefined ? null : { id };
 }
@@ -939,7 +911,7 @@ export function getItemRefById(db: Database, id: number): string | null {
  * §11.4 re-key migration ({@link rekeyUsageEventsToItemRef}) runs. This resolver
  * accepts BOTH: a new-grammar ref keys directly on the globally-unique `item_ref`
  * (no source scoping needed — the bundle is in the ref); the legacy arm keeps the
- * pre-flip origin→root scoping. `// F5: delete` the legacy arm.
+ * pre-flip origin→root scoping. Chunk-8: delete the legacy arm with the re-key.
  */
 function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsageEventsOptions): number | undefined {
   if (classifyRefGrammar(ref) === "bundle") {
@@ -948,17 +920,17 @@ function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsag
     // falls back to the default-stash scope, mirroring the legacy bare-ref arm.
     return findEntryIdByRef(db, ref, parseBundleRef(ref).bundle ? undefined : options.defaultStashDir);
   }
-  // F5: delete — legacy `[origin//]type:name` resolution with origin→root scoping.
-  const parsed = parseAssetRef(ref);
+  // Chunk-8: legacy `[origin//]type:name` resolution with origin→root scoping.
+  const parsed = parseStoredRef(ref);
   if (!parsed.origin) {
-    return options.defaultStashDir ? findEntryIdByRef(db, ref, options.defaultStashDir) : undefined;
+    return options.defaultStashDir ? findEntryIdByLegacyRef(db, ref, options.defaultStashDir) : undefined;
   }
 
   const source =
     parsed.origin === "local" || parsed.origin === "stash"
       ? options.sources?.[0]
       : options.sources?.find((candidate) => candidate.registryId === parsed.origin);
-  return source ? findEntryIdByRef(db, ref, source.path) : undefined;
+  return source ? findEntryIdByLegacyRef(db, ref, source.path) : undefined;
 }
 
 /**
@@ -1093,17 +1065,17 @@ export function rekeyUsageEventsToItemRef(
  *   - `"defer"`   — an origin naming no configured source (a removed source) that
  *                   is not the primary sentinel — its source→bundle identity is a
  *                   Chunk-8 / D-R5 concern, so leave legacy-spelled (dual-arm
- *                   readers still see it; F5 forces it). Also the NULL-item_ref
- *                   write-back straggler (heals on the next full index).
+ *                   readers still see it; Chunk-8 forces it). Also the
+ *                   NULL-item_ref write-back straggler (heals on the next index).
  *
- * F5: delete — the whole legacy arm goes once the old grammar is removed.
+ * Chunk-8: the whole legacy arm goes with the one-time state.db re-key.
  */
 type RekeyResolution = { kind: "rekey"; entryId: number; itemRef: string } | { kind: "orphan" } | { kind: "defer" };
 
 function classifyLegacyRefForRekey(db: Database, ref: string, options: RelinkUsageEventsOptions): RekeyResolution {
   let parsed: AssetRef;
   try {
-    parsed = parseAssetRef(ref);
+    parsed = parseStoredRef(ref);
   } catch {
     return { kind: "defer" }; // unparseable — leave untouched
   }
@@ -1114,13 +1086,13 @@ function classifyLegacyRefForRekey(db: Database, ref: string, options: RelinkUsa
     parsed.origin === undefined ||
     (named === undefined && (parsed.origin === "local" || parsed.origin === "stash"))
   ) {
-    const id = options.defaultStashDir ? findEntryIdByRef(db, ref, options.defaultStashDir) : undefined;
+    const id = options.defaultStashDir ? findEntryIdByLegacyRef(db, ref, options.defaultStashDir) : undefined;
     return resolveEntryToItemRef(db, id, /* orphanWhenMissing */ options.defaultStashDir !== undefined);
   }
   // Origin names a configured source (registryId, incl. a filesystem source's
   // name) → resolve strictly within that source so the bundle stays faithful.
   if (named === undefined) return { kind: "defer" }; // removed source — Chunk-8 identity
-  const id = findEntryIdByRef(db, ref, named.path);
+  const id = findEntryIdByLegacyRef(db, ref, named.path);
   return resolveEntryToItemRef(db, id, /* orphanWhenMissing */ true);
 }
 

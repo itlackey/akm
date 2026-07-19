@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { makeAssetRef } from "../../core/asset/asset-ref";
 import { displayRef } from "../../core/asset/resolve-ref";
 import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
@@ -73,8 +72,9 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     // Parent ref shape: `memory:<name>`. Re-build from the entry's name
     // so we don't depend on whatever wiki/registry prefix `hit.ref` carries.
     // INTERNAL lookup key into `getDerivedForParent` (derived_from stores the
-    // legacy spelling until F4c) — deliberately stays legacy `makeAssetRef`.
-    const parentRef = makeAssetRef("memory", hit.name);
+    // legacy spelling until the Chunk-8 re-key) — deliberately stays the legacy
+    // `type:name` spelling, built inline.
+    const parentRef = `memory:${hit.name}`;
     const derived = getDerivedForParent(ctx.db, parentRef);
     if (!derived) return;
 

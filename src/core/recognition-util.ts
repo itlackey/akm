@@ -133,7 +133,7 @@ export function isKnownType(type: string): type is KnownType {
  *     re-admitted as an ordinary indexed/ref-able type.
  *   - `tool` — retired outright, no replacement.
  *
- * Consulted by `asset-ref.ts`'s `parseAssetRef` and `metadata.ts`'s
+ * Consulted by the ref parser and `metadata.ts`'s
  * `validateStashEntry` gate (and the `akm` adapter's `recognize`) so the
  * rejection lives in one place instead of three closed-union-shaped copies.
  */
