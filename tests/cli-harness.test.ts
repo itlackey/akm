@@ -46,12 +46,17 @@ describe("in-process CLI harness", () => {
   });
 
   test("captures stderr and a non-zero exit for a known-bad invocation", async () => {
-    // `show` with a colon-less ref fails arg validation before any IO.
+    // `show` with a bare token whose leading segment names no asset type: under
+    // the 0.9.0 ref grammar (Chunk-5 flip F1b) a colon-less token is a valid
+    // short conceptId, so it fails as a NOT-FOUND (no such concept) rather than
+    // an arg-parse error — the "same UX as an unknown type" the resolver
+    // guarantees. Either way the harness must capture a structured error
+    // envelope and a non-zero exit.
     const { code, stderr } = await runCliCapture(["show", "invalid-ref-no-colon"]);
     expect(code).not.toBe(0);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(parsed.code).toBe("ASSET_NOT_FOUND");
   });
 
   test("maps a UsageError to exit code 2", async () => {

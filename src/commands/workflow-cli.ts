@@ -18,7 +18,7 @@ import { getParsedInvocation } from "../cli/invocation";
 import { getStringArg } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
@@ -187,7 +187,7 @@ const workflowStatusCommand = defineJsonCommand({
     // Check if target looks like a workflow ref
     const parsed = (() => {
       try {
-        return parseAssetRef(target);
+        return parseRefInput(target);
       } catch {
         return null;
       }
@@ -359,9 +359,13 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
   // ref contract in lockstep with the rest of the workflow command family — an
   // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
   // starts, rather than being mistaken for a relative path that does not exist.
-  const looksLikeWorkflowRef = target.startsWith("workflow:") || target.includes("//workflow:");
+  const looksLikeWorkflowRef =
+    target.startsWith("workflow:") ||
+    target.includes("//workflow:") ||
+    target.startsWith("workflows/") ||
+    target.includes("//workflows/");
   if (!looksLikeWorkflowRef) return target;
-  const parsed = parseAssetRef(target);
+  const parsed = parseRefInput(target);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
   }

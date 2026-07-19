@@ -46,7 +46,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
-import { parseAssetRef, refToString } from "../core/asset/asset-ref";
+import { refToString } from "../core/asset/asset-ref";
+import { isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -1097,7 +1098,7 @@ export const mvCommand = defineJsonCommand({
 
     await withAssetMutationLease("mv", async () => {
       // ── Validation (everything before any write; a failure moves nothing) ──
-      const source = parseAssetRef(refArg);
+      const source = parseRefInput(refArg);
       if (source.origin && source.origin !== "local") {
         throw new UsageError(
           `akm mv operates on the primary writable stash only — the origin prefix "${source.origin}//" is not supported.`,
@@ -1134,9 +1135,13 @@ export const mvCommand = defineJsonCommand({
       }
 
       // The target may be a bare name ("projectA/new-note") or a ref-shaped
-      // spelling. Parsing the bare form through the same ref grammar gives it
-      // identical name validation (traversal, null bytes, absolute paths).
-      const target = parseAssetRef(targetArg.includes(":") ? targetArg : `${source.type}:${targetArg}`);
+      // spelling (either grammar). Parsing the bare form through the same ref
+      // grammar gives it identical name validation (traversal, null bytes,
+      // absolute paths). A bare name's leading segment maps to no asset type
+      // (`isFullRefInput` is false), so it is qualified with the source type;
+      // a ref-shaped target (`memory:x` or the new-grammar `memories/x`) is
+      // parsed as-is.
+      const target = parseRefInput(isFullRefInput(targetArg) ? targetArg : `${source.type}:${targetArg}`);
       if (target.origin) {
         throw new UsageError(
           `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,

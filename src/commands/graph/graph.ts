@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -121,7 +121,7 @@ interface LoadedGraph {
 
 interface ResolvedGraphTarget {
   ref: string;
-  parsedRef: ReturnType<typeof parseAssetRef>;
+  parsedRef: ReturnType<typeof parseRefInput>;
   filePath: string;
   stashPath: string;
 }
@@ -635,7 +635,7 @@ export async function akmGraphUpdate(options: {
 }
 
 async function resolveGraphTarget(ref: string, source?: string): Promise<ResolvedGraphTarget> {
-  const parsedRef = parseAssetRef(ref);
+  const parsedRef = parseRefInput(ref);
   const filePath =
     (await resolveAssetPath(parsedRef, {
       mode: "index-first",

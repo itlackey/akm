@@ -4,9 +4,10 @@
 
 import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { parseAssetRef, refToString } from "../core/asset/asset-ref";
+import { refToString } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -181,7 +182,7 @@ export const feedbackCommand = defineJsonCommand({
         "Pass a ref like `skill:deploy` and either --positive or --negative.",
       );
     }
-    const parsedRef = parseAssetRef(ref);
+    const parsedRef = parseRefInput(ref);
     if (args.positive && args.negative) {
       throw new UsageError("Specify either --positive or --negative, not both.");
     }
@@ -359,7 +360,7 @@ export const feedbackCommand = defineJsonCommand({
     let appliedToResult: { lessonRef: string; strength: number } | null = null;
     if (appliedToRaw && signal === "positive") {
       try {
-        const parsedApplied = parseAssetRef(appliedToRaw);
+        const parsedApplied = parseRefInput(appliedToRaw);
         if (parsedApplied.type === "lesson") {
           const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
           if (updated) {

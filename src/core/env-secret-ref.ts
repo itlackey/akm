@@ -17,15 +17,20 @@ import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName } from "./asset/asset-placement";
-import { parseAssetRef } from "./asset/asset-ref";
+import type { AssetRef } from "./asset/asset-ref";
+import { isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 
 export type { IndexSearchSource };
 
-export function parseEnvRef(ref: string): ReturnType<typeof parseAssetRef> {
-  return parseAssetRef(ref.includes(":") ? ref : `env:${ref}`);
+export function parseEnvRef(ref: string): AssetRef {
+  // Accept a bare env name (`prod`, `sub/prod`), a legacy `env:`/`environment:`
+  // ref, or the new-grammar `[bundle//]env/name` conceptId. A bare name's
+  // leading segment maps to no asset type, so it is qualified with `env:`;
+  // anything already a full ref (either grammar) is parsed as-is.
+  return parseRefInput(isFullRefInput(ref) ? ref : `env:${ref}`);
 }
 
 export function findEnvSource(origin: string | undefined): IndexSearchSource {
@@ -54,7 +59,7 @@ export function resolveEnvPath(ref: string): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
-  parsedRef: ReturnType<typeof parseAssetRef>;
+  parsedRef: AssetRef;
   dir: "env";
 } {
   const parsed = parseEnvRef(ref);
@@ -76,8 +81,9 @@ export function resolveEnvPath(ref: string): {
   return { name: parsed.name, absPath: envPath, source, parsedRef: parsed, dir: "env" };
 }
 
-export function parseSecretRef(ref: string): ReturnType<typeof parseAssetRef> {
-  return parseAssetRef(ref.includes(":") ? ref : `secret:${ref}`);
+export function parseSecretRef(ref: string): AssetRef {
+  // Same bare-name-vs-full-ref rule as parseEnvRef, defaulting to `secret:`.
+  return parseRefInput(isFullRefInput(ref) ? ref : `secret:${ref}`);
 }
 
 export function makeSecretRef(name: string, source?: IndexSearchSource): string {

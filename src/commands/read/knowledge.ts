@@ -15,9 +15,10 @@ import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
-import { type AssetRef, makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { type AssetRef, makeAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -172,7 +173,7 @@ interface ParsedWriteRef {
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
   try {
-    parsed = parseAssetRef(raw);
+    parsed = parseRefInput(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new UsageError(

@@ -20,8 +20,9 @@
 import fs from "node:fs";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
+import { refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
@@ -217,7 +218,7 @@ function logShowEvent(
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   const eventRef = refToString({ ...parsed, ...(parsed.origin || !origin ? {} : { origin }) });
   appendEvent({ eventType: "show", ref: eventRef, metadata: { type: parsed.type, name: parsed.name } });
 
@@ -274,7 +275,7 @@ export async function showLocal(input: {
   detail?: ShowDetailLevel;
   stashDir?: string;
 }): Promise<ShowResponse> {
-  const parsed = parseAssetRef(input.ref);
+  const parsed = parseRefInput(input.ref);
   const displayType = parsed.type;
   const config = loadConfig();
   const allSources = resolveSourceEntries(input.stashDir);
@@ -452,7 +453,7 @@ async function maybeExtractGraphInline(
  * renderer graph. Spec §6.2's literal flow.
  */
 export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   const entry = await lookup(parsed);
   if (!entry) {
     throw new NotFoundError(`Asset not found for ref: ${parsed.type}:${parsed.name}`);

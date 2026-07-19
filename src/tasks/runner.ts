@@ -32,7 +32,7 @@ import os from "node:os";
 import path from "node:path";
 import { shouldSkipUnactivatedTask } from "../core/activation-policy";
 import { assertNever } from "../core/assert";
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, rethrowIfTestIsolationError } from "../core/errors";
@@ -354,7 +354,7 @@ async function runWorkflowTask(input: {
 }): Promise<TaskRunResult> {
   const { task, logPath, startedAt, now, startWorkflowRunImpl, historyReserved } = input;
   if (task.target.kind !== "workflow") throw new Error("invariant: workflow target");
-  const ref = parseAssetRef(task.target.ref);
+  const ref = parseRefInput(task.target.ref);
   if (ref.type !== "workflow") {
     throw new NotFoundError(
       `Task "${task.id}" workflow target must be a workflow ref (got "${task.target.ref}").`,
@@ -571,7 +571,7 @@ async function resolvePromptText(task: TaskDocument, stashDir: string): Promise<
     return fs.readFileSync(filePath, "utf8");
   }
   // asset
-  const ref = parseAssetRef(src.ref);
+  const ref = parseRefInput(src.ref);
   const assetPath = await resolveAssetPath(stashDir, ref.type, ref.name);
   return fs.readFileSync(assetPath, "utf8");
 }

@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -55,7 +56,7 @@ export type WorkflowAsset = {
  * resolution.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${ref}".`);
   }

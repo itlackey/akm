@@ -79,7 +79,10 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    // Chunk-5 flip F1b: a colon-less token is a valid short conceptId in the
+    // 0.9.0 grammar, so it fails as NOT-FOUND (leading segment names no asset
+    // type) rather than an arg-parse error — the "same UX as an unknown type".
+    expect(parsed.code).toBe("ASSET_NOT_FOUND");
   });
 
   test("search --source invalid prints hint about source", async () => {

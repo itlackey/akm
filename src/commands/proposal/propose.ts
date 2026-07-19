@@ -16,7 +16,7 @@
 
 import fs from "node:fs";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
@@ -255,9 +255,9 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const expectedRef = `${options.type}:${options.name}`;
   let ref = expectedRef;
   if (payload.ref) {
-    let parsedRef: ReturnType<typeof parseAssetRef>;
+    let parsedRef: ReturnType<typeof parseRefInput>;
     try {
-      parsedRef = parseAssetRef(payload.ref);
+      parsedRef = parseRefInput(payload.ref);
     } catch (err) {
       return {
         schemaVersion: 2,

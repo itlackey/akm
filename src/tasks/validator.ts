@@ -18,7 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError } from "../core/errors";
@@ -40,7 +40,7 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
 
   if (task.target.kind === "workflow") {
     const stashDir = options.stashDir ?? resolveStashDir();
-    const ref = parseAssetRef(task.target.ref);
+    const ref = parseRefInput(task.target.ref);
     if (ref.type !== "workflow") {
       throw new NotFoundError(
         `Task "${task.id}" workflow target must be a workflow ref (got "${task.target.ref}").`,
@@ -70,7 +70,7 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
   const src = task.target.source;
   if (src.kind === "asset") {
     const stashDir = options.stashDir ?? resolveStashDir();
-    const ref = parseAssetRef(src.ref);
+    const ref = parseRefInput(src.ref);
     await resolveAssetPath(stashDir, ref.type, ref.name);
   } else if (src.kind === "file") {
     const taskDir = path.dirname(task.source.path);

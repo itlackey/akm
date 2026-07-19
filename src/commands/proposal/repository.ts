@@ -48,6 +48,7 @@ import path from "node:path";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import type { AssetRef } from "../../core/asset/asset-ref";
 import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -401,9 +402,9 @@ export function createProposal(
     throw new UsageError(message, "INVALID_PROPOSAL");
   };
 
-  let parsedRef: ReturnType<typeof parseAssetRef>;
+  let parsedRef: ReturnType<typeof parseRefInput>;
   try {
-    parsedRef = parseAssetRef(input.ref);
+    parsedRef = parseRefInput(input.ref);
   } catch (err) {
     return rejectProposal(
       "invalid_ref",

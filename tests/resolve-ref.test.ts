@@ -11,16 +11,19 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { parseAssetRef } from "../src/core/asset/asset-ref";
 import {
   classifyRefGrammar,
   conceptIdToLegacy,
+  isFullRefInput,
   legacyConceptId,
   legacyRefToBundleRef,
+  parseRefInput,
   type RefContext,
   type RefResolutionBundle,
   resolveRef,
 } from "../src/core/asset/resolve-ref";
-import { NotFoundError } from "../src/core/errors";
+import { NotFoundError, UsageError } from "../src/core/errors";
 
 /** Build a bundle whose membership set is a fixed list of conceptIds. */
 function bundle(id: string, concepts: string[]): RefResolutionBundle {
@@ -175,5 +178,72 @@ describe("legacyConceptId / conceptIdToLegacy", () => {
     // local/stash origins are not stored bundle ids → stays short.
     expect(legacyRefToBundleRef("local//skill:review")).toEqual({ bundle: undefined, conceptId: "skills/review" });
     expect(legacyRefToBundleRef("skill:review")).toEqual({ bundle: undefined, conceptId: "skills/review" });
+  });
+});
+
+// ── parseRefInput (F1b input-boundary parser) ───────────────────────────────
+
+describe("parseRefInput", () => {
+  test("legacy grammar → byte-identical to parseAssetRef", () => {
+    for (const raw of [
+      "skill:code-review",
+      "knowledge:guide.md",
+      "script:db/migrate/run.sh",
+      "mycatalog//skill:review",
+      "local//knowledge:auth-flow",
+      "environment:prod", // the `environment` alias of `env`
+    ]) {
+      expect(parseRefInput(raw)).toEqual(parseAssetRef(raw));
+    }
+  });
+
+  test("new-grammar bare conceptId → same AssetRef an origin-less type:name yields", () => {
+    // The whole point: a re-keyed literal resolves to the SAME value-object the
+    // old spelling did, so every downstream consumer is unaffected.
+    expect(parseRefInput("skills/code-review")).toEqual(parseAssetRef("skill:code-review"));
+    expect(parseRefInput("knowledge/guide")).toEqual(parseAssetRef("knowledge:guide"));
+    expect(parseRefInput("scripts/db/migrate/run.sh")).toEqual(parseAssetRef("script:db/migrate/run.sh"));
+    expect(parseRefInput("workflows/release")).toEqual(parseAssetRef("workflow:release"));
+  });
+
+  test("new-grammar bundle-qualified → bundle becomes the AssetRef origin", () => {
+    expect(parseRefInput("mycatalog//skills/review")).toEqual({
+      type: "skill",
+      name: "review",
+      origin: "mycatalog",
+    });
+  });
+
+  test("new-grammar conceptId with an unknown type prefix → NotFoundError naming the ref", () => {
+    let err: unknown;
+    try {
+      parseRefInput("notatype/thing");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect((err as Error).message).toContain("notatype/thing");
+  });
+
+  test("an export #fragment is rejected at the input boundary", () => {
+    expect(() => parseRefInput("skills/review#usage")).toThrow(UsageError);
+  });
+});
+
+// ── isFullRefInput (bare-name-vs-typed-ref disambiguation) ──────────────────
+
+describe("isFullRefInput", () => {
+  test("legacy type:name and new-grammar typed conceptId → full ref", () => {
+    expect(isFullRefInput("env:prod")).toBe(true);
+    expect(isFullRefInput("mycatalog//env:prod")).toBe(true);
+    expect(isFullRefInput("env/prod")).toBe(true);
+    expect(isFullRefInput("mycatalog//env/prod")).toBe(true);
+    expect(isFullRefInput("secrets/api-token")).toBe(true);
+  });
+
+  test("bare names (no type prefix) → not a full ref", () => {
+    expect(isFullRefInput("prod")).toBe(false);
+    expect(isFullRefInput("projectA/new-note")).toBe(false); // leading segment maps to no type
+    expect(isFullRefInput("")).toBe(false);
   });
 });
