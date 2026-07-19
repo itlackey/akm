@@ -20,9 +20,22 @@
  * sandboxed-stash filenames (`<stashDir>/lessons/<name>.md`).
  */
 
-/** Build a `lesson:<name>` ref string from a bare fixture name. */
+/** Build a new-grammar `lessons/<name>` conceptId ref from a bare fixture name — the createProposal INPUT spelling. */
 export function lessonRef(name: string): string {
   return `lessons/${name}`;
+}
+
+/**
+ * The LEGACY `lesson:<name>` spelling the proposal engine DURABLY stores:
+ * `createProposal` normalizes every accepted input to
+ * `${type}:${name}` (`propose.ts` expectedRef) and the accept/revert/reject
+ * engines emit usage events with `ref: p.ref` — the stored spelling. The F5
+ * flip re-keys createProposal INPUTS to {@link lessonRef}'s new grammar but
+ * leaves this stored key legacy (Chunk-8 preservation) — so an event-query
+ * assertion must source its spelling here, never from {@link lessonRef}.
+ */
+export function lessonDurableRef(name: string): string {
+  return `lesson:${name}`;
 }
 
 // ── goldens-proposal-txn.test.ts (R3 — accept/revert/reject engines) ───────

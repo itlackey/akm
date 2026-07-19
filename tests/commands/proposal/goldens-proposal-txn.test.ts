@@ -92,6 +92,7 @@ import {
   CREATE_HASH_MATCH_REJECTED_NAME,
   CREATE_MODEL_ID_TERM_NAME,
   lessonContent,
+  lessonDurableRef,
   lessonRef,
   REJECT_CONCURRENT_EDIT_NAME,
   REJECT_NON_PENDING_NAME,
@@ -161,7 +162,7 @@ describe("goldens: proposal accept engine round-trip (WI-03, R3)", () => {
       expect(accepted.acceptedContentHash).toBeDefined();
       expect(accepted.backupContent).toBeUndefined();
 
-      const promoted = eventOutcome("promoted", ref);
+      const promoted = eventOutcome("promoted", lessonDurableRef(ACCEPT_NEW_ASSET_NAME));
       expect(promoted.matchingCount).toBe(1);
       expect(promoted.distinctIdempotencyKeyCount).toBe(1);
 
@@ -216,7 +217,7 @@ describe("goldens: proposal accept engine round-trip (WI-03, R3)", () => {
       expect(second.proposal.acceptedContentHash).toBe(first.proposal.acceptedContentHash);
       expect(treeAfterSecond).toEqual(treeAfterFirst);
 
-      const promoted = eventOutcome("promoted", ref);
+      const promoted = eventOutcome("promoted", lessonDurableRef(ACCEPT_IDEMPOTENT_NAME));
       expect(promoted.matchingCount).toBe(1);
       expect(promoted.distinctIdempotencyKeyCount).toBe(1);
     } finally {
@@ -307,7 +308,7 @@ describe("goldens: proposal revert engine round-trip (WI-03, R3)", () => {
       expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
       expect(getProposal(storage.stashDir, created.id).status).toBe("reverted");
 
-      const reverted = eventOutcome("proposal_reverted", ref);
+      const reverted = eventOutcome("proposal_reverted", lessonDurableRef(REVERT_SUCCESS_NAME));
       expect(reverted.matchingCount).toBe(1);
       expect(reverted.distinctIdempotencyKeyCount).toBe(1);
     } finally {
@@ -371,7 +372,7 @@ describe("goldens: proposal reject engine round-trip (WI-03, R3)", () => {
       expect(result.ok).toBe(true);
       expect(getProposal(storage.stashDir, created.id).status).toBe("rejected");
 
-      const rejected = eventOutcome("rejected", ref);
+      const rejected = eventOutcome("rejected", lessonDurableRef(REJECT_SUCCESS_NAME));
       expect(rejected.matchingCount).toBe(1);
       expect(rejected.distinctIdempotencyKeyCount).toBe(1);
     } finally {
@@ -628,7 +629,7 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
           status: accepted.status,
           acceptedContentHashPresent: accepted.acceptedContentHash !== undefined,
           backupContentPresent: accepted.backupContent !== undefined,
-          promotedEvent: eventOutcome("promoted", ref),
+          promotedEvent: eventOutcome("promoted", lessonDurableRef(ACCEPT_NEW_ASSET_NAME)),
           journalDirCleaned: transactionsRootIsClean(storage.dataDir),
         };
       } finally {
@@ -684,7 +685,7 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
           treeUnchanged: JSON.stringify(fileTreeManifest(storage.stashDir)) === JSON.stringify(treeAfterFirst),
           sameAssetPath: second.assetPath === first.assetPath,
           sameAcceptedContentHash: second.proposal.acceptedContentHash === first.proposal.acceptedContentHash,
-          promotedEvent: eventOutcome("promoted", ref),
+          promotedEvent: eventOutcome("promoted", lessonDurableRef(ACCEPT_IDEMPOTENT_NAME)),
         };
       } finally {
         storage.cleanup();
@@ -768,7 +769,7 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
         return {
           restoredByteIdentical: fs.readFileSync(assetPath, "utf8") === original,
           status: getProposal(storage.stashDir, created.id).status,
-          revertedEvent: eventOutcome("proposal_reverted", ref),
+          revertedEvent: eventOutcome("proposal_reverted", lessonDurableRef(REVERT_SUCCESS_NAME)),
         };
       } finally {
         storage.cleanup();
@@ -833,7 +834,7 @@ describe("golden fixture: serialize proposal transaction outcomes (WI-03, R3)", 
         await akmProposalReject({ stashDir: storage.stashDir, id: created.id, reason: "not useful" });
         return {
           status: getProposal(storage.stashDir, created.id).status,
-          rejectedEvent: eventOutcome("rejected", ref),
+          rejectedEvent: eventOutcome("rejected", lessonDurableRef(REJECT_SUCCESS_NAME)),
         };
       } finally {
         storage.cleanup();

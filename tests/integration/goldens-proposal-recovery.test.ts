@@ -47,6 +47,7 @@ import {
 } from "../_helpers/sandbox";
 import {
   lessonContent,
+  lessonDurableRef,
   lessonRef,
   RECOVERY_ACCEPT_PREFIX,
   RECOVERY_REJECT_PREFIX,
@@ -157,7 +158,7 @@ describe("goldens: proposal accept crash recovery (WI-03, R3, integration)", () 
       expect(proposal.status).toBe("accepted");
       expect(proposal.backupContent).toBe(seeded.original);
       expect(proposal.acceptedContentHash).toBeDefined();
-      const promoted = eventOutcome("promoted", lessonRef(name));
+      const promoted = eventOutcome("promoted", lessonDurableRef(name));
       expect(promoted.matchingCount).toBe(1);
       expect(promoted.distinctIdempotencyKeyCount).toBe(1);
     });
@@ -176,7 +177,7 @@ describe("goldens: proposal revert crash recovery (WI-03, R3, integration)", () 
       expect(result.ok).toBe(true);
       expect(fs.readFileSync(seeded.assetPath, "utf8")).toBe(seeded.original);
       expect(getProposal(storage.stashDir, seeded.id).status).toBe("reverted");
-      const reverted = eventOutcome("proposal_reverted", lessonRef(name));
+      const reverted = eventOutcome("proposal_reverted", lessonDurableRef(name));
       expect(reverted.matchingCount).toBe(1);
       expect(reverted.distinctIdempotencyKeyCount).toBe(1);
     });
@@ -198,7 +199,7 @@ describe("goldens: proposal reject crash recovery (WI-03, R3, integration)", () 
 
       const result = await akmProposalReject({ stashDir: storage.stashDir, id: proposal.id, reason: "durable reject" });
       expect(result.proposal.status).toBe("rejected");
-      const rejected = eventOutcome("rejected", lessonRef(name));
+      const rejected = eventOutcome("rejected", lessonDurableRef(name));
       expect(rejected.matchingCount).toBe(1);
       expect(rejected.distinctIdempotencyKeyCount).toBe(1);
     });
@@ -243,7 +244,7 @@ describe("golden fixture: serialize proposal crash recovery outcomes (WI-03, R3)
         backupContentMatchesOriginal: proposal.backupContent === seeded.original,
         acceptedContentHashPresent: proposal.acceptedContentHash !== undefined,
         assetContentMatchesProposal: fs.readFileSync(seeded.assetPath, "utf8") === seeded.content,
-        promotedEvent: eventOutcome("promoted", lessonRef(name)),
+        promotedEvent: eventOutcome("promoted", lessonDurableRef(name)),
         journalPhasesObserved: [phase],
       };
     }
@@ -259,7 +260,7 @@ describe("golden fixture: serialize proposal crash recovery outcomes (WI-03, R3)
         ok: result.ok,
         restoredByteIdentical: fs.readFileSync(seeded.assetPath, "utf8") === seeded.original,
         status: getProposal(storage.stashDir, seeded.id).status,
-        revertedEvent: eventOutcome("proposal_reverted", lessonRef(name)),
+        revertedEvent: eventOutcome("proposal_reverted", lessonDurableRef(name)),
         journalPhasesObserved: [phase],
       };
     }
@@ -278,7 +279,7 @@ describe("golden fixture: serialize proposal crash recovery outcomes (WI-03, R3)
       const result = await akmProposalReject({ stashDir: storage.stashDir, id: proposal.id, reason: "durable reject" });
       rejectOutcomes[phase] = {
         status: result.proposal.status,
-        rejectedEvent: eventOutcome("rejected", lessonRef(name)),
+        rejectedEvent: eventOutcome("rejected", lessonDurableRef(name)),
         journalPhasesObserved: [phase],
       };
     }
