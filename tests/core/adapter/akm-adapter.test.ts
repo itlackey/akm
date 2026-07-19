@@ -226,7 +226,8 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   // minimal-seed fold — it includes filename/frontmatter description + tags.
   // The contributor-EXCLUSIVE fields (searchHints/toc/parameters) are still
   // folded verbatim, which is what this test now pins; the full-surface parity
-  // to `generateMetadataFlat` is proven by tests/integration/shadow-scan-parity.
+  // between recognize and the persisted index is proven by
+  // tests/integration/shadow-scan-parity.
   test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", async () => {
     let asserted = 0;
     for (const ctx of allTypesContexts()) {

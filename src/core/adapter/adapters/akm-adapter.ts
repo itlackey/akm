@@ -230,7 +230,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const dirPath = path.dirname(file.absPath);
 
   // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
-  // (spec §2/§3), reproducing `buildEntryFromFile`'s `generateMetadataFlat`
+  // (spec §2/§3), reproducing `buildEntryFromFile`'s flat-walk metadata
   // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
   // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
   // in-place contributor precedence) for the async P3 renderer contributors.

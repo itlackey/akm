@@ -134,7 +134,7 @@ export function isKnownType(type: string): type is KnownType {
  *   - `tool` — retired outright, no replacement.
  *
  * Consulted by `asset-ref.ts`'s `parseAssetRef` and `metadata.ts`'s
- * `validateStashEntry`/`generateMetadataFlat` gates so the rejection lives
- * in one place instead of three closed-union-shaped copies.
+ * `validateStashEntry` gate (and the `akm` adapter's `recognize`) so the
+ * rejection lives in one place instead of three closed-union-shaped copies.
  */
 export const DEPRECATED_REJECTED_TYPES: ReadonlySet<string> = new Set(["tool", "vault"]);

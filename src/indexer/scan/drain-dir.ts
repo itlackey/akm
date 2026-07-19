@@ -4,7 +4,7 @@
 
 /**
  * Per-directory document drain — akm 0.9.0 Chunk 5, milestone F4a M-core-2 (the
- * engine swap). Replaces the live indexer's per-dir `generateMetadataFlat`
+ * engine swap). Replaces the live indexer's per-dir flat-walk matcher-pass
  * `StashEntry` stream with the `akm` adapter's `recognize` `IndexDocument`
  * stream, reconstructing the durable `StashEntry` via {@link
  * indexDocumentToStashEntry} (proven lossless by the shadow-parity gate).
@@ -36,14 +36,15 @@
  * (nothing imports it back), so it joins no import cycle.
  */
 
+import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import type { BundleComponent, IndexDocument } from "../../core/adapter/types";
 import { parseWorkflow } from "../../workflows/parser";
 import { parseWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
 import { cacheWorkflowDocument } from "../../workflows/runtime/document-cache";
-import { buildMetadataSkipWarning, type StashEntry } from "../passes/metadata";
-import type { FileContext } from "../walk/file-context";
+import { buildMetadataSkipWarning, type StashEntry, type StashFile, shouldIndexStashFile } from "../passes/metadata";
+import { buildFileContext, type FileContext } from "../walk/file-context";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
 
 /** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
@@ -64,7 +65,7 @@ export interface DrainedDir {
  * `fileContexts` are the dir's indexable files (already `shouldIndexStashFile`-
  * filtered by the caller). `adapter.recognize` returns `null` for a file no
  * matcher claims (or an OKF reserved file) — silently skipped, the same
- * contract `generateMetadataFlat`'s "no matcher claims the file" case had.
+ * contract the legacy flat-walk pass's "no matcher claims the file" case had.
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,
@@ -93,6 +94,28 @@ export function drainDirDocuments(
   }
 
   return { entries, warnings, hashByFile };
+}
+
+/**
+ * `(stashRoot, files) → StashFile` drop-in for the deleted flat-walk matcher
+ * pass (F4a M-core-3): builds a FileContext per `shouldIndexStashFile`-eligible file
+ * and drains them through the `akm` adapter's `recognize`. The recognize engine
+ * is the proven-equal replacement for the old matcher-pass metadata assembly
+ * (shadow-parity gate), so callers that only need the recognized entries
+ * (`manifest`'s no-index fallback, the `registry` static-index builder, and the
+ * metadata unit tests) get identical entries — plus the D-R6 reserved-file
+ * exclusion the adapter enforces. Provenance is not persisted by these callers,
+ * so the synthetic component id is immaterial.
+ */
+export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
+  const component: BundleComponent = { id: stashRoot, adapter: "akm", root: stashRoot, writable: false };
+  const contexts = files
+    .filter((file) => shouldIndexStashFile(stashRoot, file))
+    .map((file) => buildFileContext(stashRoot, file));
+  const drained = drainDirDocuments(akmAdapter, component, contexts);
+  return drained.warnings.length > 0
+    ? { entries: drained.entries, warnings: drained.warnings }
+    : { entries: drained.entries };
 }
 
 /**

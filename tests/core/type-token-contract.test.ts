@@ -9,14 +9,14 @@
  *
  * Proves the new model end to end:
  *   (a) an open/foreign token is ACCEPTED as data by `validateStashEntry`
- *       and the `generateMetadataFlat` gate (metadata.ts:1423 in the
- *       pre-chunk anchors — the plan-unmentioned second gate);
+ *       and the `akm` adapter's `recognize` gate (which replaced the deleted
+ *       flat-walk matcher pass in the F4 engine swap);
  *   (b) `KNOWN_TYPES` exhaustiveness — `TYPE_BOOST` and `TYPE_PRESENTATION`
  *       compile-cover all 14 known types;
  *   (c) `presentationFor` returns the generic fallback for an unknown type;
  *   (d) the `DEPRECATED_REJECTED_TYPES` deny-list still rejects `tool`/
  *       `vault` with their original messages, across all three gates
- *       (`parseAssetRef`, `validateStashEntry`, `generateMetadataFlat`).
+ *       (`parseAssetRef`, `validateStashEntry`, and the `akm` adapter's `recognize`).
  *
  * Replaces (not just deletes) the taxonomy-pin tests identified in
  * `docs/design/execution/chunk-1.5/anchors.md` §D.1.
@@ -50,7 +50,7 @@ describe("open type token — accepted as data (D1.5-1)", () => {
     expect(validateStashEntry({ name: "x" })).toBeNull(); // no type at all
   });
 
-  // NOTE (chunk-3 cutover): the two `generateMetadataFlat`-via-`registerMatcher`
+  // NOTE (chunk-3 cutover): the two flat-walk-via-`registerMatcher`
   // cases that exercised the indexer's open-token accept / deny-list reject were
   // removed together with the file-context matcher registry. The akm flat-walk now
   // recognizes only the built-in types (`recognizeMatch`), so a FOREIGN type can no

@@ -4,7 +4,8 @@ import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { StashEntry } from "../../src/indexer/passes/metadata";
-import { extractCommandParameters, generateMetadataFlat } from "../../src/indexer/passes/metadata";
+import { extractCommandParameters } from "../../src/indexer/passes/metadata";
+import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
@@ -62,7 +63,7 @@ describe("command parameter extraction", () => {
       '---\ndescription: "Deploy a Docker image"\n---\nDeploy $1 to environment $2\n',
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "commands", "deploy.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "commands", "deploy.md")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -79,7 +80,7 @@ describe("command parameter extraction", () => {
       '---\ndescription: "Run a command"\n---\nExecute the following with $ARGUMENTS\n',
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "commands", "run.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "commands", "run.md")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -94,7 +95,7 @@ describe("command parameter extraction", () => {
       '---\ndescription: "Build image"\n---\ndocker build -t {{image_name}} --platform {{platform}} .\n',
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "commands", "build.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "commands", "build.md")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -121,7 +122,7 @@ describe("script @param extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "scripts", "deploy.ts")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "scripts", "deploy.ts")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -147,7 +148,7 @@ describe("script @param extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "scripts", "resize.ts")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "scripts", "resize.ts")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -174,7 +175,7 @@ describe("script @param extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "scripts", "backup.sh")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "scripts", "backup.sh")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -205,7 +206,7 @@ describe("frontmatter params extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "commands", "provision.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "commands", "provision.md")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -251,7 +252,7 @@ describe("no parameters", () => {
       '---\ndescription: "A guide"\n---\n# Getting Started\nIntro.\n',
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "knowledge", "guide.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "guide.md")]);
 
     expect(result.entries.length).toBe(1);
     expect(result.entries[0].parameters).toBeUndefined();
@@ -268,7 +269,7 @@ describe("parameter ordering", () => {
       '---\ndescription: "Multi param command"\n---\nRun $1 then $2 then $3 with $ARGUMENTS\n',
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "commands", "multi.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "commands", "multi.md")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -297,7 +298,7 @@ describe("parameter descriptions", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "scripts", "transform.ts")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "scripts", "transform.ts")]);
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
@@ -401,7 +402,7 @@ describe("knowledge articles skip command parameter extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "knowledge", "template-guide.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "template-guide.md")]);
 
     expect(result.entries.length).toBe(1);
     expect(result.entries[0].type).toBe("knowledge");
@@ -425,7 +426,7 @@ describe("knowledge articles skip command parameter extraction", () => {
       ].join("\n"),
     );
 
-    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "knowledge", "config-ref.md")]);
+    const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "config-ref.md")]);
 
     expect(result.entries.length).toBe(1);
     expect(result.entries[0].type).toBe("knowledge");

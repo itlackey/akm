@@ -8,7 +8,7 @@
  * milestone F4a (M2 groundwork).
  *
  * The engine swap drains an `IndexDocument` stream (`scanComponent` × the akm
- * adapter's `recognize`) in place of the per-dir `generateMetadataFlat`
+ * adapter's `recognize`) in place of the per-dir flat-walk matcher-pass
  * `StashEntry` stream, then persists it. But the durable `entries.entry_json`
  * column stays a faithful `StashEntry` — every reader (`rowToIndexedEntry` →
  * `DbIndexedEntry.entry`) consumes it as one, and the byte-for-byte goldens pin
@@ -21,16 +21,16 @@
  * onto named members, every other search-surface/provenance field onto
  * `documentJson` (the `DOCUMENT_JSON_CARRIED_FIELDS` set). This function reverses
  * that mapping exactly, so `indexDocumentToStashEntry(recognize(file))` deep-
- * equals `generateMetadataFlat`'s entry for the same file (proven by
- * `tests/integration/shadow-scan-parity.test.ts`'s round-trip arm).
+ * equals the entry the legacy flat-walk pass stored for the same file (the
+ * `tests/integration/shadow-scan-parity.test.ts` gate pins the persisted index).
  *
  * Two deliberate non-round-trip fields:
  *   - `filename` — dropped by `indexDocumentFromEntry` (no IndexDocument home),
  *     recovered here as `basename(doc.path)`. The old pipeline set it to
  *     `basename(file)` in `applyPostContributorFields`, and `doc.path` IS that
  *     file, so the value is identical.
- *   - `fileSize` — never set by `recognize` NOR by `generateMetadataFlat`; both
- *     pipelines attach it at PERSIST time (`attachFileSize`). It is therefore
+ *   - `fileSize` — never set by `recognize` NOR by the legacy flat-walk pass;
+ *     both pipelines attach it at PERSIST time (`attachFileSize`). It is therefore
  *     intentionally absent here and added by the persist layer, exactly as
  *     before.
  *

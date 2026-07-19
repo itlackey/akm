@@ -12,7 +12,6 @@ import {
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
-  generateMetadataFlat,
   isEnrichmentComplete,
   loadStashFile,
   type StashEntry,
@@ -20,6 +19,7 @@ import {
   validateStashEntry,
   writeStashFile,
 } from "../../src/indexer/passes/metadata";
+import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import { buildSearchFields, buildSearchText } from "../../src/indexer/search/search-fields";
 import { sandboxXdgConfigHome, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -880,7 +880,7 @@ test("generateMetadataFlat merges directory tokens from the canonical ref subpat
   const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
   writeFile(file, memoryDocWithTags(["auth"]));
 
-  const stash = await generateMetadataFlat(stashRoot, [file]);
+  const stash = recognizeStashEntries(stashRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0].type).toBe("memory");
   // canonicalName is the ref subpath relative to the TYPE root ("memories"),
@@ -898,7 +898,7 @@ test("flat-walk and stash-walk derive identical tags for a nested asset without 
   const file = path.join(memRoot, "projectA", "auth-tip.md");
   writeFile(file, "Plain memory body prose with no frontmatter.\n");
 
-  const flat = await generateMetadataFlat(stashRoot, [file]);
+  const flat = recognizeStashEntries(stashRoot, [file]);
   const walked = await generateMetadata(memRoot, "memory", [file]);
   expect(flat.entries).toHaveLength(1);
   expect(walked.entries).toHaveLength(1);
@@ -1238,7 +1238,7 @@ test("flag on: secret files are never read for bodyOpening (SPEC-8)", async () =
     const secretFile = path.join(stashRoot, "secrets", "deploy-key.md");
     writeFile(secretFile, "walrus-credential value paragraph that must never be indexed.\n");
 
-    const stash = await generateMetadataFlat(stashRoot, [secretFile]);
+    const stash = recognizeStashEntries(stashRoot, [secretFile]);
     expect(stash.entries).toHaveLength(1);
     expect(stash.entries[0].type).toBe("secret");
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
@@ -1253,7 +1253,7 @@ test("flag on: env files are never read for bodyOpening (SPEC-8)", async () => {
     const envFile = path.join(stashRoot, "env", "ci.env");
     writeFile(envFile, ["# staging credentials walrus paragraph", "API_KEY=walrus-value-token", ""].join("\n"));
 
-    const stash = await generateMetadataFlat(stashRoot, [envFile]);
+    const stash = recognizeStashEntries(stashRoot, [envFile]);
     expect(stash.entries).toHaveLength(1);
     expect(stash.entries[0].type).toBe("env");
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
@@ -1269,7 +1269,7 @@ test("flag on: flat-walk memories gain bodyOpening through the shared pipeline (
     const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
     writeFile(file, memoryDocWithBody([OPENING_PARA]));
 
-    const stash = await generateMetadataFlat(stashRoot, [file]);
+    const stash = recognizeStashEntries(stashRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     expect(stash.entries[0].type).toBe("memory");
     expect(entryBodyOpening(stash.entries[0])).toBe(OPENING_PARA);

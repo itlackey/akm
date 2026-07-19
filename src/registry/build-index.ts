@@ -16,7 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
 import { getCacheDir } from "../core/paths";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "../indexer/passes/metadata";
+import { loadStashFile, type StashEntry } from "../indexer/passes/metadata";
+import { recognizeStashEntries } from "../indexer/scan/drain-dir";
 import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
 import { writeResponseToFile } from "../runtime";
@@ -354,7 +355,7 @@ async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
 
   const entries: StashEntry[] = [];
   for (const [dirPath, files] of dirGroups) {
-    const generated = await generateMetadataFlat(stashRoot, files);
+    const generated = recognizeStashEntries(stashRoot, files);
     const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
     const mergedEntries = legacyOverrides
       ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))

@@ -13,11 +13,7 @@ import { recognizeMatch } from "../../core/adapter/recognize-match";
 // names so every untouched consumer keeps compiling. `SCOPE_KEYS` (a value)
 // stays here.
 import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
-import {
-  deriveCanonicalAssetName,
-  deriveCanonicalAssetNameFromStashRoot,
-  isRelevantAssetFile,
-} from "../../core/asset/asset-placement";
+import { deriveCanonicalAssetName, isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString, writeFileAtomic } from "../../core/common";
@@ -1062,13 +1058,10 @@ export function extractBodyOpening(body: string): string | undefined {
 /**
  * Shared pipeline (steps 2-6) for building a single StashEntry from a file.
  *
- * Both `generateMetadata` and `generateMetadataFlat` perform identical work
- * once the initial `entry` object has been seeded with type and canonical name.
- * This helper encapsulates that shared pipeline so the two callers only differ
- * in how they determine the asset type and canonical name (step 1):
- *
- *  - `generateMetadata`     — explicit `assetType` arg + `deriveCanonicalAssetName`
- *  - `generateMetadataFlat` — type from `runMatchers()` + `deriveCanonicalAssetNameFromStashRoot`
+ * `generateMetadata` seeds the initial `entry` with type + canonical name and
+ * delegates the rest here. (Its former flat-walk sibling — the matcher-pass
+ * metadata source deleted in the F4 engine swap — used the same helper; the live
+ * index now recognizes files through the `akm` adapter instead.)
  *
  * @param file        Absolute path to the file being processed.
  * @param assetType   Resolved asset type string (already validated by caller).
@@ -1077,7 +1070,7 @@ export function extractBodyOpening(body: string): string | undefined {
  * @param pkgMeta     Pre-loaded package.json metadata for this directory (may be null/undefined).
  * @param stashRoot   Stash root used for renderer search hints context.
  * @param ctx         FileContext for the file (may be pre-built by the caller).
- * @param match       Pre-resolved MatchResult when available (from `generateMetadataFlat`).
+ * @param match       Pre-resolved MatchResult when available.
  * @returns The populated entry, or `{ skip: true, warning: string }` when the
  *          renderer throws and the file should be dropped.
  */
@@ -1286,58 +1279,13 @@ export async function generateMetadata(
   return warnings.length > 0 ? { entries, warnings } : { entries };
 }
 
-/**
- * Generate metadata for files using the matcher system instead of a fixed asset type.
- *
- * This is the flat-walk counterpart of `generateMetadata`. It classifies each
- * file via the akm adapter's `recognizeMatch()` and uses the matched type for
- * canonical naming. Files that no matcher claims are silently skipped.
- */
-export async function generateMetadataFlat(stashRoot: string, files: string[]): Promise<StashFile> {
-  const entries: StashEntry[] = [];
-  const warnings: string[] = [];
-  const pkgMetaCache = new Map<string, ReturnType<typeof extractPackageMetadata>>();
-
-  for (const file of files) {
-    if (!shouldIndexStashFile(stashRoot, file)) continue;
-
-    // Step 1: determine type and canonical name via the akm adapter recognition.
-    const ctx = buildFileContext(stashRoot, file);
-    const match = recognizeMatch(ctx);
-    if (!match) continue;
-
-    const assetType = match.type;
-    // Open type token (chunk 1.5): a recognized foreign/adapter type is
-    // indexed instead of silently skipped — only the deliberately-removed
-    // deny-list (`tool`/`vault`) still short-circuits the flat-walk path.
-    if (!assetType || DEPRECATED_REJECTED_TYPES.has(assetType)) continue;
-
-    // If the file lives under a known type directory, use that as the root
-    // for canonical naming so names don't include the type prefix.
-    // e.g. scripts/deploy.sh → "deploy.sh" not "scripts/deploy.sh"
-    const ext = path.extname(file).toLowerCase();
-    const baseName = path.basename(file, ext);
-    const canonicalName = deriveCanonicalAssetNameFromStashRoot(assetType, stashRoot, file) ?? baseName;
-
-    // Resolve package.json metadata with a per-directory cache.
-    const dirPath = path.dirname(file);
-    if (!pkgMetaCache.has(dirPath)) {
-      pkgMetaCache.set(dirPath, extractPackageMetadata(dirPath));
-    }
-    const pkgMeta = pkgMetaCache.get(dirPath);
-
-    // Steps 2-6: delegate to the shared pipeline; pass the pre-resolved match
-    // so we don't run matchers a second time.
-    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, stashRoot, ctx, match);
-    if ("skip" in result) {
-      warnings.push(result.warning);
-      continue;
-    }
-    entries.push(result);
-  }
-
-  return warnings.length > 0 ? { entries, warnings } : { entries };
-}
+// The pre-0.9.0 flat-walk matcher-pass metadata source was DELETED in Chunk 5
+// F4a M-core-3. Its role (recognize a stash root's files into durable entries)
+// is now the `akm` adapter's `recognize`, drained by `indexer/scan/drain-dir.ts`
+// (`drainDirDocuments` for the live indexer, `recognizeStashEntries` for the
+// `manifest` fallback / `registry` index builder / metadata unit tests). The
+// flip is the F4 engine swap; the shadow-parity gate proved recognize produced
+// the identical entries before the old pass was removed.
 
 export function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);

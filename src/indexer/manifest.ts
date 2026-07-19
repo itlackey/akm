@@ -23,7 +23,8 @@ import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries, getEntryCount } from "../storage/repositories/index-entries-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "./passes/metadata";
+import { loadStashFile, type StashEntry } from "./passes/metadata";
+import { recognizeStashEntries } from "./scan/drain-dir";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
 import { walkStashFlat } from "./walk/walker";
 
@@ -142,7 +143,7 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
     }
 
     for (const [dirPath, files] of dirGroups) {
-      const generated = await generateMetadataFlat(currentStashDir, files);
+      const generated = recognizeStashEntries(currentStashDir, files);
       const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
       const mergedEntries = legacyOverrides
         ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))

@@ -9,7 +9,7 @@
  * (spec line 254): for each installation → each component → `scanComponent`
  * (core walk × `adapter.recognize`, or the adapter's `index()` override) →
  * DRAIN the full document stream. ADDITIVE — M-c makes this the live indexer's
- * document source in place of the per-dir `generateMetadataFlat` loop; here it
+ * document source in place of the per-dir flat-walk matcher-pass loop; here it
  * backs the shadow-parity proof only.
  *
  * "Drain the full document stream (any scan error aborts before the first
@@ -70,7 +70,7 @@ export async function materializeInstallationDocuments(installations: BundleInst
 /**
  * Convenience: derive installations from the transitional `SearchSource[]`
  * (M-a) and materialize their documents. This is the shadow-scan entry point
- * the parity harness drives against `generateMetadataFlat`.
+ * the parity harness drove against the legacy flat-walk pass.
  */
 export async function scanSourcesToDocuments(sources: SearchSource[]): Promise<IndexDocument[]> {
   return materializeInstallationDocuments(deriveInstallations(sources));
