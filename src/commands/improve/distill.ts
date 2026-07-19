@@ -51,7 +51,7 @@
 import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
@@ -251,7 +251,7 @@ export interface AkmDistillOptions {
 
 /** Derive the proposed lesson ref from the input ref. See module docblock. */
 export function deriveLessonRef(inputRef: string): string {
-  const parsed = parseAssetRef(inputRef);
+  const parsed = parseRefInput(inputRef);
   // Strip origin: a feedback signal recorded against `team//skill:deploy`
   // distils into the same lesson namespace as `skill:deploy`. The proposal
   // id (a UUID) keeps the queue entries distinct, so collisions are not a
@@ -672,7 +672,7 @@ async function loadAndScoreInputSalience(args: {
 
   if (assetContent && assetFilePath) {
     try {
-      const parsedRef = parseAssetRef(inputRef);
+      const parsedRef = parseRefInput(inputRef);
       // G4: predictionError decays with revision count — the prior hardcoded
       // `revisionCount: 0` made it a dead constant 1.0. Use the number of
       // proposals ever raised against this ref as the revision proxy.
@@ -731,7 +731,7 @@ async function loadAndScoreInputSalience(args: {
  */
 function refuseDisallowedDistillInput(args: {
   options: AkmDistillOptions;
-  parsedInputRef: ReturnType<typeof parseAssetRef>;
+  parsedInputRef: ReturnType<typeof parseRefInput>;
   inputRef: string;
   durableInputRef: string;
   eligMeta: { eligibilitySource?: EligibilitySource };
@@ -775,7 +775,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
   // Validate the ref shape up front so a typo never reaches the LLM.
-  const parsedInputRef = parseAssetRef(inputRef);
+  const parsedInputRef = parseRefInput(inputRef);
   const durableInputRef = durableImproveRef(inputRef, options.sourceName);
   const targetKind = options.proposalKind ?? "lesson";
 
@@ -1546,9 +1546,9 @@ function readDistillFeedback(args: {
   // #267 — feedback exclusion. Filter events whose `ref` matches the
   // exclusion list BEFORE the prompt is built. The original event stream
   // is never mutated; only the `feedback` slice that reaches the LLM is
-  // affected. The exclusion set is normalised through `parseAssetRef` →
-  // re-serialised so callers can pass canonical or origin-prefixed refs
-  // and the comparison still works against the event payload's `ref`.
+  // affected. The exclusion set is normalised through the durable/bare ref
+  // helpers so callers can pass canonical or origin-prefixed refs and the
+  // comparison still works against the event payload's `ref`.
   const exclusionList = options.excludeFeedbackFromRefs ?? [];
   const exclusionSet = new Set(exclusionList.map((ref) => ref.trim()).filter((ref) => ref.length > 0));
   const originalEventCount = events.length;
