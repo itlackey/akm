@@ -63,6 +63,14 @@ export interface DbSearchResult {
   entry: IndexDocument;
   searchText: string;
   bm25Score: number;
+  /**
+   * Chunk-5 flip F5d (Step 2): the durable fully-qualified `<bundle>//<concept-id>`
+   * stored spelling from the `entries.item_ref` column, surfaced onto the search
+   * read path so the salience dual-read arm keys on the new grammar first.
+   * `undefined`/`null` for a NULL-provenance (pre-flip / write-back) row — the
+   * reader then falls through to its inline legacy `type:name` arm.
+   */
+  itemRef?: string | null;
 }
 
 /** One nearest-neighbour hit from the vector index (id + L2 distance). */

@@ -743,9 +743,9 @@ export function getEmbeddableEntryCount(db: Database): number {
 export function getEntryById(
   db: Database,
   id: number,
-): { filePath: string; stashDir: string; entry: IndexDocument } | undefined {
-  const row = db.prepare("SELECT file_path, stash_dir, entry_json FROM entries WHERE id = ?").get(id) as
-    | { file_path: string; stash_dir: string; entry_json: string }
+): { filePath: string; stashDir: string; entry: IndexDocument; itemRef?: string | null } | undefined {
+  const row = db.prepare("SELECT file_path, stash_dir, entry_json, item_ref FROM entries WHERE id = ?").get(id) as
+    | { file_path: string; stash_dir: string; entry_json: string; item_ref: string | null }
     | undefined;
   if (!row) return undefined;
   // Guard against corrupt JSON
@@ -756,7 +756,7 @@ export function getEntryById(
     warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
     return undefined;
   }
-  return { filePath: row.file_path, stashDir: row.stash_dir, entry };
+  return { filePath: row.file_path, stashDir: row.stash_dir, entry, itemRef: row.item_ref };
 }
 
 export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[] {

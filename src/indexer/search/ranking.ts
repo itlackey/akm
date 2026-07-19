@@ -147,7 +147,7 @@ export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { sco
 export function combineSearchScores(options: {
   ftsScoreMap: Map<number, { score: number; result: DbSearchResult }>;
   embedScoreMap: Map<number, number>;
-  getEntryById: (id: number) => { entry: IndexDocument; filePath: string } | undefined;
+  getEntryById: (id: number) => { entry: IndexDocument; filePath: string; itemRef?: string | null } | undefined;
   typeFilter?: string;
   /**
    * #627 — types excluded from the default (untyped 'any') path. The FTS and
@@ -176,6 +176,7 @@ export function combineSearchScores(options: {
       filePath: result.filePath,
       score: combinedScore,
       rankingMode: embedScore !== undefined ? "hybrid" : "fts",
+      itemRef: result.itemRef,
     });
   }
 
@@ -192,6 +193,7 @@ export function combineSearchScores(options: {
       filePath: found.filePath,
       score: cosine * VEC_WEIGHT,
       rankingMode: "semantic",
+      itemRef: found.itemRef,
     });
   }
 

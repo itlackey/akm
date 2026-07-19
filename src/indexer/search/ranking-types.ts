@@ -21,6 +21,13 @@ export interface RankedEntryInput {
   filePath: string;
   score: number;
   rankingMode: "hybrid" | "semantic" | "fts";
+  /**
+   * Chunk-5 flip F5d (Step 2): the durable fully-qualified `<bundle>//<concept-id>`
+   * stored spelling carried from `entries.item_ref` through the search read path,
+   * so `loadSalienceRankScores` can key on the new grammar first (new key, then an
+   * inline legacy `type:name` arm). `undefined`/`null` for a NULL-provenance row.
+   */
+  itemRef?: string | null;
   utilityBoosted?: boolean;
   /**
    * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
