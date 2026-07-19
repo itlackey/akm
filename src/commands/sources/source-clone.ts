@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
+import { isBundleSlug } from "../../core/asset/asset-ref";
 import { displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
@@ -41,10 +42,37 @@ export interface CloneResponse {
   remoteFetched?: { origin: string; stashRoot: string; cacheDir: string };
 }
 
+/**
+ * Parse a clone `sourceRef`, tolerating a non-slug origin prefix. A ref of the
+ * form `<origin>//<conceptId>` whose `<origin>` is not a bundle slug (a registry
+ * ref, path, or URL) has only its conceptId body parsed under the strict new
+ * grammar; the raw origin is re-attached so `resolveSourcesForOrigin` / the
+ * remote-fetch fallback can match it. A slug origin (or no origin) parses whole.
+ */
+function parseCloneSourceRef(sourceRef: string): ReturnType<typeof parseRefInput> {
+  const boundary = sourceRef.indexOf("//");
+  if (boundary > 0) {
+    const origin = sourceRef.slice(0, boundary);
+    if (!isBundleSlug(origin)) {
+      const parsed = parseRefInput(sourceRef.slice(boundary + 2));
+      return { ...parsed, origin };
+    }
+  }
+  return parseRefInput(sourceRef);
+}
+
 export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
-  // F1b/F4b: accept both ref grammars — buildEditHint now suggests the conceptId
-  // spelling (`akm clone scripts/deploy.sh`), so the clone input must parse it.
-  const parsed = parseRefInput(options.sourceRef);
+  // F1b/F4b: accept the 0.9.0 conceptId spelling (`akm clone scripts/deploy.sh`).
+  // F5 origin split: `akm clone` also accepts a NON-slug clone SOURCE as the
+  // `origin//conceptId` prefix — a registry ref (`npm:@scope/pkg`), a bare path,
+  // or a URL. Those origins carry `:` / `.` / `/` so they are not legal bundle
+  // slugs and the strict new-grammar `parseRefInput` rejects them; but they are
+  // still valid clone sources, resolved by `resolveSourcesForOrigin`'s
+  // registry-id / path matching and the remote-fetch fallback below (the display
+  // side already keeps `origin//…` for exactly these non-slug origins — see
+  // displayRef). So when the origin prefix is not a bundle slug, parse only the
+  // conceptId body under the strict grammar and re-attach the raw origin.
+  const parsed = parseCloneSourceRef(options.sourceRef);
 
   // When --dest is provided, the working stash is optional
   let allSources: SearchSource[];

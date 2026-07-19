@@ -239,9 +239,9 @@ describe("source commands and resolution", () => {
 
     process.env.AKM_STASH_DIR = stashDir;
 
-    const skill = await akmShow({ ref: "skill:ops" });
-    const command = await akmShow({ ref: "command:release.md" });
-    const agent = await akmShow({ ref: "agent:coach.md" });
+    const skill = await akmShow({ ref: "skills/ops" });
+    const command = await akmShow({ ref: "commands/release.md" });
+    const agent = await akmShow({ ref: "agents/coach.md" });
 
     expect(skill.type).toBe("skill");
     expect(skill.action).toContain("Read and follow");
@@ -261,7 +261,7 @@ describe("source commands and resolution", () => {
     try {
       process.env.AKM_STASH_DIR = stashDir;
       // QA #27: error should not leak "Stash type root" wording; be user-facing
-      await expect(akmShow({ ref: "agent:missing.md" })).rejects.toThrow(
+      await expect(akmShow({ ref: "agents/missing.md" })).rejects.toThrow(
         /Asset not found for ref: agent:missing\.md|not found for ref/i,
       );
     } finally {
@@ -269,34 +269,40 @@ describe("source commands and resolution", () => {
     }
   });
 
-  test("akmShow accepts a foreign/unknown type in ref (open token, chunk 1.5)", async () => {
+  test("akmShow rejects a foreign/unknown conceptId leading segment (F5 new grammar closes the type token)", async () => {
     const stashDir = createTmpDir("akm-stash-");
     process.env.AKM_STASH_DIR = stashDir;
-    // `parseAssetRef` no longer rejects "widget" — the type token is open at
-    // the validation/data layer. Resolution still fails, but the rejection
-    // now comes from a DIFFERENT, still-closed gate one layer down:
-    // `asset-spec.ts`'s `ASSET_SPECS`/`TYPE_DIRS`-keyed `resolveAssetPathFromName`
-    // (reached via path-resolver.ts's on-disk fallback) throws its own
-    // "Unknown asset type" for anything outside the closed 14 — that gate is
-    // untouched until a later chunk (chunk-1.5 anchors §E.3 phasing note: "a
-    // foreign type accepted post-1.5 can still fail at those gates"). So the
-    // observable change is the REJECTION REASON/message, not success.
-    await expect(akmShow({ ref: "widget:foo" })).rejects.toThrow(/Unknown asset type/);
+    // The F5 new-grammar input parser (`parseRefInput`) is CLOSED at the type
+    // token: a conceptId whose leading segment is not a known stash subdir
+    // ("widget" is not) has no legacy type predicate and is rejected as an
+    // unrecognized ref — the same outcome an unknown asset type produced before,
+    // now surfaced at the input-parse boundary. (The pre-0.9.0 open-token /
+    // "Unknown asset type" phasing is retired with the legacy grammar.)
+    await expect(akmShow({ ref: "widget/foo" })).rejects.toThrow(/no known asset-type prefix|Unrecognized asset ref/i);
   });
 
-  test("akmShow still rejects the deny-listed tool/vault types", async () => {
+  test("akmShow rejects the retired tool/vault types as unrecognized new-grammar refs", async () => {
     const stashDir = createTmpDir("akm-stash-");
     process.env.AKM_STASH_DIR = stashDir;
-    await expect(akmShow({ ref: "tool:deploy.sh" })).rejects.toThrow(/Invalid asset type/);
-    await expect(akmShow({ ref: "vault:prod" })).rejects.toThrow(/vault.*removed in 0\.9\.0/i);
+    // `tool`/`vault` are not stash subdirs, so the new-grammar input parser
+    // rejects them as unrecognized refs. (The vault-removal migration hint lives
+    // in the STORED-ref parser `parseStoredRef` for durable data, not the CLI
+    // input path, which never durably re-key round-trips a `vault` ref.)
+    await expect(akmShow({ ref: "tool/deploy.sh" })).rejects.toThrow(
+      /no known asset-type prefix|Unrecognized asset ref/i,
+    );
+    await expect(akmShow({ ref: "vault/prod" })).rejects.toThrow(/no known asset-type prefix|Unrecognized asset ref/i);
   });
 
   test("akmShow rejects traversal and absolute path refs", async () => {
     const stashDir = createTmpDir("akm-stash-");
     process.env.AKM_STASH_DIR = stashDir;
 
-    await expect(akmShow({ ref: "script:../outside.sh" })).rejects.toThrow(/Path traversal/);
-    await expect(akmShow({ ref: "script:/etc/passwd" })).rejects.toThrow(/Absolute path/);
+    // The new-grammar conceptId validator (`validateName`) is the path-safety
+    // guard: a `../`-leading conceptId trips traversal, an absolute path trips
+    // the absolute-path guard — both at the input-parse boundary.
+    await expect(akmShow({ ref: "../outside.sh" })).rejects.toThrow(/Path traversal/);
+    await expect(akmShow({ ref: "/etc/passwd" })).rejects.toThrow(/Absolute path/);
   });
 
   test("akmShow blocks symlink escapes outside stash type root", async () => {
@@ -316,7 +322,7 @@ describe("source commands and resolution", () => {
 
     process.env.AKM_STASH_DIR = stashDir;
     // Symlinks are skipped by the indexer, so the asset won't be found
-    await expect(akmShow({ ref: "script:link.sh" })).rejects.toThrow(/not found for ref/);
+    await expect(akmShow({ ref: "scripts/link.sh" })).rejects.toThrow(/not found for ref/);
   });
 
   // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -361,7 +367,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "knowledge:api-guide.md" });
+    const result = await akmShow({ ref: "knowledge/api-guide.md" });
 
     expect(result.type).toBe("knowledge");
     expect(result.content).toContain("# Overview");
@@ -373,7 +379,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } });
+    const result = await akmShow({ ref: "knowledge/api-guide.md", view: { mode: "toc" } });
 
     expect(result.type).toBe("knowledge");
     expect(result.content).toContain("# Overview");
@@ -388,7 +394,7 @@ Creates a user.
 
     process.env.AKM_STASH_DIR = stashDir;
     const result = await akmShow({
-      ref: "knowledge:api-guide.md",
+      ref: "knowledge/api-guide.md",
       view: { mode: "section", heading: "Authentication" },
     });
 
@@ -402,7 +408,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } });
+    const result = await akmShow({ ref: "knowledge/api-guide.md", view: { mode: "lines", start: 5, end: 7 } });
 
     expect(result.type).toBe("knowledge");
     expect(result.content).toContain("# Overview");
@@ -413,7 +419,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } });
+    const result = await akmShow({ ref: "knowledge/api-guide.md", view: { mode: "frontmatter" } });
 
     expect(result.type).toBe("knowledge");
     expect(result.content).toContain("title: API Guide");
@@ -425,7 +431,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Just a heading\nSome text.\n");
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } });
+    const result = await akmShow({ ref: "knowledge/plain.md", view: { mode: "frontmatter" } });
 
     expect(result.content).toBe("(no frontmatter)");
   });
@@ -436,7 +442,7 @@ Creates a user.
 
     process.env.AKM_STASH_DIR = stashDir;
     const result = await akmShow({
-      ref: "knowledge:api-guide.md",
+      ref: "knowledge/api-guide.md",
       view: { mode: "section", heading: "Nonexistent" },
     });
     expect(result.type).toBe("knowledge");
@@ -451,7 +457,7 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeTruthy();
@@ -491,7 +497,7 @@ Creates a user.
 
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      await expect(akmShow({ ref: "script:readme.txt" })).rejects.toThrow(
+      await expect(akmShow({ ref: "scripts/readme.txt" })).rejects.toThrow(
         /unsupported file type|supported script extension/i,
       );
     } finally {
@@ -577,7 +583,7 @@ Creates a user.
 
     try {
       process.env.AKM_STASH_DIR = stashDir;
-      const result = await akmShow({ ref: "script:process.py" });
+      const result = await akmShow({ ref: "scripts/process.py" });
 
       expect(result.type).toBe("script");
       expect(result.run).toBeDefined();
@@ -597,7 +603,7 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await akmShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeTruthy();
