@@ -36,6 +36,7 @@ import { scanComponent } from "../../src/core/adapter/scan-component";
 import type { BundleComponent, BundleInstallation, IndexDocument } from "../../src/core/adapter/types";
 import { stashDirFor } from "../../src/core/asset/asset-placement";
 import { generateMetadataFlat, type StashEntry } from "../../src/indexer/passes/metadata";
+import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
 import { buildSearchFields } from "../../src/indexer/search/search-fields";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 
@@ -132,6 +133,25 @@ for (const { name, root } of STASHES) {
         expect(buildSearchFields(entryForSearchFields(d)), `search-fields for ${oldIdentity(e)}`).toEqual(
           buildSearchFields(e),
         );
+        asserted += 1;
+      }
+      expect(asserted).toBe(olds.length);
+    });
+
+    test("indexDocumentToStashEntry reconstructs the full StashEntry losslessly (F4a M2 persist input)", async () => {
+      // The engine swap persists `entry_json` reconstructed from the IndexDocument.
+      // That reconstruction must deep-equal the StashEntry the OLD pipeline stored
+      // (every field, not just the search/signal surface) — the goldens + every
+      // entry_json reader depend on it. `fileSize` is absent from BOTH (attached
+      // at persist time by `attachFileSize`), so a direct deep-equal is exact.
+      const [olds, news] = await Promise.all([oldStream(root), newStream(root)]);
+      const newByKey = new Map(news.map((d) => [newIdentity(d), d]));
+      let asserted = 0;
+      for (const e of olds) {
+        const d = newByKey.get(oldIdentity(e));
+        expect(d, `no new doc for ${oldIdentity(e)}`).toBeDefined();
+        if (!d) continue;
+        expect(indexDocumentToStashEntry(d), `reconstructed entry for ${oldIdentity(e)}`).toEqual(e);
         asserted += 1;
       }
       expect(asserted).toBe(olds.length);
