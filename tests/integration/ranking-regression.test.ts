@@ -349,7 +349,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "local-skill-1",
         path: "/test/skills/local-1/SKILL.md",
-        ref: "skill:local-skill-1",
+        ref: "skills/local-skill-1",
         origin: null,
         score: 2.5,
       },
@@ -357,7 +357,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "command",
         name: "local-cmd-1",
         path: "/test/commands/local-1.md",
-        ref: "command:local-cmd-1",
+        ref: "commands/local-cmd-1",
         origin: null,
         score: 1.8,
       },
@@ -365,7 +365,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "knowledge",
         name: "local-doc-1",
         path: "/test/knowledge/local-1.md",
-        ref: "knowledge:local-doc-1",
+        ref: "knowledge/local-doc-1",
         origin: null,
         score: 0.9,
       },
@@ -376,7 +376,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "remote-skill-1",
         path: "/remote/skills/remote-1/SKILL.md",
-        ref: "skill:remote-skill-1",
+        ref: "skills/remote-skill-1",
         origin: "remote",
         score: 0.85,
       },
@@ -398,7 +398,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "local-high",
         path: "/test/skills/high/SKILL.md",
-        ref: "skill:local-high",
+        ref: "skills/local-high",
         origin: null,
         score: 2.0,
       },
@@ -406,7 +406,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "local-low",
         path: "/test/skills/low/SKILL.md",
-        ref: "skill:local-low",
+        ref: "skills/local-low",
         origin: null,
         score: 0.5,
       },
@@ -417,7 +417,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "remote-1",
         path: "/remote/skills/1/SKILL.md",
-        ref: "skill:remote-1",
+        ref: "skills/remote-1",
         origin: "remote",
         score: 1.0, // Normalized provider score between local-high and local-low
       },
@@ -441,7 +441,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "shared-skill",
         path: "/test/skills/shared/SKILL.md",
-        ref: "skill:shared-skill",
+        ref: "skills/shared-skill",
         origin: null,
         score: 2.0,
       },
@@ -452,7 +452,7 @@ describe("Provider merge (score not destroyed)", () => {
         type: "skill",
         name: "shared-skill",
         path: "/test/skills/shared/SKILL.md", // Same path = duplicate
-        ref: "skill:shared-skill",
+        ref: "skills/shared-skill",
         origin: "remote",
         score: 0.5,
       },
@@ -469,11 +469,11 @@ describe("Provider merge (score not destroyed)", () => {
 
   test("merge preserves sort order by score descending", () => {
     const localHits: SourceSearchHit[] = [
-      { type: "skill", name: "a", path: "/a", ref: "skill:a", origin: null, score: 3.0 },
-      { type: "skill", name: "b", path: "/b", ref: "skill:b", origin: null, score: 1.0 },
+      { type: "skill", name: "a", path: "/a", ref: "skills/a", origin: null, score: 3.0 },
+      { type: "skill", name: "b", path: "/b", ref: "skills/b", origin: null, score: 1.0 },
     ];
     const additionalHits: SourceSearchHit[] = [
-      { type: "skill", name: "c", path: "/c", ref: "skill:c", origin: "remote", score: 2.0 },
+      { type: "skill", name: "c", path: "/c", ref: "skills/c", origin: "remote", score: 2.0 },
     ];
 
     const merged = mergeStashHits(localHits, additionalHits, 20);

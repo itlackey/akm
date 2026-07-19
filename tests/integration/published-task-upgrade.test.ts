@@ -270,7 +270,7 @@ test.skipIf(!ENABLED)(
 
       const oldAdds = [
         ["upgrade-prompt", "--prompt", "Review the published upgrade", "--profile", "legacy-agent"],
-        ["upgrade-workflow", "--workflow", "workflow:upgrade-noop", "--params", '{"source":"published"}'],
+        ["upgrade-workflow", "--workflow", "workflows/upgrade-noop", "--params", '{"source":"published"}'],
         ["upgrade-command", "--command", "akm --version"],
         ["upgrade-disabled", "--command", "akm --version", "--disabled"],
         ["upgrade-explicit-improve", "--command", "/opt/retained-0.8/akm improve --profile frequent"],
@@ -457,7 +457,7 @@ test.skipIf(!ENABLED)(
       });
       expect(shown.get("upgrade-workflow")).toMatchObject({
         enabled: true,
-        target: { kind: "workflow", ref: "workflow:upgrade-noop", params: { source: "published" } },
+        target: { kind: "workflow", ref: "workflows/upgrade-noop", params: { source: "published" } },
       });
       expect(shown.get("upgrade-command")).toMatchObject({
         enabled: true,
@@ -543,7 +543,7 @@ test.skipIf(!ENABLED)(
       const workflowHistory = readLatestHistory(currentCli, "upgrade-workflow", currentEnv);
       expect(workflowHistory).toMatchObject({
         status: "active",
-        target: { kind: "workflow", ref: "workflow:upgrade-noop" },
+        target: { kind: "workflow", ref: "workflows/upgrade-noop" },
       });
       expect(workflowHistory.detail?.runId).toBeTruthy();
       expect(fs.readFileSync(workflowHistory.log, "utf8")).toContain(

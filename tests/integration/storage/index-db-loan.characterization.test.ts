@@ -39,7 +39,7 @@ describe("withIndexDb loan helper (WS5)", () => {
     // Seed the index.db at exactly the location withIndexDb will open.
     const dbPath = path.join(dataDir, "index.db");
     const seed = openIndexDatabase(dbPath);
-    insertUsageEvent(seed, { event_type: "search", query: "deploy", entry_ref: "skill:deploy" });
+    insertUsageEvent(seed, { event_type: "search", query: "deploy", entry_ref: "skills/deploy" });
     seed.close();
   });
 
@@ -53,7 +53,7 @@ describe("withIndexDb loan helper (WS5)", () => {
     const rows = withIndexDb((db) => getUsageEvents(db));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.event_type).toBe("search");
-    expect(rows[0]?.entry_ref).toBe("skill:deploy");
+    expect(rows[0]?.entry_ref).toBe("skills/deploy");
   });
 
   test("returns whatever fn returns", () => {
@@ -65,12 +65,12 @@ describe("withIndexDb loan helper (WS5)", () => {
     // The returned array is read AFTER withIndexDb has already closed the db.
     const rows = withIndexDb((db) => getUsageEvents(db));
     // No connection is open here; reading the array must still work.
-    expect(rows.map((r) => r.entry_ref)).toEqual(["skill:deploy"]);
+    expect(rows.map((r) => r.entry_ref)).toEqual(["skills/deploy"]);
   });
 
   test("writes through the loan scope land in the same file", () => {
     withIndexDb((db) => {
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:deploy" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
     });
     // Re-open the file independently and confirm the write persisted.
     const verify = new Database(path.join(dataDir, "index.db"));

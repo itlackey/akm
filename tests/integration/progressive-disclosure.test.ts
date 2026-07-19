@@ -61,7 +61,7 @@ describe("summary show", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "skill:code-review", detail: "summary" });
+    const result = await akmShow({ ref: "skills/code-review", detail: "summary" });
 
     expect(result.type).toBe("skill");
     expect(result.name).toBe("code-review");
@@ -81,7 +81,7 @@ describe("summary show", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:release", detail: "summary" });
+    const result = await akmShow({ ref: "commands/release", detail: "summary" });
 
     expect(result.type).toBe("command");
     expect(result.name).toBe("release");
@@ -106,7 +106,7 @@ describe("summary token budget", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "skill:big-skill", detail: "summary" });
+    const result = await akmShow({ ref: "skills/big-skill", detail: "summary" });
 
     // Rough token estimate: JSON.stringify length / 4
     const serialized = JSON.stringify(result);
@@ -124,7 +124,7 @@ describe("full show unchanged", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "skill:full-skill" });
+    const result = await akmShow({ ref: "skills/full-skill" });
 
     expect(result.type).toBe("skill");
     expect(result.content).toBe(content);
@@ -136,7 +136,7 @@ describe("full show unchanged", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "skill:full-skill", detail: "full" });
+    const result = await akmShow({ ref: "skills/full-skill", detail: "full" });
 
     expect(result.type).toBe("skill");
     expect(result.content).toBe(content);
@@ -246,7 +246,7 @@ describe("summary show for different asset types", () => {
     );
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "skill:analyze", detail: "summary" });
+    const result = await akmShow({ ref: "skills/analyze", detail: "summary" });
     expect(result.type).toBe("skill");
     expect(result.description).toBe("Analyze code patterns");
     expect(result.content).toBeUndefined();
@@ -259,7 +259,7 @@ describe("summary show for different asset types", () => {
     );
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:deploy", detail: "summary" });
+    const result = await akmShow({ ref: "commands/deploy", detail: "summary" });
     expect(result.type).toBe("command");
     expect(result.description).toBe("Deploy to env");
     expect(result.parameters).toBeDefined();
@@ -273,7 +273,7 @@ describe("summary show for different asset types", () => {
     );
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "agent:architect", detail: "summary" });
+    const result = await akmShow({ ref: "agents/architect", detail: "summary" });
     expect(result.type).toBe("agent");
     expect(result.description).toBe("Architecture advisor");
     expect(result.prompt).toBeUndefined();
@@ -284,7 +284,7 @@ describe("summary show for different asset types", () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy");
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "script:deploy.sh", detail: "summary" });
+    const result = await akmShow({ ref: "scripts/deploy.sh", detail: "summary" });
     expect(result.type).toBe("script");
     expect(result.content).toBeUndefined();
     // Summary preserves run (action metadata) but omits content body
@@ -298,7 +298,7 @@ describe("summary show for different asset types", () => {
     );
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "knowledge:api-guide", detail: "summary" });
+    const result = await akmShow({ ref: "knowledge/api-guide", detail: "summary" });
     expect(result.type).toBe("knowledge");
     expect(result.description).toBe("API reference guide");
     expect(result.content).toBeUndefined();

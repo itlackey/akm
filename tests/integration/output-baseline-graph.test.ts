@@ -173,7 +173,7 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
       undefined,
       envDirs,
     );
@@ -205,7 +205,7 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
       undefined,
       envDirs,
     );
@@ -244,7 +244,7 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=text", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=text", "--detail=full"],
       undefined,
       envDirs,
     );

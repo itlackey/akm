@@ -879,7 +879,7 @@ describe("workflow smoke parity", () => {
     assertNoBoundaryLeak(created, "workflow create");
     expect(created.status).toBe(0);
 
-    const start = nodeRun(["workflow", "start", "workflow:smoke-flow"], nodeEnv);
+    const start = nodeRun(["workflow", "start", "workflows/smoke-flow"], nodeEnv);
     assertNoBoundaryLeak(start, "workflow start");
     expect(start.status).toBe(0);
     const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
@@ -954,7 +954,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      const start = nodeRun(["workflow", "start", "workflow:judge-smoke"], nodeEnv);
+      const start = nodeRun(["workflow", "start", "workflows/judge-smoke"], nodeEnv);
       assertNoBoundaryLeak(start, "judge start");
       expect(start.status).toBe(0);
       const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
@@ -983,7 +983,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("dispatch-smoke");
 
-      const start = nodeRun(["workflow", "start", "workflow:dispatch-smoke"], nodeEnv);
+      const start = nodeRun(["workflow", "start", "workflows/dispatch-smoke"], nodeEnv);
       assertNoBoundaryLeak(start, "dispatch start");
       expect(start.status).toBe(0);
       const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;

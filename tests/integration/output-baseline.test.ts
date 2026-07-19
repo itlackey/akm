@@ -122,7 +122,7 @@ describe("output baseline", () => {
       "---\ndescription: Release\n---\nRun release {{version}}\n",
     );
 
-    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json"]);
+    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // QA #7: path and editable are now always projected in JSON shape
@@ -145,7 +145,7 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const output = await runCli(stashDir, ["show", "script:deploy.sh", "--format=text"]);
+    const output = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=text"]);
 
     expect(output).toContain("# origin: null");
     expect(output).toContain("run:");
@@ -166,7 +166,7 @@ describe("output baseline", () => {
     writeFile(path.join(stashDir, "agents", "coach.md"), "---\ndescription: Coach\n---\nYou are a coach.\n");
     writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
 
-    const refs = ["script:deploy.sh", "skill:ops", "command:release.md", "agent:coach.md", "knowledge:guide.md"];
+    const refs = ["scripts/deploy.sh", "skills/ops", "commands/release.md", "agents/coach.md", "knowledge/guide.md"];
     for (const ref of refs) {
       const output = await runCli(stashDir, ["show", ref, "--format=json"], undefined, envDirs);
       const json = JSON.parse(output) as Record<string, unknown>;
@@ -180,7 +180,7 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const output = await runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--detail=full"]);
+    const output = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     expect(json.schemaVersion).toBe(1);
@@ -196,7 +196,7 @@ describe("output baseline", () => {
       "---\ndescription: Release\n---\nRun release {{version}}\n",
     );
 
-    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=summary"]);
+    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=summary"]);
     const json = JSON.parse(output) as Record<string, unknown>;
     expect(json.type).toBe("command");
     expect(json.name).toBe("release.md");

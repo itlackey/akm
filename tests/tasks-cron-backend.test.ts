@@ -29,7 +29,7 @@ const TASK: TaskDocument = {
   id: "ping",
   schedule: "*/15 * * * *",
   enabled: true,
-  target: { kind: "workflow", ref: "workflow:noop", params: {} },
+  target: { kind: "workflow", ref: "workflows/noop", params: {} },
   source: { path: "/stash/tasks/ping.yml" },
 };
 
@@ -236,7 +236,7 @@ const SYNC_TASK: TaskDocument = {
   id: "ping",
   schedule: "*/15 * * * *",
   enabled: true,
-  target: { kind: "workflow", ref: "workflow:noop", params: {} },
+  target: { kind: "workflow", ref: "workflows/noop", params: {} },
   source: { path: "/stash/tasks/ping.yml" },
 };
 

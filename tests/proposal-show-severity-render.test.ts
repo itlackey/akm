@@ -13,7 +13,7 @@ import { formatProposalShowPlain } from "../src/output/text/helpers";
 
 const baseProposal = {
   id: "uuid-1",
-  ref: "lesson:rg-over-grep",
+  ref: "lessons/rg-over-grep",
   status: "pending",
   source: "distill",
 };

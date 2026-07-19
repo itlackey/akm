@@ -246,15 +246,15 @@ describe("recordImproveRun", () => {
     try {
       const result = buildMinimalResult({
         plannedRefs: [
-          { ref: "lesson:a", reason: "scope-type" },
-          { ref: "lesson:b", reason: "scope-type" },
-          { ref: "lesson:c", reason: "scope-type" },
+          { ref: "lessons/a", reason: "scope-type" },
+          { ref: "lessons/b", reason: "scope-type" },
+          { ref: "lessons/c", reason: "scope-type" },
         ],
         actions: [
-          { ref: "lesson:a", mode: "reflect", result: { ok: true, autoAccepted: true } as never },
-          { ref: "lesson:b", mode: "distill", result: { ok: true } as never },
-          { ref: "lesson:c", mode: "reflect-cooldown", result: { ok: true, reason: "cooldown" } },
-          { ref: "lesson:d", mode: "error", result: { ok: false, error: "boom" } },
+          { ref: "lessons/a", mode: "reflect", result: { ok: true, autoAccepted: true } as never },
+          { ref: "lessons/b", mode: "distill", result: { ok: true } as never },
+          { ref: "lessons/c", mode: "reflect-cooldown", result: { ok: true, reason: "cooldown" } },
+          { ref: "lessons/d", mode: "error", result: { ok: false, error: "boom" } },
         ],
       });
       recordImproveRun(db, {
@@ -298,11 +298,11 @@ describe("recordImproveRun", () => {
     // corrected total: the guard rejection now contributes to rejectedCount.
     const metrics = computeImproveRunMetrics(
       buildMinimalResult({
-        plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
+        plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
         actions: [
-          { ref: "lesson:a", mode: "reflect", result: { ok: true } as never },
+          { ref: "lessons/a", mode: "reflect", result: { ok: true } as never },
           {
-            ref: "lesson:b",
+            ref: "lessons/b",
             mode: "reflect-guard-rejected",
             result: { ok: true, reason: "EXCESSIVE_SHRINKAGE" },
           },
@@ -317,8 +317,8 @@ describe("recordImproveRun", () => {
 
   test("computeImproveRunMetrics is a pure helper consistent with recorded metrics", () => {
     const result = buildMinimalResult({
-      plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
-      actions: [{ ref: "lesson:a", mode: "reflect", result: { ok: true } as never }],
+      plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
+      actions: [{ ref: "lessons/a", mode: "reflect", result: { ok: true } as never }],
     });
     const metrics = computeImproveRunMetrics(result);
     expect(metrics).toEqual({
@@ -337,12 +337,12 @@ describe("recordImproveRun", () => {
   // metric total must still be counted from the aggregate, NOT from per-ref rows.
   test("counts distillSkipped aggregate into skippedCount and actionsCount", () => {
     const result = buildMinimalResult({
-      plannedRefs: [{ ref: "lesson:a", reason: "scope-type" }],
-      actions: [{ ref: "lesson:a", mode: "reflect", result: { ok: true } as never }],
+      plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
+      actions: [{ ref: "lessons/a", mode: "reflect", result: { ok: true } as never }],
       distillSkipped: {
         total: 13000,
         byReason: { "no new signal since last proposal": 12000, "pending proposal exists": 1000 },
-        samples: [{ ref: "memory:a", reason: "no new signal since last proposal" }],
+        samples: [{ ref: "memories/a", reason: "no new signal since last proposal" }],
       },
     });
     const metrics = computeImproveRunMetrics(result);
@@ -365,9 +365,9 @@ describe("recordImproveRun", () => {
           total: 13000,
           byReason: { "no new signal since last proposal": 13000 },
           samples: [
-            { ref: "memory:a", reason: "no new signal since last proposal" },
-            { ref: "memory:b", reason: "no new signal since last proposal" },
-            { ref: "memory:c", reason: "no new signal since last proposal" },
+            { ref: "memories/a", reason: "no new signal since last proposal" },
+            { ref: "memories/b", reason: "no new signal since last proposal" },
+            { ref: "memories/c", reason: "no new signal since last proposal" },
           ],
         },
       });

@@ -34,7 +34,7 @@ describe("purgeOldEvents", () => {
       insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health:probe" });
       // Within retention window — must survive.
       const recentTs = new Date(now - 3 * day).toISOString();
-      insertEvent(db, { eventType: "reflect_invoked", ts: recentTs, ref: "lesson:fresh" });
+      insertEvent(db, { eventType: "reflect_invoked", ts: recentTs, ref: "lessons/fresh" });
 
       const before = db.prepare("SELECT COUNT(*) AS c FROM events").get() as { c: number };
       expect(before.c).toBe(3);
@@ -49,7 +49,7 @@ describe("purgeOldEvents", () => {
         event_type: string;
         ref: string | null;
       }>;
-      expect(survivors).toEqual([{ event_type: "reflect_invoked", ref: "lesson:fresh" }]);
+      expect(survivors).toEqual([{ event_type: "reflect_invoked", ref: "lessons/fresh" }]);
     } finally {
       db.close();
     }
@@ -75,7 +75,7 @@ describe("purgeOldEvents", () => {
     const db = openStateDatabase();
     try {
       const recentTs = new Date(Date.now() - 1 * 86_400_000).toISOString();
-      insertEvent(db, { eventType: "reflect_invoked", ts: recentTs, ref: "lesson:x" });
+      insertEvent(db, { eventType: "reflect_invoked", ts: recentTs, ref: "lessons/x" });
 
       const purged = purgeOldEvents(db, 90);
       expect(purged).toBe(0);

@@ -14,7 +14,7 @@ import { shapeProposalProducerOutput } from "../../src/output/shapes";
 
 const proposal = {
   id: "uuid-1",
-  ref: "lesson:rg-over-grep",
+  ref: "lessons/rg-over-grep",
   status: "pending",
   source: "reflect",
   sourceRun: "run-7",
@@ -28,14 +28,14 @@ describe("reflect/propose success envelope contract", () => {
     const result = {
       schemaVersion: 2,
       ok: true,
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       engine: "claude",
       durationMs: 12,
       proposal,
     };
     const out = shapeProposalProducerOutput(result, "normal");
     expect(out.ok).toBe(true);
-    expect(out.ref).toBe("lesson:rg-over-grep");
+    expect(out.ref).toBe("lessons/rg-over-grep");
     expect(out.engine).toBe("claude");
     expect(out.durationMs).toBe(12);
     expect(out).toHaveProperty("proposal");
@@ -47,7 +47,7 @@ describe("reflect/propose success envelope contract", () => {
     const result = {
       schemaVersion: 2,
       ok: true,
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       engine: "claude",
       durationMs: 12,
       proposal,
@@ -57,11 +57,11 @@ describe("reflect/propose success envelope contract", () => {
   });
 
   test("brief: shaped proposal still includes id+ref+status (via brief→normal upgrade)", () => {
-    const result = { schemaVersion: 1, ok: true, ref: "lesson:rg-over-grep", proposal };
+    const result = { schemaVersion: 1, ok: true, ref: "lessons/rg-over-grep", proposal };
     const out = shapeProposalProducerOutput(result, "brief");
     const p = out.proposal as Record<string, unknown>;
     expect(p.id).toBe("uuid-1");
-    expect(p.ref).toBe("lesson:rg-over-grep");
+    expect(p.ref).toBe("lessons/rg-over-grep");
     expect(p.status).toBe("pending");
   });
 });
@@ -73,7 +73,7 @@ describe("reflect/propose failure envelope contract", () => {
       ok: false,
       reason: "non_zero_exit",
       error: "exited with code 7",
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       engine: "claude",
       exitCode: 7,
       stdout: "out",
@@ -83,7 +83,7 @@ describe("reflect/propose failure envelope contract", () => {
     expect(out.ok).toBe(false);
     expect(out.reason).toBe("non_zero_exit");
     expect(out.error).toBe("exited with code 7");
-    expect(out.ref).toBe("lesson:rg-over-grep");
+    expect(out.ref).toBe("lessons/rg-over-grep");
     expect(out.exitCode).toBe(7);
     // stdio only at full
     expect(out).not.toHaveProperty("stdout");

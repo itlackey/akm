@@ -190,7 +190,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "lesson:foo",
+        ref: "lessons/foo",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
       "run-1",
@@ -198,14 +198,14 @@ describe("classifyPlannerAction", () => {
     expect(result.noOpRefuse).toBe(true);
     expect(result.llmTouched).toBe(true);
     expect(result.mode).toBe("distill");
-    expect(result.ref).toBe("lesson:foo");
+    expect(result.ref).toBe("lessons/foo");
   });
 
   test("flags generic 'X refuses Y' shapes as noOpRefuse (case-insensitive)", () => {
     const result = classifyPlannerAction(
       {
         mode: "consolidate",
-        ref: "skill:bar",
+        ref: "skills/bar",
         result: {
           ok: true,
           outcome: "skipped",
@@ -221,7 +221,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "reflect",
-        ref: "script:foo.ts",
+        ref: "scripts/foo.ts",
         result: {
           ok: true,
           outcome: "skipped",
@@ -239,7 +239,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: {
           ok: true,
           outcome: "skipped",
@@ -259,7 +259,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill-skipped",
-        ref: "agent:foo",
+        ref: "agents/foo",
         result: { ok: true, outcome: null, message: null },
       },
       "run-1",
@@ -272,7 +272,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { ok: true, outcome: "queued", message: null },
       },
       "run-1",
@@ -285,7 +285,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { ok: false, outcome: "skipped", message: "Distill refuses ..." },
       },
       "run-1",
@@ -297,7 +297,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { ok: true, outcome: "queued", message: "internal note: distill refuses recursion" },
       },
       "run-1",
@@ -308,7 +308,7 @@ describe("classifyPlannerAction", () => {
   test("truncates long messages in the classified-action snippet", () => {
     const longMessage = `${DISTILL_REFUSE_MESSAGE} ${"x".repeat(500)}`;
     const result = classifyPlannerAction(
-      { mode: "distill", ref: "lesson:foo", result: { ok: true, outcome: "skipped", message: longMessage } },
+      { mode: "distill", ref: "lessons/foo", result: { ok: true, outcome: "skipped", message: longMessage } },
       "run-1",
     );
     expect(result.noOpRefuse).toBe(true);
@@ -330,7 +330,7 @@ describe("classifyPlannerAction", () => {
     const result = classifyPlannerAction(
       {
         mode: "distill",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { ok: true, outcome: "skipped", message: "agent refused the call (transport failure)" },
       },
       "run-1",
@@ -365,12 +365,12 @@ describe("aggregatePlannerActions", () => {
 
   test("counts totals, llm-touched, and refuses", () => {
     const a = aggregatePlannerActions([
-      refuse("distill", "lesson:a", DISTILL_REFUSE_MESSAGE),
-      refuse("distill", "lesson:b", DISTILL_REFUSE_MESSAGE),
-      llmAttempt("distill", "memory:c"),
-      llmAttempt("reflect", "memory:d"),
-      planSkipped("distill-skipped", "memory:e"),
-      planSkipped("distill-skipped", "memory:f"),
+      refuse("distill", "lessons/a", DISTILL_REFUSE_MESSAGE),
+      refuse("distill", "lessons/b", DISTILL_REFUSE_MESSAGE),
+      llmAttempt("distill", "memories/c"),
+      llmAttempt("reflect", "memories/d"),
+      planSkipped("distill-skipped", "memories/e"),
+      planSkipped("distill-skipped", "memories/f"),
     ]);
     expect(a.counts.totalActions).toBe(6);
     expect(a.counts.llmTouchedActions).toBe(4);
@@ -381,12 +381,12 @@ describe("aggregatePlannerActions", () => {
   test("computes rates against the right denominators", () => {
     // 2 refuses / 6 total = 0.333; 2 / 4 llm-touched = 0.5
     const a = aggregatePlannerActions([
-      refuse("distill", "lesson:a", DISTILL_REFUSE_MESSAGE),
-      refuse("distill", "lesson:b", DISTILL_REFUSE_MESSAGE),
-      llmAttempt("distill", "memory:c"),
-      llmAttempt("reflect", "memory:d"),
-      planSkipped("distill-skipped", "memory:e"),
-      planSkipped("distill-skipped", "memory:f"),
+      refuse("distill", "lessons/a", DISTILL_REFUSE_MESSAGE),
+      refuse("distill", "lessons/b", DISTILL_REFUSE_MESSAGE),
+      llmAttempt("distill", "memories/c"),
+      llmAttempt("reflect", "memories/d"),
+      planSkipped("distill-skipped", "memories/e"),
+      planSkipped("distill-skipped", "memories/f"),
     ]);
     expect(a.noOpRefuseRate).toBeCloseTo(2 / 6, 9);
     expect(a.noOpRefuseRateLlmTouched).toBeCloseTo(2 / 4, 9);
@@ -402,9 +402,9 @@ describe("aggregatePlannerActions", () => {
 
   test("collects per-mode refuse breakdown across multiple modes", () => {
     const a = aggregatePlannerActions([
-      refuse("distill", "lesson:a", DISTILL_REFUSE_MESSAGE),
-      refuse("distill", "lesson:b", DISTILL_REFUSE_MESSAGE),
-      refuse("consolidate", "skill:c", "Consolidate refuses non-text inputs — only markdown is accepted."),
+      refuse("distill", "lessons/a", DISTILL_REFUSE_MESSAGE),
+      refuse("distill", "lessons/b", DISTILL_REFUSE_MESSAGE),
+      refuse("consolidate", "skills/c", "Consolidate refuses non-text inputs — only markdown is accepted."),
     ]);
     expect(a.counts.refusesByMode).toEqual({ distill: 2, consolidate: 1 });
   });
@@ -414,12 +414,12 @@ describe("aggregatePlannerActions", () => {
     const m2 = "Reflect rejects asset type 'script'.";
     const m3 = "Consolidate refuses non-text inputs.";
     const a = aggregatePlannerActions([
-      refuse("distill", "lesson:1", m1),
-      refuse("distill", "lesson:2", m1),
-      refuse("distill", "lesson:3", m1),
-      refuse("reflect", "script:1", m2),
-      refuse("reflect", "script:2", m2),
-      refuse("consolidate", "skill:1", m3),
+      refuse("distill", "lessons/1", m1),
+      refuse("distill", "lessons/2", m1),
+      refuse("distill", "lessons/3", m1),
+      refuse("reflect", "scripts/1", m2),
+      refuse("reflect", "scripts/2", m2),
+      refuse("consolidate", "skills/1", m3),
     ]);
     expect(a.topReasons.map((r) => `${r.count}:${r.message[0]}`)).toEqual(["3:D", "2:R", "1:C"]);
     // Modes appear in the histogram for triage.
@@ -432,7 +432,7 @@ describe("aggregatePlannerActions", () => {
       // Reason `r-04` appears 4 times, all others appear once each.
       const reps = i === 4 ? 4 : 1;
       for (let j = 0; j < reps; j++) {
-        actions.push(refuse("distill", `lesson:${i}-${j}`, `r-${String(i).padStart(2, "0")}`));
+        actions.push(refuse("distill", `lessons/${i}-${j}`, `r-${String(i).padStart(2, "0")}`));
       }
     }
     const a = aggregatePlannerActions(actions);
@@ -444,17 +444,17 @@ describe("aggregatePlannerActions", () => {
 
   test("caps per-reason samples at 3 in encounter order", () => {
     const a = aggregatePlannerActions([
-      refuse("distill", "lesson:1", DISTILL_REFUSE_MESSAGE, "run-A"),
-      refuse("distill", "lesson:2", DISTILL_REFUSE_MESSAGE, "run-A"),
-      refuse("distill", "lesson:3", DISTILL_REFUSE_MESSAGE, "run-B"),
-      refuse("distill", "lesson:4", DISTILL_REFUSE_MESSAGE, "run-B"),
-      refuse("distill", "lesson:5", DISTILL_REFUSE_MESSAGE, "run-C"),
+      refuse("distill", "lessons/1", DISTILL_REFUSE_MESSAGE, "run-A"),
+      refuse("distill", "lessons/2", DISTILL_REFUSE_MESSAGE, "run-A"),
+      refuse("distill", "lessons/3", DISTILL_REFUSE_MESSAGE, "run-B"),
+      refuse("distill", "lessons/4", DISTILL_REFUSE_MESSAGE, "run-B"),
+      refuse("distill", "lessons/5", DISTILL_REFUSE_MESSAGE, "run-C"),
     ]);
     expect(a.samplesByReason).toHaveLength(1);
     expect(a.samplesByReason[0].samples).toEqual([
-      { runId: "run-A", ref: "lesson:1", mode: "distill" },
-      { runId: "run-A", ref: "lesson:2", mode: "distill" },
-      { runId: "run-B", ref: "lesson:3", mode: "distill" },
+      { runId: "run-A", ref: "lessons/1", mode: "distill" },
+      { runId: "run-A", ref: "lessons/2", mode: "distill" },
+      { runId: "run-B", ref: "lessons/3", mode: "distill" },
     ]);
   });
 });
@@ -465,15 +465,15 @@ describe("collectPlannerActions", () => {
     writeImproveRun(stash, "2026-05-01T00-00-00-000Z-aaaa", [
       {
         mode: "distill",
-        ref: "lesson:a",
+        ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
-      { mode: "distill-skipped", ref: "agent:b", result: { ok: true } },
+      { mode: "distill-skipped", ref: "agents/b", result: { ok: true } },
     ]);
     writeImproveRun(stash, "2026-05-01T01-00-00-000Z-bbbb", [
       {
         mode: "distill",
-        ref: "lesson:c",
+        ref: "lessons/c",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
     ]);
@@ -490,7 +490,7 @@ describe("collectPlannerActions", () => {
       writeImproveRun(stash, `2026-05-${String(i + 1).padStart(2, "0")}T00-00-00-000Z-xxxx`, [
         {
           mode: "distill",
-          ref: `lesson:${i}`,
+          ref: `lessons/${i}`,
           result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
         },
       ]);
@@ -520,7 +520,7 @@ describe("collectPlannerActions", () => {
     writeImproveRun(stash, goodId, [
       {
         mode: "distill",
-        ref: "lesson:a",
+        ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
     ]);
@@ -536,10 +536,10 @@ describe("runPlannerWasteCase", () => {
     writeImproveRun(stash, "2026-05-01T00-00-00-000Z-aaaa", [
       {
         mode: "distill",
-        ref: "lesson:a",
+        ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
-      { mode: "graph-extraction", ref: "memory:b", result: { ok: true, outcome: "queued" } },
+      { mode: "graph-extraction", ref: "memories/b", result: { ok: true, outcome: "queued" } },
     ]);
     const result = await runPlannerWasteCase(makeCase(), makeCtx(stash));
     expect(result.passed).toBe(true);
@@ -555,16 +555,16 @@ describe("runPlannerWasteCase", () => {
     writeImproveRun(stash, "2026-05-01T00-00-00-000Z-aaaa", [
       {
         mode: "distill",
-        ref: "lesson:a",
+        ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
       {
         mode: "distill",
-        ref: "lesson:b",
+        ref: "lessons/b",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
-      { mode: "graph-extraction", ref: "memory:c", result: { ok: true, outcome: "queued" } },
-      { mode: "reflect", ref: "memory:d", result: { ok: true, outcome: "queued" } },
+      { mode: "graph-extraction", ref: "memories/c", result: { ok: true, outcome: "queued" } },
+      { mode: "reflect", ref: "memories/d", result: { ok: true, outcome: "queued" } },
     ]);
     const result = await runPlannerWasteCase(
       makeCase({ id: "planner-waste-rate-ceiling", expected: { maxNoOpRefuseRate: 0.05 } }),
@@ -586,13 +586,13 @@ describe("runPlannerWasteCase", () => {
     const actions: PlannerActionInput[] = [];
     actions.push({
       mode: "distill",
-      ref: "lesson:a",
+      ref: "lessons/a",
       result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
     });
     for (let i = 0; i < 99; i++) {
       actions.push({
         mode: "graph-extraction",
-        ref: `memory:${i}`,
+        ref: `memories/${i}`,
         result: { ok: true, outcome: "queued" },
       });
     }
@@ -614,7 +614,7 @@ describe("runPlannerWasteCase", () => {
     writeImproveRun(stash, "2026-05-01T00-00-00-000Z-aaaa", [
       {
         mode: "distill",
-        ref: "lesson:a",
+        ref: "lessons/a",
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       },
     ]);
@@ -651,7 +651,7 @@ describe("runPlannerWasteCase", () => {
     for (let i = 0; i < 5; i++) {
       actions.push({
         mode: "distill",
-        ref: `lesson:${i}`,
+        ref: `lessons/${i}`,
         result: { ok: true, outcome: "skipped", message: DISTILL_REFUSE_MESSAGE },
       });
     }

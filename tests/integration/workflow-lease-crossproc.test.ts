@@ -80,7 +80,7 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
   test("one process drives while a second is refused naming the holder; a SIGKILLed winner's run is reclaimed and its completed units are reused", async () => {
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
-    const started = await startWorkflowRun("workflow:lease-xproc", params);
+    const started = await startWorkflowRun("workflows/lease-xproc", params);
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);

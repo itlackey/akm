@@ -206,7 +206,7 @@ describe("hashSessionContent", () => {
     const base = fakeSession("ses_meta", 1_000_000, { title: "Original title" });
     const reTitled = fakeSession("ses_meta", 9_000_000, { title: "Totally different title" });
     // Same event text, divergent ref metadata.
-    reTitled.inlineRefs = [{ kind: "remember", ref: "memory:foo", text: "added mid-session", ts: 5_000_000 }];
+    reTitled.inlineRefs = [{ kind: "remember", ref: "memories/foo", text: "added mid-session", ts: 5_000_000 }];
     expect(hashSessionContent(reTitled)).toBe(hashSessionContent(base));
   });
 

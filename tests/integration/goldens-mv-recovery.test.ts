@@ -275,7 +275,7 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     await crashAt("filesystem-committed", ref, `${MV_RECOVERY_ENTRY_PROMOTE_NAME}-new`);
 
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:mv-recovery-entry-promote-trigger",
+      ref: "lessons/mv-recovery-entry-promote-trigger",
       source: "propose",
       force: true,
       payload: {
@@ -442,7 +442,7 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         seed(`memories/${name}.md`, mvSourceBody("promote-entry-golden"));
         await crashAt("filesystem-committed", ref, `${name}-new`);
         const proposal = createProposal(storage.stashDir, {
-          ref: "lesson:mv-recovery-entry-promote-trigger-golden",
+          ref: "lessons/mv-recovery-entry-promote-trigger-golden",
           source: "propose",
           force: true,
           payload: {

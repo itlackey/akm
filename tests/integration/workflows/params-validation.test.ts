@@ -64,7 +64,7 @@ describe("#12 — param schema validation at start", () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
     let caught: unknown;
     try {
-      await startWorkflowRun("workflow:param-guard", { files: "not-an-array", mode: "fast" });
+      await startWorkflowRun("workflows/param-guard", { files: "not-an-array", mode: "fast" });
     } catch (err) {
       caught = err;
     }
@@ -79,14 +79,14 @@ describe("#12 — param schema validation at start", () => {
 
   test("rejects a param outside its declared enum", async () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
-    await expect(startWorkflowRun("workflow:param-guard", { files: ["a.ts"], mode: "turbo" })).rejects.toThrow(
+    await expect(startWorkflowRun("workflows/param-guard", { files: ["a.ts"], mode: "turbo" })).rejects.toThrow(
       /params\.mode/,
     );
   });
 
   test("accepts params that satisfy every declared schema, and freezes the schemas into the plan", async () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
-    const started = await startWorkflowRun("workflow:param-guard", { files: ["a.ts", "b.ts"], mode: "slow" });
+    const started = await startWorkflowRun("workflows/param-guard", { files: ["a.ts", "b.ts"], mode: "slow" });
     expect(started.run.status).toBe("active");
 
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
@@ -99,7 +99,7 @@ describe("#12 — param schema validation at start", () => {
 
   test("undeclared params are not constrained (the schema map only names what it declares)", async () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
-    const started = await startWorkflowRun("workflow:param-guard", {
+    const started = await startWorkflowRun("workflows/param-guard", {
       files: ["a.ts"],
       mode: "fast",
       extra: { anything: true },
@@ -111,7 +111,7 @@ describe("#12 — param schema validation at start", () => {
 describe("#12 — journaled params must still satisfy the frozen schemas (brief/report integrity)", () => {
   test("brief refuses a run whose params row was edited to violate the schema", async () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
-    const started = await startWorkflowRun("workflow:param-guard", { files: ["a.ts"], mode: "fast" });
+    const started = await startWorkflowRun("workflows/param-guard", { files: ["a.ts"], mode: "fast" });
     tamperParams(started.run.id, JSON.stringify({ files: "no-longer-an-array", mode: "fast" }));
 
     await expect(buildWorkflowBrief(started.run.id)).rejects.toThrow(new RegExp(`${started.run.id}.*integrity check`));
@@ -119,7 +119,7 @@ describe("#12 — journaled params must still satisfy the frozen schemas (brief/
 
   test("report refuses a run whose params row was edited to violate the schema", async () => {
     writeProgram("param-guard", PARAM_GUARD_WF);
-    const started = await startWorkflowRun("workflow:param-guard", { files: ["a.ts"], mode: "fast" });
+    const started = await startWorkflowRun("workflows/param-guard", { files: ["a.ts"], mode: "fast" });
     tamperParams(started.run.id, JSON.stringify({ files: ["a.ts"], mode: "unknown-mode" }));
 
     await expect(
@@ -138,7 +138,7 @@ describe("#12 — journaled params must still satisfy the frozen schemas (brief/
     // SCHEMA violation is loud corruption here; a same-type value change stays a
     // (separately-detected) replay divergence, not a params integrity failure.
     writeProgram("param-guard", PARAM_GUARD_WF);
-    const started = await startWorkflowRun("workflow:param-guard", { files: ["a.ts"], mode: "fast" });
+    const started = await startWorkflowRun("workflows/param-guard", { files: ["a.ts"], mode: "fast" });
     tamperParams(started.run.id, JSON.stringify({ files: ["a.ts", "b.ts"], mode: "slow" }));
 
     // brief no longer trips the param-integrity assert (it may still surface

@@ -45,7 +45,7 @@ describe("proposal Git target commits", () => {
       defaultWriteTarget: "team",
     } as AkmConfig;
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:git-proposal",
+      ref: "lessons/git-proposal",
       source: "distill",
       force: true,
       payload: { content: ACCEPTED },

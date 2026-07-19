@@ -163,7 +163,7 @@ describe("family A — search/show/list/info/curate/history/proposal/env/secret/
       process.chdir(workDir);
       const created = await runCli(["workflow", "create", A_WORKFLOW_NAME]);
       expect(created.code).toBe(0);
-      const started = await runCli(["workflow", "start", `workflow:${A_WORKFLOW_NAME}`]);
+      const started = await runCli(["workflow", "start", `workflows/${A_WORKFLOW_NAME}`]);
       expect(started.code).toBe(0);
       withRun = await runCli(["show", skillRef(), "--format=text"]);
     } finally {
@@ -441,7 +441,7 @@ describe("family D — argv-handling surfaces", () => {
 
   test("show <ref> lines 1 2 --format=text — normalizeShowArgv view-mode", async () => {
     writeFile("knowledge/lines-fixture.md", "# Heading\nline2\nline3\nline4\n");
-    const result = await runCli(["show", "knowledge:lines-fixture.md", "lines", "1", "2", "--format=text"]);
+    const result = await runCli(["show", "knowledge/lines-fixture.md", "lines", "1", "2", "--format=text"]);
     expect(result.code).toBe(0);
     expectGolden(
       "tests/fixtures/goldens/cli/d-show-lines-view.json",
@@ -492,7 +492,7 @@ describe("family F — error envelopes", () => {
     // exist — an UNKNOWN type (e.g. "nonexistent:x") is a UsageError
     // (MISSING_REQUIRED_ARGUMENT, exit 2) at ref-parse time, a different
     // family-F case than the not-found path this scenario targets.
-    const result = await runCli(["show", "script:does-not-exist.sh", "--format=json"]);
+    const result = await runCli(["show", "scripts/does-not-exist.sh", "--format=json"]);
     expect(result.code).toBe(1);
     const parsed = JSON.parse(result.stderr);
     expect(parsed.ok).toBe(false);

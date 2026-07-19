@@ -184,11 +184,11 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
   });
 
   test("env ref NAMES are part of the hash (order-sensitive), never resolved values", () => {
-    expect(hashOf({ env: ["env:ci"] })).not.toBe(baseline);
+    expect(hashOf({ env: ["env/ci"] })).not.toBe(baseline);
     // Distinct name lists ⇒ distinct hashes; identical names ⇒ identical hash
     // (the hash carries NAMES, so it cannot leak or depend on secret values).
-    expect(hashOf({ env: ["env:a", "env:b"] })).not.toBe(hashOf({ env: ["env:b", "env:a"] }));
-    expect(hashOf({ env: ["env:ci"] })).toBe(hashOf({ env: ["env:ci"] }));
+    expect(hashOf({ env: ["env/a", "env/b"] })).not.toBe(hashOf({ env: ["env/b", "env/a"] }));
+    expect(hashOf({ env: ["env/ci"] })).toBe(hashOf({ env: ["env/ci"] }));
   });
 
   test("isolation is part of the hash", () => {
@@ -777,7 +777,7 @@ function routeState(selected: string): WorkflowNextResult {
   return {
     run: { id: RUN_ID, params: {} },
     workflow: {
-      ref: "workflow:routed",
+      ref: "workflows/routed",
       title: "Routed",
       steps: [
         {
@@ -935,7 +935,7 @@ function passingResult(): ExecutedStepOutcome {
 function finalizeArgs(overrides: Record<string, unknown>) {
   return {
     runId: RUN_ID,
-    workflowRef: "workflow:demo",
+    workflowRef: "workflows/demo",
     stepId: "work",
     stepPlan: gatedStep(),
     completionCriteria: ["the work is thorough"],

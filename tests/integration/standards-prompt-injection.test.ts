@@ -74,7 +74,7 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
   {
     name: "buildReflectPrompt",
     render: (s) =>
-      buildReflectPrompt({ ref: "skill:foo", type: "skill", name: "foo", assetContent: "body", standardsContext: s })
+      buildReflectPrompt({ ref: "skills/foo", type: "skill", name: "foo", assetContent: "body", standardsContext: s })
         .prompt,
   },
   {
@@ -85,7 +85,7 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
     name: "buildSchemaRepairPrompt",
     render: (s) =>
       buildSchemaRepairPrompt({
-        ref: "skill:foo",
+        ref: "skills/foo",
         type: "skill",
         name: "foo",
         reason: "missing description",
@@ -96,7 +96,7 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
   {
     name: "buildDistillPrompt",
     render: (s) =>
-      buildDistillPrompt({ inputRef: "skill:foo", assetContent: "body", feedback: [], standardsContext: s }),
+      buildDistillPrompt({ inputRef: "skills/foo", assetContent: "body", feedback: [], standardsContext: s }),
   },
   {
     name: "buildExtractPrompt",
@@ -140,7 +140,7 @@ describe("standards prompt injection", () => {
     expect(standardsContext).toContain(factBody);
     expect(standardsContext).toContain("# fact:conventions/naming");
 
-    const prompt = buildDistillPrompt({ inputRef: "skill:foo", assetContent: "body", feedback: [], standardsContext });
+    const prompt = buildDistillPrompt({ inputRef: "skills/foo", assetContent: "body", feedback: [], standardsContext });
     expect(prompt).toContain(LEAD_IN);
     expect(prompt).toContain(factBody);
   });

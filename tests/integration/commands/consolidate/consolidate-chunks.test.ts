@@ -538,13 +538,13 @@ describe("C-3: writeContradictEdge writes contradictedBy frontmatter edges (#382
     const memFile = path.join(tmpDir, "auth-a.md");
     fs.writeFileSync(memFile, "---\ndescription: Auth tips A\n---\nContent A.\n", "utf8");
 
-    writeContradictEdge(memFile, "memory:auth-b");
+    writeContradictEdge(memFile, "memories/auth-b");
 
     const content = fs.readFileSync(memFile, "utf8");
     const parsed = parseFrontmatter(content);
     expect(parsed.data.beliefState).toBe("contradicted");
     expect(Array.isArray(parsed.data.contradictedBy)).toBe(true);
-    expect(parsed.data.contradictedBy as string[]).toContain("memory:auth-b");
+    expect(parsed.data.contradictedBy as string[]).toContain("memories/auth-b");
   });
 
   it("is idempotent — does not write duplicate edges", () => {
@@ -558,12 +558,12 @@ describe("C-3: writeContradictEdge writes contradictedBy frontmatter edges (#382
     );
 
     // Write the same edge again — should be a no-op
-    writeContradictEdge(memFile, "memory:auth-b");
+    writeContradictEdge(memFile, "memories/auth-b");
 
     const content = fs.readFileSync(memFile, "utf8");
     const parsed = parseFrontmatter(content);
     const refs = parsed.data.contradictedBy as string[];
     // Still exactly one edge (no duplicate)
-    expect(refs.filter((r) => r === "memory:auth-b")).toHaveLength(1);
+    expect(refs.filter((r) => r === "memories/auth-b")).toHaveLength(1);
   });
 });

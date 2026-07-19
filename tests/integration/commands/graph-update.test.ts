@@ -187,7 +187,7 @@ describe("akmGraphUpdate", () => {
     let capturedOptions: GraphExtractionPassOptions | undefined;
 
     const result = await akmGraphUpdate({
-      refs: ["knowledge:k1"],
+      refs: ["knowledge/k1"],
       graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(1);
@@ -208,7 +208,7 @@ describe("akmGraphUpdate", () => {
     let capturedOptions: GraphExtractionPassOptions | undefined;
 
     const result = await akmGraphUpdate({
-      refs: ["knowledge:k1", "memory:m1"],
+      refs: ["knowledge/k1", "memories/m1"],
       graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(2);
@@ -228,7 +228,7 @@ describe("akmGraphUpdate", () => {
 
     let extractionCalled = false;
     const result = await akmGraphUpdate({
-      refs: ["knowledge:does-not-exist"],
+      refs: ["knowledge/does-not-exist"],
       graphExtractionFn: async () => {
         extractionCalled = true;
         return fakeExtractionResult(0);
@@ -250,7 +250,7 @@ describe("akmGraphUpdate", () => {
     let capturedOptions: GraphExtractionPassOptions | undefined;
 
     const result = await akmGraphUpdate({
-      refs: ["knowledge:k1", "knowledge:ghost-ref"],
+      refs: ["knowledge/k1", "knowledge/ghost-ref"],
       graphExtractionFn: async ({ options = {} }: GraphExtractionPassContext) => {
         capturedOptions = options;
         return fakeExtractionResult(1);

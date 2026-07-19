@@ -68,7 +68,7 @@ describe("Usage Telemetry", () => {
       insertUsageEvent(db, {
         event_type: "search",
         query: "deploy tool",
-        metadata: JSON.stringify({ entry_refs: ["skill:deploy", "command:rollback"] }),
+        metadata: JSON.stringify({ entry_refs: ["skills/deploy", "commands/rollback"] }),
       });
 
       const events = getUsageEvents(db);
@@ -88,13 +88,13 @@ describe("Usage Telemetry", () => {
     try {
       insertUsageEvent(db, {
         event_type: "show",
-        entry_ref: "skill:deploy",
+        entry_ref: "skills/deploy",
       });
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
       expect(events[0].event_type).toBe("show");
-      expect(events[0].entry_ref).toBe("skill:deploy");
+      expect(events[0].entry_ref).toBe("skills/deploy");
     } finally {
       closeDatabase(db);
     }
@@ -108,7 +108,7 @@ describe("Usage Telemetry", () => {
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
-        entry_ref: "skill:deploy",
+        entry_ref: "skills/deploy",
         signal: "positive",
         metadata: JSON.stringify({ note: "Very useful skill" }),
       });
@@ -117,7 +117,7 @@ describe("Usage Telemetry", () => {
       expect(events).toHaveLength(1);
       expect(events[0].event_type).toBe("feedback");
       expect(events[0].signal).toBe("positive");
-      expect(events[0].entry_ref).toBe("skill:deploy");
+      expect(events[0].entry_ref).toBe("skills/deploy");
     } finally {
       closeDatabase(db);
     }
@@ -129,7 +129,7 @@ describe("Usage Telemetry", () => {
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
-        entry_ref: "command:broken-cmd",
+        entry_ref: "commands/broken-cmd",
         signal: "negative",
       });
 
@@ -148,8 +148,8 @@ describe("Usage Telemetry", () => {
     const db = openIndexDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "search", query: "test query" });
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:a" });
-      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skill:b", signal: "positive" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/a" });
+      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skills/b", signal: "positive" });
       insertUsageEvent(db, { event_type: "search", query: "another query" });
 
       const searchEvents = getUsageEvents(db, { event_type: "search" });
@@ -176,17 +176,17 @@ describe("Usage Telemetry", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:deploy" });
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:test" });
-      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skill:deploy", signal: "positive" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/test" });
+      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skills/deploy", signal: "positive" });
 
-      const deployEvents = getUsageEvents(db, { entry_ref: "skill:deploy" });
+      const deployEvents = getUsageEvents(db, { entry_ref: "skills/deploy" });
       expect(deployEvents).toHaveLength(2);
       for (const e of deployEvents) {
-        expect(e.entry_ref).toBe("skill:deploy");
+        expect(e.entry_ref).toBe("skills/deploy");
       }
 
-      const testEvents = getUsageEvents(db, { entry_ref: "skill:test" });
+      const testEvents = getUsageEvents(db, { entry_ref: "skills/test" });
       expect(testEvents).toHaveLength(1);
     } finally {
       closeDatabase(db);
@@ -236,7 +236,7 @@ describe("Usage Telemetry", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      const meta = { entry_refs: ["skill:deploy", "command:rollback"], resultCount: 5 };
+      const meta = { entry_refs: ["skills/deploy", "commands/rollback"], resultCount: 5 };
       insertUsageEvent(db, {
         event_type: "search",
         query: "deploy",
@@ -247,7 +247,7 @@ describe("Usage Telemetry", () => {
       expect(events).toHaveLength(1);
       expect(events[0].metadata).toBeDefined();
       const parsed = JSON.parse(events[0].metadata ?? "");
-      expect(parsed.entry_refs).toEqual(["skill:deploy", "command:rollback"]);
+      expect(parsed.entry_refs).toEqual(["skills/deploy", "commands/rollback"]);
       expect(parsed.resultCount).toBe(5);
     } finally {
       closeDatabase(db);
@@ -260,14 +260,14 @@ describe("Usage Telemetry", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:deploy" });
-      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skill:deploy", signal: "positive" });
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skill:test" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
+      insertUsageEvent(db, { event_type: "feedback", entry_ref: "skills/deploy", signal: "positive" });
+      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/test" });
 
-      const filtered = getUsageEvents(db, { event_type: "show", entry_ref: "skill:deploy" });
+      const filtered = getUsageEvents(db, { event_type: "show", entry_ref: "skills/deploy" });
       expect(filtered).toHaveLength(1);
       expect(filtered[0].event_type).toBe("show");
-      expect(filtered[0].entry_ref).toBe("skill:deploy");
+      expect(filtered[0].entry_ref).toBe("skills/deploy");
     } finally {
       closeDatabase(db);
     }
@@ -282,7 +282,7 @@ describe("Usage Telemetry", () => {
       insertUsageEvent(db, {
         event_type: "show",
         entry_id: 42,
-        entry_ref: "skill:deploy",
+        entry_ref: "skills/deploy",
       });
 
       const events = getUsageEvents(db);

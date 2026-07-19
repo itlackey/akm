@@ -56,11 +56,11 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
   test("identical updates differing only in acceptedChangeCount produce identical scores", () => {
     const { db } = openTestDb();
     try {
-      seedRow(db, "skill:a", 10, 2.0, 0.2);
-      seedRow(db, "skill:b", 10, 2.0, 0.2);
+      seedRow(db, "skills/a", 10, 2.0, 0.2);
+      seedRow(db, "skills/b", 10, 2.0, 0.2);
 
       const a = updateAssetOutcome(db, {
-        ref: "skill:a",
+        ref: "skills/a",
         currentRetrievalCount: 15,
         lastRetrievedAt: NOW,
         acceptedChangeCount: 0,
@@ -69,7 +69,7 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
         now: NOW + 1000,
       });
       const b = updateAssetOutcome(db, {
-        ref: "skill:b",
+        ref: "skills/b",
         currentRetrievalCount: 15,
         lastRetrievedAt: NOW,
         acceptedChangeCount: 500,
@@ -90,11 +90,11 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
       // The live flip case from the meta-review: 7 accepted changes on 3
       // retrievals (rate 2.33 > 1) — under v1 the penalty term went negative
       // and PAID for churn on any positive retrieval delta.
-      seedRow(db, "command:churned", 1, 0.5, 0.0);
-      seedRow(db, "command:untouched", 1, 0.5, 0.0);
+      seedRow(db, "commands/churned", 1, 0.5, 0.0);
+      seedRow(db, "commands/untouched", 1, 0.5, 0.0);
 
       const churned = updateAssetOutcome(db, {
-        ref: "command:churned",
+        ref: "commands/churned",
         currentRetrievalCount: 3,
         lastRetrievedAt: NOW,
         acceptedChangeCount: 7,
@@ -103,7 +103,7 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
         now: NOW + 1000,
       });
       const untouched = updateAssetOutcome(db, {
-        ref: "command:untouched",
+        ref: "commands/untouched",
         currentRetrievalCount: 3,
         lastRetrievedAt: NOW,
         acceptedChangeCount: 0,
@@ -121,9 +121,9 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
   test("accepted_change_count is still persisted as raw telemetry", () => {
     const { db } = openTestDb();
     try {
-      seedRow(db, "lesson:telemetry", 5, 1.0, 0.1);
+      seedRow(db, "lessons/telemetry", 5, 1.0, 0.1);
       updateAssetOutcome(db, {
-        ref: "lesson:telemetry",
+        ref: "lessons/telemetry",
         currentRetrievalCount: 6,
         lastRetrievedAt: NOW,
         acceptedChangeCount: 42,
@@ -131,7 +131,7 @@ describe("outcome_score is invariant to acceptedChangeCount (#691)", () => {
         valence: 0,
         now: NOW + 1000,
       });
-      expect(getAssetOutcome(db, "lesson:telemetry")?.accepted_change_count).toBe(42);
+      expect(getAssetOutcome(db, "lessons/telemetry")?.accepted_change_count).toBe(42);
     } finally {
       db.close();
     }

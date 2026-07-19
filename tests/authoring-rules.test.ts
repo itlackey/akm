@@ -23,7 +23,7 @@ import {
   WHEN_TO_USE_MIN_CHARS,
 } from "../src/core/authoring-rules";
 
-const ref = "lesson:example";
+const ref = "lessons/example";
 
 describe("authoring-rules bounds drive the validators", () => {
   test("description below DESCRIPTION_MIN_CHARS is rejected; at the bound is accepted", () => {

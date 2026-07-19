@@ -64,7 +64,7 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
     config,
     ensureIndexFn: async () => undefined,
     collectEligibleRefsFn: (async () => ({
-      plannedRefs: [{ ref: "memory:seed" }],
+      plannedRefs: [{ ref: "memories/seed" }],
       memorySummary: { eligible: 1, derived: 0 },
       profileFilteredRefs: [],
     })) as never,

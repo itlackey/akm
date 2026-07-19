@@ -144,7 +144,7 @@ const okDistill = (ref: string): AkmDistillResult => ({
   ok: true,
   outcome: "queued",
   inputRef: ref,
-  lessonRef: `lesson:${ref.replace(/[:/]/g, "-")}-lesson`,
+  lessonRef: `lessons/${ref.replace(/[:/]/g, "-")}-lesson`,
 });
 
 // ── isSignalDeltaEligible truth table (pure function, eligibility.ts:421-431) ─
@@ -405,7 +405,7 @@ describe("eligibleRefs/distillOnlyRefs/noFeedbackPool partition counts (preparat
 // ── Golden fixture: serialize every scenario above ─────────────────────────
 
 test("golden fixture: signal-delta-gate.json", async () => {
-  const TT_REF = "memory:truth-table";
+  const TT_REF = "memories/truth-table";
   const truthTableCases: Array<{ fb: string | undefined; lp: string | undefined }> = [
     { fb: undefined, lp: undefined },
     { fb: undefined, lp: "2026-01-01T00:00:00.000Z" },

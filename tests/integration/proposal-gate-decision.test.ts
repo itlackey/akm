@@ -80,7 +80,7 @@ const BIG_CONSOLIDATE = `---\ndescription: A large consolidated lesson\nwhen_to_
 describe("recordGateDecision (#577)", () => {
   test("stamps the decision without changing status or archiving the proposal", () => {
     const stash = makeStashDir();
-    const created = seed(stash, "lesson:rg", "reflect", VALID_LESSON);
+    const created = seed(stash, "lessons/rg", "reflect", VALID_LESSON);
 
     const updated = recordGateDecision(stash, created.id, {
       outcome: "deferred",
@@ -123,7 +123,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
         schemaVersion: 1,
         ok: true,
         id: opts.id,
-        ref: "lesson:fake",
+        ref: "lessons/fake",
         assetPath: "/tmp/fake.md",
         proposal: { id: opts.id } as Proposal,
       }),
@@ -135,7 +135,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
         schemaVersion: 1,
         ok: true,
         id: opts.id,
-        ref: "lesson:fake",
+        ref: "lessons/fake",
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
         proposal: { id: opts.id } as Proposal,
       }),
@@ -144,7 +144,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
   test("auto-accepted: deterministic accept stamps outcome=auto-accepted", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lesson:ok", "extract", VALID_LESSON);
+    const p = seed(stash, "lessons/ok", "extract", VALID_LESSON);
 
     await drainProposals(
       { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
@@ -159,7 +159,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
   test("auto-rejected: empty diff stamps outcome=auto-rejected reason=empty-diff", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lesson:empty", "reflect", EMPTY_LESSON);
+    const p = seed(stash, "lessons/empty", "reflect", EMPTY_LESSON);
 
     await drainProposals(
       { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
@@ -174,7 +174,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
   test("deferred (max-diff-lines): over-band consolidate carries the threshold", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lesson:big", "consolidate", BIG_CONSOLIDATE);
+    const p = seed(stash, "lessons/big", "consolidate", BIG_CONSOLIDATE);
 
     await drainProposals(
       { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
@@ -194,7 +194,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
   test("deferred (no-judge-configured): defer-list source with no runner", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lesson:dup", "distill", VALID_LESSON);
+    const p = seed(stash, "lessons/dup", "distill", VALID_LESSON);
 
     await drainProposals(
       { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
@@ -209,7 +209,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
   test("dry-run performs zero writes — no decision is recorded", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lesson:dry", "consolidate", BIG_CONSOLIDATE);
+    const p = seed(stash, "lessons/dry", "consolidate", BIG_CONSOLIDATE);
 
     await drainProposals(
       { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: true },
@@ -226,7 +226,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 describe("proposal show / list expose the gate decision (#577)", () => {
   const withDecision = {
     id: "uuid-1",
-    ref: "lesson:rg",
+    ref: "lessons/rg",
     status: "pending",
     source: "improve",
     createdAt: "2026-06-11T00:00:00.000Z",
@@ -244,7 +244,7 @@ describe("proposal show / list expose the gate decision (#577)", () => {
   // bound so the full "210 > 200" comparison renders (#577 finding 4).
   const drainBand = {
     id: "uuid-drain",
-    ref: "lesson:big",
+    ref: "lessons/big",
     status: "pending",
     source: "consolidate",
     createdAt: "2026-06-11T00:00:00.000Z",
@@ -259,7 +259,7 @@ describe("proposal show / list expose the gate decision (#577)", () => {
   };
   const legacy = {
     id: "uuid-legacy",
-    ref: "lesson:old",
+    ref: "lessons/old",
     status: "pending",
     source: "reflect",
     createdAt: "2026-06-11T00:00:00.000Z",

@@ -65,7 +65,7 @@ describe("secret path", () => {
     const fp = path.join(stashDir, "secrets", "demo");
     setSecret(fp, Buffer.from("v"));
 
-    const { stdout, stderr, status } = await runCli(["secret", "path", "secret:demo"], { AKM_STASH_DIR: stashDir });
+    const { stdout, stderr, status } = await runCli(["secret", "path", "secrets/demo"], { AKM_STASH_DIR: stashDir });
     expect(status).toBe(0);
     expect(stdout.trim()).toBe(fp);
     expect(stderr.trim()).toBe("");
@@ -74,7 +74,7 @@ describe("secret path", () => {
   test("returns {ok:false} on stderr and exits 1 when the secret does not exist", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
-    const { stdout, stderr, status } = await runCli(["secret", "path", "secret:nope"], { AKM_STASH_DIR: stashDir });
+    const { stdout, stderr, status } = await runCli(["secret", "path", "secrets/nope"], { AKM_STASH_DIR: stashDir });
     expect(status).toBe(1);
     expect(JSON.parse(stderr.trim()).error).toContain("Secret not found");
     expect(stdout.trim()).toBe("");
@@ -98,7 +98,7 @@ describe("secret run", () => {
   test("rejects a dangerous target variable name (process hijacking)", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
-    const { status, stderr } = await runCli(["secret", "run", "secret:demo", "LD_PRELOAD", "--", "true"], {
+    const { status, stderr } = await runCli(["secret", "run", "secrets/demo", "LD_PRELOAD", "--", "true"], {
       AKM_STASH_DIR: stashDir,
     });
     expect(status).toBe(2);
@@ -108,7 +108,7 @@ describe("secret run", () => {
   test("rejects an invalid env var name", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
-    const { status } = await runCli(["secret", "run", "secret:demo", "not a var", "--", "true"], {
+    const { status } = await runCli(["secret", "run", "secrets/demo", "not a var", "--", "true"], {
       AKM_STASH_DIR: stashDir,
     });
     expect(status).toBe(2);
@@ -117,7 +117,7 @@ describe("secret run", () => {
   test("errors when no command is supplied after --", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
-    const { status } = await runCli(["secret", "run", "secret:demo", "TOKEN"], { AKM_STASH_DIR: stashDir });
+    const { status } = await runCli(["secret", "run", "secrets/demo", "TOKEN"], { AKM_STASH_DIR: stashDir });
     expect(status).toBe(2);
   });
 });

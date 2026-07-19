@@ -151,7 +151,7 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
         ok: true,
         outcome: "queued",
         inputRef: o.ref,
-        lessonRef: "lesson:stub",
+        lessonRef: "lessons/stub",
       }),
       // Report written facts so the maintenance pass triggers the
       // post-inference reindex (#584 call site 1).
@@ -204,7 +204,7 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
     const eventsDb = openStateDatabase(stateDbPath);
     try {
       const oldTs = new Date(Date.now() - 10 * 86_400_000).toISOString();
-      insertEvent(eventsDb, { eventType: "feedback", ts: oldTs, ref: "memory:alpha", metadata: {} });
+      insertEvent(eventsDb, { eventType: "feedback", ts: oldTs, ref: "memories/alpha", metadata: {} });
 
       const allWarnings: string[] = [];
       await runImproveMaintenancePasses({
@@ -255,7 +255,7 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
     const stateDbPath = makeStateDbPath();
     const seedDb = openStateDatabase(stateDbPath);
     const oldTs = new Date(Date.now() - 10 * 86_400_000).toISOString();
-    insertEvent(seedDb, { eventType: "feedback", ts: oldTs, ref: "memory:alpha", metadata: {} });
+    insertEvent(seedDb, { eventType: "feedback", ts: oldTs, ref: "memories/alpha", metadata: {} });
     seedDb.close();
 
     const allWarnings: string[] = [];

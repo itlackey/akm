@@ -21,7 +21,7 @@ describe("health v3 legacy profile metrics", () => {
         memorySummary: { eligible: 1, derived: 0 },
         plannedRefs: [],
         actions: [],
-        profileFilteredRefs: [{ ref: "script:legacy", reason: "strategy_filtered_all_passes" as const }],
+        profileFilteredRefs: [{ ref: "scripts/legacy", reason: "strategy_filtered_all_passes" as const }],
       };
       recordImproveRun(db, {
         id: "legacy-profile-metric",

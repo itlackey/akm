@@ -23,7 +23,7 @@ function makeStashHit(name: string, score: number): SourceSearchHit {
     type: "script",
     name,
     path: `/stash/scripts/${name}`,
-    ref: `script:${name}`,
+    ref: `scripts/${name}`,
     score,
   };
 }

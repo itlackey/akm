@@ -59,7 +59,7 @@ describe("detectTruncatedDescription — shared truncation heuristic", () => {
 });
 
 describe("repairTruncatedDescription — post-generation repair pass (#556)", () => {
-  const REF = "lesson:some-topic";
+  const REF = "lessons/some-topic";
 
   // ── Zero behaviour change for already-valid descriptions ──────────────────
   describe("already-valid descriptions pass through byte-identical", () => {

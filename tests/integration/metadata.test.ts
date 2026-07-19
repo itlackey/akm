@@ -629,7 +629,7 @@ test("applyCuratedFrontmatter ignores blank when_to_use values", () => {
 
 test("applyCuratedFrontmatter sets lessonStrength from an array's length", () => {
   const entry: StashEntry = { name: "lesson", type: "lesson" };
-  applyCuratedFrontmatter(entry, { lessonStrength: ["memory:a", "memory:b", "memory:c"] });
+  applyCuratedFrontmatter(entry, { lessonStrength: ["memories/a", "memories/b", "memories/c"] });
   expect(entry.lessonStrength).toBe(3);
 });
 
@@ -653,8 +653,8 @@ test("applyCuratedFrontmatter omits lessonStrength when absent", () => {
 
 test("applyCuratedFrontmatter extracts evidenceSources as a string list", () => {
   const entry: StashEntry = { name: "lesson", type: "lesson" };
-  applyCuratedFrontmatter(entry, { evidenceSources: ["memory:a", "memory:b"] });
-  expect(entry.evidenceSources).toEqual(["memory:a", "memory:b"]);
+  applyCuratedFrontmatter(entry, { evidenceSources: ["memories/a", "memories/b"] });
+  expect(entry.evidenceSources).toEqual(["memories/a", "memories/b"]);
 });
 
 test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evidenceSources", () => {
@@ -664,13 +664,13 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
     captureMode: "hot",
     whenToUse: "for triage",
     lessonStrength: 4,
-    evidenceSources: ["memory:x"],
+    evidenceSources: ["memories/x"],
   });
   expect(result).not.toBeNull();
   expect(result?.captureMode).toBe("hot");
   expect(result?.whenToUse).toBe("for triage");
   expect(result?.lessonStrength).toBe(4);
-  expect(result?.evidenceSources).toEqual(["memory:x"]);
+  expect(result?.evidenceSources).toEqual(["memories/x"]);
 });
 
 // ── SPEC-6: fact `category` capture into the index ───────────────────────────

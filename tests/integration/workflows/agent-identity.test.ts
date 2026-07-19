@@ -169,7 +169,7 @@ describe("workflow run agent identity persistence", () => {
   test("explicit harness + session id are stored and retrievable", async () => {
     writeWorkflow("explicit-flow");
     const started = await startWorkflowRun(
-      "workflow:explicit-flow",
+      "workflows/explicit-flow",
       {},
       { agentHarness: "claude-code", agentSessionId: "session-xyz" },
     );
@@ -182,7 +182,7 @@ describe("workflow run agent identity persistence", () => {
     expect(reloaded.run.agentHarness).toBe("claude-code");
     expect(reloaded.run.agentSessionId).toBe("session-xyz");
 
-    const listed = await listWorkflowRuns({ workflowRef: "workflow:explicit-flow" });
+    const listed = await listWorkflowRuns({ workflowRef: "workflows/explicit-flow" });
     const match = listed.runs.find((r) => r.id === started.run.id);
     expect(match?.agentHarness).toBe("claude-code");
     expect(match?.agentSessionId).toBe("session-xyz");
@@ -190,7 +190,7 @@ describe("workflow run agent identity persistence", () => {
 
   test("workflow_started event emits only run id + status, never the raw workflow title (07 P1-B)", async () => {
     writeWorkflow("title-flow");
-    const started = await startWorkflowRun("workflow:title-flow", {});
+    const started = await startWorkflowRun("workflows/title-flow", {});
 
     const events = readEvents({ type: "workflow_started" }).events;
     const evt = events.find((e) => (e.metadata as { runId?: string } | undefined)?.runId === started.run.id);
@@ -207,7 +207,7 @@ describe("workflow run agent identity persistence", () => {
     writeWorkflow("env-flow");
 
     const started = await withEnv({ CLAUDE_SESSION_ID: "env-session-42" }, () =>
-      startWorkflowRun("workflow:env-flow", {}),
+      startWorkflowRun("workflows/env-flow", {}),
     );
     expect(started.run.agentHarness).toBe("claude-code");
     expect(started.run.agentSessionId).toBe("env-session-42");
@@ -221,7 +221,7 @@ describe("workflow run agent identity persistence", () => {
     writeWorkflow("anon-flow");
     const started = await withEnv(
       { CLAUDE_SESSION_ID: undefined, OPENCODE_SESSION_ID: undefined, AKM_AGENT_HARNESS: undefined },
-      () => startWorkflowRun("workflow:anon-flow", {}),
+      () => startWorkflowRun("workflows/anon-flow", {}),
     );
     expect(started.run.agentHarness).toBeNull();
     expect(started.run.agentSessionId).toBeNull();

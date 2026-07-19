@@ -137,7 +137,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           id: "other-proposal",
           stashDir: f.otherStashRoot,
-          ref: "lesson:other",
+          ref: "lessons/other",
           status: "accepted",
           source: "reflect",
           createdAt: "2026-06-01T00:00:00.000Z",
@@ -145,7 +145,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           id: "current-proposal",
           stashDir: f.stashRoot,
-          ref: "lesson:current",
+          ref: "lessons/current",
           status: "accepted",
           source: "reflect",
           createdAt: "2026-06-01T00:10:00.000Z",
@@ -155,19 +155,19 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           type: "promoted",
           ts: "2026-06-01T00:01:00.000Z",
-          ref: "lesson:other",
+          ref: "lessons/other",
           metadata: { proposalId: "other-proposal" },
         },
         {
           type: "reflect_completed",
           ts: "2026-06-01T00:10:00.000Z",
-          ref: "lesson:current",
+          ref: "lessons/current",
           metadata: { proposalId: "current-proposal" },
         },
         {
           type: "promoted",
           ts: "2026-06-01T00:11:00.000Z",
-          ref: "lesson:current",
+          ref: "lessons/current",
           metadata: { proposalId: "current-proposal" },
         },
       ],
@@ -192,7 +192,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           id: "current-proposal",
           stashDir: f.stashRoot,
-          ref: "lesson:current",
+          ref: "lessons/current",
           status: "accepted",
           source: "reflect",
           createdAt: "2026-06-01T00:10:00.000Z",
@@ -202,13 +202,13 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           type: "promoted",
           ts: "2026-06-01T00:05:00.000Z",
-          ref: "lesson:current",
+          ref: "lessons/current",
           metadata: { proposalId: "current-proposal" },
         },
         {
           type: "reflect_completed",
           ts: "2026-06-01T00:10:00.000Z",
-          ref: "lesson:current",
+          ref: "lessons/current",
           metadata: { proposalId: "current-proposal" },
         },
       ],
@@ -232,7 +232,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           id: "other-proposal",
           stashDir: f.otherStashRoot,
-          ref: "lesson:other",
+          ref: "lessons/other",
           status: "accepted",
           source: "reflect",
           createdAt: "2026-06-01T00:10:00.000Z",
@@ -242,7 +242,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           type: "promoted",
           ts: "2026-06-01T00:11:00.000Z",
-          ref: "lesson:other",
+          ref: "lessons/other",
           metadata: { proposalId: "other-proposal" },
         },
       ],
@@ -263,7 +263,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           id: "before-window",
           stashDir: f.stashRoot,
-          ref: "lesson:old",
+          ref: "lessons/old",
           status: "accepted",
           source: "reflect",
           createdAt: "2026-06-01T00:00:00.000Z",
@@ -273,7 +273,7 @@ describe("runWorkflowComplianceCase — proposalQueueRespect", () => {
         {
           type: "promoted",
           ts: "2026-06-01T00:20:00.000Z",
-          ref: "lesson:old",
+          ref: "lessons/old",
           metadata: { proposalId: "before-window" },
         },
       ],

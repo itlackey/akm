@@ -140,7 +140,7 @@ describe("secret indexer safety", () => {
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from(SECRET_VALUE));
 
     const { stdout, code } = await withEnv({ AKM_STASH_DIR: stashDir }, () =>
-      runCliCapture(["show", "secret:demo", "--format", "json"]),
+      runCliCapture(["show", "secrets/demo", "--format", "json"]),
     );
     expect(code).toBe(0);
     expect(stdout).not.toContain(SECRET_VALUE);

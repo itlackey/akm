@@ -50,7 +50,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         scope: { mode: "all" },
         dryRun: false,
         memorySummary: { eligible: 25, derived: 5 },
-        plannedRefs: [{ ref: "memory:complete" }],
+        plannedRefs: [{ ref: "memories/complete" }],
         actions: [],
       });
       insert("published-0.8-staleness", 150_000, {
@@ -59,7 +59,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         scope: { mode: "all" },
         dryRun: false,
         memorySummary: { eligible: 7, derived: 2 },
-        plannedRefs: [{ ref: "memory:stale-a" }, { ref: "memory:stale-b" }],
+        plannedRefs: [{ ref: "memories/stale-a" }, { ref: "memories/stale-b" }],
         actions: [],
         stalenessDetection: {
           considered: 8,
@@ -86,7 +86,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         profile: "default",
         scope: { mode: "all" },
         dryRun: false,
-        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memory:invalid-${index}` })),
+        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memories/invalid-${index}` })),
         actions: [],
         terminated: { reason: "not-interrupted", at: new Date(now - 60_000).toISOString() },
       });
@@ -96,7 +96,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         scope: { mode: "all" },
         dryRun: false,
         memorySummary: { eligible: 999, derived: 999 },
-        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memory:stale-invalid-${index}` })),
+        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memories/stale-invalid-${index}` })),
         actions: [],
         stalenessDetection: {
           considered: 8,
@@ -112,7 +112,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         scope: { mode: "all" },
         dryRun: false,
         memorySummary: { eligible: 999, derived: 999 },
-        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memory:future-${index}` })),
+        plannedRefs: Array.from({ length: 10 }, (_, index) => ({ ref: `memories/future-${index}` })),
         actions: [],
       });
 

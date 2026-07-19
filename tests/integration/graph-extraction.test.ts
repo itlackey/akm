@@ -293,7 +293,7 @@ describe("collectEligibleFiles", () => {
 
   test("skips inferred memory children", () => {
     writeFile("memories/parent.md", {}, "Parent body.");
-    writeFile("memories/parent.derived.md", { inferred: true, source: "memory:parent" }, "# Derived\n\nCompressed.");
+    writeFile("memories/parent.derived.md", { inferred: true, source: "memories/parent" }, "# Derived\n\nCompressed.");
 
     const eligible = collectEligibleFiles(tmpStash);
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath));

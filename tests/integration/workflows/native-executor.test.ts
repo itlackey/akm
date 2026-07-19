@@ -136,7 +136,7 @@ describe("executeStepPlan — fan-out", () => {
 
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b", "c", "d"] },
       evidence: {},
       maxConcurrency: 4,
@@ -164,7 +164,7 @@ describe("executeStepPlan — fan-out", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a.ts", "b.ts", "c.ts"] },
       evidence: {},
       dispatcher,
@@ -201,7 +201,7 @@ describe("executeStepPlan — fan-out", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: items, secret: "LEAKED-SECRET", note: "cost is $& today" },
       evidence: {},
       dispatcher: async (req) => {
@@ -234,7 +234,7 @@ describe("executeStepPlan — fan-out", () => {
     if (!stepPlan) throw new Error("missing review step");
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       // Evidence WITHOUT an `output` key (e.g. a manually-completed step):
       // the recorded evidence object itself is the step output.
@@ -257,7 +257,7 @@ describe("executeStepPlan — fan-out", () => {
     if (!stepPlan) throw new Error("missing review step");
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: { prior: { unrelated: true } },
       dispatcher: async () => ({ ok: true, text: "must not run" }),
@@ -271,7 +271,7 @@ describe("executeStepPlan — fan-out", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: "not-a-list" },
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "unused" }),
@@ -291,7 +291,7 @@ describe("executeStepPlan — fan-out", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b"] },
       evidence: {},
       dispatcher,
@@ -313,7 +313,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["only"] },
       evidence: {},
       dispatcher: async () => {
@@ -340,7 +340,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: items },
       evidence: {},
       dispatcher: async (req) => {
@@ -367,7 +367,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: [null] },
       evidence: {},
       dispatcher: async () => {
@@ -417,7 +417,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => {
@@ -439,7 +439,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const first = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "done" }),
@@ -461,7 +461,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     let dispatches = 0;
     const second = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => {
@@ -498,7 +498,7 @@ describe("executeStepPlan — structured output", () => {
     const stepPlan = plan(SCHEMA_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
@@ -519,7 +519,7 @@ describe("executeStepPlan — structured output", () => {
     const stepPlan = plan(SCHEMA_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher,
@@ -535,7 +535,7 @@ describe("executeStepPlan — structured output", () => {
     const stepPlan = plan(SCHEMA_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => ({ ok: true, text: '{"nope": 1}' }),
@@ -580,7 +580,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const result = await executeStepPlan(plan(EMPTY_WF).steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "" }),
@@ -604,7 +604,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
     const result = await executeStepPlan(plan(SCHEMA_WF).steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "" }),
@@ -627,7 +627,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
 
     const build = await executeStepPlan(wf.steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "" }),
@@ -638,7 +638,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     let dispatched = 0;
     const consume = await executeStepPlan(wf.steps[1], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       // The empty step's promoted artifact (null) is the downstream scope.
       evidence: { build: build.evidence as Record<string, unknown> },
@@ -688,7 +688,7 @@ describe("executeStepPlan — vote reducer", () => {
     const stepPlan = plan(VOTE_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { attempts: [1, 2, 3] },
       evidence: {},
       dispatcher,
@@ -724,7 +724,7 @@ steps:
     const stepPlan = plan(CONTINUE_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b"] },
       evidence: {},
       dispatcher,
@@ -762,7 +762,7 @@ steps:
     const stepPlan = plan(RETRY_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher,
@@ -794,7 +794,7 @@ steps:
     const stepPlan = plan(RETRY_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher,
@@ -814,7 +814,7 @@ steps:
         : { ok: true, text: "finally" };
     };
     const stepPlan = plan(RETRY_WF).steps[0];
-    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {}, evidence: {} };
+    const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {}, evidence: {} };
     const first = await executeStepPlan(stepPlan, { ...ctx, dispatcher: flaky });
     expect(first.ok).toBe(true);
     expect(call).toBe(2); // attempt 0 failed, ~r1 succeeded
@@ -839,7 +839,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
     // inside dispatchUnit — never reaching workflow_run_units.session_id.
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
     const stepPlan = plan(SCHEMA_WF).steps[0];
-    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {}, evidence: {} };
+    const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {}, evidence: {} };
 
     const first = await executeStepPlan(stepPlan, {
       ...ctx,
@@ -870,7 +870,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => ({
@@ -894,7 +894,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => ({ ok: true, text: "done" }),
@@ -911,7 +911,7 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
     const stepPlan = plan(FAN_OUT_WF).steps[0];
     const ctx = {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b"] },
       evidence: {},
     };
@@ -961,7 +961,7 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
     };
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher,
@@ -971,7 +971,7 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
     // divergence is same-id-different-hash, covered in the R2 identity suite).
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a-changed"] },
       evidence: {},
       dispatcher,
@@ -1003,7 +1003,7 @@ steps:
     seedRun({ steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(REORDER_WF).steps.find((s) => s.stepId === "review");
     if (!stepPlan) throw new Error("missing review step");
-    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: {} };
+    const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {} };
 
     let dispatches = 0;
     const first = await executeStepPlan(stepPlan, {
@@ -1045,7 +1045,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b", "a"] },
       evidence: {},
       dispatcher: async () => {
@@ -1088,7 +1088,7 @@ steps:
 
     const first = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"], note: "v1" },
       evidence: {},
       dispatcher,
@@ -1103,7 +1103,7 @@ steps:
     // continue must NOT downgrade it to a tolerated unit failure.
     const second = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"], note: "v2-tampered" },
       evidence: {},
       dispatcher,
@@ -1155,7 +1155,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a"] },
       evidence: {},
       dispatcher: async () => {
@@ -1185,7 +1185,7 @@ describe("executeStepPlan — lifetime unit cap counts actual dispatches only (p
     const files = Array.from({ length: 20 }, (_, i) => `f${i}.ts`);
     seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0];
-    const ctx = { runId: RUN_ID, workflowRef: "workflow:demo", params: { files }, evidence: {} };
+    const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: { files }, evidence: {} };
 
     // First pass: 19 units complete, one fails → 20 journaled attempt rows.
     const first = await executeStepPlan(stepPlan, {
@@ -1222,7 +1222,7 @@ describe("executeStepPlan — lifetime unit cap counts actual dispatches only (p
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files },
       evidence: {},
       unitsDispatched: LIFETIME_UNIT_CAP - 2,
@@ -1978,7 +1978,7 @@ steps:
             // NO injected dispatcher: the default llm dispatch path is under test.
             const result = await executeStepPlan(stepPlan, {
               runId: RUN_ID,
-              workflowRef: "workflow:demo",
+              workflowRef: "workflows/demo",
               params: {},
               evidence: {},
               engines: plan(LLM_RETRY_WF).execution?.engines,
@@ -2254,7 +2254,7 @@ steps:
 
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       resolveEnv: async () => ({ TOKEN: sentinel }),
@@ -2275,7 +2275,7 @@ steps:
 
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       resolveEnv: async () => ({ TOKEN: sentinel }),
@@ -2313,7 +2313,7 @@ steps:
     const result = await withEnv({ LLM_BASE_URL: deviceCodeUrl, OPENCODE_CONFIG: authorizationCodeUrl }, () =>
       executeStepPlan(stepPlan, {
         runId: RUN_ID,
-        workflowRef: "workflow:demo",
+        workflowRef: "workflows/demo",
         params: {},
         evidence: {},
         resolveEnv: async () => ({}),
@@ -2352,7 +2352,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       resolveEnv: async () => {
@@ -2380,7 +2380,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       // A non-git base dir + a preflight that reports git missing: neither must
@@ -2412,7 +2412,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b"] },
       evidence: {},
       resolveEnv: async () => {
@@ -2440,7 +2440,7 @@ steps:
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a", "b"] },
       evidence: {},
       workDir: "/definitely/not/a/git/repo",

@@ -101,7 +101,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
   test("workflow start + status: success envelopes carry the run id and steps", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
-    const started = await runCli(["--json", "workflow", "start", "workflow:release-flow"], stash);
+    const started = await runCli(["--json", "workflow", "start", "workflows/release-flow"], stash);
     expect(started.status).toBe(0);
     const startEnv = JSON.parse(started.stdout);
     const runId = startEnv.run.id as string;
@@ -137,7 +137,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
     const { stderr, status } = await runCli(
-      ["--json", "workflow", "next", "workflow:release-flow", "--dry-run"],
+      ["--json", "workflow", "next", "workflows/release-flow", "--dry-run"],
       stash,
     );
     expect(status).toBe(2);

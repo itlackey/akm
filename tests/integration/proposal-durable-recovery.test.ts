@@ -69,7 +69,7 @@ function seedProposal(name: string): { id: string; assetPath: string; original: 
     "---\ndescription: Original durable content\nwhen_to_use: Testing proposal crash recovery\n---\n\nORIGINAL.\n";
   fs.writeFileSync(assetPath, original, "utf8");
   const proposal = createProposal(storage.stashDir, {
-    ref: `lesson:${name}`,
+    ref: `lessons/${name}`,
     source: "distill",
     force: true,
     payload: { content: CONTENT },
@@ -116,7 +116,7 @@ describe("proposal accept durable crash recovery", () => {
         defaultWriteTarget: "shm",
       } as AkmConfig;
       const proposal = createProposal(stashDir, {
-        ref: "lesson:cross-device-accept",
+        ref: "lessons/cross-device-accept",
         source: "distill",
         force: true,
         payload: { content: CONTENT },
@@ -179,7 +179,7 @@ describe("proposal accept durable crash recovery", () => {
       semanticSearchMode: "off",
     });
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:multi-target-crash",
+      ref: "lessons/multi-target-crash",
       source: "distill",
       force: true,
       payload: { content: CONTENT },
@@ -218,7 +218,7 @@ describe("proposal accept durable crash recovery", () => {
       "---\ndescription: Target A original content\nwhen_to_use: Testing cross target revert recovery\n---\n\nORIGINAL A.\n";
     fs.writeFileSync(path.join(targetA, "lessons", "multi-target-revert.md"), original, "utf8");
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:multi-target-revert",
+      ref: "lessons/multi-target-revert",
       source: "distill",
       force: true,
       payload: { content: CONTENT },
@@ -242,7 +242,7 @@ describe("proposal accept durable crash recovery", () => {
   for (const phase of ["reject-state-persisted", "reject-event-persisted"] as const) {
     test(`reject recovers SIGKILL at ${phase} with exactly one event`, async () => {
       const proposal = createProposal(storage.stashDir, {
-        ref: `lesson:${phase}`,
+        ref: `lessons/${phase}`,
         source: "distill",
         force: true,
         payload: { content: CONTENT },

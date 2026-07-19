@@ -35,7 +35,7 @@ afterEach(() => {
 const VALID_LESSON =
   "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n";
 
-function seedProposal(ref = "lesson:rg-over-grep"): void {
+function seedProposal(ref = "lessons/rg-over-grep"): void {
   const result = createProposal(storage.stashDir, {
     ref,
     source: "reflect",

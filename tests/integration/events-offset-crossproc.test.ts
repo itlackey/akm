@@ -75,18 +75,18 @@ describe("events @offset cursor across a real process boundary", () => {
     const ctx = { dbPath };
 
     // 1. Producer writes events 0..2 (the "first batch").
-    appendEvent({ eventType: "remember", ref: "memory:e0" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e1" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e2" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e0" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e1" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e2" }, ctx);
 
     // 2. Producer persists nextOffset to a temp file.
     const cursor = readEvents({}, ctx).nextOffset;
     fs.writeFileSync(cursorFile, String(cursor));
 
     // 3. Producer appends MORE events (3..5) BEFORE the second process reads.
-    appendEvent({ eventType: "remember", ref: "memory:e3" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e4" }, ctx);
-    appendEvent({ eventType: "remember", ref: "memory:e5" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e3" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e4" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/e5" }, ctx);
 
     // 4. Spawn a SECOND bun process; it reads the cursor from the temp file
     //    and asks the CLI for events with `--since @offset:<cursor>`. This
@@ -103,7 +103,7 @@ describe("events @offset cursor across a real process boundary", () => {
 
     // 5. Assert: exactly the post-cursor events, in order, no duplicates,
     //    no losses. The pre-cursor events MUST NOT appear.
-    expect(parsed.events.map((e) => e.ref)).toEqual(["memory:e3", "memory:e4", "memory:e5"]);
+    expect(parsed.events.map((e) => e.ref)).toEqual(["memories/e3", "memories/e4", "memories/e5"]);
     expect(parsed.totalCount).toBe(3);
     expect(parsed.sinceOffset).toBe(Number(persisted));
     expect(parsed.nextOffset).toBeGreaterThan(Number(persisted));

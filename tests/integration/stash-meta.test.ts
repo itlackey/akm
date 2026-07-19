@@ -30,8 +30,8 @@ describe("parseMetaRef", () => {
   });
 
   test("returns null for non-meta refs so callers fall through", () => {
-    expect(parseMetaRef("skill:code-review")).toBeNull();
-    expect(parseMetaRef("knowledge:guide")).toBeNull();
+    expect(parseMetaRef("skills/code-review")).toBeNull();
+    expect(parseMetaRef("knowledge/guide")).toBeNull();
     expect(parseMetaRef("metaphor:x")).toBeNull(); // must not greedily match the `meta` prefix
     expect(parseMetaRef("")).toBeNull();
   });

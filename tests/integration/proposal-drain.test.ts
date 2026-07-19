@@ -95,7 +95,7 @@ function fakeAccept() {
       schemaVersion: 1,
       ok: true,
       id: opts.id,
-      ref: "lesson:fake",
+      ref: "lessons/fake",
       assetPath: "/tmp/fake.md",
       proposal: { id: opts.id } as Proposal,
     }),
@@ -108,7 +108,7 @@ function fakeReject() {
       schemaVersion: 1,
       ok: true,
       id: opts.id,
-      ref: "lesson:fake",
+      ref: "lessons/fake",
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       proposal: { id: opts.id } as Proposal,
     }),
@@ -207,9 +207,9 @@ describe("isEmptyDiff", () => {
 describe("drainProposals — policy matching", () => {
   test("extract→accept, empty→reject, consolidate mid-band→defer", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lesson:good", "extract", VALID_LESSON);
-    const empty = seed(stash, "lesson:empty", "extract", EMPTY_LESSON);
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const accepted = seed(stash, "lessons/good", "extract", VALID_LESSON);
+    const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const promoteFn = fakeAccept();
     const rejectFn = fakeReject();
@@ -226,8 +226,8 @@ describe("drainProposals — policy matching", () => {
 describe("drainProposals — excludeIds", () => {
   test("fresh ids are filtered out (decision #2)", async () => {
     const stash = makeStashDir();
-    const fresh = seed(stash, "lesson:fresh", "extract", VALID_LESSON);
-    const old = seed(stash, "lesson:old", "extract", VALID_LESSON);
+    const fresh = seed(stash, "lessons/fresh", "extract", VALID_LESSON);
+    const old = seed(stash, "lessons/old", "extract", VALID_LESSON);
 
     const promoteFn = fakeAccept();
     const result = await drainProposals(baseOpts(stash, { excludeIds: new Set([fresh.id]) }), promoteFn, fakeReject());
@@ -240,9 +240,9 @@ describe("drainProposals — excludeIds", () => {
 describe("drainProposals — maxAccepts ceiling", () => {
   test("ceiling stops promotion and reports skippedByCap", async () => {
     const stash = makeStashDir();
-    seed(stash, "lesson:a", "extract", VALID_LESSON);
-    seed(stash, "lesson:b", "extract", VALID_LESSON);
-    seed(stash, "lesson:c", "extract", VALID_LESSON);
+    seed(stash, "lessons/a", "extract", VALID_LESSON);
+    seed(stash, "lessons/b", "extract", VALID_LESSON);
+    seed(stash, "lessons/c", "extract", VALID_LESSON);
 
     const promoteFn = fakeAccept();
     const result = await drainProposals(baseOpts(stash, { maxAccepts: 1 }), promoteFn, fakeReject());
@@ -254,7 +254,7 @@ describe("drainProposals — maxAccepts ceiling", () => {
 
   test("deterministic promotion receives the frozen target and config", async () => {
     const stash = makeStashDir();
-    seed(stash, "lesson:a", "extract", VALID_LESSON);
+    seed(stash, "lessons/a", "extract", VALID_LESSON);
     const config = { semanticSearchMode: "off" } as AkmConfig;
     const promoteFn = fakeAccept();
 
@@ -270,9 +270,9 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
     // 1 deterministic accept (extract) + 2 deferred consolidate items the judge
     // will accept. maxAccepts=1 → the deterministic accept consumes the whole
     // budget, so BOTH judged-accepts must be skipped by the cap.
-    const det = seed(stash, "lesson:det", "extract", VALID_LESSON);
-    const big1 = seed(stash, "lesson:big1", "consolidate", BIG_LESSON);
-    const big2 = seed(stash, "lesson:big2", "consolidate", BIG_LESSON);
+    const det = seed(stash, "lessons/det", "extract", VALID_LESSON);
+    const big1 = seed(stash, "lessons/big1", "consolidate", BIG_LESSON);
+    const big2 = seed(stash, "lessons/big2", "consolidate", BIG_LESSON);
 
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "ok" }));
     const promoteFn = fakeAccept();
@@ -296,9 +296,9 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
     const stash = makeStashDir();
     // 1 deterministic accept + 2 judged-accepts, maxAccepts=2 → deterministic
     // promotes 1, judgment may promote 1 more, the 2nd judged-accept is capped.
-    const det = seed(stash, "lesson:det", "extract", VALID_LESSON);
-    seed(stash, "lesson:big1", "consolidate", BIG_LESSON);
-    seed(stash, "lesson:big2", "consolidate", BIG_LESSON);
+    const det = seed(stash, "lessons/det", "extract", VALID_LESSON);
+    seed(stash, "lessons/big1", "consolidate", BIG_LESSON);
+    seed(stash, "lessons/big2", "consolidate", BIG_LESSON);
 
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "ok" }));
     const promoteFn = fakeAccept();
@@ -320,8 +320,8 @@ describe("drainProposals — maxAccepts bounds judgment-tier promotions (FIX 1)"
 describe("drainProposals — applyMode queue", () => {
   test("queue mode never calls promoteFn but still rejects empties", async () => {
     const stash = makeStashDir();
-    seed(stash, "lesson:a", "extract", VALID_LESSON);
-    const empty = seed(stash, "lesson:empty", "extract", EMPTY_LESSON);
+    seed(stash, "lessons/a", "extract", VALID_LESSON);
+    const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
 
     const promoteFn = fakeAccept();
     const rejectFn = fakeReject();
@@ -337,8 +337,8 @@ describe("drainProposals — applyMode queue", () => {
 describe("drainProposals — maxDiffLines", () => {
   test("defers large proposals instead of promoting", async () => {
     const stash = makeStashDir();
-    const small = seed(stash, "lesson:small", "extract", VALID_LESSON);
-    const large = seed(stash, "lesson:large", "extract", BIG_LESSON);
+    const small = seed(stash, "lessons/small", "extract", VALID_LESSON);
+    const large = seed(stash, "lessons/large", "extract", BIG_LESSON);
 
     const promoteFn = fakeAccept();
     const result = await drainProposals(baseOpts(stash, { maxDiffLines: 10 }), promoteFn, fakeReject());
@@ -351,8 +351,8 @@ describe("drainProposals — maxDiffLines", () => {
 describe("drainProposals — dry-run", () => {
   test("performs zero writes (promote/reject never called)", async () => {
     const stash = makeStashDir();
-    const accepted = seed(stash, "lesson:good", "extract", VALID_LESSON);
-    const empty = seed(stash, "lesson:empty", "extract", EMPTY_LESSON);
+    const accepted = seed(stash, "lessons/good", "extract", VALID_LESSON);
+    const empty = seed(stash, "lessons/empty", "extract", EMPTY_LESSON);
 
     const promoteFn = fakeAccept();
     const rejectFn = fakeReject();
@@ -404,7 +404,7 @@ function agentResult(stdout: string): AgentRunResult {
 describe("drainProposals — judgment tier (llm mode)", () => {
   test("engine accepts a deferred item when the llm verdict is accept", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable consolidation" }));
     const seams: JudgmentSeams = { chat };
@@ -423,7 +423,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 
   test("judgment promotion receives the frozen target and config", async () => {
     const stash = makeStashDir();
-    seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    seed(stash, "lessons/big", "consolidate", BIG_LESSON);
     const config = { semanticSearchMode: "off" } as AkmConfig;
     const promoteFn = fakeAccept();
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
@@ -440,7 +440,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 
   test("engine rejects a deferred item when the llm verdict is reject", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const chat = mock(async () => '```json\n{"decision":"reject","reason":"duplicate"}\n```');
     const promoteFn = fakeAccept();
@@ -456,7 +456,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 
   test("verdict 'defer' leaves the item unresolved (triage_deferred)", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const chat = mock(async () => JSON.stringify({ decision: "defer", reason: "need more context" }));
     const promoteFn = fakeAccept();
@@ -474,7 +474,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 describe("drainProposals — judgment tier (agent mode)", () => {
   test("engine accepts a deferred item when the agent verdict is accept", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const runAgentFn = mock(async () =>
       agentResult(JSON.stringify({ decision: "accept", reason: "merge is correct" })),
@@ -493,7 +493,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
 
   test("a failed agent run leaves the item unresolved", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const runAgentFn = mock(
       async (): Promise<AgentRunResult> => ({
@@ -519,7 +519,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
 
   test("queue applyMode stages an accept verdict rather than promoting", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const runAgentFn = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "ok" })));
     const promoteFn = fakeAccept();
@@ -545,7 +545,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
 describe("drainProposals — queue-mode staged accept (FIX 7)", () => {
   test("a judged-accept in queue mode does NOT emit triage_deferred 'unresolved'", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const ctx = eventsCtx();
     const runAgentFn = mock(async () => agentResult(JSON.stringify({ decision: "accept", reason: "ok" })));
@@ -571,7 +571,7 @@ describe("drainProposals — queue-mode staged accept (FIX 7)", () => {
 describe("drainProposals — judgment disabled", () => {
   test("deferred items stay unresolved when no runner is configured", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lesson:big", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     const result = await drainProposals(baseOpts(stash, { judgment: null }), fakeAccept(), fakeReject(), {});
 

@@ -122,13 +122,13 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
       operations: [
         {
           op: "merge",
-          primary: "memory:auth-tips",
-          secondaries: ["memory:auth-helpers"],
+          primary: "memories/auth-tips",
+          secondaries: ["memories/auth-helpers"],
           mergeStrategy: "synthesize",
         },
         {
           op: "delete",
-          ref: "memory:outdated",
+          ref: "memories/outdated",
           reason: "Superseded by knowledge:deploy.",
         },
       ],
@@ -150,7 +150,7 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
   });
 
   test("a payload missing the required `primary` field for a merge op fails the required-key check", () => {
-    const broken = { operations: [{ op: "merge", secondaries: ["memory:foo"], mergeStrategy: "synthesize" }] };
+    const broken = { operations: [{ op: "merge", secondaries: ["memories/foo"], mergeStrategy: "synthesize" }] };
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
     const mergeVariant = s.properties.operations.items.oneOf.find((v) => {
       const opProp = v.properties.op as { enum?: string[] };

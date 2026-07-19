@@ -218,7 +218,7 @@ describe("issue #194 — workflow create --from then start has non-null workflow
     // No explicit `akm index` — `workflow create --from` should leave the
     // FTS index in a state that lets `workflow start` resolve a workflowEntryId.
     const started = await runCli(
-      ["workflow", "start", "workflow:imported", "--params", '{"app_name":"sandbox-app"}'],
+      ["workflow", "start", "workflows/imported", "--params", '{"app_name":"sandbox-app"}'],
       env,
     );
     expect(started.status).toBe(0);

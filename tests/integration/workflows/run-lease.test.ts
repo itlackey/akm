@@ -97,7 +97,7 @@ function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>)
 describe("repository lease primitives", () => {
   test("acquire is atomic: a live lease is not reclaimable, an expired one is; renew/release require the holder", async () => {
     writeWorkflow("lease-repo");
-    const started = await startWorkflowRun("workflow:lease-repo", {});
+    const started = await startWorkflowRun("workflows/lease-repo", {});
     const runId = started.run.id;
 
     await withWorkflowRunsRepo((repo) => {
@@ -140,7 +140,7 @@ describe("repository lease primitives", () => {
 describe("half-set lease columns (defined non-live semantics, both directions)", () => {
   test("holder WITHOUT expiry: claimable, not surfaced, and the manual loop is not blocked", async () => {
     writeWorkflow("lease-holder-only");
-    const started = await startWorkflowRun("workflow:lease-holder-only", {});
+    const started = await startWorkflowRun("workflows/lease-holder-only", {});
     const runId = started.run.id;
     execOnWorkflowDb(
       "UPDATE workflow_runs SET engine_lease_holder = ?, engine_lease_until = NULL WHERE id = ?",
@@ -160,7 +160,7 @@ describe("half-set lease columns (defined non-live semantics, both directions)",
 
   test("expiry WITHOUT holder: claimable, not surfaced, and manual complete succeeds", async () => {
     writeWorkflow("lease-expiry-only");
-    const started = await startWorkflowRun("workflow:lease-expiry-only", {});
+    const started = await startWorkflowRun("workflows/lease-expiry-only", {});
     const runId = started.run.id;
     execOnWorkflowDb(
       "UPDATE workflow_runs SET engine_lease_holder = NULL, engine_lease_until = ? WHERE id = ?",
@@ -185,7 +185,7 @@ describe("half-set lease columns (defined non-live semantics, both directions)",
 describe("engine run lease (single driver)", () => {
   test("a successful run holds the lease while driving and releases it on exit", async () => {
     writeWorkflow("lease-happy");
-    const started = await startWorkflowRun("workflow:lease-happy", {});
+    const started = await startWorkflowRun("workflows/lease-happy", {});
 
     let leaseDuringDispatch: { holder: string | null; until: string | null } | undefined;
     const result = await runWorkflowSteps({
@@ -238,7 +238,7 @@ describe("engine run lease (single driver)", () => {
       ].join("\n"),
       "utf8",
     );
-    const started = await startWorkflowRun("workflow:lease-maxsteps", {});
+    const started = await startWorkflowRun("workflows/lease-maxsteps", {});
     const runId = started.run.id;
 
     let holderDuringDispatch: string | null = null;
@@ -266,7 +266,7 @@ describe("engine run lease (single driver)", () => {
 
   test("a second run invocation on a live-leased run refuses up front, naming holder + expiry, dispatching nothing", async () => {
     writeWorkflow("lease-contended");
-    const started = await startWorkflowRun("workflow:lease-contended", {});
+    const started = await startWorkflowRun("workflows/lease-contended", {});
     const until = isoIn(90_000);
     await plantLease(started.run.id, "engine-A", until);
 
@@ -287,7 +287,7 @@ describe("engine run lease (single driver)", () => {
 
   test("an EXPIRED lease is claimable: the run proceeds and the stale holder is replaced", async () => {
     writeWorkflow("lease-expired");
-    const started = await startWorkflowRun("workflow:lease-expired", {});
+    const started = await startWorkflowRun("workflows/lease-expired", {});
     await plantLease(started.run.id, "crashed-engine", isoIn(-5_000));
 
     let holderDuringDispatch: string | null = null;
@@ -307,7 +307,7 @@ describe("engine run lease (single driver)", () => {
 
   test("the lease is released when the dispatcher throws (engine failure path)", async () => {
     writeWorkflow("lease-crash");
-    const started = await startWorkflowRun("workflow:lease-crash", {});
+    const started = await startWorkflowRun("workflows/lease-crash", {});
 
     const result = await runWorkflowSteps({
       target: started.run.id,
@@ -325,7 +325,7 @@ describe("engine run lease (single driver)", () => {
 
   test("the lease is released when the engine throws before dispatching (frozen-plan integrity failure)", async () => {
     writeWorkflow("lease-throw");
-    const started = await startWorkflowRun("workflow:lease-throw", {});
+    const started = await startWorkflowRun("workflows/lease-throw", {});
 
     await expect(
       runWorkflowSteps({
@@ -343,7 +343,7 @@ describe("engine run lease (single driver)", () => {
 describe("manual loop under the lease", () => {
   test("manual complete is refused during a live engine lease, allowed after release", async () => {
     writeWorkflow("lease-manual");
-    const started = await startWorkflowRun("workflow:lease-manual", {});
+    const started = await startWorkflowRun("workflows/lease-manual", {});
     await plantLease(started.run.id, "engine-A", isoIn(90_000));
 
     // Refused while the engine drives — the error names the holder.
@@ -373,7 +373,7 @@ describe("manual loop under the lease", () => {
 
   test("manual complete is allowed once the lease has EXPIRED (dead engine never wedges the run)", async () => {
     writeWorkflow("lease-manual-expired");
-    const started = await startWorkflowRun("workflow:lease-manual-expired", {});
+    const started = await startWorkflowRun("workflows/lease-manual-expired", {});
     await plantLease(started.run.id, "crashed-engine", isoIn(-5_000));
 
     const detail = await completeWorkflowStep({
@@ -388,7 +388,7 @@ describe("manual loop under the lease", () => {
 
   test("manual `workflow next` takes no lease, and next/status surface engineLease while one is held", async () => {
     writeWorkflow("lease-surface");
-    const started = await startWorkflowRun("workflow:lease-surface", {});
+    const started = await startWorkflowRun("workflows/lease-surface", {});
 
     // `next` on an unleased run: reads state, leaves the columns untouched.
     const before = await getNextWorkflowStep(started.run.id);
@@ -418,7 +418,7 @@ describe("manual loop under the lease", () => {
 describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
   test("a COMPLETED run rejects a corrupt plan before the terminal no-op and leaves engine_lease_* untouched", async () => {
     writeWorkflow("term-completed");
-    const started = await startWorkflowRun("workflow:term-completed", {});
+    const started = await startWorkflowRun("workflows/term-completed", {});
     const runId = started.run.id;
 
     // Drive it to completion normally.
@@ -461,7 +461,7 @@ describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
 
   test("a FAILED run refuses up front WITHOUT loading the plan or touching the lease, dispatching nothing", async () => {
     writeWorkflow("term-failed");
-    const started = await startWorkflowRun("workflow:term-failed", {});
+    const started = await startWorkflowRun("workflows/term-failed", {});
     const runId = started.run.id;
 
     // Crash the run: the dispatcher throw → failed unit → failed step → failed run.
@@ -515,7 +515,7 @@ describe("terminal run no-op (no lease, no plan load, no dispatch)", () => {
 describe("engine lease heartbeat (long-running steps)", () => {
   test("(a) the heartbeat renews the lease across a dispatch longer than the TTL, keeping it live and unclaimable", async () => {
     writeWorkflow("lease-heartbeat");
-    const started = await startWorkflowRun("workflow:lease-heartbeat", {});
+    const started = await startWorkflowRun("workflows/lease-heartbeat", {});
     const runId = started.run.id;
 
     let fireTick: (() => Promise<void>) | undefined;
@@ -553,7 +553,7 @@ describe("engine lease heartbeat (long-running steps)", () => {
     writeWorkflow("lease-hb-stop");
 
     // Success path: the run completes, the finally stops the heartbeat.
-    const ok = await startWorkflowRun("workflow:lease-hb-stop", {});
+    const ok = await startWorkflowRun("workflows/lease-hb-stop", {});
     let stopsOk = 0;
     const okResult = await runWorkflowSteps({
       target: ok.run.id,
@@ -567,7 +567,7 @@ describe("engine lease heartbeat (long-running steps)", () => {
 
     // Failure path: the dispatcher throw becomes a failed run, and the finally
     // still stops the heartbeat exactly once.
-    const bad = await startWorkflowRun("workflow:lease-hb-stop", {});
+    const bad = await startWorkflowRun("workflows/lease-hb-stop", {});
     let stopsBad = 0;
     const badResult = await runWorkflowSteps({
       target: bad.run.id,
@@ -584,7 +584,7 @@ describe("engine lease heartbeat (long-running steps)", () => {
 
   test("(c) a failed renewal (lease stolen mid-step) aborts dispatch and fails the run loudly", async () => {
     writeWorkflow("lease-hb-stolen");
-    const started = await startWorkflowRun("workflow:lease-hb-stolen", {});
+    const started = await startWorkflowRun("workflows/lease-hb-stolen", {});
     const runId = started.run.id;
 
     let fireTick: (() => Promise<void>) | undefined;
@@ -627,7 +627,7 @@ describe("engine lease heartbeat (long-running steps)", () => {
     // stop the engine loudly — WITHOUT leaking an unhandled promise rejection out
     // of the fire-and-forget timer tick.
     writeWorkflow("lease-hb-throw");
-    const started = await startWorkflowRun("workflow:lease-hb-throw", {});
+    const started = await startWorkflowRun("workflows/lease-hb-throw", {});
     const runId = started.run.id;
 
     // Only the IN-DISPATCH heartbeat renewal throws; the between-step
@@ -683,7 +683,7 @@ describe("engine lease heartbeat (long-running steps)", () => {
 
   test("(d) `workflow report` keeps refusing while the heartbeat holds the lease live through a long step", async () => {
     writeWorkflow("lease-hb-report");
-    const started = await startWorkflowRun("workflow:lease-hb-report", {});
+    const started = await startWorkflowRun("workflows/lease-hb-report", {});
     const runId = started.run.id;
 
     let fireTick: (() => Promise<void>) | undefined;

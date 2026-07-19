@@ -94,7 +94,7 @@ describe("WS-5 perfTelemetry aggregation", () => {
             processed: 5,
             merged: 2,
             deleted: 1,
-            promoted: ["memory:a"],
+            promoted: ["memories/a"],
             contradicted: 0,
             warnings: [],
             durationMs: 500,
@@ -347,7 +347,7 @@ describe("WS-5 denominator-fixed coverage", () => {
 
       // Seed 3 accepted proposals.
       for (let i = 0; i < 3; i++) {
-        upsertProposal(db, makeAcceptedProposal(`proposal-${i}`, `memory:asset-${i}`), "/tmp/stash");
+        upsertProposal(db, makeAcceptedProposal(`proposal-${i}`, `memories/asset-${i}`), "/tmp/stash");
       }
     } finally {
       db.close();
@@ -405,13 +405,13 @@ describe("WS-5 denominator-fixed coverage", () => {
       });
 
       // 2 accepted, 1 pending.
-      upsertProposal(db, makeAcceptedProposal("p-acc-1", "memory:x"), "/tmp/stash");
-      upsertProposal(db, makeAcceptedProposal("p-acc-2", "memory:y"), "/tmp/stash");
+      upsertProposal(db, makeAcceptedProposal("p-acc-1", "memories/x"), "/tmp/stash");
+      upsertProposal(db, makeAcceptedProposal("p-acc-2", "memories/y"), "/tmp/stash");
       // Pending proposal — should NOT count toward coverage.
       upsertProposal(
         db,
         {
-          ...makeAcceptedProposal("p-pend", "memory:z"),
+          ...makeAcceptedProposal("p-pend", "memories/z"),
           status: "pending",
         },
         "/tmp/stash",
@@ -454,14 +454,14 @@ describe("WS-5 denominator-fixed coverage", () => {
       });
 
       // 1 accepted proposal within the window (updatedAt = now).
-      upsertProposal(db, makeAcceptedProposal("p-in-window", "memory:in"), "/tmp/stash");
+      upsertProposal(db, makeAcceptedProposal("p-in-window", "memories/in"), "/tmp/stash");
 
       // 1 accepted proposal outside the window (updatedAt = 3 hours ago).
       const oldTime = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString();
       upsertProposal(
         db,
         {
-          ...makeAcceptedProposal("p-old", "memory:old"),
+          ...makeAcceptedProposal("p-old", "memories/old"),
           updatedAt: oldTime,
           createdAt: oldTime,
         },
@@ -512,9 +512,9 @@ describe("WS-5 degradation metrics", () => {
       // With 1 asset at 0.99 and many near-zero (0.001), the Gini approaches
       // the ~0.47 maximum for bounded [0,1] values and triggers entrenchment
       // (threshold is 0.35 in health.ts).
-      upsertAssetSalience(db, "memory:dominant", { encoding: 0.9, outcome: 0.9, retrieval: 0.99, rankScore: 0.99 });
+      upsertAssetSalience(db, "memories/dominant", { encoding: 0.9, outcome: 0.9, retrieval: 0.99, rankScore: 0.99 });
       for (let i = 0; i < 19; i++) {
-        upsertAssetSalience(db, `memory:low-${i}`, {
+        upsertAssetSalience(db, `memories/low-${i}`, {
           encoding: 0.01,
           outcome: 0.01,
           retrieval: 0.001,
@@ -568,7 +568,7 @@ describe("WS-5 degradation metrics", () => {
 
       // Uniform distribution — Gini close to 0.
       for (let i = 0; i < 10; i++) {
-        upsertAssetSalience(db, `memory:uniform-${i}`, {
+        upsertAssetSalience(db, `memories/uniform-${i}`, {
           encoding: 0.5,
           outcome: 0.5,
           retrieval: 0.5,
@@ -620,7 +620,7 @@ describe("WS-5 degradation metrics", () => {
 
       // Seed 8 accepted proposals — spot-check should sample up to 5.
       for (let i = 0; i < 8; i++) {
-        upsertProposal(db, makeAcceptedProposal(`oracle-${i}`, `memory:check-${i}`), "/tmp/stash");
+        upsertProposal(db, makeAcceptedProposal(`oracle-${i}`, `memories/check-${i}`), "/tmp/stash");
       }
     } finally {
       db.close();

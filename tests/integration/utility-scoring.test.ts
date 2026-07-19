@@ -609,11 +609,11 @@ describe("Production path end-to-end", () => {
       // One legitimate event, one stale event whose entry_id was deleted.
       db.prepare(
         "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
-      ).run(realId, "skill:real-skill");
+      ).run(realId, "skills/real-skill");
       const staleId = 999999; // not in entries
       db.prepare(
         "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
-      ).run(staleId, "skill:vaporware");
+      ).run(staleId, "skills/vaporware");
 
       // This used to throw FOREIGN KEY constraint failed.
       expect(() => recomputeUtilityScores(db)).not.toThrow();

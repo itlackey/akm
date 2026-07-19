@@ -38,7 +38,7 @@ function makeStash(): string {
 }
 
 const validSkill = JSON.stringify({
-  ref: "skill:http-timeout",
+  ref: "skills/http-timeout",
   content: "---\ndescription: Exercise direct HTTP timeout forwarding\n---\n\nUse the direct transport.\n",
 });
 

@@ -124,7 +124,7 @@ describe("assembleInfo", () => {
     const dbPath = path.join(tmpDir("db"), "test.db");
     const db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "test-skill");
-    upsertEntry(db, "skill:test-skill", "/fake/skill", "/fake/skill/test-skill", stashDir, entry, "test skill");
+    upsertEntry(db, "skills/test-skill", "/fake/skill", "/fake/skill/test-skill", stashDir, entry, "test skill");
     rebuildFts(db);
     setMeta(db, "builtAt", "2026-03-17T00:00:00Z");
     closeDatabase(db);
@@ -144,7 +144,7 @@ describe("assembleInfo", () => {
     const entry = makeEntry("skill", "embed-skill");
     const id = upsertEntry(
       db,
-      "skill:embed-skill",
+      "skills/embed-skill",
       "/fake/skill",
       "/fake/skill/embed-skill",
       stashDir,

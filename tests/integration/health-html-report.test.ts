@@ -56,15 +56,15 @@ function seedImproveRun(id = "run-html-1", ok = true): void {
         scope: { mode: "all" },
         dryRun: false,
         memorySummary: { eligible: 8, derived: 3 },
-        plannedRefs: [{ ref: "memory:a" }, { ref: "memory:b" }],
+        plannedRefs: [{ ref: "memories/a" }, { ref: "memories/b" }],
         actions: [
-          { ref: "memory:a", mode: "reflect", result: { ok: true } },
-          { ref: "memory:b", mode: "distill", result: { outcome: "queued" } },
-          { ref: "memory:c", mode: "distill-skipped", result: { reason: "type-filter" } },
+          { ref: "memories/a", mode: "reflect", result: { ok: true } },
+          { ref: "memories/b", mode: "distill", result: { outcome: "queued" } },
+          { ref: "memories/c", mode: "distill-skipped", result: { reason: "type-filter" } },
         ],
         consolidation: {
           processed: 4,
-          promoted: ["memory:p1", "memory:p2"],
+          promoted: ["memories/p1", "memories/p2"],
           merged: 1,
           deleted: 0,
           contradicted: 0,
@@ -249,7 +249,7 @@ describe("buildHealthHtmlReplacements", () => {
       buildOpts({
         proposals: [
           { ref: "lesson:<script>alert(1)</script>", source: "extract", createdAt: "2026-06-10T12:00:00.000Z" },
-          { ref: "memory:safe", source: "consolidate", createdAt: "2026-06-10T13:00:00.000Z" },
+          { ref: "memories/safe", source: "consolidate", createdAt: "2026-06-10T13:00:00.000Z" },
         ],
       }),
     );
@@ -353,7 +353,7 @@ describe("buildHealthHtmlReplacements", () => {
     const replacements = buildHealthHtmlReplacements(
       healthResult(),
       buildOpts({
-        proposals: [{ ref: "memory:x", source: "extract", createdAt: "2026-06-10T12:00:00.000Z" }],
+        proposals: [{ ref: "memories/x", source: "extract", createdAt: "2026-06-10T12:00:00.000Z" }],
       }),
     );
     const actions = replacements["%%ACTION_ITEMS_HTML%%"];

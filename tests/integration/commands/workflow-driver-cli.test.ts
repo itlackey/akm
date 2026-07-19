@@ -114,7 +114,7 @@ function splitWatchOutput(stdout: string): { events: EventEnvelope[]; envelope: 
 describe("akm workflow complete — refused while a live engine lease is held (CLI envelope)", () => {
   test("the {ok:false} error envelope names the holder and exits 2", async () => {
     writeSingleStepWorkflow(storage.stashDir, "lease-block");
-    const started = await startWorkflowRun("workflow:lease-block", {});
+    const started = await startWorkflowRun("workflows/lease-block", {});
     const runId = started.run.id;
 
     // Plant a LIVE engine lease directly (simulates an engine driving the run).
@@ -150,7 +150,7 @@ describe("akm workflow complete — refused while a live engine lease is held (C
 describe("akm workflow watch — CLI backlog + --stream against a seeded terminal run", () => {
   async function seedCompletedRun(name: string): Promise<string> {
     writeSingleStepWorkflow(storage.stashDir, name);
-    const started = await startWorkflowRun(`workflow:${name}`, {});
+    const started = await startWorkflowRun(`workflows/${name}`, {});
     await completeWorkflowStep({
       runId: started.run.id,
       stepId: "only-step",
@@ -243,7 +243,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
 
   test("a bare workflow:<name> ref in the primary stash also validates", async () => {
     writeSingleStepWorkflow(storage.stashDir, "primary-flow");
-    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", "workflow:primary-flow"]);
+    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", "workflows/primary-flow"]);
     expect(code).toBe(0);
     const env = JSON.parse(stdout) as { ok: boolean; stepCount: number };
     expect(env.ok).toBe(true);
@@ -354,7 +354,7 @@ describe("akm workflow validate — non-fatal WARNINGS surface additively (ok st
         if (level === "warn") captured.push(args.map((a) => String(a)).join(" "));
       },
       async () => {
-        const started = await startWorkflowRun("workflow:warny-start");
+        const started = await startWorkflowRun("workflows/warny-start");
         // Non-fatal: the run still starts.
         expect(started.run.status).toBe("active");
       },

@@ -7,12 +7,12 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const BASELINE = {
-  dockerHomelab: ["knowledge:skills/docker-homelab/references/compose", "skill:docker-homelab"],
+  dockerHomelab: ["knowledge/skills/docker-homelab/references/compose", "skills/docker-homelab"],
   dockerDeploy: [
-    "script:docker-clean",
-    "knowledge:skills/docker-homelab/references/compose",
-    "skill:docker-homelab",
-    "command:release-manager",
+    "scripts/docker-clean",
+    "knowledge/skills/docker-homelab/references/compose",
+    "skills/docker-homelab",
+    "commands/release-manager",
   ],
   theDocker: [] as string[],
   howDocker: [] as string[],
@@ -27,7 +27,7 @@ async function curateRefs(query: string): Promise<string[]> {
 
 function familyOccupancy(refs: string[], familyKey: string): number {
   return refs.filter(
-    (ref) => ref === `skill:${familyKey}` || ref.startsWith(`knowledge:skills/${familyKey}/references/`),
+    (ref) => ref === `skills/${familyKey}` || ref.startsWith(`knowledge/skills/${familyKey}/references/`),
   ).length;
 }
 
@@ -55,8 +55,8 @@ describe("curate relevance improvements", () => {
       expect(familyOccupancy(dockerHomelab, "docker-homelab")).toBeLessThan(
         familyOccupancy([...BASELINE.dockerHomelab], "docker-homelab"),
       );
-      expect(bannedCount(dockerDeploy, "command:release-manager")).toBeLessThan(
-        bannedCount([...BASELINE.dockerDeploy], "command:release-manager"),
+      expect(bannedCount(dockerDeploy, "commands/release-manager")).toBeLessThan(
+        bannedCount([...BASELINE.dockerDeploy], "commands/release-manager"),
       );
       expect(theDocker.length).toBeGreaterThan(BASELINE.theDocker.length);
       expect(theDocker.some((ref) => ref.includes("docker"))).toBe(true);

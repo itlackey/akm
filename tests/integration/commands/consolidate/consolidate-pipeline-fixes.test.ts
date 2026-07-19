@@ -547,11 +547,11 @@ describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", 
       merged: 0,
       judgedNoAction: 78,
       skipReasons: [
-        { ref: "memory:a", skips: [{ op: "merge", reason: "merge_missing_description" }] },
-        { ref: "memory:b", skips: [{ op: "merge", reason: "merge_missing_description" }] },
-        { ref: "memory:c", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
-        { ref: "memory:d", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
-        { ref: "memory:e", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
+        { ref: "memories/a", skips: [{ op: "merge", reason: "merge_missing_description" }] },
+        { ref: "memories/b", skips: [{ op: "merge", reason: "merge_missing_description" }] },
+        { ref: "memories/c", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
+        { ref: "memories/d", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+        { ref: "memories/e", skips: [{ op: "promote", reason: "dedup_pending_proposal" }] },
       ],
     };
 
@@ -586,18 +586,18 @@ describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", 
     type Grouped = Array<{ ref: string; skips: Array<{ op: string; reason: string }> }>;
     const skipReasons: Grouped = [
       {
-        ref: "memory:dup",
+        ref: "memories/dup",
         skips: [
           { op: "merge", reason: "merge_participant_blocked" },
           { op: "promote", reason: "dedup_pending_proposal" },
         ],
       },
-      { ref: "memory:other", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
+      { ref: "memories/other", skips: [{ op: "delete", reason: "captureMode_hot_refused" }] },
     ];
 
     // Each ref occupies exactly one array entry.
     expect(skipReasons.length).toBe(2);
-    const dup = skipReasons.find((e) => e.ref === "memory:dup");
+    const dup = skipReasons.find((e) => e.ref === "memories/dup");
     expect(dup?.skips.length).toBe(2);
     // Health-style aggregation counts every skip across all refs.
     const histogram: Record<string, number> = {};
@@ -683,30 +683,30 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     // expanded skipReasons close the gap exactly.
     const loadedRefs = new Set<string>([
       // 32 originally counted via skipReasons (all in-chunk):
-      ...Array.from({ length: 32 }, (_, i) => `memory:s${i}`),
+      ...Array.from({ length: 32 }, (_, i) => `memories/s${i}`),
       // 4 additional secondaries from two multi-secondary failed merges:
-      "memory:sec-a1",
-      "memory:sec-a2",
-      "memory:sec-b1",
-      "memory:sec-b2",
+      "memories/sec-a1",
+      "memories/sec-a2",
+      "memories/sec-b1",
+      "memories/sec-b2",
       // 7 from now-emitted "not found" / write-failed skipReasons that
       // ARE in-chunk (modeled — in practice these were a mix of phantom
       // and in-chunk refs; only in-chunk ones impact the invariant):
-      ...Array.from({ length: 7 }, (_, i) => `memory:in-chunk-not-found-${i}`),
+      ...Array.from({ length: 7 }, (_, i) => `memories/in-chunk-not-found-${i}`),
       // 5 contradict targets:
-      "memory:c1",
-      "memory:c2",
-      "memory:c3",
-      "memory:c4",
-      "memory:c5",
+      "memories/c1",
+      "memories/c2",
+      "memories/c3",
+      "memories/c4",
+      "memories/c5",
       // 69 judgedNoAction memories:
-      ...Array.from({ length: 69 }, (_, i) => `memory:n${i}`),
+      ...Array.from({ length: 69 }, (_, i) => `memories/n${i}`),
     ]);
     // Sanity: 32 + 4 + 7 + 5 + 69 = 117 = processed.
     const skipReasons: SkipEntry[] = [
       // Original 32 from the run (pre-fix, but post-fix they remain):
       ...Array.from({ length: 32 }, (_, i) => ({
-        ref: `memory:s${i}`,
+        ref: `memories/s${i}`,
         skips: [{ op: "promote" as const, reason: "dedup_pending_proposal" }],
       })),
       // Post-fix: 2 failed merges each emit primary + 2 secondaries.
@@ -715,15 +715,15 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
       // sanitization/missing-description guard pre-fix; the fix adds the
       // 4 secondaries. For invariant arithmetic only the unique-ref count
       // matters, and each of these refs is distinct → one group entry each.
-      { ref: "memory:merge-fail-a", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
-      { ref: "memory:sec-a1", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
-      { ref: "memory:sec-a2", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
-      { ref: "memory:sec-b1", skips: [{ op: "merge", reason: "merge_missing_description" }] },
-      { ref: "memory:sec-b2", skips: [{ op: "merge", reason: "merge_missing_description" }] },
+      { ref: "memories/merge-fail-a", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
+      { ref: "memories/sec-a1", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
+      { ref: "memories/sec-a2", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
+      { ref: "memories/sec-b1", skips: [{ op: "merge", reason: "merge_missing_description" }] },
+      { ref: "memories/sec-b2", skips: [{ op: "merge", reason: "merge_missing_description" }] },
       // 7 "not found" / failure sites that are in-chunk (post-fix all
       // emit a skipReason; pre-fix only a freeform warning):
       ...Array.from({ length: 7 }, (_, i) => ({
-        ref: `memory:in-chunk-not-found-${i}`,
+        ref: `memories/in-chunk-not-found-${i}`,
         skips: [{ op: "promote" as const, reason: "promote_ref_missing" }],
       })),
     ];
@@ -747,11 +747,11 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     // skipReasons=[] → 1 + 6 = 7, but processed=10 → 3 missing.
     // Post-fix: mergedSecondaries=3 → 1 + 3 + 6 = 10. Closes the gap.
     const loadedRefs = new Set<string>([
-      "memory:p",
-      "memory:s1",
-      "memory:s2",
-      "memory:s3",
-      ...Array.from({ length: 6 }, (_, i) => `memory:n${i}`),
+      "memories/p",
+      "memories/s1",
+      "memories/s2",
+      "memories/s3",
+      ...Array.from({ length: 6 }, (_, i) => `memories/n${i}`),
     ]);
     const envelope: Envelope = {
       processed: 10,
@@ -773,9 +773,9 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     // Pre-fix: failedChunks=2 (visible) but the 10 memories vanish from
     // the invariant. Post-fix: failedChunkMemories=10 closes it.
     const loadedRefs = new Set<string>([
-      "memory:c-1",
-      ...Array.from({ length: 4 }, (_, i) => `memory:n${i}`),
-      ...Array.from({ length: 10 }, (_, i) => `memory:f${i}`),
+      "memories/c-1",
+      ...Array.from({ length: 4 }, (_, i) => `memories/n${i}`),
+      ...Array.from({ length: 10 }, (_, i) => `memories/f${i}`),
     ]);
     const envelope: Envelope = {
       processed: 15,
@@ -820,10 +820,10 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     // Post-fix: judgedNoAction is decremented by 1 when B's skipReason is
     // pushed → 76 + 36 = 112... 76 + 36 + 5 = 117. ✓
     const loadedRefs = new Set<string>([
-      ...Array.from({ length: 5 }, (_, i) => `memory:c${i}`),
-      ...Array.from({ length: 76 }, (_, i) => `memory:n${i}`),
-      ...Array.from({ length: 35 }, (_, i) => `memory:s${i}`),
-      "memory:cross-chunk-secondary",
+      ...Array.from({ length: 5 }, (_, i) => `memories/c${i}`),
+      ...Array.from({ length: 76 }, (_, i) => `memories/n${i}`),
+      ...Array.from({ length: 35 }, (_, i) => `memories/s${i}`),
+      "memories/cross-chunk-secondary",
     ]);
     const envelope: Envelope = {
       processed: 117,
@@ -835,11 +835,11 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
       judgedNoAction: 76, // 77 pre-promote, -1 after B is moved to skipReasons
       skipReasons: [
         ...Array.from({ length: 35 }, (_, i) => ({
-          ref: `memory:s${i}`,
+          ref: `memories/s${i}`,
           skips: [{ op: "promote" as const, reason: "dedup_pending_proposal" }],
         })),
         {
-          ref: "memory:cross-chunk-secondary",
+          ref: "memories/cross-chunk-secondary",
           skips: [{ op: "merge" as const, reason: "merge_missing_description" }],
         },
       ],

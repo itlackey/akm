@@ -89,7 +89,7 @@ const rejectingJudge: SummaryJudge = async () => '{"complete": false, "missing":
 describe("runWorkflowSteps drains dispatch resources on every exit path", () => {
   test("success path: drain called exactly once", async () => {
     writeProgram("drain-ok", oneStep("drain-ok"));
-    const started = await startWorkflowRun("workflow:drain-ok", {});
+    const started = await startWorkflowRun("workflows/drain-ok", {});
     let drains = 0;
     const result = await runWorkflowSteps({
       target: started.run.id,
@@ -105,7 +105,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("gate-rejection path: drain called", async () => {
     writeProgram("drain-gate", oneStep("drain-gate", /* withGate */ true));
-    const started = await startWorkflowRun("workflow:drain-gate", {});
+    const started = await startWorkflowRun("workflows/drain-gate", {});
     let drains = 0;
     const result = await runWorkflowSteps({
       target: started.run.id,
@@ -121,7 +121,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("failure path (dispatcher throws): drain still called", async () => {
     writeProgram("drain-fail", oneStep("drain-fail"));
-    const started = await startWorkflowRun("workflow:drain-fail", {});
+    const started = await startWorkflowRun("workflows/drain-fail", {});
     let drains = 0;
     const result = await runWorkflowSteps({
       target: started.run.id,
@@ -139,7 +139,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("caller-abort path: drain still called", async () => {
     writeProgram("drain-abort", oneStep("drain-abort"));
-    const started = await startWorkflowRun("workflow:drain-abort", {});
+    const started = await startWorkflowRun("workflows/drain-abort", {});
     const controller = new AbortController();
     controller.abort();
     let drains = 0;
@@ -165,7 +165,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("terminal no-op path (already-completed run): drain still called", async () => {
     writeProgram("drain-noop", oneStep("drain-noop"));
-    const started = await startWorkflowRun("workflow:drain-noop", {});
+    const started = await startWorkflowRun("workflows/drain-noop", {});
     const runId = started.run.id;
     // Drive to completion first.
     const done = await runWorkflowSteps({
@@ -190,7 +190,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("a throwing drain never masks the run's own result", async () => {
     writeProgram("drain-throws", oneStep("drain-throws"));
-    const started = await startWorkflowRun("workflow:drain-throws", {});
+    const started = await startWorkflowRun("workflows/drain-throws", {});
     const result = await runWorkflowSteps({
       target: started.run.id,
       summaryJudge: null,
@@ -205,7 +205,7 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
   test("awaits asynchronous disposal before resolving the workflow run", async () => {
     writeProgram("drain-awaited", oneStep("drain-awaited"));
-    const started = await startWorkflowRun("workflow:drain-awaited", {});
+    const started = await startWorkflowRun("workflows/drain-awaited", {});
     let release!: () => void;
     const disposalBlocked = new Promise<void>((resolve) => {
       release = resolve;
@@ -366,7 +366,7 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
         },
       })) as never);
 
-    const started = await startWorkflowRun("workflow:sdk-e2e", {});
+    const started = await startWorkflowRun("workflows/sdk-e2e", {});
     const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
 
     // The real SDK path ran (the fake server answered the prompt)…

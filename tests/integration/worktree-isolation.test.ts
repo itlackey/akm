@@ -114,7 +114,7 @@ function plan(yamlText: string): WorkflowPlanGraph {
   if (!parsed.ok) throw new Error(parsed.errors.map((e) => `${e.line}: ${e.message}`).join(" | "));
   return compileResolveFreezeWorkflow(
     {
-      ref: "workflow:demo",
+      ref: "workflows/demo",
       path: "workflows/demo.yaml",
       sourcePath: "/tmp",
       title: parsed.program.name,
@@ -177,7 +177,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     expect(workflow.irVersion).toBe(3);
     const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher,
@@ -220,7 +220,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     expect(workflow.irVersion).toBe(3);
     const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher,
@@ -252,7 +252,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     expect(workflow.irVersion).toBe(3);
     const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: { files: ["a.ts", "b.ts"] },
       evidence: {},
       dispatcher,
@@ -278,7 +278,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     expect(workflow.irVersion).toBe(3);
     const result = await executeStepPlan(workflow.steps[0], {
       runId: RUN_ID,
-      workflowRef: "workflow:demo",
+      workflowRef: "workflows/demo",
       params: {},
       evidence: {},
       dispatcher: async () => {

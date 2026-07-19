@@ -21,7 +21,7 @@ import {
 } from "../../../src/commands/improve/distill/content-repair";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 
-const REF = "skill:deploy";
+const REF = "skills/deploy";
 
 // A lesson whose description and when_to_use are both valid and distinct
 // (the exact post-swap pairing proven valid by the e2e swap test).

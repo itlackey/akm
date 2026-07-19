@@ -233,7 +233,7 @@ describe("family E — resolveRelativeDates phrase grammar (memory-improve.ts:36
       beliefStateTransitions: [],
       consolidationCandidates: [],
       relativeDateCandidates: [
-        { ref: `memory:${DURATION_RELATIVE_MEMORY_NAME}`, filePath, matches: ["yesterday", "last week"] },
+        { ref: `memories/${DURATION_RELATIVE_MEMORY_NAME}`, filePath, matches: ["yesterday", "last week"] },
       ],
     };
 

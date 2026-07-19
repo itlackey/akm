@@ -474,7 +474,7 @@ describe("tasks run attempt observability", () => {
   });
 
   test("records a classified pre-dispatch failure without persisting the target ref", async () => {
-    const targetSecret = "agent:PRE-DISPATCH-TARGET-SECRET";
+    const targetSecret = "agents/PRE-DISPATCH-TARGET-SECRET";
     writeTask("wrong-workflow-ref", `version: 2\nschedule: "@daily"\nworkflow: ${targetSecret}\n`);
 
     const result = await runCliCapture(["--json", "tasks", "run", "wrong-workflow-ref"]);

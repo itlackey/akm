@@ -279,7 +279,7 @@ describe("call-site behavior: mv-cli.ts:739 steers a fallback-resolved ref to it
       // renaming the wrong ref.
       seedAsset(storage.stashDir, "knowledge/archive/notes.md", "---\ndescription: Archived note\n---\nBody.\n");
 
-      const result = await runCliCapture(["mv", "knowledge:notes", "renamed-notes"]);
+      const result = await runCliCapture(["mv", "knowledge/notes", "renamed-notes"]);
 
       expect(result.code).not.toBe(0);
       const envelope = JSON.parse(result.stderr) as ErrorEnvelope;
@@ -307,7 +307,7 @@ describe("call-site behavior: mv-cli.ts:739 steers a fallback-resolved ref to it
       // "outside the type root" rejection instead of a canonical-ref steer.
       seedAsset(storage.stashDir, "custom-notes/deep-note.md", "You are a deep-note agent.\n");
 
-      const result = await runCliCapture(["mv", "agent:custom-notes/deep-note", "renamed-agent"]);
+      const result = await runCliCapture(["mv", "agents/custom-notes/deep-note", "renamed-agent"]);
 
       expect(result.code).not.toBe(0);
       const envelope = JSON.parse(result.stderr) as ErrorEnvelope;
@@ -336,7 +336,7 @@ describe("golden fixture: deriveCanonicalAssetNameFromStashRoot minting oracle (
       const storage = withIsolatedAkmStorage();
       try {
         seedAsset(storage.stashDir, "knowledge/archive/notes.md", "---\ndescription: Archived note\n---\nBody.\n");
-        const result = await runCliCapture(["mv", "knowledge:notes", "renamed-notes"]);
+        const result = await runCliCapture(["mv", "knowledge/notes", "renamed-notes"]);
         const envelope = result.code !== 0 ? (JSON.parse(result.stderr) as ErrorEnvelope) : null;
         return {
           exitNonZero: result.code !== 0,
@@ -357,7 +357,7 @@ describe("golden fixture: deriveCanonicalAssetNameFromStashRoot minting oracle (
       const storage = withIsolatedAkmStorage();
       try {
         seedAsset(storage.stashDir, "custom-notes/deep-note.md", "You are a deep-note agent.\n");
-        const result = await runCliCapture(["mv", "agent:custom-notes/deep-note", "renamed-agent"]);
+        const result = await runCliCapture(["mv", "agents/custom-notes/deep-note", "renamed-agent"]);
         const envelope = result.code !== 0 ? (JSON.parse(result.stderr) as ErrorEnvelope) : null;
         return {
           exitNonZero: result.code !== 0,

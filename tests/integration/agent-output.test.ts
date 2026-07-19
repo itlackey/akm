@@ -121,7 +121,7 @@ describe("--shape agent field projection", () => {
 
   test("--shape agent show output strips non-essential fields", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Must have essential fields
@@ -140,13 +140,13 @@ describe("--shape agent field projection", () => {
     const stashDir = makeStash();
 
     // Command has template content
-    const cmdOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=agent"]);
+    const cmdOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
     expect(cmdJson).toHaveProperty("template");
     expect(cmdJson).toHaveProperty("action");
 
     // Script has run field
-    const scriptOutput = await runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--shape=agent"]);
+    const scriptOutput = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--shape=agent"]);
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
     expect(scriptJson).toHaveProperty("action");
@@ -167,7 +167,7 @@ describe("--shape agent field projection", () => {
     expect(hit).toHaveProperty("action");
 
     // Default show still has origin
-    const showOutput = await runCli(stashDir, ["show", "command:release.md", "--format=json"]);
+    const showOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json"]);
     const showJson = JSON.parse(showOutput) as Record<string, unknown>;
     expect(showJson).toHaveProperty("origin");
   });
@@ -201,7 +201,7 @@ describe("--shape agent output mode", () => {
 
   test("--shape agent show output strips non-essential fields", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["show", "command:release.md", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
     expect(json).not.toHaveProperty("path");
     expect(json).not.toHaveProperty("origin");

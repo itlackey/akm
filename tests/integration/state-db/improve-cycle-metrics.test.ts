@@ -91,12 +91,12 @@ describe("migration 016 — collapse/churn detector tables", () => {
 describe("canary set CRUD", () => {
   test("insert + read back the active set in insertion order", () => {
     insertCanaries(db, "set-a", [
-      { anchorRef: "memory:alpha", query: "alpha topic" },
-      { anchorRef: "lesson:beta", query: "beta lesson", source: "manual" },
+      { anchorRef: "memories/alpha", query: "alpha topic" },
+      { anchorRef: "lessons/beta", query: "beta lesson", source: "manual" },
     ]);
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(2);
-    expect(active[0].anchor_ref).toBe("memory:alpha");
+    expect(active[0].anchor_ref).toBe("memories/alpha");
     expect(active[0].source).toBe("auto");
     expect(active[1].source).toBe("manual");
     expect(active.every((c) => c.canary_set_id === "set-a")).toBe(true);
@@ -105,18 +105,18 @@ describe("canary set CRUD", () => {
   test("two active sets (interrupted refresh): only the NEWEST set is returned", () => {
     // Simulate a bug/interruption that leaves two sets active — mixing them
     // would corrupt trend baselines, so getActiveCanaries scopes to the newest.
-    insertCanaries(db, "set-old", [{ anchorRef: "memory:old", query: "old" }], "2026-01-01T00:00:00.000Z");
-    insertCanaries(db, "set-new", [{ anchorRef: "memory:new", query: "new" }], "2026-06-01T00:00:00.000Z");
+    insertCanaries(db, "set-old", [{ anchorRef: "memories/old", query: "old" }], "2026-01-01T00:00:00.000Z");
+    insertCanaries(db, "set-new", [{ anchorRef: "memories/new", query: "new" }], "2026-06-01T00:00:00.000Z");
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(1);
     expect(active[0].canary_set_id).toBe("set-new");
   });
 
   test("re-mint deactivates the old set but retains its rows", () => {
-    insertCanaries(db, "set-a", [{ anchorRef: "memory:alpha", query: "alpha" }]);
+    insertCanaries(db, "set-a", [{ anchorRef: "memories/alpha", query: "alpha" }]);
     const deactivated = deactivateCanarySet(db, "set-a");
     expect(deactivated).toBe(1);
-    insertCanaries(db, "set-b", [{ anchorRef: "memory:beta", query: "beta" }]);
+    insertCanaries(db, "set-b", [{ anchorRef: "memories/beta", query: "beta" }]);
 
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(1);
@@ -144,7 +144,7 @@ describe("cycle metrics insert/query/purge", () => {
     const freshTs = new Date().toISOString();
     insertCycleMetrics(db, makeRow({ run_id: "old", ts: oldTs }));
     insertCycleMetrics(db, makeRow({ run_id: "fresh", ts: freshTs }));
-    insertCanaries(db, "set-a", [{ anchorRef: "memory:alpha", query: "alpha" }]);
+    insertCanaries(db, "set-a", [{ anchorRef: "memories/alpha", query: "alpha" }]);
 
     const purged = purgeOldCycleMetrics(db, 365);
     expect(purged).toBe(1);

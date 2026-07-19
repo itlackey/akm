@@ -177,7 +177,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -357,7 +357,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -398,7 +398,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -444,7 +444,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -485,7 +485,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -521,7 +521,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:direct",
+        ref: "workflows/direct",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "direct",

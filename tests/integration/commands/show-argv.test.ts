@@ -39,11 +39,11 @@ async function runEntrypoint(args: string[]): Promise<{ status: number; stdout: 
 // agent` silently drops the projection because process.argv is replaced before
 // initOutputMode reads it.
 describe("normalizeShowArgv preserves global output flags on the view-mode path", () => {
-  const base = ["bun", "akm", "show", "knowledge:guide"];
+  const base = ["bun", "akm", "show", "knowledge/guide"];
 
   test("--shape <value> (space form) survives the rewrite", () => {
     const out = normalizeShowArgv([...base, "toc", "--shape", "agent"]);
-    expect(out).toEqual(["bun", "akm", "show", "knowledge:guide", "--akmView", "toc", "--shape", "agent"]);
+    expect(out).toEqual(["bun", "akm", "show", "knowledge/guide", "--akmView", "toc", "--shape", "agent"]);
   });
 
   test("--shape=<value> (equals form) survives the rewrite", () => {
@@ -58,7 +58,7 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "bun",
       "akm",
       "show",
-      "knowledge:guide",
+      "knowledge/guide",
       "--akmView",
       "section",
       "--akmHeading",
@@ -75,7 +75,7 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "--shape",
       "summary",
       "show",
-      "knowledge:guide",
+      "knowledge/guide",
       "toc",
     ]);
     expect(out).toEqual([
@@ -85,7 +85,7 @@ describe("normalizeShowArgv preserves global output flags on the view-mode path"
       "--shape",
       "summary",
       "show",
-      "knowledge:guide",
+      "knowledge/guide",
       "--akmView",
       "toc",
     ]);
@@ -104,7 +104,7 @@ describe("entrypoint global --shape=summary ordering", () => {
       "---\ndescription: Release\n---\nRun release {{version}}\n",
     );
 
-    const result = await runEntrypoint(["--format=json", "--shape=summary", "show", "command:release.md"]);
+    const result = await runEntrypoint(["--format=json", "--shape=summary", "show", "commands/release.md"]);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");

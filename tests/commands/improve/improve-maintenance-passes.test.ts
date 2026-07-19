@@ -110,7 +110,7 @@ describe("runMemoryInferenceMaintenancePass", () => {
       },
     });
 
-    const out = await runMemoryInferenceMaintenancePass(ctx, { current: fakeDb }, new Set(["memory:a"]));
+    const out = await runMemoryInferenceMaintenancePass(ctx, { current: fakeDb }, new Set(["memories/a"]));
 
     expect(out.memoryInference).toBe(result);
     expect(out.action).toEqual({ ref: "memory:_inference", mode: "memory-inference", result });

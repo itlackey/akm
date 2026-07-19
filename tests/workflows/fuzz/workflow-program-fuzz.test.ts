@@ -117,7 +117,7 @@ function unitBlock(rng: Rng, params: string[], earlier: string[], inMap: boolean
   if (rng.bool(0.3)) unit.timeout = rng.pick(TIMEOUTS);
   if (rng.bool(0.25)) unit.on_error = rng.pick(ON_ERROR);
   if (rng.bool(0.2)) unit.output = schema(rng);
-  if (rng.bool(0.2)) unit.env = [`env:secret_${rng.int(5)}`];
+  if (rng.bool(0.2)) unit.env = [`env/secret_${rng.int(5)}`];
   if (rng.bool(0.15)) unit.isolation = rng.pick(ISOLATION);
   if (rng.bool(0.2)) {
     unit.retry = {

@@ -210,7 +210,7 @@ describe("runProposalQualityCase — windowed validationPassRate", () => {
       proposals: [
         {
           id: "recent-1",
-          ref: "lesson:foo",
+          ref: "lessons/foo",
           status: "pending",
           source: "improve",
           createdAt: oneHourAgo,
@@ -237,7 +237,7 @@ describe("runProposalQualityCase — windowed validationPassRate", () => {
       proposals: [
         {
           id: "recent-1",
-          ref: "lesson:foo",
+          ref: "lessons/foo",
           status: "pending",
           source: "improve",
           createdAt: oneHourAgo,

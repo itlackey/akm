@@ -62,7 +62,7 @@ function seedProposal(input: {
      VALUES (?, '/tmp/stash', ?, ?, 'reflect', ?, ?, ?)`,
   ).run(
     `p-${idCounter++}`,
-    `knowledge:asset-${idCounter}`,
+    `knowledge/asset-${idCounter}`,
     input.status ?? "accepted",
     input.updatedAt ?? IN_WINDOW,
     input.updatedAt ?? IN_WINDOW,

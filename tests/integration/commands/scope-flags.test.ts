@@ -237,7 +237,7 @@ describe("akm show --scope narrows resolution", () => {
     await akmIndex({ stashDir, full: true });
 
     const result = await akmShowUnified({
-      ref: "memory:scoped",
+      ref: "memories/scoped",
       scope: { user: "alice" },
     });
     expect(result.name).toBe("scoped");
@@ -258,7 +258,7 @@ describe("akm show --scope narrows resolution", () => {
     let thrown: unknown;
     let returned: unknown;
     try {
-      returned = await akmShowUnified({ ref: "memory:scoped", scope: { user: "bob" } });
+      returned = await akmShowUnified({ ref: "memories/scoped", scope: { user: "bob" } });
     } catch (err) {
       thrown = err;
     }
@@ -281,7 +281,7 @@ describe("akm show --scope narrows resolution", () => {
 
     await akmIndex({ stashDir, full: true });
 
-    await expect(akmShowUnified({ ref: "memory:legacy", scope: { user: "alice" } })).rejects.toBeInstanceOf(
+    await expect(akmShowUnified({ ref: "memories/legacy", scope: { user: "alice" } })).rejects.toBeInstanceOf(
       NotFoundError,
     );
   });

@@ -119,8 +119,8 @@ describe("decodeImproveResult", () => {
 
     for (const malformed of [
       { ...interrupted, ok: true },
-      { ...interrupted, plannedRefs: [{ ref: "memory:unfinished" }] },
-      { ...interrupted, actions: [{ ref: "memory:unfinished", mode: "error", result: { ok: false } }] },
+      { ...interrupted, plannedRefs: [{ ref: "memories/unfinished" }] },
+      { ...interrupted, actions: [{ ref: "memories/unfinished", mode: "error", result: { ok: false } }] },
       { ...interrupted, guidance: "not part of the historical partial envelope" },
       { ...interrupted, terminated: {} },
     ]) {

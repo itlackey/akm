@@ -80,18 +80,18 @@ async function completeOnlyStep(runId: string): Promise<void> {
 describe("workflow watch — backlog", () => {
   test("prints only this run's workflow_* events as NDJSON, in id order, then exits", async () => {
     writeWorkflow("watch-backlog");
-    const started = await startWorkflowRun("workflow:watch-backlog", {});
+    const started = await startWorkflowRun("workflows/watch-backlog", {});
     const runId = started.run.id;
 
     // Seed journal events for this run…
     appendEvent({
       eventType: "workflow_unit_started",
-      ref: "workflow:watch-backlog",
+      ref: "workflows/watch-backlog",
       metadata: { runId, stepId: "only-step", unitId: "only-step:solo" },
     });
     appendEvent({
       eventType: "workflow_unit_finished",
-      ref: "workflow:watch-backlog",
+      ref: "workflows/watch-backlog",
       metadata: { runId, stepId: "only-step", unitId: "only-step:solo", status: "completed" },
     });
     // …and noise that must NOT appear: another run's workflow event, a
@@ -138,7 +138,7 @@ describe("workflow watch — backlog", () => {
 describe("workflow watch — --stream", () => {
   test("polls from the last seen event id and exits when the run reaches a terminal status", async () => {
     writeWorkflow("watch-stream");
-    const started = await startWorkflowRun("workflow:watch-stream", {});
+    const started = await startWorkflowRun("workflows/watch-stream", {});
     const runId = started.run.id;
 
     const lines: string[] = [];
@@ -154,7 +154,7 @@ describe("workflow watch — --stream", () => {
     await sleep(50);
     appendEvent({
       eventType: "workflow_unit_started",
-      ref: "workflow:watch-stream",
+      ref: "workflows/watch-stream",
       metadata: { runId, stepId: "only-step", unitId: "only-step:solo" },
     });
     await completeOnlyStep(runId);
@@ -177,7 +177,7 @@ describe("workflow watch — --stream", () => {
 
   test("a run that is already terminal prints the backlog and exits after a single idle grace poll", async () => {
     writeWorkflow("watch-terminal");
-    const started = await startWorkflowRun("workflow:watch-terminal", {});
+    const started = await startWorkflowRun("workflows/watch-terminal", {});
     const runId = started.run.id;
     await completeOnlyStep(runId);
 

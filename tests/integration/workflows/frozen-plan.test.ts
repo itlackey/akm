@@ -81,7 +81,7 @@ function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>)
 describe("plan freezing at workflow start (migration 006)", () => {
   test("a fresh run persists plan_json + plan_hash, and the hash verifies the JSON", async () => {
     writeWorkflow("freeze-me", "Do the frozen thing.");
-    const started = await startWorkflowRun("workflow:freeze-me", {});
+    const started = await startWorkflowRun("workflows/freeze-me", {});
 
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
     expect(row?.plan_json).toBeTruthy();
@@ -101,7 +101,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("workflow run executes the FROZEN plan even after the asset file is edited mid-run", async () => {
     const file = writeWorkflow("frozen-semantics", "Do the ORIGINAL thing.");
-    const started = await startWorkflowRun("workflow:frozen-semantics", {});
+    const started = await startWorkflowRun("workflows/frozen-semantics", {});
 
     // Mid-run edit: the live asset now says something else entirely.
     writeWorkflow("frozen-semantics", "Do the EDITED thing.");
@@ -132,7 +132,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       "gha-doc",
       `Deploy the build for commit \${{ github.sha }}. Do not resolve \${{ params.tag }} either.`,
     );
-    const started = await startWorkflowRun("workflow:gha-doc", { tag: "v1" });
+    const started = await startWorkflowRun("workflows/gha-doc", { tag: "v1" });
 
     const prompts: string[] = [];
     const result = await runWorkflowSteps({
@@ -154,7 +154,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("a plan_json / plan_hash mismatch is rejected with an error naming the run", async () => {
     writeWorkflow("tampered", "Do the honest thing.");
-    const started = await startWorkflowRun("workflow:tampered", {});
+    const started = await startWorkflowRun("workflows/tampered", {});
 
     // Tamper with the journaled plan while leaving the hash in place.
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
@@ -176,7 +176,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("corrupt plan_json (not valid JSON) is rejected with an error naming the run", async () => {
     writeWorkflow("corrupt", "Do the thing.");
-    const started = await startWorkflowRun("workflow:corrupt", {});
+    const started = await startWorkflowRun("workflows/corrupt", {});
     execOnWorkflowDb("UPDATE workflow_runs SET plan_json = ? WHERE id = ?", "{not json", started.run.id);
 
     await expect(
@@ -189,7 +189,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("a legacy run (NULL plan_json) is inspection-only and points to abandon", async () => {
     writeWorkflow("legacy", "Do the legacy thing.");
-    const started = await startWorkflowRun("workflow:legacy", {});
+    const started = await startWorkflowRun("workflows/legacy", {});
 
     // Simulate a run created before migration 006: no frozen plan on the row.
     execOnWorkflowDb(
@@ -212,7 +212,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("historical IR command matrix is inspection/abandon only with the exact unsupported code", async () => {
     writeWorkflow("old-matrix", "Do old work.");
-    const started = await startWorkflowRun("workflow:old-matrix", {});
+    const started = await startWorkflowRun("workflows/old-matrix", {});
     execOnWorkflowDb(
       "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = 2 WHERE id = ?",
       '{"irVersion":2}',
@@ -258,7 +258,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
     ];
     for (const item of cases) {
       writeWorkflow(item.name, "Historical work.");
-      const started = await startWorkflowRun(`workflow:${item.name}`, {});
+      const started = await startWorkflowRun(`workflows/${item.name}`, {});
       execOnWorkflowDb(
         "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = ? WHERE id = ?",
         "{malformed",
@@ -269,7 +269,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
     }
 
     writeWorkflow("malformed-v3", "Protected work.");
-    const v3 = await startWorkflowRun("workflow:malformed-v3", {});
+    const v3 = await startWorkflowRun("workflows/malformed-v3", {});
     execOnWorkflowDb(
       "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = 3 WHERE id = ?",
       "{malformed",
@@ -281,7 +281,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
   test("bad hash and spine mismatch are rejected before any workflow mutation", async () => {
     writeWorkflow("preflight", "Do immutable work.");
-    const started = await startWorkflowRun("workflow:preflight", {});
+    const started = await startWorkflowRun("workflows/preflight", {});
     const beforeRun = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
     const beforeSteps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(started.run.id));
 

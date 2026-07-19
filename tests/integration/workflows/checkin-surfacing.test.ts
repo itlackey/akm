@@ -79,7 +79,7 @@ describe("plain-text check-in surfacing (review C2)", () => {
   };
   const result = {
     run: { id: RUN_ID, status: "active", currentStepId: "step-1" },
-    workflow: { ref: "workflow:demo", title: "Demo", steps: [] },
+    workflow: { ref: "workflows/demo", title: "Demo", steps: [] },
     step: { id: "step-1", title: "Do the thing", instructions: "instructions" },
     checkin,
   };

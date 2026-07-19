@@ -55,7 +55,7 @@ describe("secret run", () => {
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("super-secret-token"));
 
     const { stdout, status } = spawnCli(
-      ["secret", "run", "secret:demo", "TOKEN", "--", "bash", "-lc", 'printf "%s" "$TOKEN"'],
+      ["secret", "run", "secrets/demo", "TOKEN", "--", "bash", "-lc", 'printf "%s" "$TOKEN"'],
       { AKM_STASH_DIR: stashDir },
     );
     expect(status).toBe(0);

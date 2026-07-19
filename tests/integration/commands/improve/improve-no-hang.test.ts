@@ -83,7 +83,7 @@ const stubDistill = async ({ ref }: { ref?: string }): Promise<AkmDistillResult>
   ok: true,
   outcome: "queued",
   inputRef: ref ?? "stub",
-  lessonRef: `lesson:${(ref ?? "stub").replace(/[:/]/g, "-")}-lesson`,
+  lessonRef: `lessons/${(ref ?? "stub").replace(/[:/]/g, "-")}-lesson`,
 });
 
 /** A consolidation stub that resolves immediately (simulates fast/no-op consolidation). */

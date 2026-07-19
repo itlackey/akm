@@ -91,7 +91,7 @@ describe("shapeSearchHit — local stash hits", () => {
     type: "skill",
     name: "deploy",
     description: "Deploy the app",
-    ref: "skill:deploy",
+    ref: "skills/deploy",
     action: "akm show skill:deploy",
     score: 0.42,
     estimatedTokens: 120,
@@ -105,7 +105,7 @@ describe("shapeSearchHit — local stash hits", () => {
     expect(shapeSearchHit(fullHit, "brief")).toEqual({
       type: "skill",
       name: "deploy",
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       action: "akm show skill:deploy",
       estimatedTokens: 120,
     });
@@ -179,7 +179,7 @@ describe("shapeSearchHitForAgent", () => {
     const hit = {
       type: "skill",
       name: "deploy",
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       description: "long ".repeat(100),
       action: "akm show skill:deploy",
       score: 0.5,
@@ -190,7 +190,7 @@ describe("shapeSearchHitForAgent", () => {
     const out = shapeSearchHitForAgent(hit);
     expect(out).toMatchObject({
       name: "deploy",
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       type: "skill",
       action: "akm show skill:deploy",
       score: 0.5,
@@ -347,7 +347,7 @@ describe("shapeSearchOutput", () => {
           type: "skill",
           name: "x",
           action: "a",
-          ref: "skill:x",
+          ref: "skills/x",
           description: "d",
           score: 0.1,
           estimatedTokens: 1,
@@ -356,7 +356,7 @@ describe("shapeSearchOutput", () => {
       registryHits: [],
     };
     const out = shapeSearchOutput(result, "brief", "agent") as { hits: Record<string, unknown>[] };
-    expect((out.hits[0] as Record<string, unknown>).ref).toBe("skill:x");
+    expect((out.hits[0] as Record<string, unknown>).ref).toBe("skills/x");
   });
 });
 
@@ -400,7 +400,7 @@ describe("shapeForCommand: unknown command", () => {
 describe("shapeProposal* — proposal commands", () => {
   const fullProposal: Record<string, unknown> = {
     id: "uuid-1",
-    ref: "lesson:rg-over-grep",
+    ref: "lessons/rg-over-grep",
     status: "pending",
     source: "reflect",
     sourceRun: "run-7",
@@ -414,7 +414,7 @@ describe("shapeProposal* — proposal commands", () => {
     const out = shapeProposalEntry(fullProposal, "brief");
     expect(out).toEqual({
       id: "uuid-1",
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       status: "pending",
       source: "reflect",
       createdAt: "2026-04-27T00:00:00Z",
@@ -427,7 +427,7 @@ describe("shapeProposal* — proposal commands", () => {
     const out = shapeProposalEntry(fullProposal, "normal");
     expect(out).toMatchObject({
       id: "uuid-1",
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       status: "pending",
       source: "reflect",
       sourceRun: "run-7",
@@ -460,7 +460,7 @@ describe("shapeProposal* — proposal commands", () => {
     const validation = { ok: true, findings: [] };
     const out = shapeProposalShowOutput({ schemaVersion: 1, proposal: fullProposal, validation }, "normal");
     expect(out.validation).toEqual(validation);
-    expect((out.proposal as Record<string, unknown>).ref).toBe("lesson:rg-over-grep");
+    expect((out.proposal as Record<string, unknown>).ref).toBe("lessons/rg-over-grep");
     expect(out).not.toHaveProperty("schemaVersion");
     // full adds schemaVersion
     const full = shapeProposalShowOutput({ schemaVersion: 1, proposal: fullProposal, validation }, "full");
@@ -472,7 +472,7 @@ describe("shapeProposal* — proposal commands", () => {
       schemaVersion: 1,
       ok: true,
       id: "uuid-1",
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       assetPath: "/tmp/stash/lessons/rg.md",
       proposal: fullProposal,
     };
@@ -480,19 +480,19 @@ describe("shapeProposal* — proposal commands", () => {
       const out = shapeProposalAcceptOutput(result, detail);
       expect(out.ok).toBe(true);
       expect(out.id).toBe("uuid-1");
-      expect(out.ref).toBe("lesson:rg-over-grep");
+      expect(out.ref).toBe("lessons/rg-over-grep");
       expect(out.assetPath).toBe("/tmp/stash/lessons/rg.md");
     }
   });
 
   test("shapeProposalRejectOutput threads `reason` only when present", () => {
     const withReason = shapeProposalRejectOutput(
-      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lesson:x", reason: "duplicate", proposal: fullProposal },
+      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lessons/x", reason: "duplicate", proposal: fullProposal },
       "normal",
     );
     expect(withReason.reason).toBe("duplicate");
     const withoutReason = shapeProposalRejectOutput(
-      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lesson:x", proposal: fullProposal },
+      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lessons/x", proposal: fullProposal },
       "normal",
     );
     expect(withoutReason).not.toHaveProperty("reason");
@@ -502,7 +502,7 @@ describe("shapeProposal* — proposal commands", () => {
     const result = {
       schemaVersion: 1,
       id: "uuid-1",
-      ref: "lesson:x",
+      ref: "lessons/x",
       isNew: true,
       unified: "--- /dev/null\n+++ a\n",
       targetPath: "/tmp/x",
@@ -518,14 +518,14 @@ describe("shapeProposal* — proposal commands", () => {
     const result = {
       schemaVersion: 2,
       ok: true,
-      ref: "lesson:rg",
+      ref: "lessons/rg",
       engine: "claude",
       durationMs: 12,
       proposal: fullProposal,
     };
     const out = shapeProposalProducerOutput(result, "normal");
     expect(out.ok).toBe(true);
-    expect(out.ref).toBe("lesson:rg");
+    expect(out.ref).toBe("lessons/rg");
     expect(out.engine).toBe("claude");
     expect(out.durationMs).toBe(12);
     expect((out.proposal as Record<string, unknown>).id).toBe("uuid-1");
@@ -537,7 +537,7 @@ describe("shapeProposal* — proposal commands", () => {
       ok: false,
       reason: "non_zero_exit",
       error: "agent failed",
-      ref: "lesson:rg",
+      ref: "lessons/rg",
       engine: "claude",
       exitCode: 7,
       stdout: "captured-out",
@@ -547,7 +547,7 @@ describe("shapeProposal* — proposal commands", () => {
     expect(normal.ok).toBe(false);
     expect(normal.reason).toBe("non_zero_exit");
     expect(normal.error).toBe("agent failed");
-    expect(normal.ref).toBe("lesson:rg");
+    expect(normal.ref).toBe("lessons/rg");
     expect(normal.exitCode).toBe(7);
     // normal omits stdio (large payload); full retains them
     expect(normal).not.toHaveProperty("stdout");
@@ -570,14 +570,14 @@ describe("shapeProposal* — proposal commands", () => {
       { schemaVersion: 1, proposal: fullProposal, validation: { ok: true, findings: [] } },
       "normal",
     ) as Record<string, unknown>;
-    expect((show.proposal as Record<string, unknown>).ref).toBe("lesson:rg-over-grep");
+    expect((show.proposal as Record<string, unknown>).ref).toBe("lessons/rg-over-grep");
     const accept = shapeForCommand(
       "proposal-accept",
       {
         schemaVersion: 1,
         ok: true,
         id: "uuid-1",
-        ref: "lesson:x",
+        ref: "lessons/x",
         assetPath: "/tmp/x",
         proposal: fullProposal,
       },
@@ -586,19 +586,19 @@ describe("shapeProposal* — proposal commands", () => {
     expect(accept.assetPath).toBe("/tmp/x");
     const reject = shapeForCommand(
       "proposal-reject",
-      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lesson:x", proposal: fullProposal },
+      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lessons/x", proposal: fullProposal },
       "brief",
     ) as Record<string, unknown>;
     expect(reject.id).toBe("uuid-1");
     const diff = shapeForCommand(
       "proposal-diff",
-      { schemaVersion: 1, id: "uuid-1", ref: "lesson:x", isNew: true, unified: "+++" },
+      { schemaVersion: 1, id: "uuid-1", ref: "lessons/x", isNew: true, unified: "+++" },
       "brief",
     ) as Record<string, unknown>;
     expect(diff.isNew).toBe(true);
     const reflect = shapeForCommand(
       "reflect",
-      { schemaVersion: 2, ok: true, ref: "lesson:x", proposal: fullProposal, engine: "p", durationMs: 1 },
+      { schemaVersion: 2, ok: true, ref: "lessons/x", proposal: fullProposal, engine: "p", durationMs: 1 },
       "normal",
     ) as Record<string, unknown>;
     expect(reflect.ok).toBe(true);

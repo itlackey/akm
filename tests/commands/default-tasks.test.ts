@@ -36,7 +36,7 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
       return {
         tasks: [...store.values()].map((c) => ({
           id: c.id,
-          ref: `task:${c.id}`,
+          ref: `tasks/${c.id}`,
           path: `/fake/${c.id}.yml`,
           schedule: c.schedule,
           enabled: c.disabled !== true,
@@ -53,7 +53,7 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
       store.set(input.id, input);
       return {
         id: input.id,
-        ref: `task:${input.id}`,
+        ref: `tasks/${input.id}`,
         path: `/fake/${input.id}.yml`,
         stashDir: "/fake",
         schedule: input.schedule,

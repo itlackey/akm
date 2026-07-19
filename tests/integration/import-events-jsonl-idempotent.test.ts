@@ -51,9 +51,9 @@ function countEvents(): number {
 describe("importEventsJsonl idempotency", () => {
   test("re-running the import does not double-insert rows", async () => {
     writeJsonl([
-      { eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lesson:a", metadata: { hit: 1 } },
+      { eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lessons/a", metadata: { hit: 1 } },
       { eventType: "search", ts: "2024-01-01T00:00:01.000Z", ref: null, metadata: { query: "foo" } },
-      { eventType: "show", ts: "2024-01-01T00:00:02.000Z", ref: "lesson:b", metadata: { hit: 2 } },
+      { eventType: "show", ts: "2024-01-01T00:00:02.000Z", ref: "lessons/b", metadata: { hit: 2 } },
     ]);
 
     // First import — inserts all three.
@@ -98,7 +98,7 @@ describe("importEventsJsonl idempotency", () => {
   });
 
   test("imports only the new rows when the JSONL file gains additional events between runs", async () => {
-    writeJsonl([{ eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lesson:a", metadata: { hit: 1 } }]);
+    writeJsonl([{ eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lessons/a", metadata: { hit: 1 } }]);
 
     {
       const db = openStateDatabase(dbPath);
@@ -115,8 +115,8 @@ describe("importEventsJsonl idempotency", () => {
     // Append a new event with a distinct ts; the existing row must not be
     // re-imported, the new row must be imported.
     writeJsonl([
-      { eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lesson:a", metadata: { hit: 1 } },
-      { eventType: "show", ts: "2024-01-01T00:00:01.000Z", ref: "lesson:b", metadata: { hit: 2 } },
+      { eventType: "show", ts: "2024-01-01T00:00:00.000Z", ref: "lessons/a", metadata: { hit: 1 } },
+      { eventType: "show", ts: "2024-01-01T00:00:01.000Z", ref: "lessons/b", metadata: { hit: 2 } },
     ]);
 
     {

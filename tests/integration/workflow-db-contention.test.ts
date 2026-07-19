@@ -69,7 +69,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
   test("concurrent status/journal reads during a wide fan-out never observe corruption; the final journal is complete + terminal", async () => {
     const files = Array.from({ length: 40 }, (_, i) => `f${i}.ts`);
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
-    const started = await startWorkflowRun("workflow:db-contention", { files });
+    const started = await startWorkflowRun("workflows/db-contention", { files });
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
 
@@ -134,7 +134,7 @@ describe("writer queue resilience (fault-injected write failure)", () => {
     // A real run so insertUnit has a valid parent run/step to attach to.
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const files = ["a.ts", "b.ts", "c.ts"];
-    const started = await startWorkflowRun("workflow:db-contention", { files });
+    const started = await startWorkflowRun("workflows/db-contention", { files });
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [ua, ub, uc] = await unitIds(runId, { files });

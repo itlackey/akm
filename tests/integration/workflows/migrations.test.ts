@@ -170,7 +170,7 @@ describe("workflow.db migrations", () => {
       )
       .run(
         "legacy-run-1",
-        "workflow:legacy",
+        "workflows/legacy",
         7,
         "Legacy Workflow",
         "active",

@@ -42,7 +42,7 @@ afterEach(() => {
 describe("akm env set", () => {
   test("creates the file and the key from --from-env; value is never echoed", async () => {
     process.env.AKM_TEST_ENV_VALUE = "topsecret-value";
-    const result = await runCli(["env", "set", "env:prod", "API_TOKEN", "--from-env", "AKM_TEST_ENV_VALUE"]);
+    const result = await runCli(["env", "set", "env/prod", "API_TOKEN", "--from-env", "AKM_TEST_ENV_VALUE"]);
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain("topsecret-value");
     expect(result.stderr).not.toContain("topsecret-value");
@@ -56,20 +56,20 @@ describe("akm env set", () => {
     fs.writeFileSync(envFile(), "# production config\nAPI_URL=https://old\nDEBUG=false\n");
     process.env.AKM_TEST_ENV_VALUE = "true";
 
-    const result = await runCli(["env", "set", "env:prod", "DEBUG", "--from-env", "AKM_TEST_ENV_VALUE"]);
+    const result = await runCli(["env", "set", "env/prod", "DEBUG", "--from-env", "AKM_TEST_ENV_VALUE"]);
     expect(result.status).toBe(0);
     expect(fs.readFileSync(envFile(), "utf8")).toBe("# production config\nAPI_URL=https://old\nDEBUG=true\n");
   });
 
   test("quotes a value containing spaces so it round-trips", async () => {
     process.env.AKM_TEST_ENV_VALUE = "hello world";
-    await runCli(["env", "set", "env:prod", "GREETING", "--from-env", "AKM_TEST_ENV_VALUE"]);
+    await runCli(["env", "set", "env/prod", "GREETING", "--from-env", "AKM_TEST_ENV_VALUE"]);
     expect(fs.readFileSync(envFile(), "utf8")).toContain('GREETING="hello world"');
   });
 
   test("rejects an invalid key name", async () => {
     process.env.AKM_TEST_ENV_VALUE = "x";
-    const result = await runCli(["env", "set", "env:prod", "bad-key!", "--from-env", "AKM_TEST_ENV_VALUE"]);
+    const result = await runCli(["env", "set", "env/prod", "bad-key!", "--from-env", "AKM_TEST_ENV_VALUE"]);
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).error).toMatch(/Invalid env key/);
   });
@@ -111,7 +111,7 @@ describe("akm env unset", () => {
   });
 
   test("removes a key and preserves the rest + comments; reports removed/missing", async () => {
-    const result = await runCli(["env", "unset", "env:prod", "DEBUG", "NOPE", "--format", "json"]);
+    const result = await runCli(["env", "unset", "env/prod", "DEBUG", "NOPE", "--format", "json"]);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { removed: string[]; missing: string[] };
     expect(json.removed).toEqual(["DEBUG"]);
@@ -120,13 +120,13 @@ describe("akm env unset", () => {
   });
 
   test("requires at least one key", async () => {
-    const result = await runCli(["env", "unset", "env:prod"]);
+    const result = await runCli(["env", "unset", "env/prod"]);
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).error).toMatch(/one or more keys/);
   });
 
   test("errors when the env file does not exist", async () => {
-    const result = await runCli(["env", "unset", "env:absent", "KEY"]);
+    const result = await runCli(["env", "unset", "env/absent", "KEY"]);
     expect(result.status).not.toBe(0);
     expect(JSON.parse(result.stderr).error).toMatch(/not found/i);
   });

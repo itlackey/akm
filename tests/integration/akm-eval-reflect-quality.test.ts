@@ -171,7 +171,7 @@ function makeCase(overrides: Partial<EvalCase> = {}): EvalCase {
 
 describe("classifyReflectAction", () => {
   test("classifies mode='reflect' as succeeded", () => {
-    const result = classifyReflectAction({ mode: "reflect", ref: "memory:foo" }, "run-1");
+    const result = classifyReflectAction({ mode: "reflect", ref: "memories/foo" }, "run-1");
     expect(result).not.toBeNull();
     expect(result?.classification).toBe("succeeded");
   });
@@ -180,7 +180,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { error: 'agent response missing required string field "ref"' },
       },
       "run-1",
@@ -192,7 +192,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { error: "JSON Parse error: Unterminated string" },
       },
       "run-1",
@@ -204,7 +204,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { error: "Unterminated string somewhere in body" },
       },
       "run-1",
@@ -216,7 +216,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: {
           error:
             "Reflect rejected: EXCESSIVE_EXPANSION — proposed body is 481% of source (maximum 200%) for ref memory:foo. Speculative material was likely added.",
@@ -231,7 +231,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: {
           error:
             "Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is 13% of source (minimum 50%) for ref memory:foo. Concrete content was likely deleted.",
@@ -246,7 +246,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "script:google/get-token.ts",
+        ref: "scripts/google/get-token.ts",
         result: {
           error:
             'Reflect refused: asset type "script" is not supported by reflect (only markdown-canonical types are allowed: agent, command, knowledge, lesson, memory, skill, workflow). Use `akm propose` or edit the file directly.',
@@ -261,7 +261,7 @@ describe("classifyReflectAction", () => {
     const result = classifyReflectAction(
       {
         mode: "reflect-failed",
-        ref: "memory:foo",
+        ref: "memories/foo",
         result: { error: "Agent retargeted proposal: expected ref X but got Y..." },
       },
       "run-1",
@@ -270,14 +270,14 @@ describe("classifyReflectAction", () => {
   });
 
   test("returns null for non-reflect modes (e.g. distill)", () => {
-    const result = classifyReflectAction({ mode: "distill", ref: "memory:foo" }, "run-1");
+    const result = classifyReflectAction({ mode: "distill", ref: "memories/foo" }, "run-1");
     expect(result).toBeNull();
   });
 
   test("treats missing error as not-schemaShape on reflect-failed", () => {
     // When mode is reflect-failed but no error string is present, we fall
     // through to "other" — neither succeeded nor any specific classifier.
-    const result = classifyReflectAction({ mode: "reflect-failed", ref: "memory:foo" }, "run-1");
+    const result = classifyReflectAction({ mode: "reflect-failed", ref: "memories/foo" }, "run-1");
     expect(result?.classification).toBe("other");
   });
 });
@@ -301,7 +301,7 @@ describe("aggregateReflectActions", () => {
       },
       {
         mode: "reflect-failed",
-        ref: "script:e",
+        ref: "scripts/e",
         result: { error: 'Reflect refused: asset type "script" is not supported' },
       },
     ]);
@@ -336,7 +336,7 @@ describe("aggregateReflectActions", () => {
     const classified = classify([
       {
         mode: "reflect-failed",
-        ref: "script:e",
+        ref: "scripts/e",
         result: { error: 'Reflect refused: asset type "script" is not supported' },
       },
     ]);
@@ -352,7 +352,7 @@ describe("aggregateReflectActions", () => {
     for (let i = 0; i < 5; i++) {
       many.push({
         mode: "reflect-failed",
-        ref: `memory:foo-${i}`,
+        ref: `memories/foo-${i}`,
         result: { error: 'agent response missing required string field "ref"' },
       });
     }
@@ -367,23 +367,23 @@ describe("collectReflectActions (end-to-end fixture)", () => {
   test("reads multiple improve-result.json files and classifies them", () => {
     const stash = makeTmpStash();
     writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [
-      { mode: "reflect", ref: "memory:a" },
+      { mode: "reflect", ref: "memories/a" },
       {
         mode: "reflect-failed",
-        ref: "memory:b",
+        ref: "memories/b",
         result: { error: 'agent response missing required string field "ref"' },
       },
-      { mode: "distill", ref: "memory:c" },
+      { mode: "distill", ref: "memories/c" },
     ]);
     writeImproveRun(stash, "2026-05-21T11-00-00-000Z-bbb", [
       {
         mode: "reflect-failed",
-        ref: "memory:d",
+        ref: "memories/d",
         result: { error: "Reflect rejected: EXCESSIVE_EXPANSION — too long" },
       },
       {
         mode: "reflect-failed",
-        ref: "script:e",
+        ref: "scripts/e",
         result: { error: 'Reflect refused: asset type "script" is not supported' },
       },
     ]);
@@ -404,15 +404,15 @@ describe("collectReflectActions (end-to-end fixture)", () => {
   test("respects windowRuns by trimming oldest runs", () => {
     const stash = makeTmpStash();
     // 3 runs total; window of 2 should drop the oldest.
-    writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [{ mode: "reflect", ref: "memory:a" }]);
-    writeImproveRun(stash, "2026-05-21T11-00-00-000Z-bbb", [{ mode: "reflect", ref: "memory:b" }]);
-    writeImproveRun(stash, "2026-05-21T12-00-00-000Z-ccc", [{ mode: "reflect", ref: "memory:c" }]);
+    writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [{ mode: "reflect", ref: "memories/a" }]);
+    writeImproveRun(stash, "2026-05-21T11-00-00-000Z-bbb", [{ mode: "reflect", ref: "memories/b" }]);
+    writeImproveRun(stash, "2026-05-21T12-00-00-000Z-ccc", [{ mode: "reflect", ref: "memories/c" }]);
 
     const collected = collectReflectActions(stash, 2);
     expect(collected.runIdsRead.length).toBe(2);
     expect(collected.actions.length).toBe(2);
     const refs = collected.actions.map((a) => a.ref).sort();
-    expect(refs).toEqual(["memory:b", "memory:c"]);
+    expect(refs).toEqual(["memories/b", "memories/c"]);
   });
 
   test("returns empty when stash has no improve runs", () => {
@@ -431,15 +431,15 @@ describe("runReflectQualityCase", () => {
   test("metrics-only case (no expectations) passes and reports rates", async () => {
     const stash = makeTmpStash();
     writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [
-      { mode: "reflect", ref: "memory:a" },
+      { mode: "reflect", ref: "memories/a" },
       {
         mode: "reflect-failed",
-        ref: "memory:b",
+        ref: "memories/b",
         result: { error: 'agent response missing required string field "ref"' },
       },
       {
         mode: "reflect-failed",
-        ref: "script:c",
+        ref: "scripts/c",
         result: { error: 'Reflect refused: asset type "script" is not supported' },
       },
     ]);
@@ -463,10 +463,10 @@ describe("runReflectQualityCase", () => {
     const stash = makeTmpStash();
     // Only 2 LLM-touched reflects across the window.
     writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [
-      { mode: "reflect", ref: "memory:a" },
+      { mode: "reflect", ref: "memories/a" },
       {
         mode: "reflect-failed",
-        ref: "memory:b",
+        ref: "memories/b",
         result: { error: 'agent response missing required string field "ref"' },
       },
     ]);
@@ -490,11 +490,11 @@ describe("runReflectQualityCase", () => {
     const stash = makeTmpStash();
     // 10 LLM-touched reflects; 4 schema-shape failures → 40% (> 10% gate).
     const actions: ReflectActionInput[] = [];
-    for (let i = 0; i < 6; i++) actions.push({ mode: "reflect", ref: `memory:ok-${i}` });
+    for (let i = 0; i < 6; i++) actions.push({ mode: "reflect", ref: `memories/ok-${i}` });
     for (let i = 0; i < 4; i++) {
       actions.push({
         mode: "reflect-failed",
-        ref: `memory:bad-${i}`,
+        ref: `memories/bad-${i}`,
         result: { error: 'agent response missing required string field "ref"' },
       });
     }
@@ -518,10 +518,10 @@ describe("runReflectQualityCase", () => {
     const stash = makeTmpStash();
     // 10 LLM-touched reflects; 1 schema-shape → 10% (boundary).
     const actions: ReflectActionInput[] = [];
-    for (let i = 0; i < 9; i++) actions.push({ mode: "reflect", ref: `memory:ok-${i}` });
+    for (let i = 0; i < 9; i++) actions.push({ mode: "reflect", ref: `memories/ok-${i}` });
     actions.push({
       mode: "reflect-failed",
-      ref: "memory:bad",
+      ref: "memories/bad",
       result: { error: 'agent response missing required string field "ref"' },
     });
     writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", actions);
@@ -544,12 +544,12 @@ describe("runReflectQualityCase", () => {
     writeImproveRun(stash, "2026-05-21T10-00-00-000Z-aaa", [
       {
         mode: "reflect-failed",
-        ref: "memory:bad-1",
+        ref: "memories/bad-1",
         result: { error: 'agent response missing required string field "ref"' },
       },
       {
         mode: "reflect-failed",
-        ref: "memory:bad-2",
+        ref: "memories/bad-2",
         result: { error: "Reflect rejected: EXCESSIVE_EXPANSION — way too long" },
       },
     ]);
@@ -557,8 +557,8 @@ describe("runReflectQualityCase", () => {
     const result = await runReflectQualityCase(makeCase(), makeCtx(stash));
     const evidence = result.evidence.sampleByClass as Record<string, Array<{ ref: string }>>;
     expect(evidence.schemaShape.length).toBe(1);
-    expect(evidence.schemaShape[0].ref).toBe("memory:bad-1");
+    expect(evidence.schemaShape[0].ref).toBe("memories/bad-1");
     expect(evidence.contentPolicy.length).toBe(1);
-    expect(evidence.contentPolicy[0].ref).toBe("memory:bad-2");
+    expect(evidence.contentPolicy[0].ref).toBe("memories/bad-2");
   });
 });

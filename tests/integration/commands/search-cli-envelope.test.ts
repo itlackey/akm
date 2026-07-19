@@ -123,7 +123,7 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
 
   test("show: known ref → success envelope with the asset payload", async () => {
     const stash = await makeIndexedStash();
-    const { stdout, status } = await runCli(["--json", "show", "skill:deploy-widgets"], stash);
+    const { stdout, status } = await runCli(["--json", "show", "skills/deploy-widgets"], stash);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.type).toBe("skill");
@@ -133,7 +133,7 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
 
   test("show: unknown ref → byte-identical {ok:false} not-found envelope on stderr", async () => {
     const stash = await makeIndexedStash();
-    const { stderr, status } = await runCli(["--json", "show", "skill:does-not-exist"], stash);
+    const { stderr, status } = await runCli(["--json", "show", "skills/does-not-exist"], stash);
     expect(status).toBe(1);
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);

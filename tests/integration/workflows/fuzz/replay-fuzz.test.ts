@@ -219,7 +219,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
             // 1) First execution dispatches exactly one unit per item.
             const first = await executeStepPlan(STEP, {
               runId,
-              workflowRef: "workflow:f",
+              workflowRef: "workflows/f",
               params: { items },
               evidence: {},
               dispatcher,
@@ -231,7 +231,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
             // 2) Re-execution with identical inputs reuses every journaled row.
             const second = await executeStepPlan(STEP, {
               runId,
-              workflowRef: "workflow:f",
+              workflowRef: "workflows/f",
               params: { items },
               evidence: {},
               dispatcher: async () => {
@@ -247,7 +247,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
             //    replay divergence, even though the unit is on_error: continue.
             const diverged = await executeStepPlan(STEP, {
               runId,
-              workflowRef: "workflow:f",
+              workflowRef: "workflows/f",
               params: { items, tamper: `v-${seed}` },
               evidence: {},
               dispatcher,
@@ -268,7 +268,7 @@ describe("replay fuzz — executor reuse, divergence, and dup-before-dispatch", 
             let dupDispatches = 0;
             const dupResult = await executeStepPlan(STEP, {
               runId: dupRunId,
-              workflowRef: "workflow:f",
+              workflowRef: "workflows/f",
               params: { items: withDup },
               evidence: {},
               dispatcher: async () => {

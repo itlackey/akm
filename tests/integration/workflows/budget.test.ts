@@ -94,7 +94,7 @@ steps:
 describe("budget.max_units", () => {
   test("the budget freezes onto plan_json and dispatching stops at the ceiling with a hard step failure", async () => {
     writeProgram("units-capped", FAN_OUT_3("budget: { max_units: 2 }"));
-    const started = await startWorkflowRun("workflow:units-capped", { files: ["a.ts", "b.ts", "c.ts"] });
+    const started = await startWorkflowRun("workflows/units-capped", { files: ["a.ts", "b.ts", "c.ts"] });
 
     // End-to-end: the budget rides the FROZEN plan, not the live asset.
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
@@ -145,7 +145,7 @@ steps:
       instructions: Do step two.
 `,
     );
-    const started = await startWorkflowRun("workflow:gate-seeded", {});
+    const started = await startWorkflowRun("workflows/gate-seeded", {});
 
     // Invocation 1: step one dispatches (used = 1) and its gate judge passes,
     // journaling the extra `one.gate:l1` row. maxSteps stops the engine here
@@ -202,7 +202,7 @@ steps:
       instructions: Build it.
 `,
     );
-    const started = await startWorkflowRun("workflow:crash-budget", {});
+    const started = await startWorkflowRun("workflows/crash-budget", {});
     const runId = started.run.id;
 
     // Invocation 1: the dispatch crashes → one FAILED attempt journaled (attempts=1).
@@ -263,7 +263,7 @@ steps:
 
   test("seeding: journaled dispatches from a prior invocation count against max_units", async () => {
     writeProgram("units-seeded", TWO_STEPS("budget: { max_units: 1 }"));
-    const started = await startWorkflowRun("workflow:units-seeded", {});
+    const started = await startWorkflowRun("workflows/units-seeded", {});
 
     // Invocation 1 dispatches step one's single unit (exactly the budget).
     const first = await runWorkflowSteps({
@@ -294,7 +294,7 @@ steps:
 describe("budget.max_tokens", () => {
   test("a usage-reporting dispatcher trips the ceiling; further dispatch is refused and the step fails hard", async () => {
     writeProgram("tokens-capped", FAN_OUT_3("budget: { max_tokens: 100 }"));
-    const started = await startWorkflowRun("workflow:tokens-capped", { files: ["a.ts", "b.ts", "c.ts"] });
+    const started = await startWorkflowRun("workflows/tokens-capped", { files: ["a.ts", "b.ts", "c.ts"] });
 
     let dispatches = 0;
     const result = await runWorkflowSteps({
@@ -348,7 +348,7 @@ steps:
         instructions: Review \${{ item }} carefully.
 `,
     );
-    const started = await startWorkflowRun("workflow:tokens-abort", { files: ["fast.ts", "slow.ts"] });
+    const started = await startWorkflowRun("workflows/tokens-abort", { files: ["fast.ts", "slow.ts"] });
 
     let sawAbort = false;
     // Handshake: the fast unit only reports its over-ceiling usage AFTER the
@@ -396,7 +396,7 @@ steps:
 
   test("seeding: journaled token spend from prior invocations counts against max_tokens", async () => {
     writeProgram("tokens-seeded", TWO_STEPS("budget: { max_tokens: 100 }"));
-    const started = await startWorkflowRun("workflow:tokens-seeded", {});
+    const started = await startWorkflowRun("workflows/tokens-seeded", {});
 
     const first = await runWorkflowSteps({
       target: started.run.id,
@@ -431,7 +431,7 @@ steps:
 describe("budget interactions", () => {
   test("a workflow without a budget block is unchanged: huge usage and full fan-out complete fine", async () => {
     writeProgram("no-budget", FAN_OUT_3(""));
-    const started = await startWorkflowRun("workflow:no-budget", { files: ["a.ts", "b.ts", "c.ts"] });
+    const started = await startWorkflowRun("workflows/no-budget", { files: ["a.ts", "b.ts", "c.ts"] });
 
     const signals: Array<AbortSignal | undefined> = [];
     const result = await runWorkflowSteps({
@@ -455,7 +455,7 @@ describe("budget interactions", () => {
 
   test("budget + on_error: continue still fails the step hard, naming the ceiling", async () => {
     writeProgram("continue-capped", FAN_OUT_3("budget: { max_units: 1 }", "        on_error: continue"));
-    const started = await startWorkflowRun("workflow:continue-capped", { files: ["a.ts", "b.ts"] });
+    const started = await startWorkflowRun("workflows/continue-capped", { files: ["a.ts", "b.ts"] });
 
     let dispatches = 0;
     const result = await runWorkflowSteps({
@@ -504,7 +504,7 @@ ${unitExtra}    gate:
 
   test("loop re-dispatches count against max_units; a ceiling hit DURING a gate loop fails hard, not another loop", async () => {
     writeProgram("gate-units-capped", GATE_LOOP_WF("budget: { max_units: 2 }"));
-    const started = await startWorkflowRun("workflow:gate-units-capped", {});
+    const started = await startWorkflowRun("workflows/gate-units-capped", {});
 
     let dispatches = 0;
     let judgeCalls = 0;
@@ -541,7 +541,7 @@ ${unitExtra}    gate:
 
   test("budget + on_error: continue during a gate loop STILL fails hard, naming the ceiling", async () => {
     writeProgram("gate-continue-capped", GATE_LOOP_WF("budget: { max_units: 2 }", "      on_error: continue\n"));
-    const started = await startWorkflowRun("workflow:gate-continue-capped", {});
+    const started = await startWorkflowRun("workflows/gate-continue-capped", {});
 
     let dispatches = 0;
     const result = await runWorkflowSteps({
@@ -562,7 +562,7 @@ ${unitExtra}    gate:
 
   test("loop re-dispatch tokens count against max_tokens; crossing the ceiling DURING a gate loop fails hard", async () => {
     writeProgram("gate-tokens-capped", GATE_LOOP_WF("budget: { max_tokens: 100 }"));
-    const started = await startWorkflowRun("workflow:gate-tokens-capped", {});
+    const started = await startWorkflowRun("workflows/gate-tokens-capped", {});
 
     let dispatches = 0;
     let judgeCalls = 0;
