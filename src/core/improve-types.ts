@@ -39,6 +39,16 @@ export interface ImproveEligibleRef {
    */
   filePath?: string;
   /**
+   * Chunk-5 flip F5d (Step 4): the durable fully-qualified `<bundle>//<concept-id>`
+   * stored spelling (`entries.item_ref`), DERIVED FROM THE RESOLVED INDEX ENTRY at
+   * planning time (D-R3 — "derived from a resolved entry, never from raw input").
+   * The durable-state writers (salience/outcome) key by this when present and fall
+   * back to the pre-flip `type:name` grammar for NULL-`item_ref` (pre-flip /
+   * write-back) rows. Unset when the planner could not resolve provenance for the
+   * ref (e.g. an unindexed scope-ref target).
+   */
+  itemRef?: string;
+  /**
    * The eligibility lane that selected this ref for the current run. Stamped at
    * partition time in `runImprovePreparationStage` and threaded through to the
    * reflect/distill event emit sites and proposal creation. See

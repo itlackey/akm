@@ -177,6 +177,13 @@ async function collectEligibleRefsFromIndex(
     let memoryDerived = 0;
     for (const indexed of entries) {
       const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      // Chunk-5 flip F5d (Step 4): the durable `item_ref` (`<bundle>//<concept-id>`),
+      // reconstructed from the mapper-unlocked provenance columns with ZERO extra
+      // queries (D-R3 — derived from the resolved index entry, never raw input).
+      // `undefined` for a NULL-provenance (pre-flip / write-back) row; the durable
+      // writers then fall back to the legacy `type:name` key.
+      const itemRef =
+        indexed.bundleId && indexed.conceptId ? `${indexed.bundleId}//${indexed.conceptId}` : undefined;
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories are LLM-inferred and intentionally skip reflect
       // (see the synthetic `derived-memory-reflect-skipped` branch in the
@@ -198,6 +205,7 @@ async function collectEligibleRefsFromIndex(
             ref,
             reason: "strategy_filtered_all_passes",
             filePath: indexed.filePath,
+            itemRef,
           });
         } else {
           planned.set(ref, {
@@ -205,6 +213,7 @@ async function collectEligibleRefsFromIndex(
             reason:
               scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
             filePath: indexed.filePath,
+            itemRef,
           });
         }
       }
