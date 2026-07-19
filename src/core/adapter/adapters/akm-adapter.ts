@@ -83,7 +83,6 @@ import {
   applyPostContributorFields,
   applyPreContributorFields,
   extractPackageMetadata,
-  type StashEntry,
 } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import {
@@ -134,7 +133,7 @@ function stashDirToType(stashDir: string): string | undefined {
 }
 
 /**
- * The search-surface `StashEntry` fields that have NO first-class `IndexDocument`
+ * The search-surface `IndexDocument` fields that have NO first-class `IndexDocument`
  * home (spec §3) and therefore ride `documentJson` so the persist-time fold
  * (`search-fields.ts:28-33`) can still reach them — the exact set
  * `buildSearchFields` folds into the `hints`/`content` FTS columns beyond the
@@ -164,10 +163,10 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "generation",
   "sourceRefs",
   "evidenceSources",
-] as const satisfies readonly (keyof StashEntry)[];
+] as const satisfies readonly (keyof IndexDocument)[];
 
 /**
- * Map the fully-assembled `StashEntry` (produced by the shared metadata
+ * Map the fully-assembled `IndexDocument` (produced by the shared metadata
  * pipeline) onto an `IndexDocument` (spec §3). First-class ranking/embedding
  * fields land on named IndexDocument fields; every other search-surface or
  * signal field rides `documentJson` (opaque adapter extras) so nothing the
@@ -175,7 +174,7 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
  * The winning renderer name is carried on `documentJson.renderer` (WI-C contract).
  */
 function indexDocumentFromEntry(
-  entry: StashEntry,
+  entry: IndexDocument,
   base: Pick<IndexDocument, "ref" | "bundle" | "component" | "conceptId" | "path" | "hash" | "adapterId" | "type">,
   rendererName: string,
 ): IndexDocument {
@@ -247,7 +246,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
   // title. Parity is by construction — the two paths differ only in the P3 step,
   // pinned equal by the akm-adapter fold-parity test.
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: canonicalName,
     type: match.type,
     quality: "generated",

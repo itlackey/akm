@@ -8,7 +8,7 @@
  * - Required-field rejection before any file write
  * - --expires duration → ISO date computation
  * - Zero-flag remember still works (no frontmatter written)
- * - memory metadata contributors populate StashEntry fields
+ * - memory metadata contributors populate IndexDocument fields
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
 import { buildFileContext, buildRenderContext } from "../../src/indexer/walk/file-context";
 import { runCliCapture } from "../_helpers/cli";
@@ -361,7 +361,7 @@ describe("memory metadata contributors", () => {
     return { filePath, stashRoot };
   }
 
-  async function applyMemoryMetadata(entry: StashEntry, stashRoot: string, filePath: string): Promise<void> {
+  async function applyMemoryMetadata(entry: IndexDocument, stashRoot: string, filePath: string): Promise<void> {
     const ctx = buildFileContext(stashRoot, filePath);
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     await applyMetadataContributors(entry, { rendererName: "memory-md", renderContext: renderCtx });
@@ -370,7 +370,7 @@ describe("memory metadata contributors", () => {
   test("populates tags from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops, networking]\n---\nDeployment needs VPN access\n");
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
     await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
@@ -382,7 +382,7 @@ describe("memory metadata contributors", () => {
       "---\ndescription: VPN required for staging deploys\ntags: [ops]\n---\nBody content\n",
     );
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
     await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.description).toBe("VPN required for staging deploys");
@@ -393,7 +393,7 @@ describe("memory metadata contributors", () => {
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
     await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.searchHints).toBeDefined();
@@ -406,7 +406,7 @@ describe("memory metadata contributors", () => {
   test("observed_at falls back to file mtime when not in frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
     await applyMemoryMetadata(entry, stashRoot, filePath);
 
     // Should have an observed_at hint derived from mtime
@@ -420,7 +420,7 @@ describe("memory metadata contributors", () => {
   test("works for bare memory with no frontmatter (no crash)", async () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
 
     // Should not throw
     await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
@@ -433,7 +433,7 @@ describe("memory metadata contributors", () => {
   test("block-sequence tags in frontmatter are parsed correctly", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags:\n- ops\n- networking\n- deploy\n---\nVPN required\n");
 
-    const entry: StashEntry = { name: "test-memory", type: "memory" };
+    const entry: IndexDocument = { name: "test-memory", type: "memory" };
     await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");

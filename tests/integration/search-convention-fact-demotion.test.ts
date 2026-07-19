@@ -37,7 +37,7 @@ import path from "node:path";
 
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import { runCliCapture } from "../_helpers/cli";
@@ -67,12 +67,12 @@ interface Hit {
 }
 
 /**
- * SPEC-6 adds `category?: string` to StashEntry. Read it through a typed
+ * SPEC-6 adds `category?: string` to IndexDocument. Read it through a typed
  * accessor so this file compiles before the implementation lands; the capture
  * test then goes red on the runtime value instead of a compile error.
  */
-function entryCategory(entry: StashEntry): string | undefined {
-  return (entry as StashEntry & { category?: string }).category;
+function entryCategory(entry: IndexDocument): string | undefined {
+  return (entry as IndexDocument & { category?: string }).category;
 }
 
 function writeFile(filePath: string, content: string): void {
@@ -203,7 +203,7 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     await buildFixture();
 
     // Read the freshly built index back: every skeleton convention fact must
-    // carry its frontmatter `category` on the persisted StashEntry. This is
+    // carry its frontmatter `category` on the persisted IndexDocument. This is
     // the SPEC-6 capture prerequisite — without it neither demotion nor any
     // category-keyed policy is implementable.
     const db = openExistingDatabase();

@@ -12,9 +12,9 @@ import {
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
+  type IndexDocument,
   isEnrichmentComplete,
   loadStashFile,
-  type StashEntry,
   type StashFile,
   validateStashEntry,
   writeStashFile,
@@ -524,7 +524,7 @@ test("generateMetadata preserves curated aliases from comment metadata", async (
 // ── isEnrichmentComplete ────────────────────────────────────────────────────
 
 test("isEnrichmentComplete returns true when description, tags, and searchHints are all populated", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "Deploy services to production",
@@ -535,7 +535,7 @@ test("isEnrichmentComplete returns true when description, tags, and searchHints 
 });
 
 test("isEnrichmentComplete returns false when description is missing", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     tags: ["deploy", "production"],
@@ -545,7 +545,7 @@ test("isEnrichmentComplete returns false when description is missing", () => {
 });
 
 test("isEnrichmentComplete returns false when description is an empty string", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "   ",
@@ -556,7 +556,7 @@ test("isEnrichmentComplete returns false when description is an empty string", (
 });
 
 test("isEnrichmentComplete returns false when tags array is empty", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "Deploy services to production",
@@ -567,7 +567,7 @@ test("isEnrichmentComplete returns false when tags array is empty", () => {
 });
 
 test("isEnrichmentComplete returns false when tags is missing", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "Deploy services to production",
@@ -577,7 +577,7 @@ test("isEnrichmentComplete returns false when tags is missing", () => {
 });
 
 test("isEnrichmentComplete returns false when searchHints is missing", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "Deploy services to production",
@@ -587,7 +587,7 @@ test("isEnrichmentComplete returns false when searchHints is missing", () => {
 });
 
 test("isEnrichmentComplete returns false when searchHints array is empty", () => {
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: "deploy",
     type: "script",
     description: "Deploy services to production",
@@ -600,59 +600,59 @@ test("isEnrichmentComplete returns false when searchHints array is empty", () =>
 // ── Wave 1: captureMode / whenToUse / lessonStrength / evidenceSources ──────
 
 test("applyCuratedFrontmatter extracts captureMode='hot' and 'background'", () => {
-  const hotEntry: StashEntry = { name: "m", type: "memory" };
+  const hotEntry: IndexDocument = { name: "m", type: "memory" };
   applyCuratedFrontmatter(hotEntry, { captureMode: "hot" });
   expect(hotEntry.captureMode).toBe("hot");
 
-  const bgEntry: StashEntry = { name: "m", type: "memory" };
+  const bgEntry: IndexDocument = { name: "m", type: "memory" };
   applyCuratedFrontmatter(bgEntry, { captureMode: "background" });
   expect(bgEntry.captureMode).toBe("background");
 });
 
 test("applyCuratedFrontmatter ignores unknown captureMode values", () => {
-  const entry: StashEntry = { name: "m", type: "memory" };
+  const entry: IndexDocument = { name: "m", type: "memory" };
   applyCuratedFrontmatter(entry, { captureMode: "freeform-bogus" });
   expect(entry.captureMode).toBeUndefined();
 });
 
 test("applyCuratedFrontmatter maps when_to_use frontmatter to whenToUse field", () => {
-  const entry: StashEntry = { name: "skill", type: "skill" };
+  const entry: IndexDocument = { name: "skill", type: "skill" };
   applyCuratedFrontmatter(entry, { when_to_use: "When provisioning a new tenant cluster" });
   expect(entry.whenToUse).toBe("When provisioning a new tenant cluster");
 });
 
 test("applyCuratedFrontmatter ignores blank when_to_use values", () => {
-  const entry: StashEntry = { name: "skill", type: "skill" };
+  const entry: IndexDocument = { name: "skill", type: "skill" };
   applyCuratedFrontmatter(entry, { when_to_use: "   " });
   expect(entry.whenToUse).toBeUndefined();
 });
 
 test("applyCuratedFrontmatter sets lessonStrength from an array's length", () => {
-  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  const entry: IndexDocument = { name: "lesson", type: "lesson" };
   applyCuratedFrontmatter(entry, { lessonStrength: ["memories/a", "memories/b", "memories/c"] });
   expect(entry.lessonStrength).toBe(3);
 });
 
 test("applyCuratedFrontmatter sets lessonStrength from a numeric value", () => {
-  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  const entry: IndexDocument = { name: "lesson", type: "lesson" };
   applyCuratedFrontmatter(entry, { lessonStrength: 7 });
   expect(entry.lessonStrength).toBe(7);
 });
 
 test("applyCuratedFrontmatter clamps negative lessonStrength to zero", () => {
-  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  const entry: IndexDocument = { name: "lesson", type: "lesson" };
   applyCuratedFrontmatter(entry, { lessonStrength: -3 });
   expect(entry.lessonStrength).toBe(0);
 });
 
 test("applyCuratedFrontmatter omits lessonStrength when absent", () => {
-  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  const entry: IndexDocument = { name: "lesson", type: "lesson" };
   applyCuratedFrontmatter(entry, {});
   expect(entry.lessonStrength).toBeUndefined();
 });
 
 test("applyCuratedFrontmatter extracts evidenceSources as a string list", () => {
-  const entry: StashEntry = { name: "lesson", type: "lesson" };
+  const entry: IndexDocument = { name: "lesson", type: "lesson" };
   applyCuratedFrontmatter(entry, { evidenceSources: ["memories/a", "memories/b"] });
   expect(entry.evidenceSources).toEqual(["memories/a", "memories/b"]);
 });
@@ -677,40 +677,40 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
 //
 // Convention facts are selected for prompt injection by their `category:`
 // frontmatter (resolveStashStandards), but the indexer never captured that key
-// onto StashEntry — so no rank-time or filter policy can see it. SPEC-6 step 1
+// onto IndexDocument — so no rank-time or filter policy can see it. SPEC-6 step 1
 // (docs/design/stash-conventions-code-spec.md) captures it in
 // applyCuratedFrontmatter (alongside beliefState) and whitelists it through
 // validateStashEntry so it survives the .stash.json / entry_json round-trip.
 
 /**
- * SPEC-6 adds `category?: string` to StashEntry. Read it through a typed
+ * SPEC-6 adds `category?: string` to IndexDocument. Read it through a typed
  * accessor so this file still compiles before the implementation lands; the
  * dependent tests then go red on the runtime value instead of a compile error.
  */
-function entryCategory(entry: StashEntry | null | undefined): string | undefined {
-  return (entry as (StashEntry & { category?: string }) | null | undefined)?.category;
+function entryCategory(entry: IndexDocument | null | undefined): string | undefined {
+  return (entry as (IndexDocument & { category?: string }) | null | undefined)?.category;
 }
 
 test("applyCuratedFrontmatter captures category frontmatter onto the entry (SPEC-6)", () => {
-  const entry: StashEntry = { name: "conventions/backlinks", type: "fact" };
+  const entry: IndexDocument = { name: "conventions/backlinks", type: "fact" };
   applyCuratedFrontmatter(entry, { category: "convention" });
   expect(entryCategory(entry)).toBe("convention");
 });
 
 test("applyCuratedFrontmatter trims category and ignores blank or non-string values (SPEC-6)", () => {
-  const trimmed: StashEntry = { name: "f", type: "fact" };
+  const trimmed: IndexDocument = { name: "f", type: "fact" };
   applyCuratedFrontmatter(trimmed, { category: "  meta  " });
   expect(entryCategory(trimmed)).toBe("meta");
 
-  const blank: StashEntry = { name: "f", type: "fact" };
+  const blank: IndexDocument = { name: "f", type: "fact" };
   applyCuratedFrontmatter(blank, { category: "   " });
   expect(entryCategory(blank)).toBeUndefined();
 
-  const nonString: StashEntry = { name: "f", type: "fact" };
+  const nonString: IndexDocument = { name: "f", type: "fact" };
   applyCuratedFrontmatter(nonString, { category: 42 });
   expect(entryCategory(nonString)).toBeUndefined();
 
-  const absent: StashEntry = { name: "f", type: "fact" };
+  const absent: IndexDocument = { name: "f", type: "fact" };
   applyCuratedFrontmatter(absent, {});
   expect(entryCategory(absent)).toBeUndefined();
 });
@@ -761,13 +761,13 @@ test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin
   // future buildSearchFields edit (e.g. SPEC-8's content-field work) cannot
   // silently start indexing the category value. The sentinel token appears
   // nowhere else on the entry, so any leak into a field is unambiguous.
-  const base: StashEntry = {
+  const base: IndexDocument = {
     name: "conventions/backlinks",
     type: "fact",
     description: "how backlinks are declared",
     tags: ["conventions"],
   };
-  const withCategory: StashEntry = { ...base, category: "sentinelcategorytoken" };
+  const withCategory: IndexDocument = { ...base, category: "sentinelcategorytoken" };
 
   // Adding a category leaves every FTS field byte-identical…
   expect(buildSearchFields(withCategory)).toEqual(buildSearchFields(base));
@@ -791,7 +791,7 @@ function memoryDocWithTags(tags: string[]): string {
   return ["---", "tags:", ...tags.map((t) => `  - ${t}`), "---", "Plain memory body prose."].join("\n");
 }
 
-function sortedTags(entry: StashEntry | undefined): string[] {
+function sortedTags(entry: IndexDocument | undefined): string[] {
   return [...(entry?.tags ?? [])].sort();
 }
 
@@ -977,7 +977,7 @@ test("multi-token directory segments tokenize like extractTagsFromPath in the me
 //
 // With `index.indexBodyOpening: true` in the user config, buildEntryFromFile's
 // md branch extracts the first non-heading, non-fence, non-empty paragraph of
-// the body (capped at 280 chars) into a new StashEntry field `bodyOpening`,
+// the body (capped at 280 chars) into a new IndexDocument field `bodyOpening`,
 // and buildSearchFields folds it into the lowest-weight `content` FTS field.
 // Default (flag absent or explicitly false) keeps entries and search fields
 // byte-identical to today. Secret/env file bodies are never read; session-kind
@@ -986,12 +986,12 @@ test("multi-token directory segments tokenize like extractTagsFromPath in the me
 // docs/design/stash-conventions-code-spec.md SPEC-8.
 
 /**
- * SPEC-8 adds `bodyOpening?: string` to StashEntry. Read it through a typed
+ * SPEC-8 adds `bodyOpening?: string` to IndexDocument. Read it through a typed
  * accessor so this file still compiles before the implementation lands; the
  * dependent tests then go red on the runtime value instead of a compile error.
  */
-function entryBodyOpening(entry: StashEntry | null | undefined): string | undefined {
-  return (entry as (StashEntry & { bodyOpening?: string }) | null | undefined)?.bodyOpening;
+function entryBodyOpening(entry: IndexDocument | null | undefined): string | undefined {
+  return (entry as (IndexDocument & { bodyOpening?: string }) | null | undefined)?.bodyOpening;
 }
 
 /**

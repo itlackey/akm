@@ -16,7 +16,7 @@ import { type AssetRef, makeAssetRef, parseAssetRef, parseBundleRef } from "../.
 import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { warn } from "../../core/warn";
-import type { StashEntry } from "../../indexer/passes/metadata";
+import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { Database } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
@@ -45,7 +45,7 @@ export function upsertEntry(
   dirPath: string,
   filePath: string,
   stashDir: string,
-  entry: StashEntry,
+  entry: IndexDocument,
   searchText: string,
   provenance?: EntryProvenance,
   contentHash?: string,
@@ -285,7 +285,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
   let entryJson = row.entry_json;
   let searchText = row.search_text;
   try {
-    const entry = JSON.parse(row.entry_json) as StashEntry;
+    const entry = JSON.parse(row.entry_json) as IndexDocument;
     entry.name = opts.newName;
     if (typeof entry.filename === "string") entry.filename = path.basename(opts.newFilePath);
     if (opts.newDerivedFrom !== undefined) entry.derivedFrom = opts.newDerivedFrom;
@@ -743,15 +743,15 @@ export function getEmbeddableEntryCount(db: Database): number {
 export function getEntryById(
   db: Database,
   id: number,
-): { filePath: string; stashDir: string; entry: StashEntry } | undefined {
+): { filePath: string; stashDir: string; entry: IndexDocument } | undefined {
   const row = db.prepare("SELECT file_path, stash_dir, entry_json FROM entries WHERE id = ?").get(id) as
     | { file_path: string; stash_dir: string; entry_json: string }
     | undefined;
   if (!row) return undefined;
   // Guard against corrupt JSON
-  let entry: StashEntry;
+  let entry: IndexDocument;
   try {
-    entry = JSON.parse(row.entry_json) as StashEntry;
+    entry = JSON.parse(row.entry_json) as IndexDocument;
   } catch {
     warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
     return undefined;

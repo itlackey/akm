@@ -8,13 +8,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { IndexDocument } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
 import type { Database } from "../src/storage/database";
 
 function makeLesson(name: string, lessonStrength?: number): RankedEntryInput {
-  const entry: StashEntry = { name, type: "lesson" };
+  const entry: IndexDocument = { name, type: "lesson" };
   if (lessonStrength !== undefined) entry.lessonStrength = lessonStrength;
   return {
     id: 1,
@@ -79,14 +79,14 @@ describe("lessonStrengthContributor (Phase 7A)", () => {
   test("non-lesson entries are unaffected by the lesson-strength boost", () => {
     const skillEntry: RankedEntryInput = {
       id: 1,
-      entry: { name: "skill", type: "skill", lessonStrength: 10 } as StashEntry,
+      entry: { name: "skill", type: "skill", lessonStrength: 10 } as IndexDocument,
       filePath: "/stash/skills/skill.md",
       score: 1,
       rankingMode: "fts",
     };
     const skillNoStrength: RankedEntryInput = {
       id: 2,
-      entry: { name: "skill2", type: "skill" } as StashEntry,
+      entry: { name: "skill2", type: "skill" } as IndexDocument,
       filePath: "/stash/skills/skill2.md",
       score: 1,
       rankingMode: "fts",

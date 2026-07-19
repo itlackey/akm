@@ -38,7 +38,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 
 // ── Injected chat seam ───────────────────────────────────────────────────────
 // `chatResponder` returns a raw string (the model body) or throws. Reset per
@@ -73,7 +73,7 @@ const DISABLED_CONFIG = {
   index: { metadataEnhance: { enabled: false } },
 } as unknown as AkmConfig;
 
-const ENTRY: StashEntry = { name: "build-image", type: "script", description: "build image" };
+const ENTRY: IndexDocument = { name: "build-image", type: "script", description: "build image" };
 
 function validPayload(): string {
   return JSON.stringify({

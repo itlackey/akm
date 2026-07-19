@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -53,7 +53,7 @@ afterEach(() => {
   warnCalls = [];
 });
 
-function insertEntry(db: Database, key: string, entry: StashEntry, searchText: string): number {
+function insertEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
   return upsertEntry(db, key, "/test/dir", `/test/dir/${key}.ts`, "/test/stash", entry, searchText);
 }
 

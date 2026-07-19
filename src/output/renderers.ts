@@ -24,7 +24,7 @@ import {
   parseMarkdownToc,
 } from "../core/asset/markdown";
 import { asNonEmptyString, hasErrnoCode } from "../core/common";
-import type { StashEntry } from "../indexer/passes/metadata";
+import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
@@ -134,7 +134,7 @@ export function detectExecHints(filePath: string): ExecHints {
  * 2. Script file header comments (`@run`/`@setup`/`@cwd`)
  * 3. Auto-detection from extension + dependency files
  */
-export function resolveExecHints(stashEntry: StashEntry | undefined, filePath: string): ExecHints {
+export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath: string): ExecHints {
   const stashHints: ExecHints = {
     run: stashEntry?.run,
     setup: stashEntry?.setup,
@@ -579,7 +579,7 @@ const factMdRenderer: AssetRenderer = {
   },
 };
 
-function applySessionMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applySessionMetadata(entry: IndexDocument, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     entry.tags = Array.from(new Set([...(entry.tags ?? []), "session"]));
@@ -598,7 +598,7 @@ function applySessionMetadata(entry: StashEntry, ctx: RenderContext): void {
   }
 }
 
-function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyTocMetadata(entry: IndexDocument, ctx: RenderContext): void {
   try {
     const toc = parseMarkdownToc(ctx.content());
     if (toc.headings.length > 0) entry.toc = toc.headings;
@@ -613,7 +613,7 @@ function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
  * task). `pinned` is mirrored to both a `pinned` tag and a `pinned` search
  * hint so the ranking contributor can detect it and queries can target it.
  */
-function applyFactMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyFactMetadata(entry: IndexDocument, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     const tags = new Set<string>([...(entry.tags ?? []), "fact"]);
@@ -639,7 +639,7 @@ function applyFactMetadata(entry: StashEntry, ctx: RenderContext): void {
  * into `entry`. Returns the raw frontmatter data object so callers can access
  * type-specific fields without re-parsing.
  */
-function applyFrontmatterDescriptionAndTags(entry: StashEntry, ctx: RenderContext): Record<string, unknown> {
+function applyFrontmatterDescriptionAndTags(entry: IndexDocument, ctx: RenderContext): Record<string, unknown> {
   const parsed = parseFrontmatter(ctx.content());
   const fm = parsed.data;
   const desc = asNonEmptyString(fm.description);
@@ -657,7 +657,7 @@ function applyFrontmatterDescriptionAndTags(entry: StashEntry, ctx: RenderContex
   return fm;
 }
 
-function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyLessonMetadata(entry: IndexDocument, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     const whenToUse = asNonEmptyString(fm.when_to_use);
@@ -670,7 +670,7 @@ function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
     // Non-fatal: skip metadata extraction on parse error
   }
 }
-function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyMemoryMetadata(entry: IndexDocument, ctx: RenderContext): void {
   try {
     const fm = applyFrontmatterDescriptionAndTags(entry, ctx);
     const hints = new Set<string>(entry.searchHints ?? []);
@@ -697,7 +697,7 @@ function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
     // Non-fatal: skip metadata extraction on error
   }
 }
-function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyScriptMetadata(entry: IndexDocument, ctx: RenderContext): void {
   if (ctx.ext === ".md") return;
   const commentDesc = extractDescriptionFromComments(ctx.absPath);
   if (commentDesc && !entry.description) {
@@ -707,7 +707,7 @@ function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
   }
 }
 
-function applyEnvMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyEnvMetadata(entry: IndexDocument, ctx: RenderContext): void {
   // Key names only — comment text must never reach description/search_text
   // (comments routinely contain commented-out credentials).
   const { keys } = listVaultKeys(ctx.absPath);
@@ -721,7 +721,7 @@ function applyEnvMetadata(entry: StashEntry, ctx: RenderContext): void {
  * Secret metadata: tags only. Must NEVER read the file body — the whole file
  * is the value, so the entry is built from the filename alone (name-only).
  */
-function applySecretMetadata(entry: StashEntry, _ctx: RenderContext): void {
+function applySecretMetadata(entry: IndexDocument, _ctx: RenderContext): void {
   entry.tags = Array.from(new Set([...(entry.tags ?? []), "secret", "sensitive"]));
 }
 
@@ -735,7 +735,7 @@ function applySecretMetadata(entry: StashEntry, _ctx: RenderContext): void {
  * still gets tagged; the YAML parse/read is best-effort and never throws out
  * of a metadata contributor.
  */
-function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
+function applyTaskMetadata(entry: IndexDocument, ctx: RenderContext): void {
   entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
   try {
     const doc = parseYaml(ctx.content());

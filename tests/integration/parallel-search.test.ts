@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { clearEmbeddingCache } from "../../src/llm/embedder";
 import type { SourceSearchHit } from "../../src/sources/types";
 import type { Database } from "../../src/storage/database";
@@ -58,7 +58,7 @@ function tmpDbPath(label = "parallel"): string {
   return path.join(dir, "test.db");
 }
 
-function makeEntry(overrides: Partial<StashEntry> & { name: string; type: StashEntry["type"] }): StashEntry {
+function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: IndexDocument["type"] }): IndexDocument {
   return {
     description: "A test entry",
     ...overrides,
@@ -74,7 +74,7 @@ function insertTestEntry(
     stashDir?: string;
     description?: string;
     searchText?: string;
-    type?: StashEntry["type"];
+    type?: IndexDocument["type"];
   },
 ): number {
   const type = opts?.type ?? "script";

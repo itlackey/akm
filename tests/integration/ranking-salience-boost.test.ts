@@ -13,14 +13,14 @@ import fs from "node:fs";
 import { upsertAssetSalience } from "../../src/commands/improve/salience";
 import { acquireMaintenanceBarrier } from "../../src/core/maintenance-barrier";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { loadSalienceRankScores, type RankedEntryInput } from "../../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../../src/indexer/search/ranking-contributors";
 import type { Database } from "../../src/storage/database";
 import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 function makeRanked(id: number, name: string, type = "lesson"): RankedEntryInput {
-  const entry: StashEntry = { name, type: type as StashEntry["type"] };
+  const entry: IndexDocument = { name, type: type as IndexDocument["type"] };
   return {
     id,
     entry,

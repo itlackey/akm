@@ -38,7 +38,7 @@ import { rebuildFts } from "../storage/repositories/index-fts-repository";
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { withIndexWriterLease } from "./index-writer-lock";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import type { StashEntry } from "./passes/metadata";
+import type { IndexDocument } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildSearchText } from "./search/search-fields";
 import { buildFileContext } from "./walk/file-context";
@@ -99,7 +99,7 @@ export async function indexWrittenAssets(
         root: stashDir,
         writable: true,
       };
-      const pairs: Array<{ file: string; entry: StashEntry; contentHash?: string }> = [];
+      const pairs: Array<{ file: string; entry: IndexDocument; contentHash?: string }> = [];
       const unindexable = new Set<string>();
       for (const file of files) {
         if (!fs.existsSync(file)) {

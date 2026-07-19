@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../../src/indexer/search/ranking-contributors";
 import type { Database } from "../../src/storage/database";
@@ -31,7 +31,7 @@ function makeTempDb(label: string): { db: Database; dbPath: string } {
 }
 
 function makeRankedItem(id: number, baseScore = 1): RankedEntryInput {
-  const entry: StashEntry = { name: `entry-${id}`, type: "skill" };
+  const entry: IndexDocument = { name: `entry-${id}`, type: "skill" };
   return { id, entry, filePath: `/stash/skills/entry-${id}.md`, score: baseScore, rankingMode: "fts" };
 }
 

@@ -35,7 +35,7 @@
  *
  * ── What is folded, and where it lands on the IndexDocument ──
  *
- * The contributors mutate a `StashEntry`; {@link foldRecognizedMetadata} returns
+ * The contributors mutate a `IndexDocument`; {@link foldRecognizedMetadata} returns
  * the same fields as a plain {@link FoldedMetadata}, which `recognize` maps onto
  * `IndexDocument` first-class fields (`tags`/`searchHints`/`description`/
  * `confidence`) and, for the fields without a first-class home
@@ -59,7 +59,7 @@
 import fs from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { listKeys } from "../../../commands/env/env";
-import type { StashEntry } from "../../../indexer/passes/metadata";
+import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseWorkflow } from "../../../workflows/parser";
 import { parseWorkflowProgram } from "../../../workflows/program/parser";
@@ -69,7 +69,7 @@ import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
 import { nonEmptyString } from "./shared";
 
-/** The contributor-produced metadata fields, mirrored from the `StashEntry` fields the 11 contributors mutate. */
+/** The contributor-produced metadata fields, mirrored from the `IndexDocument` fields the 11 contributors mutate. */
 export interface FoldedMetadata {
   tags?: string[];
   searchHints?: string[];
@@ -157,7 +157,7 @@ function finalizeHints(out: FoldedMetadata, hints: Set<string>): void {
 
 /**
  * The metadata fold, keyed on the winning renderer NAME. Returns the fields the
- * 11 contributors would add to a MINIMAL (name+type) `StashEntry`. `recognize`
+ * 11 contributors would add to a MINIMAL (name+type) `IndexDocument`. `recognize`
  * maps the result onto the `IndexDocument`. Reads the live file (index-time, so
  * disk reads are legitimate — unlike `validate`).
  */
@@ -367,7 +367,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
 }
 
 /**
- * Apply {@link foldRecognizedMetadata}'s output onto a `StashEntry` with the
+ * Apply {@link foldRecognizedMetadata}'s output onto a `IndexDocument` with the
  * SAME precedence the live in-place renderer contributors use (Chunk 5 M-b), so
  * `entry.applyPreContributorFields → applyFoldedMetadata → applyPostContributorFields`
  * reproduces `buildEntryFromFile`'s `P1/P2 → contributors → P4` byte-for-byte.
@@ -387,10 +387,10 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
  * `entry` state here is what recovers the in-place precedence (the fold ≡
  * contributors-on-a-minimal-seed is pinned by the akm-adapter fold-parity test).
  */
-export function applyFoldedMetadata(entry: StashEntry, folded: FoldedMetadata): void {
+export function applyFoldedMetadata(entry: IndexDocument, folded: FoldedMetadata): void {
   if (folded.description && !entry.description) {
     entry.description = folded.description;
-    if (folded.source) entry.source = folded.source as StashEntry["source"];
+    if (folded.source) entry.source = folded.source as IndexDocument["source"];
     if (folded.confidence !== undefined) entry.confidence = folded.confidence;
   }
   if (folded.tags && folded.tags.length > 0) {

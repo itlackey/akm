@@ -8,13 +8,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { IndexDocument } from "../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyScoreContributors } from "../src/indexer/search/ranking-contributors";
 import type { Database } from "../src/storage/database";
 
-function makeRanked(name: string, overrides: Partial<StashEntry>): RankedEntryInput {
-  const entry: StashEntry = { name, type: "memory", ...overrides };
+function makeRanked(name: string, overrides: Partial<IndexDocument>): RankedEntryInput {
+  const entry: IndexDocument = { name, type: "memory", ...overrides };
   return {
     id: 1,
     entry,
@@ -68,14 +68,14 @@ describe("captureModeRankingContributor (Phase 1B)", () => {
   test("non-memory entries are unaffected by capture-mode boost", () => {
     const skillHot = {
       id: 1,
-      entry: { name: "skill", type: "skill", captureMode: "hot" as const } as StashEntry,
+      entry: { name: "skill", type: "skill", captureMode: "hot" as const } as IndexDocument,
       filePath: "/stash/skills/skill.md",
       score: 1,
       rankingMode: "fts" as const,
     };
     const skillPlain = {
       id: 2,
-      entry: { name: "skill", type: "skill" } as StashEntry,
+      entry: { name: "skill", type: "skill" } as IndexDocument,
       filePath: "/stash/skills/skill2.md",
       score: 1,
       rankingMode: "fts" as const,

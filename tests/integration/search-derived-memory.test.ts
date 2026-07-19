@@ -17,7 +17,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -112,12 +112,12 @@ function buildFixture(): void {
   fs.writeFileSync(lonelyPath, "---\ntype: memory\n---\nAlways prefix branch names with feat/.\n");
 
   // Index everything by hand — we want to exercise the indexer's own
-  // derived_from extraction path. See `upsertEntry` + StashEntry.derivedFrom.
+  // derived_from extraction path. See `upsertEntry` + IndexDocument.derivedFrom.
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = openIndexDatabase(dbPath);
   try {
-    const entries: Array<{ entry: StashEntry; filePath: string; dirPath: string }> = [
+    const entries: Array<{ entry: IndexDocument; filePath: string; dirPath: string }> = [
       {
         entry: {
           name: "claude-prefs",

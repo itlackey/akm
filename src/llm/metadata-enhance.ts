@@ -12,7 +12,7 @@
 
 import metadataEnhanceSystemPrompt from "../assets/prompts/metadata-enhance-system.md" with { type: "text" };
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
-import type { StashEntry } from "../indexer/passes/metadata";
+import type { IndexDocument } from "../indexer/passes/metadata";
 import { parseJsonResponse } from "./client";
 import { callStructured } from "./structured-call";
 
@@ -32,7 +32,7 @@ export type EnhancedMetadata = { description?: string; searchHints?: string[]; t
  */
 export async function enhanceMetadata(
   config: LlmConnectionConfig,
-  entry: StashEntry,
+  entry: IndexDocument,
   fileContent?: string,
   signal?: AbortSignal,
   akmConfig?: AkmConfig,

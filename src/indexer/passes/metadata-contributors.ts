@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { RenderContext } from "../walk/file-context";
-import type { StashEntry } from "./metadata";
+import type { IndexDocument } from "./metadata";
 
 export interface MetadataContext {
   rendererName: string;
@@ -13,7 +13,7 @@ export interface MetadataContext {
 export interface MetadataContributor {
   name: string;
   appliesTo(ctx: MetadataContext): boolean;
-  contribute(entry: StashEntry, ctx: MetadataContext): void;
+  contribute(entry: IndexDocument, ctx: MetadataContext): void;
 }
 
 const contributors: MetadataContributor[] = [];
@@ -40,7 +40,7 @@ export async function getMetadataContributors(): Promise<MetadataContributor[]> 
   return [...contributors];
 }
 
-export async function applyMetadataContributors(entry: StashEntry, ctx: MetadataContext): Promise<void> {
+export async function applyMetadataContributors(entry: IndexDocument, ctx: MetadataContext): Promise<void> {
   const activeContributors = await getMetadataContributors();
   for (const contributor of activeContributors) {
     if (!contributor.appliesTo(ctx)) continue;

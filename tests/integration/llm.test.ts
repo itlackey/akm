@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmConnectionConfig } from "../../src/core/config/config";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { enhanceMetadata } from "../../src/llm/metadata-enhance";
 
 // These tests verify the LLM module's response parsing logic.
@@ -51,7 +51,7 @@ describe("enhanceMetadata", () => {
     );
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "build-image", type: "script", description: "build image" };
+      const entry: IndexDocument = { name: "build-image", type: "script", description: "build image" };
       const result = await enhanceMetadata(config, entry);
       expect(result.description).toBe("Builds Docker images from Dockerfiles");
       expect(result.searchHints).toHaveLength(3);
@@ -67,7 +67,7 @@ describe("enhanceMetadata", () => {
     );
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       const result = await enhanceMetadata(config, entry);
       expect(result.description).toBe("test desc");
       expect(result.searchHints).toEqual(["do thing"]);
@@ -80,7 +80,7 @@ describe("enhanceMetadata", () => {
     const { url, server } = createMockServer("This is not JSON at all");
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       const result = await enhanceMetadata(config, entry);
       expect(result).toEqual({});
     } finally {
@@ -92,7 +92,7 @@ describe("enhanceMetadata", () => {
     const { url, server } = createErrorServer(500, "Internal Server Error");
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       await expect(enhanceMetadata(config, entry)).rejects.toThrow("LLM provider error (500)");
     } finally {
       server.stop(true);
@@ -111,7 +111,7 @@ describe("enhanceMetadata", () => {
         temperature: 0.7,
         maxTokens: 256,
       };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       await enhanceMetadata(config, entry);
       expect(requestBody).toMatchObject({
         model: "test-model",
@@ -131,7 +131,7 @@ describe("enhanceMetadata", () => {
     );
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       const result = await enhanceMetadata(config, entry);
       expect(result.searchHints?.length).toBeLessThanOrEqual(8);
     } finally {
@@ -148,7 +148,7 @@ describe("enhanceMetadata", () => {
     );
     try {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
-      const entry: StashEntry = { name: "test", type: "script" };
+      const entry: IndexDocument = { name: "test", type: "script" };
       const result = await enhanceMetadata(config, entry);
       expect(result.searchHints).toEqual(["valid", "also valid"]);
       expect(result.tags).toEqual(["good", "fine"]);

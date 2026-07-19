@@ -6,7 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { generateMetadata, type StashEntry } from "../../src/indexer/passes/metadata";
+import { generateMetadata, type IndexDocument } from "../../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../../src/indexer/search/ranking";
 import {
   applyBeliefStateScoreCeiling,
@@ -90,7 +90,7 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
     };
   }
 
-  function makeItem(entry: StashEntry): RankedEntryInput {
+  function makeItem(entry: IndexDocument): RankedEntryInput {
     return { id: 1, entry, filePath: "/stash/memories/projectA/auth-tip.md", score: 1, rankingMode: "fts" };
   }
 
@@ -164,13 +164,13 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
 
 describe("applyBeliefStateScoreCeiling (SPEC-5 demoting-state ceilings)", () => {
   function makeBeliefItem(beliefState: string | undefined, score: number): RankedEntryInput {
-    const entry: StashEntry = {
+    const entry: IndexDocument = {
       name: "belief-item",
       type: "memory",
       description: "ceiling unit fixture",
       filename: "belief-item.md",
       ...(beliefState !== undefined ? { beliefState } : {}),
-    } as StashEntry;
+    } as IndexDocument;
     return { id: 1, entry, filePath: "/stash/memories/belief-item.md", score, rankingMode: "fts" };
   }
 

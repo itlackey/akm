@@ -16,7 +16,7 @@
  */
 
 import { warn } from "../../core/warn";
-import type { StashEntry } from "../../indexer/passes/metadata";
+import type { IndexDocument } from "../../indexer/passes/metadata";
 import type { DbIndexedEntry } from "./index-entry-types";
 
 /**
@@ -42,9 +42,9 @@ export type EntryRow = {
  * callers can skip the row instead of crashing.
  */
 export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntry | null {
-  let entry: StashEntry;
+  let entry: IndexDocument;
   try {
-    entry = JSON.parse(row.entry_json) as StashEntry;
+    entry = JSON.parse(row.entry_json) as IndexDocument;
   } catch {
     warn(`[db] ${context}: skipping entry id=${row.id} — corrupt entry_json`);
     return null;

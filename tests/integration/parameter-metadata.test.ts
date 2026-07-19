@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { extractCommandParameters } from "../../src/indexer/passes/metadata";
 import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
@@ -224,7 +224,7 @@ describe("frontmatter params extraction", () => {
 
 describe("parameter search text inclusion", () => {
   test("parameter names and descriptions are included in search text", () => {
-    const entry: StashEntry = {
+    const entry: IndexDocument = {
       name: "deploy",
       type: "command",
       description: "Deploy a service",

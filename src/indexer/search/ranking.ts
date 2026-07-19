@@ -10,7 +10,7 @@ import { type Database, openDatabase } from "../../storage/database";
 import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import type { GraphBoostContext } from "../graph/graph-boost";
-import type { StashEntry } from "../passes/metadata";
+import type { IndexDocument } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
 import {
   applyBeliefStateScoreCeiling,
@@ -147,7 +147,7 @@ export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { sco
 export function combineSearchScores(options: {
   ftsScoreMap: Map<number, { score: number; result: DbSearchResult }>;
   embedScoreMap: Map<number, number>;
-  getEntryById: (id: number) => { entry: StashEntry; filePath: string } | undefined;
+  getEntryById: (id: number) => { entry: IndexDocument; filePath: string } | undefined;
   typeFilter?: string;
   /**
    * #627 — types excluded from the default (untyped 'any') path. The FTS and

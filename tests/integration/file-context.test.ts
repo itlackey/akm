@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
 import {
   buildFileContext,
@@ -491,7 +491,7 @@ describe("task-yaml metadata contributor", () => {
 
     const ctx = buildFileContext(root, filePath);
     const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
-    const entry: StashEntry = { name: "nightly-report", type: "task" };
+    const entry: IndexDocument = { name: "nightly-report", type: "task" };
     await applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx });
 
     expect(entry.tags).toContain("task");
@@ -509,7 +509,7 @@ describe("task-yaml metadata contributor", () => {
 
     const ctx = buildFileContext(root, filePath);
     const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
-    const entry: StashEntry = { name: "broken", type: "task" };
+    const entry: IndexDocument = { name: "broken", type: "task" };
 
     await expect(
       applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx }),

@@ -42,7 +42,7 @@ import {
   resetGraphBoostCache,
 } from "../../src/indexer/graph/graph-boost";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../../src/indexer/graph/graph-extraction";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import {
   closeDatabase,
@@ -183,7 +183,7 @@ function buildFixture(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = openIndexDatabase(dbPath);
   try {
-    const entries: Array<{ entry: StashEntry; filePath: string; dirPath: string }> = [
+    const entries: Array<{ entry: IndexDocument; filePath: string; dirPath: string }> = [
       {
         entry: {
           name: "database-runbook",

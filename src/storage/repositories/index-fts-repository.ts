@@ -10,7 +10,7 @@
  */
 
 import { warn } from "../../core/warn";
-import type { StashEntry } from "../../indexer/passes/metadata";
+import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildPrefixQuery, sanitizeFtsQuery } from "../../indexer/search/fts-query";
 import { buildSearchFields } from "../../indexer/search/search-fields";
 import type { Database, SqlValue } from "../database";
@@ -93,9 +93,9 @@ function runFtsQuery(
     // Guard against corrupt JSON — skip the row rather than crashing
     const results: DbSearchResult[] = [];
     for (const row of rows) {
-      let entry: StashEntry;
+      let entry: IndexDocument;
       try {
-        entry = JSON.parse(row.entry_json) as StashEntry;
+        entry = JSON.parse(row.entry_json) as IndexDocument;
       } catch {
         warn(`[db] searchFts: skipping entry id=${row.id} — corrupt entry_json`);
         continue;
@@ -166,10 +166,10 @@ export function rebuildFts(db: Database, options?: { incremental?: boolean }): v
 
     let skipped = 0;
     for (const row of rows) {
-      let entry: StashEntry;
+      let entry: IndexDocument;
       let fields: ReturnType<typeof buildSearchFields>;
       try {
-        entry = JSON.parse(row.entry_json) as StashEntry;
+        entry = JSON.parse(row.entry_json) as IndexDocument;
         fields = buildSearchFields(entry);
       } catch {
         skipped++;

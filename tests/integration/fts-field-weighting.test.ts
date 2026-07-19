@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { buildSearchFields, buildSearchText } from "../../src/indexer/search/search-fields";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -49,14 +49,14 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeEntry(overrides: Partial<StashEntry> & { name: string; type: string }): StashEntry {
+function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: string }): IndexDocument {
   return {
     description: "A test entry",
     ...overrides,
   };
 }
 
-function insertEntry(db: Database, key: string, entry: StashEntry, searchText: string): number {
+function insertEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
   return upsertEntry(db, key, "/test/dir", `/test/dir/${key}.ts`, "/test/stash", entry, searchText);
 }
 
@@ -304,18 +304,18 @@ describe("buildSearchFields", () => {
 //
 // docs/design/stash-conventions-code-spec.md SPEC-8: when the metadata pass
 // (gated by `index.indexBodyOpening`) has put the first body paragraph on
-// StashEntry.bodyOpening, buildSearchFields folds it into the lowest-weight
+// IndexDocument.bodyOpening, buildSearchFields folds it into the lowest-weight
 // `content` column (bm25 weight 1.0) — NOT `hints` — so orientation prose is
 // retrievable without outranking name/description/tag matches. Entries
 // without bodyOpening must keep byte-identical search fields.
 
 /**
- * SPEC-8 adds `bodyOpening?: string` to StashEntry. Attach it via a cast so
+ * SPEC-8 adds `bodyOpening?: string` to IndexDocument. Attach it via a cast so
  * this file compiles before the field exists; the tests then go red on the
  * runtime search-field/FTS behavior instead of a compile error.
  */
-function withBodyOpening(entry: StashEntry, bodyOpening: string): StashEntry {
-  return { ...entry, bodyOpening } as StashEntry;
+function withBodyOpening(entry: IndexDocument, bodyOpening: string): IndexDocument {
+  return { ...entry, bodyOpening } as IndexDocument;
 }
 
 describe("SPEC-8 bodyOpening indexing", () => {

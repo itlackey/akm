@@ -5,13 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
-// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): `StashEntry` is now a deprecated
-// alias OF the merged `IndexDocument` (the spec's §3 type = StashEntry +
-// provenance). The interface body — and the sub-shapes it references — moved to
-// `core/adapter/types.ts` so `IndexDocument` can reference them without a
-// `metadata.ts ↔ types.ts` cycle; here we alias + re-export under the historical
-// names so every untouched consumer keeps compiling. `SCOPE_KEYS` (a value)
-// stays here.
+// akm 0.9.0 Chunk 5 (type-merge): the durable indexed-entry shape is the merged
+// `IndexDocument` (spec §3 = the pre-merge entry shape + provenance). Its body
+// — and the sub-shapes it references — live in `core/adapter/types.ts` so
+// `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
+// they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
 import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import { deriveCanonicalAssetName, isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -25,22 +23,18 @@ import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
-export type { AssetParameter, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
+export type {
+  AssetParameter,
+  IndexDocument,
+  ScopeKey,
+  StashEntryScope,
+  StashIntent,
+} from "../../core/adapter/types";
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
 
-/**
- * F5: delete — deprecated alias. The durable indexed-entry shape is now the
- * merged {@link IndexDocument} (spec §3 = StashEntry + provenance; provenance
- * fields are optional so a metadata-pipeline entry literal still satisfies it,
- * and are never serialized onto `entry_json`). Kept so the ~hundreds of
- * `StashEntry` references outside this chunk's touch-set keep compiling; F5
- * renames them away and deletes this line.
- */
-export type StashEntry = IndexDocument;
-
 export interface StashFile {
-  entries: StashEntry[];
+  entries: IndexDocument[];
   warnings?: string[];
 }
 
@@ -107,7 +101,7 @@ export function loadStashFile(dirPath: string, options?: LoadStashFileOptions): 
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!raw || !Array.isArray(raw.entries)) return null;
-    const entries: StashEntry[] = [];
+    const entries: IndexDocument[] = [];
     for (const e of raw.entries) {
       const validated = validateStashEntry(e);
       if (validated) {
@@ -133,21 +127,21 @@ export function writeStashFile(dirPath: string, stash: StashFile): void {
 }
 
 /**
- * Validate and normalize a raw object into a `StashEntry`.
+ * Validate and normalize a raw object into a `IndexDocument`.
  *
  * Open type token (chunk 1.5, D1.5-1/D1.5-6): `entry.type` accepts any
- * non-empty string — foreign/adapter types are valid `StashEntry` data, not
+ * non-empty string — foreign/adapter types are valid `IndexDocument` data, not
  * just AKM's own built-in set — EXCEPT `DEPRECATED_REJECTED_TYPES`
  * (`tool`/`vault`), which stay rejected so a hand-edited `.stash.json` can't
  * silently resurrect a deliberately-retired type.
  */
-export function validateStashEntry(entry: unknown): StashEntry | null {
+export function validateStashEntry(entry: unknown): IndexDocument | null {
   if (typeof entry !== "object" || entry === null) return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.name !== "string" || !e.name) return null;
   if (typeof e.type !== "string" || !e.type || DEPRECATED_REJECTED_TYPES.has(e.type)) return null;
 
-  const result: StashEntry = {
+  const result: IndexDocument = {
     name: e.name,
     type: e.type as string,
   };
@@ -175,7 +169,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     typeof e.source === "string" &&
     ["package", "frontmatter", "comments", "filename", "manual", "llm"].includes(e.source)
   ) {
-    result.source = e.source as StashEntry["source"];
+    result.source = e.source as IndexDocument["source"];
   }
   if (Array.isArray(e.aliases)) {
     const filtered = e.aliases.filter((a): a is string => typeof a === "string" && a.trim().length > 0);
@@ -220,7 +214,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     result.category = e.category.trim();
   }
   if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
-    result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
+    result.beliefState = e.beliefState.trim() as IndexDocument["beliefState"];
   }
   const supersededBy = normalizeNonEmptyStringList(e.supersededBy);
   if (supersededBy) result.supersededBy = supersededBy;
@@ -308,7 +302,7 @@ function normalizeScopeObject(raw: Record<string, unknown>): StashEntryScope | u
  * missing or malformed values; legacy memories without these keys are left
  * untouched (no `scope` field added).
  */
-export function applyScopeFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+export function applyScopeFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const collected: Record<string, unknown> = {};
   for (const key of SCOPE_KEYS) {
     const fmKey = `scope_${key}`;
@@ -338,7 +332,7 @@ function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
   return normalizeNonEmptyStringList(value);
 }
 
-export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const description = asNonEmptyString(fmData.description);
   if (description) {
     entry.description = description;
@@ -378,7 +372,7 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
   if (category) entry.category = category;
 
   const beliefState = asNonEmptyString(fmData.beliefState);
-  if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];
+  if (beliefState) entry.beliefState = beliefState as IndexDocument["beliefState"];
 
   const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);
   if (supersededBy) entry.supersededBy = supersededBy;
@@ -501,7 +495,7 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
  * Extract wiki frontmatter fields (wikiRole, pageKind, xrefs, sources) from a parsed
  * frontmatter block and apply them to the entry. Tolerates missing or malformed values.
  */
-export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+export function applyWikiFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const role = fmData.wikiRole;
   if (role === "schema" || role === "index" || role === "log" || role === "raw" || role === "page") {
     entry.wikiRole = role;
@@ -794,7 +788,7 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-export function applyCommentMetadata(entry: StashEntry, metadata: CommentMetadata | undefined): void {
+export function applyCommentMetadata(entry: IndexDocument, metadata: CommentMetadata | undefined): void {
   if (!metadata) return;
   let usedCommentMetadata = false;
 
@@ -869,7 +863,7 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
  * entries that were previously enriched and already carry all three fields.
  * Pass `reEnrich = true` in the caller to bypass this check.
  */
-export function isEnrichmentComplete(entry: StashEntry): boolean {
+export function isEnrichmentComplete(entry: IndexDocument): boolean {
   const hasDescription = typeof entry.description === "string" && entry.description.trim().length > 0;
   const hasTags = Array.isArray(entry.tags) && entry.tags.length > 0;
   const hasSearchHints = Array.isArray(entry.searchHints) && entry.searchHints.length > 0;
@@ -1056,7 +1050,7 @@ export function extractBodyOpening(body: string): string | undefined {
 // ── Metadata Generation ─────────────────────────────────────────────────────
 
 /**
- * Shared pipeline (steps 2-6) for building a single StashEntry from a file.
+ * Shared pipeline (steps 2-6) for building a single IndexDocument from a file.
  *
  * `generateMetadata` seeds the initial `entry` with type + canonical name and
  * delegates the rest here. (Its former flat-walk sibling — the matcher-pass
@@ -1086,7 +1080,7 @@ export function extractBodyOpening(body: string): string | undefined {
  * former inline P1/P2/P2b block. Mutates `entry` in place.
  */
 export function applyPreContributorFields(
-  entry: StashEntry,
+  entry: IndexDocument,
   file: string,
   ctx: Pick<ReturnType<typeof buildFileContext>, "content">,
   pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
@@ -1154,7 +1148,7 @@ export function applyPreContributorFields(
  * pipeline paths share it. Behavior-preserving verbatim lift. Mutates `entry`.
  */
 export function applyPostContributorFields(
-  entry: StashEntry,
+  entry: IndexDocument,
   file: string,
   canonicalName: string,
   dirPath: string,
@@ -1202,8 +1196,8 @@ async function buildEntryFromFile(
   stashRoot: string,
   ctx: ReturnType<typeof buildFileContext>,
   match: import("../walk/file-context").MatchResult | null,
-): Promise<StashEntry | { skip: true; warning: string }> {
-  const entry: StashEntry = {
+): Promise<IndexDocument | { skip: true; warning: string }> {
+  const entry: IndexDocument = {
     name: canonicalName,
     type: assetType,
     quality: "generated",
@@ -1249,7 +1243,7 @@ export async function generateMetadata(
   files: string[],
   typeRoot = dirPath,
 ): Promise<StashFile> {
-  const entries: StashEntry[] = [];
+  const entries: IndexDocument[] = [];
   const warnings: string[] = [];
   const pkgMeta = extractPackageMetadata(dirPath);
 

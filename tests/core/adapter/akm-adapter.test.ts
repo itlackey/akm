@@ -32,7 +32,7 @@ import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { BundleComponent } from "../../../src/core/adapter/types";
 import { deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-placement";
-import type { StashEntry } from "../../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { applyMetadataContributors } from "../../../src/indexer/passes/metadata-contributors";
 import { buildFileContext, buildRenderContext, type FileContext } from "../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../src/indexer/walk/walker";
@@ -213,7 +213,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
     if (!match) return {};
     const rc = buildRenderContext(ctx, match, [ALL_TYPES_ROOT]);
     const name = deriveCanonicalAssetNameFromStashRoot(match.type, ALL_TYPES_ROOT, ctx.absPath) ?? ctx.relPath;
-    const entry: StashEntry = { name, type: match.type };
+    const entry: IndexDocument = { name, type: match.type };
     await applyMetadataContributors(entry, { rendererName: match.renderer, renderContext: rc });
     const rec = entry as unknown as Record<string, unknown>;
     const out: Record<string, unknown> = {};

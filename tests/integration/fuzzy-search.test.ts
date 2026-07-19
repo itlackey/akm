@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -47,7 +47,7 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeEntry(overrides: Partial<StashEntry> & { name: string; type: StashEntry["type"] }): StashEntry {
+function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: IndexDocument["type"] }): IndexDocument {
   return {
     description: "A test entry",
     ...overrides,
@@ -63,7 +63,7 @@ function insertTestEntry(
     stashDir?: string;
     description?: string;
     searchText?: string;
-    type?: StashEntry["type"];
+    type?: IndexDocument["type"];
   },
 ): number {
   const type = opts?.type ?? "skill";

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { saveConfig } from "../../src/core/config/config";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { buildDbHit } from "../../src/indexer/search/db-search";
 
 // Trigger source-provider self-registration
@@ -147,7 +147,7 @@ describe("full show unchanged", () => {
 
 describe("estimatedTokens in search hits", () => {
   test("buildDbHit includes estimatedTokens derived from fileSize", async () => {
-    const entry: StashEntry = {
+    const entry: IndexDocument = {
       name: "test-script",
       type: "script",
       description: "A test script",
@@ -181,7 +181,7 @@ describe("estimatedTokens in search hits", () => {
 
 describe("estimatedTokens approximation", () => {
   test("a 1000-byte file should have estimatedTokens around 250 (1000/4)", async () => {
-    const entry: StashEntry = {
+    const entry: IndexDocument = {
       name: "sized-script",
       type: "script",
       description: "A sized script",
@@ -209,7 +209,7 @@ describe("estimatedTokens approximation", () => {
   });
 
   test("estimatedTokens is undefined when fileSize is not set", async () => {
-    const entry: StashEntry = {
+    const entry: IndexDocument = {
       name: "no-size",
       type: "script",
       description: "No file size",

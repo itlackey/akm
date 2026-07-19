@@ -23,7 +23,7 @@ import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries, getEntryCount } from "../storage/repositories/index-entries-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { loadStashFile, type StashEntry } from "./passes/metadata";
+import { type IndexDocument, loadStashFile } from "./passes/metadata";
 import { recognizeStashEntries } from "./scan/drain-dir";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
 import { walkStashFlat } from "./walk/walker";
@@ -40,11 +40,11 @@ function truncateDescription(desc: string | undefined): string | undefined {
 }
 
 /**
- * Build a compact ManifestEntry from a StashEntry.
+ * Build a compact ManifestEntry from a IndexDocument.
  * Returns null if the entry cannot be converted (e.g. malformed name).
  */
 function toManifestEntry(
-  entry: StashEntry,
+  entry: IndexDocument,
   filePath: string,
   stashDir: string,
   registryId?: string,
@@ -166,7 +166,7 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
   return entries;
 }
 
-function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
   const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
   return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }

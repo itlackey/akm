@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
 import { getCacheDir } from "../core/paths";
-import { loadStashFile, type StashEntry } from "../indexer/passes/metadata";
+import { type IndexDocument, loadStashFile } from "../indexer/passes/metadata";
 import { recognizeStashEntries } from "../indexer/scan/drain-dir";
 import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
@@ -343,7 +343,7 @@ function readNearestPackageJson(extractDir: string, stashRoot: string): Record<s
   return {};
 }
 
-async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
+async function enumerateAssets(stashRoot: string): Promise<IndexDocument[]> {
   const fileContexts = walkStashFlat(stashRoot);
   const dirGroups = new Map<string, string[]>();
 
@@ -353,7 +353,7 @@ async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
     else dirGroups.set(ctx.parentDirAbs, [ctx.absPath]);
   }
 
-  const entries: StashEntry[] = [];
+  const entries: IndexDocument[] = [];
   for (const [dirPath, files] of dirGroups) {
     const generated = recognizeStashEntries(stashRoot, files);
     const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
@@ -369,12 +369,12 @@ async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
   return entries.sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
 }
 
-function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
   const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
   return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }
 
-function attachFileSize(dirPath: string, entry: StashEntry): StashEntry {
+function attachFileSize(dirPath: string, entry: IndexDocument): IndexDocument {
   if (typeof entry.fileSize === "number" || !entry.filename) return entry;
   try {
     return { ...entry, fileSize: fs.statSync(path.join(dirPath, entry.filename)).size };

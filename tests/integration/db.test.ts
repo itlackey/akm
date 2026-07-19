@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { Database } from "../../src/storage/database";
 import {
   closeDatabase,
@@ -70,7 +70,7 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeEntry(overrides: Partial<StashEntry> & { name: string; type: StashEntry["type"] }): StashEntry {
+function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: IndexDocument["type"] }): IndexDocument {
   return {
     description: "A test entry",
     ...overrides,
@@ -86,7 +86,7 @@ function insertTestEntry(
     stashDir?: string;
     description?: string;
     searchText?: string;
-    type?: StashEntry["type"];
+    type?: IndexDocument["type"];
   },
 ): number {
   const type = opts?.type ?? "script";
@@ -701,7 +701,7 @@ describe("Vector / Embedding integration", () => {
 // ── Incremental rebuildFts (#177 perf finding) ──────────────────────────────
 
 describe("rebuildFts incremental", () => {
-  function makeEntry(name: string, description = ""): StashEntry {
+  function makeEntry(name: string, description = ""): IndexDocument {
     return {
       name,
       type: "skill",
@@ -809,8 +809,8 @@ describe("rebuildFts incremental", () => {
 // the `entries` table SQL lives with all its siblings and cli.ts holds zero
 // raw SQL. These assertions capture the pre-move behaviour exactly.
 describe("collectTagSetFromEntries", () => {
-  function seedTagged(db: Database, key: string, type: StashEntry["type"], tags: unknown): number {
-    const entry = { description: `Description for ${key}`, type, tags } as unknown as StashEntry;
+  function seedTagged(db: Database, key: string, type: IndexDocument["type"], tags: unknown): number {
+    const entry = { description: `Description for ${key}`, type, tags } as unknown as IndexDocument;
     return upsertEntry(db, key, "/test/dir", `/test/dir/${key}.md`, "/test/stash", entry, key);
   }
 
@@ -881,8 +881,8 @@ describe("collectTagSetFromEntries", () => {
 // touching the `entries` table lives in one module. These assertions capture
 // the pre-move behaviour exactly.
 describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById / getEntryRefRowsForStashRoot)", () => {
-  function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: StashEntry["type"]): number {
-    const entry = { description: `Description for ${key}`, type, name: key } as unknown as StashEntry;
+  function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: IndexDocument["type"]): number {
+    const entry = { description: `Description for ${key}`, type, name: key } as unknown as IndexDocument;
     return upsertEntry(db, key, path.dirname(filePath), filePath, stashDir, entry, key);
   }
 

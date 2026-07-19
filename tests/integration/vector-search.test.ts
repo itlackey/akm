@@ -18,7 +18,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { cosineSimilarity } from "../../src/llm/embedder";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -51,7 +51,7 @@ function tmpDbPath(label = "vec"): string {
   return path.join(dir, "test.db");
 }
 
-function makeEntry(overrides: Partial<StashEntry> & { name: string; type: string }): StashEntry {
+function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: string }): IndexDocument {
   return {
     description: "A test entry",
     ...overrides,

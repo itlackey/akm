@@ -20,7 +20,7 @@
 
 import { makeAssetRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
-import type { StashEntry } from "../indexer/passes/metadata";
+import type { IndexDocument } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type { ShowResponse } from "../sources/types";
@@ -129,7 +129,7 @@ export const workflowProgramRenderer: AssetRenderer = {
 registerMetadataContributor({
   name: "workflow-document-metadata",
   appliesTo: ({ rendererName }) => rendererName === "workflow-md",
-  contribute(entry: StashEntry, { renderContext }: { renderContext: RenderContext }) {
+  contribute(entry: IndexDocument, { renderContext }: { renderContext: RenderContext }) {
     const doc = loadDocument(renderContext);
     const hints = new Set<string>(entry.searchHints ?? []);
     hints.add(doc.title);
@@ -155,7 +155,7 @@ registerMetadataContributor({
 registerMetadataContributor({
   name: "workflow-program-metadata",
   appliesTo: ({ rendererName }) => rendererName === WORKFLOW_PROGRAM_RENDERER_NAME,
-  contribute(entry: StashEntry, { renderContext }: { renderContext: RenderContext }) {
+  contribute(entry: IndexDocument, { renderContext }: { renderContext: RenderContext }) {
     // Parse failures throw, which the metadata pass turns into a
     // skip-with-warning — broken programs never land in the index, mirroring
     // markdown workflows. No workflow_documents cache row is written: YAML

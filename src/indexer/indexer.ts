@@ -85,10 +85,10 @@ import {
   inferZeroRowReason,
 } from "./passes/dir-staleness";
 import {
+  type IndexDocument,
   isEnrichmentComplete,
   isWorkflowSkipWarning,
   loadStashFile,
-  type StashEntry,
   type StashFile,
   shouldIndexStashFile,
 } from "./passes/metadata";
@@ -919,7 +919,7 @@ async function scanSourceDirs(
 
       // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via
       // `akmAdapter.recognize` (broken workflows dropped-with-warning at the
-      // drain layer) and reconstruct the durable `StashEntry`s. `.stash.json`
+      // drain layer) and reconstruct the durable `IndexDocument`s. `.stash.json`
       // legacy overrides are still merged (item-4 decommission is deferred —
       // §12.3 gate fixtures feed curated metadata exclusively via `.stash.json`).
       const drained = drainDirDocuments(akmAdapter, component, indexableCtxs);
@@ -1541,7 +1541,7 @@ interface EmbeddingGenerationResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
+function attachFileSize(entry: IndexDocument, entryPath: string): IndexDocument {
   try {
     return { ...entry, fileSize: fs.statSync(entryPath).size };
   } catch {
@@ -1795,7 +1795,7 @@ async function enhanceStashWithLlm(
   // concurrentMap returns Array<T | undefined>; filter out undefined slots
   // (which can only occur if the callback itself returned undefined, which
   // it never does above — but TypeScript needs the filter for type safety).
-  const enhanced: StashEntry[] = results.map((r, i) => r ?? stash.entries[i]);
+  const enhanced: IndexDocument[] = results.map((r, i) => r ?? stash.entries[i]);
   return { entries: enhanced };
 }
 
@@ -1836,7 +1836,7 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   return null;
 }
 
-function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
   const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
   if (!legacy) return entry;
 

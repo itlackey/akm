@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../../src/commands/sources/info";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
@@ -61,7 +61,7 @@ function makeStashDir(): string {
   return dir;
 }
 
-function makeEntry(type: string, name: string): StashEntry {
+function makeEntry(type: string, name: string): IndexDocument {
   return {
     type,
     name,

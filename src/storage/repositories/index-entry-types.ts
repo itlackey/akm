@@ -10,13 +10,13 @@
  * storage↔indexer boundary into `db.ts` — which is what used to pin the
  * `db.ts` / `entry-mapper.ts` / `schema.ts` trio inside the import cycle.
  *
- * `StashEntry` is the sole cross-layer type dependency and it is intentionally
+ * `IndexDocument` is the sole cross-layer type dependency and it is intentionally
  * imported type-only from the indexer metadata pass (its rename/relocation is a
  * later slice); nothing here imports a repository, so this module never
  * re-enters a cycle.
  */
 
-import type { StashEntry } from "../../indexer/passes/metadata";
+import type { IndexDocument } from "../../indexer/passes/metadata";
 
 /**
  * Chunk-5 Step 2 (spec §14.4): the durable bundle-adapter identity + provenance
@@ -42,7 +42,7 @@ export interface DbIndexedEntry {
   dirPath: string;
   filePath: string;
   stashDir: string;
-  entry: StashEntry;
+  entry: IndexDocument;
   searchText: string;
 }
 
@@ -50,7 +50,7 @@ export interface DbIndexedEntry {
 export interface DbSearchResult {
   id: number;
   filePath: string;
-  entry: StashEntry;
+  entry: IndexDocument;
   searchText: string;
   bm25Score: number;
 }

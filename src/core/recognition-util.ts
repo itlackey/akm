@@ -70,7 +70,7 @@ export const DERIVED_SUFFIX = ".derived";
 //
 // `KNOWN_TYPES` replaces the deleted `common.ts` closed asset-type union.
 // It is a HINT/exhaustiveness tuple, NOT a validation gate: unknown/foreign
-// `type` strings are still valid `IndexDocument`/`StashEntry`/`AssetRef` DATA
+// `type` strings are still valid `IndexDocument`/`IndexDocument`/`AssetRef` DATA
 // (plan §2.3/§15.4) — this tuple only anchors compile-time completeness for
 // AKM's OWN presentation/ranking tables (`Record<KnownType, X>` fails to
 // compile if a key is missing). A plain `as const` literal tuple adds no

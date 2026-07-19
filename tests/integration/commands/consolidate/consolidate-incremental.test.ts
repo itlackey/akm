@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { narrowToIncrementalCandidates } from "../../../../src/commands/improve/consolidate";
 import { getDbPath } from "../../../../src/core/paths";
-import type { StashEntry } from "../../../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
 import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
@@ -136,7 +136,7 @@ describe("narrowToIncrementalCandidates — mixed branch (real index DB)", () =>
   // The dim-4 unit vectors are crafted so cosine similarity (the JS fallback in
   // searchBlobVec, and sqlite-vec when present) ranks neighbours deterministically.
   function indexMemory(db: ReturnType<typeof openIndexDatabase>, name: string, embedding: number[]): number {
-    const entry: StashEntry = { type: "memory", name, description: `desc for ${name}` };
+    const entry: IndexDocument = { type: "memory", name, description: `desc for ${name}` };
     const id = upsertEntry(
       db,
       `memory:${name}`,

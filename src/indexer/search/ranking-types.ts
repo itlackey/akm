@@ -13,11 +13,11 @@
  * re-exports `RankedEntryInput` so existing import sites are unaffected.
  */
 
-import type { StashEntry } from "../passes/metadata";
+import type { IndexDocument } from "../passes/metadata";
 
 export interface RankedEntryInput {
   id: number;
-  entry: StashEntry;
+  entry: IndexDocument;
   filePath: string;
   score: number;
   rankingMode: "hybrid" | "semantic" | "fts";

@@ -5,8 +5,8 @@
 /**
  * Per-directory document drain — akm 0.9.0 Chunk 5, milestone F4a M-core-2 (the
  * engine swap). Replaces the live indexer's per-dir flat-walk matcher-pass
- * `StashEntry` stream with the `akm` adapter's `recognize` `IndexDocument`
- * stream, reconstructing the durable `StashEntry` via {@link
+ * `IndexDocument` stream with the `akm` adapter's `recognize` `IndexDocument`
+ * stream, reconstructing the durable `IndexDocument` via {@link
  * indexDocumentToStashEntry} (proven lossless by the shadow-parity gate).
  *
  * Two behaviors the adapter fold does NOT carry, restored here at the drain
@@ -43,7 +43,7 @@ import { parseWorkflow } from "../../workflows/parser";
 import { parseWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
 import { cacheWorkflowDocument } from "../../workflows/runtime/document-cache";
-import { buildMetadataSkipWarning, type StashEntry, type StashFile, shouldIndexStashFile } from "../passes/metadata";
+import { buildMetadataSkipWarning, type StashFile, shouldIndexStashFile } from "../passes/metadata";
 import { buildFileContext, type FileContext } from "../walk/file-context";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
 
@@ -52,7 +52,7 @@ const WORKFLOW_MD_RENDERER = "workflow-md";
 
 export interface DrainedDir {
   /** The reconstructed durable entries, broken workflows already dropped. */
-  entries: StashEntry[];
+  entries: IndexDocument[];
   /** Per-file skip warnings (broken workflows), same shape the metadata pass emitted. */
   warnings: string[];
   /** `doc.hash` keyed by the recognized file's absolute path (content_hash source, item 2). */
@@ -72,7 +72,7 @@ export function drainDirDocuments(
   component: BundleComponent,
   fileContexts: readonly FileContext[],
 ): DrainedDir {
-  const entries: StashEntry[] = [];
+  const entries: IndexDocument[] = [];
   const warnings: string[] = [];
   const hashByFile = new Map<string, string>();
 
@@ -124,7 +124,7 @@ export function recognizeStashEntries(stashRoot: string, files: string[]): Stash
  * (workflow-md only) and return `null` when valid. Non-workflow docs return
  * `null` immediately.
  */
-function handleWorkflowDoc(doc: IndexDocument, entry: StashEntry, file: FileContext): string | null {
+function handleWorkflowDoc(doc: IndexDocument, entry: IndexDocument, file: FileContext): string | null {
   const renderer = docRenderer(doc);
 
   if (renderer === WORKFLOW_MD_RENDERER) {

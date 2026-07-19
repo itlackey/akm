@@ -44,7 +44,7 @@ import {
   type GraphBoostContext,
   loadGraphBoostContext,
 } from "../graph/graph-boost";
-import { isProposedQuality, type StashEntry, type StashEntryScope } from "../passes/metadata";
+import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
 import { resolveProjectContext } from "../walk/project-context";
 import { parseRefPrefixQuery, sanitizeFtsQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
@@ -87,7 +87,7 @@ export function buildLocalAction(
   return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
 }
 
-function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
+function resolveSearchHitRef(entry: IndexDocument, refName: string, source?: SearchSource): string {
   // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the hit's
   // user-facing ref (short conceptId in the primary bundle, `bundle//conceptId`
   // for a slug-clean non-default source). `displayRef` prefers the row's stored
@@ -671,7 +671,7 @@ async function enumerateEntries(opts: {
  * improve run, erasing it. Only twins with no state of their own inherit; an
  * explicit twin state always wins. Reuses the (03) belief-state ranker + filter.
  */
-function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number; entry: StashEntry }>): void {
+function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number; entry: IndexDocument }>): void {
   const DEMOTING = new Set(["contradicted", "superseded", "deprecated", "archived"]);
   const twins = items.filter(
     (it) =>
@@ -688,7 +688,7 @@ function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number;
     const baseBelief = baseBeliefByTwinId.get(t.id);
     // Only inherit DEMOTIONS — never let a base's active/asserted state lift a twin.
     if (baseBelief && DEMOTING.has(baseBelief)) {
-      t.entry.beliefState = baseBelief as StashEntry["beliefState"];
+      t.entry.beliefState = baseBelief as IndexDocument["beliefState"];
     }
   }
 }
@@ -747,7 +747,7 @@ async function tryVecScores(
 // ── Hit building ────────────────────────────────────────────────────────────
 
 export async function buildDbHit(input: {
-  entry: StashEntry;
+  entry: IndexDocument;
   path: string;
   score: number;
   query: string;
@@ -839,7 +839,7 @@ export async function buildDbHit(input: {
 }
 
 export function buildWhyMatched(
-  entry: StashEntry,
+  entry: IndexDocument,
   query: string,
   // "hybrid" ranking mode
   rankingMode: "hybrid" | "semantic" | "fts",

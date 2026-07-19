@@ -15,7 +15,7 @@
  *
  *  - `IndexDocument` — transcribed verbatim from the same doc, §3 (lines
  *    205-241). Per D1-1 this is the FULL/real shape, not a deferred
- *    placeholder: Chunk 5 later reconciles it with the `StashEntry` ->
+ *    placeholder: Chunk 5 later reconciles it with the `IndexDocument` ->
  *    `IndexDocument` rename (a merge into this type, not a re-creation of
  *    it).
  *
@@ -82,7 +82,7 @@ export interface BundleComponent {
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────
 //
-// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): these StashEntry sub-shapes move
+// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): these IndexDocument sub-shapes move
 // HERE from `indexer/passes/metadata.ts` so the merged {@link IndexDocument}
 // (below) can reference them WITHOUT closing a `metadata.ts ↔ types.ts` import
 // cycle (the cycle ratchet counts type-only edges). They are the durable field
@@ -125,21 +125,21 @@ export interface StashEntryScope {
 /** Allowed keys in `--filter k=v` and `--scope k=v` flags. */
 export type ScopeKey = keyof StashEntryScope;
 
-// ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS StashEntry + provenance) ─────
+// ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
 //
-// The spec's §3 `IndexDocument` IS `StashEntry` + provenance (M1 decision). The
+// The spec's §3 `IndexDocument` IS `IndexDocument` + provenance (M1 decision). The
 // scan engine drains `IndexDocument`s; the durable `entry_json` column stays a
-// faithful `StashEntry`, so `StashEntry` is now a deprecated alias OF this type
+// faithful `IndexDocument`, so `IndexDocument` is now a deprecated alias OF this type
 // (`metadata.ts`, `// F5: delete`). To let a metadata-pipeline entry literal
 // (`{ name, type, … }`, no provenance) satisfy the alias, the seven provenance
 // fields are OPTIONAL here; `recognize` and the scan writer fill them in, and
 // they are NEVER serialized onto `entry_json` (that durable shape is unchanged).
-// Where the pre-merge `IndexDocument` and `StashEntry` field shapes conflicted
+// Where the pre-merge `IndexDocument` and `IndexDocument` field shapes conflicted
 // (`supersededBy`, `scope`, `captureMode`, `quality`, `beliefState`), the
-// StashEntry shape wins — the durable truth.
+// IndexDocument shape wins — the durable truth.
 
 export interface IndexDocument {
-  // ── Provenance (spec §3) — OPTIONAL for the StashEntry alias; see header ──
+  // ── Provenance (spec §3) — OPTIONAL for the IndexDocument alias; see header ──
   /** Fully-qualified "<bundle>//<concept-id>" (canonical stored spelling, §1.3). */
   ref?: ItemRef;
   bundle?: BundleId;
@@ -153,7 +153,7 @@ export interface IndexDocument {
   adapterId?: string;
 
   // ── Identity + FTS surface ──
-  /** = OKF `type`; open; frontmatter (native) or adapter-derived (foreign). Presents/ranks/filters; NEVER executes or identifies. Required — the durable StashEntry contract. */
+  /** = OKF `type`; open; frontmatter (native) or adapter-derived (foreign). Presents/ranks/filters; NEVER executes or identifies. Required — the durable IndexDocument contract. */
   type: string;
   /** FTS 10 ← OKF `title` (fallback filename). */
   name: string;
@@ -161,12 +161,12 @@ export interface IndexDocument {
   description?: string;
   /** FTS 3 ← OKF `tags`. */
   tags?: string[];
-  /** FTS 2 — IndexDocument-native (StashEntry uses `searchHints`). */
+  /** FTS 2 — IndexDocument-native (IndexDocument uses `searchHints`). */
   hints?: string[];
   /** FTS 1 (bounded) — IndexDocument-native. */
   content?: string;
 
-  // ── StashEntry durable fields (the M1 decision's durable truth) ──
+  // ── IndexDocument durable fields (the M1 decision's durable truth) ──
   examples?: string[];
   searchHints?: string[];
   intent?: StashIntent;
@@ -285,7 +285,7 @@ export interface IndexDocument {
    */
   bodyOpening?: string;
 
-  // ── IndexDocument-native extras (no StashEntry equivalent) ──
+  // ── IndexDocument-native extras (no IndexDocument equivalent) ──
   pinned?: boolean;
   /** ← OKF `timestamp`. */
   updated?: string;

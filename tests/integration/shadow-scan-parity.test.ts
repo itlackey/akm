@@ -6,7 +6,7 @@
  * Chunk 5 F4a M-core-3 — FLIPPED shadow-parity gate (the F4 regression net).
  *
  * Before the flip this file compared two IN-MEMORY streams: the legacy
- * `generateMetadataFlat` `StashEntry` stream vs the `scanComponent`
+ * `generateMetadataFlat` `IndexDocument` stream vs the `scanComponent`
  * `IndexDocument` stream. F4a M-core-2 made `scanComponent`-style
  * `akmAdapter.recognize` the LIVE indexer engine and M-core-3 DELETED
  * `generateMetadataFlat`, so there is no legacy stream left to compare against.
@@ -20,7 +20,7 @@
  *   2. every item persists with `item_ref == <bundle>//<conceptId>` (D-R2) and a
  *      populated `content_hash` (the diff-persist provenance write, M-core-2);
  *   3. the durable `entry_json` deep-equals `indexDocumentToStashEntry(doc)` —
- *      the exact StashEntry `recognize` reconstructs — modulo the persist-time
+ *      the exact IndexDocument `recognize` reconstructs — modulo the persist-time
  *      `fileSize` (attached by `attachFileSize`, absent from the doc). This one
  *      equality SUBSUMES the old folded-search-fields and filter/ranking-signal
  *      arms: every one of those surfaces is derived from `entry_json`.
@@ -64,7 +64,7 @@ interface PersistedRow {
   conceptId: string;
   itemRef: string | null;
   contentHash: string | null;
-  // biome-ignore lint/suspicious/noExplicitAny: entry_json is the durable StashEntry, compared structurally below.
+  // biome-ignore lint/suspicious/noExplicitAny: entry_json is the durable IndexDocument, compared structurally below.
   entry: any;
 }
 
@@ -145,7 +145,7 @@ for (const { name, root } of STASHES) {
       }
     });
 
-    test("persisted entry_json deep-equals recognize→StashEntry (minus persist-time fileSize)", () => {
+    test("persisted entry_json deep-equals recognize→IndexDocument (minus persist-time fileSize)", () => {
       const expectedByKey = new Map(docs.map((d) => [docKey(d), indexDocumentToStashEntry(d)]));
       let asserted = 0;
       for (const r of rows) {
@@ -154,7 +154,7 @@ for (const { name, root } of STASHES) {
         if (!expected) continue;
         const persisted = { ...r.entry };
         // fileSize is attached at persist time by attachFileSize; the doc-derived
-        // StashEntry never carries it. Strip it for the structural comparison.
+        // IndexDocument never carries it. Strip it for the structural comparison.
         persisted.fileSize = undefined;
         delete persisted.fileSize;
         expect(persisted, `entry_json for ${rowKey(r)}`).toEqual(expected);

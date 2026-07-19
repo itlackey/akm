@@ -26,7 +26,7 @@ import { akmImprove } from "../../src/commands/improve/improve";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { RankedEntryInput } from "../../src/indexer/search/ranking";
 import { applyScoreContributors } from "../../src/indexer/search/ranking-contributors";
 import type { Database } from "../../src/storage/database";
@@ -179,8 +179,8 @@ describe("Phase 1A: belief-state transitions for asserted/deprecated", () => {
 // 2. beliefStateBoost ranking ordering
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeRanked(name: string, overrides: Partial<StashEntry>): RankedEntryInput {
-  const entry: StashEntry = { name, type: "memory", ...overrides };
+function makeRanked(name: string, overrides: Partial<IndexDocument>): RankedEntryInput {
+  const entry: IndexDocument = { name, type: "memory", ...overrides };
   return {
     id: 1,
     entry,
@@ -227,9 +227,9 @@ describe("Phase 1A: beliefStateBoost ordering", () => {
     // unflagged. After deleting the `type === "memory"` guard + broadening the
     // contributor to any belief-state-carrying entry, contradicted/superseded
     // KNOWLEDGE is demoted and asserted knowledge is boosted, same as memories.
-    const mk = (name: string, overrides: Partial<StashEntry>) => ({
+    const mk = (name: string, overrides: Partial<IndexDocument>) => ({
       id: 1,
-      entry: { name, type: "knowledge", ...overrides } as StashEntry,
+      entry: { name, type: "knowledge", ...overrides } as IndexDocument,
       filePath: `/stash/knowledge/${name}.md`,
       score: 1,
       rankingMode: "fts" as const,

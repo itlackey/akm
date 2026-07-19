@@ -9,14 +9,14 @@
  *
  * The engine swap drains an `IndexDocument` stream (`scanComponent` × the akm
  * adapter's `recognize`) in place of the per-dir flat-walk matcher-pass
- * `StashEntry` stream, then persists it. But the durable `entries.entry_json`
- * column stays a faithful `StashEntry` — every reader (`rowToIndexedEntry` →
+ * `IndexDocument` stream, then persists it. But the durable `entries.entry_json`
+ * column stays a faithful `IndexDocument` — every reader (`rowToIndexedEntry` →
  * `DbIndexedEntry.entry`) consumes it as one, and the byte-for-byte goldens pin
- * it. So the persist path must reconstruct the exact `StashEntry` the old
+ * it. So the persist path must reconstruct the exact `IndexDocument` the old
  * pipeline stored FROM the `IndexDocument` the new pipeline produces.
  *
  * That reconstruction is lossless by construction: the akm adapter's `recognize`
- * assembles a full `StashEntry` (P1/P2 → fold → P4) and then maps it onto the
+ * assembles a full `IndexDocument` (P1/P2 → fold → P4) and then maps it onto the
  * `IndexDocument` via `indexDocumentFromEntry` — first-class search/signal fields
  * onto named members, every other search-surface/provenance field onto
  * `documentJson` (the `DOCUMENT_JSON_CARRIED_FIELDS` set). This function reverses
@@ -39,18 +39,18 @@
 
 import path from "node:path";
 import type { IndexDocument } from "../../core/adapter/types";
-import type { StashEntry, StashIntent } from "../passes/metadata";
+import type { StashIntent } from "../passes/metadata";
 
 /**
- * Reconstruct the `StashEntry` an `IndexDocument` was mapped from. First-class
+ * Reconstruct the `IndexDocument` an `IndexDocument` was mapped from. First-class
  * IndexDocument members and the `documentJson`-carried extras are both restored;
  * every field is set only when present, matching the old pipeline's
  * "assign-only-when-defined" assembly so the reconstruction deep-equals it.
  */
-export function indexDocumentToStashEntry(doc: IndexDocument): StashEntry {
+export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   const dj = (doc.documentJson ?? {}) as Record<string, unknown>;
 
-  const entry: StashEntry = {
+  const entry: IndexDocument = {
     name: doc.name,
     // `type` is a required member of the merged IndexDocument (M-core-1), so no
     // `?? ""` fallback is needed — `recognize` always sets it.
@@ -76,24 +76,24 @@ export function indexDocumentToStashEntry(doc: IndexDocument): StashEntry {
 
   // ── documentJson-carried extras (DOCUMENT_JSON_CARRIED_FIELDS) ──
   // The `renderer` key on documentJson is adapter-internal (WI-C presentation),
-  // NOT a StashEntry field — deliberately not restored.
+  // NOT a IndexDocument field — deliberately not restored.
   assignStringList(entry, "examples", dj.examples);
   assignStringList(entry, "usage", dj.usage);
   if (isIntent(dj.intent)) entry.intent = dj.intent;
   assignStringList(entry, "xrefs", dj.xrefs);
   assignString(entry, "pageKind", dj.pageKind);
   assignString(entry, "whenToUse", dj.whenToUse);
-  if (dj.toc !== undefined) entry.toc = dj.toc as StashEntry["toc"];
-  if (dj.parameters !== undefined) entry.parameters = dj.parameters as StashEntry["parameters"];
+  if (dj.toc !== undefined) entry.toc = dj.toc as IndexDocument["toc"];
+  if (dj.parameters !== undefined) entry.parameters = dj.parameters as IndexDocument["parameters"];
   assignString(entry, "bodyOpening", dj.bodyOpening);
-  if (dj.source !== undefined) entry.source = dj.source as StashEntry["source"];
+  if (dj.source !== undefined) entry.source = dj.source as IndexDocument["source"];
   assignString(entry, "category", dj.category);
   assignStringList(entry, "supersededBy", dj.supersededBy);
   assignStringList(entry, "contradictedBy", dj.contradictedBy);
   assignString(entry, "run", dj.run);
   assignString(entry, "setup", dj.setup);
   assignString(entry, "cwd", dj.cwd);
-  if (dj.wikiRole !== undefined) entry.wikiRole = dj.wikiRole as StashEntry["wikiRole"];
+  if (dj.wikiRole !== undefined) entry.wikiRole = dj.wikiRole as IndexDocument["wikiRole"];
   assignStringList(entry, "sources", dj.sources);
   if (typeof dj.generation === "number") entry.generation = dj.generation;
   assignStringList(entry, "sourceRefs", dj.sourceRefs);
@@ -114,11 +114,11 @@ type StringListKey =
 
 type StringKey = "pageKind" | "whenToUse" | "bodyOpening" | "category" | "run" | "setup" | "cwd";
 
-function assignStringList(entry: StashEntry, key: StringListKey, value: unknown): void {
+function assignStringList(entry: IndexDocument, key: StringListKey, value: unknown): void {
   if (Array.isArray(value)) entry[key] = value as string[];
 }
 
-function assignString(entry: StashEntry, key: StringKey, value: unknown): void {
+function assignString(entry: IndexDocument, key: StringKey, value: unknown): void {
   if (typeof value === "string") entry[key] = value;
 }
 
