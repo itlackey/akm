@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../../core/asset/asset-ref";
+import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
 import { appendEvent, type EventsContext } from "../../../core/events";
@@ -381,7 +381,7 @@ export function persistOutputEncodingSalience(
   outcomeWeightEnabled: boolean,
 ): void {
   try {
-    const parsedRef = parseAssetRef(ref);
+    const parsedRef = parseRefInput(ref);
     const salienceResult = scoreEncodingSalience({
       body,
       type: parsedRef.type,

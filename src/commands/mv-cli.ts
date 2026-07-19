@@ -946,6 +946,21 @@ function rekeyStateDbForMove(
       }
       if (includeLegacyBare) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
     }
+    // Chunk-5 flip F5e — also re-key any NEW-grammar `<bundle>//<conceptId>`
+    // rows the durable salience/outcome writers key by once item_ref is
+    // populated. `type` is shared across a move; the conceptId is the D-R2
+    // `<stash-subdir>/<name>` spelling. Origins double as the bundle id for
+    // the primary stash (both "stash"). // Chunk-8: the one-time state.db
+    // re-key subsumes this once every row is item_ref-spelled.
+    const moveType = fromRef.includes(":") ? fromRef.slice(0, fromRef.indexOf(":")) : "";
+    if (moveType) {
+      const fromConcept = legacyConceptId(moveType, fromRef.slice(moveType.length + 1));
+      const toConcept = legacyConceptId(moveType, toRef.slice(moveType.length + 1));
+      for (const origin of origins) {
+        pairs.push([`${origin}//${fromConcept}`, `${origin}//${toConcept}`]);
+        if (includeTwin) pairs.push([`${origin}//${fromConcept}.derived`, `${origin}//${toConcept}.derived`]);
+      }
+    }
     const db = openStateDatabase();
     const tableFailures: string[] = [];
     try {
