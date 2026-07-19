@@ -37,7 +37,7 @@
 
 import { NotFoundError, UsageError } from "../errors";
 import { stashDirFor, typeForStashDir } from "./asset-placement";
-import { type AssetRef, type BundleRef, isBundleSlug, parseAssetRef, parseBundleRef } from "./asset-ref";
+import { type AssetRef, type BundleRef, isBundleSlug, makeAssetRef, parseAssetRef, parseBundleRef } from "./asset-ref";
 
 // ── Resolution surface (D-R4) ───────────────────────────────────────────────
 
@@ -125,6 +125,76 @@ function notFound(conceptId: string, triedForms: string[], ctx: RefContext): Not
   const scope = ctx.only !== undefined ? ` in bundle "${ctx.only}"` : "";
   const forms = triedForms.map((f) => `"${f}"`).join(", ");
   return new NotFoundError(`No bundle contains concept "${conceptId}"${scope} (tried ${forms}).`, "ASSET_NOT_FOUND");
+}
+
+// ── Display-ref emission (Chunk-5 flip F4b — the output-spelling rule) ────────
+
+/**
+ * The fields {@link displayRef} needs from an indexed item to build its
+ * user-facing / envelope ref string. Supplied by every emission site (search
+ * hit, show/curate response, workflow status, improve REPORT envelope, …).
+ */
+export interface DisplayRefItem {
+  /** Legacy asset type — supplies the conceptId stash-subdir when `conceptId` is absent. */
+  type: string;
+  /** Bare canonical name — the conceptId tail when `conceptId` is absent. */
+  name: string;
+  /**
+   * The row's stored conceptId (`concept_id` / the `item_ref` tail). Derived
+   * from `type`/`name` (D-R2 `stashDirFor(type)/name`) when absent — the
+   * NULL-`item_ref` write-back-row fallback.
+   */
+  conceptId?: string;
+  /**
+   * The item's bundle id — the search source's `registryId`, or the row's
+   * `bundle_id`. `undefined` means the default/primary bundle (the un-qualified
+   * display case).
+   */
+  bundleId?: string;
+}
+
+/**
+ * D-R2 conceptId derivation from a legacy `type`/`name` pair
+ * (`stashDirFor(type)/name`; bare name for a foreign type with no placement
+ * stash-subdir). Kept self-contained so {@link displayRef} — a PERMANENT display
+ * rule — does not depend on the `F5: delete` legacy shims below.
+ */
+function conceptIdFromTypeName(type: string, name: string): string {
+  const stashDir = stashDirFor(type);
+  return stashDir !== undefined ? `${stashDir}/${name}` : name;
+}
+
+/**
+ * Build the USER-FACING / envelope ref string for an indexed item, applying the
+ * Chunk-5 flip F4b output-spelling rule (orchestrator decision; ref-grammar
+ * decision D-R2 / D-R3). This is the ONE place the rule lives — every emission
+ * site calls it instead of hand-building a ref from an entry.
+ *
+ * The rule mirrors TODAY'S origin-qualification UX, transposed to the 0.9.0
+ * grammar:
+ *
+ *   - An item in the **default/primary bundle** (`bundleId` undefined, or equal
+ *     to `defaultBundleId`) emits the SHORT conceptId (`knowledge/http-caching`)
+ *     — exactly where the pre-0.9.0 output emitted an un-qualified `type:name`.
+ *   - An item in a slug-clean **non-default bundle** emits the fully-qualified
+ *     `bundle//conceptId`.
+ *   - An item whose bundle id is a registry origin that is NOT YET a legal
+ *     bundle slug (`github:owner/repo`, `npm:@scope/pkg`, `owner/repo` — they
+ *     carry `:` / `/`) keeps the legacy `origin//type:name` display THIS STAGE.
+ *     The registry-origin display re-key is F4c / Chunk-8 (bundle-identity
+ *     slugging), so this branch is byte-identical to today's qualified output
+ *     and the codemod's origin-qualified skips stay consistent with it.
+ *     // F4c: unify onto bundle//conceptId
+ */
+export function displayRef(item: DisplayRefItem, defaultBundleId?: string): string {
+  const conceptId = item.conceptId ?? conceptIdFromTypeName(item.type, item.name);
+  const { bundleId } = item;
+  // Default/primary bundle → SHORT conceptId (the flip).
+  if (bundleId === undefined || bundleId === defaultBundleId) return conceptId;
+  // Slug-clean non-default bundle → the new fully-qualified grammar.
+  if (isBundleSlug(bundleId)) return `${bundleId}//${conceptId}`;
+  // Registry origin not yet a legal bundle slug — legacy display until F4c.
+  return makeAssetRef(item.type, item.name, bundleId); // F4c: unify onto bundle//conceptId
 }
 
 // ── Dual-grammar input dispatch (TRANSIENT SHIM — F5 deletes all of this) ─────

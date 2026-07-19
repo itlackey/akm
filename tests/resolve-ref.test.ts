@@ -15,6 +15,7 @@ import { parseAssetRef } from "../src/core/asset/asset-ref";
 import {
   classifyRefGrammar,
   conceptIdToLegacy,
+  displayRef,
   isFullRefInput,
   legacyConceptId,
   legacyRefToBundleRef,
@@ -245,5 +246,42 @@ describe("isFullRefInput", () => {
     expect(isFullRefInput("prod")).toBe(false);
     expect(isFullRefInput("projectA/new-note")).toBe(false); // leading segment maps to no type
     expect(isFullRefInput("")).toBe(false);
+  });
+});
+
+describe("displayRef (F4b output-spelling rule)", () => {
+  test("default/primary bundle (no bundleId) → SHORT conceptId, derived from type/name", () => {
+    expect(displayRef({ type: "knowledge", name: "http-caching" })).toBe("knowledge/http-caching");
+    expect(displayRef({ type: "skill", name: "code-review" })).toBe("skills/code-review");
+    expect(displayRef({ type: "memory", name: "claude-prefs" })).toBe("memories/claude-prefs");
+    expect(displayRef({ type: "memory", name: "claude-prefs.derived" })).toBe("memories/claude-prefs.derived");
+  });
+
+  test("bundleId equal to defaultBundleId → SHORT conceptId", () => {
+    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "core" }, "core")).toBe("knowledge/guide");
+  });
+
+  test("explicit conceptId wins over type/name derivation for the short form", () => {
+    expect(displayRef({ type: "knowledge", name: "guide.md", conceptId: "knowledge/guide" })).toBe("knowledge/guide");
+  });
+
+  test("slug-clean non-default bundle → fully-qualified bundle//conceptId", () => {
+    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "team-catalog" })).toBe(
+      "team-catalog//knowledge/guide",
+    );
+    expect(
+      displayRef({ type: "workflow", name: "release", conceptId: "workflows/release", bundleId: "team-catalog" }),
+    ).toBe("team-catalog//workflows/release");
+  });
+
+  test("registry origin not yet a legal bundle slug → legacy origin//type:name (F4c-deferred)", () => {
+    // github:/npm:/owner/repo carry ':' or '/', so they are not legal bundle
+    // slugs yet — the display stays byte-identical to today's qualified output.
+    expect(displayRef({ type: "agent", name: "helper", bundleId: "github:evil/pack" })).toBe(
+      "github:evil/pack//agent:helper",
+    );
+    expect(displayRef({ type: "script", name: "deploy.sh", bundleId: "npm:@scope/pkg" })).toBe(
+      "npm:@scope/pkg//script:deploy.sh",
+    );
   });
 });
