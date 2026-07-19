@@ -118,7 +118,7 @@ describe("F4c M1 — akm mv rewrites both grammars", () => {
       "utf8",
     );
 
-    const res = await runCliCapture(["mv", "memory:old-note", "new-note"]);
+    const res = await runCliCapture(["mv", "memories/old-note", "new-note"]);
     expect(res.code).toBe(0);
 
     const citer = fs.readFileSync(path.join(stashDir, "memories", "citer.md"), "utf8");
