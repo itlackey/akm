@@ -4,7 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stashDirFor } from "../core/asset/asset-placement";
+import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
+import type { BundleComponent } from "../core/adapter/types";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
@@ -45,7 +46,7 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../storage/repositories/index-connection";
 import {
-  deleteEntriesByDir,
+  deleteEntriesByDirExceptKeys,
   deleteEntriesByIds,
   deleteEntriesByStashDir,
   getEmbeddableEntryCount,
@@ -74,7 +75,7 @@ import {
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { deleteStoredGraph } from "./db/graph-db";
 import { withIndexWriterLease } from "./index-writer-lock";
-import { deriveInstallations } from "./installations";
+import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import {
   canUseIncrementalSkip,
   computeDirFingerprint,
@@ -83,7 +84,6 @@ import {
   inferZeroRowReason,
 } from "./passes/dir-staleness";
 import {
-  generateMetadataFlat,
   isEnrichmentComplete,
   isWorkflowSkipWarning,
   loadStashFile,
@@ -91,6 +91,7 @@ import {
   type StashFile,
   shouldIndexStashFile,
 } from "./passes/metadata";
+import { drainDirDocuments } from "./scan/drain-dir";
 import { buildSearchText } from "./search/search-fields";
 import type { SearchSource } from "./search/search-source";
 import {
@@ -100,6 +101,7 @@ import {
   writeSemanticStatus,
 } from "./search/semantic-status";
 import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
+import type { FileContext } from "./walk/file-context";
 import type { IndexRunContext, IndexVerification } from "./walk/index-context";
 import { walkStashFlat } from "./walk/walker";
 
@@ -698,6 +700,12 @@ type DirRecord = {
   skip: boolean;
   reason?: DirScanReason;
   persistedRowCount?: number;
+  /**
+   * F4a M-core-2: `doc.hash` keyed by recognized-file absolute path, produced by
+   * the per-dir document drain. Read by the persist layer to populate
+   * `content_hash`. Absent on skipped dirs (nothing drained).
+   */
+  hashByFile?: Map<string, string>;
 };
 
 type DirNeedingLlm = {
@@ -708,13 +716,31 @@ type DirNeedingLlm = {
 };
 
 /**
+ * Map each source root → its durable `BundleComponent` (`deriveInstallations`,
+ * batch-unique bundle ids, source order preserved). The per-dir document drain
+ * (F4a M-core-2) hands this component to `akmAdapter.recognize`. The component
+ * id only surfaces on `IndexDocument.ref`, which the persist layer re-derives
+ * independently — so a source missing from the map (never happens: the map is
+ * built from the same sources) is harmless.
+ */
+function buildComponentBySource(sources: SearchSource[]): Map<string, BundleComponent> {
+  const map = new Map<string, BundleComponent>();
+  const installations = deriveInstallations(sources);
+  sources.forEach((source, i) => {
+    const component = installations[i]?.components[0];
+    if (component) map.set(source.path, component);
+  });
+  return map;
+}
+
+/**
  * Phase 1 (async): walk every source directory and pre-generate all metadata
  * outside any transaction, producing the per-directory scan records that
  * {@link persistDirRecords} later writes.
  *
- * generateMetadataFlat is async (uses dynamic import for the matcher/renderer
- * registry), so it cannot run inside a db.transaction() callback — hence the
- * split into a pure-ish scan pass and a synchronous persist pass.
+ * The per-dir document drain (`drainDirDocuments` × `akmAdapter.recognize`, F4a
+ * M-core-2) is synchronous, but the walk still runs outside `db.transaction()`
+ * so the persist pass can be a single synchronous transaction.
  */
 async function scanSourceDirs(
   db: Database,
@@ -735,6 +761,7 @@ async function scanSourceDirs(
   let generatedCount = 0;
   const warnings: string[] = [];
   const seenPaths = new Set<string>();
+  const componentBySource = buildComponentBySource(allSourceEntries);
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
@@ -789,6 +816,7 @@ async function scanSourceDirs(
     currentStashDir: string,
     stateFiles: string[],
     stash: StashFile | null,
+    hashByFile: Map<string, string>,
   ): void => {
     const previousState = getDirIndexState(db, dirPath, stateFiles, builtAtMs);
     if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
@@ -816,6 +844,7 @@ async function scanSourceDirs(
       skip: false,
       reason,
       persistedRowCount: previousState.persistedRowCount,
+      hashByFile,
     });
     reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
   };
@@ -828,16 +857,27 @@ async function scanSourceDirs(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
 
-    const dirGroups = new Map<string, string[]>();
+    // Group by parent dir, keeping the FileContexts so the drain can hand each
+    // to `akmAdapter.recognize` (F4a M-core-2). The freshness gate still keys on
+    // the plain path list derived from these.
+    const dirGroups = new Map<string, FileContext[]>();
     for (const ctx of fileContexts) {
       const dir = ctx.parentDirAbs;
       const group = dirGroups.get(dir);
-      if (group) group.push(ctx.absPath);
-      else dirGroups.set(dir, [ctx.absPath]);
+      if (group) group.push(ctx);
+      else dirGroups.set(dir, [ctx]);
     }
 
-    for (const [dirPath, files] of dirGroups) {
-      const indexableFiles = files.filter((file) => shouldIndexStashFile(currentStashDir, file));
+    const component = componentBySource.get(currentStashDir) ?? {
+      id: currentStashDir,
+      adapter: "akm",
+      root: currentStashDir,
+      writable: false,
+    };
+
+    for (const [dirPath, ctxs] of dirGroups) {
+      const indexableCtxs = ctxs.filter((ctx) => shouldIndexStashFile(currentStashDir, ctx.absPath));
+      const indexableFiles = indexableCtxs.map((ctx) => ctx.absPath);
 
       if (markSeenOrSkipDuplicate(dirPath, currentStashDir, indexableFiles)) continue;
 
@@ -871,8 +911,16 @@ async function scanSourceDirs(
         continue;
       }
 
-      const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
-      if (generated.warnings?.length) warnings.push(...generated.warnings);
+      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via
+      // `akmAdapter.recognize` (broken workflows dropped-with-warning at the
+      // drain layer) and reconstruct the durable `StashEntry`s. `.stash.json`
+      // legacy overrides are still merged (item-4 decommission is deferred —
+      // §12.3 gate fixtures feed curated metadata exclusively via `.stash.json`).
+      const drained = drainDirDocuments(akmAdapter, component, indexableCtxs);
+      if (drained.warnings.length) warnings.push(...drained.warnings);
+      const generated: StashFile = drained.warnings.length
+        ? { entries: drained.entries, warnings: drained.warnings }
+        : { entries: drained.entries };
 
       const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
       const { stash, staleFiles } = buildIndexedDirCandidate(dirPath, indexableFiles, generated, legacyOverrides);
@@ -881,7 +929,7 @@ async function scanSourceDirs(
         generatedCount += generated.entries.length;
       }
 
-      recordFreshnessDecision(dirPath, currentStashDir, staleFiles, stash);
+      recordFreshnessDecision(dirPath, currentStashDir, staleFiles, stash, drained.hashByFile);
     }
   }
 
@@ -980,7 +1028,7 @@ function persistDirRecords(
       db.exec("DELETE FROM entries");
     }
 
-    for (const { dirPath, currentStashDir, files, stash, skip, reason } of dirRecords) {
+    for (const { dirPath, currentStashDir, files, stash, skip, reason, hashByFile } of dirRecords) {
       if (skip) {
         if (reason?.kind === "unchanged") {
           const fingerprint = computeDirFingerprint(dirPath, files);
@@ -994,8 +1042,12 @@ function persistDirRecords(
         continue;
       }
 
-      // Delete old entries for this dir (will be re-inserted)
-      deleteEntriesByDir(db, dirPath);
+      // Diff-persist (F4a M-core-2, spec §14.2): upsert the current file set
+      // FIRST (ON CONFLICT preserving `entries.id` so embeddings / utility /
+      // usage stay attached to unchanged rows), tracking every upserted
+      // `entry_key`, then prune only the DEPARTED rows below. Replaces the old
+      // `deleteEntriesByDir` truncate-and-reinsert (which discarded ids).
+      const keptEntryKeys = new Set<string>();
 
       let persistedRows = 0;
       let dedupedRows = 0;
@@ -1018,30 +1070,21 @@ function persistDirRecords(
           indexedAssetIdentities.add(identityKey);
 
           const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+          keptEntryKeys.add(entryKey);
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
+          // content_hash = doc.hash from the drain, keyed by the recognized
+          // file's path (stable across the `.stash.json` merge). NULL preserves
+          // any existing hash (upsert COALESCE) for `.stash.json`-only entries.
+          const contentHash = hashByFile?.get(entryPath);
 
-          // Chunk-5 Step 2 (spec §14.4): derive the durable bundle identity.
-          // conceptId == the QUALIFIED `<stash-subdir>/<canonical-name>`
-          // spelling (ref-grammar decision D-R2) and item_ref ==
-          // `<bundle>//<conceptId>` — the exact spelling `scanComponent` emits
-          // as `IndexDocument.ref` (proven by the shadow-scan parity gate). A
-          // foreign type with no placement stash-subdir keeps the bare name
-          // (transitional legacy-merge edge; dies with the F4 flip). NULL
-          // provenance when the source root has no bundle mapping (e.g.
-          // write-back paths) — healed on next index.
+          // Chunk-5 Step 2 (spec §14.4): derive the durable bundle identity
+          // (the D-R2 qualified conceptId + `<bundle>//<conceptId>` item_ref) via
+          // the shared helper that the write-path fast path also uses. NULL
+          // provenance when the source root has no bundle mapping (e.g. write-back
+          // paths) — healed on next index.
           const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
-          const typeStashDir = stashDirFor(entry.type);
-          const conceptId = typeStashDir !== undefined ? `${typeStashDir}/${entry.name}` : entry.name;
-          const provenance = bundle
-            ? {
-                itemRef: `${bundle.bundleId}//${conceptId}`,
-                bundleId: bundle.bundleId,
-                componentId: bundle.componentId,
-                conceptId,
-                adapterId: bundle.adapterId,
-              }
-            : undefined;
+          const provenance = bundle ? deriveEntryProvenance(bundle, entry.type, entry.name) : undefined;
 
           const entryId = upsertEntry(
             db,
@@ -1052,6 +1095,7 @@ function persistDirRecords(
             entryWithSize,
             searchText,
             provenance,
+            contentHash,
           );
           persistedRows++;
 
@@ -1070,6 +1114,12 @@ function persistDirRecords(
           dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
         }
       }
+
+      // Prune the departed rows: everything under this dir NOT re-upserted above
+      // (files deleted, deduped away, or filtered by shouldIndexStashFile). With
+      // an empty kept-set this deletes every row for the dir — the exact net
+      // effect of the old unconditional `deleteEntriesByDir`, minus the id churn.
+      deleteEntriesByDirExceptKeys(db, dirPath, keptEntryKeys);
 
       const fingerprint = computeDirFingerprint(dirPath, files);
       const persistedReason =

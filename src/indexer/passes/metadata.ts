@@ -1339,7 +1339,7 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
   return warnings.length > 0 ? { entries, warnings } : { entries };
 }
 
-function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
+export function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   // Workflow errors are already multi-line `path:line — message` blocks; print
   // them as-is so the author sees a flat list without a redundant prefix.

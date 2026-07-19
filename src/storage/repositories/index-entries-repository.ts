@@ -48,6 +48,7 @@ export function upsertEntry(
   entry: StashEntry,
   searchText: string,
   provenance?: EntryProvenance,
+  contentHash?: string,
 ): number {
   // Hot path during indexing — cache the two prepared statements per
   // database connection so we don't pay the SQL parse/compile cost on
@@ -63,8 +64,9 @@ export function upsertEntry(
   // columns alongside the legacy ones. `type` mirrors `entry_type` (the open
   // token) unconditionally; `item_ref`/bundle/component/concept/adapter come
   // from the write-boundary derivation when available (NULL otherwise, healed
-  // by the next full index). `content_hash`/`document_json` stay NULL until the
-  // Step-3 writer swap that owns diff-persistence populates them.
+  // by the next full index). `content_hash` (F4a M-core-2) is `doc.hash` from
+  // the diff-persist writer; a NULL passed here PRESERVES any existing hash (the
+  // ON CONFLICT COALESCE below) so the LLM-enrichment re-upsert cannot wipe it.
   const result = stmts.upsert.get(
     entryKey,
     dirPath,
@@ -80,6 +82,7 @@ export function upsertEntry(
     provenance?.conceptId ?? null,
     provenance?.adapterId ?? null,
     entry.type,
+    contentHash ?? null,
   ) as { id: number } | undefined;
   if (!result) throw new Error("upsertEntry: entry_key not found after upsert");
 
@@ -107,9 +110,9 @@ function getUpsertStmts(db: Database): UpsertStmts {
     upsert: db.prepare(`
       INSERT INTO entries (
         entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from,
-        item_ref, bundle_id, component_id, concept_id, adapter_id, type
+        item_ref, bundle_id, component_id, concept_id, adapter_id, type, content_hash
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(entry_key) DO UPDATE SET
         dir_path = excluded.dir_path,
         file_path = excluded.file_path,
@@ -123,7 +126,8 @@ function getUpsertStmts(db: Database): UpsertStmts {
         component_id = excluded.component_id,
         concept_id = excluded.concept_id,
         adapter_id = excluded.adapter_id,
-        type = excluded.type
+        type = excluded.type,
+        content_hash = COALESCE(excluded.content_hash, content_hash)
       RETURNING id
     `),
     markDirty: db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)"),
@@ -432,6 +436,42 @@ export function deleteEntriesByDir(db: Database, dirPath: string): void {
  */
 export function deleteEntriesByStashDir(db: Database, stashDir: string): void {
   deleteEntriesWhere(db, "stash_dir", stashDir);
+}
+
+/**
+ * Diff-persist orphan delete (Chunk-5 flip F4a M-core-2): remove every entry
+ * (and its child rows, via {@link deleteRelatedRows}) under `dirPath` whose
+ * `entry_key` is NOT in `keepKeys` — the rows for files that vanished from a
+ * rescanned directory.
+ *
+ * Replaces the old per-dir `deleteEntriesByDir` + full re-insert: the caller
+ * upserts the current file set FIRST (ON CONFLICT preserving `entries.id`, so
+ * embeddings / utility / usage stay attached to unchanged rows), then calls this
+ * to prune only the DEPARTED rows. The net row-state of `dir_path` is identical
+ * to delete-then-reinsert; the win is that unchanged rows keep their id.
+ *
+ * Keyed on `entry_key` rather than `item_ref`: the diff must be exact regardless
+ * of whether a row's `item_ref` is populated (legacy rows and NULL-provenance
+ * write-back rows exist), and `entry_key` is never NULL and mirrors the upsert
+ * conflict target precisely. Dir-scoped (not stash-dir-scoped) so it is safe
+ * under the per-dir incremental freshness gate — untouched (skipped) sibling
+ * directories are never in scope.
+ */
+export function deleteEntriesByDirExceptKeys(db: Database, dirPath: string, keepKeys: ReadonlySet<string>): void {
+  db.transaction(() => {
+    const rows = db.prepare("SELECT id, entry_key FROM entries WHERE dir_path = ?").all(dirPath) as Array<{
+      id: number;
+      entry_key: string;
+    }>;
+    const doomed = rows.filter((r) => !keepKeys.has(r.entry_key));
+    if (doomed.length === 0) return;
+    deleteRelatedRows(db, doomed);
+    for (let i = 0; i < doomed.length; i += SQLITE_CHUNK_SIZE) {
+      const chunk = doomed.slice(i, i + SQLITE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      db.prepare(`DELETE FROM entries WHERE id IN (${placeholders})`).run(...chunk.map((r) => r.id));
+    }
+  })();
 }
 
 function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {

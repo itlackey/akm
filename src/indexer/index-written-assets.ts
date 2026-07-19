@@ -23,6 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
 import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
@@ -36,8 +37,11 @@ import {
 import { rebuildFts } from "../storage/repositories/index-fts-repository";
 import { takeWorkflowDocument } from "../workflows/runtime/document-cache";
 import { withIndexWriterLease } from "./index-writer-lock";
-import { generateMetadataFlat } from "./passes/metadata";
+import { deriveEntryProvenance, deriveInstallations } from "./installations";
+import type { StashEntry } from "./passes/metadata";
+import { drainDirDocuments } from "./scan/drain-dir";
 import { buildSearchText } from "./search/search-fields";
+import { buildFileContext } from "./walk/file-context";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. A real write — unlike the
@@ -86,23 +90,30 @@ export async function indexWrittenAssets(
       if (files.length === 0) return true;
 
       // Generate metadata BEFORE opening the DB so the write window stays
-      // short. One call per file keeps the entry↔path pairing exact.
-      const pairs: Array<{
-        file: string;
-        entry: Awaited<ReturnType<typeof generateMetadataFlat>>["entries"][number];
-      }> = [];
+      // short. One drain call per file keeps the entry↔path pairing exact and
+      // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
+      // workflows drop, valid workflow docs are cached for the side-table upsert.
+      const component = deriveInstallations([{ path: stashDir, writable: true }])[0]?.components[0] ?? {
+        id: stashDir,
+        adapter: "akm",
+        root: stashDir,
+        writable: true,
+      };
+      const pairs: Array<{ file: string; entry: StashEntry; contentHash?: string }> = [];
       const unindexable = new Set<string>();
       for (const file of files) {
         if (!fs.existsSync(file)) {
           unindexable.add(file);
           continue;
         }
-        const generated = await generateMetadataFlat(stashDir, [file]);
-        const entry = generated.entries[0];
+        const ctx = buildFileContext(stashDir, file);
+        const drained = drainDirDocuments(akmAdapter, component, [ctx]);
+        const entry = drained.entries[0];
         // Workflows also carry a workflow_documents side-table upsert — handled
         // below, mirroring the full walk — since `akm mv` rewrites citer files
-        // that can be workflows.
-        if (entry) pairs.push({ file, entry });
+        // that can be workflows. A broken workflow drains to zero entries (like
+        // the old skip-with-warning) and is treated as unindexable.
+        if (entry) pairs.push({ file, entry, contentHash: drained.hashByFile.get(ctx.absPath) });
         else unindexable.add(file);
       }
 
@@ -117,7 +128,7 @@ export async function indexWrittenAssets(
             rows.map((row) => row.id),
           );
         }
-        for (const { file, entry } of pairs) {
+        for (const { file, entry, contentHash } of pairs) {
           const entryKey = `${stashDir}:${entry.type}:${entry.name}`;
           let entryWithSize = entry;
           try {
@@ -125,6 +136,14 @@ export async function indexWrittenAssets(
           } catch {
             // stat raced a delete — index without the size, like the full walk does.
           }
+          // Real provenance (F4a M-core-2 item 5): populate item_ref/content_hash
+          // via the SAME derivation the full-index writer uses, so a write-path
+          // row is never a NULL-item_ref straggler.
+          const provenance = deriveEntryProvenance(
+            { bundleId: component.id, componentId: component.id, adapterId: component.adapter },
+            entry.type,
+            entry.name,
+          );
           const entryId = upsertEntry(
             db,
             entryKey,
@@ -133,6 +152,8 @@ export async function indexWrittenAssets(
             stashDir,
             entryWithSize,
             buildSearchText(entry),
+            provenance,
+            contentHash,
           );
           if (entry.type === "workflow") {
             // Same contract as the full walk (indexer.ts): the renderer cached
