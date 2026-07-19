@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { daysToMs } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -72,8 +72,11 @@ function readAssetSalienceForImproveRef(
   ref: string,
   sourceName?: string,
   includeLegacyBare = false,
+  itemRef?: string,
 ): ReturnType<typeof getAssetSalience> {
-  for (const key of improveStateReadRefs(ref, sourceName, includeLegacyBare)) {
+  // Chunk-5 flip F5e — probe [itemRef, durable, bare] so a row written under
+  // EITHER grammar is found during the transition window (source-identity.ts).
+  for (const key of improveStateReadRefs(ref, sourceName, includeLegacyBare, itemRef)) {
     const row = getAssetSalience(db, key);
     if (row) return row;
   }
@@ -85,8 +88,53 @@ function readConsecutiveNoOpsForImproveRef(
   ref: string,
   sourceName?: string,
   includeLegacyBare = false,
+  itemRef?: string,
 ): number {
-  return readAssetSalienceForImproveRef(db, ref, sourceName, includeLegacyBare)?.consecutive_no_ops ?? 0;
+  return readAssetSalienceForImproveRef(db, ref, sourceName, includeLegacyBare, itemRef)?.consecutive_no_ops ?? 0;
+}
+
+// ── Chunk-5 flip F5e — durable-state write keys ──────────────────────────────
+//
+// The durable improve-state writers key by the resolved index entry's
+// `item_ref` (`<bundle>//<conceptId>`, D-R3) WHEN the planner resolved one
+// (`ImproveEligibleRef.itemRef`), and fall back to each writer's PRE-FLIP
+// spelling for a NULL-provenance (pre-flip / write-back) ref:
+//   - salience (`asset_salience`)  → the SOURCE-QUALIFIED `durableImproveRef`
+//     (`<source>//<type>:<name>`), matching the pre-flip upsert.
+//   - outcome  (`asset_outcome`)   → the BARE `type:name`, matching the pre-flip
+//     `updateAssetOutcome({ ref: r.ref })` call.
+// itemRefByRef is `bare-ref → item_ref | undefined`, built once per pass from
+// the candidate set. // Chunk-8: collapse both to the item_ref after the
+// one-time state.db re-key.
+
+/** `bare-ref → item_ref | undefined` for a run's candidate set. */
+function buildItemRefByRef(refs: ImproveEligibleRef[]): Map<string, string | undefined> {
+  const m = new Map<string, string | undefined>();
+  for (const r of refs) m.set(r.ref, r.itemRef);
+  return m;
+}
+
+/** Durable `asset_salience` write key: item_ref, else the source-qualified `type:name`. */
+function salienceWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>, sourceName?: string): string {
+  return itemRefByRef.get(ref) ?? durableImproveRef(ref, sourceName);
+}
+
+/** Durable `asset_outcome` write key: item_ref, else the bare `type:name` (pre-flip outcome spelling). */
+function outcomeWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>): string {
+  return itemRefByRef.get(ref) ?? ref;
+}
+
+/**
+ * Recover the legacy asset type from a ref in EITHER grammar (Chunk-5 flip F5e):
+ * the `type:` prefix of a bare/source-qualified `type:name`, or the D-R2
+ * stash-subdir of a `[bundle//]conceptId`. "" when neither applies (a foreign
+ * bare-name conceptId). Byte-identical to the prior `ref.slice(0, indexOf(":"))`
+ * guard for the bare `type:name` refs the salience vector actually iterates.
+ */
+function legacyTypeOf(ref: string): string {
+  const tail = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
+  if (tail.includes(":")) return tail.slice(0, tail.indexOf(":"));
+  return conceptIdToLegacy(tail)?.type ?? "";
 }
 
 // ── improve preparation stage ───────────────────────
@@ -1691,10 +1739,11 @@ function selectHighSalienceLane(args: {
             r.ref,
             options.sourceName,
             options.legacyBareState,
+            r.itemRef,
           );
           if (
             row &&
-            isContentEncodingRow(row, parseAssetRef(r.ref).type) &&
+            isContentEncodingRow(row, legacyTypeOf(r.ref)) &&
             row.encoding_salience >= salienceThreshold &&
             !lastReflectProposalTs.has(r.ref)
           ) {
@@ -1763,6 +1812,9 @@ function scoreSalience(args: {
     highSalienceRefs,
   } = args;
   const mergedRefs = args.mergedRefs;
+  // Chunk-5 flip F5e — resolve each candidate's durable item_ref ONCE for this
+  // pass (the write/read key source for the outcome + salience state writers).
+  const itemRefByRef = buildItemRefByRef(mergedRefs);
 
   // WS-1 — Unified salience vector (S1 seam).
   //
@@ -1805,6 +1857,7 @@ function scoreSalience(args: {
 
   const outcomeSalienceByRef = updateOutcomeScores({
     mergedRefs,
+    itemRefByRef,
     feedbackSummary,
     retrievalCounts,
     lastUseMsByRef,
@@ -1815,6 +1868,7 @@ function scoreSalience(args: {
 
   const { salienceMap, nowForSalience } = computeSalienceVectors({
     mergedRefs,
+    itemRefByRef,
     options,
     eventsCtx,
     retrievalCounts,
@@ -1825,6 +1879,7 @@ function scoreSalience(args: {
 
   const pendingForgettingRefs = persistSalienceAndReportRanks({
     salienceMap,
+    itemRefByRef,
     utilityMap,
     feedbackSummary,
     options,
@@ -1848,6 +1903,7 @@ function scoreSalience(args: {
 /** WS-2 — update asset_outcome for the merged set; returns outcomeSalience by ref. */
 function updateOutcomeScores(args: {
   mergedRefs: ImproveEligibleRef[];
+  itemRefByRef: Map<string, string | undefined>;
   feedbackSummary: Map<string, { hasSignal: boolean; positive: number; negative: number }>;
   retrievalCounts: Map<string, number>;
   lastUseMsByRef: Map<string, number>;
@@ -1855,7 +1911,8 @@ function updateOutcomeScores(args: {
   primaryStashDir?: string;
   eventsCtx?: EventsContext;
 }): Map<string, number> {
-  const { mergedRefs, feedbackSummary, retrievalCounts, lastUseMsByRef, utilityMap, primaryStashDir, eventsCtx } = args;
+  const { mergedRefs, itemRefByRef, feedbackSummary, retrievalCounts, lastUseMsByRef, utilityMap, primaryStashDir, eventsCtx } =
+    args;
   // ── WS-2 Outcome loop ─────────────────────────────────────────────────────
   //
   // Update asset_outcome for every ref in the merged set BEFORE computing the
@@ -1898,7 +1955,10 @@ function updateOutcomeScores(args: {
           const valenceResult = computeValenceScore(fb);
           try {
             const result = updateAssetOutcome(outcomeDb, {
-              ref: r.ref,
+              // Chunk-5 flip F5e — key by item_ref when resolved, else the bare
+              // pre-flip outcome spelling. rawOutcomeScores stays keyed by the
+              // bare `r.ref` (its in-memory identity for the salience vector).
+              ref: outcomeWriteKey(r.ref, itemRefByRef),
               currentRetrievalCount: retrievalCounts.get(r.ref) ?? 0,
               lastRetrievedAt: lastUseMsByRef.get(r.ref) ?? 0,
               acceptedChangeCount: acceptedCountByRef.get(r.ref) ?? 0,
@@ -1971,11 +2031,17 @@ function updateOutcomeScores(args: {
 
         // Also fetch outcome scores for refs NOT updated this run (stale or absent)
         // so the outcomeSalience read path works for all refs in the batch.
+        // Chunk-5 flip F5e — query by each missing ref's WRITE key (item_ref,
+        // else bare) and map the stored-key result back to the bare `r.ref`
+        // identity that outcomeSalienceByRef is keyed on.
         const missingRefs = mergedRefs.map((r) => r.ref).filter((ref) => !rawOutcomeScores.has(ref));
         if (missingRefs.length > 0) {
-          const storedScores = getOutcomeScoresByRef(outcomeDb, missingRefs);
-          for (const [ref, score] of storedScores) {
-            outcomeSalienceByRef.set(ref, outcomeScoreToSalience(score, maxOutcomeScore));
+          const refByWriteKey = new Map<string, string>();
+          for (const ref of missingRefs) refByWriteKey.set(outcomeWriteKey(ref, itemRefByRef), ref);
+          const storedScores = getOutcomeScoresByRef(outcomeDb, [...refByWriteKey.keys()]);
+          for (const [writeKey, score] of storedScores) {
+            const bareRef = refByWriteKey.get(writeKey) ?? writeKey;
+            outcomeSalienceByRef.set(bareRef, outcomeScoreToSalience(score, maxOutcomeScore));
           }
         }
       },
@@ -1991,6 +2057,7 @@ function updateOutcomeScores(args: {
 /** WS-1 — compute the salience vector per ref (#644 provenance preserved). */
 function computeSalienceVectors(args: {
   mergedRefs: ImproveEligibleRef[];
+  itemRefByRef: Map<string, string | undefined>;
   options: AkmImproveOptions;
   eventsCtx?: EventsContext;
   retrievalCounts: Map<string, number>;
@@ -1998,7 +2065,8 @@ function computeSalienceVectors(args: {
   utilityMap: Map<string, number>;
   outcomeSalienceByRef: Map<string, number>;
 }): { salienceMap: Map<string, ReturnType<typeof computeSalience>>; nowForSalience: number } {
-  const { mergedRefs, options, eventsCtx, retrievalCounts, lastUseMsByRef, utilityMap, outcomeSalienceByRef } = args;
+  const { mergedRefs, itemRefByRef, options, eventsCtx, retrievalCounts, lastUseMsByRef, utilityMap, outcomeSalienceByRef } =
+    args;
   // Compute the salience vector for every ref in the merged set.
   // retrievalCounts now covers the full candidate set (feedback-bearing + zero-feedback)
   // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
@@ -2026,12 +2094,13 @@ function computeSalienceVectors(args: {
     withStateDb(
       (dbForStoredEncoding) => {
         for (const r of mergedRefs) {
-          const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
+          const type = legacyTypeOf(r.ref);
           const row = readAssetSalienceForImproveRef(
             dbForStoredEncoding,
             r.ref,
             options.sourceName,
             options.legacyBareState,
+            itemRefByRef.get(r.ref),
           );
           if (row && isContentEncodingRow(row, type)) {
             storedEncodingByRef.set(r.ref, row.encoding_salience);
@@ -2046,7 +2115,7 @@ function computeSalienceVectors(args: {
   }
 
   for (const r of mergedRefs) {
-    const type = r.ref.includes(":") ? r.ref.slice(0, r.ref.indexOf(":")) : "";
+    const type = legacyTypeOf(r.ref);
     const sizeBytes = (() => {
       const fp = r.filePath;
       if (!fp) return undefined;
@@ -2079,13 +2148,34 @@ function computeSalienceVectors(args: {
 /** Persist salience vectors + the WS-1 step-7 rank-change/forgetting report. */
 function persistSalienceAndReportRanks(args: {
   salienceMap: Map<string, ReturnType<typeof computeSalience>>;
+  itemRefByRef: Map<string, string | undefined>;
   utilityMap: Map<string, number>;
   feedbackSummary: Map<string, { hasSignal: boolean; positive: number; negative: number }>;
   options: AkmImproveOptions;
   eventsCtx?: EventsContext;
   nowForSalience: number;
 }): string[] {
-  const { salienceMap, utilityMap, feedbackSummary, options, eventsCtx, nowForSalience } = args;
+  const { salienceMap, itemRefByRef, utilityMap, feedbackSummary, options, eventsCtx, nowForSalience } = args;
+  // Chunk-5 flip F5e — the WRITE-key space. salienceMap stays keyed by each
+  // candidate's own bare `r.ref`; the state.db boundary keys by the durable
+  // salience write key (item_ref, else source-qualified `type:name`). `wk`
+  // maps a bare pool ref to that key; `normalizeStoredKey` folds every stored
+  // spelling of an in-pool asset ([item_ref, durable, bare]) onto the same key
+  // so a seeded-legacy row and a fresh item_ref write for one asset can never
+  // double-count in the stash-wide rank report.
+  const wk = (ref: string): string => salienceWriteKey(ref, itemRefByRef, options.sourceName);
+  const normalizeStoredKey = new Map<string, string>();
+  // Reverse: a pool asset's WRITE key → its filesystem-facing bare `r.ref`, so a
+  // forgetting candidate the stash-wide report names in the write-key space is
+  // re-stamped onto the SAME pool ref (not duplicated) by applyForgettingSafety.
+  const refByWriteKey = new Map<string, string>();
+  for (const [ref, itemRef] of itemRefByRef) {
+    const writeKey = wk(ref);
+    refByWriteKey.set(writeKey, ref);
+    for (const spelling of improveStateReadRefs(ref, options.sourceName, true, itemRef)) {
+      normalizeStoredKey.set(spelling, writeKey);
+    }
+  }
   // Persist salience vectors to state.db (best-effort, non-blocking).
   // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
   //
@@ -2139,17 +2229,21 @@ function persistSalienceAndReportRanks(args: {
         // Step 7: stash-wide rank-change report BEFORE overwriting the table.
         //
         // Load ALL existing rows so rank positions are stash-relative, not pool-relative.
+        // Chunk-5 flip F5e — source-scope by PREFIX (`<bundle|source>//…`, works
+        // for BOTH grammars — no `parseAssetRef` throw on an item_ref row) and
+        // fold each in-pool asset's stored spelling onto its single write key so
+        // the merge below never double-counts one asset across two spellings.
         const allStoredScores = getAllRankScores(stateDb);
-        const existingAllScores = options.sourceName
-          ? new Map(
-              [...allStoredScores].flatMap(([ref, score]) => {
-                const parsed = parseAssetRef(ref);
-                return parsed.origin === options.sourceName || (options.legacyBareState && !parsed.origin)
-                  ? [[bareImproveRef(ref), score] as const]
-                  : [];
-              }),
-            )
-          : allStoredScores;
+        const existingAllScores = new Map<string, number>();
+        for (const [ref, score] of allStoredScores) {
+          if (options.sourceName) {
+            const boundary = ref.indexOf("//");
+            const prefix = boundary >= 0 ? ref.slice(0, boundary) : undefined;
+            const belongs = prefix === options.sourceName || (options.legacyBareState && prefix === undefined);
+            if (!belongs) continue;
+          }
+          existingAllScores.set(normalizeStoredKey.get(ref) ?? ref, score);
+        }
 
         if (existingAllScores.size === 0) {
           // Scenario A: first WS-1 run — table empty.
@@ -2218,7 +2312,9 @@ function persistSalienceAndReportRanks(args: {
           // picture of what the new ordering looks like after this run.
           const mergedNewScores = new Map<string, number>(existingAllScores);
           for (const [ref, vector] of salienceMap) {
-            mergedNewScores.set(ref, vector.rankScore);
+            // Chunk-5 flip F5e — key this run's fresh scores by the WRITE key so
+            // they overwrite (never duplicate) the same asset's normalized stored row.
+            mergedNewScores.set(wk(ref), vector.rankScore);
           }
 
           // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
@@ -2244,7 +2340,11 @@ function persistSalienceAndReportRanks(args: {
             // Collect refs for protective consolidation pass (plan §WS-1 step 7).
             // These are force-included in the candidate pool (mergedRefs) after
             // this try block, bypassing cooldown/signal-delta gating.
-            pendingForgettingRefs = report.forgettingCandidates.map((e) => e.ref);
+            // Chunk-5 flip F5e — map an in-pool candidate's write-key spelling
+            // back to its bare `r.ref` so applyForgettingSafety re-stamps the
+            // existing pool ref; a genuinely stash-wide (out-of-pool) candidate
+            // keeps its stored spelling and is synthesised as a fresh stub.
+            pendingForgettingRefs = report.forgettingCandidates.map((e) => refByWriteKey.get(e.ref) ?? e.ref);
           }
           appendEvent(
             {
@@ -2266,7 +2366,9 @@ function persistSalienceAndReportRanks(args: {
         }
 
         for (const [ref, vector] of salienceMap) {
-          upsertAssetSalience(stateDb, durableImproveRef(ref, options.sourceName), vector, nowForSalience);
+          // Chunk-5 flip F5e — persist salience under the durable WRITE key
+          // (item_ref when resolved, else source-qualified `type:name`).
+          upsertAssetSalience(stateDb, wk(ref), vector, nowForSalience);
         }
       },
       { path: eventsCtx?.dbPath },
@@ -2408,7 +2510,7 @@ async function filterEligibility(args: {
         for (const r of mergedRefs) {
           noOpMap.set(
             r.ref,
-            readConsecutiveNoOpsForImproveRef(noOpDb, r.ref, options.sourceName, options.legacyBareState),
+            readConsecutiveNoOpsForImproveRef(noOpDb, r.ref, options.sourceName, options.legacyBareState, r.itemRef),
           );
         }
       } finally {
@@ -2568,15 +2670,27 @@ function applyReplaySelection(args: {
         (replayDb) => {
           const alreadyInPool = new Set(mergedRefs.map((r) => r.ref));
           const storedRankScores = getAllRankScores(replayDb);
+          // Chunk-5 flip F5e — plan reverse map so a stored item_ref row re-keys
+          // back onto its filesystem-facing bare ref (the replay stub must match
+          // a planned entry for its filePath / disk check).
+          const itemRefByPlanned = buildItemRefByRef(plannedRefs);
+          const bareRefByItemRef = new Map<string, string>();
+          for (const [bareRef, itemRef] of itemRefByPlanned) if (itemRef) bareRefByItemRef.set(itemRef, bareRef);
           const allRankScores = options.sourceName
-            ? new Map(
-                [...storedRankScores].flatMap(([ref, score]) => {
-                  const parsed = parseAssetRef(ref);
-                  return parsed.origin === options.sourceName || (options.legacyBareState && !parsed.origin)
-                    ? [[bareImproveRef(ref), score] as const]
-                    : [];
-                }),
-              )
+            ? (() => {
+                // Source-scope by PREFIX (both grammars — no `parseAssetRef` throw
+                // on an item_ref row), then re-key onto the bare ref: item_ref rows
+                // via the planned reverse map, legacy rows inline via bareImproveRef.
+                const m = new Map<string, number>();
+                for (const [ref, score] of storedRankScores) {
+                  const boundary = ref.indexOf("//");
+                  const prefix = boundary >= 0 ? ref.slice(0, boundary) : undefined;
+                  const belongs = prefix === options.sourceName || (options.legacyBareState && prefix === undefined);
+                  if (!belongs) continue;
+                  m.set(bareRefByItemRef.get(ref) ?? bareImproveRef(ref), score);
+                }
+                return m;
+              })()
             : storedRankScores;
           // Candidate universe = every salience row NOT already in the pool, ordered by
           // rank_score desc with a deterministic ref-string tie-break (mirrors the main
@@ -2586,7 +2700,13 @@ function applyReplaySelection(args: {
           const candidates: Array<{ ref: string; rankScore: number }> = [];
           for (const [ref, rankScore] of allRankScores) {
             if (alreadyInPool.has(ref)) continue;
-            const noOps = readConsecutiveNoOpsForImproveRef(replayDb, ref, options.sourceName, options.legacyBareState);
+            const noOps = readConsecutiveNoOpsForImproveRef(
+              replayDb,
+              ref,
+              options.sourceName,
+              options.legacyBareState,
+              itemRefByPlanned.get(ref),
+            );
             if (noOps >= SALIENCE_NO_OP_DAMPEN_THRESHOLD) {
               convergedSkipped++;
               continue;

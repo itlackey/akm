@@ -386,15 +386,20 @@ async function runLoopReflectPass(
       // A no_change reflect means the LLM was invoked but found nothing to
       // improve — the asset is stable. Track it. A successful reflect means
       // the asset changed; reset the counter so the dampener lifts.
+      // Chunk-5 flip F5e — key the plasticity counter by the SAME durable
+      // salience write key the preparation/distill salience writers use:
+      // item_ref when the planner resolved one, else the source-qualified
+      // `type:name`. A split key would strand consecutive_no_ops on a second row.
+      const plasticityKey = planned.itemRef ?? durableImproveRef(planned.ref, options.sourceName);
       if (isNoChange && eventsCtx?.db) {
         try {
-          recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+          recordNoOp(eventsCtx.db, plasticityKey);
         } catch {
           // best-effort: plasticity counter failure never blocks the run
         }
       } else if (reflectResult.ok && eventsCtx?.db) {
         try {
-          resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+          resetConsecutiveNoOps(eventsCtx.db, plasticityKey);
         } catch {
           // best-effort
         }
@@ -571,6 +576,9 @@ async function invokeDistillAndRecord(
     () =>
       distillFn({
         ref: planned.ref,
+        // Chunk-5 flip F5e — the resolved item_ref so distill keys its salience
+        // write by it (matching preparation), when the planner supplied one.
+        ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
         ...(options.sourceName ? { sourceName: options.sourceName } : {}),
         ...(options.legacyBareState ? { legacyBareState: true } : {}),
         ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
@@ -600,11 +608,14 @@ async function invokeDistillAndRecord(
   // quality gate — the asset is not yielding useful distill output.
   // queued: a proposal was produced; reset the no-op counter.
   if (eventsCtx?.db) {
+    // Chunk-5 flip F5e — same durable salience write key as the distill/
+    // preparation salience writers (item_ref, else source-qualified type:name).
+    const plasticityKey = planned.itemRef ?? durableImproveRef(planned.ref, options.sourceName);
     try {
       if (distillResult.outcome === "quality_rejected" || distillResult.outcome === "skipped") {
-        recordNoOp(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+        recordNoOp(eventsCtx.db, plasticityKey);
       } else if (distillResult.outcome === "queued") {
-        resetConsecutiveNoOps(eventsCtx.db, durableImproveRef(planned.ref, options.sourceName));
+        resetConsecutiveNoOps(eventsCtx.db, plasticityKey);
       }
     } catch {
       // best-effort: plasticity counter failure never blocks the run

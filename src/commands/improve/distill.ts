@@ -245,6 +245,15 @@ export interface AkmDistillOptions {
   sourceName?: string;
   /** Read pre-source-qualification feedback only for the historical local stash. */
   legacyBareState?: boolean;
+  /**
+   * Chunk-5 flip F5e — the input asset's durable `item_ref`
+   * (`<bundle>//<conceptId>`), resolved from the index entry at planning time
+   * (`ImproveEligibleRef.itemRef`). When present, distill keys its
+   * `asset_salience` write by it — matching the preparation-stage salience
+   * writer — instead of the pre-flip source-qualified `type:name`. Unset for a
+   * NULL-provenance ref or a direct `akm distill` invocation.
+   */
+  itemRef?: string;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
@@ -617,6 +626,12 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
 async function loadAndScoreInputSalience(args: {
   inputRef: string;
   durableInputRef: string;
+  /**
+   * Chunk-5 flip F5e — the durable `asset_salience` WRITE key for the input
+   * asset: its `item_ref` when resolved, else `durableInputRef` (the pre-flip
+   * source-qualified `type:name`). Matches the preparation-stage salience writer.
+   */
+  salienceWriteKey: string;
   stash: string;
   config: AkmConfig;
   outcomeWeightEnabled: boolean;
@@ -632,7 +647,7 @@ async function loadAndScoreInputSalience(args: {
    */
   ctx: RunContext;
 }): Promise<{ assetContent: string | null; existingRefVocabulary: Set<string> }> {
-  const { inputRef, durableInputRef, stash, config, outcomeWeightEnabled, lookup, ctx } = args;
+  const { inputRef, durableInputRef, salienceWriteKey, stash, config, outcomeWeightEnabled, lookup, ctx } = args;
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
   let assetContent: string | null = null;
@@ -707,7 +722,7 @@ async function loadAndScoreInputSalience(args: {
             encodingSalience: salienceResult.score,
             outcomeWeightEnabled,
           });
-          upsertAssetSalience(stateDb, durableInputRef, vector);
+          upsertAssetSalience(stateDb, salienceWriteKey, vector);
         });
       } catch {
         // State DB unavailable — frontmatter mirror is the only persistence.
@@ -777,6 +792,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // Validate the ref shape up front so a typo never reaches the LLM.
   const parsedInputRef = parseRefInput(inputRef);
   const durableInputRef = durableImproveRef(inputRef, options.sourceName);
+  // Chunk-5 flip F5e — the input asset's durable salience write key: item_ref
+  // when the planner resolved one, else the pre-flip source-qualified spelling.
+  const salienceWriteKey = options.itemRef ?? durableInputRef;
   const targetKind = options.proposalKind ?? "lesson";
 
   // Attribution tagging: spread into every distill_invoked event's metadata so
@@ -841,6 +859,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const { assetContent, existingRefVocabulary } = await loadAndScoreInputSalience({
     inputRef,
     durableInputRef,
+    salienceWriteKey,
     stash,
     config,
     outcomeWeightEnabled,
