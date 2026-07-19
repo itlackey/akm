@@ -215,18 +215,26 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   if (match === null) return null;
 
   // canonical name = the winning type's per-type canonical name (§5.1:
-  // reproduce AssetSpec.toCanonicalName). Fall back to the raw path minus its
-  // extension only if the type's toCanonicalName abstains (e.g. a SKILL.md
-  // sitting directly at the skills/ root with no name dir).
+  // reproduce AssetSpec.toCanonicalName). Fall back to the BASENAME minus its
+  // extension only if the type's toCanonicalName abstains (e.g. a `skills/x.md`
+  // flat file, or a `SKILL.md` sitting directly at the skills/ root with no name
+  // dir). The basename fallback is byte-identical to the pre-0.9.0 flat-walk's
+  // `?? baseName` fallback (metadata.ts `generateMetadata`), so `entry.name`
+  // stays the BARE canonical name — never the stash-root-relative path, which
+  // would re-embed the `<stash-subdir>/` type prefix and double-prefix every
+  // downstream `makeAssetRef(type, entry.name)` ref (e.g. `skill:skills/x`).
   const derived = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
-  const canonicalName = derived ?? file.relPath.replace(/\.[^./]+$/, "");
+  const canonicalName = derived ?? path.basename(file.absPath).replace(/\.[^./]+$/, "");
   // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
   // (ref-grammar decision D-R2): the same form `placeNew` consumes, and for
-  // markdown types the OKF concept ID (path − .md). The fallback branch is
-  // already the real relative path, so it is never re-prefixed. `entry.name`
-  // below keeps the BARE canonical name — identity ≠ search text.
-  const stashDir = derived !== undefined ? stashDirFor(match.type) : undefined;
-  const conceptId = stashDir !== undefined ? `${stashDir}/${derived}` : canonicalName;
+  // markdown types the OKF concept ID (path − .md). Both branches now feed a
+  // BARE canonicalName (the abstain fallback is the basename, above), so the
+  // stash-subdir is prefixed uniformly — a flat `skills/x.md` yields
+  // `skills/x`, never the un-prefixed `x` or the double-prefixed
+  // `skills/skills/x`. `entry.name` below keeps the BARE canonical name —
+  // identity ≠ search text.
+  const stashDir = stashDirFor(match.type);
+  const conceptId = stashDir !== undefined ? `${stashDir}/${canonicalName}` : canonicalName;
   const dirPath = path.dirname(file.absPath);
 
   // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
