@@ -46,7 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
-import { isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
+import { displayRef, isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -1016,7 +1016,12 @@ function persistMoveEvent(journal: TxnJournal<MvTxnPayload>): void {
       insertEventOnce(db, {
         eventType: "mv",
         ts: p.eventTs,
-        ref: p.toRef,
+        // F4b/F5 display flip: the durable mv-event ref (surfaced by `akm
+        // events`/`akm history`) carries the USER-FACING new-grammar conceptId,
+        // derived from the internal legacy `toRef` via displayRef. Internal
+        // re-keys (index entry_key, usage_events, state.db salience/outcome) keep
+        // the legacy `type:name` spelling — see rekeyIndexForMove/rekeyStateForMove.
+        ref: displayRef({ type: p.type, name: p.newName }),
         metadata: {
           ...p.eventMetadata,
           mutationTransactionId: journal.transactionId,
@@ -1410,8 +1415,11 @@ export const mvCommand = defineJsonCommand({
 
       output("mv", {
         ok: true,
-        from: fromRef,
-        to: toRef,
+        // F4b/F5 display flip: the JSON envelope echoes the USER-FACING
+        // new-grammar conceptId (displayRef); `fromRef`/`toRef` stay legacy
+        // `type:name` internally for the citer-rewrite patterns + durable re-keys.
+        from: displayRef({ type: source.type, name: sourceName }),
+        to: displayRef({ type: source.type, name: newName }),
         rewrote: plans.map((plan) => ({ file: plan.relPath, count: plan.count })),
         readOnlyCiters,
         utilityPreserved: finalized.utilityPreserved,

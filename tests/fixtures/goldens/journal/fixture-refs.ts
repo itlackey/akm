@@ -75,9 +75,22 @@ export const RECOVERY_REJECT_RECOVERS_ACCEPT_NAME = "jnl-recovery-reject-recover
 // name strings plus small content builders for the source asset and its
 // citers (body prose, frontmatter `xrefs:` list, `tasks/*.yml`).
 
-/** Build a `memory:<name>` ref string from a bare fixture name. */
+/** Build a new-grammar `memories/<name>` conceptId ref from a bare fixture name — the CLI-input / displayed spelling. */
 export function memoryRef(name: string): string {
   return `memories/${name}`;
+}
+
+/**
+ * The LEGACY `memory:<name>` spelling still carried by DURABLE index/state
+ * keys (the `entries.entry_key` = `<stashDir>:memory:<name>` suffix; the
+ * seeded `usage_events.entry_ref` a pre-move show event holds; the state.db
+ * `asset_salience`/`asset_outcome` `asset_ref`). The F5 flip re-keys CLI
+ * INPUTS and the user-facing display to {@link memoryRef}'s new grammar but
+ * leaves these stored keys legacy (Chunk-8 preservation) — so a durable-key
+ * assertion must source its spelling here, never from {@link memoryRef}.
+ */
+export function memoryStoredRef(name: string): string {
+  return `memory:${name}`;
 }
 
 /**

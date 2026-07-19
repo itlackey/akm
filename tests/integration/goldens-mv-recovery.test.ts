@@ -73,6 +73,7 @@ import {
   MV_RECOVERY_ROLLBACK_TARGET_REL,
   memoryItemRef,
   memoryRef,
+  memoryStoredRef,
   mvSourceBody,
 } from "../fixtures/goldens/journal/fixture-refs";
 
@@ -213,15 +214,16 @@ describe("goldens: mv SIGKILL roll-forward phases (WI-04, R3, integration)", () 
     test(`crash at ${phase} recovers forward: exactly one mv event, index + state re-keyed`, async () => {
       const name = `${MV_RECOVERY_FORWARD_PREFIX}-${phase}`;
       const ref = memoryRef(name);
+      const storedRef = memoryStoredRef(name);
       seed(`memories/${name}.md`, mvSourceBody(phase));
-      seedStateRows(ref);
+      seedStateRows(storedRef);
       const triggerName = `${MV_RECOVERY_FORWARD_TRIGGER_PREFIX}-${phase}`;
       seed(`memories/${triggerName}.md`, mvSourceBody(`${phase}-trigger`));
       const indexed = await runCliCapture(["index"]);
       expect(indexed.code).toBe(0);
 
       let db = openExistingDatabase(getDbPath());
-      const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+      const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
         | { id: number }
         | undefined;
       closeDatabase(db);
@@ -232,16 +234,17 @@ describe("goldens: mv SIGKILL roll-forward phases (WI-04, R3, integration)", () 
       expect(trigger.code).toBe(0);
 
       const toRef = memoryRef(`${name}-new`);
+      const storedToRef = memoryStoredRef(`${name}-new`);
       expect(fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`))).toBe(true);
       db = openExistingDatabase(getDbPath());
-      const after = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${toRef}`) as
+      const after = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedToRef}`) as
         | { id: number }
         | undefined;
       closeDatabase(db);
       expect(after?.id).toBe(before?.id);
 
-      const state = stateRowsFor(toRef);
-      expect(state.salience).toBe(toRef);
+      const state = stateRowsFor(storedToRef);
+      expect(state.salience).toBe(storedToRef);
       expect(state.outcomeRetrievalCount).toBe(7);
 
       const mvEvent = mvEventOutcome(toRef);
@@ -302,14 +305,15 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     // indirectly via a usage_events junction row rather than a direct id
     // comparison) -- this test follows the same proven technique.
     const ref = memoryRef(MV_RECOVERY_ENTRY_INDEXER_FULL_NAME);
+    const storedRef = memoryStoredRef(MV_RECOVERY_ENTRY_INDEXER_FULL_NAME);
     seed(`memories/${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}.md`, mvSourceBody("indexfull-entry"));
     await akmIndex({ stashDir: storage.stashDir, full: true });
     let db = openExistingDatabase(getDbPath());
-    const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+    const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
       | { id: number }
       | undefined;
     if (!before) throw new Error("missing indexed source row");
-    insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: ref });
+    insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
     closeDatabase(db);
 
     await crashAt("filesystem-committed", ref, `${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`);
@@ -321,7 +325,7 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     db = openExistingDatabase(getDbPath());
     const after = db
       .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-      .get(`%:${memoryRef(`${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`)}`) as { id: number } | undefined;
+      .get(`%:${memoryStoredRef(`${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`)}`) as { id: number } | undefined;
     const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as
       | { entry_ref: string; entry_id: number }
       | undefined;
@@ -340,10 +344,11 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
 
   test("the targeted write-path indexer's pre-flight recovery finishes a pending committed move (index-written-assets.ts:72)", async () => {
     const ref = memoryRef(MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME);
+    const storedRef = memoryStoredRef(MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME);
     seed(`memories/${MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME}.md`, mvSourceBody("indextargeted-entry"));
     await akmIndex({ stashDir: storage.stashDir, full: true });
     let db = openExistingDatabase(getDbPath());
-    const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+    const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
       | { id: number }
       | undefined;
     closeDatabase(db);
@@ -357,7 +362,7 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     db = openExistingDatabase(getDbPath());
     const after = db
       .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-      .get(`%:${memoryRef(`${MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME}-new`)}`) as { id: number } | undefined;
+      .get(`%:${memoryStoredRef(`${MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME}-new`)}`) as { id: number } | undefined;
     closeDatabase(db);
     expect(after?.id).toBe(before?.id);
     expect(transactionsRootIsClean(storage.stashDir)).toBe(true);
@@ -392,13 +397,14 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
     for (const phase of MV_RECOVERY_FORWARD_PHASES) {
       const name = `${MV_RECOVERY_FORWARD_PREFIX}-golden-${phase}`;
       const ref = memoryRef(name);
+      const storedRef = memoryStoredRef(name);
       seed(`memories/${name}.md`, mvSourceBody(phase));
-      seedStateRows(ref);
+      seedStateRows(storedRef);
       const triggerName = `${MV_RECOVERY_FORWARD_TRIGGER_PREFIX}-golden-${phase}`;
       seed(`memories/${triggerName}.md`, mvSourceBody(`${phase}-trigger`));
       await runCliCapture(["index"]);
       let db = openExistingDatabase(getDbPath());
-      const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+      const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
         | { id: number }
         | undefined;
       closeDatabase(db);
@@ -406,18 +412,19 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
       await crashAt(phase, ref, `${name}-new`);
       const trigger = await runCliCapture(["mv", memoryRef(triggerName), `${triggerName}-new`]);
       const toRef = memoryRef(`${name}-new`);
+      const storedToRef = memoryStoredRef(`${name}-new`);
       db = openExistingDatabase(getDbPath());
-      const after = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${toRef}`) as
+      const after = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedToRef}`) as
         | { id: number }
         | undefined;
       closeDatabase(db);
-      const state = stateRowsFor(toRef);
+      const state = stateRowsFor(storedToRef);
 
       forwardOutcomes[phase] = {
         recoveredMoveSucceeded: trigger.code === 0,
         targetCreated: fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`)),
         indexRowIdPreserved: after?.id === before?.id,
-        stateSalienceRekeyed: state.salience === toRef,
+        stateSalienceRekeyed: state.salience === storedToRef,
         stateOutcomeRekeyed: state.outcomeRetrievalCount === 7,
         mvEvent: mvEventOutcome(toRef),
         journalPhasesObserved: [phase],
@@ -474,21 +481,22 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
       const indexerFullOutcome = await (async () => {
         const name = MV_RECOVERY_ENTRY_INDEXER_FULL_NAME;
         const ref = memoryRef(name);
+        const storedRef = memoryStoredRef(name);
         seed(`memories/${name}.md`, mvSourceBody("indexfull-entry-golden"));
         await akmIndex({ stashDir: storage.stashDir, full: true });
         let db = openExistingDatabase(getDbPath());
-        const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+        const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
           | { id: number }
           | undefined;
         if (!before) throw new Error("missing indexed source row");
-        insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: ref });
+        insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
         closeDatabase(db);
         await crashAt("filesystem-committed", ref, `${name}-new`);
         await akmIndex({ stashDir: storage.stashDir, full: true });
         db = openExistingDatabase(getDbPath());
         const after = db
           .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-          .get(`%:${memoryRef(`${name}-new`)}`) as { id: number } | undefined;
+          .get(`%:${memoryStoredRef(`${name}-new`)}`) as { id: number } | undefined;
         const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as
           | { entry_ref: string; entry_id: number }
           | undefined;
@@ -507,10 +515,11 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
       const indexerTargetedOutcome = await (async () => {
         const name = MV_RECOVERY_ENTRY_INDEXER_TARGETED_NAME;
         const ref = memoryRef(name);
+        const storedRef = memoryStoredRef(name);
         seed(`memories/${name}.md`, mvSourceBody("indextargeted-entry-golden"));
         await akmIndex({ stashDir: storage.stashDir, full: true });
         let db = openExistingDatabase(getDbPath());
-        const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${ref}`) as
+        const before = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedRef}`) as
           | { id: number }
           | undefined;
         closeDatabase(db);
@@ -519,7 +528,7 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         db = openExistingDatabase(getDbPath());
         const after = db
           .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-          .get(`%:${memoryRef(`${name}-new`)}`) as { id: number } | undefined;
+          .get(`%:${memoryStoredRef(`${name}-new`)}`) as { id: number } | undefined;
         closeDatabase(db);
         return {
           indexWrittenAssetsReturnedTrue: indexed,

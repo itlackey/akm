@@ -72,9 +72,9 @@ describe("mv durable journal crash recovery", () => {
     seed("memories/crash-before-commit.md", "Crash source.\n");
     const citerA = seed("knowledge/crash-a.md", "A memory:crash-before-commit\n");
     const citerB = seed("knowledge/crash-b.md", "B memory:crash-before-commit\n");
-    await crashAt("applying-partial", "memory:crash-before-commit", "crash-before-commit-new");
+    await crashAt("applying-partial", "memories/crash-before-commit", "crash-before-commit-new");
 
-    const retry = await runCliCapture(["mv", "memory:crash-before-commit", "crash-before-commit-new"]);
+    const retry = await runCliCapture(["mv", "memories/crash-before-commit", "crash-before-commit-new"]);
     expect(retry.code).toBe(0);
     expect(fs.readFileSync(citerA, "utf8")).toContain("memory:crash-before-commit-new");
     expect(fs.readFileSync(citerB, "utf8")).toContain("memory:crash-before-commit-new");
@@ -93,10 +93,10 @@ describe("mv durable journal crash recovery", () => {
       .run("memory:crash-after-commit", 0.8, 0, 0, 0.7, 0, Date.now(), "content");
     state.close();
 
-    await crashAt("filesystem-committed", "memory:crash-after-commit", "crash-after-commit-new");
+    await crashAt("filesystem-committed", "memories/crash-after-commit", "crash-after-commit-new");
     expect(fs.existsSync(path.join(storage.stashDir, "memories/crash-after-commit-new.md"))).toBe(true);
 
-    const trigger = await runCliCapture(["mv", "memory:recovery-trigger", "recovery-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/recovery-trigger", "recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();
     const refs = after
@@ -120,8 +120,8 @@ describe("mv durable journal crash recovery", () => {
       .run("memory:crash-after-state", Date.now(), 9, 1, 0, 2, 0.4, Date.now());
     state.close();
 
-    await crashAt("state-finalized", "memory:crash-after-state", "crash-after-state-new");
-    const trigger = await runCliCapture(["mv", "memory:state-recovery-trigger", "state-recovery-trigger-new"]);
+    await crashAt("state-finalized", "memories/crash-after-state", "crash-after-state-new");
+    const trigger = await runCliCapture(["mv", "memories/state-recovery-trigger", "state-recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
 
     const after = openStateDatabase();
@@ -130,29 +130,29 @@ describe("mv durable journal crash recovery", () => {
       .all() as Array<{ asset_ref: string; retrieval_count: number }>;
     after.close();
     expect(rows).toEqual([{ asset_ref: "memory:crash-after-state-new", retrieval_count: 9 }]);
-    const events = readEvents({ type: "mv", ref: "memory:crash-after-state-new" }).events;
+    const events = readEvents({ type: "mv", ref: "memories/crash-after-state-new" }).events;
     expect(events).toHaveLength(1);
   });
 
   test("recovery after mv event persistence does not duplicate the event", async () => {
     seed("memories/crash-after-mv-event.md", "Event-finalized source.\n");
     seed("memories/mv-event-recovery-trigger.md", "Trigger.\n");
-    await crashAt("mv-event-persisted", "memory:crash-after-mv-event", "crash-after-mv-event-new");
+    await crashAt("mv-event-persisted", "memories/crash-after-mv-event", "crash-after-mv-event-new");
 
-    const trigger = await runCliCapture(["mv", "memory:mv-event-recovery-trigger", "mv-event-recovery-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/mv-event-recovery-trigger", "mv-event-recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
-    const events = readEvents({ type: "mv", ref: "memory:crash-after-mv-event-new" }).events;
+    const events = readEvents({ type: "mv", ref: "memories/crash-after-mv-event-new" }).events;
     expect(events).toHaveLength(1);
   });
 
   test("refuses forward recovery when the committed target diverged after the crash", async () => {
     seed("memories/crash-divergent.md", "Original committed bytes.\n");
     seed("memories/divergence-trigger.md", "Trigger.\n");
-    await crashAt("filesystem-committed", "memory:crash-divergent", "crash-divergent-new");
+    await crashAt("filesystem-committed", "memories/crash-divergent", "crash-divergent-new");
     const target = path.join(storage.stashDir, "memories", "crash-divergent-new.md");
     fs.writeFileSync(target, "EXTERNAL POST-CRASH EDIT\n", "utf8");
 
-    const trigger = await runCliCapture(["mv", "memory:divergence-trigger", "divergence-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/divergence-trigger", "divergence-trigger-new"]);
     expect(trigger.code).not.toBe(0);
     expect(fs.readFileSync(target, "utf8")).toBe("EXTERNAL POST-CRASH EDIT\n");
     expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(true);
@@ -169,7 +169,7 @@ describe("mv durable journal crash recovery", () => {
       )
       .run("memory:crash-before-proposal", Date.now(), 4, 1, 0, 1, 0.3, Date.now());
     state.close();
-    await crashAt("filesystem-committed", "memory:crash-before-proposal", "crash-before-proposal-new");
+    await crashAt("filesystem-committed", "memories/crash-before-proposal", "crash-before-proposal-new");
 
     const proposal = createProposal(storage.stashDir, {
       ref: "lesson:recovery-trigger-proposal",
@@ -204,8 +204,8 @@ describe("mv durable journal crash recovery", () => {
     };
     closeDatabase(db);
 
-    await crashAt("index-rekeyed", "memory:crash-during-index", "crash-during-index-new");
-    const trigger = await runCliCapture(["mv", "memory:index-crash-trigger", "index-crash-trigger-new"]);
+    await crashAt("index-rekeyed", "memories/crash-during-index", "crash-during-index-new");
+    const trigger = await runCliCapture(["mv", "memories/index-crash-trigger", "index-crash-trigger-new"]);
     expect(trigger.stderr).toBe("");
     expect(trigger.code).toBe(0);
     db = openExistingDatabase(getDbPath());
@@ -232,7 +232,7 @@ describe("mv durable journal crash recovery", () => {
     });
     closeDatabase(db);
 
-    await crashAt("filesystem-committed", "memory:crash-before-full-index", "crash-before-full-index-new");
+    await crashAt("filesystem-committed", "memories/crash-before-full-index", "crash-before-full-index-new");
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     db = openExistingDatabase(getDbPath());
@@ -259,7 +259,7 @@ describe("mv durable journal crash recovery", () => {
       .get() as { id: number };
     closeDatabase(db);
 
-    await crashAt("filesystem-committed", "memory:crash-before-targeted-index", "crash-before-targeted-index-new");
+    await crashAt("filesystem-committed", "memories/crash-before-targeted-index", "crash-before-targeted-index-new");
     const targetPath = path.join(storage.stashDir, "memories", "crash-before-targeted-index-new.md");
     expect(await indexWrittenAssets(storage.stashDir, [targetPath])).toBe(true);
 
@@ -292,8 +292,8 @@ describe("mv durable journal crash recovery", () => {
       .run("memory:crash-between-state", now, 6, 1, 0, 2, 0.5, now);
     state.close();
 
-    await crashAt("state-asset_salience-rekeyed", "memory:crash-between-state", "crash-between-state-new");
-    const trigger = await runCliCapture(["mv", "memory:state-table-trigger", "state-table-trigger-new"]);
+    await crashAt("state-asset_salience-rekeyed", "memories/crash-between-state", "crash-between-state-new");
+    const trigger = await runCliCapture(["mv", "memories/state-table-trigger", "state-table-trigger-new"]);
     expect(trigger.stderr).toBe("");
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();

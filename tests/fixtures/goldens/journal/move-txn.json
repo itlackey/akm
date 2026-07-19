@@ -10,11 +10,11 @@
   },
   "moveWithCiters": {
     "fileTree": {
-      "knowledge/mv-move-body-citer.md": "385b1f22d2766442f6ec82be20a41fa26a4aeea5b9014f5bd79a3159635e8fdf",
-      "knowledge/mv-move-frontmatter-citer.md": "0841c0c4e7e2406bb7227d08180f7a01cc907aa61a25e8b49c5994c50a9162b3",
+      "knowledge/mv-move-body-citer.md": "e1617de2145311d3d9f37acbfe046daa8f5bd5e95f1798ddd139d0a6bbf60b35",
+      "knowledge/mv-move-frontmatter-citer.md": "d0438b94f0672b76eb85d0729927b39ebc7581c1e50572ff45077125ee997f8c",
       "memories/projectA/mv-move-renamed.derived.md": "e1904415be6b1adcb25ebed4547c0f7bfe4f1f3a61d37527ad21986c574e39ac",
       "memories/projectA/mv-move-renamed.md": "91b648cfe768e193337792f9ede4d529f60fe117ec02b59c83a1d1d20128dec2",
-      "tasks/mv-move-nightly.yml": "bc930302037b9db4ca8491cacd9459030874e88451e92306d7831d9393fd21d7"
+      "tasks/mv-move-nightly.yml": "5c40c780a76b5562c893e9fc7e112d6bf94ecf6d62ed0e8e113c7c84230defcf"
     },
     "from": "memories/mv-move-base",
     "mvEvent": {

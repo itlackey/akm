@@ -114,6 +114,7 @@ import {
   MV_TRANSIENT_REKEY_TRIGGER_NAME,
   MV_TRANSIENT_REKEY_TRIGGER_TARGET_REL,
   memoryRef,
+  memoryStoredRef,
   mvBodyCiterContent,
   mvFrontmatterCiterContent,
   mvSourceBody,
@@ -419,7 +420,7 @@ describe("goldens: mv transient re-key failure retains journal, next mutation co
       let db = openExistingDatabase(getDbPath());
       const before = db
         .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-        .get(`%:${memoryRef(MV_TRANSIENT_REKEY_NAME)}`) as { id: number } | null | undefined;
+        .get(`%:${memoryStoredRef(MV_TRANSIENT_REKEY_NAME)}`) as { id: number } | null | undefined;
       closeDatabase(db);
       expect(before).toBeDefined();
 
@@ -442,7 +443,7 @@ describe("goldens: mv transient re-key failure retains journal, next mutation co
       db = openExistingDatabase(getDbPath());
       const after = db
         .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-        .get(`%:${memoryRef(MV_TRANSIENT_REKEY_TARGET_REL)}`) as { id: number } | null | undefined;
+        .get(`%:${memoryStoredRef(MV_TRANSIENT_REKEY_TARGET_REL)}`) as { id: number } | null | undefined;
       closeDatabase(db);
 
       expect(journalRetainedAfterFailure).toBe(true);
@@ -660,7 +661,7 @@ describe("golden fixture: serialize mv move-transaction outcomes (WI-04, R3)", (
         let db = openExistingDatabase(getDbPath());
         const before = db
           .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-          .get(`%:${memoryRef(MV_TRANSIENT_REKEY_NAME)}`) as { id: number } | null | undefined;
+          .get(`%:${memoryStoredRef(MV_TRANSIENT_REKEY_NAME)}`) as { id: number } | null | undefined;
         closeDatabase(db);
 
         const spy = spyOn(indexDbModule, "rekeyEntryInPlace").mockImplementation(() => {
@@ -678,7 +679,7 @@ describe("golden fixture: serialize mv move-transaction outcomes (WI-04, R3)", (
         db = openExistingDatabase(getDbPath());
         const after = db
           .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
-          .get(`%:${memoryRef(MV_TRANSIENT_REKEY_TARGET_REL)}`) as { id: number } | null | undefined;
+          .get(`%:${memoryStoredRef(MV_TRANSIENT_REKEY_TARGET_REL)}`) as { id: number } | null | undefined;
         closeDatabase(db);
 
         return {
