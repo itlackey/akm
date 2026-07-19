@@ -70,19 +70,19 @@ describe("akm feedback", () => {
 
     await buildIndex();
 
-    const memoryResult = await runCli(["feedback", "memory:deployment-notes", "--positive", "--format=json"]);
+    const memoryResult = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
     expect(memoryResult.status).toBe(0);
     expect(parseJsonOutput(memoryResult)).toMatchObject({
       ok: true,
-      ref: "memory:deployment-notes",
+      ref: "memories/deployment-notes",
       signal: "positive",
     });
 
-    const envResult = await runCli(["feedback", "env:prod", "--positive", "--format=json"]);
+    const envResult = await runCli(["feedback", "env/prod", "--positive", "--format=json"]);
     expect(envResult.status).toBe(0);
     expect(parseJsonOutput(envResult)).toMatchObject({
       ok: true,
-      ref: "env:prod",
+      ref: "env/prod",
       signal: "positive",
     });
     expect(envResult.stdout).not.toContain("super-secret-value");
@@ -116,11 +116,11 @@ describe("akm feedback", () => {
 
     await buildIndex();
 
-    const result = await runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "commands/complete-github-issue", "--positive", "--format=json"]);
     expect(result).toMatchObject({ status: 0 });
     expect(parseJsonOutput(result)).toMatchObject({
       ok: true,
-      ref: "command:complete-github-issue",
+      ref: "commands/complete-github-issue",
       signal: "positive",
     });
   });
@@ -129,11 +129,11 @@ describe("akm feedback", () => {
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
     await buildIndex();
 
-    const result = await runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "memories/missing", "--positive", "--format=json"]);
     expect(result.status).not.toBe(0);
     const output = parseJsonOutput(result);
     expect(output.ok).toBe(false);
-    expect(output.error).toContain("memory:missing");
+    expect(output.error).toContain("memories/missing");
     expect(output.error).toContain("not in the index");
   });
 
@@ -147,7 +147,7 @@ describe("akm feedback", () => {
 
     const result = await runCli([
       "feedback",
-      "memory:deployment-notes",
+      "memories/deployment-notes",
       "--positive",
       "--reason",
       "saved me 30 minutes",
@@ -157,7 +157,7 @@ describe("akm feedback", () => {
     const parsed = parseJsonOutput(result);
     expect(parsed).toMatchObject({
       ok: true,
-      ref: "memory:deployment-notes",
+      ref: "memories/deployment-notes",
       signal: "positive",
       reason: "saved me 30 minutes",
     });
@@ -186,13 +186,13 @@ describe("akm feedback", () => {
     });
     expect(resolveSourceEntries(undefined, loadConfig()).map((source) => source.path)).toContain(teamDir);
     await akmIndex({ stashDir, full: true });
-    expect(await runCli(["feedback", "stash//memory:shared", "--positive", "--format=json"])).toMatchObject({
+    expect(await runCli(["feedback", "stash//memories/shared", "--positive", "--format=json"])).toMatchObject({
       status: 0,
     });
     // Re-prioritize the second source. The index intentionally keeps one winner
     // for a duplicate bare ref, while durable feedback must retain both origins.
     await akmIndex({ stashDir: teamDir, full: true });
-    expect(await runCli(["feedback", "team//memory:shared", "--positive", "--format=json"])).toMatchObject({
+    expect(await runCli(["feedback", "team//memories/shared", "--positive", "--format=json"])).toMatchObject({
       status: 0,
     });
 
@@ -226,7 +226,7 @@ describe("akm feedback", () => {
     expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memories/alpha", "memories/omega"]);
     expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
 
-    const feedback = await runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memories/omega", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     await buildIndex();
@@ -246,7 +246,7 @@ describe("akm feedback", () => {
     // runtimes). The user should run `akm index` to pick up new assets first.
     writeFile(path.join(stashDir, "memories", "beta.md"), "---\ndescription: beta memory\n---\nBeta body.\n");
 
-    const result = await runCli(["feedback", "memory:beta", "--positive", "--format=json"]);
+    const result = await runCli(["feedback", "memories/beta", "--positive", "--format=json"]);
     expect(result.status).toBe(2); // UsageError exit code
     const parsed = parseJsonOutput(result);
     expect(parsed.ok).toBe(false);

@@ -9,6 +9,8 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
+import { stashDirFor } from "../../core/asset/asset-placement";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -107,14 +109,28 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
 }
 
 /**
- * Bare-form candidate a bare `entry_ref` filter matches a stored row under.
- * Post-flip the filter and the stored rows share one grammar (the caller's
- * conceptId matches the re-keyed conceptId rows; a still-legacy `type:name`
- * filter matches the un-re-keyed legacy rows), so the filter matches as-is with
- * no cross-spelling bridge — the transitional legacy/conceptId sibling is gone.
+ * Bare-form candidates a bare `entry_ref` filter matches a stored row under.
+ * The durable `usage_events.entry_ref` column straddles the F5 ref-grammar flip:
+ * F4c-indexed rows carry the new-grammar conceptId (`memories/alpha`) while
+ * transitional / not-yet-re-keyed rows still carry the legacy `type:name`
+ * (`memory:alpha`). Both name the SAME asset, so a bare filter in EITHER grammar
+ * must bridge to the other spelling — otherwise a history/telemetry query misses
+ * half the asset's own events across the flip boundary. (Fully-qualified filters
+ * apply this bridge under a fixed origin — see getUsageEvents.)
  */
 function usageEventBareCandidates(ref: string): string[] {
-  return [ref.trim()];
+  const trimmed = ref.trim();
+  const out = new Set<string>([trimmed]);
+  // New-grammar conceptId (`memories/alpha`) → its legacy `type:name` sibling.
+  const legacy = typeNameFromConceptId(trimmed);
+  if (legacy) out.add(`${legacy.type}:${legacy.name}`);
+  // Legacy `type:name` (`memory:alpha`) → its new-grammar `stashDir/name` sibling.
+  const colon = trimmed.indexOf(":");
+  if (colon > 0) {
+    const dir = stashDirFor(trimmed.slice(0, colon));
+    if (dir) out.add(`${dir}/${trimmed.slice(colon + 1)}`);
+  }
+  return [...out];
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -133,9 +149,16 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
   if (filters?.entry_ref) {
     if (filters.entry_ref.includes("//")) {
       // Fully-qualified filter (`bundle//conceptId` or legacy `origin//type:name`)
-      // — the user named a specific bundle/origin, so match it exactly.
-      conditions.push("entry_ref = ?");
-      params.push(filters.entry_ref);
+      // — the user named a specific bundle/origin, so match that origin exactly,
+      // but bridge the bare tail across the F5 grammar flip (see
+      // usageEventBareCandidates) so a `stash//memories/alpha` filter also matches
+      // an un-re-keyed `stash//memory:alpha` row (and vice versa).
+      const boundary = filters.entry_ref.indexOf("//");
+      const origin = filters.entry_ref.slice(0, boundary);
+      const bareTail = filters.entry_ref.slice(boundary + 2);
+      const quals = usageEventBareCandidates(bareTail).map((bare) => `${origin}//${bare}`);
+      conditions.push(`entry_ref IN (${quals.map(() => "?").join(", ")})`);
+      params.push(...quals);
     } else {
       // Bare filter — match the stored bare form (everything after the first
       // `//`, or the whole value when un-qualified) against the conceptId the

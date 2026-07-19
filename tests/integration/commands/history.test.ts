@@ -222,7 +222,7 @@ describe("akm history CLI", () => {
     await akmIndex({ stashDir, full: true });
 
     // Generate a feedback event so history has something to surface.
-    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     // Per-asset history.
@@ -268,7 +268,7 @@ describe("akm history CLI", () => {
 
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
     await akmIndex({ stashDir, full: true });
-    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     const text = await runCli(["history", "--ref", "memory:alpha", "--format=text"]);
@@ -596,7 +596,7 @@ describe("akm history --generator CLI flag", () => {
     await akmIndex({ stashDir, full: true });
 
     // Generate a user feedback event.
-    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     // Insert an improve event directly.

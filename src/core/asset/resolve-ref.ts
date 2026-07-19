@@ -268,6 +268,33 @@ export function parseRefInput(raw: string): AssetRef {
 }
 
 /**
+ * Parse a CLI/API ref that MAY be qualified by a NON-slug origin — a registry
+ * ref (`github:owner/repo`, `npm:@scope/pkg`, `git:host/path`), a bare path, or
+ * a URL — as its `origin//conceptId` prefix. Such an origin carries `:`/`.`/`/`
+ * so it is not a legal bundle slug and the strict {@link parseRefInput} rejects
+ * it; but it is still a valid SOURCE origin that `resolveSourcesForOrigin`
+ * matches by registry-id / path and the remote-fetch fallback can install. The
+ * conceptId body is parsed under the strict new grammar; the raw origin is kept
+ * as-is — the symmetric input side of {@link displayRef}, which likewise keeps
+ * `origin//…` for exactly these non-slug origins (ref-grammar decision D-R5).
+ *
+ * A short ref (no origin) or a slug-origin ref is delegated verbatim to
+ * {@link parseRefInput}, so this is a safe superset for origin-accepting
+ * commands (`show`, `clone`, `graph`, `history`).
+ */
+export function parseQualifiedRefInput(raw: string): AssetRef {
+  const trimmed = raw.trim();
+  const boundary = trimmed.indexOf("//");
+  if (boundary > 0) {
+    const origin = trimmed.slice(0, boundary);
+    if (!isBundleSlug(origin)) {
+      return { ...parseRefInput(trimmed.slice(boundary + 2)), origin };
+    }
+  }
+  return parseRefInput(trimmed);
+}
+
+/**
  * Does `raw` already read as a COMPLETE new-grammar asset ref, as opposed to a
  * bare asset name that a boundary would prefix with a default type (the
  * `env`/`secret`/`akm mv` "bare name" convenience)?

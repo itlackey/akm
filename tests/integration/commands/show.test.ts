@@ -102,7 +102,7 @@ describe("akmShow installed ref", () => {
 
     // Use an origin that is NOT installed so resolveSourcesForOrigin returns
     // empty, triggering the add-guidance error path.
-    await expect(akmShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
+    await expect(akmShow({ ref: "npm:@other/missing-pkg//scripts/missing.sh" })).rejects.toThrow(/akm add/);
   });
 
   test("resolves installed-stash style nested agent refs", async () => {
@@ -128,7 +128,7 @@ describe("akmShow installed ref", () => {
       ],
     });
 
-    const result = await akmShow({ ref: "github:sveltejs/ai-tools//agent:tools/agents/svelte-file-editor" });
+    const result = await akmShow({ ref: "github:sveltejs/ai-tools//agents/tools/agents/svelte-file-editor" });
 
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("github:sveltejs/ai-tools");
@@ -159,7 +159,7 @@ describe("akmShow installed ref", () => {
       ],
     });
 
-    const result = await akmShow({ ref: "github:sveltejs/ai-tools//skill:tools/skills/svelte-code-writer" });
+    const result = await akmShow({ ref: "github:sveltejs/ai-tools//skills/tools/skills/svelte-code-writer" });
 
     expect(result.type).toBe("skill");
     expect(result.origin).toBe("github:sveltejs/ai-tools");
@@ -182,7 +182,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
 
   test("own-stash agent keeps its self-declared toolPolicy", async () => {
     writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
-    const result = await akmShow({ ref: "agent:helper" });
+    const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
     // Own stash → no registry origin → the operator's declared policy stands.
     expect(result.origin ?? null).toBeNull();
@@ -206,7 +206,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
         },
       ],
     });
-    const result = await akmShow({ ref: "github:evil/pack//agent:tools/agents/helper" });
+    const result = await akmShow({ ref: "github:evil/pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("github:evil/pack");
     // Provenance ceiling: only the primary stash may self-grant; an installed
@@ -235,7 +235,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
         },
       ],
     });
-    const result = await akmShow({ ref: "git:contrib/pack//agent:tools/agents/helper" });
+    const result = await akmShow({ ref: "git:contrib/pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.toolPolicy).toBeUndefined();
   });
@@ -249,7 +249,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
     saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: thirdPartyDir }] });
 
-    const result = await akmShow({ ref: "agent:helper" });
+    const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
     // Reads back as `editable: true` (not under an installed cacheDir) — proving
     // neither `editable` nor `writable` is the trust signal; primary-stash is.
@@ -266,7 +266,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
     saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: nestedDir }] });
 
-    const result = await akmShow({ ref: "agent:vendor/agents/helper" });
+    const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.toolPolicy).toBeUndefined();
   });
@@ -281,7 +281,7 @@ describe("akmShow search path", () => {
 
     saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
 
-    const result = await akmShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.name).toBe("deploy.sh");
@@ -297,7 +297,7 @@ describe("akmShow editability", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "script:local.sh" });
+    const result = await akmShow({ ref: "scripts/local.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -312,7 +312,7 @@ describe("akmShow editability", () => {
 
     saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
 
-    const result = await akmShow({ ref: "script:remote.sh" });
+    const result = await akmShow({ ref: "scripts/remote.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -340,7 +340,7 @@ describe("akmShow editability", () => {
       ],
     });
 
-    const result = await akmShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBe("installed-pkg");
@@ -364,7 +364,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:deploy.md" });
+    const result = await akmShow({ ref: "commands/deploy.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS.");
@@ -383,7 +383,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "agent:commands/hybrid" });
+    const result = await akmShow({ ref: "agents/commands/hybrid" });
 
     expect(result.type).toBe("agent");
     expect(result.action).toContain("verbatim");
@@ -405,7 +405,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:deploy.md" });
+    const result = await akmShow({ ref: "commands/deploy.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to production.");
@@ -423,7 +423,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:positional.md" });
+    const result = await akmShow({ ref: "commands/positional.md" });
 
     expect(result.type).toBe("command");
     expect(result.parameters).toEqual(["$1", "$2", "$9"]);
@@ -437,7 +437,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:named.md" });
+    const result = await akmShow({ ref: "commands/named.md" });
 
     expect(result.type).toBe("command");
     expect(result.parameters).toEqual(["env", "version"]);
@@ -448,7 +448,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "script:build.sh" });
+    const result = await akmShow({ ref: "scripts/build.sh" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeDefined();
@@ -465,7 +465,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:knowledge/deploy-cmd" });
+    const result = await akmShow({ ref: "commands/knowledge/deploy-cmd" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
@@ -482,7 +482,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:agents/build-cmd" });
+    const result = await akmShow({ ref: "commands/agents/build-cmd" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Build the project.");
@@ -497,12 +497,12 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const tocResult = await akmShow({ ref: "knowledge:guide.md", view: { mode: "toc" } });
+    const tocResult = await akmShow({ ref: "knowledge/guide.md", view: { mode: "toc" } });
     expect(tocResult.content).toContain("Intro");
     expect(tocResult.content).toContain("Setup");
 
     const sectionResult = await akmShow({
-      ref: "knowledge:guide.md",
+      ref: "knowledge/guide.md",
       view: { mode: "section", heading: "Setup" },
     });
     expect(sectionResult.content).toContain("Install things.");

@@ -225,7 +225,7 @@ describe("akm CLI mutation events", () => {
     expect(indexResult.status).toBe(0);
 
     // ─ feedback ──────────────────────────────────────────────────────────
-    const feedback = await runCli(["feedback", "memory:alpha", "--positive", "--format=json"]);
+    const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
     // ─ add (local directory source) ──────────────────────────────────────
@@ -286,7 +286,7 @@ describe("akm CLI mutation events", () => {
     const remember = await runCli(["remember", "filter test", "--name", "gamma", "--format=json"]);
     expect(remember.status).toBe(0);
     await runCli(["index", "--full", "--format=json"]);
-    await runCli(["feedback", "memory:gamma", "--positive", "--format=json"]);
+    await runCli(["feedback", "memories/gamma", "--positive", "--format=json"]);
 
     const filtered = await runCli(["log", "list", "--type", "feedback", "--format=json"]);
     expect(filtered.status).toBe(0);
