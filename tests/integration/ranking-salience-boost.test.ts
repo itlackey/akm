@@ -117,3 +117,90 @@ describe("R2 — loadSalienceRankScores (state.db read path)", () => {
     expect(loadSalienceRankScores(items).get(11)).toBeCloseTo(0.77, 9);
   });
 });
+
+// ── F5d Step 5 — the required salience dual-read (legacy + item_ref) ───────────
+//
+// The Chunk-5 flip F5d dual-arms `loadSalienceRankScores`: it folds BOTH stored
+// spellings into the single `asset_salience` IN query — the durable
+// `bundle//conceptId` item_ref FIRST, the pre-flip `type:name` legacy key
+// SECOND. An asset seeded under EITHER spelling must receive the SAME salience
+// boost, and a fresh new-grammar row must win over any stale legacy row for the
+// same asset (the Chunk-8 re-key transition window). These tests seed salience
+// directly (bypassing the writers, which flip separately) so the read path is
+// pinned independently of the write path.
+describe("F5d Step 5 — salience dual-read (legacy `type:name` + new `bundle//conceptId`)", () => {
+  let cleanup: Cleanup;
+
+  beforeEach(() => {
+    ({ cleanup } = withIsolatedAkmStorage());
+  });
+
+  afterEach(() => cleanup());
+
+  /** A ranked item that carries a durable `item_ref` (a post-flip, provenance-bearing row). */
+  function makeRankedWithItemRef(id: number, name: string, itemRef: string, type = "lesson"): RankedEntryInput {
+    return { ...makeRanked(id, name, type), itemRef };
+  }
+
+  test("an asset seeded under the legacy key and one under bundle//conceptId both boost identically", () => {
+    const db = openStateDatabase();
+    try {
+      // Pre-flip spelling: a NULL-provenance / legacy row keyed by `type:name`.
+      upsertAssetSalience(db, "lesson:legacy-hot", { encoding: 0.8, outcome: 0.5, retrieval: 0.9, rankScore: 0.66 });
+      // Post-flip spelling: a provenance-bearing row keyed by the durable item_ref.
+      upsertAssetSalience(db, "stash//lessons/new-hot", {
+        encoding: 0.8,
+        outcome: 0.5,
+        retrieval: 0.9,
+        rankScore: 0.66,
+      });
+    } finally {
+      db.close();
+    }
+
+    // `legacyItem` has NO item_ref (a pre-flip / write-back row) — it can only be
+    // matched by the inline legacy arm (`lesson:legacy-hot`).
+    const legacyItem = makeRanked(21, "legacy-hot");
+    // `newItem` carries an item_ref — it is matched by the new arm
+    // (`stash//lessons/new-hot`); its bare legacy key `lesson:new-hot` matches nothing.
+    const newItem = makeRankedWithItemRef(22, "new-hot", "stash//lessons/new-hot");
+
+    const scores = loadSalienceRankScores([legacyItem, newItem]);
+    expect(scores.get(21)).toBeCloseTo(0.66, 9); // legacy arm hit
+    expect(scores.get(22)).toBeCloseTo(0.66, 9); // new arm hit
+    // Boost identically — the whole point of the dual-arm.
+    expect(scores.get(21)).toBe(scores.get(22));
+  });
+
+  test("a fresh new-grammar row wins over a stale legacy row for the same asset", () => {
+    const db = openStateDatabase();
+    try {
+      // A stale legacy row left behind before the Chunk-8 re-key…
+      upsertAssetSalience(db, "lesson:dual", { encoding: 0, outcome: 0, retrieval: 0, rankScore: 0.1 });
+      // …and the fresh new-grammar row the post-flip writer produced.
+      upsertAssetSalience(db, "stash//lessons/dual", { encoding: 0, outcome: 0, retrieval: 0, rankScore: 0.9 });
+    } finally {
+      db.close();
+    }
+
+    // The item resolves to BOTH keys (legacy `lesson:dual` and item_ref
+    // `stash//lessons/dual`); the new-grammar score must win.
+    const item = makeRankedWithItemRef(30, "dual", "stash//lessons/dual");
+    const scores = loadSalienceRankScores([item]);
+    expect(scores.get(30)).toBeCloseTo(0.9, 9);
+  });
+
+  test("an item_ref-bearing asset with only a legacy stored row still boosts (legacy fallback)", () => {
+    const db = openStateDatabase();
+    try {
+      // Only the legacy row exists (writers not yet flipped for this asset), but
+      // the READ item already carries provenance — the legacy arm must still hit.
+      upsertAssetSalience(db, "lesson:straggler", { encoding: 0, outcome: 0, retrieval: 0, rankScore: 0.42 });
+    } finally {
+      db.close();
+    }
+    const item = makeRankedWithItemRef(40, "straggler", "stash//lessons/straggler");
+    const scores = loadSalienceRankScores([item]);
+    expect(scores.get(40)).toBeCloseTo(0.42, 9);
+  });
+});
