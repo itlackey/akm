@@ -53,8 +53,11 @@ test("usage + feedback survive a full rebuild, re-keyed onto item_ref (§11.4)",
   //   - positive/negative feedback for alpha.
   const dbPath = getDbPath();
   let db = openExistingDatabase(dbPath);
-  const alphaId = findEntryIdByRef(db, "memory:alpha");
-  const betaId = findEntryIdByRef(db, "memory:beta");
+  // Entries are keyed by the new-grammar `item_ref` post-flip; look them up by
+  // the conceptId. The DURABLE state seeded below stays legacy-spelled (the
+  // migration input the §11.4 re-key must survive).
+  const alphaId = findEntryIdByRef(db, "memories/alpha");
+  const betaId = findEntryIdByRef(db, "memories/beta");
   expect(alphaId).toBeNumber();
   expect(betaId).toBeNumber();
   const alphaItemRef = getItemRefById(db, alphaId as number);
@@ -78,9 +81,9 @@ test("usage + feedback survive a full rebuild, re-keyed onto item_ref (§11.4)",
   await akmIndex({ stashDir, full: true });
 
   db = openExistingDatabase(dbPath);
-  // Entry ids may have changed; resolve afresh.
-  const alphaId2 = findEntryIdByRef(db, "memory:alpha") as number;
-  const betaId2 = findEntryIdByRef(db, "memory:beta") as number;
+  // Entry ids may have changed; resolve afresh (new-grammar conceptId lookup).
+  const alphaId2 = findEntryIdByRef(db, "memories/alpha") as number;
+  const betaId2 = findEntryIdByRef(db, "memories/beta") as number;
 
   // Retrieval counts SURVIVE and are still keyed by the caller's ref (the count
   // reader is spelling-agnostic across the re-key).

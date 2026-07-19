@@ -9,7 +9,6 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
-import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -109,21 +108,13 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
 
 /**
  * Bare-form candidate a bare `entry_ref` filter matches a stored row under.
- * Post-flip every stored row is conceptId-spelled, so the filter is normalized
- * to its conceptId form (accepting a still-legacy `type:name` filter, which maps
- * onto the same conceptId) and matched against that alone.
- *
- * Chunk-8: once the state.db re-key lands and every input is the new grammar,
- * this reduces to the trimmed conceptId.
+ * Post-flip the filter and the stored rows share one grammar (the caller's
+ * conceptId matches the re-keyed conceptId rows; a still-legacy `type:name`
+ * filter matches the un-re-keyed legacy rows), so the filter matches as-is with
+ * no cross-spelling bridge — the transitional legacy/conceptId sibling is gone.
  */
 function usageEventBareCandidates(ref: string): string[] {
-  const trimmed = ref.trim();
-  try {
-    const parsed = parseStoredRef(trimmed);
-    return [legacyConceptId(parsed.type, parsed.name)];
-  } catch {
-    return [trimmed];
-  }
+  return [ref.trim()];
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────

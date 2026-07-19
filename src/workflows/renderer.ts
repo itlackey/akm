@@ -18,7 +18,6 @@
  *     step (runner/model, `fanOut.over` expression, route table).
  */
 
-import { displayRef } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
@@ -66,7 +65,9 @@ export const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const doc = loadDocument(ctx);
-    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
+    // Legacy `[origin//]workflow:name` action spelling (Chunk-8 re-key), built
+    // inline to match the frozen renderer goldens.
+    const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
     return {
       type: "workflow",
       name,
@@ -101,7 +102,9 @@ export const workflowProgramRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const program = loadProgram(ctx);
-    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
+    // Legacy `[origin//]workflow:name` action spelling (Chunk-8 re-key), built
+    // inline to match the frozen renderer goldens.
+    const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
     const parameters = projectProgramParameters(program);
     return {
       type: "workflow",
