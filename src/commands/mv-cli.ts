@@ -47,7 +47,7 @@ import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
 import { refToString } from "../core/asset/asset-ref";
-import { isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
+import { isFullRefInput, legacyConceptId, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -125,24 +125,51 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** One deterministic rewrite pattern and the ref spelling its matches become. */
+interface RewritePattern {
+  re: RegExp;
+  /** Replacement ref (`prefix` + this + `derivedTail`). Legacy `type:name` OR conceptId. */
+  to: string;
+}
+
 /**
  * Build the rewrite patterns for one old ref: the canonical spelling plus
  * the DETERMINISTIC alias spellings the resolver stack accepts for the same
  * asset — the `.md`-suffixed form (`markdownSpec.toAssetPath` accepts both)
  * and the `local//`-prefixed form (`makeAssetRef`/`parseAssetRef` round-trip
- * it). All alias spellings rewrite to the NEW CANONICAL ref. When the source
- * is a base memory, the optional `.derived` tail also rewrites explicit twin
- * refs (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file
- * moves together, so its ref must too. The tail group is empty-capturing
- * otherwise so the replacer's group indices stay stable.
+ * it). All spellings of ONE grammar rewrite to that grammar's NEW ref (legacy
+ * spellings → `toRef`, conceptId spellings → `toConcept`) so a rewritten ref
+ * keeps the grammar it was authored in. When the source is a base memory, the
+ * optional `.derived` tail also rewrites explicit twin refs
+ * (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file moves
+ * together, so its ref must too. The tail group is empty-capturing otherwise so
+ * the replacer's group indices stay stable.
+ *
+ * 0.9.0 flip (F4c M1): the conceptId spellings (`memories/a/note`, short form —
+ * the durable/output grammar) are recognized ALONGSIDE the legacy `type:name`
+ * ones so a rename does not strand the flipped conceptId-spelled xrefs the
+ * output emitter now writes into frontmatter. Fully-qualified `bundle//conceptId`
+ * needs no arm here: a local primary-bundle asset (the only thing `akm mv`
+ * renames) is always emitted SHORT.
  */
-function buildRewritePatterns(fromRef: string, includeDerivedTail: boolean): RegExp[] {
+function buildRewritePatterns(
+  fromRef: string,
+  toRef: string,
+  fromConcept: string,
+  toConcept: string,
+  includeDerivedTail: boolean,
+): RewritePattern[] {
   const tail = includeDerivedTail ? "(\\.derived)?" : "()";
-  const core = escapeRegExp(fromRef);
+  const legacyCore = escapeRegExp(fromRef);
+  const conceptCore = escapeRegExp(fromConcept);
   return [
-    new RegExp(`${REF_PREFIX_SRC}${core}${tail}${REF_SUFFIX_SRC}`, "gm"),
-    new RegExp(`${REF_PREFIX_SRC}${core}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"),
-    new RegExp(`${REF_PREFIX_SRC}local//${core}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"),
+    // F5: delete — legacy `type:name` spellings (canonical / `.md` / `local//`).
+    { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    { re: new RegExp(`${REF_PREFIX_SRC}local//${legacyCore}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    // 0.9.0 conceptId spellings (short form: `<stash-subdir>/<name>` [± `.md`]).
+    { re: new RegExp(`${REF_PREFIX_SRC}${conceptCore}${tail}${REF_SUFFIX_SRC}`, "gm"), to: toConcept },
+    { re: new RegExp(`${REF_PREFIX_SRC}${conceptCore}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"), to: toConcept },
   ];
 }
 
@@ -155,7 +182,7 @@ function buildRewritePatterns(fromRef: string, includeDerivedTail: boolean): Reg
  * resolver and rewriting the ones that point at the moved file's old path.
  */
 interface RewriteContext {
-  patterns: RegExp[];
+  patterns: RewritePattern[];
   /** Matches `<type>:<slug>` tokens, optionally `local//`-prefixed. */
   aliasScan: RegExp;
   type: string;
@@ -175,8 +202,11 @@ function buildRewriteContext(opts: {
   oldPath: string;
   twinOldPath: string | null;
 }): RewriteContext {
+  // 0.9.0 conceptId spellings of the same asset (`<stash-subdir>/<name>`).
+  const fromConcept = legacyConceptId(opts.type, opts.fromRef.slice(opts.type.length + 1));
+  const toConcept = legacyConceptId(opts.type, opts.toRef.slice(opts.type.length + 1));
   return {
-    patterns: buildRewritePatterns(opts.fromRef, opts.isBaseMemory),
+    patterns: buildRewritePatterns(opts.fromRef, opts.toRef, fromConcept, toConcept, opts.isBaseMemory),
     aliasScan: new RegExp(
       `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((?:local//)?${escapeRegExp(opts.type)}:${REF_SLUG_CHAR_CLASS_SRC}+)`,
       "gm",
@@ -207,10 +237,10 @@ function buildRewriteContext(opts: {
 function rewriteRefs(content: string, ctx: RewriteContext): { content: string; count: number } {
   let count = 0;
   let next = content;
-  for (const pattern of ctx.patterns) {
-    next = next.replace(pattern, (_match, prefix: string, derivedTail: string | undefined) => {
+  for (const { re, to } of ctx.patterns) {
+    next = next.replace(re, (_match, prefix: string, derivedTail: string | undefined) => {
       count += 1;
-      return `${prefix}${ctx.toRef}${derivedTail ?? ""}`;
+      return `${prefix}${to}${derivedTail ?? ""}`;
     });
   }
   /**

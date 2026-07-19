@@ -41,6 +41,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
+import { BUNDLE_REF_RE } from "../../core/asset/asset-ref";
+import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
 import { findFenceRegions, findSafeInsertionPoint } from "./markdown-insertion";
 import type { AssetLinter, LintContext, LintIssue } from "./types";
 
@@ -282,13 +284,113 @@ export function resolveRefPathInStash(relPath: string, refType: string, refName:
 }
 
 /**
+ * A `(refType, refName)` pair that is not a lint-checkable local asset ref —
+ * shared skip-guard for BOTH recognition arms (legacy `type:name` and the 0.9.0
+ * `bundle//conceptId` grammar). Filters the false-positive patterns:
+ *   - Shell variables: memory:$(cmd) or knowledge:${VAR} (guarded by callers on
+ *     the raw token, before it is split).
+ *   - Empty names or names that look like absolute paths / home dirs / URLs.
+ *   - Incomplete/placeholder refs: single-character slug or "**".
+ *   - Template placeholder refs like skill:<name> / workflow:<my-workflow>.
+ */
+function isNonRefName(refName: string): boolean {
+  if (!refName || refName.startsWith("/") || refName.startsWith("~") || refName.startsWith("http")) return true;
+  if (refName.length <= 1 || refName === "**") return true;
+  if (refName.startsWith("<") || refName.includes("<")) return true;
+  return false;
+}
+
+/**
+ * Resolve a `(refType, refName)` pair against `allRoots`. Returns the resolved
+ * stash-relative path when the ref is MISSING (no file under any root), or
+ * `null` when it resolves, is a skipped/unresolvable type, or is a
+ * non-ref-shaped name. The single existence check both grammars route through.
+ */
+function localRefMissingRelPath(refType: string, refName: string, allRoots: string[]): string | null {
+  if (isNonRefName(refName)) return null;
+  const relPath = refToRelPath(refType, refName);
+  if (relPath === null) return null; // type is skipped / unresolvable
+  return refExistsInAnyStash(relPath, refType, refName, allRoots) ? null : relPath;
+}
+
+/**
+ * F5: delete — legacy `[local//]type:name` body-ref recognition (pre-0.9.0
+ * grammar). Byte-identical to the pre-flip scan: strips a leading `local//`,
+ * skips any other origin prefix, and resolves the `type`/`name` pair through the
+ * shared existence check. After F5 the prose scan keeps only the
+ * {@link scanBundleRefs} (`BUNDLE_REF_RE`) arm.
+ */
+function scanLegacyRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
+  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
+  const re = new RegExp(REF_RE.source, REF_RE.flags);
+  let match: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
+  while ((match = re.exec(scanBody)) !== null) {
+    const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
+    if (fullRef.includes("$(") || fullRef.includes("${")) continue; // shell var
+    if (fullRef.includes("::")) continue; // ACP type notation agent::Type
+
+    let ref = fullRef;
+    if (ref.startsWith("local//")) {
+      ref = ref.slice("local//".length);
+    } else if (fullRef.includes("//")) {
+      continue; // remote origin prefix (npm:, github:, owner/repo//) — skip
+    }
+
+    const colonIdx = ref.indexOf(":");
+    if (colonIdx === -1) continue;
+    const relPath = localRefMissingRelPath(ref.slice(0, colonIdx), ref.slice(colonIdx + 1), allRoots);
+    if (relPath !== null) missing.push({ ref: fullRef, resolvedRelPath: relPath });
+  }
+  return missing;
+}
+
+/**
+ * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
+ * (`BUNDLE_REF_RE`, the anchored prose form — spec §11.1 / ref-grammar decision
+ * D-R3). The conceptId is reverse-translated to its legacy `type`/`name` via the
+ * D-R2 static table (`conceptIdToLegacy`) so the SAME on-disk existence check
+ * applies; a conceptId whose leading segment names no known stash-subdir is not
+ * a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
+ */
+function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
+  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
+  const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
+  let match: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
+  while ((match = re.exec(scanBody)) !== null) {
+    const token = match[1]; // e.g. "core//memories/foo"
+    if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
+    const boundary = token.indexOf("//");
+    if (boundary < 0) continue;
+    const found = classifyConceptRef(token.slice(boundary + 2), allRoots);
+    if (found !== null) missing.push({ ref: token, resolvedRelPath: found });
+  }
+  return missing;
+}
+
+/**
+ * Map a bare 0.9.0 conceptId (`<stash-subdir>/<name>`, e.g. `memories/foo`) to
+ * its legacy `type`/`name` and run the shared existence check. Returns the
+ * missing relPath, or `null` when it resolves or is not a known local
+ * asset-type prefix. Drops a trailing `#fragment` (export selector) before
+ * mapping.
+ */
+function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
+  const conceptId = rawConceptId.split("#", 1)[0];
+  const legacy = conceptIdToLegacy(conceptId);
+  if (legacy === undefined) return null; // foreign type / not a local asset ref
+  return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
+}
+
+/**
  * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
- * body that does not resolve to a real file under any of the provided stash roots.
- *
- * Skips false-positive patterns:
- * - Shell variables: memory:$(cmd) or knowledge:${VAR}
- * - ACP type notation: agent::Type (double colons are C++/ACP syntax)
- * - Incomplete/placeholder refs: slug is single character or "**"
+ * PROSE body that does not resolve to a real file under any of the provided
+ * stash roots. Recognizes BOTH the legacy `type:name` grammar
+ * ({@link scanLegacyRefs}, `// F5: delete`) and the 0.9.0 fully-qualified
+ * `bundle//conceptId` grammar ({@link scanBundleRefs}). Bare short conceptIds
+ * are NOT refs in prose (D-R3) — those are recognized only in the ref-list
+ * channels ({@link checkMissingRefsInList}).
  */
 function checkMissingRefs(
   body: string,
@@ -296,65 +398,77 @@ function checkMissingRefs(
   extraStashRoots: string[] = [],
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
-  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
-  let match: RegExpExecArray | null;
-  const re = new RegExp(REF_RE.source, REF_RE.flags);
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
   const scanBody = stripFencedBlocks(body);
+  return dedupeMissing([...scanLegacyRefs(scanBody, allRoots), ...scanBundleRefs(scanBody, allRoots)]);
+}
 
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = re.exec(scanBody)) !== null) {
-    const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
-
-    // Skip shell variables: memory:$(cmd) or knowledge:${VAR}
-    if (fullRef.includes("$(") || fullRef.includes("${")) {
+/**
+ * Missing-ref check for the REF-LIST channels (frontmatter `refs:` /
+ * `xrefs:` / `supersededBy:` / `contradictedBy:`) where EACH value is a whole
+ * ref, not prose. Unlike the body scan, a bare short conceptId (`memories/foo`)
+ * IS a ref here (the value's whole purpose is to name one asset), so the flipped
+ * short-conceptId frontmatter the 0.9.0 output emits is no longer invisible.
+ * Recognizes, per value:
+ *   - legacy `[local//]type:name`               (`// F5: delete`);
+ *   - fully-qualified `bundle//conceptId`;
+ *   - bare short `conceptId` (`<stash-subdir>/<name>`).
+ */
+function checkMissingRefsInList(
+  values: string[],
+  stashRoot: string,
+  extraStashRoots: string[] = [],
+): Array<{ ref: string; resolvedRelPath: string }> {
+  const allRoots = [stashRoot, ...extraStashRoots];
+  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
+  for (const raw of values) {
+    const value = raw.trim();
+    if (!value || value.includes("$(") || value.includes("${") || value.includes("::")) continue;
+    const boundary = value.indexOf("//");
+    if (boundary >= 0) {
+      // Qualified: `local//type:name` (legacy) or `bundle//conceptId` (0.9.0).
+      const tail = value.slice(boundary + 2);
+      const prefix = value.slice(0, boundary);
+      if (prefix === "local") {
+        // F5: delete — legacy `local//type:name`.
+        const colon = tail.indexOf(":");
+        if (colon === -1) continue;
+        const rel = localRefMissingRelPath(tail.slice(0, colon), tail.slice(colon + 1), allRoots);
+        if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
+      } else if (tail.includes(":")) {
+        continue; // remote origin `origin//type:name` — skip (as body scan does)
+      } else {
+        const rel = classifyConceptRef(tail, allRoots);
+        if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
+      }
       continue;
     }
-
-    // Skip ACP type notation: agent::Type (double colons)
-    if (fullRef.includes("::")) {
-      continue;
-    }
-
-    // Strip leading "local//" prefix if present
-    let ref = fullRef;
-    if (ref.startsWith("local//")) {
-      ref = ref.slice("local//".length);
-    } else if (fullRef.includes("//")) {
-      // Has a remote origin prefix (e.g. "npm:", "github:", "owner/repo//") — skip
-      continue;
-    }
-
-    // Skip refs that start with obvious remote prefixes
-    const colonIdx = ref.indexOf(":");
-    if (colonIdx === -1) continue;
-    const refType = ref.slice(0, colonIdx);
-    const refName = ref.slice(colonIdx + 1);
-
-    // Guard against empty names or names that look like paths/URLs
-    if (!refName || refName.startsWith("/") || refName.startsWith("~") || refName.startsWith("http")) {
-      continue;
-    }
-
-    // Skip placeholder/incomplete refs: single character slug or "**"
-    if (refName.length <= 1 || refName === "**") {
-      continue;
-    }
-
-    // Skip template placeholder refs like skill:<name> or workflow:<my-workflow>
-    if (refName.startsWith("<") || refName.includes("<")) {
-      continue;
-    }
-
-    const relPath = refToRelPath(refType, refName);
-    if (relPath === null) continue; // type is skipped
-
-    if (!refExistsInAnyStash(relPath, refType, refName, allRoots)) {
-      missing.push({ ref: fullRef, resolvedRelPath: relPath });
+    // Un-prefixed: legacy bare `type:name`, or a 0.9.0 short `conceptId`.
+    const colon = value.indexOf(":");
+    if (colon > 0) {
+      // F5: delete — legacy bare `type:name`.
+      const rel = localRefMissingRelPath(value.slice(0, colon), value.slice(colon + 1), allRoots);
+      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
+    } else {
+      const rel = classifyConceptRef(value, allRoots);
+      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
     }
   }
+  return dedupeMissing(missing);
+}
 
-  return missing;
+/** Dedupe missing-ref records by their `ref` token (both arms can flag one ref). */
+function dedupeMissing(
+  rows: Array<{ ref: string; resolvedRelPath: string }>,
+): Array<{ ref: string; resolvedRelPath: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ ref: string; resolvedRelPath: string }> = [];
+  for (const row of rows) {
+    if (seen.has(row.ref)) continue;
+    seen.add(row.ref);
+    out.push(row);
+  }
+  return out;
 }
 
 // ── frontmatter refs ─────────────────────────────────────────────────────────
@@ -689,8 +803,12 @@ export abstract class BaseLinter implements AssetLinter {
     // stash.
     if (shouldRun("missing-ref")) {
       const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
-      const refSource = explicitRefs !== null ? explicitRefs.join("\n") : ctx.body;
-      const missingRefs = checkMissingRefs(refSource, ctx.stashRoot, ctx.extraStashRoots);
+      // An explicit `refs:` array is a REF LIST (each value is a whole ref —
+      // short conceptIds included); a bare body is PROSE (anchored refs only).
+      const missingRefs =
+        explicitRefs !== null
+          ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots)
+          : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
       for (const { ref, resolvedRelPath } of missingRefs) {
         issues.push({
           file: ctx.relPath,
@@ -724,7 +842,7 @@ export abstract class BaseLinter implements AssetLinter {
         for (const key of XREF_FRONTMATTER_KEYS) {
           const values = readRefStringOrArray(ctx.data?.[key]);
           if (values === null) continue;
-          const missingXrefs = checkMissingRefs(values.join("\n"), ctx.stashRoot, ctx.extraStashRoots);
+          const missingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots);
           for (const { ref, resolvedRelPath } of missingXrefs) {
             issues.push({
               file: ctx.relPath,

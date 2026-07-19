@@ -2,6 +2,7 @@
   "_comment": "F2 codemod skip-list \u2014 F4-coupled files whose type:name literals must NOT be re-keyed yet. Two buckets: (1) grammar-invariant tests that assert parseAssetRef / both-grammar equivalence on the OLD spelling; (2) output-assertion / not-yet-swapped-boundary files discovered by the run -> red -> skip loop (they assert a ref VALUE the code still emits in the OLD spelling until F4, or feed a persisted/internal parser left for F4). F4 re-keys the outputs and retires this list.",
   "skip": [
     "tests/asset-ref.test.ts",
+    "tests/integration/lint-mv-ref-dual-grammar.test.ts",
     "tests/authoring-rules-injection.test.ts",
     "tests/commands/consolidate/consolidate-wave2-d.test.ts",
     "tests/commands/consolidate/consolidate-writer-fixes.test.ts",
