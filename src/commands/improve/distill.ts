@@ -51,10 +51,10 @@
 import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";

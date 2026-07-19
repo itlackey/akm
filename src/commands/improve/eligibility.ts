@@ -182,8 +182,7 @@ async function collectEligibleRefsFromIndex(
       // queries (D-R3 — derived from the resolved index entry, never raw input).
       // `undefined` for a NULL-provenance (pre-flip / write-back) row; the durable
       // writers then fall back to the legacy `type:name` key.
-      const itemRef =
-        indexed.bundleId && indexed.conceptId ? `${indexed.bundleId}//${indexed.conceptId}` : undefined;
+      const itemRef = indexed.bundleId && indexed.conceptId ? `${indexed.bundleId}//${indexed.conceptId}` : undefined;
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories are LLM-inferred and intentionally skip reflect
       // (see the synthetic `derived-memory-reflect-skipped` branch in the

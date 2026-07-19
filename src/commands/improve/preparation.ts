@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { conceptIdToLegacy } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
@@ -1911,8 +1911,16 @@ function updateOutcomeScores(args: {
   primaryStashDir?: string;
   eventsCtx?: EventsContext;
 }): Map<string, number> {
-  const { mergedRefs, itemRefByRef, feedbackSummary, retrievalCounts, lastUseMsByRef, utilityMap, primaryStashDir, eventsCtx } =
-    args;
+  const {
+    mergedRefs,
+    itemRefByRef,
+    feedbackSummary,
+    retrievalCounts,
+    lastUseMsByRef,
+    utilityMap,
+    primaryStashDir,
+    eventsCtx,
+  } = args;
   // ── WS-2 Outcome loop ─────────────────────────────────────────────────────
   //
   // Update asset_outcome for every ref in the merged set BEFORE computing the
@@ -2065,8 +2073,16 @@ function computeSalienceVectors(args: {
   utilityMap: Map<string, number>;
   outcomeSalienceByRef: Map<string, number>;
 }): { salienceMap: Map<string, ReturnType<typeof computeSalience>>; nowForSalience: number } {
-  const { mergedRefs, itemRefByRef, options, eventsCtx, retrievalCounts, lastUseMsByRef, utilityMap, outcomeSalienceByRef } =
-    args;
+  const {
+    mergedRefs,
+    itemRefByRef,
+    options,
+    eventsCtx,
+    retrievalCounts,
+    lastUseMsByRef,
+    utilityMap,
+    outcomeSalienceByRef,
+  } = args;
   // Compute the salience vector for every ref in the merged set.
   // retrievalCounts now covers the full candidate set (feedback-bearing + zero-feedback)
   // so feedback refs get their genuine retrieval frequency, not a 0-floor fallback.
@@ -2145,6 +2161,42 @@ function computeSalienceVectors(args: {
   return { salienceMap, nowForSalience };
 }
 
+/** 1-indexed rank positions sorted by score desc (deterministic ref-asc tie-break). */
+function toRankPositions(scores: Map<string, number>): Map<string, number> {
+  const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
+    b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
+  );
+  return new Map(sorted.map(([ref], i) => [ref, i + 1]));
+}
+
+/**
+ * Chunk-5 flip F5e — the durable salience write-key maps for one improve pass.
+ * `wk(ref)` is a pool asset's write key (item_ref, else source-qualified);
+ * `normalizeStoredKey` folds every stored spelling ([item_ref, durable, bare])
+ * of an in-pool asset onto its write key (no stashSize double-count); and
+ * `refByWriteKey` reverses a write key back to its filesystem-facing bare ref.
+ */
+function buildSalienceWriteKeyMaps(
+  itemRefByRef: Map<string, string | undefined>,
+  sourceName?: string,
+): {
+  wk: (ref: string) => string;
+  normalizeStoredKey: Map<string, string>;
+  refByWriteKey: Map<string, string>;
+} {
+  const wk = (ref: string): string => salienceWriteKey(ref, itemRefByRef, sourceName);
+  const normalizeStoredKey = new Map<string, string>();
+  const refByWriteKey = new Map<string, string>();
+  for (const [ref, itemRef] of itemRefByRef) {
+    const writeKey = wk(ref);
+    refByWriteKey.set(writeKey, ref);
+    for (const spelling of improveStateReadRefs(ref, sourceName, true, itemRef)) {
+      normalizeStoredKey.set(spelling, writeKey);
+    }
+  }
+  return { wk, normalizeStoredKey, refByWriteKey };
+}
+
 /** Persist salience vectors + the WS-1 step-7 rank-change/forgetting report. */
 function persistSalienceAndReportRanks(args: {
   salienceMap: Map<string, ReturnType<typeof computeSalience>>;
@@ -2158,24 +2210,10 @@ function persistSalienceAndReportRanks(args: {
   const { salienceMap, itemRefByRef, utilityMap, feedbackSummary, options, eventsCtx, nowForSalience } = args;
   // Chunk-5 flip F5e — the WRITE-key space. salienceMap stays keyed by each
   // candidate's own bare `r.ref`; the state.db boundary keys by the durable
-  // salience write key (item_ref, else source-qualified `type:name`). `wk`
-  // maps a bare pool ref to that key; `normalizeStoredKey` folds every stored
-  // spelling of an in-pool asset ([item_ref, durable, bare]) onto the same key
-  // so a seeded-legacy row and a fresh item_ref write for one asset can never
-  // double-count in the stash-wide rank report.
-  const wk = (ref: string): string => salienceWriteKey(ref, itemRefByRef, options.sourceName);
-  const normalizeStoredKey = new Map<string, string>();
-  // Reverse: a pool asset's WRITE key → its filesystem-facing bare `r.ref`, so a
-  // forgetting candidate the stash-wide report names in the write-key space is
-  // re-stamped onto the SAME pool ref (not duplicated) by applyForgettingSafety.
-  const refByWriteKey = new Map<string, string>();
-  for (const [ref, itemRef] of itemRefByRef) {
-    const writeKey = wk(ref);
-    refByWriteKey.set(writeKey, ref);
-    for (const spelling of improveStateReadRefs(ref, options.sourceName, true, itemRef)) {
-      normalizeStoredKey.set(spelling, writeKey);
-    }
-  }
+  // salience write key (item_ref, else source-qualified `type:name`), and every
+  // stored spelling of one asset folds onto that key so a seeded-legacy row and
+  // a fresh item_ref write can never double-count in the rank report.
+  const { wk, normalizeStoredKey, refByWriteKey } = buildSalienceWriteKeyMaps(itemRefByRef, options.sourceName);
   // Persist salience vectors to state.db (best-effort, non-blocking).
   // The canonical store enables WS-3 homeostatic demotion and WS-2 outcome reads.
   //
@@ -2266,15 +2304,8 @@ function persistSalienceAndReportRanks(args: {
           }
 
           // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
-          const toRanks = (scores: Map<string, number>): Map<string, number> => {
-            const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
-              b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
-            );
-            return new Map(sorted.map(([ref], i) => [ref, i + 1]));
-          };
-
-          const oldRanks = toRanks(reconstructedOldScores);
-          const newRanks = toRanks(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
+          const oldRanks = toRankPositions(reconstructedOldScores);
+          const newRanks = toRankPositions(new Map([...salienceMap.entries()].map(([ref, v]) => [ref, v.rankScore])));
           const firstRunReport = buildRankChangeReport(oldRanks, newRanks);
           if (firstRunReport.forgettingCandidates.length > 0) {
             warn(
@@ -2318,15 +2349,8 @@ function persistSalienceAndReportRanks(args: {
           }
 
           // Assign 1-indexed rank positions sorted by score desc (tie-break: ref asc).
-          const toRanks = (scores: Map<string, number>): Map<string, number> => {
-            const sorted = [...scores.entries()].sort(([refA, a], [refB, b]) =>
-              b !== a ? b - a : refA < refB ? -1 : refA > refB ? 1 : 0,
-            );
-            return new Map(sorted.map(([ref], i) => [ref, i + 1]));
-          };
-
-          const oldRanks = toRanks(existingAllScores);
-          const newRanks = toRanks(mergedNewScores);
+          const oldRanks = toRankPositions(existingAllScores);
+          const newRanks = toRankPositions(mergedNewScores);
 
           const report = buildRankChangeReport(oldRanks, newRanks);
           if (report.forgettingCandidates.length > 0) {
