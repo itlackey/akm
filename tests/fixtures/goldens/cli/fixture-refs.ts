@@ -39,28 +39,28 @@ export const A_MEMORY_NAME = "cli-a-history-subject";
 export const A_LESSON_NAME = "cli-a-rg-over-grep";
 
 export function scriptRef(name: string = A_SCRIPT_NAME): string {
-  return `script:${name}`;
+  return `scripts/${name}`;
 }
 export function commandRef(name: string = A_COMMAND_NAME): string {
-  return `command:${name}`;
+  return `commands/${name}`;
 }
 export function skillRef(name: string = A_SKILL_NAME): string {
-  return `skill:${name}`;
+  return `skills/${name}`;
 }
 export function agentRef(name: string = A_AGENT_NAME): string {
-  return `agent:${name}`;
+  return `agents/${name}`;
 }
 export function knowledgeRef(name: string = A_KNOWLEDGE_NAME): string {
-  return `knowledge:${name}`;
+  return `knowledge/${name}`;
 }
 export function workflowRef(name: string = A_WORKFLOW_NAME): string {
-  return `workflow:${name}`;
+  return `workflows/${name}`;
 }
 export function memoryRef(name: string = A_MEMORY_NAME): string {
-  return `memory:${name}`;
+  return `memories/${name}`;
 }
 export function lessonRef(name: string = A_LESSON_NAME): string {
-  return `lesson:${name}`;
+  return `lessons/${name}`;
 }
 
 // ── Family B — health ────────────────────────────────────────────────────

@@ -22,7 +22,7 @@
 
 /** Build a `lesson:<name>` ref string from a bare fixture name. */
 export function lessonRef(name: string): string {
-  return `lesson:${name}`;
+  return `lessons/${name}`;
 }
 
 // ── goldens-proposal-txn.test.ts (R3 — accept/revert/reject engines) ───────
@@ -77,7 +77,7 @@ export const RECOVERY_REJECT_RECOVERS_ACCEPT_NAME = "jnl-recovery-reject-recover
 
 /** Build a `memory:<name>` ref string from a bare fixture name. */
 export function memoryRef(name: string): string {
-  return `memory:${name}`;
+  return `memories/${name}`;
 }
 
 /**

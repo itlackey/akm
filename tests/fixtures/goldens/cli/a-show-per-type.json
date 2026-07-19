@@ -1,10 +1,10 @@
 {
   "perType": {
-    "agent:cli-a-coach.md": {
+    "agents/cli-a-coach.md": {
       "jsonKeys": ["action", "description", "editable", "name", "origin", "path", "prompt", "related", "type"],
       "textNonEmpty": true
     },
-    "command:cli-a-release.md": {
+    "commands/cli-a-release.md": {
       "jsonKeys": [
         "action",
         "description",
@@ -19,15 +19,15 @@
       ],
       "textNonEmpty": true
     },
-    "knowledge:cli-a-guide.md": {
+    "knowledge/cli-a-guide.md": {
       "jsonKeys": ["action", "content", "editable", "name", "origin", "path", "related", "type"],
       "textNonEmpty": true
     },
-    "script:cli-a-deploy.sh": {
+    "scripts/cli-a-deploy.sh": {
       "jsonKeys": ["action", "editable", "name", "origin", "path", "related", "run", "type"],
       "textNonEmpty": true
     },
-    "skill:cli-a-ops": {
+    "skills/cli-a-ops": {
       "jsonKeys": ["action", "content", "editable", "name", "origin", "path", "related", "type"],
       "textNonEmpty": true
     }

@@ -16,7 +16,7 @@
       "memories/projectA/mv-move-renamed.md": "91b648cfe768e193337792f9ede4d529f60fe117ec02b59c83a1d1d20128dec2",
       "tasks/mv-move-nightly.yml": "bc930302037b9db4ca8491cacd9459030874e88451e92306d7831d9393fd21d7"
     },
-    "from": "memory:mv-move-base",
+    "from": "memories/mv-move-base",
     "mvEvent": {
       "distinctIdempotencyKeyCount": 1,
       "matchingCount": 1
@@ -36,7 +36,7 @@
       "knowledge/mv-move-frontmatter-citer.md",
       "tasks/mv-move-nightly.yml"
     ],
-    "to": "memory:projectA/mv-move-renamed",
+    "to": "memories/projectA/mv-move-renamed",
     "transactionsRootClean": true
   },
   "notes": [
