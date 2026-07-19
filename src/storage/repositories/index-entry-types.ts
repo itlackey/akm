@@ -44,6 +44,16 @@ export interface DbIndexedEntry {
   stashDir: string;
   entry: IndexDocument;
   searchText: string;
+  /**
+   * Chunk-5 flip (Checkpoint A): the durable `concept_id`/`bundle_id` provenance
+   * columns, surfaced from the `entries` row so the state.db salience/outcome
+   * dual-read arms can reconstruct the fully-qualified `<bundle>//<concept-id>`
+   * new-grammar key with no extra query. `undefined` for a NULL-provenance
+   * (pre-flip / write-back) row — the reader then falls through to its inline
+   * legacy `type:name` arm.
+   */
+  conceptId?: string;
+  bundleId?: string;
 }
 
 /** One FTS5 search hit joined back to its `entries` row. */
