@@ -91,7 +91,7 @@ describe("akm remember — --path", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memory:personal/grocery-list");
+    expect(json.ref).toBe("memories/personal/grocery-list");
 
     const expectedPath = path.join(currentStashDir, "memories", "personal", "grocery-list.md");
     expect(json.path).toBe(expectedPath);
@@ -103,7 +103,7 @@ describe("akm remember — --path", () => {
     const result = await runCli(["remember", "# Sprint retro\n\nNotes.", "--path", "team/projects"]);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
-    expect(json.ref).toMatch(/^memory:team\/projects\//);
+    expect(json.ref).toMatch(/^memories\/team\/projects\//);
     expect(json.path.startsWith(path.join(currentStashDir, "memories", "team", "projects"))).toBe(true);
     expect(fs.existsSync(json.path)).toBe(true);
   });
@@ -148,7 +148,7 @@ describe("akm import — --path", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:projects/example/overview");
+    expect(json.ref).toBe("knowledge/projects/example/overview");
 
     const expectedPath = path.join(currentStashDir, "knowledge", "projects", "example", "overview.md");
     expect(json.path).toBe(expectedPath);

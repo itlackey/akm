@@ -137,7 +137,7 @@ describe("writeAssetToSource — filesystem", () => {
     const result = await writeAssetToSource(source, config, { type: "memory", name: "alpha" }, "hello world");
 
     expect(result.path).toBe(path.join(dir, "memories", "alpha.md"));
-    expect(result.ref).toBe("memory:alpha");
+    expect(result.ref).toBe("memories/alpha");
     expect(fs.readFileSync(result.path, "utf8")).toBe("hello world\n");
   });
 

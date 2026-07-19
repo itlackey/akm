@@ -46,9 +46,9 @@ describe("searchForCuration", () => {
       });
 
       const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
-      expect(refs).toContain("script:docker-clean.sh");
-      expect(refs).toContain("command:cleanup-audit");
-      expect(refs.indexOf("script:docker-clean.sh")).toBeLessThan(refs.indexOf("command:cleanup-audit"));
+      expect(refs).toContain("scripts/docker-clean.sh");
+      expect(refs).toContain("commands/cleanup-audit");
+      expect(refs.indexOf("scripts/docker-clean.sh")).toBeLessThan(refs.indexOf("commands/cleanup-audit"));
     });
   });
 
@@ -72,8 +72,8 @@ describe("searchForCuration", () => {
       });
 
       const refs = result.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`));
-      expect(refs[0]).toBe("skill:docker-homelab");
-      expect(refs).toContain("knowledge:docker-compose-reference");
+      expect(refs[0]).toBe("skills/docker-homelab");
+      expect(refs).toContain("knowledge/docker-compose-reference");
     });
   });
 

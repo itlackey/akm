@@ -129,7 +129,7 @@ describe("capture commands", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memory:deployment-needs-vpn-access");
+    expect(json.ref).toBe("memories/deployment-needs-vpn-access");
     expect(fs.existsSync(path.join(stashDir, "memories", "deployment-needs-vpn-access.md"))).toBe(true);
 
     const show = (await runCli(["show", json.ref], { stashDir })).result;
@@ -172,7 +172,7 @@ describe("capture commands", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:release-notes");
+    expect(json.ref).toBe("knowledge/release-notes");
     expect(fs.existsSync(path.join(stashDir, "knowledge", "release-notes.md"))).toBe(true);
 
     const show = (await runCli(["show", json.ref], { stashDir })).result;
@@ -189,7 +189,7 @@ describe("capture commands", () => {
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ref: string };
-    expect(json.ref).toBe("knowledge:scratch-notes");
+    expect(json.ref).toBe("knowledge/scratch-notes");
     expect(fs.existsSync(path.join(stashDir, "knowledge", "scratch-notes.md"))).toBe(true);
   });
 

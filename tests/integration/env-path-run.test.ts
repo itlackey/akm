@@ -121,8 +121,8 @@ describe("env run", () => {
     expect(status).not.toBe(0);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.error).toContain("secret:absent");
-    expect(parsed.error).toContain("env:prod");
+    expect(parsed.error).toContain("secrets/absent");
+    expect(parsed.error).toContain("env/prod");
     // No value content leaked to stdout.
     expect(stdout.trim()).toBe("");
   });

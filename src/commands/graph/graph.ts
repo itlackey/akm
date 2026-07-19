@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -385,7 +385,8 @@ function buildRefByPath(
         name?: string;
       };
       if (typeof entry.type === "string" && typeof entry.name === "string") {
-        map.set(row.file_path, { ref: `${entry.type}:${entry.name}`, type: entry.type });
+        // F4b output-spelling flip: emit the 0.9.0 conceptId grammar.
+        map.set(row.file_path, { ref: displayRef({ type: entry.type, name: entry.name }), type: entry.type });
       }
     } catch {
       // ignore corrupt entry_json

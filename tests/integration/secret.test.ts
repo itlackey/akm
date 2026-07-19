@@ -179,7 +179,7 @@ describe("secret list", () => {
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
     const refs = parsed.secrets.map((s: { ref: string }) => s.ref);
-    expect(refs).toContain("secret:deploy-key");
+    expect(refs).toContain("secrets/deploy-key");
     // No value, and no path field (stripped by the secret-list shape).
     expect(stdout).not.toContain("the-actual-secret-value");
     for (const s of parsed.secrets) expect(s.path).toBeUndefined();

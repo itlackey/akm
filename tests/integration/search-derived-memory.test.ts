@@ -177,7 +177,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     expect(parentHit).toBeDefined();
     if (!parentHit || !("ref" in parentHit)) return;
 
-    expect(parentHit.expandTo).toBe("memory:claude-prefs.derived");
+    expect(parentHit.expandTo).toBe("memories/claude-prefs.derived");
     // Description swapped in from the derived child.
     expect(parentHit.description).toBe(
       "Distilled Claude style preferences: three-space indent, no semicolons, prefer TypeScript.",
@@ -185,7 +185,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     // Tags swapped in from the derived child.
     expect(parentHit.tags).toEqual(["claude", "style", "typescript"]);
     // Parent ref is preserved — only surface text is swapped.
-    expect(parentHit.ref).toBe("memory:claude-prefs");
+    expect(parentHit.ref).toBe("memories/claude-prefs");
   });
 
   test("memory without a derived child is unchanged (no expandTo, no rewrite)", async () => {

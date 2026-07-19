@@ -39,8 +39,9 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // counted scope (origin-qualified skips + prose/ambiguous tokens the codemod
 // conservatively left). SHRINK-ONLY — lower this when F3/F4 removes more; never
 // raise it. Dropped 138 → 116 at F4b Ruling B1 (the `${type:...}` substitution-
-// token measurement fix — those 22 tokens were never refs).
-const CEILING = 116;
+// token measurement fix — those 22 tokens were never refs); 116 → 115 at F4b
+// when a graph output-baseline assertion flipped to the conceptId spelling.
+const CEILING = 115;
 
 const TYPES = [
   "skill",

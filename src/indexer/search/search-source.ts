@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isSourceWriteActivated } from "../../core/activation-policy";
+import { displayRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
@@ -267,7 +268,8 @@ export function isEditable(filePath: string, config?: AkmConfig): boolean {
  * unconditionally returns the hint string.
  */
 export function buildEditHint(_filePath: string, assetType: string, assetName: string, origin?: string): string {
-  const ref = origin ? `${origin}//${assetType}:${assetName}` : `${assetType}:${assetName}`;
+  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the clone hint.
+  const ref = displayRef({ type: assetType, name: assetName, bundleId: origin });
   return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${ref}`;
 }
 

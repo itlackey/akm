@@ -189,8 +189,12 @@ function conceptIdFromTypeName(type: string, name: string): string {
 export function displayRef(item: DisplayRefItem, defaultBundleId?: string): string {
   const conceptId = item.conceptId ?? conceptIdFromTypeName(item.type, item.name);
   const { bundleId } = item;
-  // Default/primary bundle → SHORT conceptId (the flip).
-  if (bundleId === undefined || bundleId === defaultBundleId) return conceptId;
+  // Default/primary bundle → SHORT conceptId (the flip). `"local"`/`"stash"` are
+  // the primary-stash origin sentinels (never real bundle slugs — they name the
+  // workspace's own stash, exactly where the pre-0.9.0 output was un-qualified),
+  // so they display short too.
+  if (bundleId === undefined || bundleId === defaultBundleId || bundleId === "local" || bundleId === "stash")
+    return conceptId;
   // Slug-clean non-default bundle → the new fully-qualified grammar.
   if (isBundleSlug(bundleId)) return `${bundleId}//${conceptId}`;
   // Registry origin not yet a legal bundle slug — legacy display until F4c.

@@ -61,7 +61,7 @@ describe("import - (stdin) slug stability under --xref", () => {
     const plain = akmWithStdin(["import", "-"], body);
     expect(plain.status, plain.stderr).toBe(0);
     const plainRef = (JSON.parse(plain.stdout) as { ref: string }).ref;
-    expect(plainRef).toBe("knowledge:auth-notes");
+    expect(plainRef).toBe("knowledge/auth-notes");
 
     // The structured path (forced by --xref) must derive the identical slug
     // from the pre-merge content — not a random knowledge-<epoch>-<rand>
@@ -85,7 +85,7 @@ describe("import - (stdin) slug stability under --xref", () => {
     const plain = akmWithStdin(["import", "-"], body);
     expect(plain.status, plain.stderr).toBe(0);
     const plainRef = (JSON.parse(plain.stdout) as { ref: string }).ref;
-    expect(plainRef).toBe("knowledge:frontmattered-guide");
+    expect(plainRef).toBe("knowledge/frontmattered-guide");
 
     const structured = akmWithStdin(["import", "-", "--force", "--xref", "knowledge:legacy-guide"], body);
     expect(structured.status, structured.stderr).toBe(0);

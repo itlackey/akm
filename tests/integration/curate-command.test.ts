@@ -137,7 +137,7 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "release", "--type", "command", "--format=json"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items.map((item) => item.ref)).toEqual(["command:release", "command:release-notes"]);
+    expect(json.items.map((item) => item.ref)).toEqual(["commands/release", "commands/release-notes"]);
   });
 
   test("text output includes direct refs and follow-up commands", async () => {
@@ -146,8 +146,8 @@ describe("curate command", () => {
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
-    expect(output).toContain("ref: command:release");
-    expect(output).toContain("show: akm show command:release");
+    expect(output).toContain("ref: commands/release");
+    expect(output).toContain("show: akm show commands/release");
   });
 
   test("returns a tip when no curated results are found", async () => {
@@ -244,21 +244,21 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "docker homelab", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items[0]?.ref).toBe("skill:docker-homelab");
+    expect(json.items[0]?.ref).toBe("skills/docker-homelab");
     const familyItems = json.items.filter(
       (item) =>
-        item.ref === "skill:docker-homelab" ||
-        String(item.ref).startsWith("knowledge:skills/docker-homelab/references/"),
+        item.ref === "skills/docker-homelab" ||
+        String(item.ref).startsWith("knowledge/skills/docker-homelab/references/"),
     );
     expect(familyItems).toHaveLength(1);
     expect(json.items[0]?.supportRefs).toEqual([
       {
-        ref: "knowledge:skills/docker-homelab/references/compose",
+        ref: "knowledge/skills/docker-homelab/references/compose",
         type: "knowledge",
         reason: "Related family asset to inspect next.",
       },
       {
-        ref: "knowledge:skills/docker-homelab/references/containers",
+        ref: "knowledge/skills/docker-homelab/references/containers",
         type: "knowledge",
         reason: "Related family asset to inspect next.",
       },
@@ -271,7 +271,7 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items.length).toBeGreaterThan(0);
-    expect(json.items[0]?.ref).toBe("skill:docker-homelab");
+    expect(json.items[0]?.ref).toBe("skills/docker-homelab");
   });
 
   test("docker deploy no longer surfaces release-manager filler", async () => {
@@ -279,6 +279,6 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "docker deploy", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items.some((item) => item.ref === "command:release-manager")).toBe(false);
+    expect(json.items.some((item) => item.ref === "commands/release-manager")).toBe(false);
   });
 });

@@ -393,8 +393,11 @@ describe("workflow CLI", async () => {
     const searchJson = JSON.parse(search.stdout) as {
       hits: Array<{ ref: string; action: string }>;
     };
-    expect(searchJson.hits[0]?.ref).toBe("workflow:release");
-    expect(searchJson.hits[0]?.action).toContain("akm workflow next 'workflow:release'");
+    // F4b: search hits emit the 0.9.0 conceptId spelling; the workflow input
+    // recognition (workflow-cli.ts:365, `startsWith("workflows/")`) accepts it,
+    // so the action hint stays runnable.
+    expect(searchJson.hits[0]?.ref).toBe("workflows/release");
+    expect(searchJson.hits[0]?.action).toContain("akm workflow next 'workflows/release'");
 
     const next = await runCli(["workflow", "next", "workflow:release"], env);
     expect(next.status).toBe(0);

@@ -109,6 +109,6 @@ describe("--supersedes on a git write target", () => {
     // The demotion itself is on disk in the git working tree.
     const oldParsed = parseFrontmatter(fs.readFileSync(oldPath, "utf8"));
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual(["knowledge:new-guide"]);
+    expect(oldParsed.data.supersededBy).toEqual(["knowledge/new-guide"]);
   });
 });

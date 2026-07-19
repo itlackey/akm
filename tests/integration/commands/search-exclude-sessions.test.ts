@@ -85,8 +85,8 @@ function writeSession(stashDir: string, harness: string, id: string): string {
     `---\ndescription: Session summary touching ${TOKEN}.\ntags: ["session", "${harness}", "${TOKEN}"]\n---\n\nDuring this session we debugged the ${TOKEN} pipeline.\n`,
     "utf8",
   );
-  // Canonical ref shape: session:<harness>/<id>
-  return `session:${harness}/${id}`;
+  // Canonical ref shape (F4b): the 0.9.0 conceptId spelling sessions/<harness>/<id>.
+  return `sessions/${harness}/${id}`;
 }
 
 async function buildIndex(stashDir: string): Promise<void> {

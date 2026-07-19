@@ -54,7 +54,7 @@ import {
 /** The shipped skeleton convention facts — the exact files `akm init` installs. */
 const SKELETON_FACTS_DIR = path.join(import.meta.dir, "..", "..", "src", "assets", "stash-skeleton", "facts");
 
-const KNOWLEDGE_REF = "knowledge:auth/oauth-refresh-races";
+const KNOWLEDGE_REF = "knowledge/auth/oauth-refresh-races";
 
 let stashDir = "";
 let envCleanup: Cleanup = () => {};
@@ -196,7 +196,7 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     const hits = await searchHits(["search", "auth", "--format=json", "--limit", "25"]);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.every((h) => h.type === "fact")).toBe(true);
-    expect(hits.some((h) => h.ref.startsWith("fact:conventions/"))).toBe(true);
+    expect(hits.some((h) => h.ref.startsWith("facts/conventions/"))).toBe(true);
   });
 
   test("index captures category: convention onto fact entries (entry_json round-trip)", async () => {
@@ -230,7 +230,7 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     for (const hit of hits) {
       expect(hit.type).toBe("fact");
     }
-    expect(hits.some((h) => h.ref.startsWith("fact:conventions/"))).toBe(true);
+    expect(hits.some((h) => h.ref.startsWith("facts/conventions/"))).toBe(true);
   });
 
   test("exact-name query still surfaces a convention fact in the top 3", async () => {
@@ -239,7 +239,7 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     // The demotion must NOT hide convention facts from users who ask for them
     // by name: the exact-name boost (+2.0) dominates the category demotion.
     const hits = await searchHits(["search", "backlinks", "--format=json", "--limit", "25"]);
-    const idx = hits.findIndex((h) => h.ref === "fact:conventions/backlinks");
+    const idx = hits.findIndex((h) => h.ref === "facts/conventions/backlinks");
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(idx).toBeLessThan(3);
   });

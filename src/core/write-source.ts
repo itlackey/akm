@@ -29,7 +29,7 @@ import path from "node:path";
 import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/asset-ref";
-import { makeAssetRef } from "./asset/asset-ref";
+import { displayRef } from "./asset/resolve-ref";
 import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { resolveConfiguredSources } from "./config/config";
@@ -205,7 +205,7 @@ export async function writeAssetToSource(
     );
   }
 
-  return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
+  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
 }
 
 /**
@@ -232,7 +232,7 @@ export async function deleteAssetFromSource(
   fs.unlinkSync(filePath);
   recordWriteTargetPath(source, filePath);
 
-  return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
+  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
 }
 
 /**

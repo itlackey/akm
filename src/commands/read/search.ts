@@ -13,7 +13,8 @@
  * Provider `search()` methods do not exist.
  */
 
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
+import { refToString } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -283,7 +284,11 @@ function resolveEntryIds(
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
       if (entryId !== undefined) {
-        const parsed = parseAssetRef(hit.ref);
+        // F4b: `hit.ref` now arrives in the 0.9.0 conceptId grammar, so parse it
+        // through the dual-grammar `parseRefInput`; `refToString` still persists
+        // the LEGACY `type:name` spelling into usage_events (the persisted-key
+        // flip is deferred to F4c). // F4c: persist the conceptId spelling.
+        const parsed = parseRefInput(hit.ref);
         const origin = parsed.origin ?? hit.origin ?? undefined;
         results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
       }

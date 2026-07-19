@@ -130,7 +130,7 @@ describe("remember --supersedes", () => {
       "old-endpoint",
       "projectA",
     );
-    expect(old.ref).toBe("memory:projectA/old-endpoint");
+    expect(old.ref).toBe("memories/projectA/old-endpoint");
     const oldRawBefore = fs.readFileSync(old.path, "utf8");
     const oldParsedBefore = parseFrontmatter(oldRawBefore);
     // The hot-path seed carries beliefState: asserted — the demotion must
@@ -151,7 +151,7 @@ describe("remember --supersedes", () => {
 
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memory:projectA/new-endpoint");
+    expect(json.ref).toBe("memories/projectA/new-endpoint");
 
     // Additive output key: the demotion is reported as applied.
     expect(Array.isArray(json.superseded)).toBe(true);
@@ -167,7 +167,7 @@ describe("remember --supersedes", () => {
     // The OLD asset gains exactly the two demotion keys...
     const oldParsedAfter = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
     expect(oldParsedAfter.data.beliefState).toBe("superseded");
-    expect(oldParsedAfter.data.supersededBy).toEqual(["memory:projectA/new-endpoint"]);
+    expect(oldParsedAfter.data.supersededBy).toEqual(["memories/projectA/new-endpoint"]);
     // ...while every other frontmatter key survives (metadata edit, not a rewrite)...
     expect(oldParsedAfter.data.captureMode).toBe("hot");
     // ...and the body is untouched.
@@ -189,7 +189,7 @@ describe("remember --supersedes", () => {
     ]);
     expect(code).toBe(0);
     const newRef = (JSON.parse(stdout) as WriteOutput).ref;
-    expect(newRef).toBe("memory:quantum-rotation-new-endpoint");
+    expect(newRef).toBe("memories/quantum-rotation-new-endpoint");
 
     // The demoted incumbent must drop out of `--belief current` immediately —
     // this only holds if the mutated old file was reindexed by the writer.
@@ -205,8 +205,8 @@ describe("remember --supersedes", () => {
     expect(all.code).toBe(0);
     const allRefs = ((JSON.parse(all.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => h.ref);
     expect(allRefs).toContain(newRef);
-    expect(allRefs).toContain("memory:quantum-rotation-old-endpoint");
-    expect(allRefs.indexOf(newRef)).toBeLessThan(allRefs.indexOf("memory:quantum-rotation-old-endpoint"));
+    expect(allRefs).toContain("memories/quantum-rotation-old-endpoint");
+    expect(allRefs.indexOf(newRef)).toBeLessThan(allRefs.indexOf("memories/quantum-rotation-old-endpoint"));
   });
 
   test("re-running the correction is idempotent: supersededBy is not duplicated", async () => {
@@ -235,7 +235,7 @@ describe("remember --supersedes", () => {
 
     const oldParsed = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual(["memory:rotation-cadence-new"]);
+    expect(oldParsed.data.supersededBy).toEqual(["memories/rotation-cadence-new"]);
   });
 
   test("unresolvable --supersedes fails with exit 2 usage envelope; nothing written, nothing demoted", async () => {
@@ -299,7 +299,7 @@ describe("remember --supersedes", () => {
 
   test("self-supersede (--force overwrite of the same name) is rejected with exit 2; the original asset is untouched", async () => {
     const orig = await rememberSeed("The flux capacitor needs the legacy calibration.", "flux-note");
-    expect(orig.ref).toBe("memory:flux-note");
+    expect(orig.ref).toBe("memories/flux-note");
     const origRaw = fs.readFileSync(orig.path, "utf8");
 
     const { code, stderr } = await runCliCapture([
@@ -525,7 +525,7 @@ describe("a demotion fs error still commits and indexes the correction", () => {
       supersedes: [{ ref: "memory:ghost-note", filePath: ghostPath, stashRoot: stashDir, writable: true }],
     });
 
-    expect(result.ref).toBe("memory:corrected-fact");
+    expect(result.ref).toBe("memories/corrected-fact");
     expect(result.superseded).toHaveLength(1);
     expect(result.superseded?.[0]?.ref).toBe("memory:ghost-note");
     expect(result.superseded?.[0]?.applied).toBe(false);
@@ -537,7 +537,7 @@ describe("a demotion fs error still commits and indexes the correction", () => {
     const search = await runCliCapture(["search", "corrected fact", "--type", "memory"]);
     expect(search.code).toBe(0);
     const refs = ((JSON.parse(search.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => h.ref);
-    expect(refs).toContain("memory:corrected-fact");
+    expect(refs).toContain("memories/corrected-fact");
   });
 });
 
@@ -576,7 +576,7 @@ describe("import --supersedes", () => {
 
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:modern-guide");
+    expect(json.ref).toBe("knowledge/modern-guide");
     expect(json.superseded).toHaveLength(1);
     expect(json.superseded?.[0]?.ref).toBe("knowledge:legacy-guide");
     expect(json.superseded?.[0]?.applied).toBe(true);
@@ -591,7 +591,7 @@ describe("import --supersedes", () => {
     // The old doc: demoted, other keys preserved, body untouched.
     const oldParsedAfter = parseFrontmatter(fs.readFileSync(oldPath, "utf8"));
     expect(oldParsedAfter.data.beliefState).toBe("superseded");
-    expect(oldParsedAfter.data.supersededBy).toEqual(["knowledge:modern-guide"]);
+    expect(oldParsedAfter.data.supersededBy).toEqual(["knowledge/modern-guide"]);
     expect(oldParsedAfter.data.description).toBe("Legacy auth guide");
     expect(oldParsedAfter.data.tags).toEqual(["auth"]);
     expect(oldParsedAfter.content).toBe(oldParsedBefore.content);
@@ -635,7 +635,7 @@ describe("--supersedes alias spellings are persisted canonically", () => {
     ]);
     expect(code).toBe(0);
     const json = JSON.parse(stdout) as WriteOutput;
-    expect(json.ref).toBe("memory:new-endpoint-alias");
+    expect(json.ref).toBe("memories/new-endpoint-alias");
     expect(json.superseded).toEqual([{ ref: "memory:old-endpoint-alias", applied: true }]);
 
     // Provenance xref on the correction: canonical bare form.
@@ -646,7 +646,7 @@ describe("--supersedes alias spellings are persisted canonically", () => {
     // (writeSupersededEdge receives the write result's canonical ref).
     const oldParsed = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual(["memory:new-endpoint-alias"]);
+    expect(oldParsed.data.supersededBy).toEqual(["memories/new-endpoint-alias"]);
   });
 });
 

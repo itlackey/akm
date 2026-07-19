@@ -685,6 +685,10 @@ export async function writeMarkdownAsset(options: {
     // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
     // Degrade to the same applied:false report the non-writable path uses.
     try {
+      // supersededBy points at the correction's canonical write ref (F4b-flipped
+      // display spelling), keeping it in lockstep with the reported `result.ref`.
+      // (The --xref INPUT-parse path, resolveXrefsForWrite/parseWriteRef, is the
+      // separate Chunk-8 content surface that stays legacy this stage.)
       writeSupersededEdge(item.filePath, result.ref);
       if (path.resolve(item.stashRoot) === path.resolve(source.path)) {
         recordWriteTargetPath(source, item.filePath);

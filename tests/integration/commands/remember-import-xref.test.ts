@@ -419,7 +419,7 @@ describe("--xref/--supersedes do not change the inferred slug", () => {
     const plain = await runCliCapture(["remember", content]);
     expect(plain.code).toBe(0);
     const plainRef = (JSON.parse(plain.stdout) as { ref: string }).ref;
-    expect(plainRef).toBe("memory:the-deploy-process-now-uses-blue-green-rollout");
+    expect(plainRef).toBe("memories/the-deploy-process-now-uses-blue-green-rollout");
 
     // The structured path (forced by --xref) must derive the identical slug
     // from the body — not a random memory-<epoch>-<rand> fallback taken from

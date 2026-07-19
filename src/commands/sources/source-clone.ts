@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
-import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   findSourceForPath,
@@ -42,7 +42,9 @@ export interface CloneResponse {
 }
 
 export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
-  const parsed = parseAssetRef(options.sourceRef);
+  // F1b/F4b: accept both ref grammars — buildEditHint now suggests the conceptId
+  // spelling (`akm clone scripts/deploy.sh`), so the clone input must parse it.
+  const parsed = parseRefInput(options.sourceRef);
 
   // When --dest is provided, the working stash is optional
   let allSources: SearchSource[];
@@ -176,7 +178,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
 
     destPath = path.join(destSkillDir, "SKILL.md");
-    const ref = makeAssetRef(parsed.type, destName, "local");
+    const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
 
     return {
       source: { path: sourcePath, registryId: sourceSource?.registryId },
@@ -199,7 +201,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   fs.copyFileSync(sourcePath, destPath);
 
-  const ref = makeAssetRef(parsed.type, destName, "local");
+  const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
 
   return {
     source: { path: sourcePath, registryId: sourceSource?.registryId },

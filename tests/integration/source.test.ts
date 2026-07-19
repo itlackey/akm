@@ -195,7 +195,7 @@ describe("source commands and resolution", () => {
     const result = await akmSearch({ query: "deploy", type: "script" });
     const hit = result.hits.filter(isLocalHit)[0];
 
-    expect(hit.ref).toContain("script:deploy.sh");
+    expect(hit.ref).toContain("scripts/deploy.sh");
     expect(hit.action).toContain("akm show");
     expect(hit.size).toBe("small");
   });

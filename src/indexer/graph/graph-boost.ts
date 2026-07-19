@@ -21,6 +21,7 @@
  *     degrades gracefully to its non-graph behaviour, exactly as today.
  */
 
+import { displayRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import type { Database } from "../../storage/database";
 import { loadStoredGraphMeta, loadStoredGraphSnapshot } from "../db/graph-db";
@@ -493,8 +494,14 @@ export function listRelatedPathsForFile(
       )
       .all(...candidatePaths, stashRoot) as Array<{ entry_key: string; stash_dir: string; file_path: string }>;
     for (const row of entryRows) {
-      const ref = stripStashPrefix(row.entry_key, row.stash_dir);
-      if (ref) refByPath.set(row.file_path, ref);
+      const legacyRef = stripStashPrefix(row.entry_key, row.stash_dir);
+      if (!legacyRef) continue;
+      // F4b output-spelling flip: the stripped `type:name` becomes the 0.9.0
+      // conceptId grammar for the user-facing graph-related ref.
+      const colon = legacyRef.indexOf(":");
+      const ref =
+        colon > 0 ? displayRef({ type: legacyRef.slice(0, colon), name: legacyRef.slice(colon + 1) }) : legacyRef;
+      refByPath.set(row.file_path, ref);
     }
   } catch {
     /* ignore — refs are best-effort */

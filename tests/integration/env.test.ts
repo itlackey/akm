@@ -391,7 +391,7 @@ describe("env list", () => {
     const parsed = JSON.parse(result.stdout.trim());
     expect(parsed.envs).toEqual([
       expect.objectContaining({
-        ref: "env:prod",
+        ref: "env/prod",
         keys: ["API_KEY"],
       }),
     ]);
@@ -428,8 +428,8 @@ describe("env list", () => {
     const parsed = JSON.parse(result.stdout.trim());
     expect(parsed.envs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ref: "env:prod", keys: ["API_KEY"] }),
-        expect.objectContaining({ ref: "team//env:shared", keys: ["TOKEN"] }),
+        expect.objectContaining({ ref: "env/prod", keys: ["API_KEY"] }),
+        expect.objectContaining({ ref: "team//env/shared", keys: ["TOKEN"] }),
       ]),
     );
   });
@@ -442,7 +442,7 @@ describe("env list", () => {
     const result = await runCli(["env", "list", "--format", "text"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("## env:json");
+    expect(result.stdout).toContain("## env/json");
     expect(result.stdout).toContain("- API_KEY");
     expect(result.stdout).toContain("- SECOND");
   });

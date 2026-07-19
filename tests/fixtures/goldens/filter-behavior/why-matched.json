@@ -1,6 +1,6 @@
 {
   "byRef": {
-    "knowledge:contradicted-knowledge": {
+    "knowledge/contradicted-knowledge": {
       "beliefState": "contradicted",
       "name": "contradicted-knowledge",
       "quality": "curated",
@@ -16,7 +16,7 @@
         "contradicted belief state"
       ]
     },
-    "memory:active-memory": {
+    "memories/active-memory": {
       "beliefState": "active",
       "name": "active-memory",
       "quality": "curated",
@@ -33,7 +33,7 @@
         "active belief state"
       ]
     },
-    "memory:archived-memory": {
+    "memories/archived-memory": {
       "beliefState": "archived",
       "name": "archived-memory",
       "quality": "generated",
@@ -48,7 +48,7 @@
         "archived belief state"
       ]
     },
-    "memory:asserted-memory": {
+    "memories/asserted-memory": {
       "beliefState": "asserted",
       "name": "asserted-memory",
       "quality": "generated",
@@ -63,7 +63,7 @@
         "asserted belief state"
       ]
     },
-    "memory:base-memory": {
+    "memories/base-memory": {
       "beliefState": "contradicted",
       "name": "base-memory",
       "quality": "generated",
@@ -77,7 +77,7 @@
         "contradicted belief state"
       ]
     },
-    "memory:base-memory.derived": {
+    "memories/base-memory.derived": {
       "beliefState": "contradicted",
       "name": "base-memory.derived",
       "quality": "generated",
@@ -92,7 +92,7 @@
         "contradicted belief state"
       ]
     },
-    "memory:deprecated-memory": {
+    "memories/deprecated-memory": {
       "beliefState": "deprecated",
       "name": "deprecated-memory",
       "quality": "generated",
@@ -107,7 +107,7 @@
         "deprecated belief state"
       ]
     },
-    "memory:plain-memory": {
+    "memories/plain-memory": {
       "name": "plain-memory",
       "quality": "generated",
       "score": 1,
@@ -120,7 +120,7 @@
         "metadata confidence boost"
       ]
     },
-    "memory:silent-twin-base": {
+    "memories/silent-twin-base": {
       "beliefState": "contradicted",
       "name": "silent-twin-base",
       "quality": "generated",
@@ -135,7 +135,7 @@
         "contradicted belief state"
       ]
     },
-    "memory:superseded-memory": {
+    "memories/superseded-memory": {
       "beliefState": "superseded",
       "name": "superseded-memory",
       "quality": "generated",
@@ -160,16 +160,16 @@
   ],
   "query": "gridlock",
   "rankedRefOrder": [
-    "memory:active-memory",
-    "memory:asserted-memory",
-    "memory:plain-memory",
-    "memory:deprecated-memory",
-    "memory:superseded-memory",
-    "knowledge:contradicted-knowledge",
-    "memory:base-memory.derived",
-    "memory:base-memory",
-    "memory:silent-twin-base",
-    "memory:archived-memory"
+    "memories/active-memory",
+    "memories/asserted-memory",
+    "memories/plain-memory",
+    "memories/deprecated-memory",
+    "memories/superseded-memory",
+    "knowledge/contradicted-knowledge",
+    "memories/base-memory.derived",
+    "memories/base-memory",
+    "memories/silent-twin-base",
+    "memories/archived-memory"
   ],
   "scenario": "buildWhyMatched output (db-search.ts:837) alongside the ranked hit set for query='gridlock' against tests/fixtures/stashes/search-filter/, default filters (includeProposed=false, belief=all) (WI-0b.5b)"
 }

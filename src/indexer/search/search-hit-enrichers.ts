@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeAssetRef } from "../../core/asset/asset-ref";
+import { displayRef } from "../../core/asset/resolve-ref";
 import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
@@ -71,6 +72,8 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
 
     // Parent ref shape: `memory:<name>`. Re-build from the entry's name
     // so we don't depend on whatever wiki/registry prefix `hit.ref` carries.
+    // INTERNAL lookup key into `getDerivedForParent` (derived_from stores the
+    // legacy spelling until F4c) — deliberately stays legacy `makeAssetRef`.
     const parentRef = makeAssetRef("memory", hit.name);
     const derived = getDerivedForParent(ctx.db, parentRef);
     if (!derived) return;
@@ -89,7 +92,9 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     if (Array.isArray(derived.entry.tags) && derived.entry.tags.length > 0) {
       hit.tags = derived.entry.tags;
     }
-    hit.expandTo = makeAssetRef("memory", derived.entry.name);
+    // F4b output-spelling flip: `expandTo` is a user-facing `akm show <ref>`
+    // target, so emit the 0.9.0 short conceptId grammar (`memories/<name>`).
+    hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
   },
 };
 

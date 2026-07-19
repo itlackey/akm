@@ -3,19 +3,19 @@
   "caseA": {
     "judgment": {
       "banned": [
-        "memory:archived-memory",
-        "memory:base-memory"
+        "memories/archived-memory",
+        "memories/base-memory"
       ],
       "id": "search-filter-case-a-real-search",
       "idealOrder": [
-        "memory:active-memory",
-        "memory:asserted-memory"
+        "memories/active-memory",
+        "memories/asserted-memory"
       ],
       "limit": 10,
       "query": "gridlock",
       "relevant": [
-        "memory:active-memory",
-        "memory:asserted-memory"
+        "memories/active-memory",
+        "memories/asserted-memory"
       ]
     },
     "metrics": {
@@ -27,34 +27,34 @@
       "score": 1
     },
     "returned": [
-      "memory:active-memory",
-      "memory:asserted-memory",
-      "memory:plain-memory",
-      "memory:proposed-memory",
-      "memory:deprecated-memory",
-      "memory:superseded-memory",
-      "knowledge:contradicted-knowledge",
-      "memory:base-memory.derived",
-      "memory:base-memory",
-      "memory:silent-twin-base",
-      "memory:archived-memory"
+      "memories/active-memory",
+      "memories/asserted-memory",
+      "memories/plain-memory",
+      "memories/proposed-memory",
+      "memories/deprecated-memory",
+      "memories/superseded-memory",
+      "knowledge/contradicted-knowledge",
+      "memories/base-memory.derived",
+      "memories/base-memory",
+      "memories/silent-twin-base",
+      "memories/archived-memory"
     ]
   },
   "caseB": {
     "judgment": {
       "banned": [
-        "memory:archived-memory"
+        "memories/archived-memory"
       ],
       "id": "search-filter-case-b-synthetic-leapfrog",
       "idealOrder": [
-        "memory:active-memory",
-        "memory:asserted-memory"
+        "memories/active-memory",
+        "memories/asserted-memory"
       ],
       "limit": 5,
       "query": "synthetic-leapfrog",
       "relevant": [
-        "memory:active-memory",
-        "memory:asserted-memory"
+        "memories/active-memory",
+        "memories/asserted-memory"
       ]
     },
     "metrics": {
@@ -66,10 +66,10 @@
       "score": 0.5186541928109935
     },
     "returned": [
-      "memory:archived-memory",
-      "memory:plain-memory",
-      "memory:active-memory",
-      "memory:asserted-memory"
+      "memories/archived-memory",
+      "memories/plain-memory",
+      "memories/active-memory",
+      "memories/asserted-memory"
     ]
   },
   "determinism": [

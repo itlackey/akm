@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { placementTypes } from "../../core/asset/asset-placement";
-import { makeAssetRef } from "../../core/asset/asset-ref";
+import { displayRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
 import { defaultRendererRegistry, type RendererRegistry } from "../../core/type-presentation";
@@ -88,7 +88,17 @@ export function buildLocalAction(
 }
 
 function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
-  return makeAssetRef(entry.type, refName, source?.registryId);
+  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the hit's
+  // user-facing ref (short conceptId in the primary bundle, `bundle//conceptId`
+  // for a slug-clean non-default source). `displayRef` prefers the row's stored
+  // conceptId and derives `stashDir/name` (== the old makeAssetRef body) when it
+  // is absent, so this is a pure ref-spelling change over the old output.
+  return displayRef({
+    type: entry.type,
+    name: refName,
+    conceptId: entry.conceptId,
+    bundleId: source?.registryId ?? undefined,
+  });
 }
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {

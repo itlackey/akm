@@ -23,7 +23,7 @@ import path from "node:path";
 import { decideDangerousEnvInjection } from "../../core/activation-policy";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { isWithin } from "../../core/common";
-import { makeEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
+import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isDangerousEnvKey } from "../lint/env-key-rules";
@@ -97,9 +97,9 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
   if (missing.length > 0) {
     throw new NotFoundError(
-      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => `secret:${n}`).join(", ")}. Nothing was injected.`,
+      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => makeSecretRef(n)).join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set secret:${missing[0]}\`.`,
+      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0])}\`.`,
     );
   }
   envValues = substituted;

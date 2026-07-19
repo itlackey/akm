@@ -219,7 +219,7 @@ describe("akm feedback", () => {
 
     const before = await akmSearch({ query: "shared deployment incident", source: "local" });
     const beforeMemories = before.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
-    expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memory:alpha", "memory:omega"]);
+    expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memories/alpha", "memories/omega"]);
     expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
 
     const feedback = await runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
@@ -229,7 +229,7 @@ describe("akm feedback", () => {
 
     const after = await akmSearch({ query: "shared deployment incident", source: "local" });
     const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
-    expect(afterMemories[0]?.ref).toBe("memory:omega");
+    expect(afterMemories[0]?.ref).toBe("memories/omega");
     expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
   });
 

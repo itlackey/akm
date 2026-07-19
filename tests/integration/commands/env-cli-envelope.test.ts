@@ -45,7 +45,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["--json", "env", "create", "prod"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe("env:prod");
+    expect(env.ref).toBe("env/prod");
     expect(fs.existsSync(path.join(stashDir, "env", "prod.env"))).toBe(true);
   });
 
@@ -56,7 +56,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(Array.isArray(env.envs)).toBe(true);
-    const prod = env.envs.find((e: { ref: string }) => e.ref === "env:prod");
+    const prod = env.envs.find((e: { ref: string }) => e.ref === "env/prod");
     expect(prod).toBeDefined();
     expect(prod.keys).toEqual(["API_URL", "TOKEN"]);
     // VALUE must never appear in structured output.
@@ -77,7 +77,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     ]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe("env:prod");
+    expect(env.ref).toBe("env/prod");
     expect(env.key).toBe("API_TOKEN");
     expect(stdout).not.toContain("topsecret-value");
     expect(stderr).not.toContain("topsecret-value");
@@ -89,7 +89,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["env", "unset", "env:prod", "DEBUG", "NOPE", "--format", "json"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe("env:prod");
+    expect(env.ref).toBe("env/prod");
     expect(env.removed).toEqual(["DEBUG"]);
     expect(env.missing).toEqual(["NOPE"]);
     expect(stdout).not.toContain("secret-debug");
@@ -101,7 +101,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["--json", "env", "remove", "env:prod", "--yes"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe("env:prod");
+    expect(env.ref).toBe("env/prod");
     expect(env.removed).toBe(true);
     expect(stdout).not.toContain("topsecret-value");
     expect(fs.existsSync(path.join(stashDir, "env", "prod.env"))).toBe(false);

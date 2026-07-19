@@ -57,7 +57,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(Array.isArray(env.secrets)).toBe(true);
-    const entry = env.secrets.find((s: { ref: string }) => s.ref === "secret:deploy-key");
+    const entry = env.secrets.find((s: { ref: string }) => s.ref === "secrets/deploy-key");
     expect(entry).toBeDefined();
     // The whole file IS the value — it must never leak into structured output.
     expect(stdout).not.toContain(SECRET_VALUE);
@@ -76,7 +76,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["--json", "secret", "remove", "secret:deploy-key", "--yes"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe("secret:deploy-key");
+    expect(env.ref).toBe("secrets/deploy-key");
     expect(env.removed).toBe(true);
     expect(stdout).not.toContain(SECRET_VALUE);
     expect(fs.existsSync(file)).toBe(false);

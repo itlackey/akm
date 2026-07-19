@@ -344,7 +344,7 @@ describe("akm graph", () => {
     // Canonical ref is `type:name`, with the stash-dir prefix stripped from
     // entries.entry_key. The legacy `path` field must remain populated for
     // back-compat consumers.
-    expect(first?.ref).toBe("memory:m1");
+    expect(first?.ref).toBe("memories/m1");
     expect(first?.ref?.includes(stashDir)).toBe(false);
     expect(first?.ref?.startsWith(":")).toBe(false);
   });
@@ -446,13 +446,13 @@ describe("akm graph entity (direct API)", () => {
     expect(result.matches.length).toBe(2);
     for (const match of result.matches) {
       expect(typeof match.ref).toBe("string");
-      expect(match.ref).toMatch(/^(memory|knowledge):/);
+      expect(match.ref).toMatch(/^(memories|knowledge)\//);
     }
     // Sorted by confidence desc, so the runbook (0.9) appears before the
     // incident memory (0.5).
-    expect(result.matches[0]?.ref).toBe("knowledge:deploy-runbook");
+    expect(result.matches[0]?.ref).toBe("knowledge/deploy-runbook");
     expect(result.matches[0]?.confidence).toBe(0.9);
-    expect(result.matches[1]?.ref).toBe("memory:deploy-incident");
+    expect(result.matches[1]?.ref).toBe("memories/deploy-incident");
     expect(result.matches[1]?.confidence).toBe(0.5);
   });
 
@@ -559,7 +559,7 @@ describe("akm graph orphans (direct API)", () => {
     const orphan = result.orphans[0];
     expect(orphan?.path).toBe(orphanPath);
     expect(orphan?.type).toBe("knowledge");
-    expect(orphan?.ref).toBe("knowledge:orphan");
+    expect(orphan?.ref).toBe("knowledge/orphan");
   });
 });
 

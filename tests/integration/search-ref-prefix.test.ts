@@ -166,7 +166,8 @@ describe("akm search ref-prefix enumeration (SPEC-4)", () => {
     expect(names).not.toContain("projectalpha/stray-note");
     for (const hit of hits) {
       expect(hit.type).toBe("memory");
-      expect(hit.ref).toBe(`memory:${hit.name}`);
+      // F4b: search hits now emit the 0.9.0 conceptId spelling.
+      expect(hit.ref).toBe(`memories/${hit.name}`);
       // Enumeration is a deterministic listing, not a relevance ranking — hits
       // carry the fixed browse score (same contract as the empty-query path).
       expect(hit.score).toBe(1);

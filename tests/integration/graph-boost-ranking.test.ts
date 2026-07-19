@@ -621,7 +621,7 @@ describe("listRelatedPathsForFile (SQL-backed)", () => {
       const top = related[0];
       expect(top?.path).toBe(path.join(stashDir, "memories", "incident-2024-shard.md"));
       expect(top?.type).toBe("memory");
-      expect(top?.ref).toBe("memory:incident-2024-shard");
+      expect(top?.ref).toBe("memories/incident-2024-shard");
       // Shared entities are sorted alphabetically by the helper.
       expect(top?.sharedEntities).toEqual(["database", "outage", "recovery"]);
       // Each consecutive neighbor must have a sharedEntities count ≤ the

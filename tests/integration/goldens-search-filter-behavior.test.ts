@@ -282,10 +282,10 @@ describe("WI-0b.5a: derived-twin belief inheritance -- parity case (base-memory 
     // twin inherits base-memory's 'contradicted' state on BOTH paths (it IS
     // an FTS candidate for 'gridlock' on the scored path too), so it PASSES
     // 'historical' and is present on both -- no divergence for this pair.
-    expect(scored.some((h) => h.ref === "memory:base-memory.derived")).toBe(true);
-    expect(enumerated.some((h) => h.ref === "memory:base-memory.derived")).toBe(true);
-    const scoredTwin = scored.find((h) => h.ref === "memory:base-memory.derived");
-    const enumeratedTwin = enumerated.find((h) => h.ref === "memory:base-memory.derived");
+    expect(scored.some((h) => h.ref === "memories/base-memory.derived")).toBe(true);
+    expect(enumerated.some((h) => h.ref === "memories/base-memory.derived")).toBe(true);
+    const scoredTwin = scored.find((h) => h.ref === "memories/base-memory.derived");
+    const enumeratedTwin = enumerated.find((h) => h.ref === "memories/base-memory.derived");
     expect(scoredTwin?.beliefState).toBe("contradicted");
     expect(enumeratedTwin?.beliefState).toBe("contradicted");
   });
@@ -298,8 +298,8 @@ describe("WI-0b.5a: derived-twin belief inheritance -- parity case (base-memory 
 
     // Inherited 'contradicted' fails 'current' on BOTH paths -- no asymmetry
     // for a twin that IS a candidate on both paths.
-    expect(scored.some((h) => h.ref === "memory:base-memory.derived")).toBe(false);
-    expect(enumerated.some((h) => h.ref === "memory:base-memory.derived")).toBe(false);
+    expect(scored.some((h) => h.ref === "memories/base-memory.derived")).toBe(false);
+    expect(enumerated.some((h) => h.ref === "memories/base-memory.derived")).toBe(false);
   });
 });
 
@@ -310,9 +310,9 @@ describe("WI-0b.5a: derived-twin belief inheritance -- the REAL two-path diverge
     const scored = await runScored(combo);
     const enumerated = await runEnumerate(combo);
 
-    expect(scored.some((h) => h.ref === "memory:silent-twin-base.derived")).toBe(false);
-    expect(enumerated.some((h) => h.ref === "memory:silent-twin-base.derived")).toBe(true);
-    const enumeratedTwin = enumerated.find((h) => h.ref === "memory:silent-twin-base.derived");
+    expect(scored.some((h) => h.ref === "memories/silent-twin-base.derived")).toBe(false);
+    expect(enumerated.some((h) => h.ref === "memories/silent-twin-base.derived")).toBe(true);
+    const enumeratedTwin = enumerated.find((h) => h.ref === "memories/silent-twin-base.derived");
     expect(enumeratedTwin?.beliefState).toBe("contradicted");
   });
 
@@ -325,8 +325,8 @@ describe("WI-0b.5a: derived-twin belief inheritance -- the REAL two-path diverge
     // belief=all applies no belief narrowing at all -- the twin's total
     // absence from the scored result set here proves the divergence is about
     // candidate-pool construction (FTS token match), not belief filtering.
-    expect(scored.some((h) => h.ref === "memory:silent-twin-base.derived")).toBe(false);
-    expect(enumerated.some((h) => h.ref === "memory:silent-twin-base.derived")).toBe(true);
+    expect(scored.some((h) => h.ref === "memories/silent-twin-base.derived")).toBe(false);
+    expect(enumerated.some((h) => h.ref === "memories/silent-twin-base.derived")).toBe(true);
   });
 
   test("a duskfall-token query DOES surface silent-twin-base.derived on the scored path too (confirms it's token-gated, not structurally excluded)", async () => {
@@ -341,8 +341,8 @@ describe("WI-0b.5a: derived-twin belief inheritance -- the REAL two-path diverge
       skipLogging: true,
     });
     const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    expect(hits.some((h) => h.ref === "memory:silent-twin-base.derived")).toBe(true);
-    const hit = hits.find((h) => h.ref === "memory:silent-twin-base.derived");
+    expect(hits.some((h) => h.ref === "memories/silent-twin-base.derived")).toBe(true);
+    const hit = hits.find((h) => h.ref === "memories/silent-twin-base.derived");
     // Inheritance still applies once it IS a candidate.
     expect(hit?.beliefState).toBe("contradicted");
   });
@@ -355,8 +355,8 @@ describe("WI-0b.5a: scope+belief contrast case (non-memory entry, never inherita
     const scored = await runScored(combo);
     const enumerated = await runEnumerate(combo);
 
-    expect(scored.map((h) => h.ref)).toEqual(["knowledge:contradicted-knowledge"]);
-    expect(enumerated.map((h) => h.ref)).toEqual(["knowledge:contradicted-knowledge"]);
+    expect(scored.map((h) => h.ref)).toEqual(["knowledge/contradicted-knowledge"]);
+    expect(enumerated.map((h) => h.ref)).toEqual(["knowledge/contradicted-knowledge"]);
   });
 });
 
@@ -505,9 +505,9 @@ describe("golden fixture: rank-metrics/search-filter.json (WI-0b.5c)", () => {
     const judgmentA: CurateJudgment = {
       id: "search-filter-case-a-real-search",
       query: FTS_QUERY,
-      relevant: ["memory:active-memory", "memory:asserted-memory"],
-      idealOrder: ["memory:active-memory", "memory:asserted-memory"],
-      banned: ["memory:archived-memory", "memory:base-memory"],
+      relevant: ["memories/active-memory", "memories/asserted-memory"],
+      idealOrder: ["memories/active-memory", "memories/asserted-memory"],
+      banned: ["memories/archived-memory", "memories/base-memory"],
       limit: 10,
     };
     const metricsA = scoreCurateCase(returnedA, judgmentA);
@@ -521,16 +521,16 @@ describe("golden fixture: rank-metrics/search-filter.json (WI-0b.5c)", () => {
     const judgmentB: CurateJudgment = {
       id: "search-filter-case-b-synthetic-leapfrog",
       query: "synthetic-leapfrog",
-      relevant: ["memory:active-memory", "memory:asserted-memory"],
-      idealOrder: ["memory:active-memory", "memory:asserted-memory"],
-      banned: ["memory:archived-memory"],
+      relevant: ["memories/active-memory", "memories/asserted-memory"],
+      idealOrder: ["memories/active-memory", "memories/asserted-memory"],
+      banned: ["memories/archived-memory"],
       limit: 5,
     };
     const returnedB = [
-      "memory:archived-memory",
-      "memory:plain-memory",
-      "memory:active-memory",
-      "memory:asserted-memory",
+      "memories/archived-memory",
+      "memories/plain-memory",
+      "memories/active-memory",
+      "memories/asserted-memory",
     ];
     const metricsB = scoreCurateCase(returnedB, judgmentB);
 

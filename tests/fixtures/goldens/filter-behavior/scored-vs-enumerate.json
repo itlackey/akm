@@ -8,7 +8,7 @@
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           },
@@ -16,7 +16,7 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
@@ -24,7 +24,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           }
@@ -41,7 +41,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
@@ -49,14 +49,14 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           }
@@ -71,7 +71,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 1,
             "type": "memory"
           },
@@ -79,7 +79,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 1,
             "type": "memory"
           },
@@ -87,7 +87,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 1,
             "type": "memory"
           },
@@ -95,7 +95,7 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 1,
             "type": "memory"
           },
@@ -103,7 +103,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 1,
             "type": "memory"
           },
@@ -111,7 +111,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base.derived",
             "quality": "generated",
-            "ref": "memory:silent-twin-base.derived",
+            "ref": "memories/silent-twin-base.derived",
             "score": 1,
             "type": "memory"
           },
@@ -119,7 +119,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 1,
             "type": "memory"
           },
@@ -127,7 +127,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 1,
             "type": "knowledge"
           }
@@ -144,7 +144,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 0.28,
             "type": "memory"
           },
@@ -152,7 +152,7 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 0.25,
             "type": "memory"
           },
@@ -160,7 +160,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 0.2,
             "type": "knowledge"
           },
@@ -168,7 +168,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 0.2,
             "type": "memory"
           },
@@ -176,7 +176,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 0.2,
             "type": "memory"
           },
@@ -184,7 +184,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 0.2,
             "type": "memory"
           },
@@ -192,7 +192,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 0.15,
             "type": "memory"
           }
@@ -207,7 +207,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 1,
             "type": "memory"
           },
@@ -215,7 +215,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 1,
             "type": "memory"
           },
@@ -223,7 +223,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 1,
             "type": "memory"
           },
@@ -231,14 +231,14 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           },
@@ -246,7 +246,7 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
@@ -254,7 +254,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 1,
             "type": "memory"
           },
@@ -262,7 +262,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base.derived",
             "quality": "generated",
-            "ref": "memory:silent-twin-base.derived",
+            "ref": "memories/silent-twin-base.derived",
             "score": 1,
             "type": "memory"
           },
@@ -270,7 +270,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
@@ -278,7 +278,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 1,
             "type": "memory"
           },
@@ -286,7 +286,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 1,
             "type": "knowledge"
           }
@@ -303,7 +303,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
@@ -311,14 +311,14 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           },
@@ -326,7 +326,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 0.28,
             "type": "memory"
           },
@@ -334,7 +334,7 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 0.25,
             "type": "memory"
           },
@@ -342,7 +342,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 0.2,
             "type": "knowledge"
           },
@@ -350,7 +350,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 0.2,
             "type": "memory"
           },
@@ -358,7 +358,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 0.2,
             "type": "memory"
           },
@@ -366,7 +366,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 0.2,
             "type": "memory"
           },
@@ -374,7 +374,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 0.15,
             "type": "memory"
           }
@@ -389,7 +389,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 1,
             "type": "memory"
           },
@@ -397,7 +397,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 1,
             "type": "memory"
           },
@@ -405,7 +405,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 1,
             "type": "memory"
           },
@@ -413,14 +413,14 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           },
@@ -428,7 +428,7 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
@@ -436,14 +436,14 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "proposed-memory",
             "quality": "proposed",
-            "ref": "memory:proposed-memory",
+            "ref": "memories/proposed-memory",
             "score": 1,
             "type": "memory"
           },
@@ -451,7 +451,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base.derived",
             "quality": "generated",
-            "ref": "memory:silent-twin-base.derived",
+            "ref": "memories/silent-twin-base.derived",
             "score": 1,
             "type": "memory"
           },
@@ -459,7 +459,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
@@ -467,7 +467,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 1,
             "type": "memory"
           },
@@ -475,7 +475,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 1,
             "type": "knowledge"
           }
@@ -492,7 +492,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
@@ -500,21 +500,21 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "plain-memory",
             "quality": "generated",
-            "ref": "memory:plain-memory",
+            "ref": "memories/plain-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "proposed-memory",
             "quality": "proposed",
-            "ref": "memory:proposed-memory",
+            "ref": "memories/proposed-memory",
             "score": 1,
             "type": "memory"
           },
@@ -522,7 +522,7 @@
             "beliefState": "deprecated",
             "name": "deprecated-memory",
             "quality": "generated",
-            "ref": "memory:deprecated-memory",
+            "ref": "memories/deprecated-memory",
             "score": 0.28,
             "type": "memory"
           },
@@ -530,7 +530,7 @@
             "beliefState": "superseded",
             "name": "superseded-memory",
             "quality": "generated",
-            "ref": "memory:superseded-memory",
+            "ref": "memories/superseded-memory",
             "score": 0.25,
             "type": "memory"
           },
@@ -538,7 +538,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 0.2,
             "type": "knowledge"
           },
@@ -546,7 +546,7 @@
             "beliefState": "contradicted",
             "name": "base-memory.derived",
             "quality": "generated",
-            "ref": "memory:base-memory.derived",
+            "ref": "memories/base-memory.derived",
             "score": 0.2,
             "type": "memory"
           },
@@ -554,7 +554,7 @@
             "beliefState": "contradicted",
             "name": "base-memory",
             "quality": "generated",
-            "ref": "memory:base-memory",
+            "ref": "memories/base-memory",
             "score": 0.2,
             "type": "memory"
           },
@@ -562,7 +562,7 @@
             "beliefState": "contradicted",
             "name": "silent-twin-base",
             "quality": "generated",
-            "ref": "memory:silent-twin-base",
+            "ref": "memories/silent-twin-base",
             "score": 0.2,
             "type": "memory"
           },
@@ -570,7 +570,7 @@
             "beliefState": "archived",
             "name": "archived-memory",
             "quality": "generated",
-            "ref": "memory:archived-memory",
+            "ref": "memories/archived-memory",
             "score": 0.15,
             "type": "memory"
           }
@@ -585,7 +585,7 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           }
@@ -604,7 +604,7 @@
             "beliefState": "asserted",
             "name": "asserted-memory",
             "quality": "generated",
-            "ref": "memory:asserted-memory",
+            "ref": "memories/asserted-memory",
             "score": 1,
             "type": "memory"
           }
@@ -619,7 +619,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           }
@@ -638,7 +638,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           }
@@ -652,7 +652,7 @@
           {
             "name": "proposed-memory",
             "quality": "proposed",
-            "ref": "memory:proposed-memory",
+            "ref": "memories/proposed-memory",
             "score": 1,
             "type": "memory"
           },
@@ -660,7 +660,7 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           }
@@ -679,14 +679,14 @@
             "beliefState": "active",
             "name": "active-memory",
             "quality": "curated",
-            "ref": "memory:active-memory",
+            "ref": "memories/active-memory",
             "score": 1,
             "type": "memory"
           },
           {
             "name": "proposed-memory",
             "quality": "proposed",
-            "ref": "memory:proposed-memory",
+            "ref": "memories/proposed-memory",
             "score": 1,
             "type": "memory"
           }
@@ -701,7 +701,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 1,
             "type": "knowledge"
           }
@@ -720,7 +720,7 @@
             "beliefState": "contradicted",
             "name": "contradicted-knowledge",
             "quality": "curated",
-            "ref": "knowledge:contradicted-knowledge",
+            "ref": "knowledge/contradicted-knowledge",
             "score": 0.2,
             "type": "knowledge"
           }

@@ -59,8 +59,9 @@ describe("akmClone", () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
 
     const result = await akmClone({ sourceRef: "script:deploy.sh" });
+    // F4b: destination ref emits the 0.9.0 conceptId spelling.
 
-    expect(result.destination.ref).toContain("script:deploy.sh");
+    expect(result.destination.ref).toContain("scripts/deploy.sh");
     expect(result.overwritten).toBe(false);
     expect(fs.existsSync(path.join(stashDir, "scripts", "deploy.sh"))).toBe(true);
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");

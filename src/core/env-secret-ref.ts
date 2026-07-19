@@ -18,7 +18,7 @@ import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "..
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/asset-ref";
-import { isFullRefInput, parseRefInput } from "./asset/resolve-ref";
+import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
@@ -47,7 +47,9 @@ export function findEnvSource(origin: string | undefined): IndexSearchSource {
 }
 
 export function makeEnvRef(name: string, source?: IndexSearchSource): string {
-  return source?.registryId ? `${source.registryId}//env:${name}` : `env:${name}`;
+  // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
+  // for a slug-clean named source.
+  return displayRef({ type: "env", name, bundleId: source?.registryId });
 }
 
 /**
@@ -87,7 +89,9 @@ export function parseSecretRef(ref: string): AssetRef {
 }
 
 export function makeSecretRef(name: string, source?: IndexSearchSource): string {
-  return source?.registryId ? `${source.registryId}//secret:${name}` : `secret:${name}`;
+  // F4b output-spelling flip: `secrets/name` in the primary stash,
+  // `bundle//secrets/name` for a slug-clean named source.
+  return displayRef({ type: "secret", name, bundleId: source?.registryId });
 }
 
 export function resolveSecretPath(

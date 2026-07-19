@@ -104,7 +104,7 @@ describe("import --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:auth-flow");
+    expect(json.ref).toBe("knowledge/auth-flow");
 
     const expectedPath = path.join(targetDir, "knowledge", "auth-flow.md");
     expect(json.path).toBe(expectedPath);
@@ -159,7 +159,7 @@ describe("import --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:overview");
+    expect(json.ref).toBe("knowledge/overview");
 
     const expectedPath = path.join(targetDir, "knowledge", "overview.md");
     expect(json.path).toBe(expectedPath);
@@ -177,7 +177,7 @@ describe("import --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("knowledge:default-stash");
+    expect(json.ref).toBe("knowledge/default-stash");
 
     const expectedPath = path.join(stashDir, "knowledge", "default-stash.md");
     expect(json.path).toBe(expectedPath);
@@ -238,7 +238,7 @@ describe("import --target", () => {
 
       const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
       expect(json.ok).toBe(true);
-      expect(json.ref).toBe("knowledge:docs/guide");
+      expect(json.ref).toBe("knowledge/docs/guide");
 
       const expectedPath = path.join(stashDir, "knowledge", "docs", "guide.md");
       expect(json.path).toBe(expectedPath);

@@ -16,8 +16,9 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
+import { refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -169,7 +170,10 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
         });
         for (const item of result.items) {
           if (!("ref" in item) || typeof item.ref !== "string") continue;
-          const parsed = parseAssetRef(item.ref);
+          // F4b: item.ref now arrives in the 0.9.0 conceptId grammar; parse via
+          // the dual-grammar parseRefInput. refToString below still persists the
+          // LEGACY entry_ref spelling (persisted-key flip deferred to F4c).
+          const parsed = parseRefInput(item.ref);
           const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
           insertUsageEvent(db, {
             event_type: "curate",
@@ -378,7 +382,9 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   if (items.length === 0) {
     return `No curated assets were selected for "${query}".`;
   }
-  const labels = items.map((item) => `${item.type}:${item.name}`);
+  // F4b: emit the flipped conceptId ref for stash items (registry items have no
+  // ref — keep their `registry:<name>` label).
+  const labels = items.map((item) => ("ref" in item ? item.ref : `${item.type}:${item.name}`));
   return `Selected ${items.length} curated result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
 }
 
@@ -557,7 +563,10 @@ function computeCurateTypeNudge(type: string, intent: CurateIntent): number {
 
 function getCurateFamily(ref: string): CurateFamily | undefined {
   try {
-    const parsed = parseAssetRef(ref);
+    // F4b: `ref` is a search-hit ref in the 0.9.0 conceptId grammar — parse via
+    // the dual-grammar parseRefInput so skill/reference family grouping still
+    // recognizes it (parseAssetRef would throw on the new spelling).
+    const parsed = parseRefInput(ref);
     if (parsed.type === "skill") {
       return { key: parsed.name, role: "root" };
     }
