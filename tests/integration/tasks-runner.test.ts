@@ -92,7 +92,7 @@ function readRunLogRows(taskId: string): TaskLogRow[] {
 
 describe("runTask — workflow target", () => {
   test("dispatches to startWorkflowRun and writes log + history to state.db", async () => {
-    writeTask("wf", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+    writeTask("wf", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", ""].join("\n"));
     const calls: Array<{ ref: string; params: Record<string, unknown> }> = [];
     const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
       calls.push({ ref, params });
@@ -119,9 +119,9 @@ describe("runTask — workflow target", () => {
       now: () => new Date("2025-01-01T00:00:00Z"),
     });
 
-    expect(calls).toEqual([{ ref: "workflow:noop", params: {} }]);
+    expect(calls).toEqual([{ ref: "workflows/noop", params: {} }]);
     expect(result.status).toBe("completed");
-    expect(result.target).toEqual({ kind: "workflow", ref: "workflow:noop" });
+    expect(result.target).toEqual({ kind: "workflow", ref: "workflows/noop" });
     expect(result.detail?.runId).toBe("run-id-1");
 
     const logExists = fs.existsSync(result.log);
@@ -145,7 +145,7 @@ describe("runTask — workflow target", () => {
   ] as const;
   for (const { wf, expected } of STATUS_CASES) {
     test(`maps workflow run status "${wf}" → task status "${expected}"`, async () => {
-      writeTask("map", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", ""].join("\n"));
+      writeTask("map", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", ""].join("\n"));
       const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => ({
         run: {
           id: "run-map",
@@ -520,7 +520,7 @@ describe("runTask — prompt target", () => {
 
 describe("runTask — disabled tasks", () => {
   test("manual invocation dispatches an intentionally disabled task", async () => {
-    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
+    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", "enabled: false", ""].join("\n"));
     let called = false;
     const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
       called = true;
@@ -552,7 +552,7 @@ describe("runTask — disabled tasks", () => {
   });
 
   test("scheduler-generated invocation is recorded but not dispatched", async () => {
-    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflow:noop", "enabled: false", ""].join("\n"));
+    writeTask("off", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", "enabled: false", ""].join("\n"));
     let called = false;
     const fakeWf = async () => {
       called = true;

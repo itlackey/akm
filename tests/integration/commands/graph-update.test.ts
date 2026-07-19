@@ -13,6 +13,7 @@ import type {
 } from "../../../src/indexer/graph/graph-extraction";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
 import { probeIndexWriterLease } from "../../../src/indexer/index-writer-lock";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -76,6 +77,7 @@ function seedIndex(): { k1Path: string; m1Path: string } {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = openIndexDatabase(dbPath);
   try {
+    const bundle = { bundleId: "stash", componentId: "stash", adapterId: "akm" };
     upsertEntry(
       db,
       `${stashDir}:knowledge:k1`,
@@ -84,6 +86,9 @@ function seedIndex(): { k1Path: string; m1Path: string } {
       stashDir,
       { name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" },
       buildSearchText({ name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" }),
+      // F5: the new-grammar ref resolver (findEntryIdByRef → matchIdByItemRef)
+      // matches on item_ref, so the seed must populate it like the real indexer.
+      deriveEntryProvenance(bundle, "knowledge", "k1"),
     );
     upsertEntry(
       db,
@@ -93,6 +98,7 @@ function seedIndex(): { k1Path: string; m1Path: string } {
       stashDir,
       { name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" },
       buildSearchText({ name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" }),
+      deriveEntryProvenance(bundle, "memory", "m1"),
     );
     rebuildFts(db);
     setMeta(db, "stashDir", stashDir);

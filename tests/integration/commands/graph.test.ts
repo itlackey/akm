@@ -235,9 +235,9 @@ describe("akm graph", () => {
   test("related resolves neighboring assets for a ref", async () => {
     writeGraphArtifact();
     seedGraphLookupIndex();
-    const result = await akmGraphRelated({ ref: "knowledge:k1" });
+    const result = await akmGraphRelated({ ref: "knowledge/k1" });
     expect(result.shape).toBe("graph-related");
-    expect(result.ref).toBe("knowledge:k1");
+    expect(result.ref).toBe("knowledge/k1");
     expect(result.total).toBe(1);
     expect(result.related[0]?.type).toBe("memory");
     expect(result.related[0]?.sharedEntities).toContain("alpha");
@@ -315,7 +315,7 @@ describe("akm graph", () => {
       closeDatabase(graphDb);
     }
 
-    const result = await akmGraphRelated({ ref: "sec-a//knowledge:shared" });
+    const result = await akmGraphRelated({ ref: "sec-a//knowledge/shared" });
     expect(result.stashPath).toBe(secondaryStashDir);
     expect(result.total).toBe(1);
     expect(result.related[0]?.type).toBe("memory");
@@ -335,7 +335,7 @@ describe("akm graph", () => {
   test("related result populates canonical ref alongside legacy path", async () => {
     writeGraphArtifact();
     seedGraphLookupIndex();
-    const result = await akmGraphRelated({ ref: "knowledge:k1" });
+    const result = await akmGraphRelated({ ref: "knowledge/k1" });
     expect(result.shape).toBe("graph-related");
     expect(result.related.length).toBe(1);
     const first = result.related[0];

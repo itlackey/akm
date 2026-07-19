@@ -762,7 +762,7 @@ steps:
     title: Build
     unit:
       instructions: Build it.
-      env: [env:leak]
+      env: [env/leak]
     gate:
       criteria: [the build passes]
   - id: wrap
@@ -782,7 +782,7 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     // Brief BEFORE any dispatch: the env binding is surfaced as a REF NAME
     // only, and the whole brief document contains no secret value.
     const preBrief = await buildWorkflowBrief(runId);
-    expect(preBrief.workList.units[0].env).toEqual(["env:leak"]);
+    expect(preBrief.workList.units[0].env).toEqual(["env/leak"]);
     expect(JSON.stringify(preBrief)).not.toContain(FAKE_SECRET);
 
     // Drive the step: the resolved value DOES reach the dispatched child env

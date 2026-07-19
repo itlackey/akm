@@ -14,7 +14,7 @@
  *     NDJSON and stamps the `workflow-watch` envelope — both in plain backlog
  *     mode (no sleep) and in `--stream` mode with a fast interval (the single
  *     idle grace poll), against an already-completed run.
- *   - `akm workflow validate <origin>//workflow:<name>` resolves an
+ *   - `akm workflow validate <origin>//workflows/<name>` resolves an
  *     origin-qualified ref through the source search, exactly like
  *     `workflow start`/`status`/`next`; an unknown origin-qualified ref is a
  *     clean UsageError, not a crash.
@@ -224,7 +224,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
     return dir;
   }
 
-  test("validate <origin>//workflow:<name> validates the file that ref would start", async () => {
+  test("validate <origin>//workflows/<name> validates the file that ref would start", async () => {
     const extraStash = makeExtraStash();
     writeSingleStepWorkflow(extraStash, "shared-flow");
     writeSandboxConfig({
@@ -233,7 +233,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
     });
     expect((await runCliCapture(["index", "--full"])).code).toBe(0);
 
-    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", "extra//workflow:shared-flow"]);
+    const { code, stdout } = await runCliCapture(["--json", "workflow", "validate", "extra//workflows/shared-flow"]);
     expect(code).toBe(0);
     const env = JSON.parse(stdout) as { ok: boolean; title: string; stepCount: number };
     expect(env.ok).toBe(true);
@@ -252,7 +252,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
 
   test("an unknown origin-qualified ref is a clean UsageError, not a crash", async () => {
     writeSandboxConfig({ semanticSearchMode: "off", sources: [] });
-    const { code, stderr } = await runCliCapture(["--json", "workflow", "validate", "nowhere//workflow:missing-flow"]);
+    const { code, stderr } = await runCliCapture(["--json", "workflow", "validate", "nowhere//workflows/missing-flow"]);
     expect(code).toBe(2);
     const env = JSON.parse(stderr) as { ok: boolean; error: string };
     expect(env.ok).toBe(false);

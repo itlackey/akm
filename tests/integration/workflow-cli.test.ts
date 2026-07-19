@@ -239,7 +239,7 @@ describe("workflow CLI", async () => {
     expect(created.ref).toBe("workflow:release-flow");
     expect(fs.existsSync(created.path)).toBe(true);
 
-    const shown = await runCli(["show", "workflow:release-flow"], env);
+    const shown = await runCli(["show", "workflows/release-flow"], env);
     expect(shown.status).toBe(0);
     const json = JSON.parse(shown.stdout) as {
       type: string;
@@ -286,7 +286,7 @@ describe("workflow CLI", async () => {
 
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
 
-    const started = await runCli(["workflow", "start", "workflow:release", "--params", '{"version":"1.2.3"}'], env);
+    const started = await runCli(["workflow", "start", "workflows/release", "--params", '{"version":"1.2.3"}'], env);
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as {
       run: { id: string; currentStepId: string; params: Record<string, unknown> };
@@ -339,7 +339,7 @@ describe("workflow CLI", async () => {
       evidence: { checkedBy: "copilot" },
     });
 
-    const listed = await runCli(["workflow", "list", "--ref", "workflow:release", "--active"], env);
+    const listed = await runCli(["workflow", "list", "--ref", "workflows/release", "--active"], env);
     expect(listed.status).toBe(0);
     const listJson = JSON.parse(listed.stdout) as { runs: Array<{ id: string; workflowRef: string }> };
     expect(listJson.runs).toHaveLength(1);
@@ -370,7 +370,7 @@ describe("workflow CLI", async () => {
     fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
 
-    const result = await runCli(["workflow", "next", "workflow:release", "--dry-run"], env);
+    const result = await runCli(["workflow", "next", "workflows/release", "--dry-run"], env);
     expect(result.status).toBe(2);
     const error = parseLastJsonLine(result.stderr) as { error: string; code?: string };
     expect(error.error).toContain("does not support --dry-run");
@@ -399,7 +399,7 @@ describe("workflow CLI", async () => {
     expect(searchJson.hits[0]?.ref).toBe("workflows/release");
     expect(searchJson.hits[0]?.action).toContain("akm workflow next 'workflows/release'");
 
-    const next = await runCli(["workflow", "next", "workflow:release"], env);
+    const next = await runCli(["workflow", "next", "workflows/release"], env);
     expect(next.status).toBe(0);
     const nextJson = JSON.parse(next.stdout) as { run: { id: string; status: string }; step: { id: string } };
     expect(nextJson.run.status).toBe("active");
@@ -424,7 +424,7 @@ describe("workflow CLI", async () => {
 
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
 
-    const started = await runCli(["workflow", "start", "workflow:release"], env);
+    const started = await runCli(["workflow", "start", "workflows/release"], env);
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -465,7 +465,7 @@ describe("workflow CLI", async () => {
 
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
 
-    const started = await runCli(["workflow", "start", "workflow:release"], env);
+    const started = await runCli(["workflow", "start", "workflows/release"], env);
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -481,7 +481,7 @@ describe("workflow CLI", async () => {
       (await runCli(["workflow", "complete", startJson.run.id, "--step", "deploy", "--state", "blocked"], env)).status,
     ).toBe(0);
 
-    const next = await runCli(["workflow", "next", "workflow:release"], env);
+    const next = await runCli(["workflow", "next", "workflows/release"], env);
     expect(next.status).toBe(0);
     const nextJson = JSON.parse(next.stdout) as { run: { id: string; status: string }; step: { id: string } };
     expect(nextJson.run.id).not.toBe(startJson.run.id);
@@ -503,7 +503,7 @@ describe("workflow CLI", async () => {
 
     expect((await runCli(["index", "--full"], env)).status).toBe(0);
 
-    const started = await runCli(["workflow", "start", "extra//workflow:shared-release"], env);
+    const started = await runCli(["workflow", "start", "extra//workflows/shared-release"], env);
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as { run: { workflowEntryId?: number | null; workflowRef: string } };
     expect(startJson.run.workflowRef).toBe("extra//workflow:shared-release");
@@ -520,11 +520,15 @@ describe("workflow CLI", async () => {
 
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
 
-    const startedA = await runCli(["workflow", "start", "workflow:release"], env, workA);
+    const startedA = await runCli(["workflow", "start", "workflows/release"], env, workA);
     expect(startedA.status).toBe(0);
     const startJsonA = JSON.parse(startedA.stdout) as { run: { id: string; scopeKey?: string | null } };
 
-    const nextB = await runCli(["workflow", "next", "workflow:release", "--params", '{"version":"2.0.0"}'], env, workB);
+    const nextB = await runCli(
+      ["workflow", "next", "workflows/release", "--params", '{"version":"2.0.0"}'],
+      env,
+      workB,
+    );
     expect(nextB.status).toBe(0);
     const nextJsonB = JSON.parse(nextB.stdout) as {
       autoStarted?: boolean;
@@ -536,22 +540,22 @@ describe("workflow CLI", async () => {
     expect(nextJsonB.run.scopeKey).toBeDefined();
     expect(nextJsonB.run.scopeKey).not.toBe(startJsonA.run.scopeKey);
 
-    const listA = await runCli(["workflow", "list", "--ref", "workflow:release", "--active"], env, workA);
+    const listA = await runCli(["workflow", "list", "--ref", "workflows/release", "--active"], env, workA);
     expect(listA.status).toBe(0);
     const listJsonA = JSON.parse(listA.stdout) as { runs: Array<{ id: string }> };
     expect(listJsonA.runs.map((run) => run.id)).toEqual([startJsonA.run.id]);
 
-    const listB = await runCli(["workflow", "list", "--ref", "workflow:release", "--active"], env, workB);
+    const listB = await runCli(["workflow", "list", "--ref", "workflows/release", "--active"], env, workB);
     expect(listB.status).toBe(0);
     const listJsonB = JSON.parse(listB.stdout) as { runs: Array<{ id: string }> };
     expect(listJsonB.runs.map((run) => run.id)).toEqual([nextJsonB.run.id]);
 
-    const statusA = await runCli(["workflow", "status", "workflow:release"], env, workA);
+    const statusA = await runCli(["workflow", "status", "workflows/release"], env, workA);
     expect(statusA.status).toBe(0);
     const statusJsonA = JSON.parse(statusA.stdout) as { run: { id: string } };
     expect(statusJsonA.run.id).toBe(startJsonA.run.id);
 
-    const statusB = await runCli(["workflow", "status", "workflow:release"], env, workB);
+    const statusB = await runCli(["workflow", "status", "workflows/release"], env, workB);
     expect(statusB.status).toBe(0);
     const statusJsonB = JSON.parse(statusB.stdout) as { run: { id: string } };
     expect(statusJsonB.run.id).toBe(nextJsonB.run.id);
@@ -571,16 +575,16 @@ describe("workflow CLI", async () => {
     fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
 
     expect((await runCli(["workflow", "create", "release", "--from", sourcePath], env)).status).toBe(0);
-    const started = await runCli(["workflow", "start", "workflow:release"], env, workA);
+    const started = await runCli(["workflow", "start", "workflows/release"], env, workA);
     expect(started.status).toBe(0);
     const startedJson = JSON.parse(started.stdout) as { run: { id: string } };
 
-    const shownA = await runCli(["show", "workflow:release"], env, workA);
+    const shownA = await runCli(["show", "workflows/release"], env, workA);
     expect(shownA.status).toBe(0);
     const shownJsonA = JSON.parse(shownA.stdout) as { activeRun?: { runId: string } };
     expect(shownJsonA.activeRun?.runId).toBe(startedJson.run.id);
 
-    const shownB = await runCli(["show", "workflow:release"], env, workB);
+    const shownB = await runCli(["show", "workflows/release"], env, workB);
     expect(shownB.status).toBe(0);
     const shownJsonB = JSON.parse(shownB.stdout) as { activeRun?: { runId: string } };
     expect(shownJsonB.activeRun).toBeUndefined();
@@ -592,7 +596,7 @@ describe("workflow CLI — qa fixes", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -618,7 +622,7 @@ describe("workflow CLI — qa fixes", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -649,7 +653,7 @@ describe("workflow CLI — qa fixes", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -670,7 +674,7 @@ describe("workflow CLI — qa fixes", async () => {
       const env = createWorkflowEnv();
       await setupWorkflow(env);
 
-      const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+      const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
       expect(started.status).toBe(0);
       const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -708,7 +712,7 @@ describe("workflow CLI — qa fixes", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -745,7 +749,7 @@ describe("workflow list --active excludes blocked", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -753,12 +757,12 @@ describe("workflow list --active excludes blocked", async () => {
       (await runCli(["workflow", "complete", startRun.id, "--step", "first", "--state", "blocked"], env)).status,
     ).toBe(0);
 
-    const listed = await runCli(["workflow", "list", "--ref", "workflow:test-flow", "--active"], env);
+    const listed = await runCli(["workflow", "list", "--ref", "workflows/test-flow", "--active"], env);
     expect(listed.status).toBe(0);
     const { runs } = JSON.parse(listed.stdout) as { runs: Array<{ id: string; status: string }> };
     expect(runs.some((r) => r.id === startRun.id)).toBe(false);
 
-    const plain = await runCli(["workflow", "list", "--ref", "workflow:test-flow"], env);
+    const plain = await runCli(["workflow", "list", "--ref", "workflows/test-flow"], env);
     expect(plain.status).toBe(0);
     const { runs: allRuns } = JSON.parse(plain.stdout) as { runs: Array<{ id: string; status: string }> };
     expect(allRuns.some((r) => r.id === startRun.id && r.status === "blocked")).toBe(true);
@@ -768,7 +772,7 @@ describe("workflow list --active excludes blocked", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -806,7 +810,7 @@ describe("workflow abandon", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -825,7 +829,7 @@ describe("workflow abandon", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -850,7 +854,7 @@ describe("workflow abandon", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -871,7 +875,7 @@ describe("workflow next — completed run signals done", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -908,7 +912,7 @@ describe("workflow next — auto-start flags autoStarted", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const next = await runCli(["workflow", "next", "workflow:test-flow"], env);
+    const next = await runCli(["workflow", "next", "workflows/test-flow"], env);
     expect(next.status).toBe(0);
     const nextJson = JSON.parse(next.stdout) as {
       autoStarted?: boolean;
@@ -925,11 +929,11 @@ describe("workflow next — auto-start flags autoStarted", async () => {
     await setupWorkflow(env);
 
     // First call auto-starts
-    const first = await runCli(["workflow", "next", "workflow:test-flow"], env);
+    const first = await runCli(["workflow", "next", "workflows/test-flow"], env);
     expect(first.status).toBe(0);
 
     // Second call resumes existing — no autoStarted
-    const second = await runCli(["workflow", "next", "workflow:test-flow"], env);
+    const second = await runCli(["workflow", "next", "workflows/test-flow"], env);
     expect(second.status).toBe(0);
     const secondJson = JSON.parse(second.stdout) as { autoStarted?: boolean };
     expect(secondJson.autoStarted).toBeUndefined();
@@ -944,7 +948,7 @@ describe("workflow next --params", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const next = await runCli(["workflow", "next", "workflow:test-flow", "--params", '{"x":1}'], env);
+    const next = await runCli(["workflow", "next", "workflows/test-flow", "--params", '{"x":1}'], env);
     expect(next.status).toBe(0);
     const nextJson = JSON.parse(next.stdout) as { run: { params?: Record<string, unknown> }; autoStarted?: boolean };
     expect(nextJson.autoStarted).toBe(true);
@@ -956,9 +960,9 @@ describe("workflow next --params", async () => {
     await setupWorkflow(env);
 
     // Start a run first
-    expect((await runCli(["workflow", "start", "workflow:test-flow"], env)).status).toBe(0);
+    expect((await runCli(["workflow", "start", "workflows/test-flow"], env)).status).toBe(0);
 
-    const next = await runCli(["workflow", "next", "workflow:test-flow", "--params", '{"x":1}'], env);
+    const next = await runCli(["workflow", "next", "workflows/test-flow", "--params", '{"x":1}'], env);
     expect(next.status).toBe(2);
     const err = JSON.parse(next.stderr) as { error: string };
     expect(err.error).toContain("--params can only be set on a new run");
@@ -968,7 +972,7 @@ describe("workflow next --params", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
@@ -985,11 +989,11 @@ describe("workflow CLI — status create", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 
-    const status = await runCli(["workflow", "status", "workflow:test-flow"], env);
+    const status = await runCli(["workflow", "status", "workflows/test-flow"], env);
     expect(status.status).toBe(0);
     const statusJson = JSON.parse(status.stdout) as { run: { id: string; status: string } };
     expect(statusJson.run.id).toBe(startRun.id);
@@ -1000,7 +1004,7 @@ describe("workflow CLI — status create", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const status = await runCli(["workflow", "status", "workflow:test-flow"], env);
+    const status = await runCli(["workflow", "status", "workflows/test-flow"], env);
     // No runs created yet — should fail with not-found (exit 1)
     expect(status.status).toBe(1);
     const err = JSON.parse(status.stderr) as { error: string };
@@ -1013,19 +1017,19 @@ describe("workflow CLI — status create", async () => {
     const workB = makeTempDir("akm-wfqa-scope-b-");
     await setupWorkflow(env);
 
-    const startedA = await runCli(["workflow", "start", "workflow:test-flow"], env, workA);
+    const startedA = await runCli(["workflow", "start", "workflows/test-flow"], env, workA);
     expect(startedA.status).toBe(0);
     const { run: runA } = JSON.parse(startedA.stdout) as { run: { id: string } };
 
-    const startedB = await runCli(["workflow", "start", "workflow:test-flow"], env, workB);
+    const startedB = await runCli(["workflow", "start", "workflows/test-flow"], env, workB);
     expect(startedB.status).toBe(0);
     const { run: runB } = JSON.parse(startedB.stdout) as { run: { id: string } };
 
-    const statusA = await runCli(["workflow", "status", "workflow:test-flow"], env, workA);
+    const statusA = await runCli(["workflow", "status", "workflows/test-flow"], env, workA);
     expect(statusA.status).toBe(0);
     expect((JSON.parse(statusA.stdout) as { run: { id: string } }).run.id).toBe(runA.id);
 
-    const statusB = await runCli(["workflow", "status", "workflow:test-flow"], env, workB);
+    const statusB = await runCli(["workflow", "status", "workflows/test-flow"], env, workB);
     expect(statusB.status).toBe(0);
     expect((JSON.parse(statusB.stdout) as { run: { id: string } }).run.id).toBe(runB.id);
   });
@@ -1156,7 +1160,7 @@ describe("workflow complete --state default", async () => {
     const env = createWorkflowEnv();
     await setupWorkflow(env);
 
-    const started = await runCli(["workflow", "start", "workflow:test-flow"], env);
+    const started = await runCli(["workflow", "start", "workflows/test-flow"], env);
     expect(started.status).toBe(0);
     const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
 

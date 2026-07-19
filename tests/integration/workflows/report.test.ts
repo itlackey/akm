@@ -334,7 +334,7 @@ steps:
   - id: work
     title: Work
     unit:
-      env: [env:report]
+      env: [env/report]
       instructions: Do the work.
 `);
     const fallback = p.execution?.engines["test-llm"];
