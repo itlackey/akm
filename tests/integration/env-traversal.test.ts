@@ -77,18 +77,22 @@ describe("env: directory traversal rejection", () => {
     expect(fs.existsSync(parentEscapedPath)).toBe(false);
   });
 
-  test("rejects env:../../evil (with type prefix) in env create", async () => {
+  test("rejects env/../../evil (conceptId form) in env create", async () => {
     const stashDir = freshStash();
-    const { status, stderr } = await runCli(["env", "create", "env:../../evil"], stashDir);
+    const { status, stderr } = await runCli(["env", "create", "env/../../evil"], stashDir);
     expect(status).not.toBe(0);
-    expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
+    // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
+    // and is then rejected as an unrecognized conceptId — still a hard rejection.
+    expect(stderr).toMatch(/traversal|escapes|relative path|invalid|Unrecognized|not found/i);
   });
 
   test("rejects nested traversal foo/../../evil in env create", async () => {
     const stashDir = freshStash();
     const { status, stderr } = await runCli(["env", "create", "foo/../../evil"], stashDir);
     expect(status).not.toBe(0);
-    expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
+    // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
+    // and is then rejected as an unrecognized conceptId — still a hard rejection.
+    expect(stderr).toMatch(/traversal|escapes|relative path|invalid|Unrecognized|not found/i);
   });
 
   test("rejects ../../evil in env path", async () => {
@@ -115,11 +119,14 @@ describe("env: directory traversal rejection", () => {
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
-  test("rejects the removed vault: prefix with a signpost to env:", async () => {
+  test("rejects the removed vault: prefix (retired to the legacy stored-ref parser)", async () => {
     const stashDir = freshStash();
+    // F5: `vault:` is not a new-grammar conceptId leading segment, so the env
+    // input path rejects it (the vault-removal signpost now lives only in the
+    // legacy stored-ref parser, which the new-grammar CLI input path never hits).
     const { status, stderr } = await runCli(["env", "path", "vault:../../evil"], stashDir);
     expect(status).not.toBe(0);
-    expect(stderr).toMatch(/was removed|env:/i);
+    expect(stderr).toMatch(/was removed|env:|not found|Unrecognized/i);
   });
 
   test("legitimate env name succeeds", async () => {

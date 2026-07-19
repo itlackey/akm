@@ -83,7 +83,7 @@ describe("secret path", () => {
   test("rejects a traversal name that escapes the secrets dir", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
-    const { status, stderr } = await runCli(["secret", "path", "secret:../../etc/passwd"], {
+    const { status, stderr } = await runCli(["secret", "path", "../../etc/passwd"], {
       AKM_STASH_DIR: stashDir,
     });
     expect(status).toBe(2);

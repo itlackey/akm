@@ -25,11 +25,30 @@ import { NotFoundError, UsageError } from "./errors";
 
 export type { IndexSearchSource };
 
+/**
+ * The `vault` asset type was removed in 0.9.0. The env/secret input path no
+ * longer routes through the legacy stored-ref parser (which carries the removal
+ * signpost), so a `vault:`/`vault/` leading token would otherwise be silently
+ * qualified into an `env/vault:…` not-found. Detect it here and re-emit the
+ * migration signpost so 0.8→0.9 muscle memory still gets pointed at env/secret.
+ */
+function assertNotRemovedVaultRef(ref: string): void {
+  const boundary = ref.indexOf("//");
+  const bare = boundary >= 0 ? ref.slice(boundary + 2) : ref;
+  if (/^vault[:/]/.test(bare.trim())) {
+    throw new UsageError(
+      "The `vault` asset type was removed in 0.9.0 — use `env:` (whole .env config) or `secret:` (a single value).",
+      "INVALID_FLAG_VALUE",
+    );
+  }
+}
+
 export function parseEnvRef(ref: string): AssetRef {
   // Accept a bare env name (`prod`, `sub/prod`) or the new-grammar
   // `[bundle//]env/name` conceptId. A bare name's leading segment maps to no
   // asset type, so it is qualified with the `env/` conceptId prefix; anything
   // already a full new-grammar ref is parsed as-is.
+  assertNotRemovedVaultRef(ref);
   return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
 }
 
@@ -86,6 +105,7 @@ export function resolveEnvPath(ref: string): {
 export function parseSecretRef(ref: string): AssetRef {
   // Same bare-name-vs-full-ref rule as parseEnvRef; a bare name is qualified
   // with the `secrets/` conceptId prefix (secret's stash subdir).
+  assertNotRemovedVaultRef(ref);
   return parseRefInput(isFullRefInput(ref) ? ref : `secrets/${ref}`);
 }
 

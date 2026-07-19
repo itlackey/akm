@@ -42,7 +42,7 @@ describe("env run dangerous-key blocking", () => {
         writeSandboxConfig({
           sources: [{ type: "filesystem", name: "vendor", path: sourceDir }],
         });
-        return runCliCapture(["env", "run", "vendor//env:danger", "--", "true"]);
+        return runCliCapture(["env", "run", "vendor//env/danger", "--", "true"]);
       },
     );
 
