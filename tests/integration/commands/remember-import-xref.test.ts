@@ -105,7 +105,7 @@ describe("remember --xref", () => {
       "remember",
       "Derived note about the auth flow",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
     ]);
     expect(code).toBe(0);
 
@@ -129,9 +129,9 @@ describe("remember --xref", () => {
       "remember",
       "Synthesis of auth flow and VPN notes",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
       "--xref",
-      "memory:vpn-note",
+      "memories/vpn-note",
     ]);
     expect(code).toBe(0);
 
@@ -149,7 +149,7 @@ describe("remember --xref", () => {
       "--tag",
       "ops",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
     ]);
     expect(code).toBe(0);
 
@@ -167,7 +167,7 @@ describe("remember --xref", () => {
       "remember",
       "This must not be written",
       "--xref",
-      "knowledge:does-not-exist",
+      "knowledge/does-not-exist",
     ]);
     expect(code).toBe(2);
 
@@ -189,9 +189,9 @@ describe("remember --xref", () => {
       "--tag",
       "ops",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
       "--xref",
-      "memory:ghost-note",
+      "memories/ghost-note",
     ]);
     expect(code).toBe(2);
 
@@ -215,7 +215,7 @@ describe("remember --xref", () => {
       "remember",
       "Derived from the shared cross-stash doc",
       "--xref",
-      "knowledge:shared-doc",
+      "knowledge/shared-doc",
     ]);
     expect(code).toBe(0);
 
@@ -261,7 +261,7 @@ describe("remember --xref", () => {
       "remember",
       "Token rotation gotcha worth keeping",
       "--xref",
-      "knowledge:oauth-refresh-dance",
+      "knowledge/oauth-refresh-dance",
     ]);
     expect(remember.code).toBe(0);
     const written = JSON.parse(remember.stdout) as { ref: string };
@@ -295,7 +295,7 @@ describe("--xref root set and resolver parity", () => {
       "remember",
       "Note derived from the working-stash one",
       "--xref",
-      "memory:local-note",
+      "memories/local-note",
     ]);
     expect(code).toBe(0);
 
@@ -312,7 +312,7 @@ describe("--xref root set and resolver parity", () => {
     // convention docs instruct agents to write `--xref script:build/release`.
     seedAsset(stashDir, "scripts/build/release.sh", "#!/bin/sh\necho release\n");
 
-    const seeded = await runCliCapture(["remember", "Release script tip", "--xref", "script:build/release.sh"]);
+    const seeded = await runCliCapture(["remember", "Release script tip", "--xref", "scripts/build/release.sh"]);
     expect(seeded.code).toBe(0);
     const seededParsed = parseFrontmatter(
       fs.readFileSync((JSON.parse(seeded.stdout) as { path: string }).path, "utf8"),
@@ -320,7 +320,7 @@ describe("--xref root set and resolver parity", () => {
     expect(seededParsed.data.xrefs).toEqual(["script:build/release.sh"]);
 
     // Fail-open means no existence check at all — same as lint's body scan.
-    const ghost = await runCliCapture(["remember", "Ghost script tip", "--xref", "script:no-such-script.sh"]);
+    const ghost = await runCliCapture(["remember", "Ghost script tip", "--xref", "scripts/no-such-script.sh"]);
     expect(ghost.code).toBe(0);
   });
 
@@ -329,13 +329,13 @@ describe("--xref root set and resolver parity", () => {
     // `workflowSpec.toAssetPath` probe made this exit 2 from any other cwd.
     seedAsset(stashDir, "workflows/deploy.yaml", "steps:\n  - run: echo hi\n");
 
-    const { code, stdout } = await runCliCapture(["remember", "Deploy workflow tip", "--xref", "workflow:deploy"]);
+    const { code, stdout } = await runCliCapture(["remember", "Deploy workflow tip", "--xref", "workflows/deploy"]);
     expect(code).toBe(0);
     const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
     expect(parsed.data.xrefs).toEqual(["workflow:deploy"]);
 
     // workflow: does NOT blanket fail-open: a ref resolving nowhere still fails.
-    const ghost = await runCliCapture(["remember", "Ghost workflow tip", "--xref", "workflow:ghost-flow"]);
+    const ghost = await runCliCapture(["remember", "Ghost workflow tip", "--xref", "workflows/ghost-flow"]);
     expect(ghost.code).toBe(2);
     expect((JSON.parse(ghost.stderr) as { error: string }).error).toContain("workflow:ghost-flow");
   });
@@ -370,7 +370,7 @@ describe("--xref root set and resolver parity", () => {
     // accepted, and persisted in the canonical bare form (the prefix is
     // stripped, mirroring lint's local// strip) so later ref scanners see
     // the same spelling the resolver validated.
-    const local = await runCliCapture(["remember", "Locally cited note", "--xref", "local//knowledge:auth-flow"]);
+    const local = await runCliCapture(["remember", "Locally cited note", "--xref", "local//knowledge/auth-flow"]);
     expect(local.code).toBe(0);
     const localParsed = parseFrontmatter(fs.readFileSync((JSON.parse(local.stdout) as { path: string }).path, "utf8"));
     expect(localParsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
@@ -399,9 +399,9 @@ describe("--xref root set and resolver parity", () => {
       "remember",
       "Note citing one asset twice",
       "--xref",
-      "local//knowledge:auth-flow",
+      "local//knowledge/auth-flow",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
     ]);
     expect(dupe.code).toBe(0);
     const dupeParsed = parseFrontmatter(fs.readFileSync((JSON.parse(dupe.stdout) as { path: string }).path, "utf8"));
@@ -424,7 +424,7 @@ describe("--xref/--supersedes do not change the inferred slug", () => {
     // The structured path (forced by --xref) must derive the identical slug
     // from the body — not a random memory-<epoch>-<rand> fallback taken from
     // the generated frontmatter fence. --force proves the name collides.
-    const structured = await runCliCapture(["remember", content, "--force", "--xref", "knowledge:auth-flow"]);
+    const structured = await runCliCapture(["remember", content, "--force", "--xref", "knowledge/auth-flow"]);
     expect(structured.code).toBe(0);
     expect((JSON.parse(structured.stdout) as { ref: string }).ref).toBe(plainRef);
   });
@@ -441,7 +441,7 @@ describe("import --xref", () => {
     seedAsset(stashDir, "knowledge/auth-flow.md");
     const sourcePath = makeSourceFile("auth-notes.md", "# Auth notes\n\nOAuth details worth keeping.\n");
 
-    const { code, stdout } = await runCliCapture(["import", sourcePath, "--xref", "knowledge:auth-flow"]);
+    const { code, stdout } = await runCliCapture(["import", sourcePath, "--xref", "knowledge/auth-flow"]);
     expect(code).toBe(0);
 
     const json = JSON.parse(stdout) as { ok: boolean; ref: string; path: string };
@@ -476,7 +476,7 @@ describe("import --xref", () => {
       ].join("\n"),
     );
 
-    const { code, stdout } = await runCliCapture(["import", sourcePath, "--xref", "knowledge:auth-flow"]);
+    const { code, stdout } = await runCliCapture(["import", sourcePath, "--xref", "knowledge/auth-flow"]);
     expect(code).toBe(0);
 
     const json = JSON.parse(stdout) as { path: string };
@@ -509,9 +509,9 @@ describe("import --xref", () => {
       "import",
       sourcePath,
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
       "--xref",
-      "memory:vpn-note",
+      "memories/vpn-note",
     ]);
     expect(code).toBe(0);
 
@@ -524,7 +524,7 @@ describe("import --xref", () => {
   test("unresolvable --xref fails with exit 2 usage envelope and writes nothing", async () => {
     const sourcePath = makeSourceFile("doomed.md", "# Doomed\n\nMust not land in the stash.\n");
 
-    const { code, stderr } = await runCliCapture(["import", sourcePath, "--xref", "knowledge:ghost-doc"]);
+    const { code, stderr } = await runCliCapture(["import", sourcePath, "--xref", "knowledge/ghost-doc"]);
     expect(code).toBe(2);
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
@@ -553,7 +553,7 @@ describe("import --xref", () => {
     // With --xref: merging would round-trip the block through the lenient
     // scalar-only fallback and rewrite `tags: [auth, oauth]` as `tags: ""` —
     // fail (exit 2) BEFORE any write instead of corrupting the copy.
-    const { code, stderr } = await runCliCapture(["import", sourcePath, "--xref", "knowledge:auth-flow"]);
+    const { code, stderr } = await runCliCapture(["import", sourcePath, "--xref", "knowledge/auth-flow"]);
     expect(code).toBe(2);
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);

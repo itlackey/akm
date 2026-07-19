@@ -17,7 +17,6 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -32,7 +31,7 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import type { AssetRef } from "../../migrate/legacy-ref-grammar";
+import { type AssetRef, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import {
   fetchWebsiteMarkdownSnapshot,
   shouldAllowPrivateWebsiteUrlForTests,
@@ -163,17 +162,22 @@ interface ParsedWriteRef {
 }
 
 /**
- * Parse a `--xref` / `--supersedes` value through the canonical ref parser
- * (`parseRefInput`) so malformed and origin-prefixed spellings get a
- * structured error instead of a misleading "did not resolve". A `local//`
- * origin is accepted (it names the same local resolution this validator
- * performs, mirroring lint's `local//` strip); any other origin is rejected —
- * write-time validation only resolves local stash roots.
+ * Parse a `--xref` / `--supersedes` value through the DUAL stored-ref parser
+ * (`parseStoredRef`, accepting BOTH the 0.9.0 `[bundle//]conceptId` and the
+ * legacy `[origin//]type:name` forms) so malformed and origin-prefixed spellings
+ * get a structured error instead of a misleading "did not resolve". Using the
+ * dual parser (not the new-only `parseRefInput`) preserves the write-ref policy
+ * that only the legacy arm carries: the `env`/`environment` type ALIAS, the
+ * `tool`/`vault` deny-list ("invalid asset type" / "vault removed"), and
+ * FOREIGN-type fail-open (D1.5-1) — none of which a closed-type-token parse can
+ * express. A `local//` origin is accepted (it names the same local resolution
+ * this validator performs, mirroring lint's `local//` strip); any other origin
+ * is rejected — write-time validation only resolves local stash roots.
  */
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
   try {
-    parsed = parseRefInput(raw);
+    parsed = parseStoredRef(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new UsageError(

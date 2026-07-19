@@ -145,7 +145,7 @@ describe("remember --supersedes", () => {
       "--path",
       "projectA",
       "--supersedes",
-      "memory:projectA/old-endpoint",
+      "memories/projectA/old-endpoint",
     ]);
     expect(code).toBe(0);
 
@@ -185,7 +185,7 @@ describe("remember --supersedes", () => {
       "--name",
       "quantum-rotation-new-endpoint",
       "--supersedes",
-      "memory:quantum-rotation-old-endpoint",
+      "memories/quantum-rotation-old-endpoint",
     ]);
     expect(code).toBe(0);
     const newRef = (JSON.parse(stdout) as WriteOutput).ref;
@@ -218,7 +218,7 @@ describe("remember --supersedes", () => {
       "--name",
       "rotation-cadence-new",
       "--supersedes",
-      "memory:rotation-cadence-old",
+      "memories/rotation-cadence-old",
     ]);
     expect(first.code).toBe(0);
 
@@ -229,7 +229,7 @@ describe("remember --supersedes", () => {
       "rotation-cadence-new",
       "--force",
       "--supersedes",
-      "memory:rotation-cadence-old",
+      "memories/rotation-cadence-old",
     ]);
     expect(second.code).toBe(0);
 
@@ -246,9 +246,9 @@ describe("remember --supersedes", () => {
       "remember",
       "This correction must not be written",
       "--supersedes",
-      "memory:good-old",
+      "memories/good-old",
       "--supersedes",
-      "memory:ghost-note",
+      "memories/ghost-note",
     ]);
     expect(code).toBe(2);
 
@@ -273,9 +273,9 @@ describe("remember --supersedes", () => {
       "--name",
       "vpn-note-correction",
       "--xref",
-      "knowledge:auth-flow",
+      "knowledge/auth-flow",
       "--supersedes",
-      "memory:vpn-note",
+      "memories/vpn-note",
     ]);
     expect(code).toBe(0);
 
@@ -309,7 +309,7 @@ describe("remember --supersedes", () => {
       "flux-note",
       "--force",
       "--supersedes",
-      "memory:flux-note",
+      "memories/flux-note",
     ]);
     expect(code).toBe(2);
 
@@ -349,7 +349,7 @@ describe("remember --supersedes", () => {
       "--name",
       "fixed-guidance",
       "--supersedes",
-      "knowledge:broken-fm",
+      "knowledge/broken-fm",
     ]);
     expect(code).toBe(0);
 
@@ -384,7 +384,7 @@ describe("remember --supersedes", () => {
       "--name",
       "team-note-fix",
       "--supersedes",
-      "memory:team-note",
+      "memories/team-note",
     ]);
     expect(code).toBe(0);
 
@@ -419,7 +419,7 @@ describe("remember --supersedes", () => {
       "--name",
       "fresh-tip",
       "--supersedes",
-      "memory:stale-tip",
+      "memories/stale-tip",
     ]);
     expect(code).toBe(0);
 
@@ -570,7 +570,7 @@ describe("import --supersedes", () => {
       "--name",
       "modern-guide",
       "--supersedes",
-      "knowledge:legacy-guide",
+      "knowledge/legacy-guide",
     ]);
     expect(code).toBe(0);
 
@@ -600,7 +600,7 @@ describe("import --supersedes", () => {
   test("unresolvable --supersedes fails with exit 2 usage envelope and imports nothing", async () => {
     const sourcePath = makeSourceFile("doomed-correction.md", "# Doomed\n\nMust not land in the stash.\n");
 
-    const { code, stderr } = await runCliCapture(["import", sourcePath, "--supersedes", "knowledge:ghost-doc"]);
+    const { code, stderr } = await runCliCapture(["import", sourcePath, "--supersedes", "knowledge/ghost-doc"]);
     expect(code).toBe(2);
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
@@ -631,7 +631,7 @@ describe("--supersedes alias spellings are persisted canonically", () => {
       "--name",
       "new-endpoint-alias",
       "--supersedes",
-      "local//memory:old-endpoint-alias",
+      "local//memories/old-endpoint-alias",
     ]);
     expect(code).toBe(0);
     const json = JSON.parse(stdout) as WriteOutput;
