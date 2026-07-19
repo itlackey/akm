@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirFor } from "../core/asset/asset-placement";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
@@ -1021,18 +1022,23 @@ function persistDirRecords(
           const entryWithSize = attachFileSize(entry, entryPath);
 
           // Chunk-5 Step 2 (spec §14.4): derive the durable bundle identity.
-          // conceptId == the pre-0.9.0 canonical name (`entry.name`) and
-          // item_ref == `<bundle>//<conceptId>` — the exact spelling
-          // `scanComponent` emits as `IndexDocument.ref` (proven by the
-          // shadow-scan parity gate). NULL provenance when the source root has
-          // no bundle mapping (e.g. write-back paths) — healed on next index.
+          // conceptId == the QUALIFIED `<stash-subdir>/<canonical-name>`
+          // spelling (ref-grammar decision D-R2) and item_ref ==
+          // `<bundle>//<conceptId>` — the exact spelling `scanComponent` emits
+          // as `IndexDocument.ref` (proven by the shadow-scan parity gate). A
+          // foreign type with no placement stash-subdir keeps the bare name
+          // (transitional legacy-merge edge; dies with the F4 flip). NULL
+          // provenance when the source root has no bundle mapping (e.g.
+          // write-back paths) — healed on next index.
           const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
+          const typeStashDir = stashDirFor(entry.type);
+          const conceptId = typeStashDir !== undefined ? `${typeStashDir}/${entry.name}` : entry.name;
           const provenance = bundle
             ? {
-                itemRef: `${bundle.bundleId}//${entry.name}`,
+                itemRef: `${bundle.bundleId}//${conceptId}`,
                 bundleId: bundle.bundleId,
                 componentId: bundle.componentId,
-                conceptId: entry.name,
+                conceptId,
                 adapterId: bundle.adapterId,
               }
             : undefined;

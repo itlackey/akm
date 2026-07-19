@@ -120,16 +120,20 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
     expect(asserted).toBe(Object.keys(RECOGNITION_GOLDEN.byRelPath).length);
   });
 
-  test("conceptId reproduces the winning type's canonical name (per-type toCanonicalName)", () => {
+  test("conceptId is the D-R2 qualified `<stash-subdir>/<canonical-name>` spelling", () => {
     const byRel = new Map(allTypesContexts().map((c) => [c.relPath, c]));
+    // Ref-grammar decision D-R2: conceptId = stashDirFor(type)/canonicalName —
+    // for markdown types the OKF concept ID (path − .md); skill = its DIR
+    // (skills/<dir>, not .../SKILL); script keeps its extension; task/env strip
+    // theirs. `entry.name`/FTS keep the bare canonical name (identity ≠ search).
     const cases: Array<[relPath: string, conceptId: string]> = [
-      ["skills/all-types-skill/SKILL.md", "all-types-skill"], // skill = its dir
-      ["scripts/all-types-script.sh", "all-types-script.sh"], // script keeps ext
-      ["knowledge/all-types-knowledge.md", "all-types-knowledge"], // markdown strips .md
-      ["tasks/all-types-task.yml", "all-types-task"], // task strips .yml
-      ["env/all-types-env.env", "all-types-env"], // env strips .env
-      ["sessions/all-types-harness/all-types-session.md", "all-types-harness/all-types-session"],
-      ["secrets/all-types-secret", "all-types-secret"],
+      ["skills/all-types-skill/SKILL.md", "skills/all-types-skill"], // skill = its dir
+      ["scripts/all-types-script.sh", "scripts/all-types-script.sh"], // script keeps ext
+      ["knowledge/all-types-knowledge.md", "knowledge/all-types-knowledge"], // markdown strips .md
+      ["tasks/all-types-task.yml", "tasks/all-types-task"], // task strips .yml
+      ["env/all-types-env.env", "env/all-types-env"], // env strips .env
+      ["sessions/all-types-harness/all-types-session.md", "sessions/all-types-harness/all-types-session"],
+      ["secrets/all-types-secret", "secrets/all-types-secret"],
     ];
     for (const [relPath, conceptId] of cases) {
       const ctx = byRel.get(relPath);

@@ -23,6 +23,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirFor } from "../../../src/core/asset/asset-placement";
 import { getDbPath } from "../../../src/core/paths";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { slugForPath } from "../../../src/indexer/installations";
@@ -105,8 +106,12 @@ describe("entries provenance columns (Chunk-5 Step 2 / DB v18)", () => {
       expect(row.type, `type for ${row.entry_key}`).toBe(row.entry_type);
       expect(row.type).toBe(entry.type);
 
-      // conceptId == the pre-0.9.0 canonical name.
-      expect(row.concept_id, `concept_id for ${row.entry_key}`).toBe(entry.name);
+      // conceptId == the D-R2 QUALIFIED spelling: `stashDirFor(type)/name`
+      // (ref-grammar decision D-R2; bare-name fallback only for a foreign type
+      // with no placement stash-subdir).
+      const typeStashDir = stashDirFor(entry.type);
+      const expectedConceptId = typeStashDir !== undefined ? `${typeStashDir}/${entry.name}` : entry.name;
+      expect(row.concept_id, `concept_id for ${row.entry_key}`).toBe(expectedConceptId);
 
       // Bundle/component provenance: the single-component akm layout couples
       // component id == bundle id == the source-root slug.
@@ -116,7 +121,7 @@ describe("entries provenance columns (Chunk-5 Step 2 / DB v18)", () => {
 
       // item_ref == `<bundle>//<conceptId>` — the canonical stored spelling
       // (== IndexDocument.ref emitted by scanComponent).
-      expect(row.item_ref, `item_ref for ${row.entry_key}`).toBe(`${expectedBundle}//${entry.name}`);
+      expect(row.item_ref, `item_ref for ${row.entry_key}`).toBe(`${expectedBundle}//${expectedConceptId}`);
     }
   });
 

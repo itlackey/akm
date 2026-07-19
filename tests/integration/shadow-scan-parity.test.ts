@@ -13,8 +13,9 @@
  *   1. same set of ITEMS (no item gained or lost);
  *   2. same `type` per item;
  *   3. same IDENTITY — the new `bundle//conceptId` maps 1:1 to the old
- *      `stashDir:type:name` (conceptId == the pre-0.9.0 canonical name, type is
- *      carried, so the pair (type, conceptId) is the bijection key);
+ *      `stashDir:type:name` (conceptId == the D-R2 qualified
+ *      `stashDirFor(type)/canonicalName` spelling, type is carried, so the
+ *      pair (type, conceptId) is the bijection key);
  *   4. same FOLDED METADATA SURFACE the ranking/embedding inputs read
  *      (`search-fields.ts:28-33` — name/description/tags/hints/content);
  *   5. same FILTER/RANKING SIGNAL fields (§12.3 filter-behavior parity:
@@ -33,6 +34,7 @@ import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { resetAdapterRegistryForTests } from "../../src/core/adapter/registry";
 import { scanComponent } from "../../src/core/adapter/scan-component";
 import type { BundleComponent, BundleInstallation, IndexDocument } from "../../src/core/adapter/types";
+import { stashDirFor } from "../../src/core/asset/asset-placement";
 import { generateMetadataFlat, type StashEntry } from "../../src/indexer/passes/metadata";
 import { buildSearchFields } from "../../src/indexer/search/search-fields";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
@@ -61,9 +63,13 @@ async function newStream(root: string): Promise<IndexDocument[]> {
   return docs;
 }
 
-/** old identity key: the pre-0.9.0 durable spelling ingredients. */
-const oldIdentity = (e: StashEntry): string => `${e.type}:${e.name}`;
-/** new identity key: type + conceptId (== canonical name), the ref's distinguishing pair. */
+/**
+ * old identity key, projected into the D-R2 qualified conceptId spelling:
+ * `stashDirFor(type)/canonicalName`. Joining old→new on this key ALSO proves
+ * the qualified-derivation rule end-to-end (ref-grammar decision D-R2).
+ */
+const oldIdentity = (e: StashEntry): string => `${e.type}:${stashDirFor(e.type)}/${e.name}`;
+/** new identity key: type + conceptId (the D-R2 qualified spelling), the ref's distinguishing pair. */
 const newIdentity = (d: IndexDocument): string => `${d.type}:${d.conceptId}`;
 
 /** Reconstruct the search-fields-relevant StashEntry shape from an IndexDocument (first-class + documentJson-carried). */
@@ -98,8 +104,8 @@ for (const { name, root } of STASHES) {
 
     test("identity is 1:1 and the ref is bundle//conceptId", async () => {
       const news = await newStream(root);
-      // conceptId == the old canonical name (identity axis 3); ref is exactly
-      // <bundle>//<conceptId>; the (type, conceptId) pair is unique.
+      // conceptId == the D-R2 qualified spelling (identity axis 3); ref is
+      // exactly <bundle>//<conceptId>; the (type, conceptId) pair is unique.
       const keys = news.map(newIdentity);
       expect(new Set(keys).size).toBe(keys.length);
       for (const d of news) expect(d.ref).toBe(`parity//${d.conceptId}`);

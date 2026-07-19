@@ -35,13 +35,17 @@
  * WI-C can wire presentation via `TYPE_PRESENTATION` without a new
  * `IndexDocument` field (WI-C owns presentation).
  *
- * ── conceptId (§5.1): per-`type` canonical name, reproduced ──
+ * ── conceptId (§5.1 + ref-grammar decision D-R2): the QUALIFIED spelling ──
  *
- * conceptId = the winning type's canonical name, reproduced via
- * `asset-placement.ts#deriveCanonicalAssetNameFromStashRoot` (skill = its dir,
- * script keeps its extension, markdown strips `.md`, env/task strip their ext,
- * secret/session keep the natural path). The `type` is carried separately on
- * `IndexDocument.type`, per §0.2 (type ≠ identity).
+ * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
+ * (`stashDirFor(type)`) followed by the winning type's canonical name
+ * (`deriveCanonicalAssetNameFromStashRoot`: skill = its dir, script keeps its
+ * extension, markdown strips `.md`, env/task strip their ext, secret/session
+ * keep the natural path). For markdown types this IS the OKF concept ID
+ * (path − `.md`); it is the same spelling {@link placeNew} consumes, so
+ * recognize/place share one identity (D-R2 resolved the earlier split). The
+ * `type` is carried separately on `IndexDocument.type`, per §0.2 (type ≠
+ * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
  *
  * ── placeNew / directoryList / looksLikeRoot: type-driven placement ──
  *
@@ -190,12 +194,19 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const match = recognizeMatch(file);
   if (match === null) return null;
 
-  // conceptId = the winning type's per-type canonical name (§5.1: reproduce
-  // AssetSpec.toCanonicalName). Fall back to the raw path minus its extension
-  // only if the type's toCanonicalName abstains (e.g. a SKILL.md sitting
-  // directly at the skills/ root with no name dir).
+  // canonical name = the winning type's per-type canonical name (§5.1:
+  // reproduce AssetSpec.toCanonicalName). Fall back to the raw path minus its
+  // extension only if the type's toCanonicalName abstains (e.g. a SKILL.md
+  // sitting directly at the skills/ root with no name dir).
   const derived = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
-  const conceptId = derived ?? file.relPath.replace(/\.[^./]+$/, "");
+  const canonicalName = derived ?? file.relPath.replace(/\.[^./]+$/, "");
+  // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
+  // (ref-grammar decision D-R2): the same form `placeNew` consumes, and for
+  // markdown types the OKF concept ID (path − .md). The fallback branch is
+  // already the real relative path, so it is never re-prefixed. `entry.name`
+  // below keeps the BARE canonical name — identity ≠ search text.
+  const stashDir = derived !== undefined ? stashDirFor(match.type) : undefined;
+  const conceptId = stashDir !== undefined ? `${stashDir}/${derived}` : canonicalName;
   const dirPath = path.dirname(file.absPath);
 
   // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
@@ -203,12 +214,13 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
   // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
   // in-place contributor precedence) for the async P3 renderer contributors.
-  // `entry.name` = the canonical name (= conceptId) so the FTS `name` column
+  // `entry.name` = the BARE canonical name (conceptId minus the D-R2 stash-subdir
+  // prefix) so the FTS `name` column
   // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
   // title. Parity is by construction — the two paths differ only in the P3 step,
   // pinned equal by the akm-adapter fold-parity test.
   const entry: StashEntry = {
-    name: conceptId,
+    name: canonicalName,
     type: match.type,
     quality: "generated",
     confidence: 0.55,
@@ -216,7 +228,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
   applyPreContributorFields(entry, file.absPath, file, extractPackageMetadata(dirPath));
   applyFoldedMetadata(entry, foldRecognizedMetadata(match.renderer, file));
-  applyPostContributorFields(entry, file.absPath, conceptId, dirPath);
+  applyPostContributorFields(entry, file.absPath, canonicalName, dirPath);
 
   return indexDocumentFromEntry(
     entry,
@@ -394,13 +406,9 @@ export const akmAdapter: BundleAdapter = {
    * direct `<root>/<conceptId>.md` — the same `${name}.md` fallback
    * `buildDiskCandidates` carries (`preserveDirectNameFallback`).
    *
-   * NOTE (recognize/place conceptId spelling): `recognize()` emits the BARE
-   * per-type canonical name on `IndexDocument.conceptId` (with `type` carried
-   * separately, §0.2), whereas `placeNew` consumes the qualified path-form
-   * (`<stash-subdir>/<name>`) because placement is type-driven and the bare name
-   * cannot recover a type. Reconciling both onto one canonical stored spelling
-   * is a cross-cutting index-persistence/ref concern owned downstream (Chunk
-   * 3/5), out of WI-B's recognition+placement scope.
+   * `recognize()` emits the SAME qualified spelling (ref-grammar decision
+   * D-R2), so recognize/place share one canonical identity — the earlier
+   * bare-vs-qualified split is resolved.
    */
   placeNew(c: BundleComponent, conceptId: string): string {
     const posix = conceptId.replace(/\\/g, "/");
