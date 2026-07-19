@@ -297,6 +297,10 @@ async function runLoopReflectPass(
         ref: planned.ref,
         ...(options.sourceName ? { sourceName: options.sourceName } : {}),
         ...(options.legacyBareState ? { legacyBareState: true } : {}),
+        // Chunk-5 flip F5f — carry the resolved item_ref so reflect keys its
+        // reflect_invoked event + source/distill_invoked reads on it (dormant
+        // until item_ref populates through the improve path).
+        ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),
         task: options.task,
         // Active strategy supplies non-engine process tuning.
         ...(improveProfile ? { improveProfile } : {}),

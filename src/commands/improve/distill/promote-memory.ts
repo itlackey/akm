@@ -40,6 +40,12 @@ export interface PromoteMemoryContext {
   inputRef: string;
   /** Source-qualified key for durable events/provenance. */
   durableInputRef?: string;
+  /**
+   * Chunk-5 flip F5f — the resolved index entry's fully-qualified item_ref. When
+   * present, the promotion branch's `distill_invoked` events key on it, else the
+   * pre-flip `durableInputRef`. Dormant: item_ref NULL through improve today.
+   */
+  itemRef?: string;
   sourceName?: string;
   assetContent: string | null;
   /** Filtered feedback events (only `.metadata` is read by the promotion policy). */
@@ -143,7 +149,8 @@ async function resolveKnowledgePromotionContent(
         appendEvent(
           {
             eventType: "distill_invoked",
-            ref: durableInputRef,
+            // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+            ref: ctx.itemRef ?? durableInputRef,
             metadata: {
               outcome: "skipped" as const,
               lessonRef: knowledgeRef,
@@ -308,7 +315,8 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
     appendEvent(
       {
         eventType: "distill_invoked",
-        ref: durableInputRef,
+        // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+        ref: ctx.itemRef ?? durableInputRef,
         metadata: {
           outcome: "skipped" as const,
           lessonRef: promotion.knowledgeRef,
@@ -341,7 +349,8 @@ export async function promoteMemoryToKnowledge(ctx: PromoteMemoryContext): Promi
   appendEvent(
     {
       eventType: "distill_invoked",
-      ref: durableInputRef,
+      // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+      ref: ctx.itemRef ?? durableInputRef,
       metadata: {
         outcome: "queued" as const,
         lessonRef: promotion.knowledgeRef,

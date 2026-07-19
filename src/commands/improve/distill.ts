@@ -763,7 +763,9 @@ function refuseDisallowedDistillInput(args: {
   appendEvent(
     {
       eventType: "distill_invoked",
-      ref: durableInputRef,
+      // Chunk-5 flip F5f — key on item_ref when the planner resolved one, else
+      // the pre-flip source-qualified durable ref (dormant: item_ref NULL today).
+      ref: options.itemRef ?? durableInputRef,
       metadata: {
         outcome: "skipped" as const,
         lessonRef: skippedRef,
@@ -889,6 +891,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     targetKind,
     inputRef,
     durableInputRef,
+    ...(options.itemRef ? { itemRef: options.itemRef } : {}),
     sourceName: options.sourceName,
     assetContent,
     filteredEvents,
@@ -941,6 +944,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       fallbackReason,
       inputRef,
       durableInputRef,
+      ...(options.itemRef ? { itemRef: options.itemRef } : {}),
       effectiveLessonRef,
       effectiveProposalKind,
       exclusionSet,
@@ -956,6 +960,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     effectiveProposalKind,
     inputRef,
     durableInputRef,
+    ...(options.itemRef ? { itemRef: options.itemRef } : {}),
     effectiveLessonRef,
     exclusionSet,
     filteredFeedbackCount,
@@ -1123,7 +1128,8 @@ async function emitDistillLessonProposal(args: {
     appendEvent(
       {
         eventType: "distill_invoked",
-        ref: durableInputRef,
+        // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+        ref: options.itemRef ?? durableInputRef,
         metadata: {
           outcome: "skipped" as const,
           lessonRef: effectiveLessonRef,
@@ -1157,7 +1163,8 @@ async function emitDistillLessonProposal(args: {
   appendEvent(
     {
       eventType: "distill_invoked",
-      ref: durableInputRef,
+      // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+      ref: options.itemRef ?? durableInputRef,
       metadata: {
         outcome: "queued" as const,
         lessonRef: effectiveLessonRef,
@@ -1203,6 +1210,8 @@ function assembleAndValidateDistillContent(args: {
   effectiveProposalKind: "lesson" | "knowledge";
   inputRef: string;
   durableInputRef: string;
+  /** Chunk-5 flip F5f — item_ref for the distill_invoked event key (dormant today). */
+  itemRef?: string;
   effectiveLessonRef: string;
   exclusionSet: Set<string>;
   filteredFeedbackCount: number;
@@ -1214,6 +1223,7 @@ function assembleAndValidateDistillContent(args: {
     effectiveProposalKind,
     inputRef,
     durableInputRef,
+    itemRef,
     effectiveLessonRef,
     exclusionSet,
     filteredFeedbackCount,
@@ -1276,7 +1286,8 @@ function assembleAndValidateDistillContent(args: {
     appendEvent(
       {
         eventType: "distill_invoked",
-        ref: durableInputRef,
+        // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+        ref: itemRef ?? durableInputRef,
         metadata: {
           outcome: "validation_failed" as const,
           lessonRef: effectiveLessonRef,
@@ -1380,6 +1391,8 @@ function distillEmptyResponseResult(args: {
   fallbackReason: "disabled" | "timeout" | "error" | undefined;
   inputRef: string;
   durableInputRef: string;
+  /** Chunk-5 flip F5f — item_ref for the distill_invoked event key (dormant today). */
+  itemRef?: string;
   effectiveLessonRef: string;
   effectiveProposalKind: "lesson" | "knowledge";
   exclusionSet: Set<string>;
@@ -1392,6 +1405,7 @@ function distillEmptyResponseResult(args: {
     fallbackReason,
     inputRef,
     durableInputRef,
+    itemRef,
     effectiveLessonRef,
     effectiveProposalKind,
     exclusionSet,
@@ -1424,7 +1438,8 @@ function distillEmptyResponseResult(args: {
   appendEvent(
     {
       eventType: "distill_invoked",
-      ref: durableInputRef,
+      // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+      ref: itemRef ?? durableInputRef,
       metadata: {
         outcome: "llm_failed" as const,
         lessonRef: effectiveLessonRef,

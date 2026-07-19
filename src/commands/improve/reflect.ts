@@ -76,7 +76,7 @@ import { emitProposal } from "./proposal-envelope";
 import { classifyReflectChange } from "./reflect-noise";
 import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import { MAX_REJECTED_PROPOSALS } from "./shared";
-import { bareImproveRef, durableImproveRef } from "./source-identity";
+import { bareImproveRef, durableImproveRef, improveStateReadRefs } from "./source-identity";
 
 export interface AkmReflectOptions {
   /**
@@ -178,6 +178,16 @@ export interface AkmReflectOptions {
   sourceName?: string;
   /** Read pre-source-qualification feedback only for the historical local stash. */
   legacyBareState?: boolean;
+  /**
+   * Chunk-5 flip F5f (Step 6 writers) — the resolved index entry's fully-qualified
+   * durable key (`<bundle>//<conceptId>`, from {@link ImproveEligibleRef.itemRef}).
+   * When present, reflect keys its `reflect_invoked` event and dual-armed source/
+   * distill_invoked reads on it, falling back to the pre-flip source-qualified
+   * `durableImproveRef` spelling otherwise. NULL through the improve path today
+   * (item_ref not yet populated), so every `itemRef ?? durable` reduces to
+   * `durable` byte-identically. // Chunk-8: collapse to `itemRef` alone.
+   */
+  itemRef?: string;
 }
 
 // AkmReflectFailure / AkmReflectSuccess / AkmReflectResult moved DOWN to
@@ -341,6 +351,8 @@ async function readRelatedLessons(
   ref: string,
   parsedRef: { type: string; name: string },
   sourceName?: string,
+  itemRef?: string,
+  legacyBareState?: boolean,
 ): Promise<RelatedLesson[]> {
   if (parsedRef.type !== "skill") return [];
 
@@ -356,7 +368,14 @@ async function readRelatedLessons(
   }
 
   try {
-    const feedbackEvents = readEvents({ type: "distill_invoked", ref: durableImproveRef(ref, sourceName) }).events;
+    // Chunk-5 flip F5f (Step 6 readers) — dual-arm the distill_invoked filter on
+    // [item_ref, durable, bare] so an event keyed under EITHER grammar resolves
+    // once the writers emit item_ref. Dormant: item_ref NULL through improve
+    // today, so the key set is [durable] byte-identically. // Chunk-8: [item_ref].
+    const distillInvokedKeys = new Set(improveStateReadRefs(ref, sourceName, legacyBareState ?? false, itemRef));
+    const feedbackEvents = readEvents({ type: "distill_invoked" }).events.filter(
+      (event) => event.ref !== undefined && distillInvokedKeys.has(event.ref),
+    );
     for (const event of feedbackEvents) {
       const lessonRef = typeof event.metadata?.lessonRef === "string" ? event.metadata.lessonRef : undefined;
       if (lessonRef?.startsWith("lesson:")) candidateRefs.add(lessonRef);
@@ -1461,7 +1480,10 @@ async function resolveReflectSource(
       assetContent = options.assetContent;
     } else {
       try {
-        const qualifiedRef = durableImproveRef(options.ref, options.sourceName);
+        // Chunk-5 flip F5f — resolve the source asset by item_ref when the planner
+        // supplied one (the index entry carries it), else the pre-flip durable ref.
+        // Dormant: item_ref NULL today, so this reduces to the durable ref.
+        const qualifiedRef = options.itemRef ?? durableImproveRef(options.ref, options.sourceName);
         const localFilePath = await findAssetFilePath(qualifiedRef, stash);
         if (localFilePath && fs.existsSync(localFilePath)) {
           assetContent = fs.readFileSync(localFilePath, "utf8");
@@ -1659,7 +1681,9 @@ function emitReflectInvokedAndBuildFailureEmitter(
   appendEvent(
     {
       eventType: "reflect_invoked",
-      ...(options.ref ? { ref: durableImproveRef(options.ref, options.sourceName) } : {}),
+      // Chunk-5 flip F5f — key on item_ref when the planner resolved one, else the
+      // pre-flip source-qualified durable ref (dormant: item_ref NULL today).
+      ...(options.ref ? { ref: options.itemRef ?? durableImproveRef(options.ref, options.sourceName) } : {}),
       metadata: {
         ...(options.task ? { task: options.task } : {}),
         ...(options.engine ? { engine: options.engine } : {}),
@@ -1724,7 +1748,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const relatedLessons =
     options.ref && parsedRef
-      ? await readRelatedLessons(assetCtx, stash, options.ref, parsedRef, options.sourceName)
+      ? await readRelatedLessons(
+          assetCtx,
+          stash,
+          options.ref,
+          parsedRef,
+          options.sourceName,
+          options.itemRef,
+          options.legacyBareState,
+        )
       : [];
   // Reflexion-style verbal-RL: inject rejected proposals so the agent avoids
   // reproducing proposals that have already been reviewed and refused.
