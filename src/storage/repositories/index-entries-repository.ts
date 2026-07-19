@@ -12,7 +12,8 @@
  */
 
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { makeAssetRef, parseAssetRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { warn } from "../../core/warn";
 import type { StashEntry } from "../../indexer/passes/metadata";
@@ -185,15 +186,27 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
     const chunk = twinIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
     bestEffort(() => {
+      // Chunk-5 flip F1: a twin's identity suffix is `.derived` on BOTH the
+      // legacy `entry_key` (`<stash>:memory:<name>.derived`) and the new
+      // `item_ref` (`<bundle>//memories/<name>.derived`). Join the base by
+      // stripping that suffix on EITHER column so both fully-migrated rows
+      // (item_ref path) and NULL-`item_ref` rows (legacy path) inherit. On a
+      // consistent index both predicates select the SAME base row, so the OR
+      // never double-counts; `substr(NULL, …)` is NULL and matches nothing, so
+      // a NULL `item_ref` simply falls through to the entry_key predicate.
+      // F5: the `entry_key` arm is the deletable legacy shim.
       const rows = db
         .prepare(
           `SELECT twin.id AS twin_id, json_extract(base.entry_json, '$.beliefState') AS belief
            FROM entries twin
            JOIN entries base
              ON base.entry_type = 'memory'
-            AND base.entry_key = substr(twin.entry_key, 1, length(twin.entry_key) - length('.derived'))
+            AND (
+                 base.entry_key = substr(twin.entry_key, 1, length(twin.entry_key) - length('.derived'))
+              OR base.item_ref = substr(twin.item_ref, 1, length(twin.item_ref) - length('.derived'))
+            )
            WHERE twin.id IN (${placeholders})
-             AND twin.entry_key LIKE '%.derived'
+             AND (twin.entry_key LIKE '%.derived' OR twin.item_ref LIKE '%.derived')
              AND json_extract(base.entry_json, '$.beliefState') IS NOT NULL`,
         )
         .all(...chunk) as { twin_id: number; belief: string | null }[];
@@ -243,10 +256,19 @@ export function getBaseBeliefStatesForDerivedTwins(db: Database, twinIds: number
  * full `akm index` picks the file up as a fresh entry).
  */
 export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number | null {
+  // F5: delete — the row is located by its legacy `entry_key`; the caller (mv)
+  // always has it and it is the UNIQUE identity column during the F1 window.
   const row = db
-    .prepare("SELECT id, stash_dir, entry_json, search_text FROM entries WHERE entry_key = ?")
+    .prepare("SELECT id, stash_dir, entry_json, search_text, entry_type, item_ref FROM entries WHERE entry_key = ?")
     .get(opts.oldEntryKey) as
-    | { id: number; stash_dir: string; entry_json: string; search_text: string }
+    | {
+        id: number;
+        stash_dir: string;
+        entry_json: string;
+        search_text: string;
+        entry_type: string;
+        item_ref: string | null;
+      }
     | undefined
     | null;
   if (!row) return null;
@@ -269,6 +291,20 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     /* corrupt entry_json — key/path-only re-key */
   }
 
+  // Chunk-5 flip F1: keep `item_ref`/`concept_id` consistent with the rename so
+  // a post-mv new-grammar lookup finds the moved row by its NEW conceptId. The
+  // bundle prefix is carried over from the existing item_ref unchanged (mv never
+  // crosses bundles); a NULL item_ref (write-back row) stays NULL and is healed
+  // on the next full index, exactly like the legacy columns before the flip.
+  let newItemRef: string | null = null;
+  let newConceptId: string | null = null;
+  if (row.item_ref) {
+    const boundary = row.item_ref.indexOf("//");
+    const bundle = boundary >= 0 ? row.item_ref.slice(0, boundary) : undefined;
+    newConceptId = legacyConceptId(row.entry_type, opts.newName);
+    newItemRef = bundle !== undefined ? `${bundle}//${newConceptId}` : newConceptId;
+  }
+
   db.transaction(() => {
     const stale = db.prepare("SELECT id FROM entries WHERE entry_key = ?").get(opts.newEntryKey) as
       | { id: number }
@@ -288,6 +324,9 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     ).run(opts.newEntryKey, path.dirname(opts.newFilePath), opts.newFilePath, entryJson, searchText, row.id);
     if (opts.newDerivedFrom !== undefined) {
       db.prepare("UPDATE entries SET derived_from = ? WHERE id = ?").run(opts.newDerivedFrom, row.id);
+    }
+    if (newItemRef !== null) {
+      db.prepare("UPDATE entries SET item_ref = ?, concept_id = ? WHERE id = ?").run(newItemRef, newConceptId, row.id);
     }
     // Re-point usage history at the new ref (see the docstring): the bare
     // spelling exactly, and the origin-qualified spelling by rewriting only
@@ -383,6 +422,14 @@ export function deleteEntriesByDir(db: Database, dirPath: string): void {
   deleteEntriesWhere(db, "dir_path", dirPath);
 }
 
+/**
+ * Delete every entry (and its child rows) under a source's stash root.
+ *
+ * Chunk-5 flip F1: this keys on `stash_dir` — the physical source-root path,
+ * which is orthogonal to the ref grammar and identifies rows regardless of
+ * whether their `item_ref` is populated or NULL. No item_ref predicate is
+ * needed (or correct) here; both grammars' rows are removed by location.
+ */
 export function deleteEntriesByStashDir(db: Database, stashDir: string): void {
   deleteEntriesWhere(db, "stash_dir", stashDir);
 }
@@ -531,29 +578,116 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
   return parseEntryRows(rows, "getAllEntries");
 }
 
+/**
+ * Resolve a single `entries.id` from a ref string, accepting BOTH the new
+ * `[bundle//]conceptId` grammar and the pre-0.9.0 `[origin//]type:name` grammar
+ * at the input edge (Chunk-5 flip F1, ref-grammar decision D-R1/D-R4).
+ *
+ * A new-grammar ref keys on `item_ref` (the canonical stored spelling) —
+ * preferred but never sole: rows whose `item_ref` is still NULL (write-back
+ * fast-path, healed on next full index) stay findable via the legacy
+ * `entry_key` predicate reached by reverse-translating the conceptId. A legacy
+ * ref keeps the EXACT pre-flip `entry_key`-suffix behavior (the green suite is
+ * the proof). The optional `stashDir` scopes the match to one source root, as
+ * before.
+ */
 export function findEntryIdByRef(db: Database, ref: string, stashDir?: string): number | undefined {
+  if (classifyRefGrammar(ref) === "bundle") {
+    return findEntryIdByBundleRef(db, ref, stashDir);
+  }
+  // F5: delete — legacy `[origin//]type:name` grammar path (exact pre-flip
+  // behavior; the whole existing suite exercises this branch).
+  return findEntryIdByLegacyRef(db, ref, stashDir);
+}
+
+/** `name` plus its `.md`-toggled sibling — the markdown ext-keep/strip ambiguity. */
+function withMdVariants(name: string): string[] {
+  return name.endsWith(".md") ? [name, name.slice(0, -3)] : [name, `${name}.md`];
+}
+
+/**
+ * New-grammar (`[bundle//]conceptId`) id lookup: match `item_ref` first (exact
+ * when bundle-qualified, `//conceptId`-suffix when short), then fall back to the
+ * legacy `entry_key` predicate for NULL-`item_ref` rows.
+ */
+function findEntryIdByBundleRef(db: Database, ref: string, stashDir?: string): number | undefined {
+  const parsed = parseBundleRef(ref);
+  const conceptVariants = withMdVariants(parsed.conceptId);
+
+  // Prefer item_ref.
+  for (const conceptId of conceptVariants) {
+    const id = matchIdByItemRef(db, parsed.bundle, conceptId, stashDir);
+    if (id !== undefined) return id;
+  }
+  // F5: delete — legacy fallback so NULL-item_ref rows stay findable by new refs.
+  for (const conceptId of conceptVariants) {
+    const legacy = conceptIdToLegacy(conceptId);
+    if (!legacy) continue;
+    const id = matchIdByLegacyEntryKey(db, legacy.type, legacy.name, stashDir);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/**
+ * Match a row `id` by `item_ref`: exact `bundle//conceptId` when `bundle` is
+ * known, else the `//conceptId` SUFFIX (short ref — any bundle). The suffix
+ * uses `substr(...) = ...` (never LIKE) so `_`/`%` in a conceptId are literal,
+ * and includes the `//` boundary so a segment split never false-matches.
+ */
+function matchIdByItemRef(
+  db: Database,
+  bundle: string | undefined,
+  conceptId: string,
+  stashDir?: string,
+): number | undefined {
+  const scope = stashDir ? "AND stash_dir = ?" : "";
+  if (bundle !== undefined) {
+    const itemRef = `${bundle}//${conceptId}`;
+    const row = db
+      .prepare(`SELECT id FROM entries WHERE item_ref = ? ${scope} LIMIT 1`)
+      .get(itemRef, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
+    return row?.id;
+  }
+  const suffix = `//${conceptId}`;
+  const row = db
+    .prepare(
+      `SELECT id FROM entries
+       WHERE item_ref IS NOT NULL
+         AND substr(item_ref, length(item_ref) - length(?) + 1) = ?
+         ${scope}
+       LIMIT 1`,
+    )
+    .get(suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
+  return row?.id;
+}
+
+/** Legacy `entry_key`-suffix (`type:name`) id lookup — the pre-flip predicate. */
+function matchIdByLegacyEntryKey(db: Database, type: string, name: string, stashDir?: string): number | undefined {
+  const suffix = `${type}:${name}`;
+  const row = db
+    .prepare(
+      `SELECT id FROM entries
+       WHERE entry_type = ?
+         AND substr(entry_key, length(entry_key) - length(?) + 1) = ?
+         ${stashDir ? "AND stash_dir = ?" : ""}
+       LIMIT 1`,
+    )
+    .get(type, suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
+  return row?.id;
+}
+
+/**
+ * F5: delete — legacy `[origin//]type:name` id lookup, extracted verbatim from
+ * the pre-flip `findEntryIdByRef` so the old grammar keeps byte-identical
+ * behavior during the additive F1 window.
+ */
+function findEntryIdByLegacyRef(db: Database, ref: string, stashDir?: string): number | undefined {
   const parsed = parseAssetRef(ref);
-  const nameVariants = [parsed.name];
-  if (parsed.name.endsWith(".md")) {
-    nameVariants.push(parsed.name.slice(0, -3));
-  } else {
-    nameVariants.push(`${parsed.name}.md`);
+  for (const name of withMdVariants(parsed.name)) {
+    const id = matchIdByLegacyEntryKey(db, parsed.type, name, stashDir);
+    if (id !== undefined) return id;
   }
-
-  const stmt = db.prepare(
-    `SELECT id FROM entries
-     WHERE entry_type = ?
-       AND substr(entry_key, length(entry_key) - length(?) + 1) = ?
-       ${stashDir ? "AND stash_dir = ?" : ""}
-     LIMIT 1`,
-  );
-
-  for (const name of nameVariants) {
-    const suffix = `${parsed.type}:${name}`;
-    const row = stmt.get(parsed.type, suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
-    if (row) return row.id;
-  }
-
   return undefined;
 }
 
@@ -721,17 +855,36 @@ export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
 }
 
 /**
- * Look up an entry by its integer numeric id.
- * Returns null when no matching row is found.
+ * Look up an entry `id` by ref, dual-keyed on `item_ref` (Chunk-5 flip F1).
+ *
+ * Two shapes:
+ *   - `getEntryByRef(db, ref)`         — a ref string in EITHER grammar.
+ *   - `getEntryByRef(db, type, name)`  — a legacy `type`/`name` pair (kept for
+ *                                        the pre-flip call convention).
+ *
+ * Both route through {@link findEntryIdByRef}, so a `bundle//conceptId` ref
+ * resolves against `item_ref` and a legacy `type:name` ref against `entry_key`,
+ * with the same NULL-`item_ref` legacy fallback. Returns `{ id }` or `null`.
  */
-export function getEntryByRef(db: Database, type: string, name: string): { id: number } | null {
-  return db.prepare("SELECT id FROM entries WHERE entry_type = ? AND entry_key = ?").get(type, `${type}:${name}`) as {
-    id: number;
-  } | null;
+export function getEntryByRef(db: Database, ref: string): { id: number } | null;
+export function getEntryByRef(db: Database, type: string, name: string): { id: number } | null;
+export function getEntryByRef(db: Database, refOrType: string, name?: string): { id: number } | null {
+  // F5: delete — the (type, name) overload; new callers pass a single ref.
+  const ref = name === undefined ? refOrType : makeAssetRef(refOrType, name);
+  const id = findEntryIdByRef(db, ref);
+  return id === undefined ? null : { id };
 }
 
 /**
  * Source mapping used to preserve qualified usage-event identity while relinking.
+ *
+ * Chunk-5 flip F1: `usage_events.entry_ref` keeps its legacy `[origin//]type:name`
+ * spelling (the durable re-key onto `item_ref` is F4, per §11.4's
+ * join-against-last-good-index cutover). This resolver therefore gains item_ref
+ * awareness FOR FREE and WITHOUT touching any stored key: it hands the raw ref
+ * to {@link findEntryIdByRef}, whose dual-grammar dispatch keys legacy refs on
+ * `entry_key` exactly as before while transparently accepting a new-grammar ref
+ * should one ever appear. No SQL here changes in F1.
  */
 function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsageEventsOptions): number | undefined {
   const parsed = parseAssetRef(ref);

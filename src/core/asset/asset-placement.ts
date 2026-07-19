@@ -185,6 +185,21 @@ export function stashDirFor(type: string): string | undefined {
   return PLACEMENT_SPECS[type]?.stashDir;
 }
 
+/**
+ * Reverse of {@link stashDirFor}: the placement type owning a stash subdir, or
+ * `undefined` when no registered type places into it. The type→subdir map is a
+ * bijection over the built-in types (each type has a distinct subdir), so this
+ * is the well-defined inverse. Used by the Chunk-5 dual-grammar shim to reverse
+ * a D-R2 qualified conceptId (`<stash-subdir>/<name>`) back to a legacy
+ * `type:name` predicate so NULL-`item_ref` rows stay findable by new refs.
+ */
+export function typeForStashDir(stashDir: string): string | undefined {
+  for (const [type, spec] of Object.entries(PLACEMENT_SPECS)) {
+    if (spec.stashDir === stashDir) return type;
+  }
+  return undefined;
+}
+
 /** All stash subdir names across the registered types. */
 export function stashDirNames(): string[] {
   return Object.values(PLACEMENT_SPECS).map((spec) => spec.stashDir);

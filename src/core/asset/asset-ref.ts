@@ -188,6 +188,16 @@ export interface BundleRef {
 const BUNDLE_SLUG_RE = /^[^\s:.#/]+$/;
 
 /**
+ * True when `s` is a legal bundle slug (spec §11.1 / D-R5 charset: non-empty,
+ * no `:`/`.`/`#`/`/` or whitespace). Exported so the dual-grammar input dispatch
+ * (`resolve-ref.ts`) can classify a `prefix//tail` token by whether its prefix
+ * is a legal bundle slug — the clean legacy-vs-new-grammar discriminator.
+ */
+export function isBundleSlug(s: string): boolean {
+  return BUNDLE_SLUG_RE.test(s);
+}
+
+/**
  * Body-ref recognition (prose): the FULLY-QUALIFIED anchored form ONLY
  * (`<bundle>//<concept-id>[#<fragment>]`, spec §11.1 — the short form is never
  * recognized in prose). `g`/`m` for scanning; group 1 = the whole ref token.
