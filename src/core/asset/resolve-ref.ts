@@ -178,13 +178,15 @@ function conceptIdFromTypeName(type: string, name: string): string {
  *     — exactly where the pre-0.9.0 output emitted an un-qualified `type:name`.
  *   - An item in a slug-clean **non-default bundle** emits the fully-qualified
  *     `bundle//conceptId`.
- *   - An item whose bundle id is a registry origin that is NOT YET a legal
- *     bundle slug (`github:owner/repo`, `npm:@scope/pkg`, `owner/repo` — they
- *     carry `:` / `/`) keeps the legacy `origin//type:name` display THIS STAGE.
- *     The registry-origin display re-key is F4c / Chunk-8 (bundle-identity
- *     slugging), so this branch is byte-identical to today's qualified output
+ *   - An item whose bundle id is a registry origin that is NOT a legal bundle
+ *     slug (`github:owner/repo`, `npm:@scope/pkg`, `owner/repo` — they carry
+ *     `:` / `.` / `/`) keeps the legacy `origin//type:name` display. F4c DECISION
+ *     (ref-grammar decision D-R5): a registryId that is not a legal slug cannot be
+ *     re-keyed to `bundle//conceptId` without INVENTING a slugging scheme, which
+ *     D-R5 forbids — the slug-clean → `bundle//conceptId` mapping is the Chunk-8
+ *     config `bundles` key (D-R5 rule 1), assigned when the config migration
+ *     lands. Until then this branch is byte-identical to today's qualified output
  *     and the codemod's origin-qualified skips stay consistent with it.
- *     // F4c: unify onto bundle//conceptId
  */
 export function displayRef(item: DisplayRefItem, defaultBundleId?: string): string {
   const conceptId = item.conceptId ?? conceptIdFromTypeName(item.type, item.name);
@@ -195,10 +197,11 @@ export function displayRef(item: DisplayRefItem, defaultBundleId?: string): stri
   // so they display short too.
   if (bundleId === undefined || bundleId === defaultBundleId || bundleId === "local" || bundleId === "stash")
     return conceptId;
-  // Slug-clean non-default bundle → the new fully-qualified grammar.
+  // Slug-clean non-default bundle (e.g. a named filesystem source) → the new
+  // fully-qualified grammar.
   if (isBundleSlug(bundleId)) return `${bundleId}//${conceptId}`;
-  // Registry origin not yet a legal bundle slug — legacy display until F4c.
-  return makeAssetRef(item.type, item.name, bundleId); // F4c: unify onto bundle//conceptId
+  // Registry origin whose registryId is not a legal bundle slug (`:` / `.` / `/`).
+  return makeAssetRef(item.type, item.name, bundleId); // Chunk-8: config bundle key
 }
 
 // ── Dual-grammar input dispatch (TRANSIENT SHIM — F5 deletes all of this) ─────

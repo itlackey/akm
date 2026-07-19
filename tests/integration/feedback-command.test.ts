@@ -95,10 +95,12 @@ describe("akm feedback", () => {
         )
         .all() as Array<{ entry_ref: string; entry_id: number | null; signal: string }>;
       expect(events).toHaveLength(2);
-      expect(events[0]?.entry_ref).toBe("stash//env:prod");
+      // F4c: usage_events.entry_ref is now the resolved entry's fully-qualified
+      // item_ref (`<bundle>//<conceptId>`), not the legacy `origin//type:name`.
+      expect(events[0]?.entry_ref).toBe("stash//env/prod");
       expect(events[0]?.entry_id).toEqual(expect.any(Number));
       expect(events[0]?.signal).toBe("positive");
-      expect(events[1]?.entry_ref).toBe("stash//memory:deployment-notes");
+      expect(events[1]?.entry_ref).toBe("stash//memories/deployment-notes");
       expect(events[1]?.entry_id).toEqual(expect.any(Number));
       expect(events[1]?.signal).toBe("positive");
     } finally {
@@ -199,7 +201,9 @@ describe("akm feedback", () => {
       const refs = db
         .prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback' ORDER BY entry_ref")
         .all() as Array<{ entry_ref: string }>;
-      expect(refs.map((row) => row.entry_ref)).toEqual(["stash//memory:shared", "team//memory:shared"]);
+      // F4c: durable feedback keys are the resolved entries' item_refs, one per
+      // origin — the cross-origin distinction is preserved, never collapsed.
+      expect(refs.map((row) => row.entry_ref)).toEqual(["stash//memories/shared", "team//memories/shared"]);
     } finally {
       closeDatabase(db);
     }

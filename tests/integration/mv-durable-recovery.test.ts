@@ -244,7 +244,9 @@ describe("mv durable journal crash recovery", () => {
       entry_id: number;
     };
     closeDatabase(db);
-    expect(usage).toEqual({ entry_ref: "memory:crash-before-full-index-new", entry_id: after.id });
+    // F4c §11.4: the move rewrites the usage-event ref to the new name, then the
+    // full index re-keys it onto the entry's fully-qualified item_ref.
+    expect(usage).toEqual({ entry_ref: "stash//memories/crash-before-full-index-new", entry_id: after.id });
     expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 

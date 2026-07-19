@@ -18,7 +18,7 @@
  * consumers see a coherent lifecycle trail in a single output.
  */
 
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
@@ -175,9 +175,11 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     if (!trimmed) {
       throw new UsageError("--ref cannot be empty.", "INVALID_FLAG_VALUE");
     }
-    // Validate the ref grammar; we still query by exact entry_ref string so
-    // the user gets back exactly what they asked for.
-    parseAssetRef(trimmed);
+    // Validate the ref grammar (accepting BOTH the 0.9.0 `[bundle//]conceptId`
+    // and the legacy `[origin//]type:name` forms); getUsageEvents matches the
+    // stored entry_ref against both spellings, so the user gets back exactly the
+    // asset they asked for regardless of which grammar they typed.
+    parseRefInput(trimmed);
     normalizedRef = trimmed;
   }
 

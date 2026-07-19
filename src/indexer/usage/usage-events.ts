@@ -9,6 +9,8 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
+import { parseAssetRef } from "../../core/asset/asset-ref";
+import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
 import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -106,6 +108,31 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
   }
 }
 
+/**
+ * Bare-form candidates a bare `entry_ref` filter can match a stored row under,
+ * spanning BOTH the legacy `type:name` spelling and the 0.9.0 conceptId spelling
+ * the F4c re-key writes — so `akm history memory:x` finds a row now stored as
+ * `bundle//<stash-subdir>/x`. Mirrors the retrieval-count reader's dual arm.
+ *
+ * F5: delete — after the flip every stored row is conceptId-spelled.
+ */
+function usageEventBareCandidates(ref: string): string[] {
+  const trimmed = ref.trim();
+  if (classifyRefGrammar(trimmed) === "bundle") {
+    // A conceptId filter → add its legacy `type:name` sibling.
+    const legacy = conceptIdToLegacy(trimmed);
+    return legacy ? [trimmed, `${legacy.type}:${legacy.name}`] : [trimmed];
+  }
+  try {
+    const parsed = parseAssetRef(trimmed);
+    const legacy = `${parsed.type}:${parsed.name}`;
+    const concept = legacyConceptId(parsed.type, parsed.name);
+    return concept === legacy ? [legacy] : [legacy, concept];
+  } catch {
+    return [trimmed];
+  }
+}
+
 // ── Query ────────────────────────────────────────────────────────────────────
 
 /**
@@ -121,11 +148,22 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
   }
   if (filters?.entry_ref) {
     if (filters.entry_ref.includes("//")) {
+      // Fully-qualified filter (`bundle//conceptId` or legacy `origin//type:name`)
+      // — the user named a specific bundle/origin, so match it exactly.
       conditions.push("entry_ref = ?");
       params.push(filters.entry_ref);
     } else {
-      conditions.push("(entry_ref = ? OR substr(entry_ref, -length(?) - 2) = '//' || ?)");
-      params.push(filters.entry_ref, filters.entry_ref, filters.entry_ref);
+      // Bare filter — match the stored bare form (everything after the first
+      // `//`, or the whole value when un-qualified) against BOTH spellings: the
+      // legacy `type:name` AND the conceptId the F4c re-key writes.
+      // F5: delete — after the flip only the conceptId candidate is needed.
+      const candidates = usageEventBareCandidates(filters.entry_ref);
+      const placeholders = candidates.map(() => "?").join(", ");
+      conditions.push(
+        `(CASE WHEN instr(entry_ref, '//') > 0 THEN substr(entry_ref, instr(entry_ref, '//') + 2) ELSE entry_ref END) ` +
+          `IN (${placeholders})`,
+      );
+      params.push(...candidates);
     }
   }
   if (filters?.source) {

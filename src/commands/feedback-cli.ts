@@ -17,7 +17,12 @@ import { warn } from "../core/warn";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import { findEntryIdByRef, getEntryById, getEntryFilePathById } from "../storage/repositories/index-entries-repository";
+import {
+  findEntryIdByRef,
+  getEntryById,
+  getEntryFilePathById,
+  getItemRefById,
+} from "../storage/repositories/index-entries-repository";
 import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
@@ -296,7 +301,11 @@ export const feedbackCommand = defineJsonCommand({
       });
       insertUsageEvent(db, {
         event_type: "feedback",
-        entry_ref: durableRef,
+        // F4c: the DURABLE usage_events key is the resolved entry's fully-qualified
+        // item_ref. `durableRef` (the legacy display spelling) remains the ref
+        // shown to the user and logged to the state.db events surface below.
+        // F5: delete — the legacy fallback for a NULL-item_ref straggler.
+        entry_ref: getItemRefById(db, entryId) ?? durableRef,
         entry_id: entryId,
         signal,
         metadata: metadataStr,

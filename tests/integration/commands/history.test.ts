@@ -233,7 +233,14 @@ describe("akm history CLI", () => {
     expect(typeof perAssetJson.totalCount).toBe("number");
     expect(Array.isArray(perAssetJson.entries)).toBe(true);
     const entries = perAssetJson.entries as Array<Record<string, unknown>>;
-    expect(entries.some((entry) => entry.eventType === "feedback" && entry.ref === "stash//memory:alpha")).toBe(true);
+    // F4c: usage_events.entry_ref is now the resolved entry's fully-qualified
+    // item_ref (`<bundle>//memories/alpha`), not the legacy `origin//type:name`.
+    expect(
+      entries.some(
+        (entry) =>
+          entry.eventType === "feedback" && typeof entry.ref === "string" && entry.ref.endsWith("//memories/alpha"),
+      ),
+    ).toBe(true);
 
     // Stash-wide history.
     const stashWide = await runCli(["history", "--format=json"]);
@@ -249,7 +256,7 @@ describe("akm history CLI", () => {
       const events = db
         .prepare("SELECT entry_ref, event_type FROM usage_events WHERE event_type = 'feedback'")
         .all() as Array<{ entry_ref: string; event_type: string }>;
-      expect(events.find((event) => event.entry_ref === "stash//memory:alpha")).toBeDefined();
+      expect(events.find((event) => event.entry_ref.endsWith("//memories/alpha"))).toBeDefined();
     } finally {
       closeDatabase(db);
     }
