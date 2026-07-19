@@ -40,8 +40,12 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // conservatively left). SHRINK-ONLY — lower this when F3/F4 removes more; never
 // raise it. Dropped 138 → 116 at F4b Ruling B1 (the `${type:...}` substitution-
 // token measurement fix — those 22 tokens were never refs); 116 → 115 at F4b
-// when a graph output-baseline assertion flipped to the conceptId spelling.
-const CEILING = 115;
+// when a graph output-baseline assertion flipped to the conceptId spelling;
+// 115 → 111 at F5j (the Chunk-5 grammar deletion RE-GREEN: CLI-arg/API ref
+// inputs across the mv/source/show/history/feedback/events/remember/env/graph/
+// workflow suites re-keyed to the conceptId grammar; the residual 111 are the
+// durable-state / persisted / echoed legacy assertions the heuristic preserves).
+const CEILING = 111;
 
 const TYPES = [
   "skill",
