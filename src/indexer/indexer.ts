@@ -14,6 +14,7 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
+import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
  *
@@ -88,7 +89,6 @@ import {
   type IndexDocument,
   isEnrichmentComplete,
   isWorkflowSkipWarning,
-  loadStashFile,
   type StashFile,
   shouldIndexStashFile,
 } from "./passes/metadata";
@@ -919,16 +919,18 @@ async function scanSourceDirs(
 
       // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via
       // `akmAdapter.recognize` (broken workflows dropped-with-warning at the
-      // drain layer) and reconstruct the durable `IndexDocument`s. `.stash.json`
-      // legacy overrides are still merged (item-4 decommission is deferred —
-      // §12.3 gate fixtures feed curated metadata exclusively via `.stash.json`).
+      // drain layer) and reconstruct the durable `IndexDocument`s. Legacy
+      // per-directory sidecar overrides are still merged (item-4 decommission is
+      // deferred — §12.3 gate fixtures feed curated metadata exclusively via the
+      // legacy sidecar).
       const drained = drainDirDocuments(akmAdapter, component, indexableCtxs);
       if (drained.warnings.length) warnings.push(...drained.warnings);
       const generated: StashFile = drained.warnings.length
         ? { entries: drained.entries, warnings: drained.warnings }
         : { entries: drained.entries };
 
-      const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+      // Chunk-8: dies with the content migration.
+      const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
       const { stash, staleFiles } = buildIndexedDirCandidate(dirPath, indexableFiles, generated, legacyOverrides);
 
       if (generated.entries.length > 0) {
@@ -1080,8 +1082,8 @@ function persistDirRecords(
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
           // content_hash = doc.hash from the drain, keyed by the recognized
-          // file's path (stable across the `.stash.json` merge). NULL preserves
-          // any existing hash (upsert COALESCE) for `.stash.json`-only entries.
+          // file's path (stable across the legacy-sidecar merge). NULL preserves
+          // any existing hash (upsert COALESCE) for sidecar-only entries.
           const contentHash = hashByFile?.get(entryPath);
 
           // Chunk-5 Step 2 (spec §14.4): derive the durable bundle identity

@@ -29,7 +29,7 @@
  *
  * `doc.hash` (= sha256 of the file content) is surfaced per recognized file so
  * the persist layer can populate the `content_hash` column (item 2). It is keyed
- * by the file's absolute path (stable across the `.stash.json` legacy merge,
+ * by the file's absolute path (stable across the legacy-sidecar merge,
  * which rebuilds entry objects) rather than by the entry object.
  *
  * Pure of DB/global state beyond the workflow-document side channel; a new leaf

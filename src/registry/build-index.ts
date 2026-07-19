@@ -16,10 +16,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
 import { getCacheDir } from "../core/paths";
-import { type IndexDocument, loadStashFile } from "../indexer/passes/metadata";
+import type { IndexDocument } from "../indexer/passes/metadata";
 import { recognizeStashEntries } from "../indexer/scan/drain-dir";
 import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
+import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
 import { writeResponseToFile } from "../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/include";
 import { detectStashRoot } from "../sources/providers/provider-utils";
@@ -356,7 +357,8 @@ async function enumerateAssets(stashRoot: string): Promise<IndexDocument[]> {
   const entries: IndexDocument[] = [];
   for (const [dirPath, files] of dirGroups) {
     const generated = recognizeStashEntries(stashRoot, files);
-    const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+    // Chunk-8: dies with the content migration.
+    const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
     const mergedEntries = legacyOverrides
       ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
       : generated.entries;

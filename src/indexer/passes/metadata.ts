@@ -14,7 +14,7 @@ import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashInt
 import { deriveCanonicalAssetName, isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
-import { asNonEmptyString, writeFileAtomic } from "../../core/common";
+import { asNonEmptyString } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
 import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
@@ -37,14 +37,6 @@ export interface StashFile {
   entries: IndexDocument[];
   warnings?: string[];
 }
-
-export interface LoadStashFileOptions {
-  requireFilename?: boolean;
-}
-
-// ── Load / Write ────────────────────────────────────────────────────────────
-
-const STASH_FILENAME = ".stash.json";
 
 // ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
 
@@ -91,48 +83,13 @@ export function isProposedQuality(quality: string | undefined): boolean {
   return quality === "proposed";
 }
 
-export function stashFilePath(dirPath: string): string {
-  return path.join(dirPath, STASH_FILENAME);
-}
-
-export function loadStashFile(dirPath: string, options?: LoadStashFileOptions): StashFile | null {
-  const filePath = stashFilePath(dirPath);
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    if (!raw || !Array.isArray(raw.entries)) return null;
-    const entries: IndexDocument[] = [];
-    for (const e of raw.entries) {
-      const validated = validateStashEntry(e);
-      if (validated) {
-        if (options?.requireFilename && !validated.filename) continue;
-        entries.push(validated);
-      } else {
-        const name =
-          typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).name === "string"
-            ? (e as Record<string, unknown>).name
-            : "(unknown)";
-        warn(`Warning: Skipping invalid entry "${name}" in ${filePath}`);
-      }
-    }
-    return entries.length > 0 ? { entries } : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeStashFile(dirPath: string, stash: StashFile): void {
-  const filePath = stashFilePath(dirPath);
-  writeFileAtomic(filePath, `${JSON.stringify(stash, null, 2)}\n`);
-}
-
 /**
  * Validate and normalize a raw object into a `IndexDocument`.
  *
  * Open type token (chunk 1.5, D1.5-1/D1.5-6): `entry.type` accepts any
  * non-empty string — foreign/adapter types are valid `IndexDocument` data, not
  * just AKM's own built-in set — EXCEPT `DEPRECATED_REJECTED_TYPES`
- * (`tool`/`vault`), which stay rejected so a hand-edited `.stash.json` can't
+ * (`tool`/`vault`), which stay rejected so a hand-edited legacy sidecar can't
  * silently resurrect a deliberately-retired type.
  */
 export function validateStashEntry(entry: unknown): IndexDocument | null {
@@ -207,7 +164,7 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
   if (xrefs) result.xrefs = xrefs;
   const sources = normalizeNonEmptyStringList(e.sources);
   if (sources) result.sources = sources;
-  // SPEC-6: `category` must survive the whitelist or .stash.json-declared
+  // SPEC-6: `category` must survive the whitelist or legacy-sidecar-declared
   // facts lose their convention/meta marker on the round-trip. Non-string
   // values are dropped, not coerced.
   if (typeof e.category === "string" && e.category.trim().length > 0) {
@@ -246,7 +203,7 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
     result.derivedFrom = e.derivedFrom.trim();
   }
   // SPEC-8: `bodyOpening` must survive the whitelist so entries round-tripped
-  // through `.stash.json` keep their captured opening. Preserved verbatim —
+  // through the legacy sidecar keep their captured opening. Preserved verbatim —
   // the extractor already trimmed and capped it at capture time.
   if (typeof e.bodyOpening === "string" && e.bodyOpening.trim().length > 0) {
     result.bodyOpening = e.bodyOpening;

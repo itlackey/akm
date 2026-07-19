@@ -19,11 +19,12 @@ import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
+import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries, getEntryCount } from "../storage/repositories/index-entries-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { type IndexDocument, loadStashFile } from "./passes/metadata";
+import type { IndexDocument } from "./passes/metadata";
 import { recognizeStashEntries } from "./scan/drain-dir";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search/search-source";
 import { walkStashFlat } from "./walk/walker";
@@ -144,7 +145,8 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
 
     for (const [dirPath, files] of dirGroups) {
       const generated = recognizeStashEntries(currentStashDir, files);
-      const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+      // Chunk-8: dies with the content migration.
+      const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
       const mergedEntries = legacyOverrides
         ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
         : generated.entries;

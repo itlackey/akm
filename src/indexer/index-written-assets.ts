@@ -80,7 +80,7 @@ export async function indexWrittenAssets(
       if (!fs.existsSync(dbPath)) return true;
 
       // The full walk never descends into dot-directories (they hold state like
-      // `.meta/`, `.stash.json`), and `shouldIndexStashFile` relies on the walker
+      // `.meta/` and the legacy metadata sidecar), and `shouldIndexStashFile` relies on the walker
       // for that — mirror it here so this fast path indexes exactly what a full
       // run would.
       const files = filePaths.filter((f) => {

@@ -504,7 +504,7 @@ async function searchDatabase(
   preFilter.sort((a, b) => displayScore(b.score) - displayScore(a.score) || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
-  // Multiple .stash.json entries can map to the same file (e.g. entries without
+  // Multiple legacy-sidecar entries can map to the same file (e.g. entries without
   // a filename field all collapse to files[0]). Showing the same path/ref
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
