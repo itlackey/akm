@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { makeAssetRef } from "../../core/asset/asset-ref";
+import path from "node:path";
 import { acquireMaintenanceActivitySync } from "../../core/maintenance-barrier";
 import { getStateDbPath } from "../../core/state-db";
 import { type Database, openDatabase } from "../../storage/database";
@@ -90,10 +90,29 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     const dbPath = getStateDbPath();
     if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
     const releaseActivity = acquireMaintenanceActivitySync("state-db");
-    const idByRef = new Map<string, number>();
+    // Chunk-5 flip F5d Step 3 — DUAL-ARM the salience read. Fold BOTH stored
+    // spellings into the single `IN` query, keyed back to the entry id:
+    //   • new grammar FIRST — the durable fully-qualified `item_ref`
+    //     (`<bundle>//<concept-id>`, what the Step-4 writer keys salience by);
+    //   • INLINE legacy SECOND — `type:name`, byte-identical to the pre-flip
+    //     `type:name` writer output.  // Chunk-8: drop after the state.db
+    //     one-time re-key.
+    // The legacy arm applies the SAME `path.posix.normalize` the pre-flip
+    // writer applied (see `posixNormalize`), so it matches the stored rows
+    // byte-for-byte. The F5d normalization-trap proof over the real
+    // curate-golden corpus (incl. deep-nested names) found 0/35 divergences;
+    // the local normalize makes that identity guaranteed by construction rather
+    // than corpus-dependent. Output is keyed by id, so this is self-contained,
+    // and a fresh new-grammar row wins over any stale legacy row for the same
+    // asset (the Chunk-8 re-key transition window).
+    const idByRef = new Map<string, { id: number; isNew: boolean }>();
     try {
       for (const item of items) {
-        idByRef.set(makeAssetRef(item.entry.type, item.entry.name), item.id);
+        // Legacy arm: `type:name` with the pre-flip name normalization.
+        idByRef.set(`${item.entry.type}:${posixNormalize(item.entry.name)}`, { id: item.id, isNew: false });
+        // New arm: the durable `item_ref` (carries `//`, lexically disjoint from
+        // the legacy key). Skipped for NULL-provenance (pre-flip / write-back) rows.
+        if (item.itemRef) idByRef.set(item.itemRef, { id: item.id, isNew: true });
       }
       const stateDb = openDatabase(dbPath, { readonly: true });
       try {
@@ -104,6 +123,7 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
         }
         const refs = [...idByRef.keys()];
         const CHUNK = 500;
+        const newHits = new Set<number>();
         for (let i = 0; i < refs.length; i += CHUNK) {
           const chunk = refs.slice(i, i + CHUNK);
           const placeholders = chunk.map(() => "?").join(",");
@@ -111,8 +131,16 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
             .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
             .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
           for (const row of rows) {
-            const id = idByRef.get(row.asset_ref);
-            if (id !== undefined) result.set(id, row.rank_score);
+            const target = idByRef.get(row.asset_ref);
+            if (!target) continue;
+            // New-grammar match wins over a stale legacy row for the same id;
+            // a legacy match applies only when no new row has claimed the id.
+            if (target.isNew) {
+              result.set(target.id, row.rank_score);
+              newHits.add(target.id);
+            } else if (!newHits.has(target.id)) {
+              result.set(target.id, row.rank_score);
+            }
           }
         }
       } finally {
@@ -125,6 +153,16 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     // Fail open — search must never break because state.db is unavailable.
   }
   return result;
+}
+
+/**
+ * Byte-identical copy of the pre-flip name normalization
+ * (`core/asset/asset-ref.ts` `normalizeName`) so the inline legacy salience
+ * key matches rows the pre-flip writer stored under the `type:name` grammar.
+ * // Chunk-8: drop together with the legacy arm after the state.db one-time re-key.
+ */
+function posixNormalize(name: string): string {
+  return path.posix.normalize(name.replace(/\\/g, "/"));
 }
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
