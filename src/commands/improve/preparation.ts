@@ -1089,23 +1089,29 @@ export function buildSnapshotManifest(args: {
   // Per-ref queries would be N+1 and the planner is already the hottest path
   // in `akm improve`.
   const candidateRefs = postCleanupRefs.filter((r) => !validationFailureRefs.has(r.ref)).map((r) => r.ref);
+  // Chunk-5 flip F5e — carry each candidate's item_ref so the feedback/proposal
+  // ts readers dual-arm their reverse maps on [item_ref, durable, bare].
+  const itemRefByRef = buildItemRefByRef(postCleanupRefs);
   const latestFeedbackTs = buildLatestFeedbackTsMap(
     candidateRefs,
     feedbackSinceCutoff,
     options.sourceName,
     options.legacyBareState,
+    itemRefByRef,
   );
   const lastReflectProposalTs = buildLatestProposalTsMap(
     candidateRefs,
     "reflect",
     options.sourceName,
     options.legacyBareState,
+    itemRefByRef,
   );
   const lastDistillProposalTs = buildLatestProposalTsMap(
     candidateRefs,
     "distill",
     options.sourceName,
     options.legacyBareState,
+    itemRefByRef,
   );
   return { feedbackSinceCutoff, latestFeedbackTs, lastReflectProposalTs, lastDistillProposalTs };
 }
@@ -1484,11 +1490,14 @@ function buildFeedbackSummaryMap(args: {
   // to feedbackSinceCutoff (same as the old inline `(e.ts ?? "") >= cutoff` guard).
   const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
   {
-    const feedbackCandidateRefs = [...processableRefs, ...noFeedbackPool].map((r) => r.ref);
-    const feedbackCandidateSet = new Set(feedbackCandidateRefs);
+    const feedbackCandidates = [...processableRefs, ...noFeedbackPool];
+    const feedbackCandidateSet = new Set(feedbackCandidates.map((r) => r.ref));
+    // Chunk-5 flip F5e — dual-arm the reverse map on [item_ref, durable, bare]
+    // so an item_ref-keyed feedback event resolves back to its candidate ref
+    // once the writers emit item_ref. // Chunk-8: collapse to [item_ref].
     const feedbackRefByDurableKey = new Map(
-      feedbackCandidateRefs.flatMap((ref) =>
-        improveStateReadRefs(ref, options.sourceName, options.legacyBareState).map((key) => [key, ref]),
+      feedbackCandidates.flatMap((r) =>
+        improveStateReadRefs(r.ref, options.sourceName, options.legacyBareState, r.itemRef).map((key) => [key, r.ref]),
       ),
     );
     if (feedbackCandidateSet.size > 0) {

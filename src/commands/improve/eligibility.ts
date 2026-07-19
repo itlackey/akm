@@ -369,11 +369,16 @@ export function buildLatestFeedbackTsMap(
   sinceIso: string,
   sourceName?: string,
   includeLegacyBare = false,
+  itemRefByRef?: Map<string, string | undefined>,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
+  // Chunk-5 flip F5e — dual-arm on [item_ref, durable, bare] so an item_ref-
+  // keyed feedback event resolves once the writers emit it. // Chunk-8: [item_ref].
   const refByDurableKey = new Map(
-    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+    refs.flatMap((ref) =>
+      improveStateReadRefs(ref, sourceName, includeLegacyBare, itemRefByRef?.get(ref)).map((key) => [key, ref]),
+    ),
   );
   const { events } = readEvents({ type: "feedback", since: sinceIso });
   for (const e of events) {
@@ -402,11 +407,16 @@ export function buildLatestProposalTsMap(
   source: "reflect" | "distill",
   sourceName?: string,
   includeLegacyBare = false,
+  itemRefByRef?: Map<string, string | undefined>,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
+  // Chunk-5 flip F5e — dual-arm on [item_ref, durable, bare] so an item_ref-
+  // keyed *_invoked event resolves once the writers emit it. // Chunk-8: [item_ref].
   const refByDurableKey = new Map(
-    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+    refs.flatMap((ref) =>
+      improveStateReadRefs(ref, sourceName, includeLegacyBare, itemRefByRef?.get(ref)).map((key) => [key, ref]),
+    ),
   );
   const eventType = source === "reflect" ? "reflect_invoked" : "distill_invoked";
   const { events } = readEvents({ type: eventType });

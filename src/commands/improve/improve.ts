@@ -890,17 +890,21 @@ export function refilterProactiveLoopRefs(
   let postLockLoopRefs = loopRefs;
   if (proactiveLoopRefs.length > 0) {
     const proactiveRefStrs = proactiveLoopRefs.map((r) => r.ref);
+    // Chunk-5 flip F5e — dual-arm the proposal reverse map on item_ref too.
+    const proactiveItemRefByRef = new Map(proactiveLoopRefs.map((r) => [r.ref, r.itemRef] as const));
     const freshReflectTs = buildLatestProposalTsMap(
       proactiveRefStrs,
       "reflect",
       options.sourceName,
       options.legacyBareState,
+      proactiveItemRefByRef,
     );
     const freshDistillTs = buildLatestProposalTsMap(
       proactiveRefStrs,
       "distill",
       options.sourceName,
       options.legacyBareState,
+      proactiveItemRefByRef,
     );
     const pmDueDays = improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS;
     const stillDue = new Set(
