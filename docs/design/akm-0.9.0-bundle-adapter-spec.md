@@ -315,7 +315,27 @@ implementation detail, and requires amending this section first.
     on the open `type`, exactly as §2/§6 specify);
   - introduces **NO** new positional / directory-name heuristics of its own — it
     relocates the *existing* classification behind the `BundleAdapter` interface,
-    unchanged in behavior.
+    unchanged in behavior;
+  - emits the **qualified conceptId spelling** (ref-grammar decision D-R2,
+    `akm-0.9.0-ref-grammar-decision.md`): conceptId = the placement stash-subdir
+    followed by the per-type canonical name — `knowledge/http-caching`,
+    `skills/code-review`, `scripts/db/migrate/run.sh` — the same spelling
+    `placeNew` consumes and this spec's §1.3 examples show. For markdown types
+    this IS the OKF concept ID (path − `.md`); directory-items (skill) and
+    non-markdown extensions follow the adapter's own path definition
+    (normative §11.2 note). `entry.name`/FTS keep the bare canonical name —
+    identity ≠ search text.
+
+**OKF reserved filenames (BINDING — decision D-R6).** Upstream OKF v0.1 §3.1
+reserves `index.md` (directory listing, §6) and `log.md` (update history, §7) at
+**every** level of a bundle: they "MUST NOT be used for concept documents." No
+adapter may emit an `IndexDocument` for a reserved filename, and item write
+paths (`placeNew`, `akm mv`, write transactions) MUST refuse a reserved-filename
+target — these files are bundle *structure*, maintained by bundle-level
+operations, never items. `okf` and `llm-wiki` already comply; the `akm`
+adapter's recognition exclusion is a behavior change that lands with the
+Chunk-5 flip (F4) / Chunk-8 producer-conformance migration, which also excludes
+or renames any existing stash file with a reserved name.
 
 **Why the two differ — the transitional reason (recorded so it is never
 re-litigated).** AKM-native content does **not** carry a frontmatter `type`

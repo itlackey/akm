@@ -244,6 +244,29 @@ F5 **inside the same chunk**, satisfying §11.4's no-permanent-dual-parser rule.
 already-derived ids (no re-key), `defaultBundle`, the §11.5 startup guard, and the three-DB
 merge re-key runs over refs that are already in final spelling.
 
+### D-R6 — OKF reserved filenames: `index.md` / `log.md` are structure, never items (BINDING)
+
+Verified against upstream OKF v0.1 §3.1/§6/§7 (2026-07-19 audit): `index.md` (directory listing,
+progressive disclosure) and `log.md` (update history) are **reserved structural files at every
+level of a bundle** and "MUST NOT be used for concept documents." AKM's OKF-compliant behavior:
+
+1. **Never indexed as items.** No adapter may emit an `IndexDocument` for a reserved filename.
+   The `okf` and `llm-wiki` adapters already comply (`okf-adapter.ts` `RESERVED_FILES`,
+   case-insensitive, any depth). The **`akm` adapter does not yet** — a `knowledge/index.md`
+   would today classify as a `knowledge` concept. Its recognition exclusion is a behavior
+   change and lands with the flip (F4) / Chunk-8 producer-conformance migration, which also
+   handles any existing stash file named `index.md`/`log.md` (exclude from the index; rename
+   if its content is a real concept).
+2. **Never touched as assets.** Reserved files are bundle structure, not items: `placeNew`,
+   `akm mv`, and item write-transactions MUST refuse a reserved-filename target (they have no
+   conceptId, so no ref can name them — the grammar enforces this passively; the write paths
+   enforce it actively). Regenerating an `index.md` listing or appending to `log.md` is a
+   *bundle-maintenance* operation owned by the bundle's adapter (e.g. llm-wiki's native log
+   semantics), never an item write.
+3. **Producer side (Chunk 8):** AKM-generated bundles emit `index.md`/`log.md` only in the §6/§7
+   listing/log shapes; the only frontmatter ever emitted in an `index.md` is the optional
+   bundle-root `okf_version` block (upstream §11).
+
 ## 5. Spec amendments (exhaustive)
 
 1. Normative §11.1: CLI/API short-ref resolution — replace "resolved … against the workspace
@@ -254,6 +277,9 @@ merge re-key runs over refs that are already in final spelling.
    recognize/place spelling-tension note.
 4. Plan §11 Chunk 5: insert F0/F1 (spelling pin + resolver/dual-reader step) ahead of the codemod;
    codemod and grep gates otherwise unchanged.
+5. Adapter spec §5.1/§6 (+ Chunk-8 checklist): the D-R6 reserved-filename rule — `index.md`/
+   `log.md` are never recognized as items and never valid write targets; the akm adapter's
+   exclusion + existing-file handling land with F4/Chunk 8.
 
 ## 6. Invariants check
 

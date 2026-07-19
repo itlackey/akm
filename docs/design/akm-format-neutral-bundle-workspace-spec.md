@@ -466,7 +466,9 @@ ref := [ <bundle> "//" ] <concept-id> [ "#" <fragment> ]
 
 The bundle slug MUST NOT contain `/`, `:`, `.`, or `#` (this keeps `bundle//` lexically distinguishable from URLs and scheme-relative links in prose). The conceptId MAY contain `/`, MUST NOT contain `#`, and is otherwise opaque to the core below the `//`.
 
-**Canonical stored spelling.** All durable state keys, index rows, bindings, and proposal targets MUST store the fully-qualified `bundle//conceptId` form, always. The short (bundle-omitted) form is CLI input sugar resolved at parse time against the workspace `defaultBundle`; it MUST NOT be persisted as a key. (Today's `rekeyStateDbForMove` probing three legacy spellings per ref is the cost of leaving this open.)
+**Canonical stored spelling.** All durable state keys, index rows, bindings, and proposal targets MUST store the fully-qualified `bundle//conceptId` form, always. The short (bundle-omitted) form is CLI input sugar; it MUST NOT be persisted as a key. (Today's `rekeyStateDbForMove` probing three legacy spellings per ref is the cost of leaving this open.)
+
+**Short-ref resolution (amended per ref-grammar decision D-R4).** A short ref from CLI/API input resolves to the **defaultBundle** if the conceptId exists there, otherwise to the first bundle containing the conceptId in **installation priority order** (the config/`deriveInstallations` order — the same order origin-less lookups walk today). First match wins, deterministically; no match is a not-found error naming the forms tried. Short refs inside bundle *content* resolve to the **containing** bundle, never defaultBundle. Scoped lookup (the old `local//`) is an explicit resolver option (`{ only: bundleId }`), not a ref spelling.
 
 **Short refs in portable content.** A short ref appearing inside a file that ships in a bundle resolves to the **containing** bundle, never the installer's default bundle, so intra-bundle references stay portable by construction. Native bundle-relative links (OKF links, §26.3) are the preferred intra-bundle reference form.
 
@@ -482,6 +484,7 @@ The bundle slug MUST NOT contain `/`, `:`, `.`, or `#` (this keeps `bundle//` le
 - Reclassifying a native item (changing its `type`, re-validating under another adapter, re-mounting a root) without moving it MUST NOT change its ref.
 - Moving or renaming a native item changes path-based identity and MUST use an explicit state-rekey transaction.
 - The core resolves conceptId → path **only via the index**. Adapters own both stripping directions (`recognize` strips the extension; `placeNew` re-adds it, longest-match against the adapter's declared extension set so `foo.yaml.md` has one defined answer). The core MAY treat a conceptId as a `/`-segmented string for prefix matching (component derivation, ref-prefix search, derived-twin keys) but MUST NOT reconstruct filesystem paths from it.
+- Clarifying note (ref-grammar decision D-R2, no rule change): "path within the bundle" means the item's path **as the adapter defines it** — a directory-item's path is its directory (a skill's id is `skills/<dir>`, not `skills/<dir>/SKILL`).
 
 ### 11.3 Export refs
 
