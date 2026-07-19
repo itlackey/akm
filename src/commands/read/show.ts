@@ -43,7 +43,11 @@ import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveStorageLocations } from "../../storage/locations";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
-import { findEntryIdByRef, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
+import {
+  findEntryIdByRef,
+  getEntryIdByFilePath,
+  getItemRefById,
+} from "../../storage/repositories/index-entries-repository";
 import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
@@ -253,10 +257,15 @@ function logShowEvent(
   try {
     withIndexDb(
       (db) => {
+        const entryId = filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef);
+        // F4c: the DURABLE usage-event key is the resolved entry's fully-qualified
+        // `item_ref`; `eventRef` is only the fallback for a NULL-item_ref straggler
+        // (or an unresolved ref). // F5: delete — eventRef fallback.
+        const entryRef = (entryId !== undefined ? getItemRefById(db, entryId) : null) ?? eventRef;
         insertUsageEvent(db, {
           event_type: "show",
-          entry_ref: eventRef,
-          entry_id: filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef),
+          entry_ref: entryRef,
+          entry_id: entryId,
           source: eventSource,
         });
       },

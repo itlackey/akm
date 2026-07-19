@@ -78,15 +78,26 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
       `SELECT u.entry_ref, e.stash_dir
          FROM usage_events u
          LEFT JOIN entries e ON e.id = u.entry_id
-        WHERE u.entry_ref LIKE '%memory:duplicate'
+        WHERE u.event_type = 'show'
         ORDER BY u.entry_ref`,
     )
     .all() as Array<{ entry_ref: string; stash_dir: string | null }>;
-  expect(linked).toEqual([
-    { entry_ref: "memory:duplicate", stash_dir: stashDir },
-    { entry_ref: "stash//memory:duplicate", stash_dir: stashDir },
-    { entry_ref: "team//memory:duplicate", stash_dir: null },
-  ]);
+  // F4c §11.4 re-key (origin-faithful): the bare `memory:duplicate` and the
+  // `stash//memory:duplicate` events both resolve to the WINNING stash row, so
+  // both re-key onto its fully-qualified item_ref (`stash//memories/duplicate`)
+  // — the origin is preserved, never collapsed. `team//memory:duplicate` names
+  // the team source, whose copy was deduped OUT of `entries`: an EXPECTED §11.4
+  // orphan — kept in place (legacy-spelled, detached), NOT deleted, and archived
+  // in the `legacy_state` quarantine.
+  const stashLinked = linked.filter((r) => r.stash_dir === stashDir);
+  expect(stashLinked.length).toBe(2);
+  expect(stashLinked.every((r) => r.entry_ref.endsWith("//memories/duplicate"))).toBe(true);
+  const teamRow = linked.filter((r) => r.entry_ref === "team//memory:duplicate");
+  expect(teamRow).toEqual([{ entry_ref: "team//memory:duplicate", stash_dir: null }]);
+  const quarantined = db
+    .prepare("SELECT old_ref, row_count, reason FROM legacy_state WHERE surface = 'usage_events'")
+    .all() as Array<{ old_ref: string; row_count: number; reason: string }>;
+  expect(quarantined).toEqual([{ old_ref: "team//memory:duplicate", row_count: 1, reason: "orphan" }]);
   expect(
     getRetrievalCounts(db, ["memory:duplicate"], {
       stashDir: teamDir,

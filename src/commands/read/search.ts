@@ -22,7 +22,7 @@ import { isTransientStashPath } from "../../core/paths";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
-import { getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
+import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { bumpUtilityScoresBatch } from "../../storage/repositories/index-utility-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 // Eagerly import source providers to trigger self-registration before the
@@ -284,13 +284,19 @@ function resolveEntryIds(
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
       if (entryId !== undefined) {
-        // F4b: `hit.ref` now arrives in the 0.9.0 conceptId grammar, so parse it
-        // through the dual-grammar `parseRefInput`; `refToString` still persists
-        // the LEGACY `type:name` spelling into usage_events (the persisted-key
-        // flip is deferred to F4c). // F4c: persist the conceptId spelling.
-        const parsed = parseRefInput(hit.ref);
-        const origin = parsed.origin ?? hit.origin ?? undefined;
-        results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
+        // F4c: persist the DURABLE fully-qualified `bundle//conceptId` spelling,
+        // derived from the resolved entry row's `item_ref` (D-R3: durable keys
+        // come from the resolved item, never raw input).
+        const itemRef = getItemRefById(db, entryId);
+        if (itemRef !== null) {
+          results.push({ entryId, ref: itemRef });
+        } else {
+          // F5: delete — NULL-item_ref write-back straggler (healed on the next
+          // full index): keep the legacy spelling so the dual-arm readers see it.
+          const parsed = parseRefInput(hit.ref);
+          const origin = parsed.origin ?? hit.origin ?? undefined;
+          results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
+        }
       }
     } catch {
       /* skip unresolvable */

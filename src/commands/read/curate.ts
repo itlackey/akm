@@ -28,6 +28,7 @@ import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usa
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
@@ -170,15 +171,26 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
         });
         for (const item of result.items) {
           if (!("ref" in item) || typeof item.ref !== "string") continue;
-          // F4b: item.ref now arrives in the 0.9.0 conceptId grammar; parse via
-          // the dual-grammar parseRefInput. refToString below still persists the
-          // LEGACY entry_ref spelling (persisted-key flip deferred to F4c).
-          const parsed = parseRefInput(item.ref);
-          const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
+          // F4c: resolve the entry and persist its DURABLE fully-qualified
+          // `item_ref` (D-R3), keying the event on entry_id so the count survives
+          // a rebuild via the id join.
+          const entryId = findEntryIdByRef(db, item.ref);
+          const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
+          let entryRef: string;
+          if (itemRef !== null) {
+            entryRef = itemRef;
+          } else {
+            // F5: delete — unresolved / NULL-item_ref straggler: keep the legacy
+            // spelling so the dual-arm retrieval-count reader still sees it.
+            const parsed = parseRefInput(item.ref);
+            const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
+            entryRef = refToString({ ...parsed, ...(parsed.origin || !itemOrigin ? {} : { origin: itemOrigin }) });
+          }
           insertUsageEvent(db, {
             event_type: "curate",
             query,
-            entry_ref: refToString({ ...parsed, ...(parsed.origin || !itemOrigin ? {} : { origin: itemOrigin }) }),
+            entry_ref: entryRef,
+            entry_id: entryId,
             source: eventSource,
           });
         }

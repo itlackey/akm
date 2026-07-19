@@ -42,7 +42,16 @@ import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 // (spec §3.3 — single clean shape, no dual read-path). The index is a
 // regenerable derived cache, so an `akm index` rebuild repopulates the new
 // columns on any DB opened at an older version.
-export const DB_VERSION = 18;
+//
+// v18→v19 (Chunk-5 flip F4c, spec §11.4): `entries.item_ref` becomes THE durable
+// identity — its lookup index is upgraded to UNIQUE (every indexed row now
+// carries item_ref; NULLs are distinct in a SQLite UNIQUE index, so write-back
+// stragglers coexist). The durable state keyed off refs (`usage_events.entry_ref`)
+// is re-keyed onto item_ref by the §11.4 join-against-last-good-index migration
+// (`rekeyUsageEventsToItemRef`, index finalize) with orphan quarantine in
+// `legacy_state`. The index is regenerable, so a rebuild is an acceptable
+// fallback if the UNIQUE upgrade finds a duplicate on a partially-migrated DB.
+export const DB_VERSION = 19;
 export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4
 // as a marker; the actual migration is the targeted drop in migrateGraphFilesSchema.
@@ -238,12 +247,11 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
   // guard pattern as `ensureDerivedFromColumn`. Runs BEFORE the item_ref index
   // so the CREATE INDEX below never references a not-yet-added column.
   ensureBundleRefColumns(db);
-  // Non-unique lookup index for item_ref (the UNIQUE identity constraint lands
-  // with the reader repoint, once every writer emits item_ref for every row).
-  bestEffort(
-    () => db.exec("CREATE INDEX IF NOT EXISTS idx_entries_item_ref ON entries(item_ref)"),
-    "entries.item_ref index — column added by ensureBundleRefColumns above",
-  );
+  // v19 (F4c, spec §11.4): item_ref is THE durable identity — its index is
+  // UNIQUE. Every indexed row now carries item_ref; SQLite treats NULLs as
+  // distinct in a UNIQUE index, so NULL-item_ref write-back stragglers coexist.
+  // A pre-v19 DB carries a NON-unique `idx_entries_item_ref`, so drop-then-create.
+  ensureUniqueItemRefIndex(db);
 
   // Phase 5A / DB v17: backfill `derived_from` column + index on databases
   // that were created at v17 fresh OR carry a partial v17 schema (a DB whose
@@ -518,6 +526,41 @@ function ensureBundleRefColumns(db: Database): void {
       if (!have.has(name)) db.exec(`ALTER TABLE entries ADD COLUMN ${name} ${sqlType}`);
     }
   }, "entries table may not exist on a brand-new DB before CREATE — caller is responsible");
+}
+
+/**
+ * Chunk-5 flip F4c / DB v19 schema guard.
+ *
+ * Upgrade `entries.item_ref`'s lookup index to UNIQUE (item_ref is now THE
+ * durable identity — spec §11.4). A pre-v19 DB has a NON-unique
+ * `idx_entries_item_ref`, so we DROP-then-CREATE (a `CREATE UNIQUE INDEX IF NOT
+ * EXISTS` under the same name would no-op against the existing non-unique index).
+ * SQLite treats NULLs as distinct in a UNIQUE index, so NULL-item_ref write-back
+ * stragglers do not collide.
+ *
+ * A partially-migrated index could still hold two rows with the same non-NULL
+ * item_ref; the UNIQUE build then throws. The index is a regenerable derived
+ * cache, so we fall back to the plain lookup index (reads stay fast) and warn —
+ * a full `akm index` rebuild repopulates one row per item_ref and the next open
+ * upgrades cleanly.
+ */
+function ensureUniqueItemRefIndex(db: Database): void {
+  let uniqueOk = false;
+  bestEffort(() => {
+    db.exec("DROP INDEX IF EXISTS idx_entries_item_ref");
+    db.exec("CREATE UNIQUE INDEX idx_entries_item_ref ON entries(item_ref)");
+    uniqueOk = true;
+  }, "entries.item_ref UNIQUE index — column added by ensureBundleRefColumns above");
+  if (!uniqueOk) {
+    warn(
+      "[akm] entries.item_ref UNIQUE index could not be built (duplicate item_ref on a partially-migrated index) — " +
+        "keeping the plain lookup index; a full `akm index` rebuild restores uniqueness.",
+    );
+    bestEffort(
+      () => db.exec("CREATE INDEX IF NOT EXISTS idx_entries_item_ref ON entries(item_ref)"),
+      "entries.item_ref lookup index fallback",
+    );
+  }
 }
 
 /**

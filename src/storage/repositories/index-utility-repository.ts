@@ -13,6 +13,7 @@
 
 import path from "node:path";
 import { parseAssetRef } from "../../core/asset/asset-ref";
+import { classifyRefGrammar, conceptIdToLegacy, legacyConceptId } from "../../core/asset/resolve-ref";
 import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, ScopedUtilityRow, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
@@ -144,22 +145,43 @@ export function upsertUtilityScore(db: Database, entryId: number, data: UtilityS
 }
 
 /**
- * Reduce a ref to its bare `type:name` form, dropping any `origin//` prefix.
- *
- * usage_events store entry_ref inconsistently: search/show writers persist
- * whatever ref the result carried, which is sometimes stash-prefixed
- * (`origin//type:name`) and sometimes bare (`type:name`). Retrieval counting
- * keys on the bare form so both spellings of the same asset collapse together.
- *
- * Returns the bare form, or the original string when it cannot be parsed (best
- * effort — never throws so a malformed stored ref can't break counting).
+ * Reduce a stored ref to its bare form, dropping any `origin//` / `bundle//`
+ * prefix — the SAME strip the counting SQL does (`substr` after the first
+ * `//`). The bare form is `type:name` for a legacy row and `conceptId` for a
+ * 0.9.0 re-keyed row (Chunk-5 flip F4c). Matching the SQL strip exactly keeps
+ * the JS row-grouping and the SQL `IN (…)` filter in lockstep across both
+ * spellings.
  */
 function bareRef(ref: string): string {
+  const boundary = ref.indexOf("//");
+  return boundary >= 0 ? ref.slice(boundary + 2) : ref;
+}
+
+/**
+ * The bare-form candidates a caller ref can match a stored `usage_events`
+ * row under, spanning BOTH spellings so retrieval counts are identical before
+ * and after the §11.4 re-key (a caller `memory:foo` matches legacy
+ * `…//memory:foo` AND re-keyed `…//memories/foo`). Ranking is invariant to the
+ * durable spelling by construction.
+ *
+ * F5: delete — after the re-key every stored row is conceptId-spelled and only
+ * the conceptId candidate remains.
+ */
+function bareRefCandidates(ref: string): string[] {
+  const bare = bareRef(ref.trim());
+  if (classifyRefGrammar(bare) === "bundle") {
+    // conceptId → add its legacy `type:name` sibling.
+    const legacy = conceptIdToLegacy(bare);
+    return legacy ? [bare, `${legacy.type}:${legacy.name}`] : [bare];
+  }
+  // legacy `type:name` → add its conceptId sibling.
   try {
-    const parsed = parseAssetRef(ref);
-    return `${parsed.type}:${parsed.name}`;
+    const parsed = parseAssetRef(bare);
+    const legacy = `${parsed.type}:${parsed.name}`;
+    const concept = legacyConceptId(parsed.type, parsed.name);
+    return concept === legacy ? [legacy] : [legacy, concept];
   } catch {
-    return ref;
+    return [bare];
   }
 }
 
@@ -199,14 +221,16 @@ export function getRetrievalCounts(
     return getSourceScopedRetrievalCounts(db, refs, options);
   }
 
-  // Map each distinct bare form back to the input ref(s) that produced it so we
-  // can re-key DB results (grouped by bare form) onto the caller's ref strings.
+  // Map each candidate bare form (both spellings) back to the input ref(s) that
+  // produced it so we can re-key DB results (grouped by bare form) onto the
+  // caller's ref strings — spelling-agnostic across the §11.4 re-key.
   const bareToInputs = new Map<string, string[]>();
   for (const ref of refs) {
-    const bare = bareRef(ref);
-    const existing = bareToInputs.get(bare);
-    if (existing) existing.push(ref);
-    else bareToInputs.set(bare, [ref]);
+    for (const bare of bareRefCandidates(ref)) {
+      const existing = bareToInputs.get(bare);
+      if (existing) existing.push(ref);
+      else bareToInputs.set(bare, [ref]);
+    }
   }
   const bareForms = [...bareToInputs.keys()];
 
@@ -264,10 +288,11 @@ function getSourceScopedRetrievalCounts(
 ): Map<string, number> {
   const bareToInputs = new Map<string, string[]>();
   for (const ref of refs) {
-    const bare = bareRef(ref);
-    const inputs = bareToInputs.get(bare);
-    if (inputs) inputs.push(ref);
-    else bareToInputs.set(bare, [ref]);
+    for (const bare of bareRefCandidates(ref)) {
+      const inputs = bareToInputs.get(bare);
+      if (inputs) inputs.push(ref);
+      else bareToInputs.set(bare, [ref]);
+    }
   }
 
   const countsByBare = new Map<string, number>();
