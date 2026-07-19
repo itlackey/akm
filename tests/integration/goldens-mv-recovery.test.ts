@@ -71,6 +71,7 @@ import {
   MV_RECOVERY_FORWARD_TRIGGER_PREFIX,
   MV_RECOVERY_ROLLBACK_NAME,
   MV_RECOVERY_ROLLBACK_TARGET_REL,
+  memoryItemRef,
   memoryRef,
   mvSourceBody,
 } from "../fixtures/goldens/journal/fixture-refs";
@@ -326,7 +327,14 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
       | undefined;
     closeDatabase(db);
     if (!after) throw new Error("recovered row missing");
-    expect(usage).toEqual({ entry_ref: memoryRef(`${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`), entry_id: after.id });
+    // F4c §11.4: the mv re-key rewrites the usage-event ref to the new NAME, then
+    // the full index migrates it onto the entry's fully-qualified item_ref — the
+    // exact green expectation pinned at mv-durable-recovery.test.ts:249. The
+    // legacy `memory:…-new` spelling this once asserted is obsolete post-flip.
+    expect(usage).toEqual({
+      entry_ref: memoryItemRef(`${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`),
+      entry_id: after.id,
+    });
     expect(transactionsRootIsClean(storage.stashDir)).toBe(true);
   });
 
@@ -487,8 +495,11 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         closeDatabase(db);
         return {
           recovered: fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`)),
+          // The re-keyed usage event carries the fully-qualified item_ref
+          // (mv-durable-recovery.test.ts:249); the golden serializes only this
+          // boolean OUTCOME, so the frozen fixture is preserved byte-for-byte.
           usageEventReKeyedOntoRecoveredRow:
-            usage?.entry_ref === memoryRef(`${name}-new`) && usage?.entry_id === after?.id,
+            usage?.entry_ref === memoryItemRef(`${name}-new`) && usage?.entry_id === after?.id,
         };
       })();
 

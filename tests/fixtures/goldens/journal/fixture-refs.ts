@@ -80,6 +80,21 @@ export function memoryRef(name: string): string {
   return `memory:${name}`;
 }
 
+/**
+ * The fully-qualified `stash//memories/<name>` item_ref a memory asset carries
+ * post-flip. `akm mv`'s in-place re-key rewrites a usage-event ref to the new
+ * NAME (still legacy-spelled), then a full index's §11.4 re-key migrates it onto
+ * the entry's fully-qualified `item_ref` — so the durable `usage_events.entry_ref`
+ * an mv-recovered row ends up carrying is this spelling, not `memory:<name>`
+ * (identical to the green expectation pinned at
+ * `tests/integration/mv-durable-recovery.test.ts:249`). Used only for the
+ * usage-event re-key assertions; the golden fixture serializes only the boolean
+ * OUTCOME of that comparison, never this literal.
+ */
+export function memoryItemRef(name: string): string {
+  return `stash//memories/${name}`;
+}
+
 /** Plain body content for a memory/knowledge asset moved by the mv-engine goldens. */
 export function mvSourceBody(label: string): string {
   return `Fixture-local mv source body (${label}).\n`;
