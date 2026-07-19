@@ -156,7 +156,7 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
 describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () => {
   test("when responseSchema is provided and no test-seam `chat` is set, chatCompletion receives the schema", async () => {
     stubReturn = JSON.stringify({
-      ref: "lesson:wired",
+      ref: "lessons/wired",
       content: "---\ndescription: ok\nwhen_to_use: when wired\n---\n\nbody.\n",
     });
 
@@ -227,13 +227,13 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm
   test("llm RunnerSpec path wires REFLECT_JSON_SCHEMA into the underlying chatCompletion call", async () => {
     const stash = makeStashDir();
     stubReturn = JSON.stringify({
-      ref: "lesson:akm-reflect-wires-schema",
+      ref: "lessons/akm-reflect-wires-schema",
       content:
         "---\ndescription: This lesson exists only to prove the schema is wired through to the LLM call site\nwhen_to_use: When confirming that the llm RunnerSpec dispatches with REFLECT_JSON_SCHEMA\n---\n\nBody.\n",
     });
 
     await akmReflect({
-      ref: "lesson:akm-reflect-wires-schema",
+      ref: "lessons/akm-reflect-wires-schema",
       stashDir: stash,
       runner: { kind: "llm", engine: "test-llm", connection: fakeLlmConnection() },
       // Bypass indexer lookup so the test does not need a built FTS index.
@@ -254,11 +254,11 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm
 describe("REFLECT_JSON_SCHEMA — parser compatibility with parseAgentProposalPayload", () => {
   test("a minimal schema-conforming payload (ref + content) parses successfully", () => {
     const sample = {
-      ref: "lesson:demo",
+      ref: "lessons/demo",
       content: "Some markdown body.",
     };
     const out = parseAgentProposalPayload(JSON.stringify(sample));
-    expect(out.ref).toBe("lesson:demo");
+    expect(out.ref).toBe("lessons/demo");
     expect(out.content).toBe("Some markdown body.");
     expect(out.frontmatter).toBeUndefined();
     expect(out.confidence).toBeUndefined();
@@ -266,13 +266,13 @@ describe("REFLECT_JSON_SCHEMA — parser compatibility with parseAgentProposalPa
 
   test("a full schema-conforming payload (ref + content + frontmatter + confidence) parses successfully", () => {
     const sample = {
-      ref: "lesson:demo",
+      ref: "lessons/demo",
       content: "---\ndescription: ok\nwhen_to_use: when relevant\n---\n\nBody.\n",
       frontmatter: { description: "ok", when_to_use: "when relevant" },
       confidence: 0.85,
     };
     const out = parseAgentProposalPayload(JSON.stringify(sample));
-    expect(out.ref).toBe("lesson:demo");
+    expect(out.ref).toBe("lessons/demo");
     expect(out.frontmatter?.description).toBe("ok");
     expect(out.confidence).toBe(0.85);
   });
@@ -283,7 +283,7 @@ describe("REFLECT_JSON_SCHEMA — parser compatibility with parseAgentProposalPa
   });
 
   test("parser rejects a payload missing content — mirrors the schema's required-key contract", () => {
-    const sample = { ref: "lesson:demo" };
+    const sample = { ref: "lessons/demo" };
     expect(() => parseAgentProposalPayload(JSON.stringify(sample))).toThrow(/content/);
   });
 });

@@ -103,10 +103,10 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     try {
       const bundle = slugForPath(stashDir);
       for (const [legacy, conceptId] of [
-        ["memory:first", "memories/first"],
-        ["memory:second", "memories/second"],
-        ["skill:deploy", "skills/deploy"],
-        ["knowledge:guide", "knowledge/guide"],
+        ["memories/first", "memories/first"],
+        ["memories/second", "memories/second"],
+        ["skills/deploy", "skills/deploy"],
+        ["knowledge/guide", "knowledge/guide"],
       ] as const) {
         const legacyId = findEntryIdByRef(db, legacy);
         expect(legacyId, `legacy lookup ${legacy}`).toBeDefined();
@@ -125,7 +125,7 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const legacyId = findEntryIdByRef(db, "skill:deploy");
+      const legacyId = findEntryIdByRef(db, "skills/deploy");
 
       const ctx = refContextFromDb(db, bundle);
       const resolved = resolveRef("skills/deploy", ctx);
@@ -144,10 +144,10 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const legacyId = findEntryIdByRef(db, "knowledge:guide");
+      const legacyId = findEntryIdByRef(db, "knowledge/guide");
       expect(legacyId).toBeDefined();
       // .md-suffixed spellings resolve to the same ext-stripped canonical row.
-      expect(findEntryIdByRef(db, "knowledge:guide.md")).toBe(legacyId);
+      expect(findEntryIdByRef(db, "knowledge/guide.md")).toBe(legacyId);
       expect(findEntryIdByRef(db, `${bundle}//knowledge/guide.md`)).toBe(legacyId);
       expect(findEntryIdByRef(db, "knowledge/guide.md")).toBe(legacyId);
     } finally {
@@ -159,11 +159,11 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const legacyId = findEntryIdByRef(db, "memory:first");
+      const legacyId = findEntryIdByRef(db, "memories/first");
       expect(getEntryByRef(db, "memory", "first")).toEqual({ id: legacyId as number });
       expect(getEntryByRef(db, `${bundle}//memories/first`)).toEqual({ id: legacyId as number });
       expect(getEntryByRef(db, "memories/first")).toEqual({ id: legacyId as number });
-      expect(getEntryByRef(db, "memory:does-not-exist")).toBeNull();
+      expect(getEntryByRef(db, "memories/does-not-exist")).toBeNull();
     } finally {
       db.close();
     }
@@ -173,7 +173,7 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const targetId = findEntryIdByRef(db, "memory:second");
+      const targetId = findEntryIdByRef(db, "memories/second");
       expect(targetId).toBeDefined();
 
       // Simulate a write-back row: clear its provenance columns.
@@ -182,7 +182,7 @@ describe("dual-keyed ref lookup (Chunk-5 flip F1)", () => {
       );
 
       // Legacy lookup still finds it (entry_key intact).
-      expect(findEntryIdByRef(db, "memory:second"), "legacy after NULL item_ref").toBe(targetId);
+      expect(findEntryIdByRef(db, "memories/second"), "legacy after NULL item_ref").toBe(targetId);
       // New-grammar lookup finds it via the legacy fallback (item_ref is NULL).
       expect(findEntryIdByRef(db, `${bundle}//memories/second`), "qualified new ref via fallback").toBe(targetId);
       expect(findEntryIdByRef(db, "memories/second"), "short new ref via fallback").toBe(targetId);

@@ -97,11 +97,11 @@ describe("buildExtractPrompt", () => {
       events: [],
       inlineRefs: [
         { kind: "remember", text: "VPN required before deploy" },
-        { kind: "feedback", ref: "knowledge:auth", text: "saved time on debug" },
+        { kind: "feedback", ref: "knowledge/auth", text: "saved time on debug" },
       ],
     });
     expect(prompt).toContain("- remember: VPN required before deploy");
-    expect(prompt).toContain("- feedback knowledge:auth: saved time on debug");
+    expect(prompt).toContain("- feedback knowledge/auth: saved time on debug");
   });
 
   test("truncates long inline-ref text to keep the prompt focused", () => {

@@ -46,7 +46,7 @@ describe("buildLockSkippedResult — the P2 envelope", () => {
       runId: "run-1",
     });
 
-    const withoutRunId = buildLockSkippedResult("quick", { mode: "ref", value: "memory:a" }, undefined);
+    const withoutRunId = buildLockSkippedResult("quick", { mode: "ref", value: "memories/a" }, undefined);
     expect("runId" in withoutRunId).toBe(false);
     expect(withoutRunId.skipped).toEqual({ reason: "lock-held" });
   });
@@ -59,7 +59,7 @@ describe("buildDryRunResult — the P3 envelope", () => {
       scope: { mode: "all" as const },
     } as Parameters<typeof buildDryRunResult>[0];
     const collected = {
-      plannedRefs: [{ ref: "memory:a", reason: "scope-type" }] as ImproveEligibleRef[],
+      plannedRefs: [{ ref: "memories/a", reason: "scope-type" }] as ImproveEligibleRef[],
       memorySummary: { eligible: 1, derived: 0 },
       strategyFilteredRefs: [],
       memoryCleanupPlan: undefined,
@@ -71,7 +71,7 @@ describe("buildDryRunResult — the P3 envelope", () => {
 
     expect(result.dryRun).toBe(true);
     expect(result.strategy).toBe("default");
-    expect(result.plannedRefs.map((r) => r.ref)).toEqual(["memory:a"]);
+    expect(result.plannedRefs.map((r) => r.ref)).toEqual(["memories/a"]);
     expect("guidance" in result).toBe(false);
     expect("memoryCleanup" in result).toBe(false);
     expect("strategyFilteredRefs" in result).toBe(false);
@@ -84,7 +84,7 @@ describe("refilterProactiveLoopRefs — post-lock cooldown re-filter", () => {
   test("no proactive refs → the SAME array instance passes through", () => {
     disposers.push(sandboxXdgDataHome(), makeStashDir());
     const loopRefs: ImproveEligibleRef[] = [
-      { ref: "memory:a", reason: "scope-type", eligibilitySource: "signal-delta" },
+      { ref: "memories/a", reason: "scope-type", eligibilitySource: "signal-delta" },
     ];
 
     const out = refilterProactiveLoopRefs(loopRefs, options, {});
@@ -95,8 +95,8 @@ describe("refilterProactiveLoopRefs — post-lock cooldown re-filter", () => {
   test("proactive refs with no fresher proposals stay due (nothing dropped)", () => {
     disposers.push(sandboxXdgDataHome(), makeStashDir());
     const loopRefs: ImproveEligibleRef[] = [
-      { ref: "memory:a", reason: "scope-type", eligibilitySource: "signal-delta" },
-      { ref: "memory:b", reason: "scope-type", eligibilitySource: "proactive" },
+      { ref: "memories/a", reason: "scope-type", eligibilitySource: "signal-delta" },
+      { ref: "memories/b", reason: "scope-type", eligibilitySource: "proactive" },
     ];
 
     // Empty sandboxed event store → no proposal timestamps → the proactive
@@ -104,6 +104,6 @@ describe("refilterProactiveLoopRefs — post-lock cooldown re-filter", () => {
     const out = refilterProactiveLoopRefs(loopRefs, options, {});
 
     expect(out).toBe(loopRefs);
-    expect(out.map((r) => r.ref)).toEqual(["memory:a", "memory:b"]);
+    expect(out.map((r) => r.ref)).toEqual(["memories/a", "memories/b"]);
   });
 });

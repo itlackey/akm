@@ -70,7 +70,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
       "--json",
       "env",
       "set",
-      "env:prod",
+      "env/prod",
       "API_TOKEN",
       "--from-env",
       "AKM_TEST_ENV_VALUE",
@@ -86,7 +86,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
   test("env unset: envelope reports removed/missing; --format value never leaks into keys", async () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "# cfg\nDEBUG=secret-debug\nKEEP=yes\n");
-    const { stdout, status } = await runCli(["env", "unset", "env:prod", "DEBUG", "NOPE", "--format", "json"]);
+    const { stdout, status } = await runCli(["env", "unset", "env/prod", "DEBUG", "NOPE", "--format", "json"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.ref).toBe("env/prod");
@@ -98,7 +98,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
   test("env remove: envelope carries ref + removed=true (with --yes)", async () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "TOKEN=topsecret-value\n");
-    const { stdout, status } = await runCli(["--json", "env", "remove", "env:prod", "--yes"]);
+    const { stdout, status } = await runCli(["--json", "env", "remove", "env/prod", "--yes"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.ref).toBe("env/prod");
@@ -113,7 +113,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
       "--json",
       "env",
       "set",
-      "env:prod",
+      "env/prod",
       "bad-key!",
       "--from-env",
       "AKM_TEST_ENV_VALUE",

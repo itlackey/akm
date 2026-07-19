@@ -102,7 +102,7 @@ describe("appendEvent hot path — reflect", () => {
     // (which covers EVERY failure emit) fires through the carrier. The chat
     // stub throws so no path can reach a network.
     const result = await akmReflect({
-      ref: "memory:does-not-exist-anywhere",
+      ref: "memories/does-not-exist-anywhere",
       stashDir: storage.stashDir,
       runner: { kind: "llm", engine: "test-llm", connection: fakeLlmConnection() },
       chat: async () => {
@@ -131,12 +131,12 @@ describe("appendEvent hot path — reflect", () => {
     // picks (proposal created, quality- or sanitize-rejected), the completion
     // event must land in the injected handle.
     const payload = JSON.stringify({
-      ref: "lesson:hot-path-pin",
+      ref: "lessons/hot-path-pin",
       content:
         "---\ndescription: hot-path pin lesson\nwhen_to_use: when pinning the appendEvent fast path\n---\n\nBody.\n",
     });
     await akmReflect({
-      ref: "lesson:hot-path-pin",
+      ref: "lessons/hot-path-pin",
       stashDir: storage.stashDir,
       runner: { kind: "llm", engine: "test-llm", connection: fakeLlmConnection() },
       assetContent: "",
@@ -160,7 +160,7 @@ describe("appendEvent hot path — distill", () => {
     // lesson inputs are refused (recursive-distillation guard) BEFORE any
     // config/LLM resolution — the earliest distill_invoked emit site.
     const result = await akmDistill({
-      ref: "lesson:already-distilled",
+      ref: "lessons/already-distilled",
       stashDir: storage.stashDir,
       eventsCtx,
     });
@@ -192,8 +192,8 @@ describe("appendEvent hot path — improve loop wiring", () => {
     fs.mkdirSync(path.dirname(memPath), { recursive: true });
     fs.writeFileSync(memPath, "---\ndescription: hot path alpha\n---\n\nRemember alpha.\n", "utf8");
     await akmIndex({ stashDir: storage.stashDir, full: true });
-    appendEvent({ eventType: "feedback", ref: "memory:hot-path-alpha", metadata: { signal: "negative" } });
-    appendEvent({ eventType: "feedback", ref: "memory:hot-path-alpha", metadata: { signal: "negative" } });
+    appendEvent({ eventType: "feedback", ref: "memories/hot-path-alpha", metadata: { signal: "negative" } });
+    appendEvent({ eventType: "feedback", ref: "memories/hot-path-alpha", metadata: { signal: "negative" } });
 
     const result = await akmImprove({
       stashDir: storage.stashDir,
@@ -219,7 +219,7 @@ describe("appendEvent hot path — improve loop wiring", () => {
           ok: true,
           outcome: "skipped",
           inputRef: o.ref,
-          lessonRef: "lesson:stub",
+          lessonRef: "lessons/stub",
           message: "stub",
         };
       },

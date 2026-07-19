@@ -142,7 +142,7 @@ describe("secret set", () => {
     const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nline1\nline2\n-----END OPENSSH PRIVATE KEY-----\n";
     fs.writeFileSync(src, pem);
 
-    const { status } = await runCli(["secret", "set", "secret:key", "--from-file", src], {
+    const { status } = await runCli(["secret", "set", "secrets/key", "--from-file", src], {
       AKM_STASH_DIR: stashDir,
     });
     expect(status).toBe(0);
@@ -151,7 +151,7 @@ describe("secret set", () => {
 
   test("--from-env reads the value from the named environment variable", async () => {
     const stashDir = makeStash();
-    const { status } = await runCli(["secret", "set", "secret:demo", "--from-env", "AKM_VALUE"], {
+    const { status } = await runCli(["secret", "set", "secrets/demo", "--from-env", "AKM_VALUE"], {
       AKM_STASH_DIR: stashDir,
       AKM_VALUE: "from-the-env",
     });
@@ -162,7 +162,7 @@ describe("secret set", () => {
   test("errors when both --from-file and --from-env are given", async () => {
     const stashDir = makeStash();
     const { status, stderr } = await runCli(
-      ["secret", "set", "secret:demo", "--from-file", "/tmp/x", "--from-env", "AKM_VALUE"],
+      ["secret", "set", "secrets/demo", "--from-file", "/tmp/x", "--from-env", "AKM_VALUE"],
       { AKM_STASH_DIR: stashDir, AKM_VALUE: "v" },
     );
     expect(status).toBe(2);
@@ -192,7 +192,7 @@ describe("secret remove", () => {
     const fp = path.join(stashDir, "secrets", "demo");
     setSecret(fp, Buffer.from("v"));
 
-    const { status } = await runCli(["secret", "remove", "secret:demo", "--yes"], { AKM_STASH_DIR: stashDir });
+    const { status } = await runCli(["secret", "remove", "secrets/demo", "--yes"], { AKM_STASH_DIR: stashDir });
     expect(status).toBe(0);
     expect(fs.existsSync(fp)).toBe(false);
   });

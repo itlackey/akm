@@ -65,7 +65,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
 
   test("secret path: prints the file path only — never the value", async () => {
     const file = seedSecret("deploy-key");
-    const { stdout, status } = await runCli(["secret", "path", "secret:deploy-key"]);
+    const { stdout, status } = await runCli(["secret", "path", "secrets/deploy-key"]);
     expect(status).toBe(0);
     expect(stdout.trim()).toBe(file);
     expect(stdout).not.toContain(SECRET_VALUE);
@@ -73,7 +73,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
 
   test("secret remove: envelope carries ref + removed=true (with --yes); value never echoed", async () => {
     const file = seedSecret("deploy-key");
-    const { stdout, status } = await runCli(["--json", "secret", "remove", "secret:deploy-key", "--yes"]);
+    const { stdout, status } = await runCli(["--json", "secret", "remove", "secrets/deploy-key", "--yes"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.ref).toBe("secrets/deploy-key");
@@ -83,7 +83,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
   });
 
   test("secret path: missing secret → {ok:false} not-found envelope on stderr (exit 1)", async () => {
-    const { stderr, status } = await runCli(["--json", "secret", "path", "secret:ghost"]);
+    const { stderr, status } = await runCli(["--json", "secret", "path", "secrets/ghost"]);
     expect(status).toBe(1);
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);
@@ -91,7 +91,7 @@ describe("akm secret — JSON envelope snapshot (WS6)", () => {
   });
 
   test("secret remove: missing secret → {ok:false} not-found envelope on stderr (exit 1)", async () => {
-    const { stderr, status } = await runCli(["--json", "secret", "remove", "secret:ghost", "--yes"]);
+    const { stderr, status } = await runCli(["--json", "secret", "remove", "secrets/ghost", "--yes"]);
     expect(status).toBe(1);
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);

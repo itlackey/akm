@@ -55,7 +55,7 @@ async function runCli(
 
 describe("akm distill CLI removal (0.8.0 hard break)", () => {
   test("legacy distill command is rejected as unknown", async () => {
-    const result = await runCli(["distill", "skill:foo"]);
+    const result = await runCli(["distill", "skills/foo"]);
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("Unknown command");
     expect(`${result.stdout}\n${result.stderr}`).toContain("distill");
@@ -63,9 +63,9 @@ describe("akm distill CLI removal (0.8.0 hard break)", () => {
 
   test("legacy distill flags do not restore the removed command", async () => {
     const result = await runCli(
-      ["distill", "skill:foo", "--exclude-feedback-from", "skill:bar", "--source-run", "run-abc-123"],
+      ["distill", "skills/foo", "--exclude-feedback-from", "skills/bar", "--source-run", "run-abc-123"],
       {
-        env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "memory:baz" },
+        env: { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: "memories/baz" },
       },
     );
     expect(result.status).not.toBe(0);
@@ -150,7 +150,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config,
       stashDir: stash,
       chat: async () => HAPPY_LESSON,
@@ -182,7 +182,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config,
       stashDir: stash,
       chat: async () => HAPPY_LESSON,

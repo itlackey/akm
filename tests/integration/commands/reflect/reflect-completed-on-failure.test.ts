@@ -100,7 +100,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
   test("unsupported asset type emits reflect_completed with ok:false", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "script:dangerous",
+      ref: "scripts/dangerous",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },
@@ -117,13 +117,13 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     expect(meta.reason).toBe("unsupported_type");
     expect(meta.subreason).toBe("unsupported_type");
     expect(meta.source).toBe("reflect");
-    expect(events[0]?.ref).toBe("script:dangerous");
+    expect(events[0]?.ref).toBe("scripts/dangerous");
   });
 
   test("spawn ENOENT emits reflect_completed with reason=spawn_failed", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:any",
+      ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
@@ -145,7 +145,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
   test("non-zero exit emits reflect_completed with reason=non_zero_exit", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:bad",
+      ref: "lessons/bad",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
@@ -170,7 +170,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
       // pass an unknown ref so fallback synthesises content from stdout; we
       // need a path that genuinely fails to parse, so we use a malformed JSON-ish
       // body that doesn't match the markdown-fallback heuristic either.
-      ref: "memory:nope",
+      ref: "memories/nope",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("{not valid json", "", 0) },
@@ -195,11 +195,11 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     // caller asked for. R-3 / #366 rejects this; Fix #3 must emit
     // reflect_completed with subreason="ref_mismatch".
     const retargetedPayload = JSON.stringify({
-      ref: "lesson:i-was-told-to-write-different-asset",
+      ref: "lessons/i-was-told-to-write-different-asset",
       content: "---\ndescription: x\nwhen_to_use: y\n---\n\nBody.\n",
     });
     const result = await akmReflect({
-      ref: "lesson:original-target",
+      ref: "lessons/original-target",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(retargetedPayload, "", 0) },
@@ -214,27 +214,27 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     expect(meta.ok).toBe(false);
     expect(meta.reason).toBe("parse_error");
     expect(meta.subreason).toBe("ref_mismatch");
-    expect(meta.expectedRef).toBe("lesson:original-target");
-    expect(meta.actualRef).toBe("lesson:i-was-told-to-write-different-asset");
+    expect(meta.expectedRef).toBe("lessons/original-target");
+    expect(meta.actualRef).toBe("lessons/i-was-told-to-write-different-asset");
   });
 
   test("exactly one reflect_completed event per invocation (no duplicates)", async () => {
     const stash = makeStashDir();
     // Three separate failing invocations.
     await akmReflect({
-      ref: "lesson:fail-1",
+      ref: "lessons/fail-1",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
     });
     await akmReflect({
-      ref: "lesson:fail-2",
+      ref: "lessons/fail-2",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
     });
     await akmReflect({
-      ref: "script:fail-3",
+      ref: "scripts/fail-3",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },

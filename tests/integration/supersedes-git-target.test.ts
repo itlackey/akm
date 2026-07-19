@@ -89,7 +89,7 @@ describe("--supersedes on a git write target", () => {
       "--target",
       "team",
       "--supersedes",
-      "knowledge:old-guide",
+      "knowledge/old-guide",
     ]);
     expect(code).toBe(0);
     const json = JSON.parse(stdout) as { superseded?: Array<{ ref: string; applied: boolean }> };

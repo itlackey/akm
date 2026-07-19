@@ -455,7 +455,7 @@ describe("env export / path (read-path safety)", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "EVIL=$(touch /tmp/shouldnothappen)\nOK=fine\n", "utf8");
     const outFile = path.join(stashDir, "out.sh");
 
-    const result = await runCli(["env", "export", "env:prod", "--out", outFile], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["env", "export", "env/prod", "--out", outFile], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
     // Values are NEVER on stdout — only the written file path is reported.
@@ -474,7 +474,7 @@ describe("env export / path (read-path safety)", () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
 
-    const result = await runCli(["env", "export", "env:prod"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["env", "export", "env/prod"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("--out");
@@ -487,14 +487,14 @@ describe("env export / path (read-path safety)", () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
 
-    const result = await runCli(["env", "path", "env:prod"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["env", "path", "env/prod"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
     expect(result.stderr).toContain("akm env run");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).
-    const quiet = await runCli(["env", "path", "env:prod", "--quiet"], { AKM_STASH_DIR: stashDir });
+    const quiet = await runCli(["env", "path", "env/prod", "--quiet"], { AKM_STASH_DIR: stashDir });
     expect(quiet.status).toBe(0);
     expect(quiet.stderr.trim()).toBe("");
   });
@@ -540,7 +540,7 @@ describe("env remove", () => {
     fs.writeFileSync(dest, "API_KEY=secret\n", "utf8");
     fs.writeFileSync(`${dest}.sensitive`, "", "utf8");
 
-    const result = await runCli(["env", "remove", "env:prod", "--yes"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["env", "remove", "env/prod", "--yes"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(dest)).toBe(false);
@@ -553,7 +553,7 @@ describe("env remove", () => {
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
 
     // No env/ copy exists → remove targets env/ and reports not found, leaving vaults/ intact.
-    const result = await runCli(["env", "remove", "env:prod", "--yes"], { AKM_STASH_DIR: stashDir });
+    const result = await runCli(["env", "remove", "env/prod", "--yes"], { AKM_STASH_DIR: stashDir });
 
     expect(result.status).not.toBe(0);
     expect(fs.existsSync(path.join(stashDir, "vaults", "prod.env"))).toBe(true);

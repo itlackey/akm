@@ -91,7 +91,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
 
     await expect(
       akmReflect({
-        ref: "memory:alpha",
+        ref: "memories/alpha",
         stashDir: stash,
         eventSource: "improve",
         config,
@@ -130,7 +130,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     };
 
     await akmReflect({
-      ref: "memory:alpha",
+      ref: "memories/alpha",
       stashDir: stash,
       eventSource: "improve",
       config,
@@ -156,7 +156,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
 
     await expect(
       akmReflect({
-        ref: "memory:alpha",
+        ref: "memories/alpha",
         stashDir: stash,
         eventSource: "improve",
         config,
@@ -172,7 +172,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     let spawned = false;
 
     await akmReflect({
-      ref: "memory:alpha",
+      ref: "memories/alpha",
       stashDir: stash,
       config: agentModeConfig(),
       runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },

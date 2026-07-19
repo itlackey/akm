@@ -40,7 +40,7 @@ let catalogRoot = "";
 let guidePath = "";
 
 /** The three spellings of the SAME `knowledge/guide` concept in the `catalog` bundle. */
-const SPELLINGS = ["knowledge:guide", "knowledge/guide", "catalog//knowledge/guide"] as const;
+const SPELLINGS = ["knowledge/guide", "knowledge/guide", "catalog//knowledge/guide"] as const;
 
 beforeEach(async () => {
   storage = withIsolatedAkmStorage();
