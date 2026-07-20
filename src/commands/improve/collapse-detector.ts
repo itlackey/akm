@@ -27,6 +27,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -110,12 +111,13 @@ function buildMintList(
 ): Array<{ anchorRef: string; query: string }> {
   const canaryCount = cfg.canaryCount ?? DEFAULT_CANARY_COUNT;
   const rankScores = getAllRankScores(stateDb);
-  // NOTE: entryKey is stash-prefixed ("<stashDir>:type:name"); asset_salience
-  // and the canary scoring both key on the bare "type:name" ref.
+  // Chunk-8 WI-8.5c: the canary anchor + salience correlation both key on the
+  // SHORT conceptId (`<stash-subdir>/<name>`, D-R2) — the same spelling the
+  // improve candidate refs and content xrefs now carry (post WI-8.5a).
   const candidates = entries
     .filter((e) => LEARNING_TYPES.has(e.entry.type))
     .map((e) => {
-      const ref = `${e.entry.type}:${e.entry.name}`;
+      const ref = conceptIdFromTypeName(e.entry.type, e.entry.name);
       return { e, ref, score: rankScores.get(ref) ?? 0 };
     })
     .sort((a, b) => b.score - a.score || (a.ref < b.ref ? -1 : 1));
@@ -244,7 +246,10 @@ function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query
   const results = searchFts(indexDb, canary.query, k);
   for (let i = 0; i < Math.min(results.length, k); i++) {
     const r = results[i];
-    const ref = `${r.entry.type}:${r.entry.name}`;
+    // Chunk-8 WI-8.5c: match the stored anchor (SHORT conceptId) and the
+    // canonical `xrefs` provenance (also conceptIds post WI-8.5a) on the
+    // conceptId spelling.
+    const ref = conceptIdFromTypeName(r.entry.type, r.entry.name);
     if (ref === canary.anchor_ref) return i;
     if (r.entry.xrefs?.includes(canary.anchor_ref) || r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
   }

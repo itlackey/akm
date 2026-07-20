@@ -158,8 +158,14 @@ export interface DisplayRefItem {
  * (`stashDirFor(type)/name`; bare name for a foreign type with no placement
  * stash-subdir). Kept self-contained so {@link displayRef} — a PERMANENT display
  * rule — does not depend on the transient legacy shims.
+ *
+ * Exported (Chunk-8 WI-8.5c) as the ONE conceptId derivation the improve
+ * correlation sites (`eligibility.ts` candidate refs, `salience.ts`
+ * last-use lookup, `collapse-detector.ts` canary mint/score) share with the
+ * display rule — the permanent successor to the retired transient
+ * `legacyConceptId` (src/migrate/legacy-ref-grammar.ts).
  */
-function conceptIdFromTypeName(type: string, name: string): string {
+export function conceptIdFromTypeName(type: string, name: string): string {
   const stashDir = stashDirFor(type);
   return stashDir !== undefined ? `${stashDir}/${name}` : name;
 }

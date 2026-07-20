@@ -15,14 +15,15 @@
  * their `SC_*`/`P0A_*` fixture-ref exports) were retired in Chunk 7 alongside
  * the lanes they baselined (R36) — see `tests/fixtures/goldens/DESIGNATIONS.json`.
  *
- * All names are memory-type (`memory:<name>`) — the only asset type these
- * suites index. Names double as sandboxed-stash filenames
+ * All names are memory-type; WI-8.5c flipped the durable/candidate ref
+ * spelling to the SHORT conceptId, so this builds `memories/<name>` (D-R2).
+ * Names double as sandboxed-stash filenames
  * (`<stashDir>/memories/<name>.md`), so they are filesystem-safe slugs.
  */
 
-/** Build a `memory:<name>` ref string from a bare fixture name. */
+/** Build a `memories/<name>` conceptId ref string from a bare fixture name. */
 export function memoryRef(name: string): string {
-  return `memory:${name}`;
+  return `memories/${name}`;
 }
 
 // ── goldens-signal-delta-gate.test.ts (R5, WI-06 — §6 preserve list) ───────

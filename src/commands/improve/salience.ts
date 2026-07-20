@@ -48,6 +48,7 @@
  */
 
 import path from "node:path";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { Database, Database as IndexDatabase } from "../../storage/database";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
@@ -647,9 +648,9 @@ export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashD
   for (const indexed of allEntries) {
     if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
     // In-memory correlation key, NOT a durable write: it must match the caller's
-    // `refs` (the bare `ImproveEligibleRef.ref` = `type:name`, eligibility.ts), so
-    // this stays bare. WI-8.5b flips the candidate-ref spelling with the display flip.
-    const ref = `${indexed.entry.type}:${indexed.entry.name}`;
+    // `refs` (the `ImproveEligibleRef.ref`, now the SHORT conceptId — Chunk-8
+    // WI-8.5c flipped the candidate-ref spelling to match the display flip).
+    const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }
 

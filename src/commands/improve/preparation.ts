@@ -65,7 +65,7 @@ import {
   SALIENCE_NO_OP_DAMPEN_THRESHOLD,
   upsertAssetSalience,
 } from "./salience";
-import { bareImproveRef, durableImproveRef, improveStateReadRefs } from "./source-identity";
+import { bareImproveRef, improveStateReadRefs } from "./source-identity";
 
 function readAssetSalienceForImproveRef(
   db: Parameters<typeof getAssetSalience>[0],
@@ -93,35 +93,40 @@ function readConsecutiveNoOpsForImproveRef(
   return readAssetSalienceForImproveRef(db, ref, sourceName, includeLegacyBare, itemRef)?.consecutive_no_ops ?? 0;
 }
 
-// ── Durable-state write keys (Chunk-5 flip F5e; WI-8.5a landed the writer) ─────
+// ── Durable-state write keys (Chunk-8 WI-8.5c: collapsed onto the item_ref) ────
 //
-// The durable improve-state writers key by the resolved index entry's `item_ref`
-// (`<bundle>//<conceptId>`, D-R3) WHEN the planner resolved one
-// (`ImproveEligibleRef.itemRef`) — the final spelling, already live. The
-// entry-absent fallback is the ONLY remaining legacy arm:
-//   - salience (`asset_salience`)  → the SOURCE-QUALIFIED `durableImproveRef`
-//     (`<source>//<type>:<name>`), matching the pre-flip upsert.
-//   - outcome  (`asset_outcome`)   → the BARE `type:name`, matching the pre-flip
-//     `updateAssetOutcome({ ref: r.ref })` call.
-// itemRefByRef is `bare-ref → item_ref | undefined`, built once per pass from
-// the candidate set. WI-8.5b: collapse both fallbacks onto the item_ref once the
-// dual-reader arms retire (the one-time state.db re-key makes every row final).
+// The durable improve-state writers (salience + outcome) key by the resolved
+// index entry's `item_ref` (`<bundle>//<conceptId>`, D-R3) WHEN the planner
+// resolved one (`ImproveEligibleRef.itemRef`). The pre-flip source-qualified /
+// bare fallbacks were retired here: both writers now share ONE key expression,
+// `itemRefByRef.get(ref) ?? ref`.
+//
+// THE ONE SURVIVING FALLBACK (`?? ref`): a `--scope <ref>` candidate is targeted
+// directly by the user and never flows through `collectEligibleRefsFromIndex`,
+// so the planner never resolves an `item_ref` for it. Its `ref` (the caller's
+// scope string) IS the write key. Every planner-resolved candidate carries its
+// item_ref (or, for a provenance-NULL / write-back index row, the SHORT
+// conceptId `ref` the WI-8.5c flip now assigns) — both are final new-grammar
+// spellings the one-time state.db re-key leaves untouched.
+//
+// itemRefByRef is `ref → item_ref | undefined`, built once per pass from the
+// candidate set.
 
-/** `bare-ref → item_ref | undefined` for a run's candidate set. */
+/** `ref → item_ref | undefined` for a run's candidate set. */
 function buildItemRefByRef(refs: ImproveEligibleRef[]): Map<string, string | undefined> {
   const m = new Map<string, string | undefined>();
   for (const r of refs) m.set(r.ref, r.itemRef);
   return m;
 }
 
-/** Durable `asset_salience` write key: the entry's item_ref, else the source-qualified `type:name`. */
-function salienceWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>, sourceName?: string): string {
-  return itemRefByRef.get(ref) ?? durableImproveRef(ref, sourceName); // WI-8.5b: collapse (entry-absent fallback)
+/** Durable `asset_salience` write key: the entry's item_ref, else its conceptId `ref` (scope-ref fallback). */
+function salienceWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>): string {
+  return itemRefByRef.get(ref) ?? ref;
 }
 
-/** Durable `asset_outcome` write key: the entry's item_ref, else the bare `type:name`. */
+/** Durable `asset_outcome` write key: the entry's item_ref, else its conceptId `ref` (scope-ref fallback). */
 function outcomeWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>): string {
-  return itemRefByRef.get(ref) ?? ref; // WI-8.5b: collapse (entry-absent fallback)
+  return itemRefByRef.get(ref) ?? ref;
 }
 
 /**
@@ -2198,7 +2203,7 @@ function buildSalienceWriteKeyMaps(
   normalizeStoredKey: Map<string, string>;
   refByWriteKey: Map<string, string>;
 } {
-  const wk = (ref: string): string => salienceWriteKey(ref, itemRefByRef, sourceName);
+  const wk = (ref: string): string => salienceWriteKey(ref, itemRefByRef);
   const normalizeStoredKey = new Map<string, string>();
   const refByWriteKey = new Map<string, string>();
   for (const [ref, itemRef] of itemRefByRef) {

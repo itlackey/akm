@@ -226,7 +226,8 @@ describe("collapse simulation (synthetic merge passes)", () => {
         description: `Merged notes about ${members.map((m) => m.name).join(" ")}`,
         tags: members.map((m) => m.name),
         generation: 1,
-        xrefs: members.map((m) => `memory:${m.name}`),
+        // WI-8.5c: canary anchors + xref merge-following key on the conceptId.
+        xrefs: members.map((m) => `memories/${m.name}`),
       });
     }
     await reindex();

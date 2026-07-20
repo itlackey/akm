@@ -209,12 +209,12 @@ describe("reflect signal-delta eligibility", () => {
     await buildIndex(stash);
 
     // Older reflect proposal recorded as reflect_invoked event.
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => OLDER_MS });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/auth-tips" }, { now: () => OLDER_MS });
     // Newer feedback event arrived after the reflect (injected ts strictly > reflect).
     appendEvent(
       {
         eventType: "feedback",
-        ref: "memory:auth-tips",
+        ref: "memories/auth-tips",
         metadata: { signal: "negative" },
       },
       { now: () => NEWER_MS },
@@ -233,7 +233,7 @@ describe("reflect signal-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memory:auth-tips");
+    expect(reflected).toContain("memories/auth-tips");
   });
 
   test("no new feedback since last reflect proposal → ineligible", async () => {
@@ -245,12 +245,12 @@ describe("reflect signal-delta eligibility", () => {
     appendEvent(
       {
         eventType: "feedback",
-        ref: "memory:stale",
+        ref: "memories/stale",
         metadata: { signal: "negative" },
       },
       { now: () => OLDER_MS },
     );
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:stale" }, { now: () => NEWER_MS });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/stale" }, { now: () => NEWER_MS });
 
     const reflected: string[] = [];
     await akmImprove({
@@ -265,7 +265,7 @@ describe("reflect signal-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memory:stale");
+    expect(reflected).not.toContain("memories/stale");
   });
 
   test("never-reflected ref with feedback signal → eligible", async () => {
@@ -274,7 +274,7 @@ describe("reflect signal-delta eligibility", () => {
     await buildIndex(stash);
     appendEvent({
       eventType: "feedback",
-      ref: "memory:fresh",
+      ref: "memories/fresh",
       metadata: { signal: "positive" },
     });
 
@@ -291,7 +291,7 @@ describe("reflect signal-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memory:fresh");
+    expect(reflected).toContain("memories/fresh");
   });
 
   test("never-reflected ref without any signal → ineligible", async () => {
@@ -313,7 +313,7 @@ describe("reflect signal-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memory:silent");
+    expect(reflected).not.toContain("memories/silent");
   });
 });
 
@@ -328,7 +328,7 @@ describe("distill signal-delta eligibility", () => {
     appendEvent(
       {
         eventType: "distill_invoked",
-        ref: "memory:auth-tips",
+        ref: "memories/auth-tips",
         metadata: { outcome: "queued" },
       },
       { now: () => OLDER_MS },
@@ -336,7 +336,7 @@ describe("distill signal-delta eligibility", () => {
     appendEvent(
       {
         eventType: "feedback",
-        ref: "memory:auth-tips",
+        ref: "memories/auth-tips",
         metadata: { signal: "negative" },
       },
       { now: () => NEWER_MS },
@@ -355,7 +355,7 @@ describe("distill signal-delta eligibility", () => {
       },
     });
 
-    expect(distilled).toContain("memory:auth-tips");
+    expect(distilled).toContain("memories/auth-tips");
   });
 
   test("no new feedback since last distill proposal → ineligible (for distill)", async () => {
@@ -366,7 +366,7 @@ describe("distill signal-delta eligibility", () => {
     appendEvent(
       {
         eventType: "feedback",
-        ref: "memory:old-memory",
+        ref: "memories/old-memory",
         metadata: { signal: "negative" },
       },
       { now: () => OLDER_MS },
@@ -374,7 +374,7 @@ describe("distill signal-delta eligibility", () => {
     appendEvent(
       {
         eventType: "distill_invoked",
-        ref: "memory:old-memory",
+        ref: "memories/old-memory",
         metadata: { outcome: "queued" },
       },
       { now: () => NEWER_MS },
@@ -393,7 +393,7 @@ describe("distill signal-delta eligibility", () => {
       },
     });
 
-    expect(distilled).not.toContain("memory:old-memory");
+    expect(distilled).not.toContain("memories/old-memory");
   });
 
   test("never-distilled memory with feedback signal → distill-eligible", async () => {
@@ -402,7 +402,7 @@ describe("distill signal-delta eligibility", () => {
     await buildIndex(stash);
     appendEvent({
       eventType: "feedback",
-      ref: "memory:new-tip",
+      ref: "memories/new-tip",
       metadata: { signal: "positive" },
     });
 
@@ -419,7 +419,7 @@ describe("distill signal-delta eligibility", () => {
       },
     });
 
-    expect(distilled).toContain("memory:new-tip");
+    expect(distilled).toContain("memories/new-tip");
   });
 
   test("never-distilled memory without signal → ineligible", async () => {
@@ -440,7 +440,7 @@ describe("distill signal-delta eligibility", () => {
       },
     });
 
-    expect(distilled).not.toContain("memory:untouched");
+    expect(distilled).not.toContain("memories/untouched");
   });
 });
 
@@ -675,7 +675,7 @@ describe("high-salience admission gate (#608)", () => {
     // High CONTENT-derived encoding_salience, no retrieval, no feedback — only the
     // high-salience lane can rescue it (memory type-weight fallback is 0.5, below
     // threshold). This is #608's real target: a distilled, content-scored asset.
-    seedSalience("memory:salient", 0.9, "content");
+    seedSalience("memories/salient", 0.9, "content");
 
     const reflected: string[] = [];
     await akmImprove({
@@ -690,19 +690,19 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memory:salient");
+    expect(reflected).toContain("memories/salient");
   });
 
   test("high-salience fires at most once per asset (prior reflect proposal blocks re-rescue)", async () => {
     const stash = makeTempDir("akm-hs-once-");
     writeMemory(stash, "salient", "High salience but already reflected once.");
     await buildIndex(stash);
-    seedSalience("memory:salient", 0.9, "content");
+    seedSalience("memories/salient", 0.9, "content");
     // A reflect proposal already exists for this ref. Without the cooldown guard
     // the high-salience lane re-selected it every run (auto-accept emits a
     // `promoted` event, not `feedback`, so it never leaves noFeedbackCandidates),
     // burning LLM calls and churning the asset. The guard must block re-rescue.
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:salient" });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/salient" });
 
     const reflected: string[] = [];
     await akmImprove({
@@ -717,7 +717,7 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memory:salient");
+    expect(reflected).not.toContain("memories/salient");
   });
 
   // The lane cap must take the TOP-N candidates BY SCORE, not the first N found
@@ -729,8 +729,8 @@ describe("high-salience admission gate (#608)", () => {
     writeMemory(stash, "aaa", "Scan-order-first, lower salience.");
     writeMemory(stash, "zzz", "Scan-order-last, higher salience.");
     await buildIndex(stash);
-    seedSalience("memory:aaa", 0.8, "content");
-    seedSalience("memory:zzz", 0.95, "content");
+    seedSalience("memories/aaa", 0.8, "content");
+    seedSalience("memories/zzz", 0.95, "content");
 
     const reflected: string[] = [];
     await akmImprove({
@@ -747,8 +747,8 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memory:zzz");
-    expect(reflected).not.toContain("memory:aaa");
+    expect(reflected).toContain("memories/zzz");
+    expect(reflected).not.toContain("memories/aaa");
   });
 
   // #644 follow-up — the lore-writer case. A type-stub row (encoding_salience set
@@ -763,7 +763,7 @@ describe("high-salience admission gate (#608)", () => {
     await buildIndex(stash);
     // Explicit type-stub provenance: isContentEncodingRow returns false outright,
     // regardless of the value differing from the (memory) stub.
-    seedSalience("memory:stub", 0.9, "type-stub");
+    seedSalience("memories/stub", 0.9, "type-stub");
 
     const reflected: string[] = [];
     await akmImprove({
@@ -779,7 +779,7 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memory:stub");
+    expect(reflected).not.toContain("memories/stub");
   });
 
   // Legacy NULL-provenance row (pre-#644 migration 015). isContentEncodingRow
@@ -790,7 +790,7 @@ describe("high-salience admission gate (#608)", () => {
     const stash = makeTempDir("akm-hs-null-diff-");
     writeMemory(stash, "legacy", "Legacy row, value differs from stub.");
     await buildIndex(stash);
-    seedSalience("memory:legacy", 0.9, null);
+    seedSalience("memories/legacy", 0.9, null);
 
     const reflected: string[] = [];
     await akmImprove({
@@ -805,7 +805,7 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memory:legacy");
+    expect(reflected).toContain("memories/legacy");
   });
 
   // Legacy NULL-provenance row whose value EQUALS the per-type stub. The
@@ -816,7 +816,7 @@ describe("high-salience admission gate (#608)", () => {
   // returns true. lesson stub = 0.75; a NULL row at exactly 0.75 returns false.
   test("legacy NULL-provenance row that EQUALS the type stub is treated as a stub (isContentEncodingRow=false)", () => {
     const equalsStub: AssetSalienceRow = {
-      asset_ref: "lesson:atstub",
+      asset_ref: "lessons/atstub",
       encoding_salience: DEFAULT_TYPE_ENCODING_WEIGHTS.lesson ?? DEFAULT_ENCODING_SALIENCE,
       outcome_salience: 0,
       retrieval_salience: 0,
@@ -844,7 +844,7 @@ describe("aggregated no_new_signal skip event", () => {
     await buildIndex(stash);
 
     for (const name of ["stale-a", "stale-b"]) {
-      const ref = `memory:${name}`;
+      const ref = `memories/${name}`;
       appendEvent({ eventType: "feedback", ref, metadata: { signal: "negative" } }, { now: () => OLDER_MS });
       appendEvent({ eventType: "reflect_invoked", ref }, { now: () => NEWER_MS });
       appendEvent({ eventType: "distill_invoked", ref, metadata: { outcome: "queued" } }, { now: () => NEWER_MS });
@@ -883,9 +883,9 @@ describe("attribution: eligibilitySource lane tagging", () => {
     const stash = makeTempDir("akm-attr-signal-");
     writeMemory(stash, "rated", "Has fresh feedback.");
     await buildIndex(stash);
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:rated" }, { now: () => OLDER_MS });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/rated" }, { now: () => OLDER_MS });
     appendEvent(
-      { eventType: "feedback", ref: "memory:rated", metadata: { signal: "negative" } },
+      { eventType: "feedback", ref: "memories/rated", metadata: { signal: "negative" } },
       { now: () => NEWER_MS },
     );
 
@@ -902,7 +902,7 @@ describe("attribution: eligibilitySource lane tagging", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(seen.get("memory:rated")).toBe("signal-delta");
+    expect(seen.get("memories/rated")).toBe("signal-delta");
   });
 
   test("explicit --scope <ref> bypass stamps eligibilitySource='scope'", async () => {
@@ -912,7 +912,7 @@ describe("attribution: eligibilitySource lane tagging", () => {
 
     const seen = new Map<string, string | undefined>();
     await akmImprove({
-      scope: "memory:targeted",
+      scope: "memories/targeted",
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -923,7 +923,7 @@ describe("attribution: eligibilitySource lane tagging", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(seen.get("memory:targeted")).toBe("scope");
+    expect(seen.get("memories/targeted")).toBe("scope");
   });
 });
 

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
@@ -176,7 +177,11 @@ async function collectEligibleRefsFromIndex(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = `${indexed.entry.type}:${indexed.entry.name}`;
+      // Chunk-8 WI-8.5c: the candidate `ref` is the SHORT conceptId
+      // (`<stash-subdir>/<name>`, D-R2) — it now matches the disk lookup,
+      // xrefs, and `displayRef` output spelling. `.itemRef` below stays the
+      // fully-qualified durable key.
+      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
       // Chunk-5 flip F5d (Step 4): the durable `item_ref` (`<bundle>//<concept-id>`),
       // reconstructed from the mapper-unlocked provenance columns with ZERO extra
       // queries (D-R3 — derived from the resolved index entry, never raw input).
@@ -503,7 +508,9 @@ export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number>
     const allDbEntries = getAllEntries(db);
     const idToRef = new Map<number, string>();
     for (const indexed of allDbEntries) {
-      const ref = `${indexed.entry.type}:${indexed.entry.name}`;
+      // Chunk-8 WI-8.5c: correlate on the SHORT conceptId to match the
+      // `ImproveEligibleRef.ref` set built in collectEligibleRefsFromIndex.
+      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     const ids = [...idToRef.keys()];

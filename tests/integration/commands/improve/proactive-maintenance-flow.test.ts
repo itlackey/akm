@@ -115,7 +115,7 @@ describe("proactive maintenance — explicitly disabled", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("skill:deploy");
+    expect(reflected).not.toContain("skills/deploy");
     expect(res.proactiveMaintenance).toBeUndefined();
     const { events } = readEvents({ type: "proactive_selected" });
     expect(events.length).toBe(0);
@@ -142,7 +142,7 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
     });
 
     // The ONLY eligibility path that can surface this ref is proactive maintenance.
-    expect(reflected).toContain("skill:deploy");
+    expect(reflected).toContain("skills/deploy");
 
     expect(res.proactiveMaintenance).toBeDefined();
     expect(res.proactiveMaintenance?.selected).toBeGreaterThanOrEqual(1);

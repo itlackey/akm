@@ -92,8 +92,8 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
 
     expect(result.ok).toBe(true);
     const byRef = new Map(result.plannedRefs.map((p) => [p.ref, p]));
-    expect(fs.realpathSync(byRef.get("lesson:alpha")?.filePath ?? "")).toBe(fs.realpathSync(alphaPath));
-    expect(fs.realpathSync(byRef.get("lesson:beta")?.filePath ?? "")).toBe(fs.realpathSync(betaPath));
+    expect(fs.realpathSync(byRef.get("lessons/alpha")?.filePath ?? "")).toBe(fs.realpathSync(alphaPath));
+    expect(fs.realpathSync(byRef.get("lessons/beta")?.filePath ?? "")).toBe(fs.realpathSync(betaPath));
     for (const planned of result.plannedRefs) {
       expect(planned.filePath).toBeDefined();
       expect(fs.existsSync(planned.filePath ?? "")).toBe(true);
@@ -120,8 +120,8 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     await indexStash(stash);
     // Fresh feedback keeps both refs past the signal-delta gate so they reach
     // the validation pass and the final disk-existence guard.
-    appendEvent({ eventType: "feedback", ref: "lesson:kept", metadata: { signal: "positive", note: "fixture" } });
-    appendEvent({ eventType: "feedback", ref: "lesson:gone", metadata: { signal: "positive", note: "fixture" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/kept", metadata: { signal: "positive", note: "fixture" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/gone", metadata: { signal: "positive", note: "fixture" } });
     // Delete one asset AFTER indexing: its pre-resolved filePath is now stale,
     // so the disk-existence guard must drop it via the fallback lookup while
     // the intact ref flows through on the fast path.
@@ -141,8 +141,8 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.plannedRefs.map((p) => p.ref)).toContain("lesson:kept");
-    expect(result.plannedRefs.map((p) => p.ref)).not.toContain("lesson:gone");
-    expect(reflected).not.toContain("lesson:gone");
+    expect(result.plannedRefs.map((p) => p.ref)).toContain("lessons/kept");
+    expect(result.plannedRefs.map((p) => p.ref)).not.toContain("lessons/gone");
+    expect(reflected).not.toContain("lessons/gone");
   });
 });

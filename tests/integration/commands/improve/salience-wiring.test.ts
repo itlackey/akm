@@ -170,7 +170,7 @@ describe("WS-1 wiring — first run (empty table)", () => {
 
     const db = openStateDatabase();
     try {
-      const row = getAssetSalience(db, "stash//skill:beta");
+      const row = getAssetSalience(db, "skills/beta");
       expect(row).toBeDefined();
       expect(row?.rank_score).toBeGreaterThan(0);
     } finally {
@@ -200,9 +200,11 @@ describe("WS-1 wiring — first run (empty table)", () => {
 
     const db = openStateDatabase();
     try {
-      expect(getAssetSalience(db, "team//skill:shared")).toBeDefined();
+      // WI-8.5c: durable improve state is now keyed by the item_ref/conceptId
+      // (`skills/shared`), never the legacy `type:name` spelling.
+      expect(getAssetSalience(db, "skills/shared")).toBeDefined();
       expect(getAssetSalience(db, "skill:shared")).toBeUndefined();
-      expect(getConsecutiveNoOps(db, "team//skill:shared")).toBeGreaterThan(0);
+      expect(getConsecutiveNoOps(db, "skills/shared")).toBeGreaterThan(0);
     } finally {
       db.close();
     }
@@ -304,7 +306,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     // Pre-seed the salience row so consecutive_no_ops starts at 0.
     const dbSetup = openStateDatabase();
     try {
-      upsertAssetSalience(dbSetup, "skill:delta", { encoding: 0.7, outcome: 0, retrieval: 0, rankScore: 0.2 });
+      upsertAssetSalience(dbSetup, "skills/delta", { encoding: 0.7, outcome: 0, retrieval: 0, rankScore: 0.2 });
     } finally {
       dbSetup.close();
     }
@@ -322,7 +324,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const db = openStateDatabase();
     try {
       // no_change reflect → recordNoOp → consecutive_no_ops = 1
-      const noOps = getConsecutiveNoOps(db, "stash//skill:delta");
+      const noOps = getConsecutiveNoOps(db, "skills/delta");
       expect(noOps).toBeGreaterThanOrEqual(1);
     } finally {
       db.close();
@@ -337,12 +339,12 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     // Pre-seed with a high no-op count.
     const dbSetup = openStateDatabase();
     try {
-      upsertAssetSalience(dbSetup, "skill:epsilon", { encoding: 0.7, outcome: 0, retrieval: 0, rankScore: 0.2 });
+      upsertAssetSalience(dbSetup, "skills/epsilon", { encoding: 0.7, outcome: 0, retrieval: 0, rankScore: 0.2 });
       // manually set consecutive_no_ops to 5 by calling recordNoOp
       for (let i = 0; i < 5; i++) {
         dbSetup
           .prepare(`UPDATE asset_salience SET consecutive_no_ops = consecutive_no_ops + 1 WHERE asset_ref = ?`)
-          .run("skill:epsilon");
+          .run("skills/epsilon");
       }
     } finally {
       dbSetup.close();
@@ -351,7 +353,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     // Verify the seed worked.
     const dbCheck = openStateDatabase();
     try {
-      expect(getConsecutiveNoOps(dbCheck, "skill:epsilon")).toBe(5);
+      expect(getConsecutiveNoOps(dbCheck, "skills/epsilon")).toBe(5);
     } finally {
       dbCheck.close();
     }
@@ -369,7 +371,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const db = openStateDatabase();
     try {
       // queued distill → resetConsecutiveNoOps → 0
-      const noOps = getConsecutiveNoOps(db, "stash//skill:epsilon");
+      const noOps = getConsecutiveNoOps(db, "skills/epsilon");
       expect(noOps).toBe(0);
     } finally {
       db.close();
@@ -412,13 +414,13 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     const dbSetup = openStateDatabase();
     const IDENTICAL_RANK_SCORE = 0.6;
     try {
-      upsertAssetSalience(dbSetup, "stash//skill:alpha-stable", {
+      upsertAssetSalience(dbSetup, "skills/alpha-stable", {
         encoding: 0.9,
         outcome: 0,
         retrieval: 0.5,
         rankScore: IDENTICAL_RANK_SCORE,
       });
-      upsertAssetSalience(dbSetup, "stash//skill:beta-fresh", {
+      upsertAssetSalience(dbSetup, "skills/beta-fresh", {
         encoding: 0.9,
         outcome: 0,
         retrieval: 0.5,
@@ -428,7 +430,7 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
       // Manually set alpha-stable to the dampen threshold.
       dbSetup
         .prepare(`UPDATE asset_salience SET consecutive_no_ops = ? WHERE asset_ref = ?`)
-        .run(3 /* SALIENCE_NO_OP_DAMPEN_THRESHOLD */, "stash//skill:alpha-stable");
+        .run(3 /* SALIENCE_NO_OP_DAMPEN_THRESHOLD */, "skills/alpha-stable");
     } finally {
       dbSetup.close();
     }
@@ -454,8 +456,8 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     // If the dampener is removed from the effectiveScore comparator, alphabetical
     // tie-break puts alpha-stable FIRST (it sorts before beta-fresh lexicographically).
     // With the dampener, alpha-stable's effective score is halved, so beta-fresh wins.
-    const alphaIdx = reflectOrder.indexOf("skill:alpha-stable");
-    const betaIdx = reflectOrder.indexOf("skill:beta-fresh");
+    const alphaIdx = reflectOrder.indexOf("skills/alpha-stable");
+    const betaIdx = reflectOrder.indexOf("skills/beta-fresh");
     expect(alphaIdx).toBeGreaterThanOrEqual(0); // alpha-stable was processed
     expect(betaIdx).toBeGreaterThanOrEqual(0); // beta-fresh was processed
     expect(betaIdx).toBeLessThan(alphaIdx); // beta-fresh came first
@@ -468,10 +470,10 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     try {
       const alphaRow = dbCheck
         .prepare(`SELECT rank_score, consecutive_no_ops FROM asset_salience WHERE asset_ref = ?`)
-        .get("stash//skill:alpha-stable") as { rank_score: number; consecutive_no_ops: number } | undefined;
+        .get("skills/alpha-stable") as { rank_score: number; consecutive_no_ops: number } | undefined;
       const betaRow = dbCheck
         .prepare(`SELECT rank_score FROM asset_salience WHERE asset_ref = ?`)
-        .get("stash//skill:beta-fresh") as { rank_score: number } | undefined;
+        .get("skills/beta-fresh") as { rank_score: number } | undefined;
 
       expect(alphaRow).toBeDefined();
       expect(betaRow).toBeDefined();
@@ -516,7 +518,7 @@ describe("WS-1 wiring — rank positions are stash-wide, not pool-relative", () 
     // These refs are NOT in the current run's pool.
     const dbInject = openStateDatabase();
     try {
-      for (const extraRef of ["knowledge:extra1", "knowledge:extra2", "knowledge:extra3"]) {
+      for (const extraRef of ["knowledge/extra1", "knowledge/extra2", "knowledge/extra3"]) {
         upsertAssetSalience(dbInject, extraRef, { encoding: 0.7, outcome: 0, retrieval: 0.5, rankScore: 0.35 });
       }
     } finally {
@@ -590,7 +592,7 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
     const dbSetup = openStateDatabase();
     try {
       // Upsert with a very high rank_score to ensure rank-1 position.
-      upsertAssetSalience(dbSetup, "skill:victim", {
+      upsertAssetSalience(dbSetup, "skills/victim", {
         encoding: 0.99,
         outcome: 0.99,
         retrieval: 0.99,
@@ -634,10 +636,10 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
     expect(rcMeta?.forgettingCandidates as number).toBeGreaterThanOrEqual(1);
 
     // The victim must have been reflected (present in capturedEligibility).
-    expect(capturedEligibility.has("skill:victim")).toBe(true);
+    expect(capturedEligibility.has("skills/victim")).toBe(true);
 
     // The victim's eligibilitySource must be 'forgetting-safety'.
-    expect(capturedEligibility.get("skill:victim")).toBe("forgetting-safety");
+    expect(capturedEligibility.get("skills/victim")).toBe("forgetting-safety");
   });
 });
 
@@ -652,7 +654,11 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
 //      via 'high-salience' (score < 1.0).
 
 describe("#608 high-salience admission gate", () => {
-  test("legacy bare salience applies to a named local stash but not a different named source", async () => {
+  // WI-8.5c: durable improve state is keyed by the conceptId (`item_ref`), so a
+  // source no longer inherits another source's state by identity — a concept is
+  // distinct by construction. The legacy source-qualified/bare read arms are
+  // retired; a run only reads salience seeded under its OWN candidate conceptId.
+  test("conceptId-keyed salience drives the high-salience lane per concept, not cross-source", async () => {
     const localStash = isolatedStash();
     const teamStash = fs.mkdtempSync(path.join(path.dirname(localStash), "akm-team-source-"));
     cleanups.push(() => fs.rmSync(teamStash, { recursive: true, force: true }));
@@ -661,15 +667,14 @@ describe("#608 high-salience admission gate", () => {
     await buildIndex(localStash);
     const stateDb = openStateDatabase();
     try {
-      for (const ref of ["skill:legacy-local", "skill:legacy-team"]) {
-        upsertAssetSalience(stateDb, ref, {
-          encoding: 0.82,
-          outcome: 0,
-          retrieval: 0,
-          rankScore: 0.2,
-          encodingSource: "content",
-        });
-      }
+      // Seed ONLY the local concept; the team concept is deliberately unseeded.
+      upsertAssetSalience(stateDb, "skills/legacy-local", {
+        encoding: 0.82,
+        outcome: 0,
+        retrieval: 0,
+        rankScore: 0.2,
+        encodingSource: "content",
+      });
     } finally {
       stateDb.close();
     }
@@ -679,7 +684,7 @@ describe("#608 high-salience admission gate", () => {
     localConfig.sources = [{ type: "filesystem", name: "local", path: localStash, writable: true }];
     localConfig.defaultWriteTarget = "local";
     const localLanes = await runAndCaptureLanes({ stash: localStash, config: localConfig, target: "local" });
-    expect(localLanes.get("skill:legacy-local")).toBe("high-salience");
+    expect(localLanes.get("skills/legacy-local")).toBe("high-salience");
 
     await buildIndex(teamStash);
     const teamConfig = configWithSalience({ salienceThreshold: 0.75 });
@@ -687,7 +692,7 @@ describe("#608 high-salience admission gate", () => {
     teamConfig.sources = [{ type: "filesystem", name: "team", path: teamStash, writable: true }];
     teamConfig.defaultWriteTarget = "team";
     const teamLanes = await runAndCaptureLanes({ stash: teamStash, config: teamConfig, target: "team" });
-    expect(teamLanes.has("skill:legacy-team")).toBe(false);
+    expect(teamLanes.has("skills/legacy-team")).toBe(false);
   });
 
   test("zero-feedback ref with encoding_salience >= threshold is reflected with eligibilitySource='high-salience'", async () => {
@@ -702,7 +707,7 @@ describe("#608 high-salience admission gate", () => {
     // target.
     const dbSetup = openStateDatabase();
     try {
-      upsertAssetSalience(dbSetup, "skill:novel-skill", {
+      upsertAssetSalience(dbSetup, "skills/novel-skill", {
         encoding: 0.82,
         outcome: 0,
         retrieval: 0,
@@ -745,8 +750,8 @@ describe("#608 high-salience admission gate", () => {
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
     });
 
-    expect(capturedEligibility.has("skill:novel-skill")).toBe(true);
-    expect(capturedEligibility.get("skill:novel-skill")).toBe("high-salience");
+    expect(capturedEligibility.has("skills/novel-skill")).toBe(true);
+    expect(capturedEligibility.get("skills/novel-skill")).toBe("high-salience");
   });
 
   test("salienceThreshold=1.0 disables the gate — ref with score=0.82 is NOT selected via high-salience", async () => {
@@ -759,7 +764,7 @@ describe("#608 high-salience admission gate", () => {
       // Content-provenance so the ONLY thing keeping this ref out of the lane is
       // the threshold (1.0 > 0.82), not the #655 content gate — this test pins
       // the threshold knob specifically.
-      upsertAssetSalience(dbSetup, "skill:gated-skill", {
+      upsertAssetSalience(dbSetup, "skills/gated-skill", {
         encoding: 0.82,
         outcome: 0,
         retrieval: 0,
@@ -803,11 +808,11 @@ describe("#608 high-salience admission gate", () => {
     });
 
     // With threshold=1.0, the ref must not be selected via high-salience.
-    if (capturedEligibility.has("skill:gated-skill")) {
-      expect(capturedEligibility.get("skill:gated-skill")).not.toBe("high-salience");
+    if (capturedEligibility.has("skills/gated-skill")) {
+      expect(capturedEligibility.get("skills/gated-skill")).not.toBe("high-salience");
     } else {
       // Not selected at all — expected when both high-salience and proactive are gated out.
-      expect(capturedEligibility.has("skill:gated-skill")).toBe(false);
+      expect(capturedEligibility.has("skills/gated-skill")).toBe(false);
     }
   });
 });
@@ -920,15 +925,15 @@ describe("#610 bounded replay budget", () => {
     await buildIndex(stash);
 
     // No feedback, no retrieval events. Pre-seed a high rank_score, no-ops=0.
-    seedSalience("skill:replay-target", 0.9, 0);
+    seedSalience("skills/replay-target", 0.9, 0);
 
     const lanes = await runAndCaptureLanes({
       stash,
       config: configWithSalience({ replayBudget: 1 }),
     });
 
-    expect(lanes.has("skill:replay-target")).toBe(true);
-    expect(lanes.get("skill:replay-target")).toBe("replay");
+    expect(lanes.has("skills/replay-target")).toBe(true);
+    expect(lanes.get("skills/replay-target")).toBe("replay");
   });
 
   // ── AC1-cooldown-bypass: replay is added AFTER cooldown/signal partitioning ──
@@ -937,13 +942,13 @@ describe("#610 bounded replay budget", () => {
     writeSkill(stash, "cooldown-target", "Recently reflected, now quiet.");
     await buildIndex(stash);
 
-    seedSalience("skill:cooldown-target", 0.9, 0);
+    seedSalience("skills/cooldown-target", 0.9, 0);
 
     // Put the ref on reflect cooldown: a recent reflect proposal with no newer
     // feedback means signal-delta partitioning would route it to the no-op pool.
     appendEvent({
       eventType: "reflect_invoked",
-      ref: "skill:cooldown-target",
+      ref: "skills/cooldown-target",
       metadata: { source: "test", eligibilitySource: "proactive" },
     });
 
@@ -953,8 +958,8 @@ describe("#610 bounded replay budget", () => {
     });
 
     // Replay bypasses cooldown/signal-delta gates exactly like forgetting-safety.
-    expect(lanes.has("skill:cooldown-target")).toBe(true);
-    expect(lanes.get("skill:cooldown-target")).toBe("replay");
+    expect(lanes.has("skills/cooldown-target")).toBe(true);
+    expect(lanes.get("skills/cooldown-target")).toBe("replay");
   });
 
   // ── AC2: replays are additive — never reduce the fresh (--limit) count ──────
@@ -971,9 +976,9 @@ describe("#610 bounded replay budget", () => {
     await buildIndex(stash);
 
     // Fresh refs get fresh feedback → signal-delta lane.
-    for (const name of freshNames) recordFreshFeedback(`skill:${name}`);
+    for (const name of freshNames) recordFreshFeedback(`skills/${name}`);
     // Replay refs: zero feedback, high rank, not converged.
-    for (const name of replayNames) seedSalience(`skill:${name}`, 0.9, 0);
+    for (const name of replayNames) seedSalience(`skills/${name}`, 0.9, 0);
 
     const lanes = await runAndCaptureLanes({
       stash,
@@ -986,7 +991,7 @@ describe("#610 bounded replay budget", () => {
 
     // All N fresh refs survive the limit; replay is additive (N + min(M,budget)).
     expect(nonReplay.length).toBe(N);
-    for (const name of freshNames) expect(lanes.has(`skill:${name}`)).toBe(true);
+    for (const name of freshNames) expect(lanes.has(`skills/${name}`)).toBe(true);
     expect(replay.length).toBe(Math.min(M, M));
     expect(lanes.size).toBe(N + Math.min(M, M));
   });
@@ -1002,11 +1007,11 @@ describe("#610 bounded replay budget", () => {
     }
     await buildIndex(stash);
 
-    for (const name of freshNames) recordFreshFeedback(`skill:${name}`);
+    for (const name of freshNames) recordFreshFeedback(`skills/${name}`);
     // 5 distinct rank scores so ordering is deterministic.
     const ranks = [0.95, 0.9, 0.85, 0.8, 0.75];
     candidateNames.forEach((name, i) => {
-      seedSalience(`skill:${name}`, ranks[i] ?? 0.5, 0);
+      seedSalience(`skills/${name}`, ranks[i] ?? 0.5, 0);
     });
 
     const lanes = await runAndCaptureLanes({
@@ -1028,7 +1033,7 @@ describe("#610 bounded replay budget", () => {
     writeSkill(stash, "quiet-skill", "Zero-feedback high-rank skill.");
     await buildIndex(stash);
 
-    seedSalience("skill:quiet-skill", 0.9, 0);
+    seedSalience("skills/quiet-skill", 0.9, 0);
 
     // Run A: explicit replayBudget=0.
     const lanesZero = await runAndCaptureLanes({
@@ -1044,8 +1049,8 @@ describe("#610 bounded replay budget", () => {
     // No 'replay' lane appears in either run; the quiet ref is not selected.
     expect([...lanesZero.values()]).not.toContain("replay");
     expect([...lanesUnset.values()]).not.toContain("replay");
-    expect(lanesZero.has("skill:quiet-skill")).toBe(false);
-    expect(lanesUnset.has("skill:quiet-skill")).toBe(false);
+    expect(lanesZero.has("skills/quiet-skill")).toBe(false);
+    expect(lanesUnset.has("skills/quiet-skill")).toBe(false);
   });
 
   // ── Convergence skip: converged (no_ops >= threshold) refs are NOT replayed ─
@@ -1055,8 +1060,8 @@ describe("#610 bounded replay budget", () => {
     writeSkill(stash, "conv-b", "Converged to no_change.");
     await buildIndex(stash);
 
-    seedSalience("skill:conv-a", 0.9, 0); // eligible for replay
-    seedSalience("skill:conv-b", 0.9, 3); // SALIENCE_NO_OP_DAMPEN_THRESHOLD → converged
+    seedSalience("skills/conv-a", 0.9, 0); // eligible for replay
+    seedSalience("skills/conv-b", 0.9, 3); // SALIENCE_NO_OP_DAMPEN_THRESHOLD → converged
 
     const lanes = await runAndCaptureLanes({
       stash,
@@ -1065,32 +1070,32 @@ describe("#610 bounded replay budget", () => {
 
     const replay = [...lanes.entries()].filter(([, src]) => src === "replay").map(([ref]) => ref);
 
-    expect(replay).toContain("skill:conv-a");
-    expect(replay).not.toContain("skill:conv-b");
+    expect(replay).toContain("skills/conv-a");
+    expect(replay).not.toContain("skills/conv-b");
     expect(replay.length).toBe(1); // budget=2, but only 1 non-converged candidate
   });
 
-  test("source-qualified convergence state suppresses replay for the selected source", async () => {
+  test("conceptId-keyed convergence state suppresses replay under the selected source", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "qualified-converged", "Converged in the team source.");
     await buildIndex(stash);
-    seedSalience("team//skill:qualified-converged", 0.9, 3);
+    seedSalience("skills/qualified-converged", 0.9, 3);
     const config = configWithSalience({ replayBudget: 1 });
     config.sources = [{ type: "filesystem", name: "team", path: stash, writable: true }];
     config.defaultWriteTarget = "team";
 
     const lanes = await runAndCaptureLanes({ stash, config, target: "team" });
 
-    expect(lanes.has("skill:qualified-converged")).toBe(false);
+    expect(lanes.has("skills/qualified-converged")).toBe(false);
   });
 
-  test("legacy bare convergence remains effective for a named historical local stash", async () => {
+  test("conceptId-keyed convergence remains effective for a named historical local stash", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "legacy-active", "Legacy local replay candidate.");
     writeSkill(stash, "legacy-converged", "Legacy local converged candidate.");
     await buildIndex(stash);
-    seedSalience("skill:legacy-active", 0.9, 0);
-    seedSalience("skill:legacy-converged", 0.95, 3);
+    seedSalience("skills/legacy-active", 0.9, 0);
+    seedSalience("skills/legacy-converged", 0.95, 3);
     const config = configWithSalience({ replayBudget: 2, salienceThreshold: 1 });
     config.stashDir = stash;
     config.sources = [{ type: "filesystem", name: "local", path: stash, writable: true }];
@@ -1098,8 +1103,8 @@ describe("#610 bounded replay budget", () => {
 
     const lanes = await runAndCaptureLanes({ stash, config, target: "local" });
 
-    expect(lanes.get("skill:legacy-active")).toBe("replay");
-    expect(lanes.has("skill:legacy-converged")).toBe(false);
+    expect(lanes.get("skills/legacy-active")).toBe("replay");
+    expect(lanes.has("skills/legacy-converged")).toBe(false);
   });
 
   // ── Replay candidate ordering: top rank_score wins, ref-string tie-break ────
@@ -1110,9 +1115,9 @@ describe("#610 bounded replay budget", () => {
     }
     await buildIndex(stash);
 
-    seedSalience("skill:ord-hi", 0.9, 0);
-    seedSalience("skill:ord-mid", 0.8, 0);
-    seedSalience("skill:ord-lo", 0.7, 0);
+    seedSalience("skills/ord-hi", 0.9, 0);
+    seedSalience("skills/ord-mid", 0.8, 0);
+    seedSalience("skills/ord-lo", 0.7, 0);
 
     const lanes = await runAndCaptureLanes({
       stash,
@@ -1121,7 +1126,7 @@ describe("#610 bounded replay budget", () => {
 
     const replay = [...lanes.entries()].filter(([, src]) => src === "replay").map(([ref]) => ref);
 
-    expect(replay).toEqual(["skill:ord-hi"]);
+    expect(replay).toEqual(["skills/ord-hi"]);
   });
 
   // ── No double-selection: a stronger lane keeps its label; budget spent elsewhere ─
@@ -1132,10 +1137,10 @@ describe("#610 bounded replay budget", () => {
     await buildIndex(stash);
 
     // dual-qual: fresh feedback (signal-delta) AND high rank (replay-eligible).
-    recordFreshFeedback("skill:dual-qual");
-    seedSalience("skill:dual-qual", 0.95, 0);
+    recordFreshFeedback("skills/dual-qual");
+    seedSalience("skills/dual-qual", 0.95, 0);
     // pure-replay: zero feedback, slightly lower rank.
-    seedSalience("skill:pure-replay", 0.9, 0);
+    seedSalience("skills/pure-replay", 0.9, 0);
 
     const lanes = await runAndCaptureLanes({
       stash,
@@ -1143,9 +1148,9 @@ describe("#610 bounded replay budget", () => {
     });
 
     // dual-qual keeps the stronger reactive lane.
-    expect(lanes.get("skill:dual-qual")).toBe("signal-delta");
+    expect(lanes.get("skills/dual-qual")).toBe("signal-delta");
     // The single replay budget is spent on the OTHER ref, not the already-selected one.
-    expect(lanes.get("skill:pure-replay")).toBe("replay");
+    expect(lanes.get("skills/pure-replay")).toBe("replay");
     const replay = [...lanes.entries()].filter(([, src]) => src === "replay");
     expect(replay.length).toBe(1);
   });
@@ -1157,15 +1162,15 @@ describe("#610 bounded replay budget", () => {
     writeSkill(stash, "would-replay", "A high-rank ref that must NOT be pulled in.");
     await buildIndex(stash);
 
-    seedSalience("skill:would-replay", 0.9, 0);
+    seedSalience("skills/would-replay", 0.9, 0);
 
     const lanes = await runAndCaptureLanes({
       stash,
       config: configWithSalience({ replayBudget: 5 }),
-      scope: "skill:scoped",
+      scope: "skills/scoped",
     });
 
     expect([...lanes.values()]).not.toContain("replay");
-    expect(lanes.has("skill:would-replay")).toBe(false);
+    expect(lanes.has("skills/would-replay")).toBe(false);
   });
 });
