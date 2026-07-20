@@ -187,7 +187,7 @@ describe("extract candidate placement", () => {
     };
     const source = { harness: "claude-code", sessionId: "s1", filePath: "/tmp/s1", projectHint: "project-a" };
 
-    expect(deriveExtractCandidateRef(candidate, source)).toBe("knowledge:oauth-refresh-race");
+    expect(deriveExtractCandidateRef(candidate, source)).toBe("knowledge/oauth-refresh-race");
   });
 });
 
