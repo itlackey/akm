@@ -51,13 +51,9 @@ import {
   quarantineIndexDb,
   runThreeDbCutover,
 } from "../migrate/legacy/three-db-cutover";
-import {
-  FROZEN_WORKFLOW_BASE_SCHEMA_DDL,
-  FROZEN_WORKFLOW_MIGRATIONS,
-} from "../migrate/legacy/workflow-migrations-bodies";
+import { FROZEN_WORKFLOW_MIGRATIONS } from "../migrate/legacy/workflow-migrations-bodies";
 import { openDatabase } from "../storage/database";
 import { runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
-import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { EXIT_CODES } from "./shared";
 
 const MANUAL_GUIDANCE =
@@ -525,7 +521,6 @@ function runFrozenWorkflowRoll(operationId: string): void {
   const workflowPath = getLegacyWorkflowDbPath();
   const db = openDatabase(workflowPath);
   try {
-    applyStandardPragmas(db, { dataDir: path.dirname(workflowPath) });
     const hasRuns = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get();
     const hasLedger = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get();
     if (hasRuns && !hasLedger) {
@@ -535,9 +530,12 @@ function runFrozenWorkflowRoll(operationId: string): void {
         "INVALID_CONFIG_FILE",
       );
     }
-    // Idempotent baseline (CREATE TABLE IF NOT EXISTS) then the pending frozen
-    // migrations — a workflow.db already at 010 is a no-op.
-    db.exec(FROZEN_WORKFLOW_BASE_SCHEMA_DDL);
+    // Roll the pending frozen migrations ONLY — never the base-schema DDL. Any
+    // real pre-cutover workflow.db already carries the base schema (its runtime
+    // opener created it); running the baseline CREATE INDEX here would fail on a
+    // pre-existing-but-narrower table. Matches the WI-8.2 workflow-applied path
+    // (openDatabase + runSqliteMigrations, no pragmas/base-schema), preserving
+    // the crash-recovery generation-fingerprint invariants that flow pins.
     runSqliteMigrations(db, FROZEN_WORKFLOW_MIGRATIONS, {
       generationMarker: { operationId, phase: "workflow-applied" },
     });
