@@ -85,7 +85,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
         return {
           schemaVersion: 2,
           ok: true,
-          proposal: makeProposal(ref ?? "memory:missing"),
+          proposal: makeProposal(ref ?? "memories/missing"),
           ref: ref ?? "",
           engine: "test",
           durationMs: 1,
@@ -164,7 +164,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
         return {
           schemaVersion: 2,
           ok: true,
-          proposal: makeProposal(opts.ref ?? "memory:budget-test"),
+          proposal: makeProposal(opts.ref ?? "memories/budget-test"),
           ref: opts.ref ?? "",
           engine: "test",
           durationMs: 1,
@@ -201,7 +201,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       reflectFn: async (opts) => ({
         schemaVersion: 2,
         ok: true,
-        proposal: makeProposal(opts.ref ?? "memory:timer-test"),
+        proposal: makeProposal(opts.ref ?? "memories/timer-test"),
         ref: opts.ref ?? "",
         engine: "test",
         durationMs: 1,
@@ -242,7 +242,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
         ok: true,
-        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        proposal: makeProposal(ref ?? "memories/auth-tips"),
         ref: ref ?? "",
         engine: "test",
         durationMs: 1,
@@ -288,7 +288,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
         ok: true,
-        proposal: makeProposal(ref ?? "memory:auth-tips"),
+        proposal: makeProposal(ref ?? "memories/auth-tips"),
         ref: ref ?? "",
         engine: "test",
         durationMs: 1,
@@ -876,7 +876,7 @@ describe("new 0.8.0 improve metrics", () => {
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
         ok: true,
-        proposal: makeProposal(ref ?? "memory:real-asset"),
+        proposal: makeProposal(ref ?? "memories/real-asset"),
         ref: ref ?? "",
         engine: "test",
         durationMs: 1,
