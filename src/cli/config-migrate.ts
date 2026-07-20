@@ -730,6 +730,21 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
             runStateMigrations(db, {
               generationMarker: { operationId: journal.operationId, phase: "state-applied" },
             });
+            // Chunk 8, WI-8.2: collapse state.db to a SINGLE FILE (DELETE journal)
+            // for the rest of the apply. A WAL-mode state.db carries `-wal`/`-shm`
+            // sidecars that the migration generation fingerprint tracks; a later
+            // read-only inspect (or a rolled-back cutover transaction) mutates
+            // them, which would trip the "state changed outside the journaled
+            // transition" rollback guard and REFUSE the fail-closed restore. In
+            // single-file mode a rolled-back transaction leaves state.db
+            // byte-identical, so the cutover's fail-closed rollback works. The
+            // runtime restores WAL on its next openStateDatabase.
+            try {
+              db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+              db.exec("PRAGMA journal_mode = DELETE");
+            } catch {
+              // Already single-file / nothing to checkpoint.
+            }
           } finally {
             db.close();
           }

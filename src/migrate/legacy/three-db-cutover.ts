@@ -560,8 +560,15 @@ function ensureCutoverLedger(db: Database): void {
   `);
 }
 
+/**
+ * READ-ONLY check for the committed merge marker. Must NOT create the table:
+ * this runs BEFORE the cutover transaction, and a `CREATE TABLE` here would be a
+ * durable pre-transaction write that a later fail-closed rollback could not undo
+ * (tripping the "state changed outside the journaled transition" guard). The
+ * table is created inside the transaction alongside the marker INSERT.
+ */
 function cutoverAlreadyMerged(db: Database): boolean {
-  ensureCutoverLedger(db);
+  if (!tableExists(db, "main", "akm_cutover_ledger")) return false;
   return !!db.prepare("SELECT 1 FROM akm_cutover_ledger WHERE singleton = 1").get();
 }
 
