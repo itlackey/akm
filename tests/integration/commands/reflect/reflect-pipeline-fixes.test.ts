@@ -18,11 +18,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/integrations/agent/spawn";
+import { durableItemRef } from "../../../_helpers/durable-ref";
 import { quietQualityGateConfig } from "../../../_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     if (!result.ok) {
       expect(result.error).not.toContain("not supported by reflect");
     } else {
-      expect(result.proposal.ref).toBe("knowledge:foo");
+      expect(result.proposal.ref).toBe(durableItemRef(stash, "knowledge", "foo"));
     }
   });
 });

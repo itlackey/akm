@@ -361,6 +361,26 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
  * `origin//type:name` spelling until the config `bundles` key lands. The
  * `local`/`stash` primary-stash sentinels resolve to the write-target bundle.
  */
+/**
+ * The conceptId (`<stash-subdir>/<name>`) a stored OR queried proposal ref maps
+ * to, in EITHER grammar (`undefined` when unparseable). WI-8.5a stores
+ * `proposals.ref` as the item_ref, so a user/display query ref (`lesson:x` or
+ * `lessons/x`) can no longer exact-match the stored `bundle//lessons/x`. Matching
+ * on the shared conceptId is the durable dual-read for the user-facing filter
+ * paths (`proposal list --ref`, `resolveProposalId`). The internal fingerprint/
+ * backoff paths keep exact `ref`-column matching (they compare the already-final
+ * `normalizedRef`), so old legacy rejected rows aging out is the documented
+ * dedup-window reset, not a lookup regression.
+ */
+function proposalConceptId(ref: string): string | undefined {
+  try {
+    const p = parseStoredRef(ref);
+    return legacyConceptId(p.type, p.name);
+  } catch {
+    return undefined;
+  }
+}
+
 function proposalDurableRef(parsedRef: AssetRef, stashDir: string): string {
   const conceptId = legacyConceptId(parsedRef.type, parsedRef.name);
   const { origin } = parsedRef;
@@ -674,11 +694,17 @@ export function listProposals(
       return [];
     }
     const status = options.includeArchive ? options.status : "pending";
+    // WI-8.5a: the `ref` filter matches by conceptId (grammar-independent) so a
+    // display/legacy query ref finds the item_ref-spelled row. Applied in JS, not
+    // as a SQL `ref = ?`, since the stored spelling no longer equals the query ref.
+    const wantConceptId = options.ref !== undefined ? proposalConceptId(options.ref) : undefined;
     return listStateProposals(db, {
       stashDir,
       ...(status !== undefined ? { status } : {}),
-      ...(options.ref !== undefined ? { ref: options.ref } : {}),
     }).filter((p) => {
+      if (options.ref !== undefined && (wantConceptId === undefined || proposalConceptId(p.ref) !== wantConceptId)) {
+        return false;
+      }
       if (!options.type) return true;
       try {
         return parseStoredRef(p.ref).type === options.type;
@@ -721,14 +747,21 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
     const exact = getStateProposal(db, idOrRef, stashDir);
     if (exact) return exact;
 
-    // 2. Asset ref (e.g. "skill:akm-dream") — most recent pending, else most
-    // recent archived.
-    if (idOrRef.includes(":")) {
+    // 2. Asset ref in EITHER grammar — most recent pending, else most recent
+    // archived. WI-8.5a: match by conceptId (a UUID carries neither `:` nor `/`,
+    // so both grammars — legacy `skill:x` and new `skills/x` / `bundle//skills/x`
+    // — route here and match the item_ref-spelled stored row).
+    const wantConceptId = idOrRef.includes(":") || idOrRef.includes("/") ? proposalConceptId(idOrRef) : undefined;
+    if (wantConceptId !== undefined) {
       const byRecency = (proposals: Proposal[]): Proposal | undefined =>
         proposals.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
-      const pending = byRecency(listStateProposals(db, { stashDir, ref: idOrRef, status: "pending" }));
+      const forConcept = (status?: string): Proposal[] =>
+        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter(
+          (p) => proposalConceptId(p.ref) === wantConceptId,
+        );
+      const pending = byRecency(forConcept("pending"));
       if (pending) return pending;
-      const archived = byRecency(listStateProposals(db, { stashDir, ref: idOrRef }));
+      const archived = byRecency(forConcept());
       if (archived) return archived;
       throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "FILE_NOT_FOUND");
     }

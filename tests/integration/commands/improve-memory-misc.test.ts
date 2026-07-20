@@ -9,6 +9,7 @@ import { type AkmConfig, type ImproveProfileConfig, saveConfig } from "../../../
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeMemory } from "../../_helpers/assets";
+import { durableItemRef } from "../../_helpers/durable-ref";
 import { makeProposal } from "../../_helpers/factories";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 
@@ -528,7 +529,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     // Proposal should exist in the queue
     const proposals = listProposals(stashDir);
     expect(proposals.length).toBe(1);
-    expect(proposals[0]?.ref).toBe("memory:auth-guide");
+    expect(proposals[0]?.ref).toBe(durableItemRef(stashDir, "memory", "auth-guide"));
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
@@ -1023,6 +1024,6 @@ describe("new 0.8.0 improve metrics", () => {
     expect(result.proposalsExpired).toBeGreaterThanOrEqual(1);
     // The expired proposal must have been emitted as a `proposal_expired` event.
     const expiredEvents = readEvents({ type: "proposal_expired" });
-    expect(expiredEvents.events.some((e) => e.ref === "memory:live-asset")).toBe(true);
+    expect(expiredEvents.events.some((e) => e.ref === durableItemRef(stashDir, "memory", "live-asset"))).toBe(true);
   });
 });

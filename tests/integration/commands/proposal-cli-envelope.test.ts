@@ -15,9 +15,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-
 import { createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import { runCliCapture } from "../../_helpers/cli";
+import { durableItemRef } from "../../_helpers/durable-ref";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -64,7 +64,7 @@ describe("akm proposal — JSON envelope snapshot (WS6)", () => {
     expect(env.totalCount).toBe(1);
     expect(Array.isArray(env.proposals)).toBe(true);
     const [p] = env.proposals;
-    expect(p.ref).toBe("lesson:rg-over-grep");
+    expect(p.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
     expect(p.source).toBe("reflect");
     expect(p.status).toBe("pending");
   });
@@ -86,7 +86,7 @@ describe("akm proposal — JSON envelope snapshot (WS6)", () => {
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.proposal.id).toBe(id);
-    expect(env.proposal.ref).toBe("lesson:rg-over-grep");
+    expect(env.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
     expect(env.validation.ok).toBe(true);
   });
 

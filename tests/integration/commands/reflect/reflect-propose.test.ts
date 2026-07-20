@@ -22,6 +22,7 @@ import { listProposals } from "../../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/integrations/agent/spawn";
+import { durableItemRef } from "../../../_helpers/durable-ref";
 import { quietQualityGateConfig } from "../../../_helpers/factories";
 import {
   type Cleanup,
@@ -206,7 +207,7 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.source).toBe("reflect");
-    expect(result.proposal.ref).toBe("lesson:rg-over-grep");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
     expect(result.proposal.payload.content).toContain("Prefer rg");
 
     const proposals = listProposals(stash);
@@ -454,7 +455,7 @@ describe("akm propose", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.source).toBe("propose");
-    expect(result.proposal.ref).toBe("skill:hello");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "skill", "hello"));
 
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
@@ -600,7 +601,7 @@ describe("akm propose", () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("expected ok");
-      expect(result.proposal.ref).toBe("widget:gear");
+      expect(result.proposal.ref).toBe(durableItemRef(stash, "widget", "gear"));
     } finally {
       deregisterAssetSpec("widget");
     }
@@ -624,6 +625,6 @@ describe("akm propose", () => {
     // Proposal queue has exactly one entry.
     const queued = listProposals(stash, { status: "pending" });
     expect(queued.length).toBe(1);
-    expect(queued[0]?.ref).toBe("skill:hello");
+    expect(queued[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 });

@@ -20,6 +20,7 @@ import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../src/commands/proposal/propose";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/integrations/agent/spawn";
+import { durableItemRef } from "../../_helpers/durable-ref";
 import { quietQualityGateConfig } from "../../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
 
@@ -217,7 +218,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.proposal.ref).toBe("lesson:rg-over-grep");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
     expect(capturedCmd[0]).toBe("fake-agent");
   });
 
@@ -295,7 +296,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.proposal.ref).toBe("skill:hello");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 
   test("parse_error: agent returns malformed JSON", async () => {

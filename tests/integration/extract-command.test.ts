@@ -27,6 +27,7 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
+import { durableItemRef } from "../_helpers/durable-ref";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -411,7 +412,7 @@ describe("akmExtract — candidate → proposal routing", () => {
 
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
     expect(pending).toHaveLength(2);
-    const lessonProp = pending.find((p) => p.ref === "lesson:vpn-before-deploy");
+    const lessonProp = pending.find((p) => p.ref === durableItemRef(stash, "lesson", "vpn-before-deploy"));
     expect(lessonProp).toBeDefined();
     // Body must contain description in YAML frontmatter so accept-time validator passes
     expect(lessonProp?.payload.content).toMatch(/description:.*VPN/);
@@ -490,7 +491,7 @@ describe("akmExtract — candidate → proposal routing", () => {
     });
 
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
-    expect(pending.map((p) => p.ref)).toEqual(["memory:project-a/vpn-deploy-order"]);
+    expect(pending.map((p) => p.ref)).toEqual([durableItemRef(stash, "memory", "project-a/vpn-deploy-order")]);
     const parsed = parseFrontmatter(pending[0]?.payload.content ?? "");
     expect(parsed.data.xrefs).toBeUndefined();
   });
@@ -532,7 +533,7 @@ describe("akmExtract — candidate → proposal routing", () => {
     expect(result.candidatesCreated).toBe(1);
 
     const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
-    const prop = pending.find((p) => p.ref === "lesson:vpn-before-deploy");
+    const prop = pending.find((p) => p.ref === durableItemRef(stash, "lesson", "vpn-before-deploy"));
     expect(prop).toBeDefined();
 
     // The persisted content's frontmatter description must now be valid.
@@ -849,7 +850,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedModel).toBe("process-model");
     expect(plan.engine).toBe("extract-special");
     expect(plan.process.triage?.enabled).toBe(true);
-    const proposal = listProposals(stash, { status: "pending" }).find((item) => item.ref === "memory:frozen-triage");
+    const proposal = listProposals(stash, { status: "pending" }).find(
+      (item) => item.ref === durableItemRef(stash, "memory", "frozen-triage"),
+    );
     expect(proposal).toBeDefined();
   });
 

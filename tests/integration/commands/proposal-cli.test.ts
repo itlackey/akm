@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
 import { runCliCapture } from "../../_helpers/cli";
+import { durableItemRef } from "../../_helpers/durable-ref";
 import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
@@ -120,7 +121,7 @@ describe("akm proposal list (CLI)", () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.totalCount).toBe(1);
-    expect(parsed.proposals[0].ref).toBe("lesson:docker-cleanup");
+    expect(parsed.proposals[0].ref).toBe(durableItemRef(stash, "lesson", "docker-cleanup"));
   });
 
   test("supports --type filtering (asset type derived from ref)", async () => {
@@ -131,7 +132,7 @@ describe("akm proposal list (CLI)", () => {
     expect(onlyLessons.status).toBe(0);
     const parsed = JSON.parse(onlyLessons.stdout);
     expect(parsed.totalCount).toBe(1);
-    expect(parsed.proposals[0].ref).toBe("lesson:rg-over-grep");
+    expect(parsed.proposals[0].ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
     // No-match type yields an empty list, not the full set.
     const none = await runCli(["proposal", "list", "--type", "agent", "--format=json"], { stashDir: stash });
     expect(JSON.parse(none.stdout).totalCount).toBe(0);
