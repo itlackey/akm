@@ -159,7 +159,7 @@ try {
     console.error("       note: 'widget' hit not found by ref-name match; checking it executed cleanly only.");
   }
   // Read a single asset back out of the stash.
-  step("show", ["show", "memory:node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
+  step("show", ["show", "memories/node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
   // Health aggregates DB + artifacts; touches detection.
   // health exits 0 (ok) or 4 (EXIT_HEALTH_WARN) — a minimal fresh stash often
   // reports `status: "warn"` (e.g. semantic search not ready), which is a valid,
