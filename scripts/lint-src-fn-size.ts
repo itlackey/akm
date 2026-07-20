@@ -45,13 +45,13 @@ export type SrcFnOffender = FnOffender;
  * Entries may be removed or lowered when a function is decomposed; they must
  * NEVER be added to or raised. Several are already scheduled for deletion or
  * decomposition by the plan (html-report → residual audit; graph-extraction →
- * 0.9.1 measurement pass; health/tasks gods → Chunk 9; report/run-workflow →
- * engine sweep) — the ratchet just keeps the list from growing while they
- * wait their turn.
+ * 0.9.1 measurement pass; health/tasks gods → Chunk 9; run-workflow → engine
+ * sweep) — the ratchet just keeps the list from growing while they wait their
+ * turn. Chunk 8 (WI-8.6, §10.7) decomposed `report.ts`'s 438-line
+ * `reportWorkflowUnitWithBarrier` into its five named phases, dropping its entry.
  */
 export const SRC_FN_SIZE_BASELINE: readonly SrcFnOffender[] = [
   { id: "src/indexer/graph/graph-extraction.ts :: runGraphExtractionPass", lines: 458 },
-  { id: "src/workflows/exec/report.ts :: reportWorkflowUnitWithBarrier", lines: 438 },
   { id: "src/storage/repositories/index-schema.ts :: ensureSchema", lines: 348 },
   { id: "src/workflows/exec/run-workflow.ts :: driveRun", lines: 327 },
   { id: "src/integrations/agent/spawn.ts :: runAgent", lines: 298 },

@@ -208,6 +208,76 @@ export async function reportWorkflowUnit(input: ReportUnitInput): Promise<Workfl
 }
 
 async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<WorkflowReportResult> {
+  // Thin orchestrator over the five ordered phases the file header documents.
+  // The guards, SQL, ordering, and error paths are unchanged from the inlined
+  // barrier fn — each phase is a named top-level function below.
+  const loaded = await loadActiveReportStep(input);
+  const resolved = await resolveReportableUnit(loaded, input);
+  if (resolved.kind === "terminal") return resolved.result;
+  const ctx = resolved.ctx;
+
+  // ── running: claim / heartbeat, never advances the spine ───────────────────
+  if (input.status === "running") return reportRunningUnit(ctx);
+
+  // ── completed / failed: validate, guard, write, maybe finalize ─────────────
+  const written = await writeReportedUnit(ctx, input, input.status);
+  if (written.kind === "terminal") return written.result;
+  return finalizeReportedUnit(ctx, input, written);
+}
+
+// ── Report phases (§10.7 barrier-fn decomposition) ────────────────────────────
+
+/** Phase 1 output: the guarded, active run + its frozen plan + unit journal. */
+interface LoadedReportStep {
+  runId: string;
+  plan: WorkflowPlanGraph;
+  next: WorkflowNextResult;
+  units: WorkflowRunUnitRow[];
+  nowFn: () => Date;
+  nowIso: string;
+}
+
+/** The fully-resolved report target threaded through phases 3–5. */
+interface ReportContext {
+  runId: string;
+  plan: WorkflowPlanGraph;
+  state: WorkflowNextResult;
+  stepState: NonNullable<WorkflowNextResult["step"]>;
+  stepPlan: IrStepPlan;
+  workList: StepWorkList;
+  gateLoop: number;
+  priorEvidence: Record<string, Record<string, unknown> | undefined>;
+  unitRows: WorkflowRunUnitRow[];
+  workUnit: StepWorkUnit;
+  engineName: string;
+  exactModel: string | null;
+  inputHash: string;
+  journalId: string;
+  sensitiveValues: string[];
+  sessionId: string | undefined;
+  nowFn: () => Date;
+  nowIso: string;
+}
+
+/** Phase 2 outcome: a terminal result (the settle drove the run past all work), or the resolved unit context. */
+type ReportResolution = { kind: "terminal"; result: WorkflowReportResult } | { kind: "resolved"; ctx: ReportContext };
+
+/** Phase 4 outcome: a terminal step failure (budget ceiling), or a continuation into finalization. */
+type WritePhaseResult =
+  | { kind: "terminal"; result: WorkflowReportResult }
+  | {
+      kind: "continue";
+      idempotent: boolean;
+      status: Exclude<WorkflowRunUnitStatus, "pending" | "running">;
+      failureReason: string | null;
+    };
+
+/**
+ * Phase 1 — load the run's spine under the report guards: refuse a non-active
+ * run, refuse a live engine lease, require a current step, honor `--expect-step`,
+ * and re-assert the journaled params still satisfy the frozen param schemas.
+ */
+async function loadActiveReportStep(input: ReportUnitInput): Promise<LoadedReportStep> {
   const nowFn = input.now ?? (() => new Date());
   const nowIso = nowFn().toISOString();
 
@@ -260,20 +330,28 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   // and the tampered-params replay-divergence path).
   assertRunParamsSatisfyPlan(runId, plan, next.run.params ?? {});
 
-  // Resolve the step the driver should actually report against. If the spine is
-  // parked on a NON-DISPATCHING step — a route-only step, an empty fan-out
-  // (`over: []`), a step whose every unit is an unresolvable expression, or a
-  // whole-list resolution failure — the engine auto-completes or fails it: there
-  // is no `report --unit` that could ever advance it. So `report` first settles
-  // the spine past such steps (mutating exactly as the engine would, through the
-  // SAME shared completion path), then resolves the reported unit against the
-  // resting step. This is a no-op when the active step already has real
-  // reportable work (the common case) — no settle runs, nothing mutates.
+  return { runId, plan, next, units, nowFn, nowIso };
+}
+
+/**
+ * Phase 2 — resolve the unit the driver should report against. If the spine is
+ * parked on a NON-DISPATCHING step — a route-only step, an empty fan-out
+ * (`over: []`), a step whose every unit is an unresolvable expression, or a
+ * whole-list resolution failure — the engine auto-completes or fails it: there
+ * is no `report --unit` that could ever advance it. So `report` first settles
+ * the spine past such steps (mutating exactly as the engine would, through the
+ * SAME shared completion path), then resolves the reported unit against the
+ * resting step. This is a no-op when the active step already has real reportable
+ * work (the common case) — no settle runs, nothing mutates.
+ */
+async function resolveReportableUnit(loaded: LoadedReportStep, input: ReportUnitInput): Promise<ReportResolution> {
+  const { runId, plan, next, units, nowFn, nowIso } = loaded;
+
   let ctx = buildStepContext(runId, plan, next, units);
   if (!ctx.dispatching) {
     const settled = await settleSpine({ plan, runId, summaryJudge: input.summaryJudge });
     if (settled.done || settled.run.status !== "active" || !settled.step) {
-      return settledTerminalResult(input, settled);
+      return { kind: "terminal", result: settledTerminalResult(input, settled) };
     }
     const freshUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
     ctx = buildStepContext(runId, plan, settled, freshUnits);
@@ -313,88 +391,125 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   const sensitiveValues = await collectReportedUnitSensitiveValues(workUnit);
   const sessionId = input.sessionId === undefined ? undefined : redactSensitiveText(input.sessionId, sensitiveValues);
 
-  // ── running: claim / heartbeat, never advances the spine ───────────────────
-  if (input.status === "running") {
-    // The claim holder: the driver's --session-id, else a token we mint and
-    // return so the driver can reuse it (as --session-id) to heartbeat and
-    // finish the SAME claim. First unexpired claim wins.
-    const holder = sessionId ?? `claim:${randomUUID()}`;
-    const claimExpiresAt = new Date(nowFn().getTime() + CLAIM_TTL_MS).toISOString();
-    const claimed = await withWorkflowRunsRepo((repo) =>
-      repo.transaction((): "claim" | "heartbeat" => {
-        const existing = repo.getUnit(runId, journalId);
-        if (existing && (existing.status === "completed" || existing.status === "failed")) {
-          throw new UsageError(
-            `Unit "${journalId}" of run ${runId} is already ${existing.status} — cannot claim a terminal unit as ` +
-              `running. Report a fresh result with --status completed|failed, or start a new run to redo it.`,
-          );
-        }
-        if (existing) {
-          // Stale-hash guard (#3): a running row whose recorded input_hash no
-          // longer matches the recomputed one is a replay divergence (a
-          // tampered/stale claim under a frozen plan) — refuse to heartbeat it.
-          assertNoHashDivergence(existing, inputHash, runId, journalId);
-          // Compare-and-set the claim owner: a LIVE claim held by a DIFFERENT
-          // holder blocks reclaim; an expired one (or a claim already ours) is
-          // (re)claimable. First unexpired claim wins (crash recovery on expiry).
-          assertClaimHeldByOrFree(existing, holder, nowIso, runId, journalId, "heartbeat");
-          repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
-          return "heartbeat";
-        }
-        repo.insertUnit({
-          runId,
-          unitId: journalId,
-          stepId: stepState.id,
-          nodeId: workUnit.nodeId,
-          parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
-          phase: null,
-          runner: workUnit.runner,
-          engine: engineName,
-          model: exactModel,
-          inputHash,
-          startedAt: nowIso,
-          claimHolder: holder,
-          claimExpiresAt,
-        });
-        repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
-        return "claim";
-      }),
-    );
-    appendEvent({
-      eventType: "workflow_unit_started",
-      ref: state.run.workflowRef,
-      metadata: { runId, stepId: stepState.id, unitId: journalId, status: "running" },
-    });
-    const remaining = countRemaining(workList.units, unitRows, journalId, "running");
-    return {
-      ok: true,
+  return {
+    kind: "resolved",
+    ctx: {
       runId,
-      stepId: stepState.id,
-      unitId: journalId,
-      status: "running",
+      plan,
+      state,
+      stepState,
+      stepPlan,
+      workList,
       gateLoop,
-      recorded: "heartbeat",
-      remainingUnits: remaining,
-      runStatus: state.run.status,
-      claim: { holder, expiresAt: claimExpiresAt },
-      message:
-        claimed === "claim"
-          ? `Claimed unit "${journalId}" of step "${stepState.id}" as ${holder} (until ${claimExpiresAt}). ` +
-            `Reuse --session-id ${holder} to heartbeat, then report the result.`
-          : `Heartbeat recorded for unit "${journalId}" of step "${stepState.id}" (claim ${holder} extended to ${claimExpiresAt}).`,
-    };
-  }
+      priorEvidence,
+      unitRows,
+      workUnit,
+      engineName,
+      exactModel,
+      inputHash,
+      journalId,
+      sensitiveValues,
+      sessionId,
+      nowFn,
+      nowIso,
+    },
+  };
+}
 
-  // ── completed / failed: validate, guard, write, maybe finalize ─────────────
+/**
+ * Phase 3 — the `running` claim / heartbeat. Mints or refreshes the unit's
+ * claim under the same compare-and-set + stale-hash guards the finish path uses,
+ * and never advances the spine.
+ */
+async function reportRunningUnit(ctx: ReportContext): Promise<WorkflowReportResult> {
+  const { runId, state, stepState, workList, gateLoop, unitRows, workUnit, engineName, exactModel, inputHash } = ctx;
+  const { journalId, sessionId, nowFn, nowIso } = ctx;
+  // The claim holder: the driver's --session-id, else a token we mint and
+  // return so the driver can reuse it (as --session-id) to heartbeat and
+  // finish the SAME claim. First unexpired claim wins.
+  const holder = sessionId ?? `claim:${randomUUID()}`;
+  const claimExpiresAt = new Date(nowFn().getTime() + CLAIM_TTL_MS).toISOString();
+  const claimed = await withWorkflowRunsRepo((repo) =>
+    repo.transaction((): "claim" | "heartbeat" => {
+      const existing = repo.getUnit(runId, journalId);
+      if (existing && (existing.status === "completed" || existing.status === "failed")) {
+        throw new UsageError(
+          `Unit "${journalId}" of run ${runId} is already ${existing.status} — cannot claim a terminal unit as ` +
+            `running. Report a fresh result with --status completed|failed, or start a new run to redo it.`,
+        );
+      }
+      if (existing) {
+        // Stale-hash guard (#3): a running row whose recorded input_hash no
+        // longer matches the recomputed one is a replay divergence (a
+        // tampered/stale claim under a frozen plan) — refuse to heartbeat it.
+        assertNoHashDivergence(existing, inputHash, runId, journalId);
+        // Compare-and-set the claim owner: a LIVE claim held by a DIFFERENT
+        // holder blocks reclaim; an expired one (or a claim already ours) is
+        // (re)claimable. First unexpired claim wins (crash recovery on expiry).
+        assertClaimHeldByOrFree(existing, holder, nowIso, runId, journalId, "heartbeat");
+        repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
+        return "heartbeat";
+      }
+      repo.insertUnit({
+        runId,
+        unitId: journalId,
+        stepId: stepState.id,
+        nodeId: workUnit.nodeId,
+        parentUnitId: workUnit.isFanOut ? `${stepState.id}.map` : null,
+        phase: null,
+        runner: workUnit.runner,
+        engine: engineName,
+        model: exactModel,
+        inputHash,
+        startedAt: nowIso,
+        claimHolder: holder,
+        claimExpiresAt,
+      });
+      repo.updateUnitClaim(runId, journalId, holder, claimExpiresAt, nowIso);
+      return "claim";
+    }),
+  );
+  appendEvent({
+    eventType: "workflow_unit_started",
+    ref: state.run.workflowRef,
+    metadata: { runId, stepId: stepState.id, unitId: journalId, status: "running" },
+  });
+  const remaining = countRemaining(workList.units, unitRows, journalId, "running");
+  return {
+    ok: true,
+    runId,
+    stepId: stepState.id,
+    unitId: journalId,
+    status: "running",
+    gateLoop,
+    recorded: "heartbeat",
+    remainingUnits: remaining,
+    runStatus: state.run.status,
+    claim: { holder, expiresAt: claimExpiresAt },
+    message:
+      claimed === "claim"
+        ? `Claimed unit "${journalId}" of step "${stepState.id}" as ${holder} (until ${claimExpiresAt}). ` +
+          `Reuse --session-id ${holder} to heartbeat, then report the result.`
+        : `Heartbeat recorded for unit "${journalId}" of step "${stepState.id}" (claim ${holder} extended to ${claimExpiresAt}).`,
+  };
+}
+
+/**
+ * Phase 4 — the guarded completed/failed write. The idempotent re-report /
+ * replay-divergence check and the budget ceiling are evaluated INSIDE the same
+ * SQLite transaction as the insert+finish, so two concurrent reports serialize
+ * on the write lock. A crossed ceiling fails the step hard (terminal result);
+ * otherwise the write continues into the finalization decision.
+ */
+async function writeReportedUnit(
+  ctx: ReportContext,
+  input: ReportUnitInput,
+  status: Exclude<WorkflowRunUnitStatus, "pending" | "running">,
+): Promise<WritePhaseResult> {
+  const { runId, plan, state, stepState, gateLoop, workUnit, engineName, exactModel } = ctx;
+  const { inputHash, journalId, sensitiveValues, sessionId, nowIso } = ctx;
   const { resultJson, failureReason } = prepareResult(input, workUnit, sensitiveValues);
   const thisTokens = input.tokens ?? 0;
-
-  // Guarded write: the idempotent re-report / replay-divergence check and the
-  // budget ceiling are evaluated INSIDE the same SQLite transaction as the
-  // insert+finish, so two concurrent reports (same unit, or different units of
-  // one budgeted step) serialize on the write lock — each sees the other's row
-  // and the row is always internally consistent.
-  const status: Exclude<WorkflowRunUnitStatus, "pending" | "running"> = input.status;
   const holder = sessionId ?? null;
   const writeResult = await withWorkflowRunsRepo((repo) =>
     repo.transaction((): UnitWriteOutcome => {
@@ -505,7 +620,10 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   // (budget ceilings ignore on_error), so the run reaches the engine's terminal
   // FAILED state rather than getting permanently stuck (peer review R3).
   if (writeResult.kind === "budget-refused") {
-    return failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, false);
+    return {
+      kind: "terminal",
+      result: await failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, false),
+    };
   }
 
   // Events carry ids/status only — never workflow-authored content. Emitted only
@@ -531,10 +649,33 @@ async function reportWorkflowUnitWithBarrier(input: ReportUnitInput): Promise<Wo
   // Budget TOKEN crossing: the row is written; fail the step hard naming the
   // ceiling (same terminal state as the engine's addTokens abort).
   if (writeResult.kind === "budget-tokens") {
-    return failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, true);
+    return {
+      kind: "terminal",
+      result: await failStepOnBudget(runId, stepState.id, journalId, status, gateLoop, writeResult.message, true),
+    };
   }
 
-  const idempotent = writeResult.kind === "idempotent";
+  return { kind: "continue", idempotent: writeResult.kind === "idempotent", status, failureReason };
+}
+
+/**
+ * Phase 5 — the shared step-finalization decision. Re-reads the journal so a
+ * concurrent sibling report is observed, fails-fast under `on_error: fail`,
+ * short-circuits a crash-recovering idempotent re-report whose step already
+ * advanced, and otherwise runs the shared completion path.
+ */
+async function finalizeReportedUnit(
+  ctx: ReportContext,
+  input: ReportUnitInput,
+  written: {
+    idempotent: boolean;
+    status: Exclude<WorkflowRunUnitStatus, "pending" | "running">;
+    failureReason: string | null;
+  },
+): Promise<WorkflowReportResult> {
+  const { runId, plan, state, stepState, stepPlan, workList, gateLoop, priorEvidence, workUnit, journalId, nowFn } =
+    ctx;
+  const { idempotent, status, failureReason } = written;
 
   // Is the step's work-list now fully terminal? Re-read the journal so a
   // concurrent report of a sibling unit is observed. Unresolvable units are
@@ -768,26 +909,25 @@ async function settleWorkflowSpineWithBarrier(input: {
     });
   }
 
-  // Finalize CAS: claim the engine lease as a short-lived settle lock, thread the
-  // holder through the settle so its `completeWorkflowStep` calls pass the
-  // single-driver guard, and release it in `finally`.
-  const holder = `report-settle:${randomUUID()}`;
-  const nowIso = nowFn().toISOString();
-  const lockExpiry = new Date(nowFn().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
-  const acquired = await withWorkflowRunsRepo((repo) => repo.acquireEngineLease(runId, holder, lockExpiry, nowIso));
-  if (!acquired) {
-    // A concurrent finalizer/settler holds the lock; report the fresh spine state
-    // as idempotent success rather than racing it.
-    const fresh = await getNextWorkflowStep(runId);
-    return settleVerbResult(runId, fresh, `A concurrent driver is settling run ${runId}`);
-  }
-  let settled: WorkflowNextResult;
-  try {
-    settled = await settleSpine({ plan, runId, summaryJudge: input.summaryJudge, leaseHolder: holder });
-  } finally {
-    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(runId, holder));
-  }
-  return settleVerbResult(runId, settled);
+  // Finalize CAS: claim the engine lease as a short-lived settle lock (the shared
+  // {@link withFinalizeLock}), thread the holder through the settle so its
+  // `completeWorkflowStep` calls pass the single-driver guard, and release it in
+  // `finally`.
+  return withFinalizeLock({
+    runId,
+    holderPrefix: "report-settle",
+    now: nowFn,
+    onContended: async () => {
+      // A concurrent finalizer/settler holds the lock; report the fresh spine
+      // state as idempotent success rather than racing it.
+      const fresh = await getNextWorkflowStep(runId);
+      return settleVerbResult(runId, fresh, `A concurrent driver is settling run ${runId}`);
+    },
+    run: async (holder) => {
+      const settled = await settleSpine({ plan, runId, summaryJudge: input.summaryJudge, leaseHolder: holder });
+      return settleVerbResult(runId, settled);
+    },
+  });
 }
 
 /** Shape a `--settle` outcome as a (unit-less) report result. */
@@ -1036,6 +1176,45 @@ async function runStepCompletion(args: {
   return { kind: "advanced" };
 }
 
+/**
+ * The finalize-lock boundary (W2 finalize-lock split, §10.7). Claims the run's
+ * engine lease as a short-lived lock through the SAME atomic single-UPDATE CAS
+ * primitive (`acquireEngineLease`) so exactly ONE reporter runs a step's
+ * completion, threads the lock holder into the locked body, and releases the
+ * lease in `finally`. On a failed acquire the caller's `onContended` result is
+ * returned WITHOUT holding or releasing any lock. Sole owner of the
+ * lease-as-lock lifecycle for both the report finalize path ({@link finalizeStep})
+ * and the standalone `--settle` verb ({@link settleWorkflowSpineWithBarrier}).
+ */
+async function withFinalizeLock<T>(args: {
+  runId: string;
+  /** Lock-holder namespace, e.g. `report-finalize` / `report-settle`. */
+  holderPrefix: string;
+  now: () => Date;
+  /** Produced when the lease is already held by a concurrent finalizer/settler. */
+  onContended: () => Promise<T>;
+  /** The locked body; receives the minted lock holder to thread through completions. */
+  run: (holder: string) => Promise<T>;
+}): Promise<T> {
+  const holder = `${args.holderPrefix}:${randomUUID()}`;
+  const nowIso = args.now().toISOString();
+  const lockExpiry = new Date(args.now().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
+  const acquired = await withWorkflowRunsRepo((repo) =>
+    repo.acquireEngineLease(args.runId, holder, lockExpiry, nowIso),
+  );
+  if (!acquired) return args.onContended();
+  try {
+    return await args.run(holder);
+  } finally {
+    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(args.runId, holder));
+  }
+}
+
+/** The locked-body outcome for {@link finalizeStep}: an early result, or the step completion to branch on. */
+type LockedFinalize =
+  | { kind: "result"; result: WorkflowReportResult }
+  | { kind: "completion"; completion: StepCompletion };
+
 async function finalizeStep(args: {
   runId: string;
   next: WorkflowNextResult;
@@ -1062,63 +1241,65 @@ async function finalizeStep(args: {
   // Two reporters that both observe the work-list fully terminal would otherwise
   // BOTH run the completion path — double-judging the gate, journaling duplicate
   // gate rows, racing `completeWorkflowStep`. Claim the run's engine lease as a
-  // short-lived finalize lock (the same atomic single-UPDATE primitive the engine
-  // uses): exactly one reporter wins. The loser (failed acquire) never runs the
-  // judge; it re-reads the spine and returns the winner's outcome as idempotent
-  // success — never a raw throw after useful work. `completeWorkflowStep`'s own
-  // transactional CAS remains the ultimate arbiter of the single spine advance.
-  const finalizeHolder = `report-finalize:${randomUUID()}`;
-  const nowIso = args.now().toISOString();
-  const lockExpiry = new Date(args.now().getTime() + FINALIZE_LOCK_TTL_MS).toISOString();
-  const acquired = await withWorkflowRunsRepo((repo) =>
-    repo.acquireEngineLease(runId, finalizeHolder, lockExpiry, nowIso),
-  );
-  if (!acquired) {
-    // A concurrent finalizer holds the lock; it will advance the step exactly
-    // once. Return idempotent success reflecting the freshest spine state.
-    return contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded);
-  }
+  // short-lived finalize lock (the shared {@link withFinalizeLock} over the same
+  // atomic single-UPDATE primitive the engine uses): exactly one reporter wins.
+  // The loser (failed acquire) never runs the judge; it re-reads the spine and
+  // returns the winner's outcome as idempotent success — never a raw throw after
+  // useful work. `completeWorkflowStep`'s own transactional CAS remains the
+  // ultimate arbiter of the single spine advance. The lock is released before the
+  // trailing settle/messaging below runs its own (unlocked) `completeWorkflowStep`
+  // calls for downstream non-dispatching steps.
+  const locked = await withFinalizeLock<LockedFinalize>({
+    runId,
+    holderPrefix: "report-finalize",
+    now: args.now,
+    onContended: async () => ({
+      // A concurrent finalizer holds the lock; it will advance the step exactly
+      // once. Return idempotent success reflecting the freshest spine state.
+      kind: "result",
+      result: await contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded),
+    }),
+    run: async (finalizeHolder) => {
+      // Under the lock, re-read the spine: a PRIOR finalizer may have already
+      // advanced this step (a sequential race — both reporters saw the work-list
+      // terminal, the first finished before this one acquired). If so, skip
+      // re-completion and report idempotent success — the step is done.
+      const fresh = await getNextWorkflowStep(runId);
+      if (fresh.run.status !== "active" || fresh.step?.id !== stepState.id) {
+        return {
+          kind: "result",
+          result: await contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded, fresh),
+        };
+      }
 
-  let completion: StepCompletion;
+      const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
+      // Route/skip bookkeeping seeded from the journal so cascaded skips survive
+      // (identical to the engine's resume seeding).
+      const routeSelected = new Set<string>();
+      const routeUnselected = new Map<string, RouteSkipInfo>();
+      seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
+
+      const completion = await runStepCompletion({
+        runId,
+        workflowRef: next.run.workflowRef,
+        stepPlan,
+        stepId: stepState.id,
+        completionCriteria: stepPlan.gate.criteria,
+        gateLoop,
+        reduced,
+        priorEvidence: args.priorEvidence,
+        params: next.run.params ?? {},
+        routeSelected,
+        routeUnselected,
+        summaryJudge: args.summaryJudge,
+        leaseHolder: finalizeHolder,
+      });
+      return { kind: "completion", completion };
+    },
+  });
+  if (locked.kind === "result") return locked.result;
+  const completion = locked.completion;
   const maxLoops = Math.max(1, stepPlan.gate.maxLoops ?? 1);
-  try {
-    // Under the lock, re-read the spine: a PRIOR finalizer may have already
-    // advanced this step (a sequential race — both reporters saw the work-list
-    // terminal, the first finished before this one acquired). If so, skip
-    // re-completion and report idempotent success — the step is done.
-    const fresh = await getNextWorkflowStep(runId);
-    if (fresh.run.status !== "active" || fresh.step?.id !== stepState.id) {
-      return contendedFinalizeResult(runId, stepState, args.written, gateLoop, recorded, fresh);
-    }
-
-    const reduced = reduceWorkListOutcomes(stepPlan, workList, byUnit);
-    // Route/skip bookkeeping seeded from the journal so cascaded skips survive
-    // (identical to the engine's resume seeding).
-    const routeSelected = new Set<string>();
-    const routeUnselected = new Map<string, RouteSkipInfo>();
-    seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
-
-    completion = await runStepCompletion({
-      runId,
-      workflowRef: next.run.workflowRef,
-      stepPlan,
-      stepId: stepState.id,
-      completionCriteria: stepPlan.gate.criteria,
-      gateLoop,
-      reduced,
-      priorEvidence: args.priorEvidence,
-      params: next.run.params ?? {},
-      routeSelected,
-      routeUnselected,
-      summaryJudge: args.summaryJudge,
-      leaseHolder: finalizeHolder,
-    });
-  } finally {
-    // Release the finalize lock before the trailing settle/messaging below runs
-    // its own (unlocked) `completeWorkflowStep` calls for downstream
-    // non-dispatching steps.
-    await withWorkflowRunsRepo((repo) => repo.releaseEngineLease(runId, finalizeHolder));
-  }
 
   if (completion.kind === "failed") {
     const state = await getNextWorkflowStep(runId);
