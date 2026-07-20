@@ -37,7 +37,7 @@ describe("parseTaskDocument", () => {
     expect(task.enabled).toBe(true);
     expect(task.target.kind).toBe("workflow");
     if (task.target.kind === "workflow") {
-      expect(task.target.ref).toBe("workflows/daily-backup");
+      expect(task.target.ref).toBe("workflow:daily-backup");
       expect(task.target.params).toEqual({ region: "us-east-1" });
     }
     expect(task.tags).toEqual(["scheduled", "backup"]);
@@ -292,7 +292,7 @@ describe("parseTaskDocument", () => {
       filePath: "/stash/tasks/workflow.yml",
       id: "workflow",
     });
-    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflows/backup", params: { region: "us" } });
+    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflow:backup", params: { region: "us" } });
   });
 
   test("preserves the permissive 0.8 field contract without weakening v2", () => {
@@ -315,7 +315,7 @@ describe("parseTaskDocument", () => {
       filePath: "/stash/tasks/workflow.yml",
       id: "workflow",
     });
-    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflows/backup", params: {} });
+    expect(workflow.target).toEqual({ kind: "workflow", ref: "workflow:backup", params: {} });
   });
 
   test("rejects unknown future task schema versions", () => {
