@@ -1,6 +1,7 @@
 # Chunk 10 — execution ledger
 
-Status: CLOSING (2026-07-20). Chunk: "Contract-surface + docs/assets sweep"
+Status: CLOSED (2026-07-20). CI fully green at e822d09e — check (lint+tsc+unit+integration,
+sharded, slow-inclusive) + node-smoke (22, 24) + smoke + actionlint. Chunk: "Contract-surface + docs/assets sweep"
 (manifest id 10, plan §16/§7.3, D28, normative §29). Executed as a six-lane
 Opus workflow (path-disjoint mandates) with orchestrator verification; two
 lanes lost only their structured report emission (retry cap) — their tree work
