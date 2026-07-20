@@ -598,7 +598,7 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
   const copied: Record<string, number> = {};
   const db = openDatabase(opts.statePath);
   try {
-    applyStandardPragmas(db, { dataDir: path.dirname(opts.statePath) });
+    db.exec("PRAGMA busy_timeout = 30000");
 
     if (cutoverAlreadyMerged(db)) {
       return { merged: false, workflowMissing: !fs.existsSync(opts.workflowPath), copied };
@@ -649,6 +649,19 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
       // DETACH must happen OUTSIDE any transaction (an in-txn DETACH fails).
       if (oldIndexExists) safeDetach(db, "oldidx");
       if (workflowExists) safeDetach(db, "wf");
+    }
+
+    // Flush the WAL into the main file and truncate the sidecar to 0 bytes: the
+    // migration generation fingerprint tracks state.db + its `-wal`/`-shm`
+    // sidecars, and an uncheckpointed WAL is moved into the main file by the next
+    // read-only inspect/resume open, desyncing the fingerprint and tripping the
+    // "does not match the exact live artifact generation" guard. No-op when the
+    // DB is not in WAL mode. The journal mode is left UNCHANGED (converting it
+    // can lock a contended WAL db).
+    try {
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      // Not in WAL mode / nothing to checkpoint.
     }
 
     return { merged: true, workflowMissing: !workflowExists, copied, rekey };

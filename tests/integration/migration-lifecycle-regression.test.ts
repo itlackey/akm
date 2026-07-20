@@ -26,7 +26,7 @@ import { _setAfterPendingOperationCheckHookForTests } from "../../src/core/migra
 import { getConfigPath, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
-import { openWorkflowDatabase, WORKFLOW_MIGRATIONS } from "../../src/workflows/db";
+import { openWorkflowDatabase } from "../../src/workflows/db";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -559,7 +559,7 @@ describe("migration lifecycle regressions", () => {
     expect(inspectMigrationState()).toMatchObject({
       config: { status: "current" },
       state: { status: "current" },
-      workflow: { status: "current" },
+      workflow: { status: "missing" }, // deleted by the three-DB cutover
     });
     expect(
       fs.readdirSync(getMigrationBackupRoot(), { withFileTypes: true }).filter((entry) => entry.isDirectory()),
@@ -570,7 +570,7 @@ describe("migration lifecycle regressions", () => {
     expect(inspectMigrationState()).toMatchObject({
       config: { status: "current" },
       state: { status: "current" },
-      workflow: { status: "current" },
+      workflow: { status: "missing" }, // deleted by the three-DB cutover
     });
   });
 
@@ -614,24 +614,23 @@ describe("migration lifecycle regressions", () => {
 
     const applied = await runCliCapture(["migrate", "apply"]);
     expect(applied.code, applied.stderr).toBe(0);
-    expect(inspectMigrationState()).toMatchObject({ state: { status: "current" }, workflow: { status: "current" } });
-    for (const [dbPath, count] of [
-      [getStateDbPathInDataDir(), STATE_MIGRATIONS.length],
-      [getWorkflowDbPath(), WORKFLOW_MIGRATIONS.length],
-    ] as const) {
-      const db = new Database(dbPath, { readonly: true });
-      try {
-        expect(
-          (
-            db.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE checksum IS NOT NULL").get() as {
-              count: number;
-            }
-          ).count,
-        ).toBe(count);
-      } finally {
-        db.close();
-      }
+    expect(inspectMigrationState()).toMatchObject({ state: { status: "current" }, workflow: { status: "missing" } });
+    // state.db seals its whole ledger (incl. the cutover migration 020); the
+    // three-DB cutover then DELETES workflow.db (its rows merged into state.db),
+    // so there is no longer a workflow.db ledger to seal.
+    const state = new Database(getStateDbPathInDataDir(), { readonly: true });
+    try {
+      expect(
+        (
+          state.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE checksum IS NOT NULL").get() as {
+            count: number;
+          }
+        ).count,
+      ).toBe(STATE_MIGRATIONS.length);
+    } finally {
+      state.close();
     }
+    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
     expect(fs.existsSync(getMigrationBackupRoot())).toBe(true);
   });
 

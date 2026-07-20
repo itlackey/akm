@@ -4,6 +4,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   MAX_CONFIG_FILE_BYTES,
@@ -39,8 +40,16 @@ import {
   sameMigrationGeneration,
   verifyMigrationBackup,
 } from "../core/migration-backup";
-import { getConfigPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../core/paths";
+import { getConfigPath, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
+import {
+  buildCutoverRefMap,
+  type CutoverStashRoot,
+  cutoverMergeCommitted,
+  deleteWorkflowDb,
+  quarantineIndexDb,
+  runThreeDbCutover,
+} from "../migrate/legacy/three-db-cutover";
 import { openDatabase } from "../storage/database";
 import { runMigrations as runWorkflowMigrations } from "../workflows/db";
 import { EXIT_CODES } from "./shared";
@@ -72,6 +81,9 @@ type ApplyPhase =
   | "prepared"
   | "state-applied"
   | "workflow-applied"
+  // Chunk 8, WI-8.2: the three-DB merge data step. Inserted AFTER workflow-applied
+  // (the merge needs workflow.db already rolled to 010) and BEFORE config-applied.
+  | "cutover-applied"
   | "config-applied"
   | "rollback-prepared"
   | "committed";
@@ -199,8 +211,12 @@ function detectAdjacentGeneration(
     };
   }
   const expectedTarget = `${JSON.stringify(journal.targetConfig, null, 2)}\n`;
+  // Chunk 8, WI-8.2: config is written in the phase AFTER the cutover, so a crash
+  // in the config mutation gap leaves the journal at `cutover-applied` with the
+  // config already on disk. state (merged) + workflow (deleted) are unchanged
+  // since the cutover-applied advance — detect the config-applied adjacent.
   if (
-    journal.phase === "workflow-applied" &&
+    (journal.phase === "workflow-applied" || journal.phase === "cutover-applied") &&
     unchanged("state", "workflow") &&
     fs.existsSync(getConfigPath()) &&
     readTextFileWithLimit(getConfigPath(), MAX_CONFIG_FILE_BYTES, "Config file") === expectedTarget
@@ -218,8 +234,11 @@ function assertRollbackTransitionAllowed(journal: ApplyJournal, current: Migrati
       ? (["config", "workflow"] as const)
       : journal.phase === "state-applied"
         ? (["config", "state"] as const)
-        : journal.phase === "workflow-applied"
-          ? (["state", "workflow"] as const)
+        : journal.phase === "workflow-applied" || journal.phase === "cutover-applied"
+          ? // config is applied in the phase after the cutover, so a rollback from
+            // either only needs state + workflow unchanged (workflow=deleted is
+            // recorded in the journal's own generation and compares equal).
+            (["state", "workflow"] as const)
           : (["config", "state", "workflow"] as const);
   for (const name of unchanged) {
     if (!sameArtifactFingerprint(journal.generation[name], current[name])) {
@@ -262,6 +281,11 @@ function validateApplyPhase(journal: ApplyJournal, manifest: MigrationBackupMani
   const workflowApplied = manifest.artifacts["workflow.db"].present
     ? live.workflow.status === "current"
     : live.workflow.status === "missing";
+  // Chunk 8, WI-8.2: at/after the cutover, workflow.db is DELETED (its rows are
+  // merged into state.db). A backed-up-present workflow.db that is now missing is
+  // the intended post-cutover terminal state, not a failure.
+  const workflowDeleted = manifest.artifacts["workflow.db"].present && live.workflow.status === "missing";
+  const workflowFinal = workflowApplied || workflowDeleted;
   const expectedTarget = `${JSON.stringify(journal.targetConfig, null, 2)}\n`;
   const configApplied =
     live.config.status === "current" &&
@@ -277,7 +301,10 @@ function validateApplyPhase(journal: ApplyJournal, manifest: MigrationBackupMani
           ? stateApplied && configOriginal && (workflowOriginal || workflowApplied)
           : journal.phase === "workflow-applied"
             ? stateApplied && workflowApplied && (configOriginal || configApplied)
-            : stateApplied && workflowApplied && configApplied;
+            : journal.phase === "cutover-applied"
+              ? stateApplied && workflowFinal && (configOriginal || configApplied)
+              : // config-applied / committed
+                stateApplied && workflowFinal && configApplied;
   if (!reachable) {
     throw new ConfigError(
       `Migration apply journal phase ${journal.phase} does not match a reachable config/state/workflow artifact state.`,
@@ -304,6 +331,7 @@ function readApplyJournal(): {
       "prepared",
       "state-applied",
       "workflow-applied",
+      "cutover-applied",
       "config-applied",
       "rollback-prepared",
       "committed",
@@ -405,7 +433,14 @@ function writeApplyJournal(journal: ApplyJournal): void {
 }
 
 function advanceApplyJournal(journal: ApplyJournal, phase: ApplyPhase): void {
-  const order: ApplyPhase[] = ["prepared", "state-applied", "workflow-applied", "config-applied", "committed"];
+  const order: ApplyPhase[] = [
+    "prepared",
+    "state-applied",
+    "workflow-applied",
+    "cutover-applied",
+    "config-applied",
+    "committed",
+  ];
   if (order.indexOf(phase) > order.indexOf(journal.phase)) journal.phase = phase;
   journal.generation = fingerprintMigrationGeneration();
   writeApplyJournal(journal);
@@ -425,12 +460,82 @@ function clearApplyJournal(): void {
   }
 }
 
-function crashAfterForTests(phase: "state" | "workflow" | "config"): void {
+function crashAfterForTests(phase: "state" | "workflow" | "cutover" | "config"): void {
   if (process.env.AKM_TEST_MIGRATION_CRASH_AFTER === phase) process.kill(process.pid, "SIGKILL");
 }
 
-function crashInMutationGapForTests(phase: "state" | "workflow" | "config" | "rollback"): void {
+function crashInMutationGapForTests(phase: "state" | "workflow" | "cutover" | "config" | "rollback"): void {
   if (process.env.AKM_TEST_MIGRATION_CRASH_GAP === phase) process.kill(process.pid, "SIGKILL");
+}
+
+/** Expand a leading `~` against the home directory (config stashDir/source paths may use it). */
+function expandTilde(p: string): string {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+/**
+ * Best-effort stash roots for the cutover ref map's origin aliases + source-(b)
+ * walk, derived from the target config. The primary is `stashDir`; named
+ * filesystem sources contribute their `name` as the registryId. Source (a) (the
+ * index `item_ref` join) is authoritative, so an unresolved root only costs a
+ * few origin aliases.
+ */
+function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
+  const roots: CutoverStashRoot[] = [];
+  try {
+    if (typeof config.stashDir === "string" && config.stashDir.length > 0) {
+      roots.push({ path: path.resolve(expandTilde(config.stashDir)), primary: true });
+    }
+    for (const source of config.sources ?? []) {
+      const type = (source as { type?: string }).type;
+      const sourcePath = (source as { path?: string }).path;
+      const name = (source as { name?: string }).name;
+      if ((type === "filesystem" || type === undefined) && typeof sourcePath === "string" && sourcePath.length > 0) {
+        roots.push({ path: path.resolve(expandTilde(sourcePath)), registryId: name });
+      }
+    }
+  } catch {
+    // Best-effort — see the doc comment.
+  }
+  return roots;
+}
+
+/**
+ * The `cutover-applied` phase (Chunk 8, WI-8.2). Builds + persists the
+ * old-ref → item_ref map, runs the fail-closed three-DB merge/re-key
+ * transaction, then the idempotent index-quarantine / workflow.db-unlink
+ * boundary ops. A committed merge marker (from an interrupted-then-resumed
+ * apply) short-circuits the merge so it runs exactly once.
+ */
+function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
+  const statePath = getStateDbPathInDataDir();
+  const workflowPath = getWorkflowDbPath();
+  const indexPath = getDbPath();
+
+  if (!cutoverMergeCommitted(statePath)) {
+    const mapPath = path.join(
+      path.dirname(getMigrationApplyJournalPath()),
+      `cutover-refmap-${journal.operationId}.json`,
+    );
+    const refMap = buildCutoverRefMap({
+      oldIndexDbPath: indexPath,
+      stashRoots: cutoverStashRootsFromConfig(target),
+      mapOutputPath: mapPath,
+    });
+    // Fail-closed: an integrity failure (unparseable ref / row-count mismatch)
+    // throws a CutoverIntegrityError, which the outer catch converts to a
+    // restore-from-backup. The state txn is atomic — a throw rolls it back, so
+    // state.db + workflow.db are unchanged going into the rollback.
+    runThreeDbCutover({ refMap, operationId: journal.operationId, statePath, workflowPath, oldIndexPath: indexPath });
+  }
+
+  // Boundary ops run AFTER the committed state txn, OUTSIDE the fail-closed gate
+  // (cutover-design.md §2 step 5/6). Idempotent + best-effort — they log and
+  // return, never throw, so a rename/unlink hiccup never rolls back the merge.
+  quarantineIndexDb(journal.operationId, indexPath);
+  deleteWorkflowDb(workflowPath);
 }
 
 function unsafeArtifact(name: string, state: MigrationArtifactState): string | undefined {
@@ -667,6 +772,19 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
             throw new ConfigError(`Migration left ${name} in ${state.status} state.`, "INVALID_CONFIG_FILE");
           }
         }
+
+        // Chunk 8, WI-8.2: the three-DB merge data step. workflow.db is now at 010
+        // and state.db at 020 (its cutover DDL applied by state-applied), so the
+        // merge target tables exist and the source is healthy. The fail-closed
+        // parts (ref-map build + the ATTACH merge/re-key transaction) run inside
+        // this try — an integrity failure rolls back to restore. The idempotent
+        // boundary ops (index quarantine, workflow.db unlink) run AFTER the
+        // committed state txn and never throw.
+        runCutoverStep(journal, target);
+        crashInMutationGapForTests("cutover");
+        advanceApplyJournal(journal, "cutover-applied");
+        crashAfterForTests("cutover");
+
         backupExistingConfig(getConfigPath());
         writeConfigAtomic(getConfigPath(), sanitizeConfigForWrite(target));
         resetConfigCache();

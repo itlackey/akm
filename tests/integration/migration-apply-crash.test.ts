@@ -116,7 +116,12 @@ function seed(options?: { failingWorkflow?: boolean }): string {
 }
 
 describe("cross-artifact migration apply crash recovery", () => {
-  for (const phase of ["state", "workflow", "config"] as const) {
+  // Chunk 8, WI-8.2: "cutover" is the three-DB merge phase, inserted after
+  // workflow-applied. A SIGKILL right after it advances resumes cleanly through
+  // config → committed. After the cutover, workflow.db is DELETED (its rows are
+  // merged into state.db), so the post-apply workflow artifact status is
+  // "missing" — the intended terminal state, not a failure.
+  for (const phase of ["state", "workflow", "cutover", "config"] as const) {
     test(`resumes after SIGKILL between ${phase} and the next apply step`, async () => {
       const prepared = seed();
       const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
@@ -145,7 +150,7 @@ describe("cross-artifact migration apply crash recovery", () => {
       expect(inspectMigrationState()).toMatchObject({
         config: { status: "current" },
         state: { status: "current" },
-        workflow: { status: "current" },
+        workflow: { status: "missing" }, // deleted by the three-DB cutover
       });
       expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
     }, 20_000);
@@ -161,8 +166,10 @@ describe("cross-artifact migration apply crash recovery", () => {
         stderr: "pipe",
       });
       await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      // Chunk 8, WI-8.2: config is written in the phase AFTER the cutover, so the
+      // config mutation gap now sits at journal phase "cutover-applied".
       const previousPhase =
-        phase === "state" ? "prepared" : phase === "workflow" ? "state-applied" : "workflow-applied";
+        phase === "state" ? "prepared" : phase === "workflow" ? "state-applied" : "cutover-applied";
       expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")).phase).toBe(previousPhase);
 
       const resumed = await runCliCapture(["migrate", "apply"]);
@@ -170,7 +177,7 @@ describe("cross-artifact migration apply crash recovery", () => {
       expect(inspectMigrationState()).toMatchObject({
         config: { status: "current" },
         state: { status: "current" },
-        workflow: { status: "current" },
+        workflow: { status: "missing" }, // deleted by the three-DB cutover
       });
       expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
     }, 20_000);
