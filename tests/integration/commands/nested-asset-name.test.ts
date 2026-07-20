@@ -169,7 +169,7 @@ describe("akm workflow create — --path", () => {
     const result = await runCli(["workflow", "create", "myflow", "--path", "release"]);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
-    expect(json.ref).toBe("workflow:release/myflow");
+    expect(json.ref).toBe("workflows/release/myflow");
     expect(fs.existsSync(path.join(currentStashDir, "workflows", "release", "myflow.md"))).toBe(true);
   });
 

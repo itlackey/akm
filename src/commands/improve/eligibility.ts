@@ -293,13 +293,15 @@ export function memoryCleanupParentRef(
     // The `source:` backref channel keeps the legacy `memory:<name>` spelling
     // (WI-8.5c) — read it through the legacy-tolerant parseMemoryRef, never
     // the strict new-grammar parser.
-    // parseMemoryRef returns the legacy-normalized `memory:<name>`; callers
-    // consume a scope REF, so convert to the conceptId spelling.
+    // parseMemoryRef returns the legacy-normalized `memory:<name>` — the
+    // derived_from channel's deliberate internal spelling (WI-8.5c), which is
+    // exactly what analyzeMemoryCleanup's parentRef filter compares against
+    // (resolveParentRef emits the same). Do NOT convert to conceptId here.
     const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
-    if (parent) return `memories/${parent.slice("memory:".length)}`;
+    if (parent) return parent;
   }
 
-  return `memories/${parsed.name.slice(0, -".derived".length)}`;
+  return `memory:${parsed.name.slice(0, -".derived".length)}`;
 }
 
 export function isLessonCandidate(ref: string): boolean {
