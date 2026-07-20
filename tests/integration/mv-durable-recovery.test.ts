@@ -90,7 +90,7 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-after-commit", 0.8, 0, 0, 0.7, 0, Date.now(), "content");
+      .run("stash//memories/crash-after-commit", 0.8, 0, 0, 0.7, 0, Date.now(), "content");
     state.close();
 
     await crashAt("filesystem-committed", "memories/crash-after-commit", "crash-after-commit-new");
@@ -100,10 +100,10 @@ describe("mv durable journal crash recovery", () => {
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();
     const refs = after
-      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'memory:crash-after-commit%'")
+      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'stash//memories/crash-after-commit%'")
       .all() as Array<{ asset_ref: string }>;
     after.close();
-    expect(refs).toEqual([{ asset_ref: "memory:crash-after-commit-new" }]);
+    expect(refs).toEqual([{ asset_ref: "stash//memories/crash-after-commit-new" }]);
     expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 
@@ -117,7 +117,7 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-after-state", Date.now(), 9, 1, 0, 2, 0.4, Date.now());
+      .run("stash//memories/crash-after-state", Date.now(), 9, 1, 0, 2, 0.4, Date.now());
     state.close();
 
     await crashAt("state-finalized", "memories/crash-after-state", "crash-after-state-new");
@@ -126,10 +126,12 @@ describe("mv durable journal crash recovery", () => {
 
     const after = openStateDatabase();
     const rows = after
-      .prepare("SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-after-state%'")
+      .prepare(
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-after-state%'",
+      )
       .all() as Array<{ asset_ref: string; retrieval_count: number }>;
     after.close();
-    expect(rows).toEqual([{ asset_ref: "memory:crash-after-state-new", retrieval_count: 9 }]);
+    expect(rows).toEqual([{ asset_ref: "stash//memories/crash-after-state-new", retrieval_count: 9 }]);
     const events = readEvents({ type: "mv", ref: "memories/crash-after-state-new" }).events;
     expect(events).toHaveLength(1);
   });
@@ -167,7 +169,7 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-before-proposal", Date.now(), 4, 1, 0, 1, 0.3, Date.now());
+      .run("stash//memories/crash-before-proposal", Date.now(), 4, 1, 0, 1, 0.3, Date.now());
     state.close();
     await crashAt("filesystem-committed", "memories/crash-before-proposal", "crash-before-proposal-new");
 
@@ -186,11 +188,11 @@ describe("mv durable journal crash recovery", () => {
     const after = openStateDatabase();
     const row = after
       .prepare(
-        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-before-proposal%'",
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-before-proposal%'",
       )
       .get() as { asset_ref: string; retrieval_count: number };
     after.close();
-    expect(row).toEqual({ asset_ref: "memory:crash-before-proposal-new", retrieval_count: 4 });
+    expect(row).toEqual({ asset_ref: "stash//memories/crash-before-proposal-new", retrieval_count: 4 });
   });
 
   test("recovers SIGKILL after index row re-key but before the durable index phase", async () => {
@@ -290,14 +292,14 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-between-state", 0.7, 0, 0, 0.6, 0, now, "content");
+      .run("stash//memories/crash-between-state", 0.7, 0, 0, 0.6, 0, now, "content");
     state
       .prepare(
         `INSERT INTO asset_outcome
          (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-between-state", now, 6, 1, 0, 2, 0.5, now);
+      .run("stash//memories/crash-between-state", now, 6, 1, 0, 2, 0.5, now);
     state.close();
 
     await crashAt("state-asset_salience-rekeyed", "memories/crash-between-state", "crash-between-state-new");
@@ -306,15 +308,15 @@ describe("mv durable journal crash recovery", () => {
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();
     const salience = after
-      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'memory:crash-between-state%'")
+      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'stash//memories/crash-between-state%'")
       .get() as { asset_ref: string };
     const outcome = after
       .prepare(
-        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-between-state%'",
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-between-state%'",
       )
       .get() as { asset_ref: string; retrieval_count: number };
     after.close();
-    expect(salience.asset_ref).toBe("memory:crash-between-state-new");
-    expect(outcome).toEqual({ asset_ref: "memory:crash-between-state-new", retrieval_count: 6 });
+    expect(salience.asset_ref).toBe("stash//memories/crash-between-state-new");
+    expect(outcome).toEqual({ asset_ref: "stash//memories/crash-between-state-new", retrieval_count: 6 });
   });
 });

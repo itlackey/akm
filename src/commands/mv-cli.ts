@@ -48,7 +48,7 @@ import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
 import { conceptIdFromTypeName, displayRef, isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
-import { loadConfig } from "../core/config/config";
+import { type AkmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import {
   _setTxnMutationHookForTests,
@@ -939,39 +939,25 @@ function rekeyStateDbForMove(
   includeTwin: boolean,
   sourceName: string,
   sourceRoot: string,
-  includeLegacyBare: boolean,
 ): { complete: boolean; warning: string | null } {
   const statePath = getStateDbPath();
   try {
     if (!fs.existsSync(statePath)) return { complete: true, warning: null };
     if (!sourceName || !sourceRoot) return { complete: false, warning: "move source identity is unavailable" };
-    const origins = new Set([sourceName]);
-    if (sourceName === "stash" && includeLegacyBare) origins.add("local");
-    const pairs: Array<[string, string]> = [...origins].map((origin) => [
-      `${origin}//${fromRef}`,
-      `${origin}//${toRef}`,
-    ]);
-    if (includeLegacyBare) pairs.push([fromRef, toRef]);
-    if (includeTwin) {
-      for (const origin of origins) {
-        pairs.push([`${origin}//${fromRef}.derived`, `${origin}//${toRef}.derived`]);
-      }
-      if (includeLegacyBare) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
-    }
-    // Chunk-5 flip F5e — also re-key any NEW-grammar `<bundle>//<conceptId>`
-    // rows the durable salience/outcome writers key by once item_ref is
-    // populated. `type` is shared across a move; the conceptId is the D-R2
-    // `<stash-subdir>/<name>` spelling. Origins double as the bundle id for
-    // the primary stash (both "stash"). // Chunk-8: the one-time state.db
-    // re-key subsumes this once every row is item_ref-spelled.
+    // WI-8.5d deviation #2: post-cutover EVERY durable `asset_salience` /
+    // `asset_outcome` row is item_ref-spelled (`<bundle>//<conceptId>`), so the
+    // mv re-key handles ONLY that grammar (and its `.derived` twin). The legacy
+    // `type:name` / `origin//type:name` pairs are retired — the one-time state.db
+    // cutover already migrated every pre-0.9 row onto its item_ref. `type` is
+    // shared across a move; the conceptId is the D-R2 `<stash-subdir>/<name>`
+    // spelling; `sourceName` is the source's bundle id (primary stash → "stash").
     const moveType = fromRef.includes(":") ? fromRef.slice(0, fromRef.indexOf(":")) : "";
+    const pairs: Array<[string, string]> = [];
     if (moveType) {
       const fromConcept = conceptIdFromTypeName(moveType, fromRef.slice(moveType.length + 1));
       const toConcept = conceptIdFromTypeName(moveType, toRef.slice(moveType.length + 1));
-      for (const origin of origins) {
-        pairs.push([`${origin}//${fromConcept}`, `${origin}//${toConcept}`]);
-        if (includeTwin) pairs.push([`${origin}//${fromConcept}.derived`, `${origin}//${toConcept}.derived`]);
-      }
+      pairs.push([`${sourceName}//${fromConcept}`, `${sourceName}//${toConcept}`]);
+      if (includeTwin) pairs.push([`${sourceName}//${fromConcept}.derived`, `${sourceName}//${toConcept}.derived`]);
     }
     const db = openStateDatabase();
     const tableFailures: string[] = [];
@@ -1089,14 +1075,7 @@ async function finalizeMoveTransaction(txn: MvTxn): Promise<{
     advanceTxn(txn, "index-finalized");
   }
   if (journal.phase === "index-finalized") {
-    const stateResult = rekeyStateDbForMove(
-      p.fromRef,
-      p.toRef,
-      p.twinNewPath !== null,
-      p.sourceName,
-      p.sourceRoot,
-      p.includeLegacyBare,
-    );
+    const stateResult = rekeyStateDbForMove(p.fromRef, p.toRef, p.twinNewPath !== null, p.sourceName, p.sourceRoot);
     if (stateResult.warning) warnings.push(stateResult.warning);
     if (!stateResult.complete) throw new Error(stateResult.warning ?? "move state finalization did not complete");
     advanceTxn(txn, "state-finalized");
@@ -1108,6 +1087,26 @@ async function finalizeMoveTransaction(txn: MvTxn): Promise<{
   }
   if (journal.phase === "event-finalized") advanceTxn(txn, "committed");
   return { utilityPreserved, warnings };
+}
+
+/**
+ * Resolve the move's durable source identity: the primary stash's bundle id
+ * (`registryId ?? "stash"`) and whether the improve loop's legacy-bare state is
+ * still readable for this source (`shouldReadLegacyBareImproveState`, shared with
+ * the improve pipeline). Extracted from `run` so the command handler stays under
+ * the fn-size ratchet.
+ */
+function resolveMoveSourceIdentity(
+  configuredSources: ReturnType<typeof resolveSourceEntries>,
+  stashDir: string,
+  config: AkmConfig,
+): { durableSourceName: string; includeLegacyBare: boolean } {
+  const primarySource = configuredSources.find((entry) => path.resolve(entry.path) === path.resolve(stashDir));
+  const durableSourceName = primarySource?.registryId ?? "stash";
+  return {
+    durableSourceName,
+    includeLegacyBare: shouldReadLegacyBareImproveState(durableSourceName, stashDir, config),
+  };
 }
 
 // ── Command ───────────────────────────────────────────────────────────────────
@@ -1252,9 +1251,7 @@ export const mvCommand = defineJsonCommand({
       const stashDir = resolveStashDir();
       const config = loadConfig();
       const configuredSources = resolveSourceEntries(stashDir, config);
-      const primarySource = configuredSources.find((entry) => path.resolve(entry.path) === path.resolve(stashDir));
-      const durableSourceName = primarySource?.registryId ?? "stash";
-      const includeLegacyBare = shouldReadLegacyBareImproveState(durableSourceName, stashDir, config);
+      const { durableSourceName, includeLegacyBare } = resolveMoveSourceIdentity(configuredSources, stashDir, config);
       await recoverInterruptedMoveTransactions(stashDir);
       const typeDir = stashDirFor(source.type) as string;
       const typeRoot = path.join(stashDir, typeDir);

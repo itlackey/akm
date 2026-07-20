@@ -214,9 +214,13 @@ describe("goldens: mv SIGKILL roll-forward phases (WI-04, R3, integration)", () 
     test(`crash at ${phase} recovers forward: exactly one mv event, index + state re-keyed`, async () => {
       const name = `${MV_RECOVERY_FORWARD_PREFIX}-${phase}`;
       const ref = memoryRef(name);
+      // The index `entry_key` stays legacy-spelled (`<stash>:memory:<name>`); the
+      // durable state.db rows are item_ref-spelled post-cutover (WI-8.5d), and the
+      // mv state re-key handles that grammar only.
       const storedRef = memoryStoredRef(name);
+      const stateRef = memoryItemRef(name);
       seed(`memories/${name}.md`, mvSourceBody(phase));
-      seedStateRows(storedRef);
+      seedStateRows(stateRef);
       const triggerName = `${MV_RECOVERY_FORWARD_TRIGGER_PREFIX}-${phase}`;
       seed(`memories/${triggerName}.md`, mvSourceBody(`${phase}-trigger`));
       const indexed = await runCliCapture(["index"]);
@@ -235,6 +239,7 @@ describe("goldens: mv SIGKILL roll-forward phases (WI-04, R3, integration)", () 
 
       const toRef = memoryRef(`${name}-new`);
       const storedToRef = memoryStoredRef(`${name}-new`);
+      const stateToRef = memoryItemRef(`${name}-new`);
       expect(fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`))).toBe(true);
       db = openExistingDatabase(getDbPath());
       const after = db.prepare("SELECT id FROM entries WHERE entry_key LIKE ?").get(`%:${storedToRef}`) as
@@ -243,8 +248,8 @@ describe("goldens: mv SIGKILL roll-forward phases (WI-04, R3, integration)", () 
       closeDatabase(db);
       expect(after?.id).toBe(before?.id);
 
-      const state = stateRowsFor(storedToRef);
-      expect(state.salience).toBe(storedToRef);
+      const state = stateRowsFor(stateToRef);
+      expect(state.salience).toBe(stateToRef);
       expect(state.outcomeRetrievalCount).toBe(7);
 
       const mvEvent = mvEventOutcome(toRef);
@@ -406,9 +411,10 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
     for (const phase of MV_RECOVERY_FORWARD_PHASES) {
       const name = `${MV_RECOVERY_FORWARD_PREFIX}-golden-${phase}`;
       const ref = memoryRef(name);
-      const storedRef = memoryStoredRef(name);
+      const storedRef = memoryStoredRef(name); // legacy `entry_key` spelling
+      const stateToRef = memoryItemRef(`${name}-new`); // item_ref state spelling (post-cutover)
       seed(`memories/${name}.md`, mvSourceBody(phase));
-      seedStateRows(storedRef);
+      seedStateRows(memoryItemRef(name));
       const triggerName = `${MV_RECOVERY_FORWARD_TRIGGER_PREFIX}-golden-${phase}`;
       seed(`memories/${triggerName}.md`, mvSourceBody(`${phase}-trigger`));
       await runCliCapture(["index"]);
@@ -427,13 +433,13 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         | { id: number }
         | undefined;
       closeDatabase(db);
-      const state = stateRowsFor(storedToRef);
+      const state = stateRowsFor(stateToRef);
 
       forwardOutcomes[phase] = {
         recoveredMoveSucceeded: trigger.code === 0,
         targetCreated: fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`)),
         indexRowIdPreserved: after?.id === before?.id,
-        stateSalienceRekeyed: state.salience === storedToRef,
+        stateSalienceRekeyed: state.salience === stateToRef,
         stateOutcomeRekeyed: state.outcomeRetrievalCount === 7,
         mvEvent: mvEventOutcome(toRef),
         journalPhasesObserved: [phase],
