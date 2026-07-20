@@ -17,7 +17,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { registerBuiltinAdapters } from "../../src/core/adapter/adapters";
 import { resetAdapterRegistryForTests } from "../../src/core/adapter/registry";
-import { deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 
 const AKM_ROOT = path.resolve(__dirname, "../fixtures/stashes/all-types");
@@ -98,6 +98,36 @@ describe("deriveInstallations — id / trust / component shape", () => {
       { path: AKM_ROOT, registryId: "c" },
     ]).map((i) => i.id);
     expect(ids).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("deriveBundleId — D-R5 slug-gated derivation (shared with the config migrator)", () => {
+  test("a slug-legal registryId IS the bundle id (D-R5 rule 1)", () => {
+    const used = new Set<string>();
+    expect(deriveBundleId("team-catalog", "/a/b/whatever", used)).toBe("team-catalog");
+  });
+
+  test("a non-slug-legal registryId slugs from the path (bundle keys must be slug-legal, §11.1)", () => {
+    const used = new Set<string>();
+    // `github:owner/repo` carries ':' and '/', so it cannot be a bundle prefix.
+    expect(deriveBundleId("github:owner/repo", "/x/y/repo", used)).toBe("repo");
+    expect(deriveBundleId("npm:@scope/pkg", "/x/y/pkg", new Set())).toBe("pkg");
+  });
+
+  test("an empty registryId falls back to the path slug", () => {
+    expect(deriveBundleId(undefined, "/x/y/team-catalog", new Set())).toBe("team-catalog");
+    expect(deriveBundleId("", "/x/y/team-catalog", new Set())).toBe("team-catalog");
+  });
+
+  test("deriveInstallations ids equal a direct deriveBundleId pass over the same sources (no re-derive)", () => {
+    const sources: SearchSource[] = [
+      { path: AKM_ROOT, writable: true },
+      { path: OKF_ROOT, registryId: "team-catalog" },
+      { path: LLM_WIKI_ROOT, registryId: "github:owner/repo" }, // non-slug-legal
+    ];
+    const used = new Set<string>();
+    const expected = sources.map((s) => deriveBundleId(s.registryId, s.path, used));
+    expect(deriveInstallations(sources).map((i) => i.id)).toEqual(expected);
   });
 });
 

@@ -462,7 +462,7 @@ export function getIndexPassConfig(config: IndexConfig | undefined, passName: st
 }
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
-export { parseSourceSpec, resolveConfiguredSources } from "./config-sources";
+export { bundlesToSourceEntries, parseSourceSpec, resolveConfiguredSources } from "./config-sources";
 
 /**
  * Merge a partial user-config override onto a base config. Used by

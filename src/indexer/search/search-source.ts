@@ -8,7 +8,7 @@ import { isSourceWriteActivated } from "../../core/activation-policy";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig } from "../../core/config/config";
+import { bundlesToSourceEntries, getSources, loadConfig } from "../../core/config/config";
 import { resolveGitContentRoot } from "../../core/write-source";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
@@ -90,6 +90,22 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       });
     }
   };
+
+  // NEW shape (spec §10.1 / D-R5): resolve from `bundles` + `defaultBundle`.
+  // `bundlesToSourceEntries` returns the source list ordered defaultBundle-first
+  // (already primary via `resolveStashDir` above), then map insertion order,
+  // folding the old sources[]/installed[] roles into one list. Each entry's
+  // `name` is its bundle key, so the addSource `registryId` == the bundle id.
+  const bundleEntries = bundlesToSourceEntries(config);
+  if (bundleEntries) {
+    for (const entry of bundleEntries) {
+      if (entry.enabled === false) continue;
+      const dir = resolveEntryContentDir(entry);
+      if (dir == null) continue;
+      addSource(dir, entry.name, entry.writable === true);
+    }
+    return sources;
+  }
 
   // (1) + (2) Single pass over declared stashes — primary first if present,
   // then the rest in declared order. The primary's directory is already
@@ -314,8 +330,8 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
-  // resolveEntryContentDir.
-  for (const entry of getSources(cfg)) {
+  // resolveEntryContentDir. NEW shape reads `bundles`; old shape reads sources[].
+  for (const entry of bundlesToSourceEntries(cfg) ?? getSources(cfg)) {
     if (entry.enabled === false) continue;
     const factory = resolveSourceProviderFactory(entry.type);
     if (!factory) continue;

@@ -58,6 +58,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { isSourceWriteActivated } from "../core/activation-policy";
 import { getAdapters } from "../core/adapter/registry";
+import { isBundleSlug } from "../core/asset/asset-ref";
 import type { BundleInstallation } from "../core/adapter/types";
 import { stashDirFor } from "../core/asset/asset-placement";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
@@ -89,6 +90,28 @@ function shortHash(input: string): string {
 }
 
 /**
+ * Derive the batch-unique bundle id for a source (D-R5, ref-grammar decision):
+ *
+ *   1. `registryId` — WHEN it is a legal bundle slug (spec §11.1 charset). A
+ *      non-slug-legal registry id (`github:owner/repo`, `npm:@scope/pkg` — they
+ *      carry `:` / `/`) CANNOT be a bundle prefix (it would break the
+ *      `bundle//conceptId` grammar), so it falls through to (2).
+ *   2. `slugForPath(sourcePath)` — the basename slug fallback.
+ *
+ * The result is made unique WITHIN a derivation batch by `ensureUniqueId`, and
+ * the chosen id is added to `usedIds`. This is the ONE derivation the Chunk-8
+ * config migrator ({@link import("../migrate/legacy/config-source-migration")})
+ * and {@link deriveInstallations} share, so a migrated `bundles` key equals the
+ * runtime installation id by construction (D-R5 no-identity-shift proof).
+ */
+export function deriveBundleId(registryId: string | undefined, sourcePath: string, usedIds: Set<string>): string {
+  const preferred = registryId && registryId.length > 0 && isBundleSlug(registryId) ? registryId : slugForPath(sourcePath);
+  const id = ensureUniqueId(preferred, sourcePath, usedIds);
+  usedIds.add(id);
+  return id;
+}
+
+/**
  * Resolve the adapter id for a component root via the ordered `looksLikeRoot`
  * probe (spec §1.2), first match wins; falls back to `akm` when no probe fires.
  */
@@ -114,9 +137,10 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
   const installations: BundleInstallation[] = [];
 
   for (const source of sources) {
-    const preferred = source.registryId && source.registryId.length > 0 ? source.registryId : slugForPath(source.path);
-    const id = ensureUniqueId(preferred, source.path, usedIds);
-    usedIds.add(id);
+    // D-R5 rule 1: when the source carries its config bundle key (a slug-legal
+    // registryId), that key IS the installation id — equal by construction to
+    // this derivation. A non-slug-legal registryId slugs from the path instead.
+    const id = deriveBundleId(source.registryId, source.path, usedIds);
 
     const writable = isSourceWriteActivated(source);
     const adapter = detectAdapterId(source.path);

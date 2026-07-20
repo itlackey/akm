@@ -5,7 +5,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { loadUserConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
+import type { AkmConfig } from "../../src/core/config/config";
+import { bundlesToSourceEntries, loadUserConfig, resetConfigCache, resolveConfiguredSources, saveConfig } from "../../src/core/config/config";
 import { validateConfigShape } from "../../src/core/config/config-schema";
 import { configSet } from "../../src/core/config/config-walker";
 import { ConfigError } from "../../src/core/errors";
@@ -217,6 +218,29 @@ describe("0.9 config contract", () => {
     expect(
       validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok,
     ).toBe(false);
+  });
+
+  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      bundles: {
+        catalog: { git: "https://example.test/catalog.git" },
+        primary: { path: "/home/u/akm", writable: true },
+        docs: { website: { url: "https://example.test/docs/", maxPages: 25 } },
+      },
+      defaultBundle: "primary",
+    } as unknown as AkmConfig;
+
+    // defaultBundle first, then remaining keys in insertion order.
+    expect(bundlesToSourceEntries(config)?.map((e) => e.name)).toEqual(["primary", "catalog", "docs"]);
+
+    const resolved = resolveConfiguredSources(config);
+    expect(resolved.map((s) => s.name)).toEqual(["primary", "catalog", "docs"]);
+    expect(resolved[0]).toMatchObject({ name: "primary", primary: true, writable: true });
+    expect(resolved[0].source).toEqual({ type: "filesystem", path: "/home/u/akm" });
+    expect(resolved[1].source).toEqual({ type: "git", url: "https://example.test/catalog.git" });
+    expect(resolved[2].source).toMatchObject({ type: "website", url: "https://example.test/docs/", maxPages: 25 });
   });
 
   test("rejects defaultBundle that names no bundle and a stray bindings block", () => {

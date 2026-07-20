@@ -191,8 +191,27 @@ function readStashDirFromConfig(): string | undefined {
     const configPath = getConfigPath();
     const text = readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file");
     const raw = JSON.parse(text);
-    if (typeof raw === "object" && raw !== null && typeof raw.stashDir === "string" && raw.stashDir.trim()) {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    // Pre-cutover shape: the top-level `stashDir` field.
+    if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
       return raw.stashDir.trim();
+    }
+    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
+    // `defaultBundle`'s filesystem `path`. Read it directly (no config module
+    // import) so the primary-stash location survives the stashDir → bundles
+    // migration without a runtime rewire.
+    const bundles = raw.bundles;
+    const defaultBundle = raw.defaultBundle;
+    if (
+      bundles &&
+      typeof bundles === "object" &&
+      typeof defaultBundle === "string" &&
+      bundles[defaultBundle] &&
+      typeof bundles[defaultBundle] === "object" &&
+      typeof bundles[defaultBundle].path === "string" &&
+      bundles[defaultBundle].path.trim()
+    ) {
+      return bundles[defaultBundle].path.trim();
     }
   } catch {
     // Config doesn't exist or is invalid — fall through
