@@ -31,7 +31,7 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { type AssetRef, parseStoredRef } from "../../migrate/legacy-ref-grammar";
+import { type AssetRef, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import {
   fetchWebsiteMarkdownSnapshot,
   shouldAllowPrivateWebsiteUrlForTests,
@@ -147,12 +147,16 @@ export async function readKnowledgeInput(
 /** A `--xref` / `--supersedes` flag value parsed to its components. */
 interface ParsedWriteRef {
   /**
-   * The CANONICAL `type:name` spelling rebuilt from the parsed components —
-   * what lands in frontmatter. Persisting the raw flag value instead would
-   * store spellings the ref parser accepts but later ref scanners (lint's
-   * registry-derived `REF_RE`, mv's rewriter) do not recognize: the
-   * `environment:` alias of `env:`, backslash-separated names, and the
-   * `local//` origin prefix (stripped here the same way lint strips it).
+   * The CANONICAL bare `conceptId` (`<stash-subdir>/<name>`, D-R2) rebuilt from
+   * the parsed components — what lands in frontmatter. WI-8.5a flips this from
+   * the legacy `type:name`: frontmatter refs are intra-bundle SHORT refs (§11.1,
+   * D-R4 "short refs inside bundle content resolve to the containing bundle"),
+   * and `--xref`/`--supersedes` only ever resolve LOCAL targets (any non-`local`
+   * origin is rejected below), so the containing-bundle short conceptId is the
+   * canonical write spelling — never a fully-qualified `bundle//conceptId`.
+   * Persisting the raw flag value instead would store spellings the ref parser
+   * accepts but later ref scanners (lint's ref-list scan, mv's rewriter) key on
+   * differently; the bare conceptId is exactly what both now recognize.
    */
   ref: string;
   /** Canonical asset type (aliases resolved by the ref parser). */
@@ -193,11 +197,12 @@ function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWrit
       `Pass the plain type:name form, e.g. ${flag} ${parsed.type}:${parsed.name}.`,
     );
   }
-  // Canonical bare form: type alias resolved, name normalized, `local//`
-  // dropped (it names the same local resolution this validator performs).
-  // Canonical bare legacy key persisted to frontmatter (Chunk-8 re-key); the
-  // name is already normalized by the parser, so it is built inline.
-  return { ref: `${parsed.type}:${parsed.name}`, type: parsed.type, name: parsed.name };
+  // Canonical bare conceptId: type alias resolved, name normalized, `local//`
+  // dropped (it names the same local resolution this validator performs). The
+  // bare `<stash-subdir>/<name>` short ref (WI-8.5a) is what lands in the
+  // containing bundle's frontmatter (§11.1 short-ref rule); the name is already
+  // normalized by the parser.
+  return { ref: legacyConceptId(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
 }
 
 /**

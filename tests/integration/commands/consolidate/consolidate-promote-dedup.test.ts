@@ -34,10 +34,17 @@ import {
   mergePlans,
 } from "../../../../src/commands/improve/consolidate";
 import { createProposal, isProposalSkipped, listProposals } from "../../../../src/commands/proposal/repository";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../../src/indexer/installations";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
+
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+}
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -201,7 +208,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
     expect(existingHash).toBe(secondContentHash);
     const dup = pending.find((p) => sha256(p.payload.content) === secondContentHash);
     expect(dup).toBeDefined();
-    expect(dup?.ref).toBe("knowledge:paged-review-efficiency");
+    expect(dup?.ref).toBe(durableRef(stash, "knowledge", "paged-review-efficiency"));
   });
 
   it("content hash guard does NOT block proposals with different content", () => {
@@ -299,6 +306,6 @@ describe("content-hash dedup — identical content blocked regardless of target 
     // The single pending proposal should be for the first ref.
     const allPending = listProposals(stash, { status: "pending" });
     expect(allPending).toHaveLength(1);
-    expect(allPending[0]?.ref).toBe("knowledge:paged-review-efficiency");
+    expect(allPending[0]?.ref).toBe(durableRef(stash, "knowledge", "paged-review-efficiency"));
   });
 });

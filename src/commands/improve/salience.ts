@@ -646,7 +646,10 @@ export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashD
   const idToRef = new Map<number, string>();
   for (const indexed of allEntries) {
     if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
-    const ref = `${indexed.entry.type}:${indexed.entry.name}`; // durable salience key (legacy spelling, Chunk-8 re-key)
+    // In-memory correlation key, NOT a durable write: it must match the caller's
+    // `refs` (the bare `ImproveEligibleRef.ref` = `type:name`, eligibility.ts), so
+    // this stays bare. WI-8.5b flips the candidate-ref spelling with the display flip.
+    const ref = `${indexed.entry.type}:${indexed.entry.name}`;
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }
 

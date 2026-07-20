@@ -65,8 +65,11 @@ export const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const doc = loadDocument(ctx);
-    // Legacy `[origin//]workflow:name` action spelling (Chunk-8 re-key), built
-    // inline to match the frozen renderer goldens.
+    // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
+    // output, not durable state — its spelling flips with the D-R5 display flip,
+    // not the WI-8.5a durable-writer flip. Flipping it here would re-baseline the
+    // renderer/all-types.json behavior-parity golden (owned by chunk 4), so it
+    // stays the legacy `[origin//]workflow:name` spelling this stage.
     const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
     return {
       type: "workflow",
@@ -102,8 +105,11 @@ export const workflowProgramRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const program = loadProgram(ctx);
-    // Legacy `[origin//]workflow:name` action spelling (Chunk-8 re-key), built
-    // inline to match the frozen renderer goldens.
+    // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
+    // output, not durable state — its spelling flips with the D-R5 display flip,
+    // not the WI-8.5a durable-writer flip. Flipping it here would re-baseline the
+    // renderer/all-types.json behavior-parity golden (owned by chunk 4), so it
+    // stays the legacy `[origin//]workflow:name` spelling this stage.
     const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
     const parameters = projectProgramParameters(program);
     return {

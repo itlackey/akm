@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset/asset-placement";
+import { displayRef } from "../core/asset/resolve-ref";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
@@ -52,10 +53,13 @@ function toManifestEntry(
   try {
     const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
     const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
-    // Durable manifest key — the legacy `[origin//]type:name` spelling, built
-    // inline (Chunk-8: re-keyed with the state.db one-time re-key). refName is
-    // canonical, so no name normalization is needed.
-    const ref = registryId ? `${registryId}//${entry.type}:${refName}` : `${entry.type}:${refName}`;
+    // WI-8.5a: the manifest's discovery ref follows the F4b output-spelling rule
+    // (`displayRef`) — a primary/default-bundle asset shows the SHORT conceptId
+    // (`skills/deploy`), a slug-clean source shows `bundle//conceptId`, and a
+    // non-slug registry origin keeps `origin//type:name` (D-R5). This is the same
+    // grammar search hits / show emit, so a manifest ref pastes straight into
+    // `akm show`. refName is canonical, so no name normalization is needed.
+    const ref = displayRef({ type: entry.type, name: refName, ...(registryId ? { bundleId: registryId } : {}) });
 
     const result: ManifestEntry = {
       name: entry.name,

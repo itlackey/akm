@@ -45,7 +45,7 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // inputs across the mv/source/show/history/feedback/events/remember/env/graph/
 // workflow suites re-keyed to the conceptId grammar; the residual 111 are the
 // durable-state / persisted / echoed legacy assertions the heuristic preserves).
-const CEILING = 111;
+const CEILING = 110;
 
 const TYPES = [
   "skill",

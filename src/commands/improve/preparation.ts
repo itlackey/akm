@@ -93,19 +93,19 @@ function readConsecutiveNoOpsForImproveRef(
   return readAssetSalienceForImproveRef(db, ref, sourceName, includeLegacyBare, itemRef)?.consecutive_no_ops ?? 0;
 }
 
-// ── Chunk-5 flip F5e — durable-state write keys ──────────────────────────────
+// ── Durable-state write keys (Chunk-5 flip F5e; WI-8.5a landed the writer) ─────
 //
-// The durable improve-state writers key by the resolved index entry's
-// `item_ref` (`<bundle>//<conceptId>`, D-R3) WHEN the planner resolved one
-// (`ImproveEligibleRef.itemRef`), and fall back to each writer's PRE-FLIP
-// spelling for a NULL-provenance (pre-flip / write-back) ref:
+// The durable improve-state writers key by the resolved index entry's `item_ref`
+// (`<bundle>//<conceptId>`, D-R3) WHEN the planner resolved one
+// (`ImproveEligibleRef.itemRef`) — the final spelling, already live. The
+// entry-absent fallback is the ONLY remaining legacy arm:
 //   - salience (`asset_salience`)  → the SOURCE-QUALIFIED `durableImproveRef`
 //     (`<source>//<type>:<name>`), matching the pre-flip upsert.
 //   - outcome  (`asset_outcome`)   → the BARE `type:name`, matching the pre-flip
 //     `updateAssetOutcome({ ref: r.ref })` call.
 // itemRefByRef is `bare-ref → item_ref | undefined`, built once per pass from
-// the candidate set. // Chunk-8: collapse both to the item_ref after the
-// one-time state.db re-key.
+// the candidate set. WI-8.5b: collapse both fallbacks onto the item_ref once the
+// dual-reader arms retire (the one-time state.db re-key makes every row final).
 
 /** `bare-ref → item_ref | undefined` for a run's candidate set. */
 function buildItemRefByRef(refs: ImproveEligibleRef[]): Map<string, string | undefined> {
@@ -114,14 +114,14 @@ function buildItemRefByRef(refs: ImproveEligibleRef[]): Map<string, string | und
   return m;
 }
 
-/** Durable `asset_salience` write key: item_ref, else the source-qualified `type:name`. */
+/** Durable `asset_salience` write key: the entry's item_ref, else the source-qualified `type:name`. */
 function salienceWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>, sourceName?: string): string {
-  return itemRefByRef.get(ref) ?? durableImproveRef(ref, sourceName);
+  return itemRefByRef.get(ref) ?? durableImproveRef(ref, sourceName); // WI-8.5b: collapse (entry-absent fallback)
 }
 
-/** Durable `asset_outcome` write key: item_ref, else the bare `type:name` (pre-flip outcome spelling). */
+/** Durable `asset_outcome` write key: the entry's item_ref, else the bare `type:name`. */
 function outcomeWriteKey(ref: string, itemRefByRef: Map<string, string | undefined>): string {
-  return itemRefByRef.get(ref) ?? ref;
+  return itemRefByRef.get(ref) ?? ref; // WI-8.5b: collapse (entry-absent fallback)
 }
 
 /**

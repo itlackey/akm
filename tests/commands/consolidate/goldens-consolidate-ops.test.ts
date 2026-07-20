@@ -631,7 +631,7 @@ describe("handlePromoteOp — happy path", () => {
       expect(skips).toEqual([]);
       expect(ctx.promoted).toHaveLength(1);
       expect(ctx.promotedSourceRefs.has(ref)).toBe(true);
-      const [proposal] = listProposals(root, { ref: kRef });
+      const [proposal] = listProposals(root);
       expect(proposal).toBeDefined();
       expect(proposal?.payload.frontmatter?.description).toBe("A promoted knowledge asset");
       const bodyFm = parseFrontmatter(proposal?.payload.content ?? "").data;
@@ -1093,7 +1093,7 @@ async function capturePromoteHappy(storage: IsolatedAkmStorage) {
     { op: "promote", ref, knowledgeRef: kRef, reason: "useful", description: "A promoted knowledge asset" },
     ctx,
   );
-  const [proposal] = listProposals(root, { ref: kRef });
+  const [proposal] = listProposals(root);
   const bodyFm = parseFrontmatter(proposal?.payload.content ?? "").data;
   return {
     promotedCount: ctx.promoted.length,

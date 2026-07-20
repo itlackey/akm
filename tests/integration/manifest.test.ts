@@ -213,7 +213,7 @@ describe("akm manifest", () => {
     expect(result.schemaVersion).toBe(1);
   });
 
-  test("ref field follows type:name format", async () => {
+  test("ref field follows the displayRef conceptId grammar (WI-8.5a)", async () => {
     const stashDir = tmpStash();
     await buildTestIndex(stashDir, {
       "skills/code-review/SKILL.md": "---\ndescription: Review code quality\n---\n# Code Review",
@@ -223,6 +223,7 @@ describe("akm manifest", () => {
 
     const entry = result.entries.find((e) => e.name === "code-review");
     expect(entry).toBeDefined();
-    expect(entry?.ref).toMatch(/^skill:code-review$/);
+    // Primary/default bundle → the SHORT conceptId (F4b output-spelling rule).
+    expect(entry?.ref).toMatch(/^skills\/code-review$/);
   });
 });

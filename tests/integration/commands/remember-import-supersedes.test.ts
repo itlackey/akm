@@ -156,13 +156,13 @@ describe("remember --supersedes", () => {
     // Additive output key: the demotion is reported as applied.
     expect(Array.isArray(json.superseded)).toBe(true);
     expect(json.superseded).toHaveLength(1);
-    expect(json.superseded?.[0]?.ref).toBe("memory:projectA/old-endpoint");
+    expect(json.superseded?.[0]?.ref).toBe("memories/projectA/old-endpoint");
     expect(json.superseded?.[0]?.applied).toBe(true);
 
     // Correction provenance: the superseded ref folds into the NEW asset's
     // xrefs automatically (no --xref flag was passed).
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(newParsed.data.xrefs).toContain("memory:projectA/old-endpoint");
+    expect(newParsed.data.xrefs).toContain("memories/projectA/old-endpoint");
 
     // The OLD asset gains exactly the two demotion keys...
     const oldParsedAfter = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
@@ -254,7 +254,7 @@ describe("remember --supersedes", () => {
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("memory:ghost-note");
+    expect(json.error).toContain("memories/ghost-note");
     expect(typeof json.code).toBe("string");
 
     // Validation happens BEFORE any write: no new asset landed AND the
@@ -282,10 +282,10 @@ describe("remember --supersedes", () => {
     const json = JSON.parse(stdout) as WriteOutput;
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
     const xrefs = (newParsed.data.xrefs ?? []) as string[];
-    expect(xrefs).toContain("knowledge:auth-flow");
-    expect(xrefs).toContain("memory:vpn-note");
+    expect(xrefs).toContain("knowledge/auth-flow");
+    expect(xrefs).toContain("memories/vpn-note");
     // No duplicates when a ref arrives through both channels or repeats.
-    expect(xrefs.filter((r) => r === "memory:vpn-note")).toHaveLength(1);
+    expect(xrefs.filter((r) => r === "memories/vpn-note")).toHaveLength(1);
 
     // A frontmatter-less old asset gains a metadata block; the body text is
     // preserved (assembleAsset only strips leading blank lines).
@@ -315,7 +315,7 @@ describe("remember --supersedes", () => {
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("memory:flux-note");
+    expect(json.error).toContain("memories/flux-note");
     expect(json.error).toContain("cannot supersede itself");
     expect(json.code).toBe("INVALID_FLAG_VALUE");
 
@@ -356,17 +356,17 @@ describe("remember --supersedes", () => {
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ok).toBe(true);
     expect(json.superseded).toHaveLength(1);
-    expect(json.superseded?.[0]?.ref).toBe("knowledge:broken-fm");
+    expect(json.superseded?.[0]?.ref).toBe("knowledge/broken-fm");
     expect(json.superseded?.[0]?.applied).toBe(false);
     expect(json.superseded?.[0]?.reason ?? "").toContain("YAML");
-    expect(stderr).toContain("knowledge:broken-fm");
+    expect(stderr).toContain("knowledge/broken-fm");
 
     // No lossy rewrite: the lenient-parser fallback would have flattened the
     // tags list to "" — the file must stay byte-identical instead.
     expect(fs.readFileSync(oldPath, "utf8")).toBe(oldRaw);
     // The correction still writes and cites the incumbent.
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(newParsed.data.xrefs).toContain("knowledge:broken-fm");
+    expect(newParsed.data.xrefs).toContain("knowledge/broken-fm");
   });
 
   test("old asset in a WRITABLE non-target source: demotion skipped with a --target remedy (not misreported as read-only)", async () => {
@@ -428,15 +428,15 @@ describe("remember --supersedes", () => {
     // Written to the PRIMARY stash while citing the read-only incumbent.
     expect(json.path.startsWith(stashDir)).toBe(true);
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(newParsed.data.xrefs).toContain("memory:stale-tip");
+    expect(newParsed.data.xrefs).toContain("memories/stale-tip");
 
     // The demotion could not be applied: reported, warned, and the read-only
     // file stays byte-identical.
     expect(json.superseded).toHaveLength(1);
-    expect(json.superseded?.[0]?.ref).toBe("memory:stale-tip");
+    expect(json.superseded?.[0]?.ref).toBe("memories/stale-tip");
     expect(json.superseded?.[0]?.applied).toBe(false);
     expect((json.superseded?.[0]?.reason ?? "").length).toBeGreaterThan(0);
-    expect(stderr).toContain("memory:stale-tip");
+    expect(stderr).toContain("memories/stale-tip");
     expect(fs.readFileSync(oldPath, "utf8")).toBe(oldRaw);
   });
 });
@@ -462,7 +462,7 @@ describe("--supersedes refuses non-markdown demotion targets before any write", 
       const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
       expect(json.ok).toBe(false);
       expect(json.code).toBe("INVALID_FLAG_VALUE");
-      expect(json.error).toContain(ref);
+      expect(json.error).toContain(ref.slice(ref.indexOf(":") + 1));
     }
 
     // Nothing demoted, nothing written.
@@ -481,7 +481,7 @@ describe("--supersedes refuses non-markdown demotion targets before any write", 
       expect(code).toBe(2);
       const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
       expect(json.code).toBe("INVALID_FLAG_VALUE");
-      expect(json.error).toContain(ref);
+      expect(json.error).toContain(ref.slice(ref.indexOf(":") + 1));
     }
     expect(fs.readFileSync(wfPath, "utf8")).toBe(wfBytes);
     expect(listDirRecursive(path.join(stashDir, "memories"))).toEqual([]);
@@ -578,13 +578,13 @@ describe("import --supersedes", () => {
     expect(json.ok).toBe(true);
     expect(json.ref).toBe("knowledge/modern-guide");
     expect(json.superseded).toHaveLength(1);
-    expect(json.superseded?.[0]?.ref).toBe("knowledge:legacy-guide");
+    expect(json.superseded?.[0]?.ref).toBe("knowledge/legacy-guide");
     expect(json.superseded?.[0]?.applied).toBe(true);
 
     // The imported doc carries the correction provenance in ONE frontmatter block.
     const newRaw = fs.readFileSync(json.path, "utf8");
     const newParsed = parseFrontmatter(newRaw);
-    expect(newParsed.data.xrefs).toContain("knowledge:legacy-guide");
+    expect(newParsed.data.xrefs).toContain("knowledge/legacy-guide");
     expect(newParsed.content).toContain("# Modern guide");
     expect(newRaw.match(/^---\s*$/gm)?.length).toBe(2);
 
@@ -605,7 +605,7 @@ describe("import --supersedes", () => {
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("knowledge:ghost-doc");
+    expect(json.error).toContain("knowledge/ghost-doc");
     expect(typeof json.code).toBe("string");
 
     expect(listDirRecursive(path.join(stashDir, "knowledge"))).toEqual([]);
@@ -636,11 +636,11 @@ describe("--supersedes alias spellings are persisted canonically", () => {
     expect(code).toBe(0);
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ref).toBe("memories/new-endpoint-alias");
-    expect(json.superseded).toEqual([{ ref: "memory:old-endpoint-alias", applied: true }]);
+    expect(json.superseded).toEqual([{ ref: "memories/old-endpoint-alias", applied: true }]);
 
     // Provenance xref on the correction: canonical bare form.
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(newParsed.data.xrefs).toEqual(["memory:old-endpoint-alias"]);
+    expect(newParsed.data.xrefs).toEqual(["memories/old-endpoint-alias"]);
 
     // The demotion landed on the old asset with the canonical NEW ref
     // (writeSupersededEdge receives the write result's canonical ref).

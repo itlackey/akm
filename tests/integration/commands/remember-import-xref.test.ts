@@ -113,7 +113,7 @@ describe("remember --xref", () => {
     expect(json.ok).toBe(true);
 
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
     // The hot-path markers still ride along in the SAME frontmatter block —
     // xrefs merge into the generated frontmatter, they don't replace it.
     expect(parsed.data.captureMode).toBe("hot");
@@ -137,7 +137,7 @@ describe("remember --xref", () => {
 
     const json = JSON.parse(stdout) as { path: string };
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow", "memory:vpn-note"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow", "memories/vpn-note"]);
   });
 
   test("--xref composes with --tag in one frontmatter block", async () => {
@@ -157,7 +157,7 @@ describe("remember --xref", () => {
     const raw = fs.readFileSync(json.path, "utf8");
     const parsed = parseFrontmatter(raw);
     expect(parsed.data.tags).toEqual(["ops"]);
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
     // Exactly one frontmatter block: opening + closing fence only.
     expect(raw.match(/^---\s*$/gm)?.length).toBe(2);
   });
@@ -173,7 +173,7 @@ describe("remember --xref", () => {
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("knowledge:does-not-exist");
+    expect(json.error).toContain("knowledge/does-not-exist");
     expect(typeof json.code).toBe("string");
 
     // Validation happens BEFORE any write: the stash stays empty.
@@ -198,7 +198,7 @@ describe("remember --xref", () => {
     const json = JSON.parse(stderr) as { ok: boolean; error: string };
     expect(json.ok).toBe(false);
     // The error names the ref(s) that failed to resolve.
-    expect(json.error).toContain("memory:ghost-note");
+    expect(json.error).toContain("memories/ghost-note");
 
     expect(listDirRecursive(path.join(stashDir, "memories"))).toEqual([]);
   });
@@ -224,7 +224,7 @@ describe("remember --xref", () => {
     // Written to the PRIMARY stash while citing the extra-stash asset.
     expect(json.path.startsWith(stashDir)).toBe(true);
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["knowledge:shared-doc"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/shared-doc"]);
   });
 
   test("more than 5 xrefs warns on stderr but still writes (soft cap)", async () => {
@@ -243,12 +243,12 @@ describe("remember --xref", () => {
     expect(json.ok).toBe(true);
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
     expect(parsed.data.xrefs).toEqual([
-      "knowledge:doc-1",
-      "knowledge:doc-2",
-      "knowledge:doc-3",
-      "knowledge:doc-4",
-      "knowledge:doc-5",
-      "knowledge:doc-6",
+      "knowledge/doc-1",
+      "knowledge/doc-2",
+      "knowledge/doc-3",
+      "knowledge/doc-4",
+      "knowledge/doc-5",
+      "knowledge/doc-6",
     ]);
     // Soft cap: a warning is emitted, not an error.
     expect(stderr.toLowerCase()).toContain("xref");
@@ -303,7 +303,7 @@ describe("--xref root set and resolver parity", () => {
     // Written to the named target while citing the working-stash asset.
     expect(json.path.startsWith(teamDir)).toBe(true);
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["memory:local-note"]);
+    expect(parsed.data.xrefs).toEqual(["memories/local-note"]);
   });
 
   test("script: refs are accepted without existence validation (fail-open, mirrors lint)", async () => {
@@ -317,7 +317,7 @@ describe("--xref root set and resolver parity", () => {
     const seededParsed = parseFrontmatter(
       fs.readFileSync((JSON.parse(seeded.stdout) as { path: string }).path, "utf8"),
     );
-    expect(seededParsed.data.xrefs).toEqual(["script:build/release.sh"]);
+    expect(seededParsed.data.xrefs).toEqual(["scripts/build/release.sh"]);
 
     // Fail-open means no existence check at all — same as lint's body scan.
     const ghost = await runCliCapture(["remember", "Ghost script tip", "--xref", "scripts/no-such-script.sh"]);
@@ -332,12 +332,12 @@ describe("--xref root set and resolver parity", () => {
     const { code, stdout } = await runCliCapture(["remember", "Deploy workflow tip", "--xref", "workflows/deploy"]);
     expect(code).toBe(0);
     const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["workflow:deploy"]);
+    expect(parsed.data.xrefs).toEqual(["workflows/deploy"]);
 
     // workflow: does NOT blanket fail-open: a ref resolving nowhere still fails.
     const ghost = await runCliCapture(["remember", "Ghost workflow tip", "--xref", "workflows/ghost-flow"]);
     expect(ghost.code).toBe(2);
-    expect((JSON.parse(ghost.stderr) as { error: string }).error).toContain("workflow:ghost-flow");
+    expect((JSON.parse(ghost.stderr) as { error: string }).error).toContain("workflows/ghost-flow");
   });
 
   test("origin-prefixed and malformed refs get a structured parse error, not 'did not resolve'", async () => {
@@ -373,7 +373,7 @@ describe("--xref root set and resolver parity", () => {
     const local = await runCliCapture(["remember", "Locally cited note", "--xref", "local//knowledge/auth-flow"]);
     expect(local.code).toBe(0);
     const localParsed = parseFrontmatter(fs.readFileSync((JSON.parse(local.stdout) as { path: string }).path, "utf8"));
-    expect(localParsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(localParsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
   });
 
   test("alias spellings parseAssetRef normalizes are persisted CANONICALLY, validated and deduped as one ref", async () => {
@@ -391,7 +391,7 @@ describe("--xref root set and resolver parity", () => {
     ]);
     expect(code).toBe(0);
     const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
-    expect(parsed.data.xrefs).toEqual(["env:prod"]);
+    expect(parsed.data.xrefs).toEqual(["env/prod"]);
 
     // Two spellings of the SAME asset dedupe into one canonical entry.
     seedAsset(stashDir, "knowledge/auth-flow.md");
@@ -405,7 +405,7 @@ describe("--xref root set and resolver parity", () => {
     ]);
     expect(dupe.code).toBe(0);
     const dupeParsed = parseFrontmatter(fs.readFileSync((JSON.parse(dupe.stdout) as { path: string }).path, "utf8"));
-    expect(dupeParsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(dupeParsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
   });
 });
 
@@ -450,7 +450,7 @@ describe("import --xref", () => {
     const raw = fs.readFileSync(json.path, "utf8");
     expect(raw.startsWith("---")).toBe(true);
     const parsed = parseFrontmatter(raw);
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
     // Body intact and no frontmatter leaked into it.
     expect(parsed.content).toContain("# Auth notes");
     expect(parsed.content).toContain("OAuth details worth keeping.");
@@ -486,7 +486,7 @@ describe("import --xref", () => {
     // Existing keys preserved, xrefs appended — one merged block.
     expect(parsed.data.description).toBe("Existing description");
     expect(parsed.data.tags).toEqual(["auth"]);
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
 
     // No nested-frontmatter corruption: the body carries no fence or key
     // leftovers from a second block.
@@ -502,7 +502,10 @@ describe("import --xref", () => {
     seedAsset(stashDir, "memories/vpn-note.md", "VPN is required for staging.\n");
     const sourcePath = makeSourceFile(
       "already-cited.md",
-      ["---", "xrefs:", "  - knowledge:auth-flow", "---", "", "Body citing prior work.", ""].join("\n"),
+      // WI-8.5a: --xref now writes the bare conceptId; a doc already carrying the
+      // new-grammar spelling dedupes against it (cross-grammar dedup of legacy
+      // existing xrefs is WI-8.5b content-migration territory).
+      ["---", "xrefs:", "  - knowledge/auth-flow", "---", "", "Body citing prior work.", ""].join("\n"),
     );
 
     const { code, stdout } = await runCliCapture([
@@ -518,7 +521,7 @@ describe("import --xref", () => {
     const json = JSON.parse(stdout) as { path: string };
     const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
     // The duplicate ref appears once; the new ref is appended.
-    expect(parsed.data.xrefs).toEqual(["knowledge:auth-flow", "memory:vpn-note"]);
+    expect(parsed.data.xrefs).toEqual(["knowledge/auth-flow", "memories/vpn-note"]);
   });
 
   test("unresolvable --xref fails with exit 2 usage envelope and writes nothing", async () => {
@@ -529,7 +532,7 @@ describe("import --xref", () => {
 
     const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("knowledge:ghost-doc");
+    expect(json.error).toContain("knowledge/ghost-doc");
     expect(typeof json.code).toBe("string");
 
     expect(listDirRecursive(path.join(stashDir, "knowledge"))).toEqual([]);

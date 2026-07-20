@@ -27,7 +27,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { parseSinceToIsoLenient } from "../../core/time";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
+import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -641,7 +641,10 @@ export function injectGenerationFrontmatter(
     ];
     const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
       try {
-        // Canonical legacy spelling of a stored provenance ref (Chunk-8 re-key).
+        // Canonical stored provenance xref. WI-8.5a DEFERS this frontmatter flip to
+        // WI-8.5b: the frozen `consolidate-ops.json` oracle (Chunk 7 DoD 5) serializes
+        // the merged asset's `bodyXrefs`, so re-spelling them here would re-record a
+        // frozen golden this chunk does not own (§8 stop-and-report). Stays legacy.
         const p = parseStoredRef(ref);
         return [p.origin ? `${p.origin}//${p.type}:${p.name}` : `${p.type}:${p.name}`];
       } catch {
@@ -2205,9 +2208,20 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
 
-  // Idempotency: check pending proposals by target ref
-  const existingProposals = listProposals(stashDir, { ref: knowledgeRef });
-  if (existingProposals.some((p) => p.status === "pending")) {
+  // Idempotency: is a pending proposal already queued for this knowledge concept?
+  // Match by conceptId, grammar-independent — WI-8.5a stores proposals.ref as the
+  // item_ref, so an exact `{ ref: knowledge:slug }` filter would miss it.
+  const targetParsed = parseStoredRef(knowledgeRef);
+  const targetConceptId = legacyConceptId(targetParsed.type, targetParsed.name);
+  const existingProposals = listProposals(stashDir, { status: "pending" }).filter((p) => {
+    try {
+      const pp = parseStoredRef(p.ref);
+      return legacyConceptId(pp.type, pp.name) === targetConceptId;
+    } catch {
+      return false;
+    }
+  });
+  if (existingProposals.length > 0) {
     warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
     pushSkipReason("promote", op.ref, "promote_pending_proposal_exists");
     return;
@@ -2446,7 +2460,16 @@ export async function handleContradictOp(op: ConsolidateContradictOp, ctx: Conso
  * for dedup purposes even if they don't share an exact ref.
  */
 function normalizeSlugForDedup(ref: string): string {
-  const slug = ref.replace(/^[^:]+:/, "");
+  // Extract the bare asset name from EITHER grammar (WI-8.5a: proposals.ref is the
+  // item_ref `bundle//conceptId`, which carries no `type:` colon — the old
+  // `replace(/^[^:]+:/,"")` strip would leave the bundle/type prefix in). The name
+  // is identical across grammars, so the dedup slug stays stable across the flip.
+  let slug: string;
+  try {
+    slug = parseStoredRef(ref).name;
+  } catch {
+    slug = ref.replace(/^[^:]+:/, "");
+  }
   const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
   const tokens = slug
     .toLowerCase()
