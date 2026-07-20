@@ -48,7 +48,10 @@ for k in $(seq 0 $((N - 1))); do
   done
   t="$(mktemp)"
   tmps+=("$t")
-  ( bun test --timeout=30000 "${slice[@]}" >"$t" 2>&1 ) &
+  # 120s per-test (vs 30s serial): under N-way process contention a heavy test
+  # can legitimately run 3-4x its solo duration; the timeout exists to catch
+  # HANGS, not to police performance, and 30s flaked real passes under load.
+  ( bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
   pids+=($!)
 done
 
