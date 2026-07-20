@@ -920,7 +920,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset" as const,
               assetType: "skill",
               assetName: "deploy",
-              action: "akm show skill:deploy",
+              action: "akm show skills/deploy",
               stash: { id: "x", name: "x" },
             },
           ],
@@ -952,14 +952,14 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset",
               assetType: "skill",
               assetName: "no-stash",
-              action: "akm show skill:no-stash",
+              action: "akm show skills/no-stash",
             } as never,
             // stash present but id is empty
             {
               type: "registry-asset",
               assetType: "skill",
               assetName: "empty-id",
-              action: "akm show skill:empty-id",
+              action: "akm show skills/empty-id",
               stash: { id: "", name: "x" },
             } as never,
             // stash present but name is missing
@@ -967,7 +967,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset",
               assetType: "skill",
               assetName: "no-name",
-              action: "akm show skill:no-name",
+              action: "akm show skills/no-name",
               stash: { id: "x" },
             } as never,
             // valid — only this one should survive
@@ -975,7 +975,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset" as const,
               assetType: "skill",
               assetName: "good",
-              action: "akm show skill:good",
+              action: "akm show skills/good",
               stash: { id: "x", name: "x" },
             },
           ],

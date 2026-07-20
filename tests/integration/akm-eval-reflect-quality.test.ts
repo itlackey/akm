@@ -219,7 +219,7 @@ describe("classifyReflectAction", () => {
         ref: "memories/foo",
         result: {
           error:
-            "Reflect rejected: EXCESSIVE_EXPANSION — proposed body is 481% of source (maximum 200%) for ref memory:foo. Speculative material was likely added.",
+            "Reflect rejected: EXCESSIVE_EXPANSION — proposed body is 481% of source (maximum 200%) for ref memories/foo. Speculative material was likely added.",
         },
       },
       "run-1",
@@ -234,7 +234,7 @@ describe("classifyReflectAction", () => {
         ref: "memories/foo",
         result: {
           error:
-            "Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is 13% of source (minimum 50%) for ref memory:foo. Concrete content was likely deleted.",
+            "Reflect rejected: EXCESSIVE_SHRINKAGE — proposed body is 13% of source (minimum 50%) for ref memories/foo. Concrete content was likely deleted.",
         },
       },
       "run-1",

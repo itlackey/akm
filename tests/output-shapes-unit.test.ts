@@ -92,7 +92,7 @@ describe("shapeSearchHit — local stash hits", () => {
     name: "deploy",
     description: "Deploy the app",
     ref: "skills/deploy",
-    action: "akm show skill:deploy",
+    action: "akm show skills/deploy",
     score: 0.42,
     estimatedTokens: 120,
     origin: "local:.",
@@ -106,7 +106,7 @@ describe("shapeSearchHit — local stash hits", () => {
       type: "skill",
       name: "deploy",
       ref: "skills/deploy",
-      action: "akm show skill:deploy",
+      action: "akm show skills/deploy",
       estimatedTokens: 120,
     });
   });
@@ -117,7 +117,7 @@ describe("shapeSearchHit — local stash hits", () => {
       type: "skill",
       name: "deploy",
       description: "Deploy the app",
-      action: "akm show skill:deploy",
+      action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
     });
@@ -181,7 +181,7 @@ describe("shapeSearchHitForAgent", () => {
       name: "deploy",
       ref: "skills/deploy",
       description: "long ".repeat(100),
-      action: "akm show skill:deploy",
+      action: "akm show skills/deploy",
       score: 0.5,
       estimatedTokens: 100,
       tags: ["ops"],
@@ -192,7 +192,7 @@ describe("shapeSearchHitForAgent", () => {
       name: "deploy",
       ref: "skills/deploy",
       type: "skill",
-      action: "akm show skill:deploy",
+      action: "akm show skills/deploy",
       score: 0.5,
       estimatedTokens: 100,
     });
@@ -208,7 +208,7 @@ describe("shapeAssetHit", () => {
     assetType: "skill",
     description: "Deploy the app",
     stash: { id: "x", name: "x" },
-    action: "akm show skill:deploy",
+    action: "akm show skills/deploy",
     estimatedTokens: 120,
   };
 
@@ -216,7 +216,7 @@ describe("shapeAssetHit", () => {
     expect(shapeAssetHit(asset, "brief")).toEqual({
       assetName: "deploy",
       assetType: "skill",
-      action: "akm show skill:deploy",
+      action: "akm show skills/deploy",
       estimatedTokens: 120,
     });
   });
@@ -236,7 +236,7 @@ describe("shapeShowOutput", () => {
     type: "skill",
     name: "deploy",
     description: "Deploy",
-    action: "akm show skill:deploy",
+    action: "akm show skills/deploy",
     content: "long body...",
     template: "tpl",
     cwd: "/tmp",

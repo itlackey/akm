@@ -19,7 +19,7 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
     type: "skill",
     name: "deploy",
     origin: null,
-    action: "akm show skill:deploy",
+    action: "akm show skills/deploy",
     description: "Deploy script",
     path: "/home/user/stash/skills/deploy/SKILL.md",
     editable: true,

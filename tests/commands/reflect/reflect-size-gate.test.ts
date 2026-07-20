@@ -191,7 +191,7 @@ describe("checkReflectSize — large source shrinkage (ratio floor)", () => {
   });
 
   test("large source (7KB), 10% shrinkage (like FINAL_REVIEW case) → EXCESSIVE_SHRINKAGE", () => {
-    // Mirrors the known-bad case: knowledge:projects/rlm/v0.0.0/FINAL_REVIEW
+    // Mirrors the known-bad case: knowledge/projects/rlm/v0.0.0/FINAL_REVIEW
     const sourceLen = 7000;
     const proposedLen = Math.round(sourceLen * 0.1);
     const result = checkReflectSize(body(sourceLen), body(proposedLen));

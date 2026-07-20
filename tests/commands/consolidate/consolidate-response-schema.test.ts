@@ -129,7 +129,7 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
         {
           op: "delete",
           ref: "memories/outdated",
-          reason: "Superseded by knowledge:deploy.",
+          reason: "Superseded by knowledge/deploy.",
         },
       ],
     };

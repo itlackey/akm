@@ -77,10 +77,10 @@ describe("parseWorkflow", () => {
 
   test("rejects xrefs that are not an array of canonical asset refs", () => {
     for (const xrefs of [
-      "xrefs: memory:deploy-order\n",
+      "xrefs: memories/deploy-order\n",
       "xrefs:\n  - not-a-ref\n",
       "xrefs:\n  - environment:production\n",
-      "xrefs:\n  - memory:deploy-order\n  - 42\n",
+      "xrefs:\n  - memories/deploy-order\n  - 42\n",
     ]) {
       const result = parse(VALID_WORKFLOW.replace("params:\n", `${xrefs}params:\n`));
       expect(result.ok).toBe(false);

@@ -133,7 +133,7 @@ function rankOf(hits: SourceSearchHit[], name: string): number {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe("Score differentiation", () => {
-  test('"docker homelab" returns skill:docker-homelab in top 3', async () => {
+  test('"docker homelab" returns skills/docker-homelab in top 3', async () => {
     const hits = await search("docker homelab");
     expect(hits.length).toBeGreaterThanOrEqual(2);
 
@@ -157,7 +157,7 @@ describe("Score differentiation", () => {
     expectHit(hits, "docker-clean");
   });
 
-  test('"svelte component" -> skill:svelte-components ranks #1, above sub-references', async () => {
+  test('"svelte component" -> skills/svelte-components ranks #1, above sub-references', async () => {
     const hits = await search("svelte component");
     expect(hits.length).toBeGreaterThanOrEqual(1);
 
@@ -190,7 +190,7 @@ describe("Score differentiation", () => {
     }
   });
 
-  test('"mem0 search" -> script:mem0-search ranks #1', async () => {
+  test('"mem0 search" -> scripts/mem0-search ranks #1', async () => {
     const hits = await search("mem0 search");
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(rankOf(hits, "mem0-search")).toBe(1);
@@ -198,7 +198,7 @@ describe("Score differentiation", () => {
 });
 
 describe("Exact/near-exact name matching", () => {
-  test('"docker-homelab" (exact) -> skill:docker-homelab appears in top 3', async () => {
+  test('"docker-homelab" (exact) -> skills/docker-homelab appears in top 3', async () => {
     const hits = await search("docker-homelab");
     expect(hits.length).toBeGreaterThanOrEqual(2);
 
@@ -213,27 +213,27 @@ describe("Exact/near-exact name matching", () => {
     expect(scoreOf(skillHit)).toBeGreaterThan(0.5);
   });
 
-  test('"mem0-search" (exact) -> script:mem0-search is #1', async () => {
+  test('"mem0-search" (exact) -> scripts/mem0-search is #1', async () => {
     const hits = await search("mem0-search");
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(hits[0].name).toBe("mem0-search");
   });
 
-  test('"security-review" (exact) -> command:security-review is #1', async () => {
+  test('"security-review" (exact) -> commands/security-review is #1', async () => {
     const hits = await search("security-review");
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(hits[0].name).toBe("security-review");
     expect(hits[0].type).toBe("command");
   });
 
-  test('"k8s-deploy" (exact) -> skill:k8s-deploy is #1', async () => {
+  test('"k8s-deploy" (exact) -> skills/k8s-deploy is #1', async () => {
     const hits = await search("k8s-deploy");
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(hits[0].name).toBe("k8s-deploy");
     expect(hits[0].type).toBe("skill");
   });
 
-  test('"code-reviewer" (exact) -> agent:code-reviewer is #1', async () => {
+  test('"code-reviewer" (exact) -> agents/code-reviewer is #1', async () => {
     const hits = await search("code-reviewer");
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(hits[0].name).toBe("code-reviewer");

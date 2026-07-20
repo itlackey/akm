@@ -33,7 +33,7 @@
  * The tripwire throws on any detected leak. If a future investigation needs
  * to inventory leaks without failing the build, temporarily replace `throw`
  * with `console.warn` in the `afterEach` handler below
- * (see knowledge:projects/akm/test-harness-redesign for context).
+ * (see knowledge/projects/akm/test-harness-redesign for context).
  *
  * Tests that legitimately need to mutate cwd or fetch within a test should
  * use `tests/_helpers/sandbox.ts` (`withMockedFetch`, etc.) — the helpers

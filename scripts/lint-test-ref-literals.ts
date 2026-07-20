@@ -45,7 +45,31 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // inputs across the mv/source/show/history/feedback/events/remember/env/graph/
 // workflow suites re-keyed to the conceptId grammar; the residual 111 are the
 // durable-state / persisted / echoed legacy assertions the heuristic preserves).
-const CEILING = 110;
+//
+// WI-8.5d (Chunk-8) drove 110 → 74: the flippable DISPLAY / PROSE / test-DATA
+// tokens re-keyed to the conceptId grammar (CLI `action` examples, ranking test
+// names, session-log event text, stale comments, schema-sample reason fields,
+// eval-fixture reason text, workflow-xref frontmatter — the xref validator
+// accepts both grammars). The residual 74 are ECHOES of internal `type:name`
+// grammar the SRC still emits and CANNOT flip without an out-of-scope SRC change:
+//   • index `entry_key` seeds/queries  — SRC builds `${stashDir}:${type}:${name}`
+//     (indexer.ts; the regenerable index keeps the legacy key, item_ref is a
+//     separate durable column): utility-scoring, scoped-utility, graph-update,
+//     graph-cli-envelope, indexer-rejection, index-db-version-preserve,
+//     llm-enrichment-cache.
+//   • `workflow_runs.workflow_ref` seeds — SRC writes `workflow:<name>`
+//     (runs.ts:409): the tests/integration/workflows/** run seeds + native-executor.
+//   • consolidate LLM-prompt refs — SRC `buildChunkPrompt` emits `memory:<name>`
+//     (chunking.ts): consolidate-chunks.
+//   • resolver / mv error-message + task-yaml + memory-inference-source + env/
+//     secret-validation refs the SRC formats as `type:name`: source-resolve,
+//     goldens-minting-oracle, tasks-run-attempt-observability, file-context,
+//     improve-dry-run-side-effects, akm-validate, standards-prompt-injection,
+//     index-written-assets, published-task-upgrade.
+//   • false positives (not refs): `$env:` PowerShell (tasks-schtasks-backend),
+//     `session:<harness>:<id>` provenance (asset-serialize), `…-agent:ok`
+//     process output (published-task-upgrade).
+const CEILING = 74;
 
 const TYPES = [
   "skill",
