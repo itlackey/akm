@@ -36,28 +36,32 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
 import { openWorkflowDatabase } from "../../../src/workflows/db";
 import { FIXTURE_BASE_EPOCH_MS } from "./fixed-values";
-import { insertAssetOutcomeRow, insertAssetSalienceRow } from "./seed-rows";
+import { insertAssetOutcomeRow, insertAssetSalienceRow, openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "./seed-rows";
 
 /**
- * The migration id this fixture's state.db is captured at: the LAST entry in
- * `STATE_MIGRATIONS` at chunk-0b's capture HEAD (`3c178568`, 2026-07-17),
- * re-verified by direct read of `src/core/state/migrations.ts` (19
- * migrations, `001-initial-schema` .. `019-proposal-fingerprints`; anchors.md
- * E.4). Deliberately a LITERAL capture rather than `STATE_MIGRATIONS.at(-1)`
- * — it records the shipped rc-train "FROM-state" pre-cutover ceiling (plan
- * §3.4) as of THIS capture moment. `buildRcTrainFromState` still applies
- * whatever the REAL (possibly longer) chain is at call time; the
- * migration-fixtures smoke test cross-checks this literal against
- * `STATE_MIGRATIONS.at(-1)!.id` so a later chunk appending a new migration to
- * the same array fails the check loudly (a signal to re-capture this fixture
- * under review) instead of silently drifting.
+ * The migration id this fixture's state.db is captured at: the last state
+ * migration BEFORE the WI-8.2 three-DB cutover (`020-three-db-cutover`) —
+ * `019-proposal-fingerprints`. This is the true shipped rc-train "FROM-state"
+ * pre-cutover ceiling (plan §3.4): a real rc-train install carried exactly this
+ * ledger before running `migrate apply` into the cutover.
+ *
+ * WI-8.2: the fixture is now built EXPLICITLY at this ceiling (via
+ * `openStateDbAtCeiling`), not through `openStateDatabase` — the latter always
+ * applies the full live chain, which now includes migration 020, so it can no
+ * longer produce a genuine pre-cutover snapshot. The migrate-apply flow under
+ * test is what applies 020 + runs the cutover data step.
+ *
+ * The migration-fixtures smoke test cross-checks this literal against
+ * `STATE_MIGRATIONS.at(-2)!.id` (the tip is now the cutover, 020): a later chunk
+ * appending a NEW migration past the cutover shifts at(-2) forward and fails the
+ * check loudly (a signal to re-capture this fixture under review) instead of
+ * silently drifting.
  */
-export const RC_TRAIN_MIGRATION_CEILING = "019-proposal-fingerprints";
+export const RC_TRAIN_MIGRATION_CEILING = PRE_CUTOVER_STATE_CEILING;
 
 /**
  * Live-state refs seeded into rc-train's state.db, matching real asset names
@@ -88,15 +92,15 @@ export function rcTrainFromStatePaths(dir: string): RcTrainFromStatePaths {
  * byte/row-stable across builds.
  *
  * Requires the caller's environment to have `XDG_DATA_HOME` (or
- * `AKM_DATA_DIR`) set under `bun test` — `openStateDatabase` resolves the
- * canonical path unconditionally even when an explicit path overrides it
- * (test-isolation guard in `src/core/paths.ts#getDataDir`).
+ * `AKM_DATA_DIR`) set under `bun test` — `openWorkflowDatabase` (below) resolves
+ * the canonical workflow.db path unconditionally even when an explicit path
+ * overrides it (test-isolation guard in `src/core/paths.ts#getDataDir`).
  */
 export function buildRcTrainFromState(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
   const { stateDbPath, workflowDbPath } = rcTrainFromStatePaths(dir);
 
-  const stateDb = openStateDatabase(stateDbPath);
+  const stateDb = openStateDbAtCeiling(stateDbPath, RC_TRAIN_MIGRATION_CEILING);
   try {
     seedLiveState(stateDb);
   } finally {

@@ -17,8 +17,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
-import { openStateDatabase } from "../../../src/core/state-db";
-import type { Database } from "../../../src/storage/database";
+import { type Database, openDatabase } from "../../../src/storage/database";
 import { openWorkflowDatabase } from "../../../src/workflows/db";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { buildOrphanBearingStateDb, LIVE_CONTRAST_REFS, ORPHAN_REFS } from "./orphan-state";
@@ -28,6 +27,7 @@ import {
   RC_TRAIN_MIGRATION_CEILING,
   rcTrainFromStatePaths,
 } from "./rc-train-state";
+import { PRE_CUTOVER_STATE_CEILING } from "./seed-rows";
 
 let storage: IsolatedAkmStorage;
 
@@ -85,10 +85,15 @@ describe("WI-0b.6a — orphan-bearing state.db builder", () => {
 
     expect(fs.existsSync(dbPath)).toBe(true);
 
-    const db = openStateDatabase(dbPath);
+    // Opened READ-ONLY so the as-built pre-cutover shape is observed verbatim —
+    // `openStateDatabase` would apply the pending cutover migration (020) on
+    // open, minting `legacy_state` and shifting the ceiling off the FROM-state.
+    const db = openDatabase(dbPath, { readonly: true });
     try {
-      // Gate 3 "loads": the real migration ledger accepts this DB as current.
-      expect(currentMigrationCeiling(db)).toBe(STATE_MIGRATIONS.at(-1)?.id);
+      // Gate 3 "loads": the DB is a valid pre-cutover FROM-state, pinned one
+      // migration behind the live tip (the tip is now the cutover, 020).
+      expect(currentMigrationCeiling(db)).toBe(STATE_MIGRATIONS.at(-2)?.id);
+      expect(currentMigrationCeiling(db)).toBe(PRE_CUTOVER_STATE_CEILING);
 
       const salienceRefs = readRefs(db, "asset_salience").map((r) => r.asset_ref);
       const outcomeRefs = readRefs(db, "asset_outcome").map((r) => r.asset_ref);
@@ -162,13 +167,16 @@ describe("WI-0b.6b — rc-train FROM-state builder", () => {
     expect(fs.existsSync(stateDbPath)).toBe(true);
     expect(fs.existsSync(workflowDbPath)).toBe(true);
 
-    // Migration ceiling: pinned literal matches the live ledger's last entry
-    // at this HEAD (re-verified — see rc-train-state.ts's doc comment) AND
-    // the fixture's actual applied ledger.
-    expect(RC_TRAIN_MIGRATION_CEILING).toBe(STATE_MIGRATIONS.at(-1)?.id as string);
+    // Migration ceiling: the FROM-state is pinned one migration behind the live
+    // tip — the tip is now the WI-8.2 cutover (020), so the pre-cutover ceiling
+    // is at(-2). The literal is kept and cross-checked both ways.
+    expect(RC_TRAIN_MIGRATION_CEILING).toBe(STATE_MIGRATIONS.at(-2)?.id as string);
     expect(RC_TRAIN_MIGRATION_CEILING).toBe("019-proposal-fingerprints");
+    expect(PRE_CUTOVER_STATE_CEILING).toBe("019-proposal-fingerprints");
 
-    const stateDb = openStateDatabase(stateDbPath);
+    // Opened READ-ONLY so the as-built pre-cutover ledger is observed verbatim
+    // (an `openStateDatabase` open would apply the pending cutover migration).
+    const stateDb = openDatabase(stateDbPath, { readonly: true });
     try {
       expect(currentMigrationCeiling(stateDb)).toBe(RC_TRAIN_MIGRATION_CEILING);
 

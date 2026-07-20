@@ -31,7 +31,42 @@
  *     this HEAD — it must never appear in an INSERT here.
  */
 
-import type { Database } from "../../../src/storage/database";
+import fs from "node:fs";
+import path from "node:path";
+import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
+import { type Database, openDatabase } from "../../../src/storage/database";
+import { runMigrations as runSqliteMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { applyStandardPragmas } from "../../../src/storage/sqlite-pragmas";
+
+/**
+ * The pre-cutover state.db migration ceiling: the LAST migration that existed
+ * before the WI-8.2 three-DB cutover (`020-three-db-cutover`) was appended.
+ * The rc-train / orphan FROM-state fixtures pin themselves here so they are a
+ * faithful pre-cutover snapshot — the exact ledger a real rc-train install
+ * carried before it ran `migrate apply` into the cutover. Migration 020 is then
+ * applied by the migrate-apply flow under test, never baked into the fixture.
+ */
+export const PRE_CUTOVER_STATE_CEILING = "019-proposal-fingerprints";
+
+/**
+ * Open a state.db migrated to an EXPLICIT ceiling migration id (a prefix of
+ * STATE_MIGRATIONS), NOT the live tip. `openStateDatabase` always applies the
+ * full live chain (which now includes the cutover DDL), so a genuine
+ * pre-cutover FROM-state fixture cannot use it. This applies exactly the prefix
+ * `[001 … ceilingId]` via the real shared migration runner (never hand-written
+ * DDL — the checksums are still sealed), leaving the DB legitimately "old"
+ * relative to the live ledger. Caller owns the returned handle (seed, then
+ * close).
+ */
+export function openStateDbAtCeiling(dbPath: string, ceilingId: string): Database {
+  const ceilingIndex = STATE_MIGRATIONS.findIndex((m) => m.id === ceilingId);
+  if (ceilingIndex < 0) throw new Error(`Unknown state.db migration ceiling "${ceilingId}"`);
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = openDatabase(dbPath);
+  applyStandardPragmas(db, { dataDir: path.dirname(dbPath) });
+  runSqliteMigrations(db, STATE_MIGRATIONS.slice(0, ceilingIndex + 1));
+  return db;
+}
 
 export interface AssetSalienceSeedRow {
   assetRef: string;

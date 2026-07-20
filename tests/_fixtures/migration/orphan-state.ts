@@ -30,10 +30,9 @@
  * migration chain.
  */
 
-import { openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { FIXTURE_BASE_EPOCH_MS } from "./fixed-values";
-import { insertAssetOutcomeRow, insertAssetSalienceRow } from "./seed-rows";
+import { insertAssetOutcomeRow, insertAssetSalienceRow, openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "./seed-rows";
 
 /** Origin qualifier used for the origin-qualified ref shapes below. Matches
  *  the real `sourceName` value `rekeyStateDbForMove` (mv-cli.ts:898-967) uses
@@ -71,19 +70,17 @@ export const LIVE_CONTRAST_REFS = {
 } as const;
 
 /**
- * Build the orphan-bearing state.db fixture at `dbPath`. Applies the full
- * real migration chain via `openStateDatabase`, then seeds the 4-shape
- * orphan rows plus 2 live-contrast rows into both `asset_salience` and
- * `asset_outcome`. Every value is a fixed literal (no `Date.now()` /
- * `Math.random()`) so the fixture is byte/row-stable across builds.
- *
- * Requires the caller's environment to have `XDG_DATA_HOME` (or
- * `AKM_DATA_DIR`) set under `bun test` — `openStateDatabase` resolves the
- * canonical path unconditionally even when `dbPath` overrides it (test-
- * isolation guard in `src/core/paths.ts#getDataDir`).
+ * Build the orphan-bearing state.db fixture at `dbPath`. Applies the real
+ * migration chain up to the PRE-CUTOVER ceiling (`019-proposal-fingerprints`,
+ * via `openStateDbAtCeiling` — NOT the full live chain, so `legacy_state` /
+ * migration 020 are deliberately absent: the cutover under test is what creates
+ * them), then seeds the 4-shape orphan rows plus 2 live-contrast rows into both
+ * `asset_salience` and `asset_outcome`. Every value is a fixed literal (no
+ * `Date.now()` / `Math.random()`) so the fixture is byte/row-stable across
+ * builds.
  */
 export function buildOrphanBearingStateDb(dbPath: string): void {
-  const db = openStateDatabase(dbPath);
+  const db = openStateDbAtCeiling(dbPath, PRE_CUTOVER_STATE_CEILING);
   try {
     seedOrphanRows(db);
     seedLiveContrastRows(db);
