@@ -23,7 +23,7 @@ import {
   verifyMigrationBackup,
 } from "../../src/core/migration-backup";
 import { _setAfterPendingOperationCheckHookForTests } from "../../src/core/migration-operation";
-import { getConfigPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
+import { getConfigPath, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
 import { openWorkflowDatabase, WORKFLOW_MIGRATIONS } from "../../src/workflows/db";
@@ -171,11 +171,14 @@ function restoreJournalEntries(
   backup: ReturnType<typeof createMigrationBackup>,
   operationId: string,
 ): Array<Record<string, unknown>> {
-  const destinations = {
+  const destinations: Record<string, string> = {
     "config.json": getConfigPath(),
     "state.db": getStateDbPathInDataDir(),
     "workflow.db": getWorkflowDbPath(),
-  } as const;
+    // Manifest v3 (chunk-8 WI-8.1) adds the pre-rescue index.db artifact; the
+    // journal's entry set must exactly match the source manifest's artifact set.
+    ...(backup.manifest.artifacts["index.db"] ? { "index.db": getDbPath() } : {}),
+  };
   const fingerprint = (filePath: string): { byteSize: number; sha256: string } | null => {
     if (!fs.existsSync(filePath)) return null;
     const bytes = fs.readFileSync(filePath);
@@ -183,7 +186,7 @@ function restoreJournalEntries(
   };
   return Object.entries(destinations).map(([name, destination]) => ({
     destination,
-    ...(backup.manifest.artifacts[name as keyof typeof destinations].present
+    ...((backup.manifest.artifacts as Record<string, { present: boolean }>)[name].present
       ? { stage: `${destination}.restore-stage.${operationId}` }
       : {}),
     originalPresent: fs.existsSync(destination),
@@ -235,7 +238,9 @@ function materializeRestoreStages(
         ? "config.json"
         : entry.destination === getStateDbPathInDataDir()
           ? "state.db"
-          : "workflow.db";
+          : entry.destination === getDbPath()
+            ? "index.db"
+            : "workflow.db";
     fs.copyFileSync(path.join(backup.path, name), entry.stage);
   }
 }

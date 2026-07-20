@@ -5,8 +5,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { openDatabase } from "../storage/database";
 import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
+import { openDatabase } from "../storage/database";
 import {
   inspectMigrationLedger,
   inspectSealedMigrationLedger,
@@ -29,6 +29,7 @@ import {
 import {
   getConfigPath,
   getDataDir,
+  getDbPath,
   getIndexWriterLockPath,
   getLockfileLockPath,
   getStateDbPathInDataDir,
@@ -37,15 +38,28 @@ import {
 import { STATE_MIGRATIONS } from "./state/migrations";
 
 export const MIGRATION_BACKUP_VERSION = "0.9.0" as const;
-const MANIFEST_FORMAT_VERSION = 2 as const;
+const MANIFEST_FORMAT_VERSION = 3 as const;
+/** Pre-cutover manifests (three artifacts, no index.db) stay readable and restorable (plan §3.3 item 1). */
+const LEGACY_MANIFEST_FORMAT_VERSION = 2 as const;
 const RESTORE_JOURNAL_FORMAT_VERSION = 2 as const;
-const ARTIFACT_NAMES = ["config.json", "state.db", "workflow.db"] as const;
+const CORE_ARTIFACT_NAMES = ["config.json", "state.db", "workflow.db"] as const;
+// index.db joined the backup set at manifest v3 (chunk-8 WI-8.1): it is a
+// regenerable cache backed up ONLY as the pre-rescue home of usage_events,
+// which the three-DB cutover moves into state.db (plan §3.2/§3.3).
+const ARTIFACT_NAMES = [...CORE_ARTIFACT_NAMES, "index.db"] as const;
 const MAX_BLOCKER_DIRECTORY_SAMPLES = 100;
 const MAX_WORKFLOW_BLOCKER_SAMPLES = 100;
 const MAX_BLOCKER_FIELD_BYTES = 256;
 const MAX_BLOCKER_ITEM_BYTES = 512;
 const MAX_BLOCKER_DIAGNOSTIC_BYTES = 16 * 1024;
+type CoreArtifactName = (typeof CORE_ARTIFACT_NAMES)[number];
 type ArtifactName = (typeof ARTIFACT_NAMES)[number];
+type ManifestFormatVersion = typeof MANIFEST_FORMAT_VERSION | typeof LEGACY_MANIFEST_FORMAT_VERSION;
+
+/** The artifact set a manifest of the given format version records (v2 = pre-cutover three-artifact shape). */
+function artifactNamesFor(formatVersion: ManifestFormatVersion): readonly ArtifactName[] {
+  return formatVersion === LEGACY_MANIFEST_FORMAT_VERSION ? CORE_ARTIFACT_NAMES : ARTIFACT_NAMES;
+}
 export type MigrationArtifactStatus = "old" | "current" | "newer" | "inconsistent" | "missing" | "corrupt";
 
 export interface MigrationArtifactState {
@@ -59,6 +73,8 @@ export interface MigrationState {
   config: MigrationArtifactState;
   state: MigrationArtifactState;
   workflow: MigrationArtifactState;
+  /** index.db recoverability ("current" | "missing" | "corrupt") — never blocks backup eligibility. */
+  index: MigrationArtifactState;
 }
 
 export interface MigrationBackupArtifact extends MigrationArtifactState {
@@ -70,14 +86,24 @@ export interface MigrationBackupArtifact extends MigrationArtifactState {
 }
 
 export interface MigrationBackupManifest {
-  formatVersion: typeof MANIFEST_FORMAT_VERSION;
+  formatVersion: ManifestFormatVersion;
   version: typeof MIGRATION_BACKUP_VERSION;
   targetVersion: typeof MIGRATION_BACKUP_VERSION;
   installationId: string;
   runId: string;
   createdAt: string;
   complete: true;
-  artifacts: Record<ArtifactName, MigrationBackupArtifact>;
+  /** v2 manifests carry only the three core artifacts; index.db exists from v3 on. */
+  artifacts: Record<CoreArtifactName, MigrationBackupArtifact> & { "index.db"?: MigrationBackupArtifact };
+}
+
+/** Artifact lookup that enforces the per-version presence parseManifest guarantees. */
+function manifestArtifact(manifest: MigrationBackupManifest, name: ArtifactName): MigrationBackupArtifact {
+  const artifact = manifest.artifacts[name];
+  if (!artifact) {
+    throw new ConfigError(`Migration backup manifest is missing its ${name} entry.`, "INVALID_CONFIG_FILE");
+  }
+  return artifact;
 }
 
 export interface MigrationBackupResult {
@@ -114,6 +140,7 @@ function expectedSourcePaths(): Record<ArtifactName, string> {
     "config.json": getConfigPath(),
     "state.db": getStateDbPathInDataDir(),
     "workflow.db": getWorkflowDbPath(),
+    "index.db": getDbPath(),
   };
 }
 
@@ -240,11 +267,31 @@ function inspectSqliteSealed(filePath: string, sealed: readonly SealedMigration[
   }
 }
 
-/** Ledger inspection for the two ledger-migrated databases (state.db live array; workflow.db frozen copy). */
-function inspectLedgerArtifact(name: "state.db" | "workflow.db", filePath: string): MigrationArtifactState {
-  return name === "state.db"
-    ? inspectSqlite(filePath, STATE_MIGRATIONS)
-    : inspectSqliteSealed(filePath, WORKFLOW_MIGRATIONS_CHECKSUMS);
+/**
+ * index.db is NOT ledger-migrated (it uses the index-schema.ts DB_VERSION
+ * scheme, rebuilt rather than migrated), so its recoverability inspection is
+ * presence + SQLite quick_check only: "current" means readable and
+ * integrity-clean. It is backed up solely as the pre-rescue usage_events home.
+ */
+function inspectIndexDbArtifact(filePath: string): MigrationArtifactState {
+  if (!fs.existsSync(filePath)) return { status: "missing" };
+  let db: ReturnType<typeof openDatabase> | undefined;
+  try {
+    db = openDatabase(filePath, { readonly: true });
+    quickCheck(db, filePath);
+    return { status: "current" };
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    db?.close();
+  }
+}
+
+/** Recoverability inspection per artifact (state.db live ledger; workflow.db frozen copy; index.db quick_check). */
+function inspectLedgerArtifact(name: Exclude<ArtifactName, "config.json">, filePath: string): MigrationArtifactState {
+  if (name === "state.db") return inspectSqlite(filePath, STATE_MIGRATIONS);
+  if (name === "workflow.db") return inspectSqliteSealed(filePath, WORKFLOW_MIGRATIONS_CHECKSUMS);
+  return inspectIndexDbArtifact(filePath);
 }
 
 export function inspectMigrationState(): MigrationState {
@@ -252,10 +299,14 @@ export function inspectMigrationState(): MigrationState {
     config: inspectConfig(getConfigPath()),
     state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
     workflow: inspectSqliteSealed(getWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
+    index: inspectIndexDbArtifact(getDbPath()),
   };
 }
 
 function assertBackupEligible(state: MigrationState): void {
+  // index.db is deliberately absent here: an unreadable index.db is excluded
+  // from the backup (regenerable cache; the cutover's usage_events rescue
+  // reports an empty result) rather than blocking migration entirely.
   const entries: Array<[string, MigrationArtifactState]> = [
     ["config.json", state.config],
     ["state.db", state.state],
@@ -288,7 +339,7 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
   }
   const manifest = value as Partial<MigrationBackupManifest>;
   if (
-    manifest.formatVersion !== MANIFEST_FORMAT_VERSION ||
+    (manifest.formatVersion !== MANIFEST_FORMAT_VERSION && manifest.formatVersion !== LEGACY_MANIFEST_FORMAT_VERSION) ||
     manifest.version !== MIGRATION_BACKUP_VERSION ||
     manifest.targetVersion !== MIGRATION_BACKUP_VERSION ||
     manifest.installationId !== path.basename(getMigrationOperationRoot()) ||
@@ -303,8 +354,10 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
     );
   }
   const expected = expectedSourcePaths();
-  for (const name of ARTIFACT_NAMES) {
+  for (const name of artifactNamesFor(manifest.formatVersion as ManifestFormatVersion)) {
     const artifact = manifest.artifacts?.[name];
+    // index.db is never ledger-classified: "current" (readable) or "missing" only.
+    const allowedStatuses = name === "index.db" ? ["current", "missing"] : ["old", "current", "missing"];
     if (
       !artifact ||
       artifact.sourcePath !== expected[name] ||
@@ -312,7 +365,7 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
       !Number.isSafeInteger(artifact.byteSize) ||
       artifact.byteSize < 0 ||
       typeof artifact.createdAt !== "string" ||
-      !["old", "current", "missing"].includes(artifact.status) ||
+      !allowedStatuses.includes(artifact.status) ||
       (artifact.present
         ? typeof artifact.sha256 !== "string" || artifact.sha256.length !== 64
         : artifact.sha256 !== null || artifact.status !== "missing")
@@ -371,8 +424,8 @@ export function verifyMigrationBackup(bundlePath = resolveBackupRun()): Migratio
   }
   const manifest = parseManifest(bundlePath);
   const expectedFiles = new Set(["manifest.json"]);
-  for (const name of ARTIFACT_NAMES) {
-    const artifact = manifest.artifacts[name];
+  for (const name of artifactNamesFor(manifest.formatVersion)) {
+    const artifact = manifestArtifact(manifest, name);
     const artifactPath = path.join(bundlePath, name);
     if (!artifact.present) {
       if (fs.existsSync(artifactPath)) {
@@ -397,7 +450,7 @@ export function verifyMigrationBackup(bundlePath = resolveBackupRun()): Migratio
         "INVALID_CONFIG_FILE",
       );
     }
-    const inspected = name === "config.json" ? inspectConfig(artifactPath) : inspectLedgerArtifact(name, artifactPath);
+    const inspected = inspectArtifactAt(name, artifactPath);
     if (!sameState(inspected, artifact)) {
       throw new ConfigError(
         `Migration backup artifact ${artifactPath} failed SQLite/config recoverability verification: expected ${artifact.status}, got ${inspected.status}${inspected.detail ? ` (${inspected.detail})` : ""}.`,
@@ -466,7 +519,10 @@ function newRunId(): string {
 }
 
 function stateForName(state: MigrationState, name: ArtifactName): MigrationArtifactState {
-  return name === "config.json" ? state.config : name === "state.db" ? state.state : state.workflow;
+  if (name === "config.json") return state.config;
+  if (name === "state.db") return state.state;
+  if (name === "workflow.db") return state.workflow;
+  return state.index;
 }
 
 function createMigrationBackupUnlocked(): MigrationBackupResult {
@@ -486,23 +542,24 @@ function createMigrationBackupUnlocked(): MigrationBackupResult {
     for (const name of ARTIFACT_NAMES) {
       const sourcePath = sources[name];
       const sourceState = stateForName(state, name);
+      // index.db never blocks a backup: anything short of a clean read
+      // (corrupt cache) is recorded as absent — it is regenerable, and the
+      // cutover's usage_events rescue reports the empty result.
+      const effectiveState =
+        name === "index.db" && sourceState.status !== "current" ? { status: "missing" as const } : sourceState;
       const destination = path.join(temporary, name);
-      const present = sourceState.status !== "missing";
+      const present = effectiveState.status !== "missing";
       if (present) {
         if (name === "config.json") copyFileDurable(sourcePath, destination);
         else backupSqlite(sourcePath, destination);
       }
-      const inspected = present
-        ? name === "config.json"
-          ? inspectConfig(destination)
-          : inspectLedgerArtifact(name, destination)
-        : { status: "missing" as const };
-      const expectedArtifact = { ...sourceState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
+      const inspected = present ? inspectArtifactAt(name, destination) : { status: "missing" as const };
+      const expectedArtifact = { ...effectiveState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
       if (!sameState(inspected, expectedArtifact)) {
         throw new ConfigError(`Snapshot ${name} does not match its source migration state.`, "INVALID_CONFIG_FILE");
       }
       artifacts[name] = {
-        ...sourceState,
+        ...effectiveState,
         sourcePath,
         present,
         byteSize: present ? fs.statSync(destination).size : 0,
@@ -891,12 +948,139 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
       invalidRestoreJournal(journalPath, `${field} is not a safe operation identifier`);
     }
   }
-  if (!Array.isArray(raw.entries) || raw.entries.length !== ARTIFACT_NAMES.length) {
-    invalidRestoreJournal(journalPath, `expected exactly ${ARTIFACT_NAMES.length} artifact entries`);
+  // The exact entry count depends on the SOURCE manifest's format version
+  // (v2 = three artifacts, v3 adds index.db); the precise check happens after
+  // the source backup is verified below. Here: bound the shape.
+  if (
+    !Array.isArray(raw.entries) ||
+    (raw.entries.length !== ARTIFACT_NAMES.length && raw.entries.length !== CORE_ARTIFACT_NAMES.length)
+  ) {
+    invalidRestoreJournal(
+      journalPath,
+      `expected ${CORE_ARTIFACT_NAMES.length} or ${ARTIFACT_NAMES.length} artifact entries`,
+    );
   }
 
   const operationId = raw.operationId as string;
   const expectedPaths = expectedSourcePaths();
+  const byDestination = parseRestoreJournalEntries(raw.entries, operationId, expectedPaths, journalPath);
+
+  const sourceRunId = raw.sourceRunId as string;
+  let sourceManifest: MigrationBackupManifest;
+  try {
+    sourceManifest = verifyMigrationBackup(getMigrationBackupDir(sourceRunId));
+  } catch (error) {
+    invalidRestoreJournal(
+      journalPath,
+      `source backup ${sourceRunId} is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const journalNames = artifactNamesFor(sourceManifest.formatVersion);
+  if (raw.entries.length !== journalNames.length) {
+    invalidRestoreJournal(
+      journalPath,
+      `expected exactly ${journalNames.length} artifact entries for source backup format ${sourceManifest.formatVersion}`,
+    );
+  }
+  const entries = journalNames.map((name) => byDestination.get(expectedPaths[name]) as RestoreJournalEntry);
+  for (const [index, name] of journalNames.entries()) {
+    const entry = entries[index];
+    if (!entry) {
+      invalidRestoreJournal(journalPath, `journal has no entry for ${name}`);
+    }
+    const artifact = manifestArtifact(sourceManifest, name);
+    const expectedStage = artifact.present ? `${entry.destination}.restore-stage.${operationId}` : undefined;
+    if (entry.stage !== expectedStage) {
+      invalidRestoreJournal(journalPath, `${name} stage presence does not match source backup ${sourceRunId}`);
+    }
+
+    if (raw.phase === "committed") {
+      if (fs.existsSync(entry.destination) !== artifact.present || (entry.stage && fs.existsSync(entry.stage))) {
+        invalidRestoreJournal(journalPath, `committed ${name} publication state is stale`);
+      }
+      if (fs.existsSync(entry.quarantine) && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+        invalidRestoreJournal(journalPath, `committed ${name} quarantine does not match the original generation`);
+      }
+      if (entry.sidecars.some((sidecar) => fs.existsSync(sidecar.destination))) {
+        invalidRestoreJournal(journalPath, `committed ${name} still has a live sidecar`);
+      }
+      for (const sidecar of entry.sidecars) {
+        if (fs.existsSync(sidecar.quarantine) && !matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)) {
+          invalidRestoreJournal(journalPath, `committed ${name} sidecar quarantine is not the original generation`);
+        }
+      }
+      verifyArtifactAgainstManifest(entry.destination, name, artifact, "Committed restore publication");
+      continue;
+    }
+
+    const destinationPresent = fs.existsSync(entry.destination);
+    const quarantinePresent = fs.existsSync(entry.quarantine);
+    if (entry.originalPresent ? !destinationPresent && !quarantinePresent : quarantinePresent) {
+      invalidRestoreJournal(journalPath, `prepared ${name} original state is stale`);
+    }
+    if (quarantinePresent && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+      invalidRestoreJournal(journalPath, `prepared ${name} quarantine does not match the original generation`);
+    }
+    if (entry.stage) {
+      const stagePresent = fs.existsSync(entry.stage);
+      const rolledBack =
+        !quarantinePresent && !stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const validPublicationState =
+        rolledBack ||
+        (entry.originalPresent
+          ? quarantinePresent
+            ? destinationPresent !== stagePresent
+            : destinationPresent && stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+          : destinationPresent !== stagePresent);
+      if (!validPublicationState) {
+        invalidRestoreJournal(journalPath, `prepared ${name} publication state is stale`);
+      }
+    } else {
+      const rolledBack = !quarantinePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const forwardState = entry.originalPresent
+        ? quarantinePresent
+          ? !destinationPresent
+          : destinationPresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+        : !destinationPresent;
+      if (!rolledBack && !forwardState) {
+        invalidRestoreJournal(journalPath, `prepared absent ${name} has an impossible publication state`);
+      }
+    }
+    for (const sidecar of entry.sidecars) {
+      const live = fs.existsSync(sidecar.destination);
+      const quarantined = fs.existsSync(sidecar.quarantine);
+      const authenticated = quarantined
+        ? matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)
+        : matchesFingerprint(sidecar.destination, sidecar.originalFingerprint);
+      if ((sidecar.originalPresent ? live === quarantined : live || quarantined) || !authenticated) {
+        invalidRestoreJournal(journalPath, `prepared ${name} sidecar state is stale`);
+      }
+    }
+  }
+
+  return {
+    formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
+    version: MIGRATION_BACKUP_VERSION,
+    operationId,
+    sourceRunId,
+    rescueRunId: raw.rescueRunId as string,
+    phase: raw.phase,
+    entries,
+  };
+}
+
+/**
+ * Parse + validate the journal's per-artifact entries (shape, operation-bound
+ * stage/quarantine paths, sidecar sets, global path uniqueness). Returns the
+ * entries keyed by destination; the caller checks the set against the SOURCE
+ * manifest's per-version artifact list.
+ */
+function parseRestoreJournalEntries(
+  rawEntries: unknown[],
+  operationId: string,
+  expectedPaths: Record<ArtifactName, string>,
+  journalPath: string,
+): Map<string, RestoreJournalEntry> {
   const byDestination = new Map<string, RestoreJournalEntry>();
   const allPaths = new Set<string>();
   const registerPath = (candidate: string, label: string): void => {
@@ -905,7 +1089,7 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
     allPaths.add(resolved);
   };
 
-  for (const value of raw.entries) {
+  for (const value of rawEntries) {
     if (
       !isRecord(value) ||
       !hasExactKeys(
@@ -988,99 +1172,7 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
       sidecars,
     });
   }
-
-  const sourceRunId = raw.sourceRunId as string;
-  let sourceManifest: MigrationBackupManifest;
-  try {
-    sourceManifest = verifyMigrationBackup(getMigrationBackupDir(sourceRunId));
-  } catch (error) {
-    invalidRestoreJournal(
-      journalPath,
-      `source backup ${sourceRunId} is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const entries = ARTIFACT_NAMES.map((name) => byDestination.get(expectedPaths[name]) as RestoreJournalEntry);
-  for (const [index, name] of ARTIFACT_NAMES.entries()) {
-    const entry = entries[index];
-    const artifact = sourceManifest.artifacts[name];
-    const expectedStage = artifact.present ? `${entry.destination}.restore-stage.${operationId}` : undefined;
-    if (entry.stage !== expectedStage) {
-      invalidRestoreJournal(journalPath, `${name} stage presence does not match source backup ${sourceRunId}`);
-    }
-
-    if (raw.phase === "committed") {
-      if (fs.existsSync(entry.destination) !== artifact.present || (entry.stage && fs.existsSync(entry.stage))) {
-        invalidRestoreJournal(journalPath, `committed ${name} publication state is stale`);
-      }
-      if (fs.existsSync(entry.quarantine) && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
-        invalidRestoreJournal(journalPath, `committed ${name} quarantine does not match the original generation`);
-      }
-      if (entry.sidecars.some((sidecar) => fs.existsSync(sidecar.destination))) {
-        invalidRestoreJournal(journalPath, `committed ${name} still has a live sidecar`);
-      }
-      for (const sidecar of entry.sidecars) {
-        if (fs.existsSync(sidecar.quarantine) && !matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)) {
-          invalidRestoreJournal(journalPath, `committed ${name} sidecar quarantine is not the original generation`);
-        }
-      }
-      verifyArtifactAgainstManifest(entry.destination, name, artifact, "Committed restore publication");
-      continue;
-    }
-
-    const destinationPresent = fs.existsSync(entry.destination);
-    const quarantinePresent = fs.existsSync(entry.quarantine);
-    if (entry.originalPresent ? !destinationPresent && !quarantinePresent : quarantinePresent) {
-      invalidRestoreJournal(journalPath, `prepared ${name} original state is stale`);
-    }
-    if (quarantinePresent && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
-      invalidRestoreJournal(journalPath, `prepared ${name} quarantine does not match the original generation`);
-    }
-    if (entry.stage) {
-      const stagePresent = fs.existsSync(entry.stage);
-      const rolledBack =
-        !quarantinePresent && !stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
-      const validPublicationState =
-        rolledBack ||
-        (entry.originalPresent
-          ? quarantinePresent
-            ? destinationPresent !== stagePresent
-            : destinationPresent && stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
-          : destinationPresent !== stagePresent);
-      if (!validPublicationState) {
-        invalidRestoreJournal(journalPath, `prepared ${name} publication state is stale`);
-      }
-    } else {
-      const rolledBack = !quarantinePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
-      const forwardState = entry.originalPresent
-        ? quarantinePresent
-          ? !destinationPresent
-          : destinationPresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
-        : !destinationPresent;
-      if (!rolledBack && !forwardState) {
-        invalidRestoreJournal(journalPath, `prepared absent ${name} has an impossible publication state`);
-      }
-    }
-    for (const sidecar of entry.sidecars) {
-      const live = fs.existsSync(sidecar.destination);
-      const quarantined = fs.existsSync(sidecar.quarantine);
-      const authenticated = quarantined
-        ? matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)
-        : matchesFingerprint(sidecar.destination, sidecar.originalFingerprint);
-      if ((sidecar.originalPresent ? live === quarantined : live || quarantined) || !authenticated) {
-        invalidRestoreJournal(journalPath, `prepared ${name} sidecar state is stale`);
-      }
-    }
-  }
-
-  return {
-    formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
-    version: MIGRATION_BACKUP_VERSION,
-    operationId,
-    sourceRunId,
-    rescueRunId: raw.rescueRunId as string,
-    phase: raw.phase,
-    entries,
-  };
+  return byDestination;
 }
 
 function rollbackRestoreJournal(journal: RestoreJournal): void {
@@ -1164,14 +1256,19 @@ function inspectArtifactAt(name: ArtifactName, filePath: string): MigrationArtif
   return name === "config.json" ? inspectConfig(filePath) : inspectLedgerArtifact(name, filePath);
 }
 
+// backupSqlite note: index.db takes no maintenance-activity lease (only
+// state.db/workflow.db have activity names) — VACUUM INTO under the 10s
+// busy_timeout suffices for the regenerable cache snapshot.
+
 function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBackupManifest, rescueRunId: string): void {
   const operationId = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
   const entries: RestoreJournalEntry[] = [];
   let journal: RestoreJournal | undefined;
   let committed = false;
+  const restoreNames = artifactNamesFor(manifest.formatVersion);
   try {
-    for (const name of ARTIFACT_NAMES) {
-      const artifact = manifest.artifacts[name];
+    for (const name of restoreNames) {
+      const artifact = manifestArtifact(manifest, name);
       const destination = artifact.sourcePath;
       const stage = artifact.present ? `${destination}.restore-stage.${operationId}` : undefined;
       if (stage) {
@@ -1223,8 +1320,8 @@ function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBacku
         fsyncDirectory(path.dirname(entry.destination));
       }
     }
-    for (const name of ARTIFACT_NAMES) {
-      const artifact = manifest.artifacts[name];
+    for (const name of restoreNames) {
+      const artifact = manifestArtifact(manifest, name);
       const actual = artifact.present ? inspectArtifactAt(name, artifact.sourcePath) : { status: "missing" as const };
       if (!sameState(actual, artifact)) {
         throw new ConfigError(`Published restore artifact ${name} failed final verification.`, "INVALID_CONFIG_FILE");

@@ -20,6 +20,7 @@ import {
 import {
   getConfigPath,
   getDataDir,
+  getDbPath,
   getLockfileLockPath,
   getStateDbPathInDataDir,
   getWorkflowDbPath,
@@ -416,5 +417,89 @@ describe("0.9 migration backup", () => {
     expect(hasColumn(migratedWorkflow, "workflow_run_units", "engine")).toBe(true);
     migratedState.close();
     migratedWorkflow.close();
+  });
+
+  // ── chunk-8 WI-8.1: manifest v3 (pre-rescue index.db) + v2 backward-read ──
+
+  test("v3 round-trip: a present index.db is captured, sha-pinned, and restored", () => {
+    seedLegacyConfig();
+    fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
+    const state = new Database(getStateDbPathInDataDir());
+    state.exec("CREATE TABLE durable(value TEXT); INSERT INTO durable VALUES ('before')");
+    state.close();
+    fs.mkdirSync(path.dirname(getDbPath()), { recursive: true });
+    const index = new Database(getDbPath());
+    index.exec("CREATE TABLE usage_events(entry_ref TEXT); INSERT INTO usage_events VALUES ('stash//memories/x')");
+    index.close();
+
+    const result = createMigrationBackup();
+    const manifest = verifyMigrationBackup(result.path);
+    expect(manifest.formatVersion).toBe(3);
+    expect(manifest.artifacts["index.db"]?.present).toBe(true);
+    expect(manifest.artifacts["index.db"]?.status).toBe("current");
+    expect(manifest.artifacts["index.db"]?.sha256).toHaveLength(64);
+    expect(fs.existsSync(path.join(result.path, "index.db"))).toBe(true);
+
+    fs.rmSync(getDbPath());
+    restoreMigrationBackup(true, result.manifest.runId);
+    const restored = new Database(getDbPath(), { readonly: true });
+    expect(restored.prepare("SELECT entry_ref FROM usage_events").all()).toEqual([{ entry_ref: "stash//memories/x" }]);
+    restored.close();
+  });
+
+  test("a pre-cutover v2 three-artifact backup still verifies and restores under the v3 binary", () => {
+    const configBefore = seedLegacyConfig();
+    fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
+    const state = new Database(getStateDbPathInDataDir());
+    state.exec("CREATE TABLE durable(value TEXT); INSERT INTO durable VALUES ('before')");
+    state.close();
+
+    // Rewrite the freshly created v3 bundle into the exact pre-cutover v2
+    // shape: formatVersion 2, no index.db artifact entry, no index.db file.
+    const result = createMigrationBackup();
+    const manifestPath = path.join(result.path, "manifest.json");
+    const raw = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    expect(raw.formatVersion).toBe(3);
+    raw.formatVersion = 2;
+    delete raw.artifacts["index.db"];
+    fs.writeFileSync(manifestPath, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
+    fs.rmSync(path.join(result.path, "index.db"), { force: true });
+
+    const manifest = verifyMigrationBackup(result.path);
+    expect(manifest.formatVersion).toBe(2);
+    expect(manifest.artifacts["index.db"]).toBeUndefined();
+
+    const live = new Database(getStateDbPathInDataDir());
+    live.exec("UPDATE durable SET value='after'");
+    live.close();
+    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.9.0"}\n');
+    restoreMigrationBackup(true, result.manifest.runId);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(configBefore);
+    const restored = new Database(getStateDbPathInDataDir(), { readonly: true });
+    expect(restored.prepare("SELECT value FROM durable").all()).toEqual([{ value: "before" }]);
+    restored.close();
+  });
+
+  test("an absent or corrupt index.db never blocks the backup — recorded absent", () => {
+    seedLegacyConfig();
+    fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
+    const state = new Database(getStateDbPathInDataDir());
+    state.exec("CREATE TABLE durable(value TEXT)");
+    state.close();
+
+    // Absent index.db → present:false, status "missing".
+    const absent = createMigrationBackup();
+    expect(absent.manifest.formatVersion).toBe(3);
+    expect(absent.manifest.artifacts["index.db"]?.present).toBe(false);
+    expect(absent.manifest.artifacts["index.db"]?.status).toBe("missing");
+    expect(fs.existsSync(path.join(absent.path, "index.db"))).toBe(false);
+
+    // Corrupt index.db → excluded from the backup (regenerable cache), not fatal.
+    fs.mkdirSync(path.dirname(getDbPath()), { recursive: true });
+    fs.writeFileSync(getDbPath(), "this is not a sqlite database");
+    const corrupt = createMigrationBackup();
+    expect(corrupt.manifest.artifacts["index.db"]?.present).toBe(false);
+    expect(corrupt.manifest.artifacts["index.db"]?.status).toBe("missing");
+    expect(fs.existsSync(path.join(corrupt.path, "index.db"))).toBe(false);
   });
 });
