@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
-import { parseRefInput } from "../core/asset/resolve-ref";
+import { displayRef, parseRefInput } from "../core/asset/resolve-ref";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -331,13 +331,16 @@ export const feedbackCommand = defineJsonCommand({
       // in search results until after reindexing.
       const indexedEntry = getEntryById(db, entryId);
       const source = sources.find((candidate) => candidate.path === indexedEntry?.stashDir);
-      // Legacy display spelling (Chunk-8 re-key), built inline — shown to the
-      // user and logged to the state.db events surface below.
       const durableOrigin = parsedRef.origin ?? source?.registryId ?? "stash";
-      durableRef = `${durableOrigin}//${parsedRef.type}:${parsedRef.name}`;
-      // The DURABLE usage_events key is the resolved entry's fully-qualified
-      // item_ref (`durableRef` above stays the user-facing legacy display).
-      utilityResult = recordFeedbackUsage(db, entryId, getItemRefById(db, entryId) ?? undefined, signal, metadataStr);
+      // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
+      // resolved entry's fully-qualified item_ref — the SAME durable key the
+      // usage_events row carries and the SAME spelling the signal-delta
+      // correlation reads (buildLatestFeedbackTsMap, collapsed to [item_ref]).
+      // The D-R5 display spelling is the fallback only for a NULL-provenance
+      // (pre-cutover) row that the one-time re-key has not yet finalized.
+      const itemRef = getItemRefById(db, entryId) ?? undefined;
+      durableRef = itemRef ?? displayRef({ type: parsedRef.type, name: parsedRef.name, bundleId: durableOrigin });
+      utilityResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
     } finally {
       closeDatabase(db);
     }

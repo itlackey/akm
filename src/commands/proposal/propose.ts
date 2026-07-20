@@ -122,10 +122,12 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
 
   const stash = options.stashDir ?? resolveStashDir();
 
-  // 1. Always emit `propose_invoked` (legacy INPUT ref, like reflect_invoked; WI-8.5b).
+  // 1. Always emit `propose_invoked`. WI-8.5b: the INPUT ref carries the same
+  // fully-qualified item_ref the durable proposal is minted under
+  // (`proposeItemRef`), so the entry event and the stored proposal agree.
   appendEvent({
     eventType: "propose_invoked",
-    ref: `${options.type}:${options.name}`,
+    ref: proposeItemRef(stash, options.type, options.name),
     metadata: {
       type: options.type,
       name: options.name,

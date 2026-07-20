@@ -462,7 +462,9 @@ describe("akm propose", () => {
 
     const events = readEvents({ type: "propose_invoked" });
     expect(events.events.length).toBe(1);
-    expect(events.events[0]?.ref).toBe("skill:hello");
+    // WI-8.5b: propose_invoked now carries the same fully-qualified item_ref the
+    // durable proposal is minted under.
+    expect(events.events[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 
   test("rejects unknown type with UsageError", async () => {

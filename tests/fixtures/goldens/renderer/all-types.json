@@ -93,7 +93,7 @@
       "type": "task"
     },
     "workflows/all-types-workflow-program.yaml": {
-      "action": "Resume the active run or start a new run with `akm workflow next 'workflow:all-types-workflow-program'`.",
+      "action": "Resume the active run or start a new run with `akm workflow next 'workflows/all-types-workflow-program'`.",
       "description": "Minimal YAML workflow program fixture used by the all-types parity stash",
       "name": "all-types-workflow-program",
       "path": "<STASH>/workflows/all-types-workflow-program.yaml",
@@ -109,7 +109,7 @@
       "workflowTitle": "all-types-workflow-program"
     },
     "workflows/all-types-workflow.md": {
-      "action": "Resume the active run or start a new run with `akm workflow next 'workflow:all-types-workflow'`.",
+      "action": "Resume the active run or start a new run with `akm workflow next 'workflows/all-types-workflow'`.",
       "description": "Minimal linear workflow fixture used by the all-types parity stash",
       "name": "all-types-workflow",
       "path": "<STASH>/workflows/all-types-workflow.md",

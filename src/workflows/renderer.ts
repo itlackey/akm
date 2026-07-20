@@ -18,6 +18,7 @@
  *     step (runner/model, `fanOut.over` expression, route table).
  */
 
+import { displayRef } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
@@ -66,11 +67,12 @@ export const workflowMdRenderer: AssetRenderer = {
     const name = deriveName(ctx);
     const doc = loadDocument(ctx);
     // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
-    // output, not durable state — its spelling flips with the D-R5 display flip,
-    // not the WI-8.5a durable-writer flip. Flipping it here would re-baseline the
-    // renderer/all-types.json behavior-parity golden (owned by chunk 4), so it
-    // stays the legacy `[origin//]workflow:name` spelling this stage.
-    const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
+    // output — its spelling follows the D-R5 display rule (`displayRef`). A
+    // primary/default-bundle workflow renders the SHORT conceptId
+    // (`workflows/<name>`); a slug-clean named source qualifies it
+    // (`<bundle>//workflows/<name>`); a non-slug registry origin keeps the legacy
+    // `origin//workflow:name` display, exactly as displayRef defines it.
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     return {
       type: "workflow",
       name,
@@ -106,11 +108,9 @@ export const workflowProgramRenderer: AssetRenderer = {
     const name = deriveName(ctx);
     const program = loadProgram(ctx);
     // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
-    // output, not durable state — its spelling flips with the D-R5 display flip,
-    // not the WI-8.5a durable-writer flip. Flipping it here would re-baseline the
-    // renderer/all-types.json behavior-parity golden (owned by chunk 4), so it
-    // stays the legacy `[origin//]workflow:name` spelling this stage.
-    const ref = ctx.origin ? `${ctx.origin}//workflow:${name}` : `workflow:${name}`;
+    // output — its spelling follows the D-R5 display rule (`displayRef`), mirroring
+    // workflowMdRenderer above.
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     const parameters = projectProgramParameters(program);
     return {
       type: "workflow",

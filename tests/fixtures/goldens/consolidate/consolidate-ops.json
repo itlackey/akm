@@ -101,7 +101,7 @@
         ],
         "generateMergedContentCallCount": 1,
         "merged": 1,
-        "primaryRawBytes": "---\ndescription: Merged primary content\nupdated: <TS>\ngeneration: 2\nxrefs:\n  - memory:cop-merge11-primary\n  - memory:cop-merge11-secondary\n  - memory:merge11-existing\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
+        "primaryRawBytes": "---\ndescription: Merged primary content\nupdated: <TS>\ngeneration: 2\nxrefs:\n  - memories/cop-merge11-primary\n  - memories/cop-merge11-secondary\n  - memories/merge11-existing\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
         "secondaryDeleted": true,
         "skips": []
       },
@@ -256,7 +256,7 @@
       },
       "happyPath": {
         "bodyDescription": "A promoted knowledge asset",
-        "bodyXrefs": ["memory:cop-promote-happy", "memory:promote-happy-existing"],
+        "bodyXrefs": ["memories/cop-promote-happy", "memories/promote-happy-existing"],
         "promotedCount": 1,
         "proposalDescription": "A promoted knowledge asset",
         "skips": []

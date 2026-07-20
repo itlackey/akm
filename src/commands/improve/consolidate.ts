@@ -9,6 +9,7 @@ import readline from "node:readline";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { displayRef } from "../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -641,12 +642,13 @@ export function injectGenerationFrontmatter(
     ];
     const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
       try {
-        // Canonical stored provenance xref. WI-8.5a DEFERS this frontmatter flip to
-        // WI-8.5b: the frozen `consolidate-ops.json` oracle (Chunk 7 DoD 5) serializes
-        // the merged asset's `bodyXrefs`, so re-spelling them here would re-record a
-        // frozen golden this chunk does not own (§8 stop-and-report). Stays legacy.
+        // Canonical stored provenance xref, WI-8.5b display-flip: emit the D-R5
+        // new-grammar spelling (short conceptId for the primary/default bundle,
+        // `bundle//conceptId` for a slug source, legacy `origin//type:name` only
+        // for a non-slug registry origin) via `displayRef`, so a merged asset's
+        // stored `xrefs` unify with the WI-8.5a content/frontmatter xref writer.
         const p = parseStoredRef(ref);
-        return [p.origin ? `${p.origin}//${p.type}:${p.name}` : `${p.type}:${p.name}`];
+        return [displayRef({ type: p.type, name: p.name, bundleId: p.origin })];
       } catch {
         return [];
       }
@@ -660,6 +662,22 @@ export function injectGenerationFrontmatter(
     return assembleAssetFromString(serializeFrontmatter(updatedFm), parsed.content);
   } catch {
     return mergedContent; // fail open
+  }
+}
+
+/**
+ * WI-8.5b — canonical D-R5 display spelling of a stored provenance xref: short
+ * conceptId for the primary/default bundle, `bundle//conceptId` for a slug
+ * source, legacy `origin//type:name` only for a non-slug registry origin.
+ * Returns the input unchanged when it cannot be parsed as a ref (fail-open, the
+ * pre-flip behavior for hand-authored provenance strings).
+ */
+function canonicalXref(ref: string): string {
+  try {
+    const p = parseStoredRef(ref);
+    return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
+  } catch {
+    return ref;
   }
 }
 
@@ -2336,8 +2354,13 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     const mergedBodyFm: Record<string, unknown> = {
       ...(parsedMemory.data ?? {}),
       description,
+      // WI-8.5b: emit provenance xrefs in the D-R5 new grammar (canonicalXref).
       xrefs: [
-        ...new Set([...(Array.isArray(parsedMemory.data?.xrefs) ? parsedMemory.data.xrefs.map(String) : []), op.ref]),
+        ...new Set(
+          [...(Array.isArray(parsedMemory.data?.xrefs) ? parsedMemory.data.xrefs.map(String) : []), op.ref].map(
+            canonicalXref,
+          ),
+        ),
       ],
     };
     const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
@@ -2370,7 +2393,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
         ...(ctx.llmConfig?.model ? { modelId: ctx.llmConfig.model } : {}),
         payload: {
           content: promotedAssetContent,
-          frontmatter: { description, xrefs: [op.ref] },
+          frontmatter: { description, xrefs: [canonicalXref(op.ref)] },
         },
         ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       },

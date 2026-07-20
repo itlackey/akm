@@ -268,11 +268,12 @@ describe("handleMergeOp — merge 1 primary + 1 secondary", () => {
       expect(ctx.counts.merged).toBe(1);
       expect(skips).toEqual([]);
       // Primary rewritten in place with generation = max(sources)+1 and a
-      // canonical xrefs union (injectGenerationFrontmatter, consolidate.ts:796).
+      // canonical xrefs union (injectGenerationFrontmatter). WI-8.5b: the stored
+      // xrefs are canonicalized to the D-R5 new grammar (short conceptId).
       const primaryAsset = readAsset(primary.filePath);
       expect(primaryAsset.frontmatter.generation).toBe(2);
       expect((primaryAsset.frontmatter.xrefs as string[]).sort()).toEqual(
-        [primary.ref, secondary.ref, "memory:merge11-existing"].sort(),
+        [primary.ref, secondary.ref, "memory:merge11-existing"].map((r) => r.replace(/^memory:/, "memories/")).sort(),
       );
       // Secondary archived then hard-deleted.
       expect(fs.existsSync(secondary.filePath)).toBe(false);
@@ -636,7 +637,10 @@ describe("handlePromoteOp — happy path", () => {
       expect(proposal?.payload.frontmatter?.description).toBe("A promoted knowledge asset");
       const bodyFm = parseFrontmatter(proposal?.payload.content ?? "").data;
       expect(bodyFm.description).toBe("A promoted knowledge asset");
-      expect((bodyFm.xrefs as string[]).sort()).toEqual(["memory:promote-happy-existing", ref].sort());
+      // WI-8.5b: promote emits provenance xrefs in the D-R5 new grammar.
+      expect((bodyFm.xrefs as string[]).sort()).toEqual(
+        ["memory:promote-happy-existing", ref].map((r) => r.replace(/^memory:/, "memories/")).sort(),
+      );
     } finally {
       storage.cleanup();
     }

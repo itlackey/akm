@@ -162,8 +162,9 @@ describe("akm feedback", () => {
     });
 
     // Read events.jsonl directly and verify the note was persisted in metadata.
+    // WI-8.5b: the feedback event keys on the resolved entry's item_ref.
     const { readEvents } = await import("../../src/core/events");
-    const { events } = readEvents({ type: "feedback", ref: "stash//memory:deployment-notes" });
+    const { events } = readEvents({ type: "feedback", ref: "stash//memories/deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
     expect(md.reason).toBe("saved me 30 minutes");
