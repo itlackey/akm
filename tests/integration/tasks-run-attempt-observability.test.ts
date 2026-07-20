@@ -191,7 +191,7 @@ describe("tasks run attempt observability", () => {
 
   test("records a workflow config failure and preserves unsupported-config classification", async () => {
     writeRawConfig('{"configVersion":"0.8.0"}');
-    writeTask("config-workflow", 'version: 2\nschedule: "@daily"\nworkflow: workflow:config-dependent\n');
+    writeTask("config-workflow", 'version: 2\nschedule: "@daily"\nworkflow: workflows/config-dependent\n');
 
     const result = await withEnv(capturedSchedulerContext(), () =>
       runCliCapture(["tasks", "run", "config-workflow", "--scheduled"]),
@@ -345,7 +345,7 @@ describe("tasks run attempt observability", () => {
   });
 
   test("keeps successful execution successful when the transitional log path is unwritable", async () => {
-    writeTask("best-effort-log", 'version: 2\nschedule: "@daily"\nworkflow: workflow:noop\n');
+    writeTask("best-effort-log", 'version: 2\nschedule: "@daily"\nworkflow: workflows/noop\n');
     const blockedLogDir = path.join(storage.root, "blocked-log-dir");
     fs.writeFileSync(blockedLogDir, "not a directory");
 
