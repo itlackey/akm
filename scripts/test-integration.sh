@@ -70,8 +70,14 @@ for t in "${tmps[@]}"; do
   pass=$((pass + ${p:-0}))
   fail=$((fail + ${f:-0}))
   filecount=$((filecount + ${c:-0}))
-  # Surface any real failures from this shard.
-  grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
+  # Surface any real failures from this shard — summary lines first, then the
+  # full tail so assertion diffs survive aggregation (a flake with no diff is
+  # undiagnosable).
+  if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
+    grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
+    echo "── shard log tail (last 80 lines) ──"
+    tail -80 "$t"
+  fi
   rm -f "$t"
 done
 

@@ -27,7 +27,12 @@ disposition, per the execution-workflow's per-chunk ledger rule.
 - fn-size ratchets green (report/akmPropose/handlePromoteOp/mv extractions recorded; baselines only shrank).
 - Grep gates: `parseAssetRef|makeAssetRef|refToString` outside migrate 0; `legacy-ref-grammar|parseStoredRef` outside migrate 0.
 - Test-literal ratchet: 111 → **50** (ceiling lowered stepwise, shrink-only; survivor analysis below).
-- Batteries at close: unit slow-inclusive 10736/0; integration 4610/4611 (the one: `add website`, live-network).
+- Batteries at close: unit 0 fail; integration 4610/4611 (the one: `add website` — later root-caused
+  as a real D-R6 crawler bug, see Landed row "CI-green"). NOTE (2026-07-20 correction): unit pass
+  totals recorded during this chunk (10256/10736) were 4x-inflated — bun `--shard` was silently
+  ignored by the pre-file-list runner, so all four "shards" ran the full suite and the aggregate
+  summed them; the true suite is ~2564 fast / ~2684 slow-inclusive tests. Fail counts were unaffected
+  (a failure would have surfaced in every duplicated run).
 
 ## §11.4 MUST-rekey coverage (audited line-by-line)
 
@@ -75,3 +80,7 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
   index-insertion (readdir) order, both machine-dependent — it passes on the capture machine and
   fails everywhere else. `enumerateEntries` now sorts type→name→filePath explicitly and the
   scored-vs-enumerate golden was re-captured under that order (registry notes updated).
+- Never trust a flag a runner passes without verifying its effect: bun `--shard` was silently
+  ignored (locally) or partially applied (CI, different bun patch release) for the entire chunk —
+  aggregate pass counts were 4x-inflated and looked plausible. Both batteries now shard by explicit
+  file lists and hard-fail unless files-ran == files-found.

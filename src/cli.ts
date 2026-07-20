@@ -15,9 +15,7 @@
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
-    const [major = 0, minor = 0, patch = 0] = (process.versions.node ?? "0")
-      .split(".")
-      .map((part) => Number.parseInt(part, 10) || 0);
+    const [major = 0] = (process.versions.node ?? "0").split(".").map((part) => Number.parseInt(part, 10) || 0);
     const nodeOk = major >= 22;
     if (!nodeOk) {
       console.error(
