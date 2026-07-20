@@ -20,7 +20,7 @@ import type { IndexDocument } from "../indexer/passes/metadata";
 import { recognizeStashEntries } from "../indexer/scan/drain-dir";
 import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
-import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
+import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 import { writeResponseToFile } from "../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/include";
 import { detectStashRoot } from "../sources/providers/provider-utils";

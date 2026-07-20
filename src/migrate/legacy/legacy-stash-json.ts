@@ -9,12 +9,13 @@
  * entries so curated metadata (captured openings, quality, descriptions) is not
  * lost on re-index.
  *
- * MIGRATOR-OWNED HOME (akm 0.9.0 Chunk-5 flip, scope-B ruling): the sidecar
- * layout is a pre-0.9 on-disk shape, so its reader/writer live here under
- * `src/migrate/` alongside the other legacy-layout code rather than in the live
- * indexer passes. The indexer imports {@link readLegacyStashOverrides} from here
- * with a `// Chunk-8: dies with the content migration` note — Chunk 8's content
- * migration folds the sidecar into the bundle format and retires this module.
+ * MIGRATOR-OWNED HOME (akm 0.9.0 Chunk-5 flip, scope-B ruling; relocated to
+ * `src/migrate/legacy/` in Chunk-8 WI-8.5d): the sidecar layout is a pre-0.9
+ * on-disk shape, so its reader/writer live under the frozen migrator home
+ * alongside the other legacy-layout code rather than in the live indexer passes.
+ * After WI-8.5d the live indexer no longer reads the sidecar — the only reader is
+ * the `content-migration.ts` migrator step (folds the sidecar into per-file
+ * frontmatter, then deletes it), so this module is now migrator-only.
  *
  * The `StashFile` container type and the per-entry `validateStashEntry` gate stay
  * in `indexer/passes/metadata.ts` (they are the live in-memory metadata shape and
@@ -23,10 +24,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { IndexDocument } from "../core/adapter/types";
-import { writeFileAtomic } from "../core/common";
-import { warn } from "../core/warn";
-import { type StashFile, validateStashEntry } from "../indexer/passes/metadata";
+import type { IndexDocument } from "../../core/adapter/types";
+import { writeFileAtomic } from "../../core/common";
+import { warn } from "../../core/warn";
+import { type StashFile, validateStashEntry } from "../../indexer/passes/metadata";
 
 /** The pre-0.9.0 per-directory metadata sidecar filename. */
 const LEGACY_STASH_FILENAME = ".stash.json";

@@ -43,6 +43,7 @@ import {
 import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
 import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
+import { type ContentMigrationReport, runContentMigration } from "../migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import {
   buildCutoverRefMap,
@@ -479,15 +480,34 @@ function expandTilde(p: string): string {
 }
 
 /**
- * Best-effort stash roots for the cutover ref map's origin aliases + source-(b)
- * walk, derived from the target config. The primary is `stashDir`; named
- * filesystem sources contribute their `name` as the registryId. Source (a) (the
- * index `item_ref` join) is authoritative, so an unresolved root only costs a
- * few origin aliases.
+ * Best-effort stash roots for the cutover ref map's origin aliases, the
+ * source-(b) legacy walk, AND the WI-8.5d content migration's `.stash.json`
+ * fold + D-R6 rename walk. Derived from the TARGET config, which by this point in
+ * the apply has already been normalized to the 0.9 `bundles` shape by
+ * {@link parseMigrationTargetConfig}: each path-bearing bundle is a root, the
+ * `defaultBundle` is the primary, and a bundle's `registryId` (or its key)
+ * supplies the origin alias. The pre-cutover `stashDir`/`sources` shape is still
+ * honored as a fallback for a transitional config that reaches here un-migrated.
+ * Source (a) (the index `item_ref` join) is authoritative, so an unresolved root
+ * only costs a few origin aliases.
  */
 function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
   const roots: CutoverStashRoot[] = [];
   try {
+    const bundles = config.bundles;
+    if (bundles && typeof bundles === "object") {
+      for (const [id, entry] of Object.entries(bundles)) {
+        const bundlePath = (entry as { path?: string }).path;
+        if (typeof bundlePath !== "string" || bundlePath.length === 0) continue; // only filesystem bundles
+        const registryId = (entry as { registryId?: string }).registryId ?? id;
+        roots.push({
+          path: path.resolve(expandTilde(bundlePath)),
+          registryId,
+          primary: config.defaultBundle === id,
+        });
+      }
+      return roots;
+    }
     if (typeof config.stashDir === "string" && config.stashDir.length > 0) {
       roots.push({ path: path.resolve(expandTilde(config.stashDir)), primary: true });
     }
@@ -579,6 +599,55 @@ function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
   // return, never throw, so a rename/unlink hiccup never rolls back the merge.
   quarantineIndexDb(journal.operationId, indexPath);
   deleteWorkflowDb(workflowPath);
+
+  // WI-8.5d: the content migration (`.stash.json` fold + delete, D-R6 reserved-
+  // filename conformance) is an ADDITIVE filesystem step of the same phase. It
+  // also runs AFTER the committed state txn, is best-effort (a throw is swallowed
+  // + logged, never aborting a committed cutover), and idempotent (a resumed
+  // apply finds no sidecars and no mis-named concepts, so it re-runs to a no-op).
+  runContentMigrationStep(journal, target);
+}
+
+/**
+ * Persist location for the content-migration report — next to the ApplyJournal
+ * (alongside the cutover ref map). Survives `clearApplyJournal` (which removes
+ * only the journal file), so the operator + the WI-8.5d test can read the D-R6
+ * rename list after a committed apply.
+ */
+function contentMigrationReportPath(): string {
+  return path.join(path.dirname(getMigrationApplyJournalPath()), "content-migration-report.json");
+}
+
+/** Best-effort content migration + report persistence (see {@link runCutoverStep}). */
+function runContentMigrationStep(journal: ApplyJournal, target: AkmConfig): void {
+  try {
+    const roots = cutoverStashRootsFromConfig(target).map((r) => r.path);
+    const report = runContentMigration(roots);
+    persistContentMigrationReport(report);
+    if (report.sidecarsFolded > 0 || report.reservedRenames.length > 0) {
+      console.log(
+        JSON.stringify({
+          event: "content-migration",
+          operationId: journal.operationId,
+          ...report,
+        }),
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[akm] content migration skipped (${error instanceof Error ? error.message : String(error)}); the committed cutover is unaffected.`,
+    );
+  }
+}
+
+function persistContentMigrationReport(report: ContentMigrationReport): void {
+  try {
+    const reportPath = contentMigrationReportPath();
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true, mode: 0o700 });
+    writeFileAtomic(reportPath, `${JSON.stringify(report, null, 2)}\n`, 0o600);
+  } catch {
+    // The report is auditing-only; a persistence failure never affects the cutover.
+  }
 }
 
 function unsafeArtifact(name: string, state: MigrationArtifactState): string | undefined {

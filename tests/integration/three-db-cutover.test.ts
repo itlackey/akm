@@ -20,9 +20,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { createProposal } from "../../src/commands/proposal/repository";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { getMigrationOperationRoot } from "../../src/core/migration-operation";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import type { StashFile } from "../../src/indexer/passes/metadata";
+import { type ContentMigrationReport, runContentMigration } from "../../src/migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
+import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
@@ -424,5 +429,107 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
     } finally {
       post.close();
     }
+  }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (f) WI-8.5d content migration — `.stash.json` fold + D-R6 reserved-file rename
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONTENT_STASH = (): string => path.join(getDataDir(), "stash");
+
+/**
+ * Seed the primary stash with (1) a markdown asset + a `.stash.json` sidecar that
+ * OVERRIDES its curated metadata, (2) a `knowledge/index.md` that actually holds
+ * asset frontmatter (a concept mis-named as a reserved file — D-R6), and (3) a
+ * structural bundle-root `index.md` with no asset frontmatter (must stay put).
+ */
+function seedContentStash(): void {
+  const stash = CONTENT_STASH();
+  const memDir = path.join(stash, "memories");
+  fs.mkdirSync(memDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(memDir, "note.md"),
+    "---\ndescription: Original generated description\n---\n\nNote body.\n",
+  );
+  const sidecar: StashFile = {
+    entries: [
+      {
+        name: "note",
+        type: "memory",
+        filename: "note.md",
+        description: "Curated override for note",
+        tags: ["curated-fold"],
+        whenToUse: "Use for the WI-8.5d fold assertion",
+      },
+    ],
+  };
+  writeLegacyStashFile(memDir, sidecar);
+
+  const knowledgeDir = path.join(stash, "knowledge");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(knowledgeDir, "index.md"),
+    "---\ndescription: A knowledge concept accidentally named index\nwhen_to_use: retrieval test\n---\n\n# Real concept\n\nbody\n",
+  );
+
+  fs.writeFileSync(path.join(stash, "index.md"), "# Bundle listing\n\n- memories/note\n");
+}
+
+function readContentReport(): ContentMigrationReport {
+  const raw = fs.readFileSync(path.join(getMigrationOperationRoot(), "content-migration-report.json"), "utf8");
+  return JSON.parse(raw) as ContentMigrationReport;
+}
+
+describe("WI-8.5d (f) — content migration folds .stash.json + D-R6 renames mis-named reserved files", () => {
+  test("overrides fold into frontmatter, sidecar deleted, index.md renamed + reported, second apply idempotent", async () => {
+    openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+    seedContentStash();
+    const prepared = writeConfigs();
+
+    const applied = await runCliCapture(["migrate", "apply", "--config", prepared]);
+    expect(applied.code, applied.stderr).toBe(0);
+
+    const stash = CONTENT_STASH();
+    const notePath = path.join(stash, "memories", "note.md");
+    const sidecarPath = path.join(stash, "memories", ".stash.json");
+    const misnamedIndex = path.join(stash, "knowledge", "index.md");
+    const renamedIndex = path.join(stash, "knowledge", "index-content.md");
+    const structuralIndex = path.join(stash, "index.md");
+
+    // (1) `.stash.json` overrides folded into the target's frontmatter; sidecar gone.
+    expect(fs.existsSync(sidecarPath)).toBe(false);
+    const noteFm = parseFrontmatter(fs.readFileSync(notePath, "utf8")).data;
+    expect(noteFm.description).toBe("Curated override for note"); // sidecar wins over the generated value
+    expect(noteFm.tags).toEqual(["curated-fold"]);
+    expect(noteFm.when_to_use).toBe("Use for the WI-8.5d fold assertion"); // whenToUse → when_to_use
+
+    // (2) D-R6: the mis-named concept renamed collision-safe; structural index.md left in place.
+    expect(fs.existsSync(misnamedIndex)).toBe(false);
+    expect(fs.existsSync(renamedIndex)).toBe(true);
+    expect(parseFrontmatter(fs.readFileSync(renamedIndex, "utf8")).data.description).toBe(
+      "A knowledge concept accidentally named index",
+    );
+    expect(fs.existsSync(structuralIndex)).toBe(true);
+    expect(fs.readFileSync(structuralIndex, "utf8")).toContain("# Bundle listing");
+
+    // (3) The rename is RECORDED in the persisted step report.
+    const report = readContentReport();
+    expect(report.sidecarsFolded).toBe(1);
+    expect(report.entriesFolded).toBe(1);
+    expect(report.reservedRenames).toHaveLength(1);
+    expect(report.reservedRenames[0]).toEqual({ from: misnamedIndex, to: renamedIndex });
+
+    // (4) A second migrate apply is a no-op — the folded/renamed state is unchanged.
+    const noteAfterFirst = fs.readFileSync(notePath, "utf8");
+    const second = await runCliCapture(["migrate", "apply"]);
+    expect(second.code, second.stderr).toBe(0);
+    expect(fs.readFileSync(notePath, "utf8")).toBe(noteAfterFirst);
+    expect(fs.existsSync(sidecarPath)).toBe(false);
+    expect(fs.existsSync(renamedIndex)).toBe(true);
+
+    // (5) Re-running the step itself directly is idempotent: nothing left to do.
+    const rerun = runContentMigration([stash]);
+    expect(rerun).toEqual({ sidecarsFolded: 0, entriesFolded: 0, entriesSkipped: 0, reservedRenames: [] });
   }, 30_000);
 });

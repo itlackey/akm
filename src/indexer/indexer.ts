@@ -15,7 +15,7 @@ import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
+import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
  *

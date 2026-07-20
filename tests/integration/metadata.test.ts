@@ -24,7 +24,7 @@ import { buildSearchFields, buildSearchText } from "../../src/indexer/search/sea
 import {
   readLegacyStashOverrides as loadStashFile,
   writeLegacyStashFile as writeStashFile,
-} from "../../src/migrate/legacy-stash-json";
+} from "../../src/migrate/legacy/legacy-stash-json";
 import { sandboxXdgConfigHome, writeSandboxConfig } from "../_helpers/sandbox";
 
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts

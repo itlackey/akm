@@ -19,7 +19,7 @@ import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
+import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries, getEntryCount } from "../storage/repositories/index-entries-repository";
