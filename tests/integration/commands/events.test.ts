@@ -132,14 +132,14 @@ describe("appendEvent / readEvents", () => {
   test("--type and --ref filters work in combination", () => {
     const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
     const ctx = { dbPath };
-    appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
-    appendEvent({ eventType: "feedback", ref: "memory:a", metadata: { signal: "positive" } }, ctx);
-    appendEvent({ eventType: "feedback", ref: "memory:b", metadata: { signal: "negative" } }, ctx);
+    appendEvent({ eventType: "remember", ref: "memories/a" }, ctx);
+    appendEvent({ eventType: "feedback", ref: "memories/a", metadata: { signal: "positive" } }, ctx);
+    appendEvent({ eventType: "feedback", ref: "memories/b", metadata: { signal: "negative" } }, ctx);
 
-    const filtered = akmEventsList({ type: "feedback", ref: "memory:a", ctx });
+    const filtered = akmEventsList({ type: "feedback", ref: "memories/a", ctx });
     expect(filtered.totalCount).toBe(1);
     expect(filtered.events[0]?.eventType).toBe("feedback");
-    expect(filtered.events[0]?.ref).toBe("memory:a");
+    expect(filtered.events[0]?.ref).toBe("memories/a");
   });
 
   test("all valid appends are readable (SQLite enforces schema integrity)", () => {

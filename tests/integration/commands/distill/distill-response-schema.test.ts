@@ -242,13 +242,13 @@ describe("assembleStructuredDistillMarkdown — knowledge kind", () => {
       {
         description: "Durable guidance.",
         body: "# Body",
-        sources: ["skill:deploy", "knowledge:vpn-policy"],
+        sources: ["skills/deploy", "knowledge/vpn-policy"],
       },
       "knowledge",
     );
     expect(out).toContain("xrefs:");
-    expect(out).toContain('"skill:deploy"');
-    expect(out).toContain('"knowledge:vpn-policy"');
+    expect(out).toContain('"skills/deploy"');
+    expect(out).toContain('"knowledge/vpn-policy"');
   });
 });
 
@@ -266,7 +266,7 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
       body: "Use `rg` instead of `grep -r`. It is faster and respects `.gitignore` by default.",
     });
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => payload,
@@ -296,7 +296,7 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "skill:deploy",
+        ref: "skills/deploy",
         config: configEnabled(stash),
         stashDir: stash,
         chat: async () => payload,
@@ -320,7 +320,7 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
       body: "## Steps\n\n1. Stop background indexer jobs.\n2. Run `akm index --rebuild`.\n3. Verify counts match.",
     });
     const result = await akmDistill({
-      ref: "skill:reindex",
+      ref: "skills/reindex",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => payload,

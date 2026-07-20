@@ -496,7 +496,7 @@ describe("--supersedes refuses non-markdown demotion targets before any write", 
       "--name",
       "release-flow-fix",
       "--supersedes",
-      "workflow:release",
+      "workflows/release",
     ]);
     expect(code).toBe(0);
 

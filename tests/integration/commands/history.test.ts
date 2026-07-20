@@ -105,16 +105,16 @@ describe("akmHistory programmatic API", () => {
       insertUsageEvent(db, { event_type: "show", entry_ref: "team//memory:alpha-extra", entry_id: 4 });
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:beta", entry_id: 5 });
 
-      const bare = await akmHistory({ db, ref: "memory:alpha" });
-      expect(bare.ref).toBe("memory:alpha");
+      const bare = await akmHistory({ db, ref: "memories/alpha" });
+      expect(bare.ref).toBe("memories/alpha");
       expect(bare.entries.map((entry) => entry.ref)).toEqual([
         "memory:alpha",
         "stash//memory:alpha",
         "team//memory:alpha",
       ]);
 
-      const qualified = await akmHistory({ db, ref: "stash//memory:alpha" });
-      expect(qualified.ref).toBe("stash//memory:alpha");
+      const qualified = await akmHistory({ db, ref: "stash//memories/alpha" });
+      expect(qualified.ref).toBe("stash//memories/alpha");
       expect(qualified.entries.map((entry) => entry.ref)).toEqual(["stash//memory:alpha"]);
     } finally {
       closeDatabase(db);
@@ -175,6 +175,7 @@ describe("akm history CLI", () => {
     sandboxStash();
     saveConfig({ semanticSearchMode: "off" });
     const bareRef = `memory:history-boundary-${process.pid}`;
+    const bareFilter = `memories/history-boundary-${process.pid}`;
     const entryRefs = [
       bareRef,
       `stash//${bareRef}`,
@@ -194,12 +195,12 @@ describe("akm history CLI", () => {
     }
 
     try {
-      const bareResult = await runCli(["history", "--ref", bareRef, "--format=json"]);
+      const bareResult = await runCli(["history", "--ref", bareFilter, "--format=json"]);
       expect(bareResult.status).toBe(0);
       const bare = parseJsonOutput(bareResult);
       expect((bare.entries as Array<{ ref: string }>).map((entry) => entry.ref)).toEqual(entryRefs.slice(0, 3));
 
-      const qualifiedResult = await runCli(["history", "--ref", `stash//${bareRef}`, "--format=json"]);
+      const qualifiedResult = await runCli(["history", "--ref", `stash//${bareFilter}`, "--format=json"]);
       expect(qualifiedResult.status).toBe(0);
       const qualified = parseJsonOutput(qualifiedResult);
       expect((qualified.entries as Array<{ ref: string }>).map((entry) => entry.ref)).toEqual([`stash//${bareRef}`]);
@@ -227,10 +228,10 @@ describe("akm history CLI", () => {
     expect(feedback.status).toBe(0);
 
     // Per-asset history.
-    const perAsset = await runCli(["history", "--ref", "memory:alpha", "--format=json"]);
+    const perAsset = await runCli(["history", "--ref", "memories/alpha", "--format=json"]);
     expect(perAsset.status).toBe(0);
     const perAssetJson = parseJsonOutput(perAsset);
-    expect(perAssetJson.ref).toBe("memory:alpha");
+    expect(perAssetJson.ref).toBe("memories/alpha");
     expect(typeof perAssetJson.totalCount).toBe("number");
     expect(Array.isArray(perAssetJson.entries)).toBe(true);
     const entries = perAssetJson.entries as Array<Record<string, unknown>>;
@@ -272,9 +273,9 @@ describe("akm history CLI", () => {
     const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
-    const text = await runCli(["history", "--ref", "memory:alpha", "--format=text"]);
+    const text = await runCli(["history", "--ref", "memories/alpha", "--format=text"]);
     expect(text.status).toBe(0);
-    expect(text.stdout).toContain("memory:alpha");
+    expect(text.stdout).toContain("memories/alpha");
     expect(text.stdout).toContain("[feedback]");
     expect(text.stdout).toContain("signal: positive");
   });
@@ -456,24 +457,24 @@ describe("akmHistory --include-proposals", () => {
       ensureUsageEventsSchema(db);
       // Two proposal events for different refs.
       appendEvent(
-        { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p1", source: "reflect" } },
+        { eventType: "promoted", ref: "skills/deploy", metadata: { proposalId: "p1", source: "reflect" } },
         { dbPath: stateDbPath },
       );
       appendEvent(
-        { eventType: "rejected", ref: "memory:draft", metadata: { proposalId: "p2", source: "reflect" } },
+        { eventType: "rejected", ref: "memories/draft", metadata: { proposalId: "p2", source: "reflect" } },
         { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
-        ref: "skill:deploy",
+        ref: "skills/deploy",
         includeProposals: true,
         eventsCtx: { dbPath: stateDbPath },
       });
 
       // Only the promoted event for skill:deploy should appear.
-      expect(result.ref).toBe("skill:deploy");
-      expect(result.entries.every((e) => e.ref === "skill:deploy")).toBe(true);
+      expect(result.ref).toBe("skills/deploy");
+      expect(result.entries.every((e) => e.ref === "skills/deploy")).toBe(true);
       const promoted = result.entries.find((e) => e.eventType === "promoted");
       expect(promoted).toBeDefined();
     } finally {
@@ -491,11 +492,11 @@ describe("akmHistory --include-proposals", () => {
     // Write a promoted event to state.db (events now live in SQLite, not events.jsonl).
     appendEvent({
       eventType: "promoted",
-      ref: "memory:alpha",
+      ref: "memories/alpha",
       metadata: { proposalId: "p-cli-test", source: "reflect", assetPath: "memories/alpha.md" },
     });
 
-    const result = await runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=json"]);
+    const result = await runCli(["history", "--include-proposals", "--ref", "memories/alpha", "--format=json"]);
     expect(result.status).toBe(0);
     const parsed = parseJsonOutput(result);
     const entries = parsed.entries as Array<Record<string, unknown>>;
@@ -503,13 +504,13 @@ describe("akmHistory --include-proposals", () => {
     // The promoted event should appear.
     const promotedEntry = entries.find((e) => e.eventType === "promoted");
     expect(promotedEntry).toBeDefined();
-    expect(promotedEntry?.ref).toBe("memory:alpha");
+    expect(promotedEntry?.ref).toBe("memories/alpha");
     // Sources should include state.db (Phase 3: events moved from events.jsonl to state.db).
     expect(Array.isArray(parsed.sources)).toBe(true);
     expect((parsed.sources as string[]).includes("state.db")).toBe(true);
 
     // Verify text output also shows the proposal event.
-    const text = await runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=text"]);
+    const text = await runCli(["history", "--include-proposals", "--ref", "memories/alpha", "--format=text"]);
     expect(text.status).toBe(0);
     expect(text.stdout).toContain("[promoted]");
     expect(text.stdout).toContain("state.db");
