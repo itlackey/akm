@@ -54,7 +54,7 @@ import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-syste
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -279,7 +279,7 @@ export function deriveLessonRef(inputRef: string): string {
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `lesson:${safeScope ? `${safeScope}/` : ""}${safe}-lesson`;
+  return `lessons/${safeScope ? `${safeScope}/` : ""}${safe}-lesson`;
 }
 
 // ── Content quality validators ──────────────────────────────────────────────
@@ -756,7 +756,7 @@ function refuseDisallowedDistillInput(args: {
   // 08-F2: env/secret are a secret-material refusal (never read the bytes);
   // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
   const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
-  const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
+  const skippedRef = isSecretInput ? inputRef : conceptIdFromTypeName("lesson", parsedInputRef.name);
   const message = isSecretInput
     ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
     : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";

@@ -172,7 +172,7 @@ describe("mv durable journal crash recovery", () => {
     await crashAt("filesystem-committed", "memories/crash-before-proposal", "crash-before-proposal-new");
 
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:recovery-trigger-proposal",
+      ref: "lessons/recovery-trigger-proposal",
       source: "propose",
       force: true,
       payload: {
@@ -231,7 +231,7 @@ describe("mv durable journal crash recovery", () => {
     insertUsageEvent(stateSeed, {
       event_type: "show",
       entry_id: before.id,
-      entry_ref: "memory:crash-before-full-index",
+      entry_ref: "stash//memories/crash-before-full-index",
     });
     stateSeed.close();
 
@@ -251,8 +251,9 @@ describe("mv durable journal crash recovery", () => {
       entry_id: number;
     };
     stateVerify.close();
-    // F4c §11.4: the move rewrites the usage-event ref to the new name, then the
-    // full index re-keys it onto the entry's fully-qualified item_ref.
+    // WI-8.5c: the usage-event ref is the fully-qualified item_ref post-cutover;
+    // the move rewrites it to the moved item_ref, then the full index relinks the
+    // entry_id.
     expect(usage).toEqual({ entry_ref: "stash//memories/crash-before-full-index-new", entry_id: after.id });
     expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });

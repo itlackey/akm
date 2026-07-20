@@ -177,12 +177,12 @@ afterEach(() => {
 
 describe("deriveLessonRef", () => {
   test("strips origin and lower-cases the slug", () => {
-    expect(deriveLessonRef("skill:Deploy")).toBe("lesson:skill-deploy-lesson");
-    expect(deriveLessonRef("team//memory:auth-tips")).toBe("lesson:memory-auth-tips-lesson");
+    expect(deriveLessonRef("skills/Deploy")).toBe("lessons/skill-deploy-lesson");
+    expect(deriveLessonRef("memories/auth-tips")).toBe("lessons/memory-auth-tips-lesson");
   });
 
   test("collapses unsafe characters into single dashes", () => {
-    expect(deriveLessonRef("knowledge:foo bar.baz")).toBe("lesson:knowledge-foo-bar-baz-lesson");
+    expect(deriveLessonRef("knowledge/foo bar.baz")).toBe("lessons/knowledge-foo-bar-baz-lesson");
   });
 
   test("rejects malformed input refs", () => {
@@ -190,7 +190,7 @@ describe("deriveLessonRef", () => {
   });
 
   test("preserves the scope segment for scope-born lesson output", () => {
-    expect(deriveLessonRef("memory:project-a/deploy-vpn")).toBe("lesson:project-a/memory-deploy-vpn-lesson");
+    expect(deriveLessonRef("memories/project-a/deploy-vpn")).toBe("lessons/project-a/memory-deploy-vpn-lesson");
   });
 });
 
@@ -207,19 +207,19 @@ describe("akmDistill — source-qualified lookup", () => {
     const lookedUp: string[] = [];
 
     await akmDistill({
-      ref: "skill:duplicate",
+      ref: "skills/duplicate",
       sourceName: "team",
       stashDir: selected,
       config: configEnabled(selected),
       lookupFn: async (ref) => {
         lookedUp.push(ref);
-        return ref === "team//skill:duplicate" ? selectedFile : otherFile;
+        return ref === "skills/duplicate" ? selectedFile : otherFile;
       },
       readEventsFn: emptyEvents,
       chat: async () => VALID_LESSON,
     });
 
-    expect(lookedUp[0]).toBe("team//skill:duplicate");
+    expect(lookedUp[0]).toBe("skills/duplicate");
     expect(fs.readFileSync(selectedFile, "utf8")).toContain("salience:");
     expect(fs.readFileSync(otherFile, "utf8")).toBe(otherContent);
   });
@@ -228,23 +228,23 @@ describe("akmDistill — source-qualified lookup", () => {
 describe("buildDistillPrompt", () => {
   test("includes asset content when present", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: "deploy stuff",
       feedback: [],
     });
-    expect(prompt).toContain("Asset ref: skill:deploy");
+    expect(prompt).toContain("Asset ref: skills/deploy");
     expect(prompt).toContain("deploy stuff");
     expect(prompt).toContain("(no feedback events recorded");
   });
 
   test("falls back gracefully when asset is not indexed", () => {
-    const prompt = buildDistillPrompt({ inputRef: "skill:deploy", assetContent: null, feedback: [] });
+    const prompt = buildDistillPrompt({ inputRef: "skills/deploy", assetContent: null, feedback: [] });
     expect(prompt).toContain("(asset is not currently indexed");
   });
 
   test("D-3: negative signal feedback goes into '## What failed' section", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [
         {
@@ -261,7 +261,7 @@ describe("buildDistillPrompt", () => {
 
   test("D-3: positive signal feedback goes into '## What worked' section", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [
         {
@@ -278,7 +278,7 @@ describe("buildDistillPrompt", () => {
 
   test("D-3: mixed signals produce both What-worked and What-failed sections", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [
         { ts: "2026-04-26T00:00:00Z", eventType: "feedback", metadata: { signal: "positive", reason: "Quick" } },
@@ -294,7 +294,7 @@ describe("buildDistillPrompt", () => {
   test("D-3: non-signal events fall back to flat format", () => {
     // When no positive/negative signals are present, fall back to old format.
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [{ ts: "2026-04-27T00:00:00Z", eventType: "reflect_invoked", metadata: { profile: "test" } }],
     });
@@ -306,7 +306,7 @@ describe("buildDistillPrompt", () => {
 
   test("uses knowledge wording when targeting knowledge output", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [],
       proposalKind: "knowledge",
@@ -317,7 +317,7 @@ describe("buildDistillPrompt", () => {
 
   test("injects rejected proposals as Reflexion verbal-RL context when present", () => {
     const prompt = buildDistillPrompt({
-      inputRef: "skill:deploy",
+      inputRef: "skills/deploy",
       assetContent: null,
       feedback: [],
       rejectedProposals: [
@@ -335,7 +335,7 @@ describe("buildDistillPrompt", () => {
   });
 
   test("omits rejected proposals section when none provided", () => {
-    const prompt = buildDistillPrompt({ inputRef: "skill:deploy", assetContent: null, feedback: [] });
+    const prompt = buildDistillPrompt({ inputRef: "skills/deploy", assetContent: null, feedback: [] });
     expect(prompt).not.toContain("Previously rejected proposals");
   });
 });
@@ -352,7 +352,7 @@ describe("akmDistill — feature gate", () => {
   test("explicit `distill: false` → also config_disabled, NO event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configDisabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -375,7 +375,7 @@ describe("akmDistill — LLM error paths", () => {
   test("chat throws → llm_failed outcome, no proposal, event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -396,7 +396,7 @@ describe("akmDistill — LLM error paths", () => {
   test("chat returns empty string → llm_failed (LLM ran but produced nothing)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => "   ",
@@ -410,7 +410,7 @@ describe("akmDistill — LLM error paths", () => {
   test("simulated timeout → llm_failed (LLM was invoked but timed out)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -436,7 +436,7 @@ describe("akmDistill — LLM error paths", () => {
       // tryLlmFeature wrapper folds into llm_failed.
     } as unknown as AkmConfig;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config,
       stashDir: stash,
       chat: async () => {
@@ -466,7 +466,7 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
     // → fallbackReason === "disabled" → suppress event, emit config_disabled.
     let chatCalled = false;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configDisabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -495,7 +495,7 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
     // reason "error" → outcome resolves to llm_failed AND the event fires
     // so the failure is observable on the events stream.
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -527,7 +527,7 @@ describe("akmDistill — validation failure", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "skill:deploy",
+        ref: "skills/deploy",
         config: configEnabled(stash),
         stashDir: stash,
         chat: async () => INVALID_LESSON_MISSING_WHEN,
@@ -552,7 +552,7 @@ description: Always validate the ripgrep installation before running searches ac
 
 When searching multi-thousand-file repos, prefer ripgrep to GNU grep — it is faster and respects .gitignore by default.`;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => lesson,
@@ -584,7 +584,7 @@ when_to_use: Always validate the ripgrep installation before running searches ac
 
 Body content explaining why ripgrep wins on large monorepos.`;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => lesson,
@@ -614,7 +614,7 @@ describe("akmDistill — queued proposal", () => {
   test("LLM returns valid lesson → proposal created, queued event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
@@ -624,7 +624,7 @@ describe("akmDistill — queued proposal", () => {
     });
 
     expect(result.outcome).toBe("queued");
-    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(result.lessonRef).toBe("lessons/skill-deploy-lesson");
     expect(typeof result.proposalId).toBe("string");
 
     const proposals = listProposals(stash);
@@ -634,7 +634,7 @@ describe("akmDistill — queued proposal", () => {
     expect(proposals[0].ref).toBe(durableRef(stash, "lesson", "skill-deploy-lesson"));
     expect(proposals[0].payload.content).toContain("description: Prefer ripgrep over grep");
     expect(proposals[0].payload.frontmatter?.when_to_use).toBeDefined();
-    expect(parseFrontmatter(proposals[0].payload.content).data.xrefs).toEqual(["skill:deploy"]);
+    expect(parseFrontmatter(proposals[0].payload.content).data.xrefs).toEqual(["skills/deploy"]);
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
@@ -651,7 +651,7 @@ describe("akmDistill — queued proposal", () => {
     let prompt = "";
 
     await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_config, messages) => {
@@ -669,7 +669,7 @@ describe("akmDistill — queued proposal", () => {
   test("attribution: eligibilitySource stamps distill_invoked event + proposal record", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
@@ -693,7 +693,7 @@ describe("akmDistill — queued proposal", () => {
   test("attribution: omitted eligibilitySource leaves distill_invoked + proposal unstamped", async () => {
     const stash = makeStashDir();
     await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
@@ -710,7 +710,7 @@ describe("akmDistill — queued proposal", () => {
     const stash = makeStashDir();
     const fenced = `\`\`\`markdown\n${VALID_LESSON}\n\`\`\``;
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => fenced,
@@ -728,7 +728,7 @@ describe("akmDistill — queued proposal", () => {
 
     let receivedPrompt = "";
     await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
@@ -765,7 +765,7 @@ describe("akmDistill — queued proposal", () => {
     );
 
     const result = await akmDistill({
-      ref: "memory:deploy-fact",
+      ref: "memories/deploy-fact",
       proposalKind: "auto",
       config: configAbsentFeature(stash),
       stashDir: stash,
@@ -773,32 +773,32 @@ describe("akmDistill — queued proposal", () => {
         throw new Error("chat must not be called for benchmark-scored memory promotion");
       },
       lookupFn: async () => memoryFile,
-      readEventsFn: eventsFor("memory:deploy-fact", ["positive", "positive"]),
+      readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
     });
 
     expect(result.outcome).toBe("queued");
     expect(result.proposalKind).toBe("knowledge");
-    expect(result.lessonRef).toBe("knowledge:deploy-fact");
-    expect(result.proposalRef).toBe("knowledge:deploy-fact");
+    expect(result.lessonRef).toBe("knowledge/deploy-fact");
+    expect(result.proposalRef).toBe("knowledge/deploy-fact");
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
     expect(proposals[0].ref).toBe(durableRef(stash, "knowledge", "deploy-fact"));
     expect(proposals[0].payload.content).toContain("xrefs:");
-    expect(proposals[0].payload.content).toContain("memory:deploy-fact");
+    expect(proposals[0].payload.content).toContain("memories/deploy-fact");
     expect(proposals[0].payload.content).toContain("Always connect the VPN");
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events).toHaveLength(1);
     expect(events[0].metadata?.proposalKind).toBe("knowledge");
-    expect(events[0].metadata?.proposalRef).toBe("knowledge:deploy-fact");
+    expect(events[0].metadata?.proposalRef).toBe("knowledge/deploy-fact");
   });
 
   test("explicit knowledge mode uses knowledge validation instead of lesson lint", async () => {
     const stash = makeStashDir();
     let receivedPrompt = "";
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       proposalKind: "knowledge",
       config: configEnabled(stash),
       stashDir: stash,
@@ -815,7 +815,7 @@ describe("akmDistill — queued proposal", () => {
 
     expect(result.outcome).toBe("queued");
     expect(result.proposalKind).toBe("knowledge");
-    expect(result.lessonRef).toBe("knowledge:deploy");
+    expect(result.lessonRef).toBe("knowledge/deploy");
     expect(receivedPrompt).toContain("produce a concise\n*knowledge* markdown document");
     expect(receivedPrompt).toContain("Produce the knowledge markdown file now.");
 
@@ -830,7 +830,7 @@ describe("akmDistill — queued proposal", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "skill:deploy",
+        ref: "skills/deploy",
         proposalKind: "knowledge",
         config: configEnabled(stash),
         stashDir: stash,
@@ -858,7 +858,7 @@ describe("akmDistill — queued proposal", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "memory:session-checkpoint",
+        ref: "memories/session-checkpoint",
         proposalKind: "knowledge",
         config: configEnabled(stash),
         stashDir: stash,
@@ -881,7 +881,7 @@ describe("akmDistill — queued proposal", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "memory:session-checkpoint",
+        ref: "memories/session-checkpoint",
         proposalKind: "knowledge",
         config: configEnabled(stash),
         stashDir: stash,
@@ -993,19 +993,19 @@ describe("akmDistill — queued proposal", () => {
     fs.writeFileSync(memoryFile, ["---", ...frontmatter, "---", "", body, ""].join("\n"), "utf8");
 
     const result = await akmDistill({
-      ref: "memory:deploy-fact",
+      ref: "memories/deploy-fact",
       proposalKind: "auto",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
       lookupFn: async () => memoryFile,
-      readEventsFn: eventsFor("memory:deploy-fact", signals),
+      readEventsFn: eventsFor("memories/deploy-fact", signals),
     });
 
     expect(result.outcome).toBe("queued");
     expect(result.proposalKind).toBe("lesson");
-    expect(result.lessonRef).toBe("lesson:memory-deploy-fact-lesson");
-    expect(result.proposalRef).toBe("lesson:memory-deploy-fact-lesson");
+    expect(result.lessonRef).toBe("lessons/memory-deploy-fact-lesson");
+    expect(result.proposalRef).toBe("lessons/memory-deploy-fact-lesson");
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
@@ -1016,12 +1016,12 @@ describe("akmDistill — queued proposal", () => {
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events).toHaveLength(1);
     expect(events[0].metadata?.proposalKind).toBe("lesson");
-    expect(events[0].metadata?.proposalRef).toBe("lesson:memory-deploy-fact-lesson");
+    expect(events[0].metadata?.proposalRef).toBe("lessons/memory-deploy-fact-lesson");
   });
 
   test("scored promotion can still pass without curated quality when the fixture is strongly reinforced", () => {
     const assessment = assessMemoryKnowledgePromotionCandidate({
-      inputRef: "memory:deploy-fact",
+      inputRef: "memories/deploy-fact",
       assetContent: [
         "---",
         "description: VPN required before deploy",
@@ -1069,7 +1069,7 @@ describe("akmDistill — queued proposal", () => {
           id: 1,
           ts: "2026-04-27T00:00:01Z",
           eventType: "feedback",
-          ref: "memory:deploy-fact",
+          ref: "memories/deploy-fact",
           metadata: { signal: "positive" },
         },
         {
@@ -1077,7 +1077,7 @@ describe("akmDistill — queued proposal", () => {
           id: 2,
           ts: "2026-04-27T00:00:02Z",
           eventType: "feedback",
-          ref: "memory:deploy-fact",
+          ref: "memories/deploy-fact",
           metadata: { signal: "positive", conflict: true },
         },
       ],
@@ -1085,7 +1085,7 @@ describe("akmDistill — queued proposal", () => {
     })) as unknown as typeof readEvents;
 
     const result = await akmDistill({
-      ref: "memory:deploy-fact",
+      ref: "memories/deploy-fact",
       proposalKind: "auto",
       config: configEnabled(stash),
       stashDir: stash,
@@ -1108,7 +1108,7 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     const stash = makeStashDir();
     let receivedPrompt = "";
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
@@ -1119,8 +1119,8 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
         return VALID_LESSON;
       },
       lookupFn: noopLookup,
-      readEventsFn: eventsFor("skill:deploy", ["negative", "negative", "positive"]),
-      excludeFeedbackFromRefs: ["skill:deploy"],
+      readEventsFn: eventsFor("skills/deploy", ["negative", "negative", "positive"]),
+      excludeFeedbackFromRefs: ["skills/deploy"],
     });
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(3);
@@ -1135,7 +1135,7 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     const stash = makeStashDir();
     let receivedPrompt = "";
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
@@ -1146,8 +1146,8 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
         return VALID_LESSON;
       },
       lookupFn: noopLookup,
-      readEventsFn: eventsFor("skill:deploy", ["negative", "positive"]),
-      excludeFeedbackFromRefs: ["memory:other"],
+      readEventsFn: eventsFor("skills/deploy", ["negative", "positive"]),
+      excludeFeedbackFromRefs: ["memories/other"],
     });
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(0);
@@ -1160,12 +1160,12 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
   test("empty exclusion list is a no-op (no diagnostic fields stamped)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
       lookupFn: noopLookup,
-      readEventsFn: eventsFor("skill:deploy", ["negative"]),
+      readEventsFn: eventsFor("skills/deploy", ["negative"]),
       excludeFeedbackFromRefs: [],
     });
     expect(result.outcome).toBe("queued");
@@ -1176,13 +1176,13 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
   test("feedbackFullyFiltered=false when no events were ever recorded", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
-      excludeFeedbackFromRefs: ["skill:deploy"],
+      excludeFeedbackFromRefs: ["skills/deploy"],
     });
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(0);
@@ -1194,13 +1194,13 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
   test("filtered count is recorded on the distill_invoked event metadata", async () => {
     const stash = makeStashDir();
     await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
       lookupFn: noopLookup,
-      readEventsFn: eventsFor("skill:deploy", ["negative", "negative"]),
-      excludeFeedbackFromRefs: ["skill:deploy"],
+      readEventsFn: eventsFor("skills/deploy", ["negative", "negative"]),
+      excludeFeedbackFromRefs: ["skills/deploy"],
     });
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
@@ -1230,7 +1230,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
       improve: { strategies: { default: { processes: { distill: { enabled: true } } } } },
     };
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config,
       stashDir: stash,
       chat: async () => {
@@ -1249,7 +1249,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
   test("queued result carries the locked field set", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
@@ -1262,8 +1262,8 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     // `result.proposal` if present.
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("queued");
-    expect(result.inputRef).toBe("skill:deploy");
-    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(result.inputRef).toBe("skills/deploy");
+    expect(result.lessonRef).toBe("lessons/skill-deploy-lesson");
     expect(typeof result.proposalId).toBe("string");
     // schemaVersion present at the top level (v1 spec lock)
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
@@ -1272,7 +1272,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
   test("config_disabled result preserves the same outer shape but omits proposalId", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       // Explicitly disable distill — 0.8.0 default is enabled, so an absent
       // flag no longer trips the gate; we have to set processes.distill.enabled: false.
       config: configDisabled(stash),
@@ -1321,16 +1321,16 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     // LLM returns NOOP — keep existing content
     const chatCalls: string[] = [];
     const result = await akmDistill({
-      ref: "memory:auth-guide",
+      ref: "memories/auth-guide",
       proposalKind: "auto",
       stashDir: stash,
       config: distillConfig(stash, { qualityGate: { enabled: false } }),
       lookupFn: async (ref: string) => {
-        if (ref === "memory:auth-guide") return memPath1;
+        if (ref === "memories/auth-guide") return memPath1;
         if (ref.includes("auth-guide")) return existingKnowledgePath;
         return null;
       },
-      readEventsFn: eventsFor("memory:auth-guide", ["positive", "positive"]),
+      readEventsFn: eventsFor("memories/auth-guide", ["positive", "positive"]),
       chat: async (_cfg, msgs) => {
         chatCalls.push(msgs[1]?.content ?? "");
         return JSON.stringify({ action: "NOOP", content: "" });
@@ -1369,16 +1369,16 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
 
     const mergedContent = "---\ndescription: Auth guide v2 (merged)\n---\nMerged auth content.\n";
     const result = await akmDistill({
-      ref: "memory:auth-guide2",
+      ref: "memories/auth-guide2",
       proposalKind: "auto",
       stashDir: stash,
       config: distillConfig(stash, { qualityGate: { enabled: false } }),
       lookupFn: async (ref: string) => {
-        if (ref === "memory:auth-guide2") return memPath2;
+        if (ref === "memories/auth-guide2") return memPath2;
         if (ref.includes("auth-guide2")) return existingKnowledgePath;
         return null;
       },
-      readEventsFn: eventsFor("memory:auth-guide2", ["positive", "positive"]),
+      readEventsFn: eventsFor("memories/auth-guide2", ["positive", "positive"]),
       chat: async () => JSON.stringify({ action: "UPDATE", content: mergedContent }),
     });
 
@@ -1418,7 +1418,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     ["When the deploy fails, retry once with the safe flag enabled.", "starts with When"],
     ["# Heading line", "starts with markdown marker"],
   ])("rejects %j (%s)", (bad, _why) => {
-    const r = isValidDescription(bad, "skill:deploy");
+    const r = isValidDescription(bad, "skills/deploy");
     expect(r.ok).toBe(false);
   });
 
@@ -1427,7 +1427,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     "Always validate project filter existence before aborting to prevent premature workflow termination.",
     "Use HMR-safe imports so SvelteKit does not double-evaluate stateful module-level code.",
   ])("accepts %j", (good) => {
-    const r = isValidDescription(good, "skill:deploy");
+    const r = isValidDescription(good, "skills/deploy");
     expect(r.ok).toBe(true);
   });
 
@@ -1435,7 +1435,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     // The slug includes hyphens; this description contains the exact slug.
     const r = isValidDescription(
       "Notes about pagedjs-content-none-transform-workaround.",
-      "knowledge:pagedjs-content-none-transform-workaround",
+      "knowledge/pagedjs-content-none-transform-workaround",
     );
     expect(r.ok).toBe(false);
   });
@@ -1453,7 +1453,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     "import { isValidDescription } from '../../src/commands/improve/distill'",
     "func handleProposal(p Proposal) error { return nil }",
   ])("rejects code-fragment description %j", (codey) => {
-    const r = isValidDescription(codey, "skill:deploy");
+    const r = isValidDescription(codey, "skills/deploy");
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toMatch(/code/i);
@@ -1463,7 +1463,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
   test("rejects description with unbalanced backticks", () => {
     const r = isValidDescription(
       "Use the `--dry-run flag to preview proposals before writing them to disk.",
-      "skill:deploy",
+      "skills/deploy",
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/backtick/i);
@@ -1473,7 +1473,7 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     // Sanity check: balanced backticks must still pass.
     const r = isValidDescription(
       "Use the `--dry-run` flag to preview proposals before writing them to disk.",
-      "skill:deploy",
+      "skills/deploy",
     );
     expect(r.ok).toBe(true);
   });
@@ -1483,19 +1483,19 @@ describe("isValidWhenToUse (pipeline-fix regression)", () => {
   test("rejects the circular fallback `When working with <slug>`", () => {
     const r = isValidWhenToUse(
       "When working with pagedjs-content-none-transform-workaround.",
-      "knowledge:pagedjs-content-none-transform-workaround",
+      "knowledge/pagedjs-content-none-transform-workaround",
     );
     expect(r.ok).toBe(false);
   });
 
   test("rejects too-short triggers", () => {
-    expect(isValidWhenToUse("When deploying.", "skill:deploy").ok).toBe(false);
+    expect(isValidWhenToUse("When deploying.", "skills/deploy").ok).toBe(false);
   });
 
   test("accepts a real trigger sentence", () => {
     const r = isValidWhenToUse(
       "When designing a CSS solution for Paged.js footers that need content: none after the runtime stylesheet.",
-      "knowledge:pagedjs",
+      "knowledge/pagedjs",
     );
     expect(r.ok).toBe(true);
   });
@@ -1552,7 +1552,7 @@ describe("akmDistill — pipeline-fix integration", () => {
   test("refuses lesson refs as input (recursive-distillation guard)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "lesson:skill-deploy-lesson",
+      ref: "lessons/skill-deploy-lesson",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -1564,7 +1564,7 @@ describe("akmDistill — pipeline-fix integration", () => {
 
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("skipped");
-    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(result.lessonRef).toBe("lessons/skill-deploy-lesson");
     expect(listProposals(stash)).toEqual([]);
 
     const { events } = readEvents({ type: "distill_invoked" });
@@ -1576,7 +1576,7 @@ describe("akmDistill — pipeline-fix integration", () => {
 
   test("refuses env/secret refs as input (08-F2: secret bytes never reach the LLM)", async () => {
     const stash = makeStashDir();
-    for (const ref of ["env:prod-api", "secret:signing-key"]) {
+    for (const ref of ["env/prod-api", "secrets/signing-key"]) {
       const result = await akmDistill({
         ref,
         config: configEnabled(stash),
@@ -1621,7 +1621,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "knowledge:foo",
+        ref: "knowledge/foo",
         config: configEnabled(stash),
         stashDir: stash,
         chat: async () => archivedBadContent,
@@ -1656,7 +1656,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     let threw: Error | undefined;
     try {
       await akmDistill({
-        ref: "knowledge:pagedjs",
+        ref: "knowledge/pagedjs",
         config: configEnabled(stash),
         stashDir: stash,
         chat: async () => badContent,
@@ -1684,7 +1684,7 @@ describe("akmDistill — pipeline-fix integration", () => {
       "Production deploys assume an authenticated origin. Run the VPN check first.",
     ].join("\n");
     const result = await akmDistill({
-      ref: "memory:deploy-tips",
+      ref: "memories/deploy-tips",
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => goodLesson,
@@ -1692,7 +1692,7 @@ describe("akmDistill — pipeline-fix integration", () => {
       readEventsFn: emptyEvents,
     });
     expect(result.outcome).toBe("queued");
-    expect(result.lessonRef).toBe("lesson:memory-deploy-tips-lesson");
+    expect(result.lessonRef).toBe("lessons/memory-deploy-tips-lesson");
     expect(listProposals(stash).length).toBe(1);
   });
 });
@@ -1703,7 +1703,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
   test("queued lesson stamps judgeConfidence on the event and content-scores the OUTPUT ref", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configJudgeEnabled(stash),
       stashDir: stash,
       chat: async (_cfg, messages) => {
@@ -1745,7 +1745,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     // the whole akmDistill path (not just runLessonQualityJudge in isolation)
     // to prove unjudgeable minted content is rejected, never queued.
     const result = await akmDistill({
-      ref: "skill:deploy",
+      ref: "skills/deploy",
       config: configJudgeEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,

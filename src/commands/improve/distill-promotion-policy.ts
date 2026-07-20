@@ -162,7 +162,7 @@ export function deriveKnowledgeRef(inputRef: string): string {
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `knowledge:${safe}`;
+  return `knowledge/${safe}`;
 }
 
 function collectPromotionFeatures(input: PromotionPolicyInput): {

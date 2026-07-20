@@ -15,6 +15,7 @@
  * throws.
  */
 
+import { typeForStashDir } from "../asset/asset-placement";
 import { resolveStashStandards } from "./resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "./resolve-type-conventions";
 
@@ -27,9 +28,14 @@ import { resolveTypeConventions, typeConventionRef } from "./resolve-type-conven
 function refType(ref: string | undefined): string | undefined {
   if (!ref) return undefined;
   const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
+  // Legacy `type:name`.
   const colon = body.indexOf(":");
-  if (colon <= 0) return undefined;
-  return body.slice(0, colon).trim() || undefined;
+  if (colon > 0) return body.slice(0, colon).trim() || undefined;
+  // New-grammar conceptId `<stash-subdir>/<name>` (WI-8.5c): the leading segment
+  // is the D-R2 stash subdir, mapped back to its asset type.
+  const slash = body.indexOf("/");
+  if (slash > 0) return typeForStashDir(body.slice(0, slash));
+  return undefined;
 }
 
 /**

@@ -62,6 +62,7 @@
 // ── Reflect-size guard ───────────────────────────────────────────────────────
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { parseRefInput } from "../../../core/asset/resolve-ref";
 import {
   DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MIN_CHARS,
@@ -69,6 +70,21 @@ import {
   WHEN_TO_USE_MIN_CHARS,
 } from "../../../core/authoring-rules";
 import { proposalContent } from "../../../core/file-change";
+
+/**
+ * The canonical asset NAME an inputRef names, lower-cased — the tail the
+ * "just restates the ref" heuristics compare against. WI-8.5c: the ref is the
+ * conceptId (`<subdir>/<name>`), so the name is parsed off the conceptId; a
+ * legacy `type:name` falls back to the post-colon segment.
+ */
+function refNameTail(inputRef: string): string {
+  try {
+    return parseRefInput(inputRef).name.toLowerCase();
+  } catch {
+    return (inputRef.split(":").pop() ?? "").toLowerCase();
+  }
+}
+
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
 import type { ProposalValidator } from "../proposal-types";
 
@@ -150,7 +166,7 @@ export function isValidDescription(
       severity: "warn",
     };
   if (!options.skipRefTailCheck) {
-    const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+    const refTail = refNameTail(inputRef);
     if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 40)
       return { ok: false, reason: "description appears to just name the input ref" };
   }
@@ -167,7 +183,7 @@ export function isValidWhenToUse(value: unknown, inputRef: string): { ok: true }
     return { ok: false, reason: `when_to_use is too long (${v.length} chars; max ${WHEN_TO_USE_MAX_CHARS})` };
   if (/^when working with\b/i.test(v))
     return { ok: false, reason: "when_to_use is the circular 'When working with ...' fallback" };
-  const refTail = inputRef.split(":").pop()?.toLowerCase() ?? "";
+  const refTail = refNameTail(inputRef);
   if (refTail.length >= 6 && v.toLowerCase().includes(refTail) && v.length < refTail.length + 25)
     return { ok: false, reason: "when_to_use appears to just name the input ref" };
   return { ok: true };

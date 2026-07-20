@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-// Stored/resolved workflow refs may still be legacy-spelled → dual parser.
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -48,15 +47,32 @@ export type WorkflowAsset = {
 };
 
 /**
- * Resolve a `workflow:<name>` ref to a fully-projected {@link WorkflowAsset}.
- *
- * Prefers the parsed document cached in `index.db` (fast path) and falls back to
- * reading + parsing the source file from disk. Pure loading/parsing concern —
- * extracted from the run repository so run orchestration no longer owns asset
- * resolution.
+ * Parse a workflow ref in EITHER grammar: the new-grammar conceptId
+ * (`[bundle//]workflows/<name>`, the user-input spelling) OR the legacy
+ * `[origin//]workflow:<name>` — the durable `workflow_runs.workflow_ref`
+ * internal run-key, which the migration cutover deliberately does NOT re-key
+ * (workflow_runs is not a cutover re-key target), so it stays legacy-spelled.
+ * Returns the {@link AssetRef} `{type, name, origin}` shape.
+ */
+export function parseWorkflowRefInput(ref: string): AssetRef {
+  const trimmed = ref.trim();
+  const boundary = trimmed.indexOf("//");
+  const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+  const LEGACY_PREFIX = "workflow:";
+  if (body.startsWith(LEGACY_PREFIX)) {
+    const origin = boundary > 0 ? trimmed.slice(0, boundary) : undefined;
+    return { type: "workflow", name: body.slice(LEGACY_PREFIX.length), origin };
+  }
+  return parseRefInput(trimmed);
+}
+
+/**
+ * Resolve a workflow ref to a fully-projected {@link WorkflowAsset}. Prefers the
+ * parsed document cached in `index.db` (fast path) and falls back to reading +
+ * parsing the source file from disk.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const parsed = parseRefInput(ref);
+  const parsed = parseWorkflowRefInput(ref);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${ref}".`);
   }
@@ -109,7 +125,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
 export function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseRefInput(ref);
+  const parsed = parseWorkflowRefInput(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db
@@ -146,7 +162,7 @@ function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
 function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): WorkflowDocument | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseRefInput(ref);
+  const parsed = parseWorkflowRefInput(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db

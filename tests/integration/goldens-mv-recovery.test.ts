@@ -316,7 +316,11 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     closeDatabase(db);
     // usage_events lives in state.db (Chunk-8 WI-8.3).
     const stateSeed = openStateDatabase();
-    insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
+    insertUsageEvent(stateSeed, {
+      event_type: "show",
+      entry_id: before.id,
+      entry_ref: memoryItemRef(MV_RECOVERY_ENTRY_INDEXER_FULL_NAME),
+    });
     stateSeed.close();
 
     await crashAt("filesystem-committed", ref, `${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`);
@@ -496,7 +500,7 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         if (!before) throw new Error("missing indexed source row");
         closeDatabase(db);
         const stateSeed = openStateDatabase();
-        insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
+        insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: memoryItemRef(name) });
         stateSeed.close();
         await crashAt("filesystem-committed", ref, `${name}-new`);
         await akmIndex({ stashDir: storage.stashDir, full: true });

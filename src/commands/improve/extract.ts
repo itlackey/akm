@@ -451,7 +451,7 @@ export function deriveExtractCandidateRef(candidate: ExtractCandidate, sourceRef
     const scope = projectName ? canonicalSegment(projectName) : "";
     return `${candidate.type}:${scope ? `${scope}/` : ""}${leaf}`;
   }
-  return `knowledge:${leaf}`;
+  return `knowledge/${leaf}`;
 }
 
 function resolveExtractStandards(stashDir: string): string {

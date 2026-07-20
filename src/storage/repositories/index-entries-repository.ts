@@ -355,8 +355,25 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
  * history (live-asset-wins). Best-effort + guarded on state.db's existence; a
  * legacy state.db predating usage_events is tolerated.
  */
+/** The conceptId for a legacy `type:name` ref (`memory:foo` → `memories/foo`), or undefined. */
+function conceptIdFromTypeNameRef(ref: string): string | undefined {
+  const colon = ref.indexOf(":");
+  if (colon <= 0) return undefined;
+  return conceptIdFromTypeName(ref.slice(0, colon), ref.slice(colon + 1));
+}
+
 function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
   if (!fs.existsSync(getStateDbPath())) return;
+  // Post-cutover, `usage_events.entry_ref` is the fully-qualified item_ref
+  // (`<bundle>//<conceptId>`); the pre-flip legacy `type:name` spellings survive
+  // only on rows written before the cutover. Rewrite BOTH: `opts.oldRef`/`newRef`
+  // are the legacy `type:name` forms, so the conceptId siblings are derived here.
+  const oldConcept = conceptIdFromTypeNameRef(opts.oldRef);
+  const newConcept = conceptIdFromTypeNameRef(opts.newRef);
+  const rename = (stateDb: Database, oldR: string, newR: string): void => {
+    stateDb.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(newR);
+    stateDb.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(newR, oldR);
+  };
   try {
     withStateDb((stateDb) => {
       stateDb.transaction(() => {
@@ -364,17 +381,16 @@ function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
           const origins = new Set([opts.sourceName]);
           if (opts.sourceName === "stash" && opts.includeLegacyBare) origins.add("local");
           for (const origin of origins) {
-            const oldQualifiedRef = `${origin}//${opts.oldRef}`;
-            const newQualifiedRef = `${origin}//${opts.newRef}`;
-            stateDb.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(newQualifiedRef);
-            stateDb
-              .prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?")
-              .run(newQualifiedRef, oldQualifiedRef);
+            rename(stateDb, `${origin}//${opts.oldRef}`, `${origin}//${opts.newRef}`);
+            // The item_ref spelling (`<bundle>//<conceptId>`) — the durable
+            // post-cutover key. Origins double as the bundle id for the stash.
+            if (oldConcept !== undefined && newConcept !== undefined)
+              rename(stateDb, `${origin}//${oldConcept}`, `${origin}//${newConcept}`);
           }
         }
         if (opts.includeLegacyBare || !opts.sourceName) {
-          stateDb.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
-          stateDb.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
+          rename(stateDb, opts.oldRef, opts.newRef);
+          if (oldConcept !== undefined && newConcept !== undefined) rename(stateDb, oldConcept, newConcept);
         }
       })();
     });
