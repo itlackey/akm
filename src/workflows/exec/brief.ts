@@ -44,6 +44,7 @@ import { frozenStepRows, requireExecutableWorkflowPlan } from "../runtime/plan-c
 import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
 import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
+import { canonicalWorkflowRunRef } from "../runtime/workflow-asset-loader";
 import { detectSecretShapedParams } from "./param-secrets";
 import {
   activeGateLoop,
@@ -737,7 +738,7 @@ export async function resolveRunId(target: string): Promise<string> {
     if (parsed.type !== "workflow") {
       throw new UsageError(`Expected a workflow run id or workflow ref (workflow:<name>), got "${target}".`);
     }
-    const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+    const ref = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
     const active = repo.getActiveRunRowForScope(ref, getCurrentWorkflowScopeKey());
     if (!active) {
       throw new NotFoundError(

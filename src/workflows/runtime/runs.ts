@@ -41,7 +41,12 @@ import {
   requireExecutableWorkflowPlan,
 } from "./plan-classifier";
 import { evaluateStaleUnits, type StaleUnit } from "./unit-checkin";
-import { loadWorkflowAsset, parseWorkflowRefInput, resolveWorkflowEntryId } from "./workflow-asset-loader";
+import {
+  canonicalWorkflowRunRef,
+  loadWorkflowAsset,
+  parseWorkflowRefInput,
+  resolveWorkflowEntryId,
+} from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
   run: WorkflowRunSummary;
@@ -404,9 +409,9 @@ export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnl
     if (input?.workflowRef) {
       const parsed = parseWorkflowRefInput(input.workflowRef);
       if (parsed.type !== "workflow") {
-        throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${input.workflowRef}".`);
+        throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${input.workflowRef}".`);
       }
-      workflowRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+      workflowRef = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
     }
     const rows = repo.listRuns({
       scopeKey,
@@ -740,7 +745,7 @@ async function resolveRunSpecifier(
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
   }
-  const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+  const ref = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
   const scopeKey = getCurrentWorkflowScopeKey();
   const active = repo.getActiveRunRowForScope(ref, scopeKey);
   if (active) {

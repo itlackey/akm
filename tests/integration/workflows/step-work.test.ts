@@ -578,7 +578,7 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: Work
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', ?, ?, ?)`,
+       VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', ?, ?, ?)`,
     ).run(RUN_ID, steps[0].id, now, now);
     steps.forEach((step, i) => {
       db.prepare(
@@ -811,7 +811,7 @@ function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
            params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-        VALUES (?, 'workflow:routed', 'dir:v1:routed', NULL, 'Routed', 'active', '{}', 'ship', ?, ?, ?, ?, 3)`,
+        VALUES (?, 'workflows/routed', 'dir:v1:routed', NULL, 'Routed', 'active', '{}', 'ship', ?, ?, ?, ?, 3)`,
     ).run(RUN_ID, now, now, canonicalPlanJson(routePlan), computePlanHash(routePlan));
     const rows = [
       { id: "classify", status: "completed", evidence: { output: { verdict: "pass" } } },

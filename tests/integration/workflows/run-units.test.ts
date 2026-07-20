@@ -29,7 +29,7 @@ function seedRun(dbPath: string): void {
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'step-1', ?, ?)`,
+       VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'step-1', ?, ?)`,
     ).run(RUN_ID, now, now);
   } finally {
     db.close();

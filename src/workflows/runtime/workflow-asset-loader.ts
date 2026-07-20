@@ -48,12 +48,22 @@ export type WorkflowAsset = {
 
 /**
  * Parse a workflow ref in EITHER grammar: the new-grammar conceptId
- * (`[bundle//]workflows/<name>`, the user-input spelling) OR the legacy
- * `[origin//]workflow:<name>` — the durable `workflow_runs.workflow_ref`
- * internal run-key, which the migration cutover deliberately does NOT re-key
- * (workflow_runs is not a cutover re-key target), so it stays legacy-spelled.
+ * (`[bundle//]workflows/<name>`, the canonical spelling — also the durable
+ * `workflow_runs.workflow_ref` run-key, re-keyed by the chunk-8 cutover per
+ * normative §11.4) OR the pre-cutover legacy `[origin//]workflow:<name>`
+ * still found in un-migrated rows/inputs.
  * Returns the {@link AssetRef} `{type, name, origin}` shape.
  */
+/**
+ * The canonical durable `workflow_runs.workflow_ref` run-key:
+ * `[origin//]workflows/<canonical-name>` (normative §11.4 — the chunk-8
+ * cutover re-keys pre-existing legacy rows onto this spelling; every mint
+ * site MUST build the key through this one helper).
+ */
+export function canonicalWorkflowRunRef(origin: string | undefined, canonicalName: string): string {
+  return `${origin ? `${origin}//` : ""}workflows/${canonicalName}`;
+}
+
 export function parseWorkflowRefInput(ref: string): AssetRef {
   const trimmed = ref.trim();
   const boundary = trimmed.indexOf("//");
@@ -94,7 +104,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   }
 
   if (!assetPath) {
-    throw new NotFoundError(`Workflow not found for ref: workflow:${parsed.name}`);
+    throw new NotFoundError(`Workflow not found for ref: workflows/${parsed.name}`);
   }
 
   const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
@@ -104,7 +114,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   // only the persisted/queried ref is collapsed (matches the index entry key,
   // which is keyed by the extension-stripped canonical name).
   const canonicalName = canonicalizeWorkflowName(parsed.name);
-  const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalName}`;
+  const fullRef = canonicalWorkflowRunRef(parsed.origin, canonicalName);
 
   // Format detection by extension: `.yaml`/`.yml` is a YAML workflow program
   // (redesign addendum, R1); everything else is the markdown document format.

@@ -161,7 +161,7 @@ describe("chaos: crash / resume (durable-row)", () => {
   test("a mid-step dispatcher failure fails the run; resume re-dispatches ONLY incomplete units", async () => {
     writeProgram("crash-resume", FANOUT_FAIL_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
-    const started = await startWorkflowRun("workflow:crash-resume", params);
+    const started = await startWorkflowRun("workflows/crash-resume", params);
     const runId = started.run.id;
 
     // Invocation 1: every unit succeeds EXCEPT the one reviewing c.ts, which
@@ -248,7 +248,7 @@ describe("chaos: crash INSIDE the completion path", () => {
   test("units done + no gate row yet (crash before the judge): resume promotes once, exactly one gate row", async () => {
     writeProgram("crash-completion", FANOUT_GATE_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:crash-completion", params);
+    const started = await startWorkflowRun("workflows/crash-completion", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
 
@@ -299,7 +299,7 @@ describe("chaos: crash INSIDE the completion path", () => {
     // step is permanently un-advanceable through brief/report (peer review R3).
     writeProgram("crash-completion", FANOUT_GATE_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:crash-completion", params);
+    const started = await startWorkflowRun("workflows/crash-completion", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
 
@@ -341,7 +341,7 @@ describe("chaos: crash INSIDE the completion path", () => {
   test("a DANGLING running gate row (crash mid-judge): resume replaces it — no duplicate row, no double promotion", async () => {
     writeProgram("crash-completion", FANOUT_GATE_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:crash-completion", params);
+    const started = await startWorkflowRun("workflows/crash-completion", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
 
@@ -427,7 +427,7 @@ steps:
 describe("chaos: lease contention", () => {
   test("two concurrent engine invocations race: exactly one drives, the loser is refused naming holder + expiry", async () => {
     writeProgram("leased", SOLO_WF);
-    const started = await startWorkflowRun("workflow:leased", {});
+    const started = await startWorkflowRun("workflows/leased", {});
     const runId = started.run.id;
 
     // The winner blocks in dispatch until we release it, guaranteeing its lease
@@ -487,7 +487,7 @@ describe("chaos: lease contention", () => {
   test("report is refused while a live engine lease is held", async () => {
     writeProgram("leased-fanout", SOLO_FANOUT_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:leased-fanout", params);
+    const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const [ua] = workListFor(plan, 0, runId, params);
@@ -515,7 +515,7 @@ describe("chaos: lease contention", () => {
   test("a crash releases the lease (finally) and an expired lease is reclaimed — an immediate re-run works", async () => {
     writeProgram("leased-fanout", SOLO_FANOUT_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:leased-fanout", params);
+    const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
 
     // Plant a STALE lease from a dead engine (expired), then crash the run.
@@ -590,7 +590,7 @@ describe("chaos: hostile content — single-pass resolution", () => {
   test("a unit result containing ${{ … }} stays LITERAL in downstream prompts and artifacts — never re-resolved", async () => {
     writeProgram("hostile-flow", PRODUCER_CONSUMER_WF);
     const params = { secret: "LEAKED-PARAM-VALUE" };
-    const started = await startWorkflowRun("workflow:hostile-flow", params);
+    const started = await startWorkflowRun("workflows/hostile-flow", params);
     const runId = started.run.id;
 
     // `discover` produces a token whose VALUE looks like an expression. A
@@ -653,7 +653,7 @@ describe("chaos: hostile content — events, clipping, brief safety", () => {
   test("events rows carry ids/status/enums ONLY; no hostile content, no 100KB blob leaks into the events table", async () => {
     writeProgram("hostile-fanout", HOSTILE_FANOUT_WF);
     const params = { files: HOSTILE_ITEMS, secret: HOSTILE_SECRET };
-    const started = await startWorkflowRun("workflow:hostile-fanout", params);
+    const started = await startWorkflowRun("workflows/hostile-fanout", params);
     const runId = started.run.id;
 
     // Capture the artifact summary the gate judge is handed — that is where the
@@ -713,7 +713,7 @@ steps:
       max_loops: 3
 `;
     writeProgram("hostile-loop", LOOP_WF);
-    const started = await startWorkflowRun("workflow:hostile-loop", {});
+    const started = await startWorkflowRun("workflows/hostile-loop", {});
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const [unit] = workListFor(plan, 0, runId, {});
@@ -776,7 +776,7 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(storage.stashDir, "env", "leak.env"), `FAKE_TOKEN=${FAKE_SECRET}\n`, "utf8");
     writeProgram("env-bound", ENV_SOLO_WF);
-    const started = await startWorkflowRun("workflow:env-bound", {});
+    const started = await startWorkflowRun("workflows/env-bound", {});
     const runId = started.run.id;
 
     // Brief BEFORE any dispatch: the env binding is surfaced as a REF NAME
@@ -825,7 +825,7 @@ describe("chaos: replay divergence under a tampered journal", () => {
   test("engine resume fails the run loudly, naming the tampered unit", async () => {
     writeProgram("leased-fanout", SOLO_FANOUT_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:leased-fanout", params);
+    const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const [ua] = workListFor(plan, 0, runId, params);
@@ -858,7 +858,7 @@ describe("chaos: replay divergence under a tampered journal", () => {
   test("the report path fails loudly, naming the tampered unit", async () => {
     writeProgram("leased-fanout", SOLO_FANOUT_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const started = await startWorkflowRun("workflow:leased-fanout", params);
+    const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const [ua] = workListFor(plan, 0, runId, params);
@@ -928,7 +928,7 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
 
   test("engine resume fails the run loudly, naming the unit", async () => {
     writeProgram("param-tamper", PARAM_SOLO_WF);
-    const started = await startWorkflowRun("workflow:param-tamper", { mode: "alpha" });
+    const started = await startWorkflowRun("workflows/param-tamper", { mode: "alpha" });
     const runId = started.run.id;
     const { unitId } = await seedThenTamper(runId);
 
@@ -946,7 +946,7 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
 
   test("the report path fails loudly, naming the unit", async () => {
     writeProgram("param-tamper", PARAM_SOLO_WF);
-    const started = await startWorkflowRun("workflow:param-tamper", { mode: "alpha" });
+    const started = await startWorkflowRun("workflows/param-tamper", { mode: "alpha" });
     const runId = started.run.id;
     const { unitId } = await seedThenTamper(runId);
 
@@ -992,7 +992,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
 
   test("engine: a THROWING judge finishes the gate row FAILED (never stuck running) and advances fail-open", async () => {
     writeProgram("judge-gate", JUDGE_GATE_WF);
-    const started = await startWorkflowRun("workflow:judge-gate", {});
+    const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
 
     const result = await runWorkflowSteps({
@@ -1013,7 +1013,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
 
   test("report: a THROWING judge finishes the gate row FAILED and advances the step identically", async () => {
     writeProgram("judge-gate", JUDGE_GATE_WF);
-    const started = await startWorkflowRun("workflow:judge-gate", {});
+    const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
     const [unit] = workListFor(plan, 0, runId, {});
@@ -1037,7 +1037,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
 
   test("engine: a MALFORMED-JSON judge fails open (defined, no crash) — gate row completed as a pass verdict", async () => {
     writeProgram("judge-gate", JUDGE_GATE_WF);
-    const started = await startWorkflowRun("workflow:judge-gate", {});
+    const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
 
     const result = await runWorkflowSteps({
@@ -1057,7 +1057,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
 
   test("engine: complete:false with NO feedback → a defined rejection carrying default feedback, no crash", async () => {
     writeProgram("judge-gate", JUDGE_GATE_WF);
-    const started = await startWorkflowRun("workflow:judge-gate", {});
+    const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
 
     const result = await runWorkflowSteps({

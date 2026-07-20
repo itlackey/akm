@@ -301,7 +301,7 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
            params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-        VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?, ?, ?, 3)`,
+        VALUES (?, 'workflows/golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?, ?, ?, 3)`,
     ).run(RUN_ID, JSON.stringify(params), current, now, now, canonicalPlanJson(plan), computePlanHash(plan));
     const plannedSteps = new Map(frozenStepRows(plan).map((step) => [step.stepId, step]));
     steps.forEach((step, i) => {

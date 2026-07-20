@@ -646,6 +646,23 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
         copied.workflow_runs = copyTable(db, "wf", "workflow_runs");
         copied.workflow_run_steps = copyTable(db, "wf", "workflow_run_steps");
         copied.workflow_run_units = copyTable(db, "wf", "workflow_run_units");
+        // Normative §11.4: workflow target refs are a MUST-rekey durable
+        // record. The run-key is a deterministic spelling transform
+        // (`[origin//]workflow:<n>` → `[origin//]workflows/<n>`) — no index
+        // join needed, and idempotent (already-new rows don't match).
+        db.exec(
+          `UPDATE workflow_runs SET workflow_ref =
+             CASE
+               WHEN workflow_ref LIKE 'workflow:%'
+                 THEN 'workflows/' || substr(workflow_ref, length('workflow:') + 1)
+               WHEN instr(workflow_ref, '//workflow:') > 0
+                 THEN substr(workflow_ref, 1, instr(workflow_ref, '//workflow:') + 1)
+                      || 'workflows/'
+                      || substr(workflow_ref, instr(workflow_ref, '//workflow:') + length('//workflow:'))
+               ELSE workflow_ref
+             END
+           WHERE workflow_ref LIKE 'workflow:%' OR instr(workflow_ref, '//workflow:') > 0`,
+        );
       }
 
       if (oldIndexExists) {

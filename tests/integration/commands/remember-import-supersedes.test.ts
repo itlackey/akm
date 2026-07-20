@@ -476,7 +476,7 @@ describe("--supersedes refuses non-markdown demotion targets before any write", 
     const wfBytes = "steps:\n  - run: echo hi\n";
     const wfPath = seedAsset(stashDir, "workflows/deploy.yaml", wfBytes);
 
-    for (const ref of ["workflow:deploy", "workflow:deploy.yaml"]) {
+    for (const ref of ["workflows/deploy", "workflows/deploy.yaml"]) {
       const { code, stderr } = await runCliCapture(["remember", "deploy changed", "--supersedes", ref]);
       expect(code).toBe(2);
       const json = JSON.parse(stderr) as { ok: boolean; error: string; code?: string };

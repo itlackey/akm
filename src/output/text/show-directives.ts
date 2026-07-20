@@ -90,7 +90,7 @@ export function appendShowDirectives(lines: string[], r: Record<string, unknown>
     }
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
-    const workflowRef = workflowName ? `workflow:${workflowName}` : "<ref>";
+    const workflowRef = workflowName ? `workflows/${workflowName}` : "<ref>";
     // Insert action directive BEFORE the workflow content by prepending to lines at the
     // separator position. We find where the header ends and insert after the first `---`.
     // Since lines already contain the full content at this point, we locate the insertion

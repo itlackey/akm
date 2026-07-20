@@ -33,7 +33,7 @@ function seedStalledRun(dbPath: string): void {
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at, checkin_armed_at,
           agent_harness, agent_session_id)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'step-1', ?, ?, ?, 'claude-code', 'sess-9')`,
+       VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'step-1', ?, ?, ?, 'claude-code', 'sess-9')`,
     ).run(RUN_ID, stale, stale, stale);
     db.prepare(
       `INSERT INTO workflow_run_steps

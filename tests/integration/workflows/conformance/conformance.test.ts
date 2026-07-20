@@ -69,7 +69,7 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>): void
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
-       VALUES (?, 'workflow:golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?)`,
+       VALUES (?, 'workflows/golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?)`,
     ).run(RUN_ID, JSON.stringify(params), steps[0]?.stepId, now, now);
     steps.forEach((step) => {
       db.prepare(

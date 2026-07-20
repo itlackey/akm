@@ -57,7 +57,7 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
-       VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', ?, ?, ?, ?)`,
+       VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', ?, ?, ?, ?)`,
     ).run(RUN_ID, JSON.stringify(opts.params ?? {}), opts.steps[0].id, now, now);
     opts.steps.forEach((step, i) => {
       db.prepare(

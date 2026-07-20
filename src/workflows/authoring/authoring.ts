@@ -125,7 +125,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   if (conflicting !== undefined) {
     throw new UsageError(
       `Workflow "${normalizedName}" already exists as ${path.relative(stashDir, conflicting)} — the ` +
-        `\`workflow:${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
+        `\`workflows/${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
         `Remove or rename the existing file first, or create the workflow under a different name.`,
       "RESOURCE_ALREADY_EXISTS",
     );
@@ -167,7 +167,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   fs.writeFileSync(assetPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
 
   return {
-    ref: `workflow:${normalizedName}`,
+    ref: `workflows/${normalizedName}`,
     path: assetPath,
     stashDir,
   };

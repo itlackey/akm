@@ -37,14 +37,14 @@ function seed(): void {
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at, agent_harness, agent_session_id, checkin_armed_at)
-       VALUES (?, 'workflow:alpha', 'dir:v1:demo', 7, 'Alpha', 'active', '{"k":1}', 'step-1',
+       VALUES (?, 'workflows/alpha', 'dir:v1:demo', 7, 'Alpha', 'active', '{"k":1}', 'step-1',
                '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 'claude-code', 'sess-1', '2026-01-02T00:00:00.000Z')`,
     ).run(RUN_A);
     db.prepare(
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at, completed_at, checkin_armed_at)
-       VALUES (?, 'workflow:beta', 'dir:v1:demo', NULL, 'Beta', 'completed', '{}', NULL,
+       VALUES (?, 'workflows/beta', 'dir:v1:demo', NULL, 'Beta', 'completed', '{}', NULL,
                '2026-01-03T00:00:00.000Z', '2026-01-04T00:00:00.000Z', '2026-01-04T00:00:00.000Z', NULL)`,
     ).run(RUN_B);
     db.prepare(
@@ -85,7 +85,7 @@ describe("WorkflowRunsRepository reads", () => {
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(RUN_A));
     expect(row).toEqual({
       id: RUN_A,
-      workflow_ref: "workflow:alpha",
+      workflow_ref: "workflows/alpha",
       scope_key: "dir:v1:demo",
       workflow_entry_id: 7,
       workflow_title: "Alpha",
@@ -124,7 +124,7 @@ describe("WorkflowRunsRepository reads", () => {
     expect(all.map((r) => r.id)).toEqual([RUN_B, RUN_A]);
 
     const filtered = await withWorkflowRunsRepo((repo) =>
-      repo.listRuns({ scopeKey: "dir:v1:demo", workflowRef: "workflow:alpha" }),
+      repo.listRuns({ scopeKey: "dir:v1:demo", workflowRef: "workflows/alpha" }),
     );
     expect(filtered.map((r) => r.id)).toEqual([RUN_A]);
 
@@ -143,7 +143,7 @@ describe("WorkflowRunsRepository reads", () => {
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, checkin_armed_at)
-         VALUES (?, 'workflow:gamma', 'dir:v1:demo', NULL, 'Gamma', 'blocked', '{}', 'step-1',
+         VALUES (?, 'workflows/gamma', 'dir:v1:demo', NULL, 'Gamma', 'blocked', '{}', 'step-1',
                  '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
       ).run(RUN_BLOCKED);
     } finally {
@@ -173,7 +173,7 @@ describe("WorkflowRunsRepository reads", () => {
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, checkin_armed_at)
-         VALUES (?, 'workflow:delta', 'dir:v1:blocked-scope', NULL, 'Delta', 'blocked', '{}', 'step-1',
+         VALUES (?, 'workflows/delta', 'dir:v1:blocked-scope', NULL, 'Delta', 'blocked', '{}', 'step-1',
                  '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
       ).run(RUN_BLOCKED);
     } finally {
@@ -183,7 +183,7 @@ describe("WorkflowRunsRepository reads", () => {
     // The START guard (findActiveRunForScope, status='active' only): a blocked
     // run does NOT occupy the scope, so a fresh `workflow start` is allowed.
     const startGuard = await withWorkflowRunsRepo((repo) =>
-      repo.findActiveRunForScope("workflow:delta", "dir:v1:blocked-scope"),
+      repo.findActiveRunForScope("workflows/delta", "dir:v1:blocked-scope"),
     );
     expect(startGuard ?? undefined).toBeUndefined();
 
@@ -208,15 +208,15 @@ describe("WorkflowRunsRepository reads", () => {
   });
 
   test("findActiveRunForScope finds only active runs", async () => {
-    const hit = await withWorkflowRunsRepo((repo) => repo.findActiveRunForScope("workflow:alpha", "dir:v1:demo"));
+    const hit = await withWorkflowRunsRepo((repo) => repo.findActiveRunForScope("workflows/alpha", "dir:v1:demo"));
     expect(hit).toEqual({ id: RUN_A, current_step_id: "step-1" });
-    const miss = await withWorkflowRunsRepo((repo) => repo.findActiveRunForScope("workflow:beta", "dir:v1:demo"));
+    const miss = await withWorkflowRunsRepo((repo) => repo.findActiveRunForScope("workflows/beta", "dir:v1:demo"));
     expect(miss).toBeNull();
   });
 
   test("findActiveOrBlockedRunForScope returns active or blocked", async () => {
     const hit = await withWorkflowRunsRepo((repo) => repo.findActiveOrBlockedRunForScope("dir:v1:demo"));
-    expect(hit).toEqual({ id: RUN_A, current_step_id: "step-1", workflow_ref: "workflow:alpha" });
+    expect(hit).toEqual({ id: RUN_A, current_step_id: "step-1", workflow_ref: "workflows/alpha" });
   });
 });
 

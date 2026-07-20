@@ -11,7 +11,7 @@
  * extension. Regression: before the fix the create path wrote the markdown
  * template to `foo.yaml`, so `loadWorkflowAsset` (program parser) rejected it.
  *
- * COMMENT B — `workflow:foo.yaml` and the canonical `workflow:foo` address the
+ * COMMENT B — `workflows/foo.yaml` and the canonical `workflows/foo` address the
  * same file and MUST share ONE run identity: the active-run guard blocks the
  * alias spelling, and `list --ref` finds runs regardless of how the ref was
  * spelled. Regression: before the fix the stored `workflow_ref` kept the
@@ -42,7 +42,7 @@ describe("workflow create with a .yaml/.yml name writes a YAML program", () => {
     const created = createWorkflowAsset({ name: "foo.yaml" });
 
     // Canonical (extension-free) ref; the file keeps its .yaml suffix.
-    expect(created.ref).toBe("workflow:foo");
+    expect(created.ref).toBe("workflows/foo");
     expect(created.path).toBe(path.join(storage.stashDir, "workflows", "foo.yaml"));
 
     // The written body is a YAML program, not the markdown template.
@@ -58,31 +58,31 @@ describe("workflow create with a .yaml/.yml name writes a YAML program", () => {
 
     // Loads as a program (this is what threw before the fix — the markdown
     // template failed the program parser selected by the .yaml extension).
-    const asset = await loadWorkflowAsset("workflow:foo");
+    const asset = await loadWorkflowAsset("workflows/foo");
     expect(asset.program).toBeDefined();
     expect(asset.document).toBeUndefined();
 
     // start → status round-trip on the canonical ref.
-    const started = await startWorkflowRun("workflow:foo");
+    const started = await startWorkflowRun("workflows/foo");
     const status = await getWorkflowStatus(started.run.id);
-    expect(status.workflow.ref).toBe("workflow:foo");
+    expect(status.workflow.ref).toBe("workflows/foo");
     expect(status.run.status).toBe("active");
   });
 
   test("create bar.yml also produces a program asset", async () => {
     const created = createWorkflowAsset({ name: "bar.yml" });
-    expect(created.ref).toBe("workflow:bar");
+    expect(created.ref).toBe("workflows/bar");
     expect(created.path).toBe(path.join(storage.stashDir, "workflows", "bar.yml"));
 
-    const asset = await loadWorkflowAsset("workflow:bar");
+    const asset = await loadWorkflowAsset("workflows/bar");
     expect(asset.program).toBeDefined();
   });
 
   test("create foo (no extension) still writes a markdown document", async () => {
     const created = createWorkflowAsset({ name: "plain" });
-    expect(created.ref).toBe("workflow:plain");
+    expect(created.ref).toBe("workflows/plain");
     expect(created.path).toBe(path.join(storage.stashDir, "workflows", "plain.md"));
-    const asset = await loadWorkflowAsset("workflow:plain");
+    const asset = await loadWorkflowAsset("workflows/plain");
     expect(asset.document).toBeDefined();
     expect(asset.program).toBeUndefined();
   });
@@ -94,27 +94,27 @@ describe("workflow_ref canonicalization collapses foo.yaml and foo", () => {
   test("the active-run guard blocks the aliased spelling", async () => {
     createWorkflowAsset({ name: "guard.yaml" });
 
-    const first = await startWorkflowRun("workflow:guard");
+    const first = await startWorkflowRun("workflows/guard");
     expect(first.run.status).toBe("active");
 
     // Starting the SAME workflow addressed with the .yaml alias must be
     // refused by the concurrency guard — not silently start a parallel run.
-    await expect(startWorkflowRun("workflow:guard.yaml")).rejects.toThrow(/already has an active run/);
+    await expect(startWorkflowRun("workflows/guard.yaml")).rejects.toThrow(/already has an active run/);
   });
 
   test("the guard also blocks the canonical spelling when the alias started the run", async () => {
     createWorkflowAsset({ name: "guard2.yaml" });
 
-    await startWorkflowRun("workflow:guard2.yaml");
-    await expect(startWorkflowRun("workflow:guard2")).rejects.toThrow(/already has an active run/);
+    await startWorkflowRun("workflows/guard2.yaml");
+    await expect(startWorkflowRun("workflows/guard2")).rejects.toThrow(/already has an active run/);
   });
 
   test("list --ref finds the run regardless of how the ref is spelled", async () => {
     createWorkflowAsset({ name: "listed.yaml" });
-    const started = await startWorkflowRun("workflow:listed");
+    const started = await startWorkflowRun("workflows/listed");
 
-    const byCanonical = await listWorkflowRuns({ workflowRef: "workflow:listed" });
-    const byAlias = await listWorkflowRuns({ workflowRef: "workflow:listed.yaml" });
+    const byCanonical = await listWorkflowRuns({ workflowRef: "workflows/listed" });
+    const byAlias = await listWorkflowRuns({ workflowRef: "workflows/listed.yaml" });
 
     expect(byCanonical.runs.map((r) => r.id)).toContain(started.run.id);
     expect(byAlias.runs.map((r) => r.id)).toContain(started.run.id);
@@ -122,7 +122,7 @@ describe("workflow_ref canonicalization collapses foo.yaml and foo", () => {
     // Both spellings resolve to exactly the same (single) run; the stored ref
     // is canonical.
     expect(byAlias.runs).toEqual(byCanonical.runs);
-    for (const run of byCanonical.runs) expect(run.workflowRef).toBe("workflow:listed");
+    for (const run of byCanonical.runs) expect(run.workflowRef).toBe("workflows/listed");
   });
 });
 
@@ -134,7 +134,7 @@ describe("workflow create rejects a canonical-name collision across extensions",
     expect(md.path).toBe(path.join(storage.stashDir, "workflows", "dup.md"));
 
     // The `.md` resolves BEFORE `.yaml`, so a `dup.yaml` would be shadowed by
-    // `dup.md` under the canonical `workflow:dup` ref — refuse and name the file.
+    // `dup.md` under the canonical `workflows/dup` ref — refuse and name the file.
     let err: unknown;
     try {
       createWorkflowAsset({ name: "dup.yaml" });

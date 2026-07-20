@@ -69,7 +69,7 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 //   • false positives (not refs): `$env:` PowerShell (tasks-schtasks-backend),
 //     `session:<harness>:<id>` provenance (asset-serialize), `…-agent:ok`
 //     process output (published-task-upgrade).
-const CEILING = 74;
+const CEILING = 50;
 
 const TYPES = [
   "skill",

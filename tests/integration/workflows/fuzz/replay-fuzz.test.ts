@@ -161,7 +161,7 @@ function seedRun(runId: string, params: Record<string, unknown>): void {
       `INSERT INTO workflow_runs
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
-       VALUES (?, 'workflow:f', 'dir:v1:f', NULL, 'F', 'active', ?, 'work', ?, ?)`,
+       VALUES (?, 'workflows/f', 'dir:v1:f', NULL, 'F', 'active', ?, 'work', ?, ?)`,
     ).run(runId, JSON.stringify(params), now, now);
     db.prepare(
       `INSERT INTO workflow_run_steps

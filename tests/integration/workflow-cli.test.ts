@@ -236,7 +236,7 @@ describe("workflow CLI", async () => {
 
     expect(result.status).toBe(0);
     const created = JSON.parse(result.stdout) as { ref: string; path: string };
-    expect(created.ref).toBe("workflow:release-flow");
+    expect(created.ref).toBe("workflows/release-flow");
     expect(fs.existsSync(created.path)).toBe(true);
 
     const shown = await runCli(["show", "workflows/release-flow"], env);
@@ -343,7 +343,7 @@ describe("workflow CLI", async () => {
     expect(listed.status).toBe(0);
     const listJson = JSON.parse(listed.stdout) as { runs: Array<{ id: string; workflowRef: string }> };
     expect(listJson.runs).toHaveLength(1);
-    expect(listJson.runs[0]?.workflowRef).toBe("workflow:release");
+    expect(listJson.runs[0]?.workflowRef).toBe("workflows/release");
 
     expect(
       (
@@ -506,7 +506,7 @@ describe("workflow CLI", async () => {
     const started = await runCli(["workflow", "start", "extra//workflows/shared-release"], env);
     expect(started.status).toBe(0);
     const startJson = JSON.parse(started.stdout) as { run: { workflowEntryId?: number | null; workflowRef: string } };
-    expect(startJson.run.workflowRef).toBe("extra//workflow:shared-release");
+    expect(startJson.run.workflowRef).toBe("extra//workflows/shared-release");
     expect(typeof startJson.run.workflowEntryId).toBe("number");
   });
 
@@ -1085,7 +1085,7 @@ describe("workflow create — name validation", async () => {
     const result = await runCli(["workflow", "create", "my-workflow"], env);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string };
-    expect(json.ref).toBe("workflow:my-workflow");
+    expect(json.ref).toBe("workflows/my-workflow");
   });
 
   test("hierarchical placement uses --path; a slash in the name positional is rejected", async () => {
@@ -1094,7 +1094,7 @@ describe("workflow create — name validation", async () => {
     // --path provides the subdirectory under workflows/; the name stays flat.
     const ok = await runCli(["workflow", "create", "ship", "--path", "release"], env);
     expect(ok.status).toBe(0);
-    expect((JSON.parse(ok.stdout) as { ref: string }).ref).toBe("workflow:release/ship");
+    expect((JSON.parse(ok.stdout) as { ref: string }).ref).toBe("workflows/release/ship");
 
     // A '/' in the name positional is rejected and points at --path.
     const bad = await runCli(["workflow", "create", "release/ship"], env);
@@ -1134,7 +1134,7 @@ describe("workflow create --force guard", async () => {
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("workflow:test-flow");
+    expect(json.ref).toBe("workflows/test-flow");
   });
 
   test("--force --from <file> succeeds and overwrites with file content", async () => {

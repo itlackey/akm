@@ -117,7 +117,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
 
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500);
 
-    expect(prompt).toContain("memory:hot-memory (captureMode: hot)");
+    expect(prompt).toContain("memories/hot-memory (captureMode: hot)");
   });
 
   it("does NOT annotate memories with captureMode: background or absent", () => {
@@ -164,7 +164,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
 
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500, pendingHashes);
 
-    expect(prompt).toContain("memory:dup-memory (already queued)");
+    expect(prompt).toContain("memories/dup-memory (already queued)");
   });
 
   it("combines both annotations when a memory is hot AND already queued", async () => {
@@ -182,7 +182,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     const queuedHash = createHash("sha256").update("Both flags body.", "utf8").digest("hex");
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500, new Set([queuedHash]));
 
-    expect(prompt).toContain("memory:hot-dup (captureMode: hot; already queued)");
+    expect(prompt).toContain("memories/hot-dup (captureMode: hot; already queued)");
   });
 
   it("emits a top-of-prompt protection block listing hot refs (2026-05-27 diagnostic)", () => {
@@ -213,14 +213,14 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
 
     // Block exists, mentions delete (the targeted op), and lists both hot refs.
     expect(prompt).toMatch(/⛔ DO NOT propose any `delete` operation for these refs/);
-    expect(prompt).toContain("  - memory:hot-1");
-    expect(prompt).toContain("  - memory:hot-2");
+    expect(prompt).toContain("  - memories/hot-1");
+    expect(prompt).toContain("  - memories/hot-2");
     // Inline annotation is preserved — the top-block is additive, not a
     // replacement.
-    expect(prompt).toContain("memory:hot-1 (captureMode: hot)");
+    expect(prompt).toContain("memories/hot-1 (captureMode: hot)");
     // Block must precede the per-memory section so the model encounters
     // the warning first.
-    expect(prompt.indexOf("⛔")).toBeLessThan(prompt.indexOf("[1] memory:hot-1"));
+    expect(prompt.indexOf("⛔")).toBeLessThan(prompt.indexOf("[1] memories/hot-1"));
     // Neutral phrasing: block must NOT contain op-words that could leak
     // into the model's op-selection for control memories.
     const block = prompt.slice(prompt.indexOf("⛔"), prompt.indexOf("[1]"));
@@ -256,7 +256,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
 
     // The line stays `[1] memory:vanilla` with no parens — preserves the
     // pre-2026-05-27 shape so other tests that grep for ref names don't break.
-    expect(prompt).toContain("[1] memory:vanilla\n");
+    expect(prompt).toContain("[1] memories/vanilla\n");
     expect(prompt).not.toMatch(/memory:vanilla \(/);
   });
 });

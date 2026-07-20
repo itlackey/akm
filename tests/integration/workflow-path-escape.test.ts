@@ -58,7 +58,7 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
 
     const result = createWorkflowAsset({ name: "agentic-test-workflow" });
 
-    expect(result.ref).toBe("workflow:agentic-test-workflow");
+    expect(result.ref).toBe("workflows/agentic-test-workflow");
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path).toBe(path.join(stashDir, "workflows", "agentic-test-workflow.md"));
   });
@@ -69,7 +69,7 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
 
     const result = createWorkflowAsset({ name: "my-multi-step-workflow" });
 
-    expect(result.ref).toBe("workflow:my-multi-step-workflow");
+    expect(result.ref).toBe("workflows/my-multi-step-workflow");
     expect(fs.existsSync(result.path)).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
 
     const result = createWorkflowAsset({ name: "team/release-flow" });
 
-    expect(result.ref).toBe("workflow:team/release-flow");
+    expect(result.ref).toBe("workflows/team/release-flow");
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path).toContain(path.join("workflows", "team", "release-flow.md"));
   });
@@ -101,7 +101,7 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
     // Must not throw "Resolved workflow path escapes the stash"
     const result = createWorkflowAsset({ name: "agentic-test-workflow" });
 
-    expect(result.ref).toBe("workflow:agentic-test-workflow");
+    expect(result.ref).toBe("workflows/agentic-test-workflow");
     expect(fs.existsSync(result.path)).toBe(true);
   });
 
@@ -132,7 +132,7 @@ Check all inputs.
 
     const result = createWorkflowAsset({ name: "release", from: srcPath });
 
-    expect(result.ref).toBe("workflow:release");
+    expect(result.ref).toBe("workflows/release");
     expect(fs.existsSync(result.path)).toBe(true);
     expect(fs.readFileSync(result.path, "utf8")).toContain("# Workflow: Release");
   });
@@ -165,7 +165,7 @@ describe("createWorkflowAsset — path escape rejection", () => {
 
     const result = createWorkflowAsset({ name: "/etc/passwd" });
     // Leading slash is stripped → name becomes "etc/passwd"
-    expect(result.ref).toBe("workflow:etc/passwd");
+    expect(result.ref).toBe("workflows/etc/passwd");
     // The resulting file is inside the stash workflows dir, not at /etc/passwd
     expect(result.path.startsWith(stashDir)).toBe(true);
     expect(result.path).toContain(path.join("workflows", "etc", "passwd.md"));

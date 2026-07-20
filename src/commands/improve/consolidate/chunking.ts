@@ -94,8 +94,8 @@ export function buildChunkPrompt(
   pendingProposalBodyHashes: Set<string> = new Set(),
   standardsContext = "",
 ): string {
-  const start = memories[0] ? `memory:${memories[0].name}` : "";
-  const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
+  const start = memories[0] ? `memories/${memories[0].name}` : "";
+  const end = memories[memories.length - 1] ? `memories/${memories[memories.length - 1].name}` : "";
 
   // First pass: classify each memory's annotations + collect hot refs so a
   // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
@@ -123,7 +123,7 @@ export function buildChunkPrompt(
     const bodyHash = cacheHash(body);
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
     annotationsByIndex.push({ isHot, isAlreadyQueued, body });
-    if (isHot) hotRefs.push(`memory:${m.name}`);
+    if (isHot) hotRefs.push(`memories/${m.name}`);
   }
 
   const lines: string[] = [
@@ -160,7 +160,7 @@ export function buildChunkPrompt(
     if (isAlreadyQueued) annotations.push("already queued");
     const annotationSuffix = annotations.length > 0 ? ` (${annotations.join("; ")})` : "";
 
-    lines.push(`[${i + 1}] memory:${m.name}${annotationSuffix}`);
+    lines.push(`[${i + 1}] memories/${m.name}${annotationSuffix}`);
     lines.push(`Description: ${m.description || "(none)"}`);
     lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
     lines.push("---");

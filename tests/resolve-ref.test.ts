@@ -194,7 +194,7 @@ describe("parseRefInput", () => {
     expect(parseRefInput("skills/code-review")).toEqual(parseAssetRef("skill:code-review"));
     expect(parseRefInput("knowledge/guide")).toEqual(parseAssetRef("knowledge:guide"));
     expect(parseRefInput("scripts/db/migrate/run.sh")).toEqual(parseAssetRef("script:db/migrate/run.sh"));
-    expect(parseRefInput("workflows/release")).toEqual(parseAssetRef("workflow:release"));
+    expect(parseRefInput("workflows/release")).toEqual(parseAssetRef("workflows/release"));
   });
 
   test("new-grammar bundle-qualified → bundle becomes the AssetRef origin", () => {
