@@ -5,8 +5,6 @@
     "tests/integration/lint-mv-ref-dual-grammar.test.ts",
     "tests/authoring-rules-injection.test.ts",
     "tests/commands/consolidate/consolidate-wave2-d.test.ts",
-    "tests/commands/distill/distill-promotion-policy.test.ts",
-    "tests/commands/distill/promote-memory.test.ts",
     "tests/commands/distill/promotion-policy-corpus.ts",
     "tests/commands/improve/derived-ref.test.ts",
     "tests/commands/improve/proactive-maintenance.test.ts",
