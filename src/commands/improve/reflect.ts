@@ -29,6 +29,7 @@ import path from "node:path";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -57,8 +58,6 @@ import {
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
-import type { AssetRef } from "../../migrate/legacy-ref-grammar";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -1186,7 +1185,7 @@ function createReflectProposal(args: {
   // failure differential from independent evidence.
   const isLessonProposal = (() => {
     try {
-      return parseStoredRef(payload.ref).type === "lesson";
+      return parseRefInput(payload.ref).type === "lesson";
     } catch {
       return false;
     }
@@ -1450,7 +1449,7 @@ async function resolveReflectSource(
   let assetContent: string | undefined;
   let parsedRef: AssetRef | undefined;
   if (options.ref) {
-    parsedRef = parseStoredRef(options.ref);
+    parsedRef = parseRefInput(options.ref);
 
     // 2a. Type guard — reflect only operates on asset types whose canonical
     // shape is `frontmatter + markdown body`. Refuse non-markdown types
@@ -1488,7 +1487,7 @@ async function resolveReflectSource(
         if (localFilePath && fs.existsSync(localFilePath)) {
           assetContent = fs.readFileSync(localFilePath, "utf8");
         } else {
-          const entry = await lookup(parseStoredRef(qualifiedRef));
+          const entry = await lookup(parseRefInput(qualifiedRef));
           if (entry?.filePath && fs.existsSync(entry.filePath)) {
             assetContent = fs.readFileSync(entry.filePath, "utf8");
           }
@@ -1861,13 +1860,13 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 6b. Validate payload.ref === options.ref (R-3 / #366).
   // A hallucinating agent can silently retarget proposals to a different ref.
-  // This guard normalises both refs through parseStoredRef (dual-grammar) so origin-prefix
+  // This guard normalises both refs through parseRefInput (dual-grammar) so origin-prefix
   // differences do not cause false positives, then rejects mismatches.
   // References: CRITIC (arXiv:2305.11738), CoVe (arXiv:2309.11495).
   if (options.ref) {
     try {
-      const expectedParsed = parseStoredRef(options.ref);
-      const actualParsed = parseStoredRef(payload.ref);
+      const expectedParsed = parseRefInput(options.ref);
+      const actualParsed = parseRefInput(payload.ref);
       // Compare type + name (drop origin — agent may omit origin prefix).
       if (expectedParsed.type !== actualParsed.type || expectedParsed.name !== actualParsed.name) {
         emitReflectFailed("parse_error", "ref_mismatch", options.ref, {
@@ -1888,7 +1887,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         };
       }
     } catch {
-      // parseStoredRef failure means the agent returned a malformed ref — already
+      // parseRefInput failure means the agent returned a malformed ref — already
       // caught downstream by createProposal; allow it to surface naturally.
     }
   }

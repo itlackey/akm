@@ -12,8 +12,8 @@
  */
 
 import path from "node:path";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
-import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, ScopedUtilityRow, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
@@ -157,24 +157,16 @@ function bareRef(ref: string): string {
 }
 
 /**
- * The bare-form candidates a caller ref can match a stored `usage_events`
- * row under, spanning BOTH spellings so retrieval counts are identical before
- * and after the §11.4 re-key (a caller `memory:foo` matches legacy
- * `…//memory:foo` AND re-keyed `…//memories/foo`). Ranking is invariant to the
- * durable spelling by construction.
- *
- * Chunk-8: after the §11.4 state.db re-key every stored row is conceptId-spelled
- * and only the conceptId candidate remains.
+ * The bare-form (conceptId) candidate a caller ref matches a stored
+ * `usage_events` row under. Post-Chunk-8 every stored row is conceptId-spelled
+ * (the one-time §11.4 re-key ran at the migration cutover), so only the conceptId
+ * candidate remains — the legacy `type:name` sibling is retired.
  */
 function bareRefCandidates(ref: string): string[] {
   const bare = bareRef(ref.trim());
-  // `parseStoredRef` accepts either grammar; emit BOTH the legacy `type:name`
-  // and the conceptId siblings so a stored row under either spelling matches.
   try {
-    const parsed = parseStoredRef(bare);
-    const legacy = `${parsed.type}:${parsed.name}`;
-    const concept = legacyConceptId(parsed.type, parsed.name);
-    return concept === legacy ? [legacy] : [legacy, concept];
+    const parsed = parseRefInput(bare);
+    return [conceptIdFromTypeName(parsed.type, parsed.name)];
   } catch {
     return [bare];
   }

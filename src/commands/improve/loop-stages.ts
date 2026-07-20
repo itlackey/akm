@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, DEFAULT_GRAPH_EXTRACTION_BATCH_SIZE, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -27,7 +28,6 @@ import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search
 import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { withLlmStage } from "../../llm/usage-telemetry";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import { type CycleMetricsRow, purgeOldCycleMetrics } from "../../storage/repositories/canaries-repository";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
@@ -231,7 +231,7 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
     // Bug D1: in-loop distill-cooldown check removed — distill-cooled candidates
     //         have their synthetic actions emitted in runImprovePreparationStage.
     const isDistillOnly = env.distillOnlyRefSet.has(planned.ref);
-    const parsedPlannedRef = parseStoredRef(planned.ref);
+    const parsedPlannedRef = parseRefInput(planned.ref);
     await runLoopReflectPass(planned, isDistillOnly, env, tally);
     // isDistillOnly refs: no reflect action emitted — proceed directly to the distill pass.
     await runLoopDistillPass(planned, parsedPlannedRef, isDistillOnly, env, tally);
@@ -435,7 +435,7 @@ async function runLoopReflectPass(
  */
 async function runLoopDistillPass(
   planned: ImproveEligibleRef,
-  parsedPlannedRef: ReturnType<typeof parseStoredRef>,
+  parsedPlannedRef: ReturnType<typeof parseRefInput>,
   isDistillOnly: boolean,
   env: ImproveLoopEnv,
   tally: LoopRefTally,
@@ -570,7 +570,7 @@ async function runLoopDistillPass(
  */
 async function invokeDistillAndRecord(
   planned: ImproveEligibleRef,
-  parsedPlannedRef: ReturnType<typeof parseStoredRef>,
+  parsedPlannedRef: ReturnType<typeof parseRefInput>,
   env: ImproveLoopEnv,
   tally: LoopRefTally,
 ): Promise<void> {
@@ -630,7 +630,7 @@ async function invokeDistillAndRecord(
     writeEvalCase(primaryStashDir, {
       ref: planned.ref,
       failureReason: distillResult.reason ?? "quality gate rejected",
-      assetType: parseStoredRef(planned.ref).type ?? "unknown",
+      assetType: parseRefInput(planned.ref).type ?? "unknown",
       rejectedAt: Date.now(),
       source: "distill_quality_rejected",
       slug: `${slug}-${Date.now()}`,
@@ -643,7 +643,7 @@ async function invokeDistillAndRecord(
     writeEvalCase(primaryStashDir, {
       ref: planned.ref,
       failureReason: (rejectedProposalEvent.metadata?.reason as string | undefined) ?? "proposal rejected",
-      assetType: parseStoredRef(planned.ref).type ?? "unknown",
+      assetType: parseRefInput(planned.ref).type ?? "unknown",
       rejectedAt: new Date(rejectedProposalEvent.ts).getTime(),
       source: "proposal_rejected",
       slug: `${slug}-rejected`,
@@ -797,7 +797,7 @@ export async function runImprovePostLoopStage(args: {
       const knowledgeEntries = actionableRefs
         .filter((r) => {
           try {
-            return parseStoredRef(r.ref).type === "knowledge";
+            return parseRefInput(r.ref).type === "knowledge";
           } catch {
             return false;
           }

@@ -53,7 +53,6 @@ import {
   deleteEntriesByStashDir,
   getEmbeddableEntryCount,
   getEntryCount,
-  rekeyUsageEventsToItemRef,
   relinkUsageEvents,
   upsertEntry,
   upsertWorkflowDocument,
@@ -349,17 +348,15 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   });
   ctx.timing.tFtsEnd = Date.now();
 
-  // §11.4 one-time re-key of legacy usage_events.entry_ref onto item_ref, then
-  // re-link detached usage_events and recompute utility scores. The re-key runs
-  // FIRST (entries is now authoritative — the last-good index §11.4 joins
-  // against) so relink sees the canonical spelling; both are idempotent.
+  // Re-link detached usage_events and recompute utility scores. The one-time
+  // §11.4 legacy→item_ref re-key is owned by the migration cutover
+  // (020-three-db-cutover) now, so index finalize only re-resolves entry_ids
+  // (idempotent) — every stored `entry_ref` is already the item_ref spelling.
   //
   // Chunk-8 WI-8.3: usage_events lives in state.db now (index.db no longer holds
   // it), so these cross-DB passes take both handles — entries in `db` (index.db),
   // usage_events in the loaned state.db.
   withStateDb((stateDb) => {
-    onProgress({ phase: "finalize", message: "Re-keying usage events (§11.4)." });
-    rekeyUsageEventsToItemRef(db, stateDb, { sources, defaultStashDir: stashDir });
     onProgress({ phase: "finalize", message: "Relinking usage events." });
     relinkUsageEvents(db, stateDb, { sources, defaultStashDir: stashDir });
     onProgress({ phase: "finalize", message: "Recomputing utility scores." });
@@ -1863,7 +1860,7 @@ function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]):
 
 // ── lookup ─────────────────────────────────────────────────────────────────
 
-import type { AssetRef } from "../migrate/legacy-ref-grammar";
+import type { AssetRef } from "../core/asset/resolve-ref";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */

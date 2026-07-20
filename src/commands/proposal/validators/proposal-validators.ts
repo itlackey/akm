@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
+import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
-import { parseStoredRef } from "../../../migrate/legacy-ref-grammar";
 import type {
   Proposal,
   ProposalValidationContext,
@@ -34,7 +34,7 @@ const genericProposalValidator: ProposalValidator = {
     }
 
     try {
-      ctx.parsedRef = parseStoredRef(proposal.ref);
+      ctx.parsedRef = parseRefInput(proposal.ref);
     } catch (err) {
       findings.push({
         kind: "invalid-ref",

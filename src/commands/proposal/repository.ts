@@ -47,6 +47,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -83,7 +84,6 @@ import {
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations, slugForPath } from "../../indexer/installations";
-import { type AssetRef, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -348,7 +348,7 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
 /**
  * WI-8.5a — the durable `proposals.ref` key in the final `bundle//conceptId`
  * item_ref grammar (D-R3). The conceptId is BUILT from the D-R2 static table
- * ({@link legacyConceptId} = `<stash-subdir>/<name>`), never looked up, so a
+ * ({@link conceptIdFromTypeName} = `<stash-subdir>/<name>`), never looked up, so a
  * proposal targeting a not-yet-existing asset (no index entry) still keys onto
  * its final spelling. The bundle is the write-target stash's installation id —
  * the SAME `deriveInstallations` derivation the index write path uses
@@ -374,15 +374,15 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
  */
 function proposalConceptId(ref: string): string | undefined {
   try {
-    const p = parseStoredRef(ref);
-    return legacyConceptId(p.type, p.name);
+    const p = parseRefInput(ref);
+    return conceptIdFromTypeName(p.type, p.name);
   } catch {
     return undefined;
   }
 }
 
 function proposalDurableRef(parsedRef: AssetRef, stashDir: string): string {
-  const conceptId = legacyConceptId(parsedRef.type, parsedRef.name);
+  const conceptId = conceptIdFromTypeName(parsedRef.type, parsedRef.name);
   const { origin } = parsedRef;
   if (origin !== undefined && origin !== "local" && origin !== "stash") {
     return isBundleSlug(origin) ? `${origin}//${conceptId}` : `${origin}//${parsedRef.type}:${parsedRef.name}`; // WI-8.5b: collapse (non-slug registry origin)
@@ -448,9 +448,9 @@ export function createProposal(
     throw new UsageError(message, "INVALID_PROPOSAL");
   };
 
-  let parsedRef: ReturnType<typeof parseStoredRef>;
+  let parsedRef: ReturnType<typeof parseRefInput>;
   try {
-    parsedRef = parseStoredRef(input.ref);
+    parsedRef = parseRefInput(input.ref);
   } catch (err) {
     return rejectProposal(
       "invalid_ref",
@@ -707,7 +707,7 @@ export function listProposals(
       }
       if (!options.type) return true;
       try {
-        return parseStoredRef(p.ref).type === options.type;
+        return parseRefInput(p.ref).type === options.type;
       } catch {
         return false;
       }
@@ -876,9 +876,9 @@ export function purgeOrphanProposals(
   const reflectPending = pending.filter((p) => p.source === "reflect");
 
   for (const p of reflectPending) {
-    let parsed: ReturnType<typeof parseStoredRef>;
+    let parsed: ReturnType<typeof parseRefInput>;
     try {
-      parsed = parseStoredRef(p.ref);
+      parsed = parseRefInput(p.ref);
     } catch {
       continue;
     }
@@ -1602,7 +1602,7 @@ async function promoteProposalWithLease(
     });
   }
 
-  const ref = parseStoredRef(proposalToValidate.ref);
+  const ref = parseRefInput(proposalToValidate.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
@@ -1716,7 +1716,7 @@ async function revertProposalWithLease(
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
   let proposal = getProposal(stashDir, id, ctx);
-  const ref = parseStoredRef(proposal.ref);
+  const ref = parseRefInput(proposal.ref);
   if (!stashDirFor(ref.type)) {
     throw new UsageError(`Proposal ${id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
@@ -1922,7 +1922,7 @@ export function diffProposal(
   ctx?: ProposalsContext,
 ): ProposalDiff {
   const proposal = getProposal(stashDir, id, ctx);
-  const ref = parseStoredRef(proposal.ref);
+  const ref = parseRefInput(proposal.ref);
 
   let targetPath: string | undefined;
   let existing: string | null = null;

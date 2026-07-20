@@ -13,8 +13,8 @@
  * `tests/commands/consolidate/goldens-merge-plans.test.ts`,
  * `tests/commands/consolidate/goldens-consolidate-journal.test.ts` (WI-06).
  *
- * All names are memory-type (`memory:<name>`) or knowledge-type
- * (`knowledge:<name>`) — the two asset types the consolidate op-handlers
+ * All names are memory-type (`memories/<name>`) or knowledge-type
+ * (`knowledge/<name>`) — the two asset types the consolidate op-handlers
  * touch. Names double as sandboxed-stash filenames
  * (`<stashDir>/memories/<name>.md` / `<stashDir>/knowledge/<name>.md`), so
  * they are filesystem-safe slugs.
@@ -22,12 +22,12 @@
 
 /** Build a `memory:<name>` ref string from a bare fixture name. */
 export function memoryRef(name: string): string {
-  return `memory:${name}`;
+  return `memories/${name}`;
 }
 
 /** Build a `knowledge:<name>` ref string from a bare fixture name. */
 export function knowledgeRef(name: string): string {
-  return `knowledge:${name}`;
+  return `knowledge/${name}`;
 }
 
 // ── goldens-consolidate-ops.test.ts — merge (R5) ────────────────────────────
@@ -96,19 +96,19 @@ export const CONTRADICT_ARCHIVED_BY_NAME = "cop-contradict-archived-by";
 
 // ── goldens-merge-plans.test.ts (pure-function mergePlans goldens) ─────────
 
-export const MP_HALLUCINATED_PRIMARY = "memory:mp-hallucinated-primary";
-export const MP_REAL_PRIMARY = "memory:mp-real-primary";
-export const MP_REAL_SECONDARY = "memory:mp-real-secondary";
-export const MP_HALLUCINATED_SECONDARY = "memory:mp-hallucinated-secondary";
+export const MP_HALLUCINATED_PRIMARY = "memories/mp-hallucinated-primary";
+export const MP_REAL_PRIMARY = "memories/mp-real-primary";
+export const MP_REAL_SECONDARY = "memories/mp-real-secondary";
+export const MP_HALLUCINATED_SECONDARY = "memories/mp-hallucinated-secondary";
 
-export const MP_MERGE_DELETE_TARGET = "memory:mp-merge-delete-target";
-export const MP_MERGE_DELETE_SECONDARY = "memory:mp-merge-delete-secondary";
+export const MP_MERGE_DELETE_TARGET = "memories/mp-merge-delete-target";
+export const MP_MERGE_DELETE_SECONDARY = "memories/mp-merge-delete-secondary";
 
-export const MP_PROMOTE_MERGE_TARGET = "memory:mp-promote-merge-target";
-export const MP_PROMOTE_MERGE_KNOWLEDGE = "knowledge:mp-promote-merge-knowledge";
+export const MP_PROMOTE_MERGE_TARGET = "memories/mp-promote-merge-target";
+export const MP_PROMOTE_MERGE_KNOWLEDGE = "knowledge/mp-promote-merge-knowledge";
 
-export const MP_CONTRADICT_A = "memory:mp-contradict-a";
-export const MP_CONTRADICT_B = "memory:mp-contradict-b";
+export const MP_CONTRADICT_A = "memories/mp-contradict-a";
+export const MP_CONTRADICT_B = "memories/mp-contradict-b";
 
 // ── goldens-consolidate-journal.test.ts (R5, WI-06) ─────────────────────────
 

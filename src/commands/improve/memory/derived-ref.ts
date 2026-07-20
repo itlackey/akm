@@ -22,7 +22,7 @@
  * `tests/commands/improve/derived-ref.test.ts`:
  *   - `derivedFrom`-keyed families now resolve a parent (and so participate in
  *     contradiction detection); and
- *   - `source:` is normalised through `parseStoredRef` (trim + origin) so a
+ *   - `source:` is normalised through `parseRefInput` (trim + origin) so a
  *     `source: " team//memory:parent "` resolves to `memory:parent` instead of
  *     silently degrading to the filename.
  *
@@ -30,23 +30,31 @@
  * consumer's prior behaviour exactly, so the consumer side is a pure move.
  */
 
+import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
-import { parseStoredRef } from "../../../migrate/legacy-ref-grammar";
 
 /**
  * Normalise an arbitrary `source:`/edge string to a canonical `memory:<name>`
- * ref, or `undefined` when it is empty, unparseable, or not a memory ref.
- * Trims whitespace and drops any origin prefix via {@link parseStoredRef}.
+ * ref, or `undefined` when it is empty, unparseable, or not a memory ref. Trims
+ * whitespace and drops any origin/bundle prefix. The durable `derived_from`
+ * channel keeps the legacy `memory:<name>` spelling (WI-8.5c), so this accepts
+ * BOTH the new-grammar `[bundle//]memories/<name>` conceptId (via
+ * {@link parseRefInput}) and a legacy `[origin//]memory:<name>` `source:` value.
  */
 export function parseMemoryRef(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  const trimmed = value.trim();
   try {
-    const parsed = parseStoredRef(value.trim());
+    const parsed = parseRefInput(trimmed);
     if (parsed.type !== "memory") return undefined;
     return `${parsed.type}:${parsed.name}`;
   } catch {
-    return undefined;
+    // Legacy `[origin//]memory:<name>` — strip the origin, keep memory refs only.
+    const boundary = trimmed.indexOf("//");
+    const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+    const MEMORY_PREFIX = "memory:";
+    return body.startsWith(MEMORY_PREFIX) ? `memory:${body.slice(MEMORY_PREFIX.length)}` : undefined;
   }
 }
 

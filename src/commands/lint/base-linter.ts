@@ -374,19 +374,9 @@ function checkMissingRefsInList(
       if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
       continue;
     }
-    // Un-prefixed LEGACY `type:name`: durable frontmatter xrefs persist the
-    // legacy spelling (remember/import write `memory:target`, not `memories/…` —
-    // Chunk-8 preservation), so the ref-list arm must recognize it to validate
-    // the durable channel. A `:` in an un-prefixed value (new-grammar conceptIds
-    // never carry one) marks the legacy grammar; route it through the SAME
-    // existence check both grammars share.
-    const colon = value.indexOf(":");
-    if (colon > 0 && !value.slice(0, colon).includes("/")) {
-      const rel = localRefMissingRelPath(value.slice(0, colon), value.slice(colon + 1), allRoots);
-      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-      continue;
-    }
-    // Un-prefixed: a 0.9.0 short `conceptId`.
+    // Un-prefixed: a 0.9.0 short `conceptId`. (Post-Chunk-8 the durable
+    // frontmatter xref channel is conceptId-spelled — the legacy `type:name`
+    // ref-list arm is retired.)
     const rel = classifyConceptRef(value, allRoots);
     if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
   }

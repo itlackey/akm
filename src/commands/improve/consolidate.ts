@@ -9,7 +9,7 @@ import readline from "node:readline";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { displayRef } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -28,7 +28,6 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
 import { parseSinceToIsoLenient } from "../../core/time";
-import { legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
@@ -647,7 +646,7 @@ export function injectGenerationFrontmatter(
         // `bundle//conceptId` for a slug source, legacy `origin//type:name` only
         // for a non-slug registry origin) via `displayRef`, so a merged asset's
         // stored `xrefs` unify with the WI-8.5a content/frontmatter xref writer.
-        const p = parseStoredRef(ref);
+        const p = parseRefInput(ref);
         return [displayRef({ type: p.type, name: p.name, bundleId: p.origin })];
       } catch {
         return [];
@@ -674,7 +673,7 @@ export function injectGenerationFrontmatter(
  */
 function canonicalXref(ref: string): string {
   try {
-    const p = parseStoredRef(ref);
+    const p = parseRefInput(ref);
     return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
   } catch {
     return ref;
@@ -1112,7 +1111,7 @@ function recordChunkJudgedNoAction(
   }
   let chunkNoAction = 0;
   for (const m of chunk) {
-    const memRef = `memory:${m.name}`;
+    const memRef = conceptIdFromTypeName("memory", m.name);
     if (!targetRefs.has(memRef)) {
       chunkNoAction++;
       accounting.judgedNoActionRefs.add(memRef);
@@ -1217,7 +1216,7 @@ async function judgeConsolidationChunks(args: {
     // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
     // LLM-failure-rate abort policy — no request was attempted.
     if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
-      for (const m of chunk) accounting.judgedNoActionRefs.add(`memory:${m.name}`);
+      for (const m of chunk) accounting.judgedNoActionRefs.add(conceptIdFromTypeName("memory", m.name));
       accounting.judgedNoAction += chunk.length;
       warn(
         `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
@@ -1513,7 +1512,7 @@ async function planConsolidation(
 
   // Build the known-refs set from the already-filtered memory pool so
   // mergePlans() can reject LLM-hallucinated primary refs before execution.
-  const knownRefs = new Set(memories.map((m) => `memory:${m.name}`));
+  const knownRefs = new Set(memories.map((m) => conceptIdFromTypeName("memory", m.name)));
   const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
   warnings.push(...mergeWarnings);
 
@@ -1570,7 +1569,7 @@ async function applyConsolidationPlan(
   // Build a lookup map: ref → MemoryEntry
   const memoryByRef = new Map<string, MemoryEntry>();
   for (const m of memories) {
-    memoryByRef.set(`memory:${m.name}`, m);
+    memoryByRef.set(conceptIdFromTypeName("memory", m.name), m);
   }
 
   const opCtx: ConsolidateOpContext = {
@@ -1927,7 +1926,7 @@ async function finalizeMerge(
 
   // Write merged primary
   try {
-    const parsedPrimary = parseStoredRef(op.primary);
+    const parsedPrimary = parseRefInput(op.primary);
     await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
   } catch (e) {
     warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
@@ -1943,7 +1942,7 @@ async function finalizeMerge(
       archiveMemory(secEntry.filePath, stashDir, secRef, "merged into primary", opIndex, op.primary, warnings);
     }
     try {
-      const parsedSec = parseStoredRef(secRef);
+      const parsedSec = parseRefInput(secRef);
       await deleteAssetFromSource(target.source, target.config, parsedSec);
       markJournalCompleted(ctx.txn, secRef);
     } catch (e) {
@@ -2173,7 +2172,7 @@ export async function handleDeleteOp(
   }
 
   try {
-    const parsedRef = parseStoredRef(op.ref);
+    const parsedRef = parseRefInput(op.ref);
     await deleteAssetFromSource(target.source, target.config, parsedRef);
     markJournalCompleted(ctx.txn, op.ref);
     counts.deleted++;
@@ -2230,8 +2229,8 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
-  const knowledgeRef = `knowledge:${slug}`;
-  parseStoredRef(knowledgeRef);
+  const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
+  parseRefInput(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef) {
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
@@ -2246,7 +2245,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
   }
 
   // Idempotency: check if knowledge asset already exists
-  const parsedKnowledgeRef = parseStoredRef(knowledgeRef);
+  const parsedKnowledgeRef = parseRefInput(knowledgeRef);
   const destPath = path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`);
   if (fs.existsSync(destPath)) {
     warnings.push(`Skipping promote: ${knowledgeRef} already exists in source`);
@@ -2478,8 +2477,8 @@ export async function handleContradictOp(op: ConsolidateContradictOp, ctx: Conso
 /** The conceptId a proposal ref maps to in EITHER grammar (WI-8.5a), or undefined. */
 function conceptIdForRef(ref: string): string | undefined {
   try {
-    const p = parseStoredRef(ref);
-    return legacyConceptId(p.type, p.name);
+    const p = parseRefInput(ref);
+    return conceptIdFromTypeName(p.type, p.name);
   } catch {
     return undefined;
   }
@@ -2500,7 +2499,7 @@ function normalizeSlugForDedup(ref: string): string {
   // is identical across grammars, so the dedup slug stays stable across the flip.
   let slug: string;
   try {
-    slug = parseStoredRef(ref).name;
+    slug = parseRefInput(ref).name;
   } catch {
     slug = ref.replace(/^[^:]+:/, "");
   }
@@ -2595,7 +2594,7 @@ export function narrowToIncrementalCandidates(
   try {
     db = openExistingDatabase();
     for (const m of changed) {
-      const id = findEntryIdByRef(db, `memory:${m.name}`);
+      const id = findEntryIdByRef(db, conceptIdFromTypeName("memory", m.name));
       if (id === undefined) continue;
       for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
         if (hit.id === id) continue;

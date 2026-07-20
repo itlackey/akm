@@ -46,7 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
-import { displayRef, isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -71,7 +71,6 @@ import { warnVerbose } from "../core/warn";
 import { withAssetMutationLease } from "../indexer/index-writer-lock";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { legacyConceptId } from "../migrate/legacy-ref-grammar";
 import { insertEventOnce } from "../storage/repositories/events-repository";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { rekeyEntryInPlace } from "../storage/repositories/index-entries-repository";
@@ -204,8 +203,8 @@ function buildRewriteContext(opts: {
   twinOldPath: string | null;
 }): RewriteContext {
   // 0.9.0 conceptId spellings of the same asset (`<stash-subdir>/<name>`).
-  const fromConcept = legacyConceptId(opts.type, opts.fromRef.slice(opts.type.length + 1));
-  const toConcept = legacyConceptId(opts.type, opts.toRef.slice(opts.type.length + 1));
+  const fromConcept = conceptIdFromTypeName(opts.type, opts.fromRef.slice(opts.type.length + 1));
+  const toConcept = conceptIdFromTypeName(opts.type, opts.toRef.slice(opts.type.length + 1));
   return {
     patterns: buildRewritePatterns(opts.fromRef, opts.toRef, fromConcept, toConcept, opts.isBaseMemory),
     aliasScan: new RegExp(
@@ -955,8 +954,8 @@ function rekeyStateDbForMove(
     // re-key subsumes this once every row is item_ref-spelled.
     const moveType = fromRef.includes(":") ? fromRef.slice(0, fromRef.indexOf(":")) : "";
     if (moveType) {
-      const fromConcept = legacyConceptId(moveType, fromRef.slice(moveType.length + 1));
-      const toConcept = legacyConceptId(moveType, toRef.slice(moveType.length + 1));
+      const fromConcept = conceptIdFromTypeName(moveType, fromRef.slice(moveType.length + 1));
+      const toConcept = conceptIdFromTypeName(moveType, toRef.slice(moveType.length + 1));
       for (const origin of origins) {
         pairs.push([`${origin}//${fromConcept}`, `${origin}//${toConcept}`]);
         if (includeTwin) pairs.push([`${origin}//${fromConcept}.derived`, `${origin}//${toConcept}.derived`]);
@@ -1191,7 +1190,9 @@ export const mvCommand = defineJsonCommand({
       // paths). A bare name's leading segment maps to no asset type
       // (`isFullRefInput` is false), so it is qualified with the source type's
       // conceptId prefix; a full new-grammar ref (`memories/x`) is parsed as-is.
-      const target = parseRefInput(isFullRefInput(targetArg) ? targetArg : legacyConceptId(source.type, targetArg));
+      const target = parseRefInput(
+        isFullRefInput(targetArg) ? targetArg : conceptIdFromTypeName(source.type, targetArg),
+      );
       if (target.origin) {
         throw new UsageError(
           `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,

@@ -110,11 +110,11 @@ describe("processImproveLoopRef — reflect half", () => {
       stashDir,
       reflectFn: (args) => {
         seen.push(args);
-        return Promise.resolve(reflectOk("knowledge:guide.md"));
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
       },
     });
 
-    const tally = await processImproveLoopRef(eligibleRef("knowledge:guide.md"), env);
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     // The distill half always records its type-filter skip for knowledge refs
     // (default distill allowedTypes is ["memory"]) — same as the inline loop did.
@@ -136,7 +136,7 @@ describe("processImproveLoopRef — reflect half", () => {
     const { stashDir } = freshSandbox();
     const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail(reason)) });
 
-    const tally = await processImproveLoopRef(eligibleRef("knowledge:guide.md"), env);
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual([mode, "distill-skipped"]);
     expect(tally.recentErrorPushes).toEqual(pushed ? [{ originator: "reflect", message: `${reason} error` }] : []);
@@ -150,11 +150,11 @@ describe("processImproveLoopRef — reflect half", () => {
       recentErrors: { reflect: ["boom 1", "boom 2"], "schema-repair": ["cross-task noise"] },
       reflectFn: (args) => {
         receivedAvoid = (args as { avoidPatterns?: string[] }).avoidPatterns;
-        return Promise.resolve(reflectOk("knowledge:guide.md"));
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
       },
     });
 
-    const tally = await processImproveLoopRef(eligibleRef("knowledge:guide.md"), env);
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     // O-5 / #378: only reflect-originator errors reach the prompt.
     expect(receivedAvoid).toEqual(["boom 1", "boom 2"]);
@@ -168,7 +168,7 @@ describe("processImproveLoopRef — reflect half", () => {
       improveProfile: { processes: { reflect: { allowedTypes: ["memory"] } } } as ImproveLoopEnv["improveProfile"],
     });
 
-    const tally = await processImproveLoopRef(eligibleRef("knowledge:guide.md"), env);
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["reflect-skipped", "distill-skipped"]);
     expect(tally.actions[0].result).toEqual({ ok: true, reason: "type-filter" });
@@ -179,7 +179,7 @@ describe("processImproveLoopRef — reflect half", () => {
     const { stashDir } = freshSandbox();
     const env = makeEnv({ stashDir });
 
-    const tally = await processImproveLoopRef(eligibleRef("memory:note.derived"), env);
+    const tally = await processImproveLoopRef(eligibleRef("memories/note.derived"), env);
 
     // B6 reflect skip, then the weak-signal distill skip (memory ref, no
     // feedback signal, non-ref scope) — both synthetic, no seam invoked.
@@ -190,7 +190,7 @@ describe("processImproveLoopRef — reflect half", () => {
 });
 
 describe("processImproveLoopRef — distill half", () => {
-  const memoryRef = "memory:finding-1";
+  const memoryRef = "memories/finding-1";
 
   function distillOnlyEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): ImproveLoopEnv {
     // distill-only refs skip the reflect call entirely (Bug D2), isolating the
@@ -336,27 +336,29 @@ describe("prepareImproveLoopEnv — derived guards", () => {
     const base = {
       options: { stashDir, config: {} as AkmConfig },
       improveProfile: profile,
-      distillOnlyRefs: [eligibleRef("memory:a")],
+      distillOnlyRefs: [eligibleRef("memories/a")],
     };
 
-    const allCooled = prepareImproveLoopEnv(runCtx({ ...base, loopRefs: [eligibleRef("memory:a")] }));
+    const allCooled = prepareImproveLoopEnv(runCtx({ ...base, loopRefs: [eligibleRef("memories/a")] }));
     expect(allCooled.skipDistillDueToRequirePlannedRefs).toBe(true);
 
     const withReflectEligible = prepareImproveLoopEnv(
-      runCtx({ ...base, loopRefs: [eligibleRef("memory:a"), eligibleRef("knowledge:fresh.md")] }),
+      runCtx({ ...base, loopRefs: [eligibleRef("memories/a"), eligibleRef("knowledge/fresh.md")] }),
     );
     expect(withReflectEligible.skipDistillDueToRequirePlannedRefs).toBe(false);
 
     // Flag unset → guard never trips, even when all refs are distill-only.
     const flagUnset = prepareImproveLoopEnv(
-      runCtx({ ...base, improveProfile: {}, loopRefs: [eligibleRef("memory:a")] }),
+      runCtx({ ...base, improveProfile: {}, loopRefs: [eligibleRef("memories/a")] }),
     );
     expect(flagUnset.skipDistillDueToRequirePlannedRefs).toBe(false);
   });
 
   test("distillOnlyRefSet mirrors distillOnlyRefs and the proposal preload tolerates a missing stash", () => {
-    const env = prepareImproveLoopEnv(runCtx({ distillOnlyRefs: [eligibleRef("memory:a"), eligibleRef("memory:b")] }));
-    expect([...env.distillOnlyRefSet].sort()).toEqual(["memory:a", "memory:b"]);
+    const env = prepareImproveLoopEnv(
+      runCtx({ distillOnlyRefs: [eligibleRef("memories/a"), eligibleRef("memories/b")] }),
+    );
+    expect([...env.distillOnlyRefSet].sort()).toEqual(["memories/a", "memories/b"]);
     // No stashDir anywhere → the preload never queries and stays empty.
     expect(env.pendingProposalRefSet.size).toBe(0);
   });

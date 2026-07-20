@@ -164,41 +164,24 @@ describe("source-qualified durable eligibility keys", () => {
     ).toBe(false);
   });
 
-  test("duplicate bare refs read feedback and cooldown timestamps only from the selected source", () => {
+  // WI-8.5c: the source-qualified / legacy-bare durable-key READS are retired —
+  // the improve state key-set collapsed to the single `[item_ref ?? conceptId]`.
+  // A durable event now correlates on the conceptId directly, so the former
+  // per-source-scoped reverse-map tests (source-qualified duplicate refs;
+  // legacy-bare local fallback) no longer describe a live code path.
+  test("a durable feedback/proposal event correlates on the conceptId key", () => {
     appendEvent(
-      { eventType: "feedback", ref: "primary//memory:auth-tips", metadata: { signal: "negative" } },
-      { now: () => OLDER_MS },
-    );
-    appendEvent(
-      { eventType: "feedback", ref: "team//memory:auth-tips", metadata: { signal: "positive" } },
+      { eventType: "feedback", ref: "memories/auth-tips", metadata: { signal: "positive" } },
       { now: () => NEWER_MS },
     );
-    appendEvent({ eventType: "reflect_invoked", ref: "primary//memory:auth-tips" }, { now: () => OLDER_MS });
-    appendEvent({ eventType: "reflect_invoked", ref: "team//memory:auth-tips" }, { now: () => NEWER_MS });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/auth-tips" }, { now: () => NEWER_MS });
 
-    expect(buildLatestFeedbackTsMap(["memory:auth-tips"], new Date(0).toISOString(), "team")).toEqual(
-      new Map([["memory:auth-tips", new Date(NEWER_MS).toISOString()]]),
+    expect(buildLatestFeedbackTsMap(["memories/auth-tips"], new Date(0).toISOString())).toEqual(
+      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
     );
-    expect(buildLatestProposalTsMap(["memory:auth-tips"], "reflect", "team")).toEqual(
-      new Map([["memory:auth-tips", new Date(NEWER_MS).toISOString()]]),
+    expect(buildLatestProposalTsMap(["memories/auth-tips"], "reflect")).toEqual(
+      new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]),
     );
-  });
-
-  test("legacy bare feedback and proposal cursors apply only when local fallback is explicit", () => {
-    appendEvent(
-      { eventType: "feedback", ref: "memory:legacy", metadata: { signal: "negative" } },
-      { now: () => NEWER_MS },
-    );
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:legacy" }, { now: () => OLDER_MS });
-
-    expect(buildLatestFeedbackTsMap(["memory:legacy"], new Date(0).toISOString(), "local", true)).toEqual(
-      new Map([["memory:legacy", new Date(NEWER_MS).toISOString()]]),
-    );
-    expect(buildLatestProposalTsMap(["memory:legacy"], "reflect", "local", true)).toEqual(
-      new Map([["memory:legacy", new Date(OLDER_MS).toISOString()]]),
-    );
-    expect(buildLatestFeedbackTsMap(["memory:legacy"], new Date(0).toISOString(), "team", false)).toEqual(new Map());
-    expect(buildLatestProposalTsMap(["memory:legacy"], "reflect", "team", false)).toEqual(new Map());
   });
 });
 

@@ -62,16 +62,16 @@ describe("partitionBySignalDelta — the four buckets", () => {
 
   test("fresh feedback with no prior proposal → eligibleRefs (not cooled)", () => {
     const stash = freshStash();
-    const refs = [ref("memory:fresh")];
+    const refs = [ref("memories/fresh")];
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
       postCleanupRefs: refs,
       validationFailureRefs: new Set(),
-      snapshot: snapshot({ latestFeedbackTs: new Map([["memory:fresh", T2]]) }),
+      snapshot: snapshot({ latestFeedbackTs: new Map([["memories/fresh", T2]]) }),
     });
 
-    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memory:fresh"]);
+    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memories/fresh"]);
     expect(out.distillOnlyRefs).toEqual([]);
     expect(out.noFeedbackPool).toEqual([]);
     expect(out.fullySkippedCount).toBe(0);
@@ -86,19 +86,19 @@ describe("partitionBySignalDelta — the four buckets", () => {
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:cooled")],
+      postCleanupRefs: [ref("memories/cooled")],
       validationFailureRefs: new Set(),
       snapshot: snapshot({
-        latestFeedbackTs: new Map([["memory:cooled", T2]]),
-        lastReflectProposalTs: new Map([["memory:cooled", T1]]),
-        lastDistillProposalTs: new Map([["memory:cooled", T2]]),
+        latestFeedbackTs: new Map([["memories/cooled", T2]]),
+        lastReflectProposalTs: new Map([["memories/cooled", T1]]),
+        lastDistillProposalTs: new Map([["memories/cooled", T2]]),
       }),
     });
 
-    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memory:cooled"]);
-    expect([...out.distillCooledRefs]).toEqual(["memory:cooled"]);
+    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memories/cooled"]);
+    expect([...out.distillCooledRefs]).toEqual(["memories/cooled"]);
     expect(out.actions).toEqual([
-      { ref: "memory:cooled", mode: "distill-skipped", result: { ok: true, reason: "distill signal-delta" } },
+      { ref: "memories/cooled", mode: "distill-skipped", result: { ok: true, reason: "distill signal-delta" } },
     ]);
   });
 
@@ -107,16 +107,16 @@ describe("partitionBySignalDelta — the four buckets", () => {
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:distill-only")],
+      postCleanupRefs: [ref("memories/distill-only")],
       validationFailureRefs: new Set(),
       snapshot: snapshot({
-        latestFeedbackTs: new Map([["memory:distill-only", T1]]),
-        lastReflectProposalTs: new Map([["memory:distill-only", T2]]),
+        latestFeedbackTs: new Map([["memories/distill-only", T1]]),
+        lastReflectProposalTs: new Map([["memories/distill-only", T2]]),
       }),
     });
 
     expect(out.eligibleRefs).toEqual([]);
-    expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memory:distill-only"]);
+    expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memories/distill-only"]);
   });
 
   test("no feedback at all → deferred to the noFeedbackPool, never skipped outright", () => {
@@ -124,12 +124,12 @@ describe("partitionBySignalDelta — the four buckets", () => {
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:never-rated")],
+      postCleanupRefs: [ref("memories/never-rated")],
       validationFailureRefs: new Set(),
       snapshot: snapshot({}),
     });
 
-    expect(out.noFeedbackPool.map((r) => r.ref)).toEqual(["memory:never-rated"]);
+    expect(out.noFeedbackPool.map((r) => r.ref)).toEqual(["memories/never-rated"]);
     expect(out.fullySkippedCount).toBe(0);
     expect(out.actions).toEqual([]);
   });
@@ -139,19 +139,19 @@ describe("partitionBySignalDelta — the four buckets", () => {
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:stale")],
+      postCleanupRefs: [ref("memories/stale")],
       validationFailureRefs: new Set(),
       snapshot: snapshot({
-        latestFeedbackTs: new Map([["memory:stale", T1]]),
-        lastReflectProposalTs: new Map([["memory:stale", T2]]),
-        lastDistillProposalTs: new Map([["memory:stale", T2]]),
+        latestFeedbackTs: new Map([["memories/stale", T1]]),
+        lastReflectProposalTs: new Map([["memories/stale", T2]]),
+        lastDistillProposalTs: new Map([["memories/stale", T2]]),
       }),
     });
 
     expect(out.fullySkippedCount).toBe(1);
     expect(out.actions).toEqual([
       {
-        ref: "memory:stale",
+        ref: "memories/stale",
         mode: "distill-skipped",
         result: { ok: true, reason: "no new signal since last proposal" },
       },
@@ -161,14 +161,14 @@ describe("partitionBySignalDelta — the four buckets", () => {
   test("O-2 (#365): explicit --scope <ref> bypasses every gate", () => {
     const stash = freshStash();
     const out = partitionBySignalDelta({
-      scope: { mode: "ref", value: "memory:target" },
+      scope: { mode: "ref", value: "memories/target" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:target")],
+      postCleanupRefs: [ref("memories/target")],
       validationFailureRefs: new Set(),
       snapshot: snapshot({}), // no feedback anywhere — bypass still admits it
     });
 
-    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memory:target"]);
+    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memories/target"]);
     expect(out.noFeedbackPool).toEqual([]);
   });
 
@@ -177,20 +177,20 @@ describe("partitionBySignalDelta — the four buckets", () => {
     const out = partitionBySignalDelta({
       scope: { mode: "all" },
       options: { stashDir: stash, config: {} as AkmConfig },
-      postCleanupRefs: [ref("memory:broken"), ref("memory:ok")],
-      validationFailureRefs: new Set(["memory:broken"]),
-      snapshot: snapshot({ latestFeedbackTs: new Map([["memory:ok", T2]]) }),
+      postCleanupRefs: [ref("memories/broken"), ref("memories/ok")],
+      validationFailureRefs: new Set(["memories/broken"]),
+      snapshot: snapshot({ latestFeedbackTs: new Map([["memories/ok", T2]]) }),
     });
 
     const everywhere = [...out.eligibleRefs, ...out.distillOnlyRefs, ...out.noFeedbackPool].map((r) => r.ref);
-    expect(everywhere).toEqual(["memory:ok"]);
+    expect(everywhere).toEqual(["memories/ok"]);
     expect(out.fullySkippedCount).toBe(0);
   });
 });
 
 describe("applyForgettingSafety — WS-1 step-7 protective injection", () => {
   test("no forgetting candidates → mergedRefs unchanged (same identity)", () => {
-    const merged = [ref("memory:a")];
+    const merged = [ref("memories/a")];
     const out = applyForgettingSafety({
       pendingForgettingRefs: [],
       scope: { mode: "all" },
@@ -204,10 +204,10 @@ describe("applyForgettingSafety — WS-1 step-7 protective injection", () => {
   });
 
   test("ref scope suppresses the injection entirely", () => {
-    const merged = [ref("memory:a")];
+    const merged = [ref("memories/a")];
     const out = applyForgettingSafety({
-      pendingForgettingRefs: ["memory:dropped"],
-      scope: { mode: "ref", value: "memory:a" },
+      pendingForgettingRefs: ["memories/dropped"],
+      scope: { mode: "ref", value: "memories/a" },
       mergedRefs: merged,
       eligibilitySourceByRef: new Map(),
       highSalienceRefs: [],
@@ -215,14 +215,14 @@ describe("applyForgettingSafety — WS-1 step-7 protective injection", () => {
       signalFiltered: [],
     });
     expect(out).toBe(merged);
-    expect(out.map((r) => r.ref)).toEqual(["memory:a"]);
+    expect(out.map((r) => r.ref)).toEqual(["memories/a"]);
   });
 
   test("new forgetting candidates are injected as labelled stubs and deduped", () => {
-    const inPool = ref("memory:already-in-pool");
+    const inPool = ref("memories/already-in-pool");
     const lanes = new Map<string, EligibilitySource>();
     const out = applyForgettingSafety({
-      pendingForgettingRefs: ["memory:dropped", "memory:already-in-pool"],
+      pendingForgettingRefs: ["memories/dropped", "memories/already-in-pool"],
       scope: { mode: "all" },
       mergedRefs: [inPool],
       eligibilitySourceByRef: lanes,
@@ -231,22 +231,22 @@ describe("applyForgettingSafety — WS-1 step-7 protective injection", () => {
       signalFiltered: [],
     });
 
-    expect(out.map((r) => r.ref)).toEqual(["memory:already-in-pool", "memory:dropped"]);
-    const stub = out.find((r) => r.ref === "memory:dropped");
+    expect(out.map((r) => r.ref)).toEqual(["memories/already-in-pool", "memories/dropped"]);
+    const stub = out.find((r) => r.ref === "memories/dropped");
     expect(stub?.eligibilitySource).toBe("forgetting-safety");
     // The pre-existing pool object is the SAME object (stamps travel by reference).
     expect(out[0]).toBe(inPool);
   });
 
   test("lane precedence: signal-delta > forgetting-safety > proactive/high-salience", () => {
-    const dropped = ref("memory:dropped-but-proactive");
-    const fresh = ref("memory:dropped-but-fresh");
+    const dropped = ref("memories/dropped-but-proactive");
+    const fresh = ref("memories/dropped-but-fresh");
     const lanes = new Map<string, EligibilitySource>([
-      ["memory:dropped-but-proactive", "proactive"],
-      ["memory:dropped-but-fresh", "signal-delta"],
+      ["memories/dropped-but-proactive", "proactive"],
+      ["memories/dropped-but-fresh", "signal-delta"],
     ]);
     const out = applyForgettingSafety({
-      pendingForgettingRefs: ["memory:dropped-but-proactive", "memory:dropped-but-fresh"],
+      pendingForgettingRefs: ["memories/dropped-but-proactive", "memories/dropped-but-fresh"],
       scope: { mode: "all" },
       mergedRefs: [dropped, fresh],
       eligibilitySourceByRef: lanes,
@@ -256,10 +256,10 @@ describe("applyForgettingSafety — WS-1 step-7 protective injection", () => {
     });
 
     // Forgetting-safety overrides proactive; signal-delta overrides forgetting-safety.
-    expect(lanes.get("memory:dropped-but-proactive")).toBe("forgetting-safety");
-    expect(lanes.get("memory:dropped-but-fresh")).toBe("signal-delta");
-    expect(out.find((r) => r.ref === "memory:dropped-but-proactive")?.eligibilitySource).toBe("forgetting-safety");
-    expect(out.find((r) => r.ref === "memory:dropped-but-fresh")?.eligibilitySource).toBe("signal-delta");
+    expect(lanes.get("memories/dropped-but-proactive")).toBe("forgetting-safety");
+    expect(lanes.get("memories/dropped-but-fresh")).toBe("signal-delta");
+    expect(out.find((r) => r.ref === "memories/dropped-but-proactive")?.eligibilitySource).toBe("forgetting-safety");
+    expect(out.find((r) => r.ref === "memories/dropped-but-fresh")?.eligibilitySource).toBe("signal-delta");
   });
 });
 
@@ -268,7 +268,7 @@ describe("buildSnapshotManifest", () => {
     freshStash();
     const before = Date.now();
     const snap = buildSnapshotManifest({
-      postCleanupRefs: [ref("memory:a")],
+      postCleanupRefs: [ref("memories/a")],
       validationFailureRefs: new Set(),
       options: { config: {} as AkmConfig },
     });
@@ -285,8 +285,8 @@ describe("buildSnapshotManifest", () => {
     freshStash();
     // With every ref excluded, the maps are built over an empty candidate list.
     const snap = buildSnapshotManifest({
-      postCleanupRefs: [ref("memory:broken")],
-      validationFailureRefs: new Set(["memory:broken"]),
+      postCleanupRefs: [ref("memories/broken")],
+      validationFailureRefs: new Set(["memories/broken"]),
       options: { config: {} as AkmConfig },
     });
     expect(snap.latestFeedbackTs.size).toBe(0);

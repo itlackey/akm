@@ -11,7 +11,7 @@
  */
 
 import { isBundleSlug } from "../core/asset/asset-ref";
-import { legacyConceptId, parseStoredRef } from "../migrate/legacy-ref-grammar";
+import { conceptIdFromTypeName, parseRefInput } from "../core/asset/resolve-ref";
 import { utf8Bytes, WORKFLOW_MAX_INSTRUCTION_BYTES, WORKFLOW_MAX_PARAMS, WORKFLOW_MAX_STEPS } from "./resource-limits";
 import type { WorkflowDocument, WorkflowError } from "./schema";
 
@@ -45,8 +45,8 @@ function checkXrefs(value: unknown, line: number, errors: WorkflowError[]): void
       // legacy xrefs — the dual-reader arm stays alive until WI-8.5b): the new
       // bare `conceptId` (or slug-clean `bundle//conceptId`) that lint/mv now
       // recognize, OR the legacy `[origin//]type:name` round-trip.
-      const p = parseStoredRef(ref);
-      const conceptId = legacyConceptId(p.type, p.name);
+      const p = parseRefInput(ref);
+      const conceptId = conceptIdFromTypeName(p.type, p.name);
       const newCanonical =
         p.origin !== undefined && p.origin !== "local" && p.origin !== "stash"
           ? isBundleSlug(p.origin)

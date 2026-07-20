@@ -14,12 +14,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { getStateDbPath, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
-import { type AssetRef, classifyRefGrammar, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
 import type {
@@ -307,7 +307,7 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
   if (row.item_ref) {
     const boundary = row.item_ref.indexOf("//");
     const bundle = boundary >= 0 ? row.item_ref.slice(0, boundary) : undefined;
-    newConceptId = legacyConceptId(row.entry_type, opts.newName);
+    newConceptId = conceptIdFromTypeName(row.entry_type, opts.newName);
     newItemRef = bundle !== undefined ? `${bundle}//${newConceptId}` : newConceptId;
   }
 
@@ -653,10 +653,8 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 /**
  * Resolve a single `entries.id` from a new-grammar `[bundle//]conceptId` ref,
  * keying on the canonical stored `item_ref` (ref-grammar decision D-R1/D-R4).
- * Public callers pass the new grammar; the legacy `[origin//]type:name`
- * resolution survives only inside the Chunk-8 §11.4 re-key machinery
- * ({@link findEntryIdByLegacyRef}). The optional `stashDir` scopes the match to
- * one source root.
+ * All refs are the new grammar post-Chunk-8. The optional `stashDir` scopes the
+ * match to one source root.
  */
 export function findEntryIdByRef(db: Database, ref: string, stashDir?: string): number | undefined {
   return findEntryIdByBundleRef(db, ref, stashDir);
@@ -715,36 +713,6 @@ function matchIdByItemRef(
     )
     .get(suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
   return row?.id;
-}
-
-/** Legacy `entry_key`-suffix (`type:name`) id lookup — the pre-flip predicate. */
-function matchIdByLegacyEntryKey(db: Database, type: string, name: string, stashDir?: string): number | undefined {
-  const suffix = `${type}:${name}`;
-  const row = db
-    .prepare(
-      `SELECT id FROM entries
-       WHERE entry_type = ?
-         AND substr(entry_key, length(entry_key) - length(?) + 1) = ?
-         ${stashDir ? "AND stash_dir = ?" : ""}
-       LIMIT 1`,
-    )
-    .get(type, suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
-  return row?.id;
-}
-
-/**
- * Legacy `[origin//]type:name` id lookup by `entry_key` suffix — retained ONLY
- * for the Chunk-8 §11.4 usage-event re-key, which resolves each historical
- * legacy `entry_ref` to its live entry. Public lookups use the new-grammar
- * {@link findEntryIdByRef}. Chunk-8: delete with the state.db re-key.
- */
-function findEntryIdByLegacyRef(db: Database, ref: string, stashDir?: string): number | undefined {
-  const parsed = parseStoredRef(ref);
-  for (const name of withMdVariants(parsed.name)) {
-    const id = matchIdByLegacyEntryKey(db, parsed.type, name, stashDir);
-    if (id !== undefined) return id;
-  }
-  return undefined;
 }
 
 export function getEntryCount(db: Database): number {
@@ -935,34 +903,14 @@ export function getItemRefById(db: Database, id: number): string | null {
 }
 
 /**
- * Source mapping used to preserve qualified usage-event identity while relinking.
- *
- * Chunk-5 flip F4c: `usage_events.entry_ref` is now written in the fully-qualified
- * `bundle//conceptId` spelling (derived from the resolved entry's `item_ref`),
- * but historical rows carry the legacy `[origin//]type:name` spelling until the
- * §11.4 re-key migration ({@link rekeyUsageEventsToItemRef}) runs. This resolver
- * accepts BOTH: a new-grammar ref keys directly on the globally-unique `item_ref`
- * (no source scoping needed — the bundle is in the ref); the legacy arm keeps the
- * pre-flip origin→root scoping. Chunk-8: delete the legacy arm with the re-key.
+ * Resolve a `usage_events.entry_ref` to its live `entries.id`. Post-Chunk-8 every
+ * `entry_ref` is the fully-qualified `bundle//conceptId` `item_ref` spelling
+ * (the one-time state.db cutover re-keyed the historical legacy rows), so this
+ * keys directly on the globally-unique `item_ref` — no origin→root scoping. A
+ * short conceptId (no bundle) falls back to the default-stash scope.
  */
 function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsageEventsOptions): number | undefined {
-  if (classifyRefGrammar(ref) === "bundle") {
-    // Fully-qualified `bundle//conceptId` — item_ref is globally unique, so a
-    // direct match needs no origin→root scope. A short conceptId (no bundle)
-    // falls back to the default-stash scope, mirroring the legacy bare-ref arm.
-    return findEntryIdByRef(db, ref, parseBundleRef(ref).bundle ? undefined : options.defaultStashDir);
-  }
-  // Chunk-8: legacy `[origin//]type:name` resolution with origin→root scoping.
-  const parsed = parseStoredRef(ref);
-  if (!parsed.origin) {
-    return options.defaultStashDir ? findEntryIdByLegacyRef(db, ref, options.defaultStashDir) : undefined;
-  }
-
-  const source =
-    parsed.origin === "local" || parsed.origin === "stash"
-      ? options.sources?.[0]
-      : options.sources?.find((candidate) => candidate.registryId === parsed.origin);
-  return source ? findEntryIdByLegacyRef(db, ref, source.path) : undefined;
+  return findEntryIdByRef(db, ref, parseBundleRef(ref).bundle ? undefined : options.defaultStashDir);
 }
 
 /**
@@ -1023,153 +971,6 @@ export function relinkUsageEvents(indexDb: Database, stateDb: Database, options:
     });
     relinkTx();
   }, "usage_events table may not exist yet during entry_id re-resolution");
-}
-
-/**
- * §11.4 one-time ref-migration of `usage_events.entry_ref` from the legacy
- * `[origin//]type:name` namespace onto the fully-qualified `bundle//conceptId`
- * `item_ref` spelling (Chunk-5 flip F4c). The mapping is computed by JOINING
- * AGAINST THE LAST-GOOD INDEX — each legacy ref is resolved to a live entry
- * (origin→root scoping via {@link resolveUsageEventEntryId}) and re-keyed to that
- * entry's `item_ref` — never by reconstructing paths from TYPE_DIRS heuristics
- * (§11.4). Runs at index FINALIZE, where `entries` is authoritative.
- *
- * Orphan taxonomy (§11.4):
- *   - EXPECTED ORPHANS — legacy refs that resolve to no live item (deleted-asset
- *     history; append-only usage rows outlive their asset). These are RECORDED in
- *     the `legacy_state` quarantine archive (auditable, purgeable, counts
- *     reported) and their usage_events rows are KEPT IN PLACE, legacy-spelled —
- *     never deleted; the dual-arm readers still see them. A literal zero-orphan
- *     requirement is unsatisfiable, so orphans MUST NOT abort the migration.
- *   - Rows under multiple legacy spellings of one logical ref (bare / origin// /
- *     .derived) are carried AS-IS under the new key — event rows need no merge.
- *
- * Idempotent: new-grammar rows (`classifyRefGrammar === "bundle"`) are skipped, so
- * a second run is a no-op; the `legacy_state` archive is refreshed in place.
- * Returns `{ rekeyed, quarantined }` distinct-ref counts for logging/tests.
- */
-export function rekeyUsageEventsToItemRef(
-  indexDb: Database,
-  stateDb: Database,
-  options: RelinkUsageEventsOptions = {},
-): { rekeyed: number; quarantined: number; deferred: number } {
-  const result = { rekeyed: 0, quarantined: 0, deferred: 0 };
-  bestEffort(() => {
-    // Cross-DB (Chunk-8 WI-8.3): usage_events + legacy_state live in stateDb;
-    // the resolver joins against `entries` in indexDb. state migration 020
-    // owns the tables, so ensureLegacyStateTable is a defensive no-op here.
-    ensureLegacyStateTable(stateDb);
-    const rows = stateDb
-      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_ref IS NOT NULL")
-      .all() as {
-      ref: string;
-    }[];
-    const legacyRefs = rows.map((r) => r.ref).filter((ref) => classifyRefGrammar(ref) === "legacy");
-    if (legacyRefs.length === 0) return;
-
-    const update = stateDb.prepare("UPDATE usage_events SET entry_ref = ?, entry_id = ? WHERE entry_ref = ?");
-    const countRows = stateDb.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE entry_ref = ?");
-    const quarantine = stateDb.prepare(
-      `INSERT OR REPLACE INTO legacy_state (surface, old_ref, row_count, reason, quarantined_at)
-       VALUES ('usage_events', ?, ?, 'orphan', datetime('now'))`,
-    );
-    const tx = stateDb.transaction(() => {
-      for (const oldRef of legacyRefs) {
-        const resolution = classifyLegacyRefForRekey(indexDb, oldRef, options);
-        if (resolution.kind === "rekey") {
-          update.run(resolution.itemRef, resolution.entryId, oldRef);
-          result.rekeyed += 1;
-        } else if (resolution.kind === "orphan") {
-          // Expected orphan — no live item. Keep the row, archive for audit.
-          const n = (countRows.get(oldRef) as { n: number }).n;
-          quarantine.run(oldRef, n);
-          result.quarantined += 1;
-        } else {
-          result.deferred += 1;
-        }
-      }
-    });
-    tx();
-    if (result.quarantined > 0 || result.deferred > 0) {
-      warn(
-        `[akm] §11.4 usage-event re-key: ${result.rekeyed} ref(s) re-keyed to item_ref, ` +
-          `${result.quarantined} orphan ref(s) quarantined in legacy_state (kept, not deleted), ` +
-          `${result.deferred} named-origin ref(s) deferred to the Chunk-8 source→bundle identity.`,
-      );
-    }
-  }, "usage_events / legacy_state may not exist yet during the §11.4 re-key");
-  return result;
-}
-
-/**
- * The §11.4 re-key resolution for one legacy `usage_events.entry_ref`. Faithful
- * to origin identity — a re-key must never COLLAPSE two origins of the same
- * conceptId onto one key (durable feedback/usage keeps each origin distinct):
- *
- *   - `"rekey"`   — the ref resolves to a live entry (scoped to the source its
- *                   origin names — the primary for a bare/`local`/`stash` ref, or
- *                   the source whose `registryId` equals the origin) that carries
- *                   an item_ref. The origin's bundle identity is preserved, so two
- *                   origins of one conceptId never collapse onto a single key.
- *   - `"orphan"`  — the same scope resolves to no live item (deleted / deduped
- *                   away): an EXPECTED §11.4 orphan → quarantine, keep legacy.
- *   - `"defer"`   — an origin naming no configured source (a removed source) that
- *                   is not the primary sentinel — its source→bundle identity is a
- *                   Chunk-8 / D-R5 concern, so leave legacy-spelled (dual-arm
- *                   readers still see it; Chunk-8 forces it). Also the
- *                   NULL-item_ref write-back straggler (heals on the next index).
- *
- * Chunk-8: the whole legacy arm goes with the one-time state.db re-key.
- */
-type RekeyResolution = { kind: "rekey"; entryId: number; itemRef: string } | { kind: "orphan" } | { kind: "defer" };
-
-function classifyLegacyRefForRekey(db: Database, ref: string, options: RelinkUsageEventsOptions): RekeyResolution {
-  let parsed: AssetRef;
-  try {
-    parsed = parseStoredRef(ref);
-  } catch {
-    return { kind: "defer" }; // unparseable — leave untouched
-  }
-  // Bare ref, or the `local`/`stash` primary sentinel with no matching named
-  // source → resolve against the workspace primary (defaultStashDir).
-  const named = parsed.origin !== undefined ? options.sources?.find((s) => s.registryId === parsed.origin) : undefined;
-  if (
-    parsed.origin === undefined ||
-    (named === undefined && (parsed.origin === "local" || parsed.origin === "stash"))
-  ) {
-    const id = options.defaultStashDir ? findEntryIdByLegacyRef(db, ref, options.defaultStashDir) : undefined;
-    return resolveEntryToItemRef(db, id, /* orphanWhenMissing */ options.defaultStashDir !== undefined);
-  }
-  // Origin names a configured source (registryId, incl. a filesystem source's
-  // name) → resolve strictly within that source so the bundle stays faithful.
-  if (named === undefined) return { kind: "defer" }; // removed source — Chunk-8 identity
-  const id = findEntryIdByLegacyRef(db, ref, named.path);
-  return resolveEntryToItemRef(db, id, /* orphanWhenMissing */ true);
-}
-
-/** Turn a resolved entry id into a re-key/orphan/defer decision by its item_ref. */
-function resolveEntryToItemRef(db: Database, id: number | undefined, orphanWhenMissing: boolean): RekeyResolution {
-  if (id === undefined) return orphanWhenMissing ? { kind: "orphan" } : { kind: "defer" };
-  const itemRef = getItemRefById(db, id);
-  return itemRef !== null ? { kind: "rekey", entryId: id, itemRef } : { kind: "defer" };
-}
-
-/**
- * Create the §11.4 orphan-quarantine archive if absent. `legacy_state` holds one
- * row per (surface, unmappable legacy ref): auditable and purgeable, it never
- * holds the live event rows themselves (those stay in `usage_events`).
- */
-function ensureLegacyStateTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS legacy_state (
-      surface        TEXT NOT NULL,
-      old_ref        TEXT NOT NULL,
-      row_count      INTEGER NOT NULL DEFAULT 0,
-      reason         TEXT NOT NULL,
-      quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (surface, old_ref)
-    );
-  `);
 }
 
 /**

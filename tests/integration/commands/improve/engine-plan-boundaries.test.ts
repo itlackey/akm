@@ -71,7 +71,7 @@ describe("improve engine-plan boundaries", () => {
       const result = await runImprovePreparationStage({
         scope: { mode: "all" },
         options: { config, stashDir: stash.dir, repairValidationFailures: false },
-        plannedRefs: [{ ref: "lesson:broken", reason: "scope-type", filePath }],
+        plannedRefs: [{ ref: "lessons/broken", reason: "scope-type", filePath }],
         primaryStashDir: stash.dir,
         memorySummary: { eligible: 0, derived: 0 },
         reindexFn: async () => undefined,
@@ -81,7 +81,7 @@ describe("improve engine-plan boundaries", () => {
         resolvedPlan,
         strategyName: "structural",
       });
-      expect(result.validationFailures).toEqual([{ ref: "lesson:broken", reason: "missing description" }]);
+      expect(result.validationFailures).toEqual([{ ref: "lessons/broken", reason: "missing description" }]);
       expect(result.schemaRepairs).toEqual([]);
       expect(result.actionableRefs).toEqual([]);
     } finally {
@@ -109,7 +109,7 @@ describe("improve engine-plan boundaries", () => {
       };
       const resolvedPlan = resolveImprovePlan("repair", config);
       const result = await runValidationAndRepairPass({
-        postCleanupRefs: [{ ref: "lesson:queued", reason: "scope-type", filePath }],
+        postCleanupRefs: [{ ref: "lessons/queued", reason: "scope-type", filePath }],
         options: { config, stashDir: stash.dir },
         startMs: Date.now(),
         budgetMs: 60_000,
@@ -119,18 +119,18 @@ describe("improve engine-plan boundaries", () => {
         schemaRepairFn: async () => ({
           repairs: [
             {
-              ref: "lesson:queued",
+              ref: "lessons/queued",
               reason: "missing description",
               outcome: "queued",
               proposalId: "proposal-1",
             },
           ],
-          repairedRefs: new Set(["lesson:queued"]),
+          repairedRefs: new Set(["lessons/queued"]),
         }),
       });
 
       expect(result.schemaRepairs[0]?.outcome).toBe("queued");
-      expect(result.validationFailureRefs).toEqual(new Set(["lesson:queued"]));
+      expect(result.validationFailureRefs).toEqual(new Set(["lessons/queued"]));
       expect(fs.readFileSync(filePath, "utf8")).toBe(original);
     } finally {
       stash.cleanup();
@@ -236,7 +236,7 @@ describe("improve engine-plan boundaries", () => {
           dryRun: false,
         }),
         primaryStashDir: stash.dir,
-        scope: { mode: "ref", value: "memory:source" },
+        scope: { mode: "ref", value: "memories/source" },
         options: { config, stashDir: stash.dir },
         reflectFn: async (options) => {
           reflectOptions = options as unknown as Record<string, unknown>;
@@ -245,7 +245,7 @@ describe("improve engine-plan boundaries", () => {
             ok: false,
             reason: "no_change",
             error: "stable",
-            ref: "memory:source",
+            ref: "memories/source",
             engine: "reflect",
             exitCode: null,
           };
@@ -257,10 +257,10 @@ describe("improve engine-plan boundaries", () => {
             ok: true,
             outcome: "skipped",
             inputRef: options.ref,
-            lessonRef: "lesson:source-lesson",
+            lessonRef: "lessons/source-lesson",
           };
         },
-        loopRefs: [{ ref: "memory:source", reason: "scope-ref" }],
+        loopRefs: [{ ref: "memories/source", reason: "scope-ref" }],
         actions: [],
         signalBearingSet: new Set(),
         distillCooledRefs: new Set(),

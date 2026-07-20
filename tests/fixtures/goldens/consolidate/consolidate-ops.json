@@ -4,10 +4,12 @@
     "contradict": {
       "archivedPreserved": {
         "contradictedCountAfterTwoRuns": 2,
-        "firstRunRawBytes": "---\ndescription: cop-contradict-archived description\nbeliefState: archived\ncontradictedBy:\n  - memory:cop-contradict-archived-by\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
+        "firstRunRawBytes": "---\ndescription: cop-contradict-archived description\nbeliefState: archived\ncontradictedBy:\n  - memories/cop-contradict-archived-by\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
         "frontmatter": {
           "beliefState": "archived",
-          "contradictedBy": ["memory:cop-contradict-archived-by"],
+          "contradictedBy": [
+            "memories/cop-contradict-archived-by"
+          ],
           "description": "cop-contradict-archived description"
         },
         "idempotentReRunByteIdentical": true,
@@ -15,10 +17,12 @@
       },
       "highConfidence": {
         "contradictedCountAfterTwoRuns": 2,
-        "firstRunRawBytes": "---\ndescription: cop-contradict-high-conf description\ncontradictedBy:\n  - memory:cop-contradict-high-conf-by\nbeliefState: contradicted\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
+        "firstRunRawBytes": "---\ndescription: cop-contradict-high-conf description\ncontradictedBy:\n  - memories/cop-contradict-high-conf-by\nbeliefState: contradicted\n---\n\nThis is a substantive memory body with enough distinct content to clear every merge/promote length floor used across these fixtures (the 100-char promote floor and the 0.3x-of-larger-source merge floor).\n",
         "frontmatter": {
           "beliefState": "contradicted",
-          "contradictedBy": ["memory:cop-contradict-high-conf-by"],
+          "contradictedBy": [
+            "memories/cop-contradict-high-conf-by"
+          ],
           "description": "cop-contradict-high-conf description"
         },
         "idempotentReRunByteIdentical": true,
@@ -31,7 +35,7 @@
           {
             "op": "contradict",
             "reason": "contradict_low_confidence",
-            "ref": "memory:cop-contradict-low-conf"
+            "ref": "memories/cop-contradict-low-conf"
           }
         ]
       },
@@ -48,7 +52,7 @@
           {
             "op": "delete",
             "reason": "delete_already_gone",
-            "ref": "memory:cop-delete-already-gone"
+            "ref": "memories/cop-delete-already-gone"
           }
         ]
       },
@@ -60,7 +64,7 @@
           {
             "op": "delete",
             "reason": "captureMode_hot_refused",
-            "ref": "memory:cop-delete-hot-refused"
+            "ref": "memories/cop-delete-hot-refused"
           }
         ]
       },
@@ -94,7 +98,7 @@
               "generation": 1,
               "status": "superseded",
               "superseded_at": "<TS>",
-              "superseded_by": "memory:cop-merge11-primary",
+              "superseded_by": "memories/cop-merge11-primary",
               "superseded_reason": "merged into primary"
             }
           }
@@ -119,12 +123,12 @@
           {
             "op": "merge",
             "reason": "merge_generation_guard",
-            "ref": "memory:cop-merge-refusal-generation-primary"
+            "ref": "memories/cop-merge-refusal-generation-primary"
           },
           {
             "op": "merge",
             "reason": "merge_generation_guard",
-            "ref": "memory:cop-merge-refusal-generation-secondary"
+            "ref": "memories/cop-merge-refusal-generation-secondary"
           }
         ]
       },
@@ -135,12 +139,12 @@
           {
             "op": "merge",
             "reason": "merge_participant_blocked",
-            "ref": "memory:cop-merge-refusal-hot-primary"
+            "ref": "memories/cop-merge-refusal-hot-primary"
           },
           {
             "op": "merge",
             "reason": "merge_participant_blocked",
-            "ref": "memory:cop-merge-refusal-hot-secondary"
+            "ref": "memories/cop-merge-refusal-hot-secondary"
           }
         ]
       },
@@ -151,12 +155,12 @@
           {
             "op": "merge",
             "reason": "merge_missing_description",
-            "ref": "memory:cop-merge-refusal-missing-desc-primary"
+            "ref": "memories/cop-merge-refusal-missing-desc-primary"
           },
           {
             "op": "merge",
             "reason": "merge_missing_description",
-            "ref": "memory:cop-merge-refusal-missing-desc-secondary"
+            "ref": "memories/cop-merge-refusal-missing-desc-secondary"
           }
         ]
       },
@@ -167,12 +171,12 @@
           {
             "op": "merge",
             "reason": "merge_truncated_description",
-            "ref": "memory:cop-merge-refusal-truncated-desc-primary"
+            "ref": "memories/cop-merge-refusal-truncated-desc-primary"
           },
           {
             "op": "merge",
             "reason": "merge_truncated_description",
-            "ref": "memory:cop-merge-refusal-truncated-desc-secondary"
+            "ref": "memories/cop-merge-refusal-truncated-desc-secondary"
           }
         ]
       },
@@ -183,12 +187,12 @@
           {
             "op": "merge",
             "reason": "merge_participant_blocked",
-            "ref": "memory:cop-merge-refusal-unparseable-primary"
+            "ref": "memories/cop-merge-refusal-unparseable-primary"
           },
           {
             "op": "merge",
             "reason": "merge_participant_blocked",
-            "ref": "memory:cop-merge-refusal-unparseable-secondary"
+            "ref": "memories/cop-merge-refusal-unparseable-secondary"
           }
         ]
       }
@@ -200,7 +204,7 @@
           {
             "op": "promote",
             "reason": "promote_already_exists",
-            "ref": "memory:cop-promote-gate-already-exists"
+            "ref": "memories/cop-promote-gate-already-exists"
           }
         ]
       },
@@ -210,7 +214,7 @@
           {
             "op": "promote",
             "reason": "dedup_pending_proposal",
-            "ref": "memory:cop-promote-gate-body-dedup"
+            "ref": "memories/cop-promote-gate-body-dedup"
           }
         ]
       },
@@ -220,7 +224,7 @@
           {
             "op": "promote",
             "reason": "promote_dedup_window",
-            "ref": "memory:cop-promote-gate-slug-dedup"
+            "ref": "memories/cop-promote-gate-slug-dedup"
           }
         ]
       },
@@ -230,7 +234,7 @@
           {
             "op": "promote",
             "reason": "promote_superseded",
-            "ref": "memory:cop-promote-gate-superseded"
+            "ref": "memories/cop-promote-gate-superseded"
           }
         ]
       },
@@ -240,7 +244,7 @@
           {
             "op": "promote",
             "reason": "promote_source_too_small",
-            "ref": "memory:cop-promote-gate-too-small"
+            "ref": "memories/cop-promote-gate-too-small"
           }
         ]
       },
@@ -250,13 +254,16 @@
           {
             "op": "promote",
             "reason": "promote_already_promoted_this_run",
-            "ref": "memory:cop-promote-gate-within-run-dedup"
+            "ref": "memories/cop-promote-gate-within-run-dedup"
           }
         ]
       },
       "happyPath": {
         "bodyDescription": "A promoted knowledge asset",
-        "bodyXrefs": ["memories/cop-promote-happy", "memories/promote-happy-existing"],
+        "bodyXrefs": [
+          "memories/cop-promote-happy",
+          "memories/promote-happy-existing"
+        ],
         "promotedCount": 1,
         "proposalDescription": "A promoted knowledge asset",
         "skips": []

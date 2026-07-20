@@ -241,7 +241,7 @@ describe("handleMergeOp — merge 1 primary + 1 secondary", () => {
     const storage = withIsolatedAkmStorage();
     try {
       const root = storage.stashDir;
-      const primary = writeMemory(root, MERGE11_PRIMARY_NAME, { generation: 1, xrefs: ["memory:merge11-existing"] });
+      const primary = writeMemory(root, MERGE11_PRIMARY_NAME, { generation: 1, xrefs: ["memories/merge11-existing"] });
       const secondary = writeMemory(root, MERGE11_SECONDARY_NAME, { generation: 1 });
       const skips: SkipCall[] = [];
       const stub = stubGenerateMergedContent(
@@ -273,7 +273,7 @@ describe("handleMergeOp — merge 1 primary + 1 secondary", () => {
       const primaryAsset = readAsset(primary.filePath);
       expect(primaryAsset.frontmatter.generation).toBe(2);
       expect((primaryAsset.frontmatter.xrefs as string[]).sort()).toEqual(
-        [primary.ref, secondary.ref, "memory:merge11-existing"].map((r) => r.replace(/^memory:/, "memories/")).sort(),
+        [primary.ref, secondary.ref, "memories/merge11-existing"].map((r) => r.replace(/^memory:/, "memories/")).sort(),
       );
       // Secondary archived then hard-deleted.
       expect(fs.existsSync(secondary.filePath)).toBe(false);
@@ -615,7 +615,7 @@ describe("handlePromoteOp — happy path", () => {
     const storage = withIsolatedAkmStorage();
     try {
       const root = storage.stashDir;
-      const { entry, ref } = writeMemory(root, PROMOTE_HAPPY_NAME, { xrefs: ["memory:promote-happy-existing"] });
+      const { entry, ref } = writeMemory(root, PROMOTE_HAPPY_NAME, { xrefs: ["memories/promote-happy-existing"] });
       const skips: SkipCall[] = [];
       const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
       const kRef = knowledgeRef(PROMOTE_HAPPY_KNOWLEDGE_NAME);
@@ -639,7 +639,7 @@ describe("handlePromoteOp — happy path", () => {
       expect(bodyFm.description).toBe("A promoted knowledge asset");
       // WI-8.5b: promote emits provenance xrefs in the D-R5 new grammar.
       expect((bodyFm.xrefs as string[]).sort()).toEqual(
-        ["memory:promote-happy-existing", ref].map((r) => r.replace(/^memory:/, "memories/")).sort(),
+        ["memories/promote-happy-existing", ref].map((r) => r.replace(/^memory:/, "memories/")).sort(),
       );
     } finally {
       storage.cleanup();
@@ -963,7 +963,7 @@ describe("handleContradictOp", () => {
 
 async function captureMerge11(storage: IsolatedAkmStorage) {
   const root = storage.stashDir;
-  const primary = writeMemory(root, MERGE11_PRIMARY_NAME, { generation: 1, xrefs: ["memory:merge11-existing"] });
+  const primary = writeMemory(root, MERGE11_PRIMARY_NAME, { generation: 1, xrefs: ["memories/merge11-existing"] });
   const secondary = writeMemory(root, MERGE11_SECONDARY_NAME, { generation: 1 });
   const skips: SkipCall[] = [];
   const stub = stubGenerateMergedContent(
@@ -1089,7 +1089,7 @@ async function captureDelete(
 
 async function capturePromoteHappy(storage: IsolatedAkmStorage) {
   const root = storage.stashDir;
-  const { entry, ref } = writeMemory(root, PROMOTE_HAPPY_NAME, { xrefs: ["memory:promote-happy-existing"] });
+  const { entry, ref } = writeMemory(root, PROMOTE_HAPPY_NAME, { xrefs: ["memories/promote-happy-existing"] });
   const skips: SkipCall[] = [];
   const ctx = makeCtx(root, { skips, memoryByRef: new Map([[ref, entry]]) });
   const kRef = knowledgeRef(PROMOTE_HAPPY_KNOWLEDGE_NAME);

@@ -11,12 +11,12 @@ import { relinkUsageEvents } from "../../../src/storage/repositories/index-entri
 /**
  * Focused tests for {@link relinkUsageEvents}.
  *
- * Regression guard for the finalize-phase slowness + silent link-loss bug:
- * the previous hand-rolled `substr(entry_key, ...)` suffix query matched the
- * RAW `entry_ref`, so origin-qualified refs (`source//type:name`) never
- * relinked and were re-scanned (non-indexably) on every index. The fix reuses
- * the canonical `findEntryIdByRef` resolver, which strips the `origin//`
- * qualifier via `parseAssetRef`.
+ * Post-Chunk-8 WI-8.5c: every `usage_events.entry_ref` is the fully-qualified
+ * `bundle//conceptId` item_ref spelling (the one-time legacy→item_ref re-key is
+ * owned by the migration cutover). The relink re-resolves detached rows through
+ * the canonical `findEntryIdByRef` resolver, which keys on the durable
+ * `entries.item_ref`. A short conceptId (no bundle) resolves within the default
+ * stash root.
  */
 describe("relinkUsageEvents", () => {
   // Chunk-8 WI-8.3: usage_events lives in state.db; `entries` in index.db. The
@@ -24,13 +24,18 @@ describe("relinkUsageEvents", () => {
   let indexDb: AkmDatabase;
   let stateDb: AkmDatabase;
 
-  /** Minimal `entries` schema (index.db) — only the columns the resolver reads. */
-  function seedEntry(entryKey: string, entryType: string, name: string): number {
-    const suffix = `:${entryType}:${name}`;
-    const stashDir = entryKey.endsWith(suffix) ? entryKey.slice(0, -suffix.length) : "";
+  /**
+   * Minimal `entries` row (index.db) — only the columns the resolver reads. The
+   * durable identity is `item_ref = bundle//conceptId`; `entry_key` carries the
+   * stash root prefix so the id-change on rebuild is modelled.
+   */
+  function seedEntry(bundle: string, conceptId: string, stashDir: string): number {
+    const itemRef = `${bundle}//${conceptId}`;
     const info = indexDb
-      .prepare("INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json) VALUES (?, ?, ?, ?)")
-      .run(entryKey, entryType, stashDir, JSON.stringify({ type: entryType, name }));
+      .prepare(
+        "INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json, item_ref, bundle_id, concept_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(`${stashDir}:${conceptId}`, conceptId.split("/")[0], stashDir, "{}", itemRef, bundle, conceptId);
     return Number(info.lastInsertRowid);
   }
 
@@ -55,50 +60,46 @@ describe("relinkUsageEvents", () => {
         entry_key  TEXT NOT NULL,
         entry_type TEXT NOT NULL,
         stash_dir  TEXT NOT NULL,
-        entry_json TEXT NOT NULL
+        entry_json TEXT NOT NULL,
+        item_ref   TEXT,
+        bundle_id  TEXT,
+        concept_id TEXT
       );
     `);
     stateDb = new Database(":memory:") as unknown as AkmDatabase;
     ensureUsageEventsSchema(stateDb);
   });
 
-  test("relinks a BARE type:name ref after entry ids change (existing behaviour)", () => {
-    const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
-    insertEvent("skill:deploy", null); // detached (e.g. after a full rebuild)
+  test("relinks a short conceptId ref within the default root after entry ids change", () => {
+    const id = seedEntry("stash", "skills/deploy", "/home/u/akm");
+    insertEvent("skills/deploy", null); // detached (e.g. after a full rebuild)
 
     relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
-    expect(entryIdFor("skill:deploy")).toBe(id);
+    expect(entryIdFor("skills/deploy")).toBe(id);
   });
 
-  test("relinks an ORIGIN-QUALIFIED source//type:name ref (regression: was silently dropped)", () => {
+  test("relinks a fully-qualified bundle//conceptId ref by its globally-unique item_ref", () => {
     const id = seedEntry(
-      "/home/u/.cache/akm/registry/git-github-getsentry-skills/abc/extracted:knowledge:skills/skill-writer/references/workflow-routing",
-      "knowledge",
-      "skills/skill-writer/references/workflow-routing",
+      "getsentry-skills",
+      "knowledge/skills/skill-writer/references/workflow-routing",
+      "/home/u/.cache/akm/registry/getsentry-skills/abc/extracted",
     );
-    insertEvent("github:getsentry/skills//knowledge:skills/skill-writer/references/workflow-routing", null);
+    insertEvent("getsentry-skills//knowledge/skills/skill-writer/references/workflow-routing", null);
 
-    relinkUsageEvents(indexDb, stateDb, {
-      sources: [
-        {
-          path: "/home/u/.cache/akm/registry/git-github-getsentry-skills/abc/extracted",
-          registryId: "github:getsentry/skills",
-        },
-      ],
-    });
+    relinkUsageEvents(indexDb, stateDb, {});
 
-    expect(entryIdFor("github:getsentry/skills//knowledge:skills/skill-writer/references/workflow-routing")).toBe(id);
+    expect(entryIdFor("getsentry-skills//knowledge/skills/skill-writer/references/workflow-routing")).toBe(id);
   });
 
-  test("relinks duplicate refs by qualified source and routes bare legacy refs only to the default root", () => {
+  test("relinks duplicate conceptId refs by bundle and routes a short ref to the default root", () => {
     const stashRoot = "/home/u/akm";
     const teamRoot = "/home/u/team";
-    const stashId = seedEntry(`${stashRoot}:memory:duplicate`, "memory", "duplicate");
-    const teamId = seedEntry(`${teamRoot}:memory:duplicate`, "memory", "duplicate");
-    insertEvent("stash//memory:duplicate", null);
-    insertEvent("team//memory:duplicate", null);
-    insertEvent("memory:duplicate", null);
+    const stashId = seedEntry("stash", "memories/duplicate", stashRoot);
+    const teamId = seedEntry("team", "memories/duplicate", teamRoot);
+    insertEvent("stash//memories/duplicate", null);
+    insertEvent("team//memories/duplicate", null);
+    insertEvent("memories/duplicate", null);
 
     relinkUsageEvents(indexDb, stateDb, {
       sources: [
@@ -108,47 +109,37 @@ describe("relinkUsageEvents", () => {
       defaultStashDir: stashRoot,
     });
 
-    expect(entryIdFor("stash//memory:duplicate")).toBe(stashId);
-    expect(entryIdFor("team//memory:duplicate")).toBe(teamId);
-    expect(entryIdFor("memory:duplicate")).toBe(stashId);
-  });
-
-  test("leaves an ambiguous bare ref detached when no historical root policy is supplied", () => {
-    seedEntry("/home/u/akm:memory:duplicate", "memory", "duplicate");
-    seedEntry("/home/u/team:memory:duplicate", "memory", "duplicate");
-    insertEvent("memory:duplicate", null);
-
-    relinkUsageEvents(indexDb, stateDb);
-
-    expect(entryIdFor("memory:duplicate")).toBeNull();
+    expect(entryIdFor("stash//memories/duplicate")).toBe(stashId);
+    expect(entryIdFor("team//memories/duplicate")).toBe(teamId);
+    expect(entryIdFor("memories/duplicate")).toBe(stashId);
   });
 
   test("leaves a genuinely-orphaned ref null (no matching entry)", () => {
-    seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
-    insertEvent("script:does-not-exist", null);
+    seedEntry("stash", "skills/deploy", "/home/u/akm");
+    insertEvent("scripts/does-not-exist", null);
 
     relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
-    expect(entryIdFor("script:does-not-exist")).toBeNull();
+    expect(entryIdFor("scripts/does-not-exist")).toBeNull();
   });
 
   test("nulls entry_ids pointing at deleted entries, then re-resolves via ref", () => {
-    const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
+    const id = seedEntry("stash", "skills/deploy", "/home/u/akm");
     // Event points at a stale id (99) that no longer exists, but carries a
     // resolvable ref.
-    insertEvent("skill:deploy", 99);
+    insertEvent("skills/deploy", 99);
 
     relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
-    expect(entryIdFor("skill:deploy")).toBe(id);
+    expect(entryIdFor("skills/deploy")).toBe(id);
   });
 
   test("does not clobber already-correct links", () => {
-    const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
-    insertEvent("skill:deploy", id);
+    const id = seedEntry("stash", "skills/deploy", "/home/u/akm");
+    insertEvent("skills/deploy", id);
 
     relinkUsageEvents(indexDb, stateDb);
 
-    expect(entryIdFor("skill:deploy")).toBe(id);
+    expect(entryIdFor("skills/deploy")).toBe(id);
   });
 });

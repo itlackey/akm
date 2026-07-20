@@ -4,16 +4,16 @@
     "contradictNoOverDedupByRefAlone": {
       "ops": [
         {
-          "contradictedByRef": "memory:mp-contradict-b",
+          "contradictedByRef": "memories/mp-contradict-b",
           "op": "contradict",
           "reason": "test reason",
-          "ref": "memory:mp-contradict-a"
+          "ref": "memories/mp-contradict-a"
         },
         {
-          "contradictedByRef": "memory:mp-merge-delete-target",
+          "contradictedByRef": "memories/mp-merge-delete-target",
           "op": "contradict",
           "reason": "test reason",
-          "ref": "memory:mp-contradict-a"
+          "ref": "memories/mp-contradict-a"
         }
       ],
       "warnings": []
@@ -21,10 +21,10 @@
     "contradictPairDedup": {
       "ops": [
         {
-          "contradictedByRef": "memory:mp-contradict-b",
+          "contradictedByRef": "memories/mp-contradict-b",
           "op": "contradict",
           "reason": "first",
-          "ref": "memory:mp-contradict-a"
+          "ref": "memories/mp-contradict-a"
         }
       ],
       "warnings": []
@@ -32,7 +32,7 @@
     "hallucinatedPrimaryDropped": {
       "ops": [],
       "warnings": [
-        "mergePlans: primary memory:mp-hallucinated-primary not in loaded memory pool (LLM hallucination) — dropping op before execution."
+        "mergePlans: primary memories/mp-hallucinated-primary not in loaded memory pool (LLM hallucination) — dropping op before execution."
       ]
     },
     "hallucinatedSecondaryFiltered": {
@@ -40,12 +40,14 @@
         {
           "mergeStrategy": "synthesize",
           "op": "merge",
-          "primary": "memory:mp-real-primary",
-          "secondaries": ["memory:mp-real-secondary"]
+          "primary": "memories/mp-real-primary",
+          "secondaries": [
+            "memories/mp-real-secondary"
+          ]
         }
       ],
       "warnings": [
-        "mergePlans: secondary memory:mp-hallucinated-secondary not in loaded memory pool (LLM hallucination) — dropping from op."
+        "mergePlans: secondary memories/mp-hallucinated-secondary not in loaded memory pool (LLM hallucination) — dropping from op."
       ]
     },
     "mergeWinsOverDelete": {
@@ -53,8 +55,10 @@
         {
           "mergeStrategy": "synthesize",
           "op": "merge",
-          "primary": "memory:mp-merge-delete-target",
-          "secondaries": ["memory:mp-merge-delete-secondary"]
+          "primary": "memories/mp-merge-delete-target",
+          "secondaries": [
+            "memories/mp-merge-delete-secondary"
+          ]
         }
       ],
       "warnings": []
@@ -62,16 +66,18 @@
     "promoteQueuedBeforeMerge": {
       "ops": [
         {
-          "knowledgeRef": "knowledge:mp-promote-merge-knowledge",
+          "knowledgeRef": "knowledge/mp-promote-merge-knowledge",
           "op": "promote",
           "reason": "test reason",
-          "ref": "memory:mp-promote-merge-target"
+          "ref": "memories/mp-promote-merge-target"
         },
         {
           "mergeStrategy": "synthesize",
           "op": "merge",
-          "primary": "memory:mp-promote-merge-target",
-          "secondaries": ["memory:mp-merge-delete-secondary"]
+          "primary": "memories/mp-promote-merge-target",
+          "secondaries": [
+            "memories/mp-merge-delete-secondary"
+          ]
         }
       ],
       "warnings": []

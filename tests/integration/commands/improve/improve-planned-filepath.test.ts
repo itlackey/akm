@@ -105,11 +105,11 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     const alphaPath = writeLesson(stash, "alpha");
     await indexStash(stash);
 
-    const result = await akmImprove({ stashDir: stash, scope: "lesson:alpha", dryRun: true });
+    const result = await akmImprove({ stashDir: stash, scope: "lessons/alpha", dryRun: true });
 
     expect(result.ok).toBe(true);
     expect(result.plannedRefs).toHaveLength(1);
-    expect(result.plannedRefs[0]?.ref).toBe("lesson:alpha");
+    expect(result.plannedRefs[0]?.ref).toBe("lessons/alpha");
     expect(fs.realpathSync(result.plannedRefs[0]?.filePath ?? "")).toBe(fs.realpathSync(alphaPath));
   });
 

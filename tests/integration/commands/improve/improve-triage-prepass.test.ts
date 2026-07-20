@@ -200,7 +200,7 @@ describe("akm improve — triage pre-pass", () => {
       const drainProposalsFn = mock(async () => emptyDrainResult());
 
       const result = await akmImprove({
-        scope: "memory:alpha",
+        scope: "memories/alpha",
         stashDir,
         config: triageEnabledConfig(true),
         drainProposalsFn: drainProposalsFn as never,

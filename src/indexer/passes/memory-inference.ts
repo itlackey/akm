@@ -40,6 +40,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { warn } from "../../core/warn";
@@ -48,7 +49,6 @@ import { isProcessEnabled } from "../../llm/feature-gate";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
 import type { EnrichmentPassContext } from "./pass-context";
@@ -545,7 +545,7 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 
   try {
     const content = renderDerivedMemory(parent, derived);
-    const childRef = parseStoredRef(childRefStr);
+    const childRef = parseRefInput(childRefStr);
     await writeAssetToSource(writeTarget, writeConfig, childRef, content);
     return { written: 1, childExists: false };
   } catch (err) {

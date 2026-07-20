@@ -18,12 +18,12 @@
  * consumers see a coherent lifecycle trail in a single output.
  */
 
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
 import { openStateDatabase } from "../../core/state-db";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
 import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import { listProposals } from "../proposal/repository";
 
@@ -183,7 +183,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     // forms); getUsageEvents bridges the stored entry_ref across both spellings,
     // so the user gets back exactly the asset they asked for regardless of which
     // grammar they typed.
-    parseStoredRef(trimmed);
+    parseRefInput(trimmed);
     normalizedRef = trimmed;
   }
 

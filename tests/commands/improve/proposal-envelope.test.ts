@@ -67,15 +67,15 @@ describe("emitProposal facade", () => {
       const stash = freshStash();
       const ctx = { dbPath: path.join(dataSb.dir, "akm", "state.db") };
 
-      const result = emitProposal({ stashDir: stash, proposalsCtx: ctx }, baseInput("knowledge:guide.md"));
+      const result = emitProposal({ stashDir: stash, proposalsCtx: ctx }, baseInput("knowledge/guide.md"));
 
       expect(isProposalSkipped(result)).toBe(false);
       if (isProposalSkipped(result)) throw new Error("unexpected skip");
       expect(result.status).toBe("pending");
       expect(result.source).toBe("reflect");
       expect(result.sourceRun).toBe("reflect-run-1");
-      expect(result.payload.content).toContain("body for knowledge:guide.md");
-      expect(result.payload.frontmatter).toEqual({ title: "knowledge:guide.md" });
+      expect(result.payload.content).toContain("body for knowledge/guide.md");
+      expect(result.payload.frontmatter).toEqual({ title: "knowledge/guide.md" });
       // No Chunk-6 fields exist on the current shape.
       expect("beforeHash" in result).toBe(false);
       expect("fileChanges" in result).toBe(false);
@@ -96,7 +96,7 @@ describe("emitProposal facade", () => {
       try {
         const stash = freshStash();
         const ctx: ProposalsContext = { dbPath: path.join(dataSb.dir, "akm", "state.db") };
-        const input = baseInput("knowledge:dup.md");
+        const input = baseInput("knowledge/dup.md");
         const first = emit(stash, ctx, input) as ReturnType<typeof createProposal>;
         const second = emit(stash, ctx, input) as ReturnType<typeof createProposal>; // identical → guard fires
         const forced = emit(stash, ctx, { ...input, force: true }) as ReturnType<typeof createProposal>;
@@ -124,7 +124,7 @@ describe("emitProposal facade", () => {
       const stash = freshStash();
       // No explicit ctx — the default state.db path resolves under the sandboxed
       // XDG_DATA_HOME, so the write still lands in the isolated tmpdir.
-      const result = emitProposal({ stashDir: stash }, baseInput("lesson:x.md"));
+      const result = emitProposal({ stashDir: stash }, baseInput("lessons/x.md"));
       expect(isProposalSkipped(result)).toBe(false);
       const rows = listProposals(stash);
       expect(rows.map((p) => p.ref)).toEqual([durableRef(stash, "lesson", "x.md")]);

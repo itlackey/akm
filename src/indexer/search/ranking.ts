@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import path from "node:path";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { acquireMaintenanceActivitySync } from "../../core/maintenance-barrier";
 import { getStateDbPath } from "../../core/state-db";
 import { type Database, openDatabase } from "../../storage/database";
@@ -90,28 +90,21 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     const dbPath = getStateDbPath();
     if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
     const releaseActivity = acquireMaintenanceActivitySync("state-db");
-    // Chunk-5 flip F5d Step 3 — DUAL-ARM the salience read. Fold BOTH stored
-    // spellings into the single `IN` query, keyed back to the entry id:
-    //   • new grammar FIRST — the durable fully-qualified `item_ref`
-    //     (`<bundle>//<concept-id>`, what the Step-4 writer keys salience by);
-    //   • INLINE legacy SECOND — `type:name`, byte-identical to the pre-flip
-    //     `type:name` writer output.  // Chunk-8: drop after the state.db
-    //     one-time re-key.
-    // The legacy arm applies the SAME `path.posix.normalize` the pre-flip
-    // writer applied (see `posixNormalize`), so it matches the stored rows
-    // byte-for-byte. The F5d normalization-trap proof over the real
-    // curate-golden corpus (incl. deep-nested names) found 0/35 divergences;
-    // the local normalize makes that identity guaranteed by construction rather
-    // than corpus-dependent. Output is keyed by id, so this is self-contained,
-    // and a fresh new-grammar row wins over any stale legacy row for the same
-    // asset (the Chunk-8 re-key transition window).
+    // Fold both durable salience spellings into the single `IN` query, keyed
+    // back to the entry id (Chunk-8 WI-8.5c — the legacy `type:name` arm is
+    // retired):
+    //   • the fully-qualified `item_ref` (`<bundle>//<conceptId>`) — what the
+    //     improve writer keys salience by when the planner resolved provenance;
+    //   • the bare conceptId — the write-key fallback for entries with no
+    //     resolved `item_ref` (`item_ref` NULL is the bare form of the same key).
+    // Output is keyed by id, so a fully-qualified match wins over the bare-conceptId
+    // match for the same asset id.
     const idByRef = new Map<string, { id: number; isNew: boolean }>();
     try {
       for (const item of items) {
-        // Legacy arm: `type:name` with the pre-flip name normalization.
-        idByRef.set(`${item.entry.type}:${posixNormalize(item.entry.name)}`, { id: item.id, isNew: false });
-        // New arm: the durable `item_ref` (carries `//`, lexically disjoint from
-        // the legacy key). Skipped for NULL-provenance (pre-flip / write-back) rows.
+        // Bare-conceptId arm (the item_ref-absent write-key fallback).
+        idByRef.set(conceptIdFromTypeName(item.entry.type, item.entry.name), { id: item.id, isNew: false });
+        // Fully-qualified `item_ref` arm (skipped for NULL-provenance rows).
         if (item.itemRef) idByRef.set(item.itemRef, { id: item.id, isNew: true });
       }
       const stateDb = openDatabase(dbPath, { readonly: true });
@@ -153,16 +146,6 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     // Fail open — search must never break because state.db is unavailable.
   }
   return result;
-}
-
-/**
- * Byte-identical copy of the pre-flip name normalization
- * (`core/asset/asset-ref.ts` `normalizeName`) so the inline legacy salience
- * key matches rows the pre-flip writer stored under the `type:name` grammar.
- * // Chunk-8: drop together with the legacy arm after the state.db one-time re-key.
- */
-function posixNormalize(name: string): string {
-  return path.posix.normalize(name.replace(/\\/g, "/"));
 }
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {

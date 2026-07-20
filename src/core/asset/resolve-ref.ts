@@ -28,16 +28,31 @@
  * ── Input-boundary parser (new-grammar only) ──
  *
  * {@link parseRefInput} parses a RAW user/CLI/API ref in the 0.9.0
- * `[bundle//]conceptId` grammar and returns today's {@link AssetRef} shape via
- * the permanent D-R2 reverse table {@link typeNameFromConceptId}. STORED durable
- * refs keep the pre-0.9.0 spelling until the Chunk-8 re-key and are parsed by
- * `parseStoredRef` (src/migrate/legacy-ref-grammar.ts), NOT here.
+ * `[bundle//]conceptId` grammar and returns an {@link AssetRef} value object via
+ * the permanent D-R2 reverse table {@link typeNameFromConceptId}. Post-Chunk-8
+ * every durable ref reaching a reader is already the new grammar, so this is the
+ * ONE ref parser outside the frozen migrator — there is no stored-ref dual
+ * grammar to bridge any more.
  */
 
-import type { AssetRef } from "../../migrate/legacy-ref-grammar";
 import { NotFoundError, UsageError } from "../errors";
 import { stashDirFor, typeForStashDir } from "./asset-placement";
 import { type BundleRef, isBundleSlug, parseBundleRef } from "./asset-ref";
+
+// ── Parsed-ref value object (the `type`/`name`/`origin` decomposition) ────────
+
+/**
+ * The decomposed form of a parsed ref — the return shape of {@link parseRefInput}
+ * / {@link parseQualifiedRefInput}. `type`/`name` are the legacy asset-type token
+ * and canonical name (D-R2 reverse of the conceptId); `origin` is the bundle
+ * slug (or non-slug source origin) when the ref was qualified, else undefined.
+ * (The frozen migrator keeps its own private copy of this shape.)
+ */
+export interface AssetRef {
+  type: string;
+  name: string;
+  origin?: string;
+}
 
 // ── Resolution surface (D-R4) ───────────────────────────────────────────────
 
@@ -163,7 +178,7 @@ export interface DisplayRefItem {
  * correlation sites (`eligibility.ts` candidate refs, `salience.ts`
  * last-use lookup, `collapse-detector.ts` canary mint/score) share with the
  * display rule — the permanent successor to the retired transient
- * `legacyConceptId` (src/migrate/legacy-ref-grammar.ts).
+ * `legacyConceptId`.
  */
 export function conceptIdFromTypeName(type: string, name: string): string {
   const stashDir = stashDirFor(type);
@@ -182,17 +197,11 @@ export function conceptIdFromTypeName(type: string, name: string): string {
  *   - An item in the **default/primary bundle** (`bundleId` undefined, or equal
  *     to `defaultBundleId`) emits the SHORT conceptId (`knowledge/http-caching`)
  *     — exactly where the pre-0.9.0 output emitted an un-qualified `type:name`.
- *   - An item in a slug-clean **non-default bundle** emits the fully-qualified
- *     `bundle//conceptId`.
- *   - An item whose bundle id is a registry origin that is NOT a legal bundle
- *     slug (`github:owner/repo`, `npm:@scope/pkg`, `owner/repo` — they carry
- *     `:` / `.` / `/`) keeps the legacy `origin//type:name` display. F4c DECISION
- *     (ref-grammar decision D-R5): a registryId that is not a legal slug cannot be
- *     re-keyed to `bundle//conceptId` without INVENTING a slugging scheme, which
- *     D-R5 forbids — the slug-clean → `bundle//conceptId` mapping is the Chunk-8
- *     config `bundles` key (D-R5 rule 1), assigned when the config migration
- *     lands. Until then this branch is byte-identical to today's qualified output
- *     and the codemod's origin-qualified skips stay consistent with it.
+ *   - Any other **non-default bundle** emits the fully-qualified
+ *     `bundle//conceptId`. Post-Chunk-8 every bundle id is a legal slug (the
+ *     config migration assigned each source its D-R5 slug bundle key), so this
+ *     is always the new grammar — a non-slug registryId now displays under its
+ *     derived slug bundle id, never the retired `origin//type:name` spelling.
  */
 export function displayRef(item: DisplayRefItem, defaultBundleId?: string): string {
   const conceptId = item.conceptId ?? conceptIdFromTypeName(item.type, item.name);
@@ -203,13 +212,8 @@ export function displayRef(item: DisplayRefItem, defaultBundleId?: string): stri
   // so they display short too.
   if (bundleId === undefined || bundleId === defaultBundleId || bundleId === "local" || bundleId === "stash")
     return conceptId;
-  // Slug-clean non-default bundle (e.g. a named filesystem source) → the new
-  // fully-qualified grammar.
-  if (isBundleSlug(bundleId)) return `${bundleId}//${conceptId}`;
-  // Registry origin whose registryId is not a legal bundle slug (`:` / `.` / `/`)
-  // keeps the legacy `origin//type:name` display (Chunk-8: config bundle key).
-  // Index item names are already canonical, so the legacy spelling is inline.
-  return `${bundleId}//${item.type}:${item.name}`;
+  // Non-default bundle → the new fully-qualified `bundle//conceptId` grammar.
+  return `${bundleId}//${conceptId}`;
 }
 
 // ── D-R2 reverse table + input-boundary parser (new grammar only) ────────────
@@ -239,10 +243,10 @@ export function typeNameFromConceptId(conceptId: string): LegacyRefParts | undef
 /**
  * Parse a RAW user / CLI / API ref string in the 0.9.0 `[bundle//]conceptId`
  * grammar, returning it in today's {@link AssetRef} value-object shape
- * (ref-grammar decision D-R1 / D-R4). Input boundaries are NEW-GRAMMAR ONLY: a
- * legacy `type:name` input now fails as an unknown-conceptId not-found. STORED
- * durable refs keep the legacy spelling until the Chunk-8 re-key and are parsed
- * by `parseStoredRef` (src/migrate/legacy-ref-grammar.ts) instead.
+ * (ref-grammar decision D-R1 / D-R4). All boundaries are NEW-GRAMMAR ONLY: a
+ * legacy `type:name` input now fails as an unknown-conceptId not-found. Post-
+ * Chunk-8 every durable ref is already the new grammar, so this parser also
+ * serves the (formerly dual-grammar) stored-ref readers.
  *
  * Mapping (new grammar → {@link AssetRef}):
  *   - `conceptId` → `type`/`name` via {@link typeNameFromConceptId} (the D-R2

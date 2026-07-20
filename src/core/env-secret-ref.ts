@@ -15,9 +15,9 @@
 
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
-import type { AssetRef } from "../migrate/legacy-ref-grammar";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName } from "./asset/asset-placement";
+import type { AssetRef } from "./asset/resolve-ref";
 import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";

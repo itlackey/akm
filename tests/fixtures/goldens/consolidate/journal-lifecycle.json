@@ -22,7 +22,7 @@
           {
             "op": "delete",
             "reason": "redundant",
-            "ref": "memory:cj-lifecycle-delete"
+            "ref": "memories/cj-lifecycle-delete"
           }
         ],
         "phase": "applying"
@@ -30,13 +30,13 @@
       "journalWriteCount": 3,
       "lastJournalWrite": {
         "completed": [
-          "memory:cj-lifecycle-delete"
+          "memories/cj-lifecycle-delete"
         ],
         "operations": [
           {
             "op": "delete",
             "reason": "redundant",
-            "ref": "memory:cj-lifecycle-delete"
+            "ref": "memories/cj-lifecycle-delete"
           }
         ],
         "phase": "committed"

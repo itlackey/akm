@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
-import { type AssetRef, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { lookup } from "../indexer";
 import { resolveSourceEntries } from "../search/search-source";
@@ -22,7 +22,7 @@ export interface ResolveAssetPathOptions {
 
 function normalizeRef(ref: string | AssetRef): AssetRef {
   // Stored/resolved refs may still be in the legacy spelling → dual parser.
-  return typeof ref === "string" ? parseStoredRef(ref) : ref;
+  return typeof ref === "string" ? parseRefInput(ref) : ref;
 }
 
 function buildDiskCandidates(sourcePath: string, ref: AssetRef, preserveDirectNameFallback: boolean): string[] {

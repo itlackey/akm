@@ -17,6 +17,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -31,7 +32,6 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { type AssetRef, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import {
   fetchWebsiteMarkdownSnapshot,
   shouldAllowPrivateWebsiteUrlForTests,
@@ -166,35 +166,32 @@ interface ParsedWriteRef {
 }
 
 /**
- * Parse a `--xref` / `--supersedes` value through the DUAL stored-ref parser
- * (`parseStoredRef`, accepting BOTH the 0.9.0 `[bundle//]conceptId` and the
- * legacy `[origin//]type:name` forms) so malformed and origin-prefixed spellings
- * get a structured error instead of a misleading "did not resolve". Using the
- * dual parser (not the new-only `parseRefInput`) preserves the write-ref policy
- * that only the legacy arm carries: the `env`/`environment` type ALIAS, the
- * `tool`/`vault` deny-list ("invalid asset type" / "vault removed"), and
- * FOREIGN-type fail-open (D1.5-1) — none of which a closed-type-token parse can
- * express. A `local//` origin is accepted (it names the same local resolution
- * this validator performs, mirroring lint's `local//` strip); any other origin
- * is rejected — write-time validation only resolves local stash roots.
+ * Parse a `--xref` / `--supersedes` value through the new-grammar input parser
+ * (`parseRefInput`, the 0.9.0 `[bundle//]conceptId` grammar) so malformed and
+ * origin-prefixed spellings get a structured error instead of a misleading "did
+ * not resolve". Chunk-8 WI-8.5c: the legacy `[origin//]type:name` content-surface
+ * arm is retired — `--xref`/`--supersedes` take the conceptId form. A `local//`
+ * origin is accepted (it names the same local resolution this validator
+ * performs, mirroring lint's `local//` strip); any other origin is rejected —
+ * write-time validation only resolves local stash roots.
  */
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
   try {
-    parsed = parseStoredRef(raw);
+    parsed = parseRefInput(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new UsageError(
       `${flag} "${raw}" is not a valid asset ref: ${message}`,
       "INVALID_FLAG_VALUE",
-      `Refs use the form type:name, e.g. ${flag} knowledge:auth-flow.`,
+      `Refs use the conceptId form, e.g. ${flag} knowledge/auth-flow.`,
     );
   }
   if (parsed.origin && parsed.origin !== "local") {
     throw new UsageError(
       `${flag} "${raw}" carries the origin prefix "${parsed.origin}//" — ${flag} only resolves refs in the write target, the working stash, and configured sources.`,
       "INVALID_FLAG_VALUE",
-      `Pass the plain type:name form, e.g. ${flag} ${parsed.type}:${parsed.name}.`,
+      `Pass the plain conceptId form, e.g. ${flag} ${conceptIdFromTypeName(parsed.type, parsed.name)}.`,
     );
   }
   // Canonical bare conceptId: type alias resolved, name normalized, `local//`
@@ -202,7 +199,7 @@ function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWrit
   // bare `<stash-subdir>/<name>` short ref (WI-8.5a) is what lands in the
   // containing bundle's frontmatter (§11.1 short-ref rule); the name is already
   // normalized by the parser.
-  return { ref: legacyConceptId(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
+  return { ref: conceptIdFromTypeName(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
 }
 
 /**
@@ -698,8 +695,8 @@ export async function writeMarkdownAsset(options: {
     try {
       // supersededBy points at the correction's canonical write ref (F4b-flipped
       // display spelling), keeping it in lockstep with the reported `result.ref`.
-      // (The --xref INPUT-parse path, resolveXrefsForWrite/parseWriteRef, is the
-      // separate Chunk-8 content surface that stays legacy this stage.)
+      // The --xref/--supersedes input path (resolveXrefsForWrite/parseWriteRef)
+      // is now the new-grammar conceptId surface too (WI-8.5c).
       writeSupersededEdge(item.filePath, result.ref);
       if (path.resolve(item.stashRoot) === path.resolve(source.path)) {
         recordWriteTargetPath(source, item.filePath);

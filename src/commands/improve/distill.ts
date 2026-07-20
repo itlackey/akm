@@ -54,6 +54,7 @@ import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-syste
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -70,7 +71,6 @@ import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution"
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
-import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import {
@@ -260,7 +260,7 @@ export interface AkmDistillOptions {
 
 /** Derive the proposed lesson ref from the input ref. See module docblock. */
 export function deriveLessonRef(inputRef: string): string {
-  const parsed = parseStoredRef(inputRef);
+  const parsed = parseRefInput(inputRef);
   // Strip origin: a feedback signal recorded against `team//skill:deploy`
   // distils into the same lesson namespace as `skill:deploy`. The proposal
   // id (a UUID) keeps the queue entries distinct, so collisions are not a
@@ -687,7 +687,7 @@ async function loadAndScoreInputSalience(args: {
 
   if (assetContent && assetFilePath) {
     try {
-      const parsedRef = parseStoredRef(inputRef);
+      const parsedRef = parseRefInput(inputRef);
       // G4: predictionError decays with revision count — the prior hardcoded
       // `revisionCount: 0` made it a dead constant 1.0. Use the number of
       // proposals ever raised against this ref as the revision proxy.
@@ -746,7 +746,7 @@ async function loadAndScoreInputSalience(args: {
  */
 function refuseDisallowedDistillInput(args: {
   options: AkmDistillOptions;
-  parsedInputRef: ReturnType<typeof parseStoredRef>;
+  parsedInputRef: ReturnType<typeof parseRefInput>;
   inputRef: string;
   durableInputRef: string;
   eligMeta: { eligibilitySource?: EligibilitySource };
@@ -792,7 +792,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
   // Validate the ref shape up front so a typo never reaches the LLM.
-  const parsedInputRef = parseStoredRef(inputRef);
+  const parsedInputRef = parseRefInput(inputRef);
   const durableInputRef = durableImproveRef(inputRef, options.sourceName);
   // Chunk-5 flip F5e — the input asset's durable salience write key: item_ref
   // when the planner resolved one, else the pre-flip source-qualified spelling.

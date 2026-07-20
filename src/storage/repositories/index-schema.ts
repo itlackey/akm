@@ -46,10 +46,10 @@ import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 // identity — its lookup index is upgraded to UNIQUE (every indexed row now
 // carries item_ref; NULLs are distinct in a SQLite UNIQUE index, so write-back
 // stragglers coexist). The durable state keyed off refs (`usage_events.entry_ref`)
-// is re-keyed onto item_ref by the §11.4 join-against-last-good-index migration
-// (`rekeyUsageEventsToItemRef`, index finalize) with orphan quarantine in
-// `legacy_state`. The index is regenerable, so a rebuild is an acceptable
-// fallback if the UNIQUE upgrade finds a duplicate on a partially-migrated DB.
+// is re-keyed onto item_ref by the one-time §11.4 migration cutover
+// (020-three-db-cutover) with orphan quarantine in `legacy_state`. The index is
+// regenerable, so a rebuild is an acceptable fallback if the UNIQUE upgrade finds
+// a duplicate on a partially-migrated DB.
 //
 // v19→v20 (Chunk-8 WI-8.3, three-DB merge): index.db STOPS owning `usage_events`
 // + `legacy_state`. Both are durable, non-regenerable state and now live in
