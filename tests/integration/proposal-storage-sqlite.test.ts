@@ -32,6 +32,7 @@ import {
   resolveProposalId,
 } from "../../src/commands/proposal/repository";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -50,6 +51,12 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
+}
+
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 beforeEach(() => {
@@ -197,7 +204,7 @@ describe("state.db is the canonical proposal store", () => {
         status: string;
         content: string;
       };
-      expect(row.ref).toBe("lesson:sqlite-canonical");
+      expect(row.ref).toBe(durableRef(stash, "lesson", "sqlite-canonical"));
       expect(row.status).toBe("pending");
       expect(row.content).toContain("Prefer rg over grep");
     } finally {
@@ -441,7 +448,8 @@ describe("concurrent create + list safety (WAL)", () => {
     const refs = Array.from({ length: 10 }, (_, i) => `lesson:parallel-${i}`);
     await Promise.all(refs.map((ref) => Promise.resolve().then(() => mustCreate(stash, ref))));
     const listed = listProposals(stash);
-    expect(listed.map((p) => p.ref).sort()).toEqual([...refs].sort());
+    const expectedStored = Array.from({ length: 10 }, (_, i) => durableRef(stash, "lesson", `parallel-${i}`));
+    expect(listed.map((p) => p.ref).sort()).toEqual([...expectedStored].sort());
     expect(countRows(stash, "pending")).toBe(10);
   });
 

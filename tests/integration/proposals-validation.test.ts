@@ -14,6 +14,13 @@ import {
   listProposals,
   purgeOrphanProposals,
 } from "../../src/commands/proposal/repository";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+}
 
 const tempDirs: string[] = [];
 const savedEnv: Record<string, string | undefined> = {
@@ -208,7 +215,7 @@ describe("purgeOrphanProposals", () => {
     expect(result.rejected).toBe(1);
     expect(result.checked).toBe(1);
     expect(result.byType.memory).toBe(1);
-    expect(result.orphans[0].ref).toBe("memory:orphaned");
+    expect(result.orphans[0].ref).toBe(durableRef(stash, "memory", "orphaned"));
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     // The orphan must now be archived as rejected
     const stillPending = listProposals(stash, { status: "pending" });

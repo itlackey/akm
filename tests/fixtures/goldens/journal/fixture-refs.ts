@@ -26,16 +26,17 @@ export function lessonRef(name: string): string {
 }
 
 /**
- * The LEGACY `lesson:<name>` spelling the proposal engine DURABLY stores:
- * `createProposal` normalizes every accepted input to
- * `${type}:${name}` (`propose.ts` expectedRef) and the accept/revert/reject
- * engines emit usage events with `ref: p.ref` — the stored spelling. The F5
- * flip re-keys createProposal INPUTS to {@link lessonRef}'s new grammar but
- * leaves this stored key legacy (Chunk-8 preservation) — so an event-query
- * assertion must source its spelling here, never from {@link lessonRef}.
+ * The fully-qualified `stash//lessons/<name>` item_ref the proposal engine
+ * DURABLY stores post-flip: WI-8.5a re-keyed `createProposal`'s `normalizedRef`
+ * (and `propose.ts`'s `expectedRef`) to the item_ref grammar, and the
+ * accept/revert/reject engines emit usage events with `ref: p.ref` — that stored
+ * spelling. The bundle id is `stash`, the slug the sandbox primary stash derives
+ * (`withIsolatedAkmStorage`'s stashDir basename; `deriveInstallations`), so an
+ * event-query assertion must source its spelling here, never from
+ * {@link lessonRef} (the createProposal INPUT / display spelling).
  */
 export function lessonDurableRef(name: string): string {
-  return `lesson:${name}`;
+  return `stash//lessons/${name}`;
 }
 
 // ── goldens-proposal-txn.test.ts (R3 — accept/revert/reject engines) ───────

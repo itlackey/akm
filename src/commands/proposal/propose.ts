@@ -22,6 +22,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import { buildProposePrompt, parseAgentProposalPayload } from "../../integrations/agent/prompts";
@@ -88,6 +89,20 @@ function failureEnvelope(
   };
 }
 
+/**
+ * WI-8.5a — the fully-qualified `bundle//conceptId` item_ref for a proposal
+ * target in `stashDir`. The conceptId is BUILT from the D-R2 static table
+ * (`deriveEntryProvenance`), never looked up, so a propose target that does not
+ * yet exist on disk still keys onto its final spelling; the bundle is the
+ * write-target stash's installation id (same derivation the index write path
+ * uses). Matches `createProposal`'s durable `proposals.ref` mint, so the entry
+ * event, the fallback ref, and the stored proposal all carry one spelling.
+ */
+function proposeItemRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+}
+
 export async function akmPropose(options: AkmProposeOptions): Promise<AkmProposeResult> {
   if (!options.type?.trim()) {
     throw new UsageError("propose: <type> is required.", "MISSING_REQUIRED_ARGUMENT");
@@ -110,7 +125,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 1. Always emit `propose_invoked` at entry so observers see the attempt.
   appendEvent({
     eventType: "propose_invoked",
-    ref: `${options.type}:${options.name}`,
+    ref: proposeItemRef(stash, options.type, options.name), // WI-8.5a item_ref flip (durable events.ref)
     metadata: {
       type: options.type,
       name: options.name,
@@ -208,7 +223,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     const draftContent = fs.readFileSync(resolvedDraftPath, "utf8");
     fs.unlinkSync(resolvedDraftPath);
     payload = {
-      ref: `${options.type}:${options.name}`,
+      ref: proposeItemRef(stash, options.type, options.name), // WI-8.5a item_ref flip
       content: draftContent,
     };
   } else {
@@ -252,7 +267,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
   // asset name (e.g. path-cleanup), but only after validating that the ref is
   // well-formed and the type still matches the requested type.
-  const expectedRef = `${options.type}:${options.name}`;
+  const expectedRef = proposeItemRef(stash, options.type, options.name); // WI-8.5a item_ref flip
   let ref = expectedRef;
   if (payload.ref) {
     let parsedRef: ReturnType<typeof parseStoredRef>;
@@ -286,7 +301,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
         ...(result.stderr ? { stderr: result.stderr } : {}),
       };
     }
-    ref = `${parsedRef.type}:${parsedRef.name}`;
+    ref = proposeItemRef(stash, parsedRef.type, parsedRef.name); // WI-8.5a item_ref flip
   }
 
   const createInput: CreateProposalInput = {

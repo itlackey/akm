@@ -24,9 +24,16 @@ import {
   listProposals,
   type ProposalsContext,
 } from "../../../src/commands/proposal/repository";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../src/indexer/installations";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
+
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+}
 
 function freshStash(): string {
   const stash: SandboxedDir = makeStashDir();
@@ -74,7 +81,7 @@ describe("emitProposal facade", () => {
       expect("fileChanges" in result).toBe(false);
 
       const persisted = listProposals(stash, {}, ctx);
-      expect(persisted.map((p) => p.ref)).toEqual(["knowledge:guide.md"]);
+      expect(persisted.map((p) => p.ref)).toEqual([durableRef(stash, "knowledge", "guide.md")]);
     } finally {
       dataSb.cleanup();
     }
@@ -120,7 +127,7 @@ describe("emitProposal facade", () => {
       const result = emitProposal({ stashDir: stash }, baseInput("lesson:x.md"));
       expect(isProposalSkipped(result)).toBe(false);
       const rows = listProposals(stash);
-      expect(rows.map((p) => p.ref)).toEqual(["lesson:x.md"]);
+      expect(rows.map((p) => p.ref)).toEqual([durableRef(stash, "lesson", "x.md")]);
     } finally {
       dataSb.cleanup();
     }

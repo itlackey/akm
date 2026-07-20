@@ -27,6 +27,7 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { openStateDatabase } from "../../src/core/state-db";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -51,6 +52,12 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
+}
+
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmConfig {
@@ -624,7 +631,7 @@ describe("akmDistill — queued proposal", () => {
     expect(proposals.length).toBe(1);
     expect(proposals[0].source).toBe("distill");
     expect(proposals[0].sourceRun).toBe("run-xyz");
-    expect(proposals[0].ref).toBe("lesson:skill-deploy-lesson");
+    expect(proposals[0].ref).toBe(durableRef(stash, "lesson", "skill-deploy-lesson"));
     expect(proposals[0].payload.content).toContain("description: Prefer ripgrep over grep");
     expect(proposals[0].payload.frontmatter?.when_to_use).toBeDefined();
     expect(parseFrontmatter(proposals[0].payload.content).data.xrefs).toEqual(["skill:deploy"]);
@@ -776,7 +783,7 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe("knowledge:deploy-fact");
+    expect(proposals[0].ref).toBe(durableRef(stash, "knowledge", "deploy-fact"));
     expect(proposals[0].payload.content).toContain("xrefs:");
     expect(proposals[0].payload.content).toContain("memory:deploy-fact");
     expect(proposals[0].payload.content).toContain("Always connect the VPN");
@@ -814,7 +821,7 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe("knowledge:deploy");
+    expect(proposals[0].ref).toBe(durableRef(stash, "knowledge", "deploy"));
     expect(proposals[0].payload.content).toContain("# Deploy Guidance");
   });
 
@@ -1002,7 +1009,7 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe("lesson:memory-deploy-fact-lesson");
+    expect(proposals[0].ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
     expect(proposals[0].payload.content).toContain("when_to_use:");
     expect(proposals[0].payload.content).not.toContain("sources:");
 
@@ -1090,7 +1097,7 @@ describe("akmDistill — queued proposal", () => {
     expect(result.outcome).toBe("queued");
     expect(result.proposalKind).toBe("lesson");
     expect(listProposals(stash)).toHaveLength(1);
-    expect(listProposals(stash)[0].ref).toBe("lesson:memory-deploy-fact-lesson");
+    expect(listProposals(stash)[0].ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
   });
 });
 
@@ -1379,7 +1386,9 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("queued");
     const { listProposals } = await import("../../src/commands/proposal/repository");
-    const proposals = listProposals(stash, { ref: result.lessonRef });
+    // WI-8.5a: proposals.ref is now the durable item_ref; result.lessonRef is the
+    // legacy display spelling, so query the queue directly (one proposal here).
+    const proposals = listProposals(stash);
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];
     expect(proposal?.payload.content).toContain("Merged auth content");

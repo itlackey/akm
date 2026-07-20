@@ -46,6 +46,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
+import { isBundleSlug } from "../../core/asset/asset-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -81,7 +82,8 @@ import {
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { type AssetRef, parseStoredRef } from "../../migrate/legacy-ref-grammar";
+import { deriveInstallations, slugForPath } from "../../indexer/installations";
+import { type AssetRef, legacyConceptId, parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -343,6 +345,32 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
   );
 }
 
+/**
+ * WI-8.5a — the durable `proposals.ref` key in the final `bundle//conceptId`
+ * item_ref grammar (D-R3). The conceptId is BUILT from the D-R2 static table
+ * ({@link legacyConceptId} = `<stash-subdir>/<name>`), never looked up, so a
+ * proposal targeting a not-yet-existing asset (no index entry) still keys onto
+ * its final spelling. The bundle is the write-target stash's installation id —
+ * the SAME `deriveInstallations` derivation the index write path uses
+ * (`index-written-assets.ts`), so a proposal's ref matches the item_ref the
+ * indexer would mint for the accepted asset byte-for-byte.
+ *
+ * A proposal carrying a slug-clean registry origin re-keys onto that bundle; a
+ * non-slug registry origin (`github:owner/repo`, `npm:@scope/pkg`) cannot be
+ * re-keyed without inventing a slug (D-R5) and keeps its legacy
+ * `origin//type:name` spelling until the config `bundles` key lands. The
+ * `local`/`stash` primary-stash sentinels resolve to the write-target bundle.
+ */
+function proposalDurableRef(parsedRef: AssetRef, stashDir: string): string {
+  const conceptId = legacyConceptId(parsedRef.type, parsedRef.name);
+  const { origin } = parsedRef;
+  if (origin !== undefined && origin !== "local" && origin !== "stash") {
+    return isBundleSlug(origin) ? `${origin}//${conceptId}` : `${origin}//${parsedRef.type}:${parsedRef.name}`; // WI-8.5b: collapse (non-slug registry origin)
+  }
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return `${bundleId}//${conceptId}`;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -433,9 +461,7 @@ export function createProposal(
     }
   }
 
-  const normalizedRef = parsedRef.origin
-    ? `${parsedRef.origin}//${parsedRef.type}:${parsedRef.name}`
-    : `${parsedRef.type}:${parsedRef.name}`; // durable proposal key (Chunk-8 re-key)
+  const normalizedRef = proposalDurableRef(parsedRef, stashDir); // durable proposal.ref (WI-8.5a item_ref flip)
 
   // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
   // target is resolved against the proposal's OWN stash (a local snapshot —

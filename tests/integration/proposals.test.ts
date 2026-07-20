@@ -31,6 +31,7 @@ import { getDbPath, getIndexWriterLockPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -53,6 +54,16 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
+}
+
+/**
+ * The durable `proposals.ref` spelling WI-8.5a stores: the fully-qualified
+ * `<bundle>//<conceptId>` item_ref, where the bundle is the stash's installation
+ * id (`deriveInstallations`) — the same derivation `createProposal` uses.
+ */
+function durableRef(stashDir: string, type: string, name: string): string {
+  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 beforeEach(() => {
@@ -107,13 +118,13 @@ describe("createProposal / listProposals / getProposal", () => {
 
     // show
     const showResult = akmProposalShow({ stashDir: stash, id: created.id });
-    expect(showResult.proposal.ref).toBe("lesson:rg-over-grep");
+    expect(showResult.proposal.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
     expect(showResult.validation.ok).toBe(true);
 
     // accept
     const acceptResult = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(acceptResult.ok).toBe(true);
-    expect(acceptResult.ref).toBe("lesson:rg-over-grep");
+    expect(acceptResult.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
     expect(fs.existsSync(acceptResult.assetPath)).toBe(true);
     expect(fs.readFileSync(acceptResult.assetPath, "utf8")).toContain("Prefer rg over grep");
 
@@ -125,7 +136,7 @@ describe("createProposal / listProposals / getProposal", () => {
     // promoted event emitted
     const events = readEvents({ type: "promoted" });
     expect(events.events.length).toBe(1);
-    expect(events.events[0]?.ref).toBe("lesson:rg-over-grep");
+    expect(events.events[0]?.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
   });
 
@@ -676,12 +687,14 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     expect(result.checked).toBe(3);
     expect(result.retentionDays).toBe(30);
     const expiredRefs = result.expiredProposals.map((p) => p.ref).sort();
-    expect(expiredRefs).toEqual(["lesson:expire-old-a", "lesson:expire-old-b"]);
+    expect(expiredRefs).toEqual(
+      [durableRef(stash, "lesson", "expire-old-a"), durableRef(stash, "lesson", "expire-old-b")].sort(),
+    );
 
     // The fresh proposal remains pending.
     const stillPending = listProposals(stash, { status: "pending" });
     expect(stillPending.length).toBe(1);
-    expect(stillPending[0]?.ref).toBe("lesson:expire-fresh");
+    expect(stillPending[0]?.ref).toBe(durableRef(stash, "lesson", "expire-fresh"));
 
     // Expired proposals are archived with reason "expired: ...".
     const expiredArchived = listProposals(stash, { status: "rejected", includeArchive: true });
@@ -744,7 +757,9 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const events = readEvents({ type: "proposal_expired" });
     expect(events.events.length).toBe(2);
     const expiredRefs = events.events.map((e) => e.ref).sort();
-    expect(expiredRefs).toEqual(["lesson:event-a", "lesson:event-b"]);
+    expect(expiredRefs).toEqual(
+      [durableRef(stash, "lesson", "event-a"), durableRef(stash, "lesson", "event-b")].sort(),
+    );
   });
 
   test("retentionDays === 0 disables expiration entirely", () => {
@@ -1018,7 +1033,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
 
     const revertResult = await akmProposalRevert({ stashDir: stash, id: created.id, config });
     expect(revertResult.ok).toBe(true);
-    expect(revertResult.ref).toBe("lesson:rg-over-grep");
+    expect(revertResult.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
     // Prior content is back.
     expect(fs.readFileSync(lessonPath, "utf8")).toContain("ORIGINAL.");
     // Status flipped to reverted.
@@ -1029,7 +1044,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     // proposal_reverted event was emitted with the expected ref.
     const revertedEvents = readEvents({ type: "proposal_reverted" });
     expect(revertedEvents.events.length).toBe(1);
-    expect(revertedEvents.events[0]?.ref).toBe("lesson:rg-over-grep");
+    expect(revertedEvents.events[0]?.ref).toBe(durableRef(stash, "lesson", "rg-over-grep"));
   });
 
   test("reverting proposal A refuses to clobber content accepted from proposal B", async () => {
