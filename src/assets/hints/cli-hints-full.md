@@ -26,10 +26,10 @@ akm search "knowledge:"                       # List every asset of a type
 | `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
 
 Ref-prefix queries (`"<type>:<prefix>/"` or a bare `"<type>:"`) return a
-deterministic listing, not a relevance ranking. A full ref without the
-trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword search —
-resolving a single ref is `akm show`'s job — and an explicit `--type` flag
-wins over the type parsed from the query.
+deterministic listing, not a relevance ranking. Drop the trailing slash and the
+same text becomes an ordinary keyword search — resolving a single asset by its
+`<subdir>/<name>` id is `akm show`'s job — and an explicit `--type` flag wins
+over the type parsed from the query.
 
 ## Curate
 
@@ -46,15 +46,15 @@ akm curate "review architecture" --type workflow # Restrict to one asset type
 Display an asset by ref. Knowledge assets support view modes as positional arguments.
 
 ```sh
-akm show script:deploy.sh                     # Show script (returns run command)
-akm show skill:code-review                    # Show skill (returns full content)
-akm show command:release                      # Show command (returns template)
-akm show agent:architect                      # Show agent (returns system prompt)
-akm show workflow:ship-release                # Show parsed workflow steps
-akm show knowledge:guide toc                  # Table of contents
-akm show knowledge:guide section "Auth"       # Specific section
-akm show knowledge:guide lines 10 30          # Line range
-akm show knowledge:my-doc                    # Show content (local or remote)
+akm show scripts/deploy.sh                    # Show script (returns run command)
+akm show skills/code-review                   # Show skill (returns full content)
+akm show commands/release                     # Show command (returns template)
+akm show agents/architect                     # Show agent (returns system prompt)
+akm show workflows/ship-release               # Show parsed workflow steps
+akm show knowledge/guide toc                  # Table of contents
+akm show knowledge/guide section "Auth"       # Specific section
+akm show knowledge/guide lines 10 30          # Line range
+akm show knowledge/my-doc                     # Show content (local or remote)
 ```
 
 | Type | Key fields returned |
@@ -76,21 +76,21 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm remember "note" --target my-other-stash    # Route write to a named writable stash source
-akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
-akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the old asset (beliefState: superseded)
+akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
+akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the old asset (beliefState: superseded)
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
-akm import ./doc.md --xref knowledge:auth-flow # Merge provenance xrefs into the imported doc's frontmatter
-akm import ./new.md --supersedes knowledge:old # Import a correction AND demote the doc it replaces
+akm import ./doc.md --xref knowledge/auth-flow # Merge provenance xrefs into the imported doc's frontmatter
+akm import ./new.md --supersedes knowledge/old # Import a correction AND demote the doc it replaces
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflows/foo.yaml       # Validate a YAML v2/markdown workflow or ref; lists every error
-akm workflow next workflow:ship-release        # Start or resume the next workflow step
-akm feedback skill:code-review --positive      # Record that an asset helped
-akm feedback agent:reviewer --negative         # Record that an asset missed the mark
-akm feedback memory:deployment-notes --positive # Works for memories too
-akm feedback env:prod --positive               # Records env feedback without surfacing values
+akm workflow next workflows/ship-release       # Start or resume the next workflow step
+akm feedback skills/code-review --positive     # Record that an asset helped
+akm feedback agents/reviewer --negative        # Record that an asset missed the mark
+akm feedback memories/deployment-notes --positive # Works for memories too
+akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
@@ -143,12 +143,12 @@ entries — you edit the file with your own editor and akm loads it.
 akm env create prod                           # Create an empty env file
 akm env create prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across stashes with key names
-akm show env:prod                             # Inspect key names (never values or comments)
-akm env run env:prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
-akm env run env:prod -- $SHELL                # Open an interactive shell with values injected
-akm env export env:prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
-akm env path env:prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
-akm env remove env:prod                       # Delete the env file
+akm show env/prod                             # Inspect key names (never values or comments)
+akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
+akm env run env/prod -- $SHELL                # Open an interactive shell with values injected
+akm env export env/prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
+akm env path env/prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
+akm env remove env/prod                       # Delete the env file
 ```
 
 ## Secrets
@@ -158,11 +158,11 @@ cert) — one file = one value at `<stashDir>/secrets/<name>`. The ENTIRE file i
 the value; only the name is ever surfaced.
 
 ```sh
-printf '%s' "$TOKEN" | akm secret set secret:deploy-token   # Store a single value
+printf '%s' "$TOKEN" | akm secret set secrets/deploy-token  # Store a single value
 akm secret list                                             # List secrets (names only)
-akm secret path secret:deploy-token                         # Print the file path (Docker `_FILE`)
-akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
-akm secret remove secret:deploy-token                       # Delete the secret
+akm secret path secrets/deploy-token                        # Print the file path (Docker `_FILE`)
+akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm secret remove secrets/deploy-token                      # Delete the secret
 ```
 
 ## Workflows
@@ -176,8 +176,8 @@ workflow. Direct run-id commands still target the exact run.
 ```sh
 akm workflow template                         # Print a starter workflow template
 akm workflow create ship-release             # Scaffold a new workflow asset
-akm workflow start workflow:ship-release     # Start a new run in the current scope
-akm workflow next workflow:ship-release      # Advance to the next step (or auto-start) in the current scope
+akm workflow start workflows/ship-release    # Start a new run in the current scope
+akm workflow next workflows/ship-release     # Advance to the next step (or auto-start) in the current scope
 akm workflow complete <run-id>               # Mark a step complete and advance
 akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Resume a blocked or failed run
@@ -193,7 +193,7 @@ akm clone <ref>                               # Clone to working stash
 akm clone <ref> --name new-name               # Rename on clone
 akm clone <ref> --dest ./project/.claude       # Clone to custom location
 akm clone <ref> --force                       # Overwrite existing
-akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
+akm clone "npm:@scope/pkg//scripts/deploy.sh" # Clone from remote package
 ```
 
 When `--dest` is provided, `akm init` is not required first.
@@ -209,8 +209,8 @@ and re-keys the index row in place so the asset's learned ranking history
 survives.
 
 ```sh
-akm mv memory:projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
-akm mv memory:solo memory:renamed-solo             # Same-type ref-shaped target also accepted
+akm mv memories/projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
+akm mv memories/solo memories/renamed-solo           # Same-type ref-shaped target also accepted
 ```
 
 Wiki refs, cross-type targets, existing targets, `../` escapes, non-canonical
@@ -321,10 +321,10 @@ akm improve <ref>                                       # Propose improvement fo
 akm proposal list                                       # List pending proposals
 akm proposal show <id>                                  # Render the proposal body
 akm proposal diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix
-akm proposal diff skill:akm-dream                       # Diff by asset ref
+akm proposal diff skills/akm-dream                      # Diff by asset ref
 akm proposal accept 7c115132                            # Accept by UUID prefix
 akm proposal accept <id> --target team-stash            # Accept to a named writable stash source
-akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
 akm proposal revert <id>                                # Restore the pre-promotion content
 ```

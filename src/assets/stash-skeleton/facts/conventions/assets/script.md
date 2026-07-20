@@ -45,6 +45,6 @@ Use a script when a task is mechanical, repeatable, and better handled by a dete
 ## Placement & linking
 
 - Scripts are **reuse-born**: file a general helper under a tool/domain slug
-  from `fact:conventions/domains` (`script:build/release`). Use the project slug
+  from `facts/conventions/domains` (`scripts/build/release`). Use the project slug
   only when the script hard-codes project-specific paths, endpoints, or
   credentials.

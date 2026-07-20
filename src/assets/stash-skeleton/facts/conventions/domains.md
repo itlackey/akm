@@ -15,8 +15,8 @@ when_to_use: Surfaced to authoring agents alongside the other convention facts; 
 # Domain vocabulary
 
 Reuse-born assets (`knowledge`, `skill`, `wiki`, `fact`, `script`) take a
-**domain prefix** from this list, e.g. `knowledge:auth/oauth-refresh-races`,
-`skill:testing/flaky-test-triage` (for a wiki, the domain names the wiki:
+**domain prefix** from this list, e.g. `knowledge/auth/oauth-refresh-races`,
+`skills/testing/flaky-test-triage` (for a wiki, the domain names the wiki:
 `wikis/auth/`). Pick the closest match. If two fit, take the one naming the
 SUBJECT of the doc (what it teaches, not where it was met) and put the other in
 tags; if still tied, the earlier entry in this list wins. If nothing fits, write
@@ -41,8 +41,8 @@ volume justifies it.
 - `frontend` — UI, rendering, client state
 - `data-pipelines` — ETL, streaming, batch processing
 - `tooling` — dev tooling, editor/agent integration, scripts
-- `policies` — organizational/business rules the work must obey (PII handling, licensing) (`fact:policies/…`)
-- `conventions` — stash authoring house-rules (`fact:conventions/…`; auto-surfaced to authoring agents — keep them in this directory)
+- `policies` — organizational/business rules the work must obey (PII handling, licensing) (`facts/policies/…`)
+- `conventions` — stash authoring house-rules (`facts/conventions/…`; auto-surfaced to authoring agents — keep them in this directory)
 
 ## Canonical entity spellings
 
@@ -57,7 +57,7 @@ fragment the entity graph. Extend as your stash grows.
 
 Project and client slugs are **not** listed here — those are scope slugs for
 scope-born types (`memory`, `lesson`, `task`, `env`, `secret`). Keep their
-canonical spellings in a `category: meta` fact (e.g. `fact:active-projects`) so
+canonical spellings in a `category: meta` fact (e.g. `facts/active-projects`) so
 they auto-inject at authoring time — not in `.meta/`, which is unindexed and
 invisible mid-task — and `akm search` for an existing spelling before minting a
 new one.

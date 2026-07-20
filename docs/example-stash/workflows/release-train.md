@@ -11,7 +11,7 @@ params:
   base_branch: "Branch the release is cut from. Defaults to `main`."
   release_branch: "Optional release branch (e.g. `release/1.4.x`). Defaults to `release/{{ release_version }}` when omitted."
   release_pr_query: "GitHub search query that selects the PRs in scope for this release (e.g. `is:open milestone:1.4.0 label:release-blocker`). The orchestrator iterates this list."
-  deploy_env: "Env ref with deploy credentials (e.g. `env:production`). Loaded only at the shell level, never echoed."
+  deploy_env: "Env ref with deploy credentials (e.g. `env/production`). Loaded only at the shell level, never echoed."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   knowledge_wiki: "AKM wiki for release notes and retrospectives. Defaults to `engineering`."
   skip_dependency_audit: "Set to `true` to skip the nested dependency audit (e.g. for hotfixes). Defaults to `false`."
@@ -23,9 +23,9 @@ This workflow is an **orchestrator**. It does very little real work itself.
 Each major phase delegates to a *nested run* of another workflow in this
 stash:
 
-- pre-flight maintenance → `workflow:weekly-dependency-audit`
-- per-PR sign-off → one `workflow:code-review-pr` run per blocker
-- post-release learning → `workflow:release-retrospective` (defined inline
+- pre-flight maintenance → `workflows/weekly-dependency-audit`
+- per-PR sign-off → one `workflows/code-review-pr` run per blocker
+- post-release learning → `workflows/release-retrospective` (defined inline
   below as a sibling workflow you can split out)
 
 The pattern is intentional. Each nested workflow is *individually*
@@ -81,7 +81,7 @@ do not duplicate that logic here — we *call* it.
 2. Start the nested run, passing through the parameters it needs:
 
    ```sh
-   akm workflow start workflow:weekly-dependency-audit \
+   akm workflow start workflows/weekly-dependency-audit \
      --params '{"package_manager":"bun","base_branch":"{{ base_branch }}",
                 "freeze_list":[]}'
    ```
@@ -165,7 +165,7 @@ the verdicts.
    pattern):
 
    ```sh
-   akm workflow start workflow:code-review-pr \
+   akm workflow start workflows/code-review-pr \
      --params '{"pr_ref":"gh:itlackey/akm#<num>","conventions_query":"<title>",
                 "knowledge_wiki":"{{ knowledge_wiki }}"}'
    ```
@@ -244,7 +244,7 @@ than burying the retro inside the orchestrator.
 1. Start the nested retrospective run:
 
    ```sh
-   akm workflow start workflow:release-retrospective \
+   akm workflow start workflows/release-retrospective \
      --params '{"release_version":"{{ release_version }}",
                 "orchestrator_run_id":"{{ runId }}",
                 "knowledge_wiki":"{{ knowledge_wiki }}"}'
@@ -262,7 +262,7 @@ than burying the retro inside the orchestrator.
 3. When the retro finishes, link its wiki page from `release-book.md`
    under `Artefacts`.
 
-If `workflow:release-retrospective` does not yet exist in the stash,
+If `workflows/release-retrospective` does not yet exist in the stash,
 this step blocks with a note pointing the next agent to create it —
 that creation work is itself a small `ship-feature-from-spec` run, and
 recording the gap in the run is more valuable than papering it over with

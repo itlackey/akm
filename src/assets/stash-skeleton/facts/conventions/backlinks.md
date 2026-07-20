@@ -26,15 +26,15 @@ lever — which means both too few and too many hurt.
 description: OAuth refresh-token race on token rotation
 tags: [auth, projectA]
 xrefs:
-  - knowledge:auth/vendor-x-token-api   # provenance: what this was synthesized from
-  - lesson:projectA/token-refresh-gotcha # one real associative link
+  - knowledge/auth/vendor-x-token-api   # provenance: what this was synthesized from
+  - lessons/projectA/token-refresh-gotcha # one real associative link
 ---
 ```
 
 ## Link rules
 
 - **One xref is mandatory when the asset derives from another: cite the source
-  ref** (`memory:projectA/token-quirk` xrefs `knowledge:auth/vendor-x-token-api`
+  ref** (`memories/projectA/token-quirk` xrefs `knowledge/auth/vendor-x-token-api`
   — it also makes this asset findable from searches for its source). An
   original observation with no source carries none — never invent provenance.
   `akm remember`/`akm import` write this channel via `--xref <ref>`
@@ -47,7 +47,7 @@ xrefs:
   xref makes this asset a false search match for the other topic, and a wrong
   relationship asserted in prose poisons the entity graph. A relationship you
   want the graph to learn must be named in the body (e.g. open with "Corrects
-  knowledge:auth/oauth-refresh-races").
+  knowledge/auth/oauth-refresh-races").
 - **Cap total xrefs at ~5 (a heuristic, not a measured threshold).** Each xref
   folds its ref tokens into THIS asset's search hints — past a handful, the
   asset matches queries about several other topics and its own ranking signal
@@ -78,7 +78,7 @@ open the body with a plain title plus a one-line
 orientation naming what it is, its scope/domain, and its key entities in
 canonical spelling (`Postgres`, `OAuth`, `TLS`, `Acme`) — the entity/relation
 graph is extracted from body prose, and readers land here from `akm show`.
-Keep the canonical-spelling list in `fact:conventions/domains` so agents don't
+Keep the canonical-spelling list in `facts/conventions/domains` so agents don't
 fragment `postgres` / `postgresql` / `pg`.
 
 ## Hubs are optional, not per-namespace obligations

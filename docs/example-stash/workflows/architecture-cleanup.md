@@ -9,7 +9,7 @@ tags:
 params:
   target_path: "Repository root or subdirectory to clean up. Defaults to the current workspace root."
   context_docs: "Optional comma-separated list of docs, ADRs, or specs to anchor the cleanup."
-  reference_skill: "Skill to load for cleanup rules and references. Defaults to `skill:architecture-cleanup`."
+  reference_skill: "Skill to load for cleanup rules and references. Defaults to `skills/architecture-cleanup`."
   base_branch: "Branch to diff against when reviewing behavior parity. Defaults to `main`."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   review_scope: "Optional focus area such as `search`, `indexing`, `agent integrations`, or `session logs`."

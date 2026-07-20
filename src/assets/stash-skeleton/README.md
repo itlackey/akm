@@ -28,22 +28,22 @@ on the next `akm index` run (or when the background improve pipeline picks them 
 ## How to organize assets
 
 A file's path under its type directory becomes part of its ref
-(`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`),
+(`knowledge/auth/oauth-refresh-races.md` → `knowledge/auth/oauth-refresh-races`),
 and its segments are search terms: `akm search "auth" --type knowledge` narrows
 to that subtree. Retrieval is search, not folder-browse, so pick subdirectories
 deliberately. The house rules live in three convention facts under
 `facts/conventions/` and are surfaced to agents automatically when they author
 assets:
 
-- **`fact:conventions/organization`** — the single path axis, chosen by asset
+- **`facts/conventions/organization`** — the single path axis, chosen by asset
   type. **Scope-born** types (`memory`, `lesson`, `task`, `env`, `secret`) go
   under the current **project/client** slug; **reuse-born** types (`knowledge`,
   `skill`, `wiki`, `fact`, `script`) go under a stable **domain**; global types
   stay at the type root.
-- **`fact:conventions/backlinks`** — how to cross-link: a provenance xref
+- **`facts/conventions/backlinks`** — how to cross-link: a provenance xref
   whenever an asset derives from another, sparse real associative links,
   corrections as new assets, canonical entity naming.
-- **`fact:conventions/domains`** — the (editable) domain vocabulary for
+- **`facts/conventions/domains`** — the (editable) domain vocabulary for
   reuse-born assets, plus canonical entity spellings.
 
 Per-type nuances live in `facts/conventions/assets/<type>.md`. All of these are

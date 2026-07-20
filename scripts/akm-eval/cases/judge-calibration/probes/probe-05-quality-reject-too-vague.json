@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-05-quality-reject-too-vague",
   "assetType": "memory",
-  "assetRef": "memory:probe-05-vague-tooling-note",
+  "assetRef": "memories/probe-05-vague-tooling-note",
   "asset": {
     "frontmatter": {
       "description": "Tooling can be tricky sometimes; be careful.",

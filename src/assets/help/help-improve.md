@@ -16,7 +16,7 @@ Modes:
 
   akm improve <ref>
       Improve one specific asset.
-      Example: akm improve workflow:release-checklist
+      Example: akm improve workflows/release-checklist
 
 What it does:
   - reviews feedback and recent history
@@ -74,8 +74,8 @@ Examples:
   akm improve
   akm improve memory
   akm improve skill
-  akm improve skill:code-review
-  akm improve workflow:incident-response --task "reduce duplication"
+  akm improve skills/code-review
+  akm improve workflows/incident-response --task "reduce duplication"
   akm improve --strategy quick
   akm improve --strategy memory-focus
   akm improve --no-sync

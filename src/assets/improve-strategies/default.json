@@ -4,7 +4,7 @@
     "reflect": {
       "enabled": true,
       "limit": 25,
-      "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"]
+      "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "workflow"]
     },
     "distill": { "enabled": true, "allowedTypes": ["memory"], "requirePlannedRefs": true },
     "consolidate": { "enabled": true, "allowedTypes": ["memory"], "minPoolSize": 500 },

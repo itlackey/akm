@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-04-review-borderline-novelty",
   "assetType": "memory",
-  "assetRef": "memory:probe-04-pairing-bandwidth-policy",
+  "assetRef": "memories/probe-04-pairing-bandwidth-policy",
   "asset": {
     "frontmatter": {
       "description": "Pairing sessions over video should be capped at 90 minutes; longer sessions degrade decision quality and the recorded artifacts tend to be unusable.",

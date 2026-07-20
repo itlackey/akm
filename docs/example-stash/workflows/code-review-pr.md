@@ -8,7 +8,7 @@ tags:
   - memory
 params:
   pr_ref: "Pull request reference (e.g. `gh:itlackey/akm#214`, or a freeform PR ID for non-GitHub forges)."
-  reviewer_persona: "Optional persona ref to bias the review (e.g. `skill:senior-typescript-reviewer`, `skill:security-reviewer`). Defaults to a generalist reviewer."
+  reviewer_persona: "Optional persona ref to bias the review (e.g. `skills/senior-typescript-reviewer`, `skills/security-reviewer`). Defaults to a generalist reviewer."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   conventions_query: "Search query used to discover project conventions in the stash (e.g. `error handling conventions`, `react component style`). Defaults to the PR title."
   knowledge_wiki: "AKM wiki to consult for prior architectural decisions and to update with new heuristics. Defaults to `engineering`."

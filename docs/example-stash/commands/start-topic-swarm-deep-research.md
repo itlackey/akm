@@ -9,7 +9,7 @@ Start the combined swarm-plus-deep-research workflow for this goal:
 
 Use this procedure:
 
-1. Ensure the workflow asset exists in the stash. If `workflow:research/topic-swarm-select-and-deep-research` does not exist yet, create it from `docs/example-stash/workflows/topic-swarm-select-and-deep-research.md`:
+1. Ensure the workflow asset exists in the stash. If `workflows/research/topic-swarm-select-and-deep-research` does not exist yet, create it from `docs/example-stash/workflows/topic-swarm-select-and-deep-research.md`:
 
 ```sh
 akm workflow create research/topic-swarm-select-and-deep-research --from docs/example-stash/workflows/topic-swarm-select-and-deep-research.md
@@ -38,13 +38,13 @@ akm workflow create research/topic-swarm-select-and-deep-research --from docs/ex
 3. Start the run:
 
 ```sh
-akm workflow start workflow:research/topic-swarm-select-and-deep-research --params '<paste-the-json-template-after-filling-it>'
+akm workflow start workflows/research/topic-swarm-select-and-deep-research --params '<paste-the-json-template-after-filling-it>'
 ```
 
 4. Immediately inspect the first actionable step:
 
 ```sh
-akm workflow next workflow:research/topic-swarm-select-and-deep-research
+akm workflow next workflows/research/topic-swarm-select-and-deep-research
 ```
 
 5. Record the returned run id and continue the run step by step. If the goal is already narrow and topic selection is unnecessary, prefer the standalone workflow in `docs/example-stash/workflows/deep-research-auto-research.md` instead.

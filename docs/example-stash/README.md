@@ -65,9 +65,9 @@ engineering work:
 
 - `workflows/release-train.md` is an **orchestrator** that delegates to
   other workflows in this stash as nested runs:
-  - `workflow:weekly-dependency-audit` for pre-flight maintenance
-  - `workflow:code-review-pr` once per release-blocker PR
-  - `workflow:release-retrospective` (sibling, to be created) for the
+  - `workflows/weekly-dependency-audit` for pre-flight maintenance
+  - `workflows/code-review-pr` once per release-blocker PR
+  - `workflows/release-retrospective` (sibling, to be created) for the
     post-release learning loop
 
   Each nested run has its own `runId`, can be inspected with
@@ -86,7 +86,7 @@ engineering work:
 4. For routine engineering work, pick the common-task workflow that matches
    the job — bug, dep audit, review, feature — instead of running the
    full research stack.
-5. For a release, run `workflow:release-train` and let it spawn the nested
+5. For a release, run `workflows/release-train` and let it spawn the nested
    runs it needs.
 
 As this example stash grows, it can hold more asset types without overloading

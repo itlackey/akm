@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-03-review-mixed-feedback",
   "assetType": "memory",
-  "assetRef": "memory:probe-03-cache-invalidation-heuristic",
+  "assetRef": "memories/probe-03-cache-invalidation-heuristic",
   "asset": {
     "frontmatter": {
       "description": "When the response cache misbehaves, restart the worker before reaching for a deeper invalidation strategy — but only for short-lived caches.",

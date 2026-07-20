@@ -11,12 +11,12 @@ For any task, follow this loop:
 4. `akm feedback <ref> --positive` — record success
 
 For workflow tasks:
-1. `akm workflow next workflow:<name>` — get current step instructions
+1. `akm workflow next workflows/<name>` — get current step instructions
 2. Do the step work in your workspace
 3. `akm workflow complete <run-id> --step <step-id>` — mark done, get next step
 
 Workflow runs are scoped to your current project/worktree/directory. Ref-based
-commands like `workflow next workflow:<name>`, `workflow status workflow:<name>`,
+commands like `workflow next workflows/<name>`, `workflow status workflows/<name>`,
 and `workflow list` operate within the current scope only.
 
 ## Quick Reference
@@ -31,20 +31,20 @@ akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm remember "note" --target my-stash         # Route write to a named writable stash source
-akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable)
-akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the superseded asset
+akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)
+akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm wiki list                                 # List available wikis
 akm wiki ingest <name>                        # Dispatch an agent to run the ingest workflow (uses defaults.engine or --engine)
 akm wiki stash <name> ./paper.md --target my-stash # Route wiki stash write to a named source
-akm proposal diff skill:akm-dream             # Diff proposal by ref, UUID, or 8-char prefix
+akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
-akm proposal reject skill:my-skill --reason "..."  # Reject by ref
+akm proposal reject skills/my-skill --reason "..."  # Reject by ref
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm mv memory:old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
+akm mv memories/old-note new-note             # Rename an asset: inbound refs rewritten, ranking history preserved
 akm sync                                      # Commit (and push if writable remote) changes in the primary stash (--no-push to commit only)
 akm improve --no-sync                         # Run improve without the end-of-run auto-commit
 akm improve --no-push                         # Auto-commit but skip push for this run

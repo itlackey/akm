@@ -9,7 +9,7 @@ tags:
 params:
   package_manager: "Package manager in use (`bun`, `pnpm`, `npm`, `yarn`, or `cargo`). Defaults to `bun`."
   base_branch: "Branch to cut the audit branch from. Defaults to `main`."
-  env: "Optional env ref with private-registry credentials (e.g. `env:npm-readonly`). Loaded only at the shell level, never echoed."
+  env: "Optional env ref with private-registry credentials (e.g. `env/npm-readonly`). Loaded only at the shell level, never echoed."
   workspace_dir: "Directory for run artefacts. Defaults to `.akm-run/{{ runId }}`."
   max_pr_size: "Soft cap on the number of packages bundled into a single PR. Defaults to `8`."
   freeze_list: "Optional JSON array of package names that must not be upgraded this week (e.g. `[\"react\", \"vite\"]`)."

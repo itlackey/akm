@@ -14,7 +14,7 @@ when_to_use: Surfaced to authoring agents when they create or move any non-wiki 
 # Stash organization conventions
 
 A file's path under its type directory **becomes part of its ref**
-(`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`).
+(`knowledge/auth/oauth-refresh-races.md` → `knowledge/auth/oauth-refresh-races`).
 That ref is an address other assets cite, and its segments are search terms —
 `akm search "projectA" --type memory` reconstructs a project's memories. The
 path is therefore the one facet you **cannot express twice and cannot change
@@ -39,18 +39,18 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   `git remote`/package.json spell it) — ranking auto-boosts assets whose name
   or tags match the current repo. Client/team slugs get no such boost; just
   reuse the existing spelling.
-  - `memory:projectA/auth-token-refresh`
-  - `lesson:clientX/migration-rollback-gotcha`
-  - `secret:clientX/api-key`
+  - `memories/projectA/auth-token-refresh`
+  - `lessons/clientX/migration-rollback-gotcha`
+  - `secrets/clientX/api-key`
 - **Reuse-born types → stable domain from a short vocabulary.**
   `knowledge`, `skill`, `wiki`, `fact`, `script`. These are meant to be reused
   across projects, so co-locate them by subject — any project retrieves them
   with `akm search "<domain>" --type <type>`. For a wiki the domain names the
   wiki itself (`wikis/auth/`); inside it, its `schema.md` and wiki lint govern
   layout, not these rules.
-  - `knowledge:auth/oauth-refresh-races`
-  - `skill:testing/flaky-test-triage`
-  - `fact:policies/pii-handling`
+  - `knowledge/auth/oauth-refresh-races`
+  - `skills/testing/flaky-test-triage`
+  - `facts/policies/pii-handling`
 - **Global-by-nature types → type root or a tool slug.**
   `command`, `agent`, `workflow`, and stash-wide `env`. Scoping these to a
   project rarely improves precision and only adds rename risk. `env` defaults
@@ -78,13 +78,13 @@ cross-project reuse.
   author, `wip`/`done`. Each one changes and forces a ref-breaking rename. They
   belong in frontmatter tags.
 - **Flat fallback beats an invented folder.** If no domain fits a reuse-type
-  asset, write it at the type root (`knowledge:http-retry-basics`) rather than
+  asset, write it at the type root (`knowledge/http-retry-basics`) rather than
   coining a one-off domain. An unneeded folder is pure rename liability; propose
   a vocabulary addition instead of fragmenting the tree.
 - **Reuse an existing slug before minting a new one.** Before coining a new
   project/client/domain slug, `akm search` for the existing spelling
   (`acme` vs `acme-corp`) so the prefix does not fragment. Keep the domain
-  vocabulary in `fact:conventions/domains`.
+  vocabulary in `facts/conventions/domains`.
 - **Off-axis facets go in `tags:`, not a bare field.** The indexed FTS fields are
   name, description, tags, hints, and content (headings only — body prose is
   not indexed by default; the opt-in `index.indexBodyOpening` flag adds just
