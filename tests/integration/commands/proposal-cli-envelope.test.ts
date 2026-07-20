@@ -37,7 +37,7 @@ function makeStashDir(): string {
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
 
-function seedProposal(stash: string, ref = "lesson:rg-over-grep"): string {
+function seedProposal(stash: string, ref = "lessons/rg-over-grep"): string {
   const result = createProposal(stash, {
     ref,
     source: "reflect",

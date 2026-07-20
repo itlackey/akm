@@ -99,7 +99,7 @@ describe("createProposal / listProposals / getProposal", () => {
     const config = makeConfig(stash);
 
     const createdResult = createProposal(stash, {
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       source: "distill",
       sourceRun: "run-123",
       force: true,
@@ -143,7 +143,7 @@ describe("createProposal / listProposals / getProposal", () => {
   test("reject path: archive contains entry, status rejected, rejected event emitted", async () => {
     const stash = makeStashDir();
     const createdResult2 = createProposal(stash, {
-      ref: "lesson:bad-idea",
+      ref: "lessons/bad-idea",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -177,13 +177,13 @@ describe("createProposal / listProposals / getProposal", () => {
     // isolation, not the dedup policy.
     const stash = makeStashDir();
     const aResult = createProposal(stash, {
-      ref: "lesson:dup",
+      ref: "lessons/dup",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
     });
     const bResult = createProposal(stash, {
-      ref: "lesson:dup",
+      ref: "lessons/dup",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -205,7 +205,7 @@ describe("diff path", () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const proposalResult = createProposal(stash, {
-      ref: "lesson:fresh",
+      ref: "lessons/fresh",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -229,7 +229,7 @@ describe("diff path", () => {
       "utf8",
     );
     const proposalResult2 = createProposal(stash, {
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -250,7 +250,7 @@ describe("validation failure", () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const proposalResult3 = createProposal(stash, {
-      ref: "lesson:no-fields",
+      ref: "lessons/no-fields",
       source: "distill",
       force: true,
       payload: { content: `---\ndescription: ""\nwhen_to_use: ""\n---\n\nbody\n` },
@@ -283,7 +283,7 @@ describe("validation failure", () => {
     let code: string | undefined;
     try {
       createProposal(stash, {
-        ref: "lesson:empty",
+        ref: "lessons/empty",
         source: "distill",
         force: true,
         payload: { content: "" },
@@ -305,7 +305,7 @@ describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
   test("rejecting an already-archived proposal → UsageError with .code INVALID_FLAG_VALUE", async () => {
     const stash = makeStashDir();
     const createdResult3 = createProposal(stash, {
-      ref: "lesson:once",
+      ref: "lessons/once",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -369,7 +369,7 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
     // lint at accept-time because the required ## When to use section is
     // missing. This exercises the validation-failure → no-promote path.
     const proposalResult5 = createProposal(stash, {
-      ref: "lesson:invalid",
+      ref: "lessons/invalid",
       source: "distill",
       force: true,
       payload: { content: "x", frontmatter: { description: "stub" } },
@@ -401,7 +401,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   test("fingerprint_match: a second mint with identical inputs is skipped without force", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
-      ref: "lesson:dup-test",
+      ref: "lessons/dup-test",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
@@ -410,7 +410,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     // Same target (absent), source, and (absent) model — the differing content
     // is not a fingerprint term (§23.6: INPUT fingerprint).
     const second = createProposal(stash, {
-      ref: "lesson:dup-test",
+      ref: "lessons/dup-test",
       source: "reflect",
       payload: { content: "Different content, but same ref+source." },
     });
@@ -422,7 +422,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   test("fingerprint changes with the target's before-state: the second mint queues alongside", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
-      ref: "lesson:hash-test",
+      ref: "lessons/hash-test",
       source: "distill",
       payload: { content: VALID_LESSON },
     });
@@ -435,7 +435,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
 
     const second = createProposal(stash, {
-      ref: "lesson:hash-test",
+      ref: "lessons/hash-test",
       source: "distill",
       payload: { content: VALID_LESSON },
     });
@@ -445,7 +445,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   test("rejection_backoff: new inputs are skipped for ref+source within the window after rejection", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
-      ref: "lesson:cooldown-test",
+      ref: "lessons/cooldown-test",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
@@ -459,7 +459,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
 
     const second = createProposal(stash, {
-      ref: "lesson:cooldown-test",
+      ref: "lessons/cooldown-test",
       source: "reflect",
       payload: { content: "Completely different content that is not the same hash." },
     });
@@ -472,14 +472,14 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   test("force:true bypasses all guards", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
-      ref: "lesson:force-test",
+      ref: "lessons/force-test",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
     expect(isProposalSkipped(first)).toBe(false);
 
     const second = createProposal(stash, {
-      ref: "lesson:force-test",
+      ref: "lessons/force-test",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -490,12 +490,12 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
   test("different sources for same ref are independent — no cross-source dedup", () => {
     const stash = makeStashDir();
     const reflectResult = createProposal(stash, {
-      ref: "lesson:cross-source",
+      ref: "lessons/cross-source",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
     const distillResult = createProposal(stash, {
-      ref: "lesson:cross-source",
+      ref: "lessons/cross-source",
       source: "distill",
       payload: { content: VALID_LESSON },
     });
@@ -536,7 +536,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
   test("createProposal accepts valid sources without warnings in the proposal record", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
-      ref: "lesson:f4-valid-source",
+      ref: "lessons/f4-valid-source",
       source: "reflect",
       sourceRun: "run-abc-123",
       payload: { content: VALID_LESSON },
@@ -551,7 +551,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
     const stash = makeStashDir();
     // Unknown source should NOT throw — it emits a warning but creates the proposal.
     const result = createProposal(stash, {
-      ref: "lesson:f4-unknown-source",
+      ref: "lessons/f4-unknown-source",
       source: "custom-extension",
       payload: { content: VALID_LESSON },
     });
@@ -565,7 +565,7 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
   test("accepts a valid confidence in [0, 1] and persists it on the proposal", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
-      ref: "lesson:confidence-valid",
+      ref: "lessons/confidence-valid",
       source: "reflect",
       sourceRun: "run-c1",
       force: true,
@@ -583,14 +583,14 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
   test("accepts boundary values 0 and 1 exactly", () => {
     const stash = makeStashDir();
     const zero = createProposal(stash, {
-      ref: "lesson:confidence-zero",
+      ref: "lessons/confidence-zero",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
       confidence: 0,
     });
     const one = createProposal(stash, {
-      ref: "lesson:confidence-one",
+      ref: "lessons/confidence-one",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -604,7 +604,7 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
   test("drops confidence when omitted (round-trip preserves the absence)", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
-      ref: "lesson:confidence-undefined",
+      ref: "lessons/confidence-undefined",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -618,10 +618,10 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
   test("rejects (drops) out-of-range values: NaN, Infinity, -0.1, 1.5", () => {
     const stash = makeStashDir();
     const cases: Array<{ ref: string; value: number }> = [
-      { ref: "lesson:c-nan", value: Number.NaN },
-      { ref: "lesson:c-inf", value: Number.POSITIVE_INFINITY },
-      { ref: "lesson:c-neg", value: -0.1 },
-      { ref: "lesson:c-hi", value: 1.5 },
+      { ref: "lessons/c-nan", value: Number.NaN },
+      { ref: "lessons/c-inf", value: Number.POSITIVE_INFINITY },
+      { ref: "lessons/c-neg", value: -0.1 },
+      { ref: "lessons/c-hi", value: 1.5 },
     ];
     for (const { ref, value } of cases) {
       const created = createProposal(stash, {
@@ -651,7 +651,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const oldA = createProposal(
       stash,
       {
-        ref: "lesson:expire-old-a",
+        ref: "lessons/expire-old-a",
         source: "reflect",
         force: true,
         payload: { content: VALID_LESSON },
@@ -661,7 +661,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const oldB = createProposal(
       stash,
       {
-        ref: "lesson:expire-old-b",
+        ref: "lessons/expire-old-b",
         source: "distill",
         force: true,
         payload: { content: VALID_LESSON },
@@ -671,7 +671,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const fresh = createProposal(
       stash,
       {
-        ref: "lesson:expire-fresh",
+        ref: "lessons/expire-fresh",
         source: "reflect",
         force: true,
         payload: { content: VALID_LESSON },
@@ -712,7 +712,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     createProposal(
       stash,
       {
-        ref: "lesson:idem-1",
+        ref: "lessons/idem-1",
         source: "reflect",
         force: true,
         payload: { content: VALID_LESSON },
@@ -734,7 +734,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const a = createProposal(
       stash,
       {
-        ref: "lesson:event-a",
+        ref: "lessons/event-a",
         source: "reflect",
         force: true,
         payload: { content: VALID_LESSON },
@@ -744,7 +744,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const b = createProposal(
       stash,
       {
-        ref: "lesson:event-b",
+        ref: "lessons/event-b",
         source: "distill",
         force: true,
         payload: { content: VALID_LESSON },
@@ -770,7 +770,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     createProposal(
       stash,
       {
-        ref: "lesson:ttl-off",
+        ref: "lessons/ttl-off",
         source: "reflect",
         force: true,
         payload: { content: VALID_LESSON },
@@ -791,7 +791,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const created = createProposal(stash, {
-      ref: "lesson:serialized-proposal",
+      ref: "lessons/serialized-proposal",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -813,7 +813,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   test("reject waits for the shared asset-mutation lease", async () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
-      ref: "lesson:serialized-reject",
+      ref: "lessons/serialized-reject",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -841,7 +841,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Original backup content\nwhen_to_use: Testing strict backup reads\n---\n\nORIGINAL.\n";
     fs.writeFileSync(assetPath, original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:backup-read-failure",
+      ref: "lessons/backup-read-failure",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -870,7 +870,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Original serialized revert\nwhen_to_use: Testing mutation serialization\n---\n\nORIGINAL.\n";
     fs.writeFileSync(assetPath, original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:serialized-revert",
+      ref: "lessons/serialized-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -896,7 +896,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     await akmIndex({ stashDir: stash });
 
     const created = createProposal(stash, {
-      ref: "lesson:immediate-index",
+      ref: "lessons/immediate-index",
       source: "distill",
       force: true,
       payload: {
@@ -920,7 +920,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     await akmIndex({ stashDir: stash });
 
     const created = createProposal(stash, {
-      ref: "lesson:revert-index",
+      ref: "lessons/revert-index",
       source: "distill",
       force: true,
       payload: {
@@ -949,7 +949,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     fs.writeFileSync(path.join(stash, "memories", "workflow-index-seed.md"), "Index seed.\n", "utf8");
     await akmIndex({ stashDir: stash });
     const created = createProposal(stash, {
-      ref: "workflow:revert-unindexable",
+      ref: "workflows/revert-unindexable",
       source: "propose",
       force: true,
       payload: {
@@ -977,7 +977,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     );
 
     const created = createProposal(stash, {
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       source: "distill",
       sourceRun: "run-backup",
       force: true,
@@ -1000,7 +1000,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const created = createProposal(stash, {
-      ref: "lesson:brand-new",
+      ref: "lessons/brand-new",
       source: "reflect",
       sourceRun: "run-new",
       force: true,
@@ -1020,7 +1020,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const lessonPath = path.join(stash, "lessons", "rg-over-grep.md");
     fs.writeFileSync(lessonPath, `---\ndescription: Original D\nwhen_to_use: Original U\n---\n\nORIGINAL.\n`, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1061,7 +1061,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const bContent =
       "---\ndescription: Proposal B accepted content\nwhen_to_use: Testing revert ownership\n---\n\nPROPOSAL B.\n";
     const proposalA = createProposal(stash, {
-      ref: "lesson:stacked-proposals",
+      ref: "lessons/stacked-proposals",
       source: "distill",
       force: true,
       payload: { content: aContent },
@@ -1071,7 +1071,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(getProposal(stash, proposalA.id).acceptedContentHash).toBeDefined();
 
     const proposalB = createProposal(stash, {
-      ref: "lesson:stacked-proposals",
+      ref: "lessons/stacked-proposals",
       source: "distill",
       force: true,
       payload: { content: bContent },
@@ -1103,7 +1103,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Legacy original content\nwhen_to_use: Testing legacy revert ownership\n---\n\nORIGINAL.\n";
     fs.writeFileSync(assetPath, original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:legacy-safe-revert",
+      ref: "lessons/legacy-safe-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1147,7 +1147,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Legacy ambiguity original\nwhen_to_use: Testing cross-target ownership attacks\n---\n\nORIGINAL.\n";
     fs.writeFileSync(assetPath, original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:legacy-ambiguous-revert",
+      ref: "lessons/legacy-ambiguous-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1181,7 +1181,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Legacy absent original\nwhen_to_use: Testing deterministic absent restoration\n---\n\nORIGINAL.\n";
     fs.writeFileSync(assetPath, original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:legacy-absent-revert",
+      ref: "lessons/legacy-absent-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1222,7 +1222,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "utf8",
     );
     const created = createProposal(stash, {
-      ref: "lesson:legacy-absent-ambiguous",
+      ref: "lessons/legacy-absent-ambiguous",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1258,7 +1258,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "utf8",
     );
     const created = createProposal(stash, {
-      ref: "lesson:legacy-diverged-revert",
+      ref: "lessons/legacy-diverged-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1295,7 +1295,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       "---\ndescription: Bound original content\nwhen_to_use: Testing target ownership binding\n---\n\nORIGINAL.\n";
     fs.writeFileSync(path.join(stash, "lessons", "bound-revert.md"), original, "utf8");
     const created = createProposal(stash, {
-      ref: "lesson:bound-revert",
+      ref: "lessons/bound-revert",
       source: "distill",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1315,7 +1315,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const created = createProposal(stash, {
-      ref: "lesson:not-accepted-revert",
+      ref: "lessons/not-accepted-revert",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1340,7 +1340,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const config = makeConfig(stash);
     // No pre-existing asset → backup will be undefined.
     const created = createProposal(stash, {
-      ref: "lesson:no-backup-revert",
+      ref: "lessons/no-backup-revert",
       source: "reflect",
       force: true,
       payload: { content: VALID_LESSON },
@@ -1386,7 +1386,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   test("new target: single create change, after IS the payload content, no beforeHash", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
-      ref: "lesson:envelope-new",
+      ref: "lessons/envelope-new",
       source: "reflect",
       sourceRun: "run-envelope",
       force: true,
@@ -1411,7 +1411,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     const stash = makeStashDir();
     const before = "---\ndescription: old\n---\n\nOld body.\n";
     const created0 = createProposal(stash, {
-      ref: "lesson:envelope-existing",
+      ref: "lessons/envelope-existing",
       source: "reflect",
       sourceRun: "run-envelope",
       force: true,
@@ -1424,7 +1424,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     fs.writeFileSync(abs, before, "utf8");
 
     const created = createProposal(stash, {
-      ref: "lesson:envelope-existing",
+      ref: "lessons/envelope-existing",
       source: "reflect",
       sourceRun: "run-envelope",
       force: true,
@@ -1440,7 +1440,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   test("round-trip: changes + beforeHash survive persistence (entry-0 after from the content column)", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
-      ref: "lesson:envelope-roundtrip",
+      ref: "lessons/envelope-roundtrip",
       source: "reflect",
       sourceRun: "run-envelope",
       force: true,
@@ -1465,7 +1465,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   test("legacy row (no persisted envelope) synthesizes one update change with the path sentinel", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
-      ref: "lesson:envelope-legacy",
+      ref: "lessons/envelope-legacy",
       source: "reflect",
       sourceRun: "run-envelope",
       force: true,

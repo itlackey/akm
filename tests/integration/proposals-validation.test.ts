@@ -87,14 +87,12 @@ describe("createProposal validation", () => {
       caught = err as { code?: string; message?: string };
     }
     expect(caught?.code).toBe("INVALID_PROPOSAL");
-    // Chunk 1.5 opened parseAssetRef's type token: "bogusType" no longer
-    // fails there (invalid_ref reason). Rejection now comes one check later,
-    // from this function's OWN `TYPE_DIRS`-keyed gate (repository.ts:411,
-    // `unknown_type` reason) — that gate is untouched by chunk 1.5 (anchors
-    // §E.3 phasing note: a foreign type accepted at the ref-parsing layer
-    // can still fail at a TYPE_DIRS-gated placement check). Same rejection
-    // code, different reason/message.
-    expect(caught?.message).toMatch(/Unknown asset type/i);
+    // Post-Chunk-5/8 ref-grammar flip: `parseRefInput` is new-grammar only, so
+    // a legacy `type:name` conceptId (`bogusType:foo` — no `<stash-subdir>/`
+    // segment) fails at the parse boundary with a not-found ("has no known
+    // asset-type prefix"), which createProposal wraps as INVALID_PROPOSAL. Same
+    // rejection code as before, new-grammar message.
+    expect(caught?.message).toMatch(/has no known asset-type prefix/i);
   });
 
   test("rejects empty content", () => {
@@ -102,7 +100,7 @@ describe("createProposal validation", () => {
     let caught: { code?: string } | undefined;
     try {
       createProposal(stash, {
-        ref: "memory:foo",
+        ref: "memories/foo",
         source: "reflect",
         force: true,
         payload: { content: "   " },
@@ -118,7 +116,7 @@ describe("createProposal validation", () => {
     let caught: { code?: string; message?: string } | undefined;
     try {
       createProposal(stash, {
-        ref: "memory:foo",
+        ref: "memories/foo",
         source: "consolidate",
         force: true,
         payload: { content: "x", frontmatter: { tags: ["a"] } },
@@ -135,7 +133,7 @@ describe("createProposal validation", () => {
     // Reflect proposals legitimately have varied content shapes — don't reject
     // for missing description, only consolidate does that.
     const result = createProposal(stash, {
-      ref: "memory:bar",
+      ref: "memories/bar",
       source: "reflect",
       force: true,
       payload: { content: "x", frontmatter: { tags: ["a"] } },
@@ -146,7 +144,7 @@ describe("createProposal validation", () => {
   test("accepts valid proposal", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
-      ref: "memory:alpha",
+      ref: "memories/alpha",
       source: "reflect",
       force: true,
       payload: { content: "body text", frontmatter: { description: "good description" } },
@@ -157,7 +155,7 @@ describe("createProposal validation", () => {
   test("accepts proposal without frontmatter", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
-      ref: "memory:beta",
+      ref: "memories/beta",
       source: "reflect",
       force: true,
       payload: { content: "body text" },
@@ -176,7 +174,7 @@ describe("purgeOrphanProposals", () => {
   test("does not touch lesson proposals (lessons are new assets)", () => {
     const stash = makeStashDir();
     createProposal(stash, {
-      ref: "lesson:new-lesson",
+      ref: "lessons/new-lesson",
       source: "reflect",
       force: true,
       payload: {
@@ -193,7 +191,7 @@ describe("purgeOrphanProposals", () => {
     const stash = makeStashDir();
     // distill proposal for an asset that doesn't exist
     createProposal(stash, {
-      ref: "memory:never-existed",
+      ref: "memories/never-existed",
       source: "distill",
       force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
@@ -206,7 +204,7 @@ describe("purgeOrphanProposals", () => {
     const stash = makeStashDir();
     // Create a reflect proposal for a memory that doesn't exist on disk
     createProposal(stash, {
-      ref: "memory:orphaned",
+      ref: "memories/orphaned",
       source: "reflect",
       force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
@@ -227,7 +225,7 @@ describe("purgeOrphanProposals", () => {
     const secondary = makeStashDir();
     writeAsset(secondary, "memories", "shared");
     createProposal(primary, {
-      ref: "memory:shared",
+      ref: "memories/shared",
       source: "reflect",
       force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
@@ -242,7 +240,7 @@ describe("purgeOrphanProposals", () => {
     // Create then immediately accept a reflect proposal — it moves to the
     // archive with status "accepted" and must never be counted by the purge.
     const created = createProposal(stash, {
-      ref: "memory:already-accepted",
+      ref: "memories/already-accepted",
       source: "reflect",
       force: true,
       payload: { content: "x", frontmatter: { description: "ok" } },
@@ -267,7 +265,7 @@ describe("purgeOrphanProposals", () => {
   test("reflect proposal for script:never-existed is treated as an orphan and rejected", () => {
     const stash = makeStashDir();
     createProposal(stash, {
-      ref: "script:never-existed",
+      ref: "scripts/never-existed",
       source: "reflect",
       force: true,
       payload: { content: "console.log('hi')", frontmatter: { description: "ok" } },
