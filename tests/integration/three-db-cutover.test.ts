@@ -19,7 +19,9 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { createProposal } from "../../src/commands/proposal/repository";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
@@ -253,6 +255,31 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     } finally {
       after.close();
     }
+
+    // WI-8.5a: a proposal WRITTEN post-cutover is born already-final — the writer
+    // flip mints proposals.ref as the fully-qualified item_ref directly, so a
+    // second re-key pass over it is a no-op (no legacy `type:name` row is ever
+    // created and then migrated). Contrast with rc-train's pre-cutover rows,
+    // which are seeded legacy and re-keyed above.
+    const postStash = path.join(getDataDir(), "stash");
+    fs.mkdirSync(path.join(postStash, "lessons"), { recursive: true });
+    const bornFinal = createProposal(postStash, {
+      ref: "lessons/post-cutover-born-final",
+      source: "distill",
+      sourceRun: "post-cutover-run",
+      force: true,
+      payload: { content: "---\ndescription: Born final.\n---\nPost-cutover payload.\n" },
+    });
+    if ("message" in bornFinal) throw new Error(`unexpected skip: ${bornFinal.message}`);
+    const bundleId = deriveInstallations([{ path: postStash, writable: true }])[0]?.id ?? slugForPath(postStash);
+    const expectedItemRef = deriveEntryProvenance(
+      { bundleId, componentId: bundleId, adapterId: "akm" },
+      "lesson",
+      "post-cutover-born-final",
+    ).itemRef;
+    expect(bornFinal.ref).toBe(expectedItemRef); // already the item_ref
+    expect(bornFinal.ref).toContain("//"); // fully-qualified, never a legacy type:name
+    expect(bornFinal.ref).not.toMatch(/(?<![A-Za-z/])lesson:/); // no legacy spelling to re-key
   }, 30_000);
 });
 
