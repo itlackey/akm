@@ -73,10 +73,10 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips" }, { now: () => now - 60 * 1000 });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/auth-tips" }, { now: () => now - 60 * 1000 });
 
     await akmImprove({
-      scope: "memory:auth-tips",
+      scope: "memories/auth-tips",
       stashDir,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -101,7 +101,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
         }) satisfies AkmDistillResult,
     });
 
-    expect(reflectedRefs).toContain("memory:auth-tips");
+    expect(reflectedRefs).toContain("memories/auth-tips");
   });
 
   test("non-ref scope (scope: 'memory') still respects reflect cooldown", async () => {
@@ -111,7 +111,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:auth-tips-2" }, { now: () => now - 60 * 1000 });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/auth-tips-2" }, { now: () => now - 60 * 1000 });
 
     await akmImprove({
       scope: "memory",
@@ -139,7 +139,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
         }) satisfies AkmDistillResult,
     });
 
-    expect(reflectedRefs).not.toContain("memory:auth-tips-2");
+    expect(reflectedRefs).not.toContain("memories/auth-tips-2");
   });
 });
 
@@ -154,7 +154,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
     const capturedTimeouts: Array<number | undefined> = [];
 
     await akmImprove({
-      scope: "memory:budget-test",
+      scope: "memories/budget-test",
       stashDir,
       timeoutMs: 60_000,
       ensureIndexFn: async () => false,
@@ -193,7 +193,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
     await buildIndex(stashDir);
 
     const result = await akmImprove({
-      scope: "memory:timer-test",
+      scope: "memories/timer-test",
       stashDir,
       timeoutMs: 60_000,
       ensureIndexFn: async () => false,
@@ -230,7 +230,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const distilledRefs: string[] = [];
     const now = Date.now();
     appendEvent(
-      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { eventType: "proposal_rejected", ref: "lessons/memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
       { now: () => now - 60 * 1000 },
     );
 
@@ -260,12 +260,12 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(distilledRefs).not.toContain("memory:auth-tips");
+    expect(distilledRefs).not.toContain("memories/auth-tips");
     // C1 (13-bus-factor): the per-ref distill-skipped row is folded into the
     // bounded `distillSkipped` aggregate rather than persisted in `actions`.
     // The single skipped ref lands in the capped sample list.
     expect(result.actions?.some((a) => a.mode === "distill-skipped")).toBe(false);
-    expect(result.distillSkipped?.samples.some((s) => s.ref === "memory:auth-tips")).toBe(true);
+    expect(result.distillSkipped?.samples.some((s) => s.ref === "memories/auth-tips")).toBe(true);
   });
 
   test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {
@@ -276,12 +276,12 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const distilledRefs: string[] = [];
     const now = Date.now();
     appendEvent(
-      { eventType: "proposal_rejected", ref: "lesson:memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
+      { eventType: "proposal_rejected", ref: "lessons/memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
       { now: () => now - 60 * 1000 },
     );
 
     await akmImprove({
-      scope: "memory:auth-tips",
+      scope: "memories/auth-tips",
       stashDir,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -305,7 +305,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
       },
     });
 
-    expect(distilledRefs).toContain("memory:auth-tips");
+    expect(distilledRefs).toContain("memories/auth-tips");
   });
 });
 
@@ -505,7 +505,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.mkdirSync(path.dirname(memFile), { recursive: true });
     fs.writeFileSync(memFile, "---\n---\nAuth guide content.\n", "utf8");
 
-    const result = await runSchemaRepairPass([{ ref: "memory:auth-guide", reason: "missing description" }], {
+    const result = await runSchemaRepairPass([{ ref: "memories/auth-guide", reason: "missing description" }], {
       startMs: Date.now(),
       budgetMs: 30_000,
       stashDir,
@@ -520,7 +520,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     const repair = result.repairs[0];
     expect(repair?.outcome).toBe("queued");
     expect(repair?.proposalId).toBeDefined();
-    expect(result.repairedRefs.has("memory:auth-guide")).toBe(false);
+    expect(result.repairedRefs.has("memories/auth-guide")).toBe(false);
 
     // File should NOT be modified (write went through proposal queue)
     const fileContent = fs.readFileSync(memFile, "utf8");
@@ -542,7 +542,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.writeFileSync(memFile, "---\n---\nAuth content.\n", "utf8");
 
     await expect(
-      runSchemaRepairPass([{ ref: "memory:auth2", reason: "missing description" }], {
+      runSchemaRepairPass([{ ref: "memories/auth2", reason: "missing description" }], {
         startMs: Date.now(),
         budgetMs: 30_000,
         llmConfig: { endpoint: "http://localhost/v1/chat", model: "test" },
@@ -585,7 +585,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     });
 
     const { appendEvent: appendFeedbackEvent } = await import("../../../src/core/events");
-    appendFeedbackEvent({ eventType: "feedback", ref: "lesson:no-description", metadata: { signal: "positive" } });
+    appendFeedbackEvent({ eventType: "feedback", ref: "lessons/no-description", metadata: { signal: "positive" } });
 
     const reflectFn = async ({ ref }: { ref?: string }): Promise<AkmReflectResult> => ({
       schemaVersion: 2,
@@ -825,8 +825,8 @@ describe("new 0.8.0 improve metrics", () => {
     // 0.8.0 signal-delta gate requires recent feedback to make a ref eligible
     // for reflect. Add a feedback event for each ref so the planner queues
     // them and reflectFn (which returns cooldown) is actually called.
-    appendEvent({ eventType: "feedback", ref: "memory:beta", metadata: { signal: "positive" } });
-    appendEvent({ eventType: "feedback", ref: "memory:gamma", metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: "memories/beta", metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: "memories/gamma", metadata: { signal: "positive" } });
 
     // Return a cooldown result for every ref to drive reflectCooldownActions up.
     const result = await akmImprove({
@@ -863,7 +863,7 @@ describe("new 0.8.0 improve metrics", () => {
 
     // Seed a pending reflect proposal for a ref that does NOT exist on disk.
     createProposal(stashDir, {
-      ref: "memory:ghost-asset",
+      ref: "memories/ghost-asset",
       source: "reflect",
       sourceRun: "test-seed",
       payload: { content: "# Ghost\nThis ref is orphaned." },
@@ -911,7 +911,7 @@ describe("new 0.8.0 improve metrics", () => {
     // the deleted gate's default threshold (0.9) this WOULD have auto-promoted.
     // scope is a specific ref so collectEligibleRefs unconditionally plans it.
     const result = await akmImprove({
-      scope: "memory:target-asset",
+      scope: "memories/target-asset",
       stashDir,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
@@ -924,7 +924,7 @@ describe("new 0.8.0 improve metrics", () => {
       }),
       reflectFn: async ({ ref, stashDir: sd }) => {
         const created = createProposal(sd ?? stashDir, {
-          ref: ref ?? "memory:target-asset",
+          ref: ref ?? "memories/target-asset",
           source: "reflect",
           sourceRun: "test-confidence-high",
           force: true,
@@ -954,7 +954,7 @@ describe("new 0.8.0 improve metrics", () => {
     });
 
     // The proposal stays pending with its confidence preserved for reviewers.
-    const pending = listProposals(stashDir, { status: "pending", ref: "memory:target-asset" });
+    const pending = listProposals(stashDir, { status: "pending", ref: "memories/target-asset" });
     expect(pending.length).toBe(1);
     expect(pending[0]?.confidence).toBe(0.95);
     if (pending[0]) {
@@ -989,7 +989,7 @@ describe("new 0.8.0 improve metrics", () => {
     const seeded = createProposal(
       stashDir,
       {
-        ref: "memory:live-asset",
+        ref: "memories/live-asset",
         source: "reflect",
         sourceRun: "test-stale",
         force: true,
@@ -1000,7 +1000,7 @@ describe("new 0.8.0 improve metrics", () => {
     if (isProposalSkipped(seeded)) throw new Error("seed skipped");
 
     const result = await akmImprove({
-      scope: "memory:live-asset",
+      scope: "memories/live-asset",
       stashDir,
       ensureIndexFn: async () => false,
       // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.

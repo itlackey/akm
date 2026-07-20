@@ -37,6 +37,7 @@ import {
 } from "../../../src/commands/improve/distill";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmReflectOptions, AkmReflectResult } from "../../../src/commands/improve/reflect";
+import { stashDirFor } from "../../../src/core/asset/asset-placement";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -152,7 +153,7 @@ describe("improve planner: skip distill-refused input types", () => {
     // Give every ref a positive feedback signal so the all-scope improve run
     // considers them eligible (otherwise the signal/retrieval gate at
     // improve.ts:1553 drops zero-signal refs and the test plan is empty).
-    for (const ref of ["lesson:alpha-lesson", "lesson:beta-lesson", "lesson:gamma-lesson", "memory:deploy-fact"]) {
+    for (const ref of ["lessons/alpha-lesson", "lessons/beta-lesson", "lessons/gamma-lesson", "memories/deploy-fact"]) {
       appendEvent({ eventType: "feedback", ref, metadata: { signal: "positive", note: "fixture" } });
     }
 
@@ -207,29 +208,29 @@ describe("improve planner: skip distill-refused input types", () => {
     // entries that are either non-derived or memory-cleanup candidates;
     // we don't rely on the skill count here.
     const plannedTypes = result.plannedRefs.map((r) => r.ref);
-    expect(plannedTypes).toContain("lesson:alpha-lesson");
-    expect(plannedTypes).toContain("lesson:beta-lesson");
-    expect(plannedTypes).toContain("lesson:gamma-lesson");
-    expect(plannedTypes).toContain("memory:deploy-fact");
+    expect(plannedTypes).toContain("lessons/alpha-lesson");
+    expect(plannedTypes).toContain("lessons/beta-lesson");
+    expect(plannedTypes).toContain("lessons/gamma-lesson");
+    expect(plannedTypes).toContain("memories/deploy-fact");
 
     // CORE ASSERTION — the planner-waste fix.
     // No lesson ref reaches the distill seam. Pre-fix this list contained
     // every lesson present in the stash and each one was refused inside
     // akmDistill with `Distill refuses lesson inputs`.
     const distilledRefs = distillCalls.map((c) => c.ref);
-    expect(distilledRefs.filter((r) => r.startsWith("lesson:"))).toEqual([]);
+    expect(distilledRefs.filter((r) => r.startsWith("lessons/"))).toEqual([]);
 
     // And no distill-mode action records a lesson ref either (covers the
     // case where a future regression might call distill some other way and
     // still record an action against a lesson).
     const distillActions = (result.actions ?? []).filter((a) => a.mode === "distill");
     const distillActionRefs = distillActions.map((a) => a.ref);
-    expect(distillActionRefs.filter((r) => r.startsWith("lesson:"))).toEqual([]);
+    expect(distillActionRefs.filter((r) => r.startsWith("lessons/"))).toEqual([]);
 
     // Sanity: reflect still runs on lessons — they're a legitimate reflect
     // target, just not a distill input.
     const reflectedRefs = reflectCalls.map((c) => c.ref ?? "");
-    expect(reflectedRefs.filter((r) => r.startsWith("lesson:")).length).toBeGreaterThan(0);
+    expect(reflectedRefs.filter((r) => r.startsWith("lessons/")).length).toBeGreaterThan(0);
   });
 });
 
@@ -252,7 +253,7 @@ describe("DISTILL_REFUSED_INPUT_TYPES contract", () => {
     // Run through every refused type the exported set advertises.
     for (const refusedType of DISTILL_REFUSED_INPUT_TYPES) {
       const result = await akmDistill({
-        ref: `${refusedType}:fixture`,
+        ref: `${stashDirFor(refusedType)}/fixture`,
         chat: async () => {
           throw new Error(`distill must not invoke LLM for refused input type "${refusedType}"`);
         },

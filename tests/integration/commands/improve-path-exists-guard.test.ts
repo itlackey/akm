@@ -147,9 +147,9 @@ describe("akmImprove final pathExists guard", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.plannedRefs.some((p) => p.ref === "lesson:ghost")).toBe(false);
-    expect(reflectedRefs).not.toContain("lesson:ghost");
-    expect(distilledRefs).not.toContain("lesson:ghost");
+    expect(result.plannedRefs.some((p) => p.ref === "lessons/ghost")).toBe(false);
+    expect(reflectedRefs).not.toContain("lessons/ghost");
+    expect(distilledRefs).not.toContain("lessons/ghost");
   });
 
   test("all files exist — guard is a no-op and no 'candidates dropped' log line is emitted", async () => {
@@ -161,8 +161,8 @@ describe("akmImprove final pathExists guard", () => {
     // Inject a positive feedback signal so both lessons pass the signal filter
     // and arrive at the final guard.
     const { appendEvent } = await import("../../../src/core/events");
-    appendEvent({ eventType: "feedback", ref: "lesson:alpha", metadata: { signal: "positive", note: "ok" } });
-    appendEvent({ eventType: "feedback", ref: "lesson:beta", metadata: { signal: "positive", note: "ok" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/alpha", metadata: { signal: "positive", note: "ok" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/beta", metadata: { signal: "positive", note: "ok" } });
 
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -177,7 +177,7 @@ describe("akmImprove final pathExists guard", () => {
 
       expect(result.ok).toBe(true);
       const refs = result.plannedRefs.map((p) => p.ref).sort();
-      expect(refs).toEqual(["lesson:alpha", "lesson:beta"]);
+      expect(refs).toEqual(["lessons/alpha", "lessons/beta"]);
 
       const emittedLines = warnSpy.mock.calls.flat().map((arg) => String(arg));
       // No `[improve] N candidates dropped — file not on disk` line should be emitted
@@ -201,9 +201,9 @@ describe("akmImprove final pathExists guard", () => {
 
     // Positive feedback so all three pass the signal filter and reach the guard.
     const { appendEvent } = await import("../../../src/core/events");
-    appendEvent({ eventType: "feedback", ref: "lesson:kept", metadata: { signal: "positive", note: "ok" } });
-    appendEvent({ eventType: "feedback", ref: "lesson:gone", metadata: { signal: "positive", note: "ok" } });
-    appendEvent({ eventType: "feedback", ref: "lesson:alive", metadata: { signal: "positive", note: "ok" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/kept", metadata: { signal: "positive", note: "ok" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/gone", metadata: { signal: "positive", note: "ok" } });
+    appendEvent({ eventType: "feedback", ref: "lessons/alive", metadata: { signal: "positive", note: "ok" } });
 
     // Delete one file post-index to simulate the deletion race.
     fs.unlinkSync(path.join(stashDir, "lessons", "gone.md"));
@@ -219,8 +219,8 @@ describe("akmImprove final pathExists guard", () => {
 
     expect(result.ok).toBe(true);
     const plannedRefs = result.plannedRefs.map((p) => p.ref).sort();
-    expect(plannedRefs).toContain("lesson:kept");
-    expect(plannedRefs).toContain("lesson:alive");
-    expect(plannedRefs).not.toContain("lesson:gone");
+    expect(plannedRefs).toContain("lessons/kept");
+    expect(plannedRefs).toContain("lessons/alive");
+    expect(plannedRefs).not.toContain("lessons/gone");
   });
 });
