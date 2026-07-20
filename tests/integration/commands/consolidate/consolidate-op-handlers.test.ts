@@ -23,7 +23,7 @@ import type {
   MemoryEntry,
 } from "../../../../src/commands/improve/consolidate/types";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
-import { parseAssetRef, refToString } from "../../../../src/migrate/legacy-ref-grammar";
+import { displayRef, parseRefInput } from "../../../../src/core/asset/resolve-ref";
 
 // Direct unit tests for the op-handlers extracted out of `akmConsolidateInner`'s
 // former ~600-LOC op-execution loop. These pin the deterministic pre-flight
@@ -177,16 +177,29 @@ describe("consolidation merge provenance", () => {
     ).injectGenerationFrontmatter;
     expect(typeof inject).toBe("function");
     const content = inject(
-      "---\ndescription: Merged memory\nsource_refs: [memory:legacy]\nxrefs: [memory:existing]\n---\n\nMerged body.\n",
+      "---\ndescription: Merged memory\nsource_refs: [memories/legacy]\nxrefs: [memories/existing]\n---\n\nMerged body.\n",
       [1, 2],
-      ["memory:primary", "memory:secondary", "environment:alias", "not-a-ref"],
+      ["memories/primary", "memories/secondary", "env/alias", "not-a-ref"],
     );
     const parsed = parseFrontmatter(content);
     const xrefs = parsed.data.xrefs as string[];
 
     expect(parsed.data.source_refs).toBeUndefined();
-    expect(xrefs).toEqual(["memory:existing", "memory:legacy", "memory:primary", "memory:secondary", "env:alias"]);
-    expect(xrefs.every((ref) => refToString(parseAssetRef(ref)) === ref)).toBe(true);
+    expect(xrefs).toEqual([
+      "memories/existing",
+      "memories/legacy",
+      "memories/primary",
+      "memories/secondary",
+      "env/alias",
+    ]);
+    // WI-8.5b: stored xrefs are canonicalized to the D-R5 new grammar via
+    // displayRef(parseRefInput(ref)) — each canonical xref round-trips to itself.
+    expect(
+      xrefs.every((ref) => {
+        const p = parseRefInput(ref);
+        return displayRef({ type: p.type, name: p.name, bundleId: p.origin }) === ref;
+      }),
+    ).toBe(true);
   });
 
   for (const antiCollapseEnabled of [true, false]) {
@@ -197,12 +210,12 @@ describe("consolidation merge provenance", () => {
       fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
       fs.writeFileSync(
         primaryPath,
-        "---\ndescription: Primary\ngeneration: 2\nxrefs: [memory:primary-xref]\nsource_refs: [environment:primary-legacy]\n---\n\nPrimary source body with distinct details.\n",
+        "---\ndescription: Primary\ngeneration: 2\nxrefs: [memories/primary-xref]\nsource_refs: [env/primary-legacy]\n---\n\nPrimary source body with distinct details.\n",
         "utf8",
       );
       fs.writeFileSync(
         secondaryPath,
-        "---\ndescription: Secondary\ngeneration: 1\nxrefs: [memory:secondary-xref]\nsource_refs: [environment:secondary-legacy]\n---\n\nSecondary source body with other details.\n",
+        "---\ndescription: Secondary\ngeneration: 1\nxrefs: [memories/secondary-xref]\nsource_refs: [env/secondary-legacy]\n---\n\nSecondary source body with other details.\n",
         "utf8",
       );
       const skips: SkipCall[] = [];
@@ -218,18 +231,18 @@ describe("consolidation merge provenance", () => {
           config: { type: "filesystem", name: "local", path: root, writable: true },
         } as ConsolidateOpContext["target"],
         memoryByRef: new Map([
-          ["memory:primary", entryFor("primary", primaryPath)],
-          ["memory:secondary", entryFor("secondary", secondaryPath)],
+          ["memories/primary", entryFor("primary", primaryPath)],
+          ["memories/secondary", entryFor("secondary", secondaryPath)],
         ]),
         generateMergedContentFn: (async () => ({
           content:
-            "---\ndescription: Merged memory\nxrefs: [memory:output-existing]\nsource_refs: [environment:output-legacy]\n---\n\nPrimary source body with distinct details and secondary source body with other details.\n",
+            "---\ndescription: Merged memory\nxrefs: [memories/output-existing]\nsource_refs: [env/output-legacy]\n---\n\nPrimary source body with distinct details and secondary source body with other details.\n",
         })) as never,
       });
       const op: ConsolidateMergeOp = {
         op: "merge",
-        primary: "memory:primary",
-        secondaries: ["memory:secondary"],
+        primary: "memories/primary",
+        secondaries: ["memories/secondary"],
         mergeStrategy: "synthesize",
       };
 
@@ -239,14 +252,14 @@ describe("consolidation merge provenance", () => {
       expect(merged.data.generation).toBe(3);
       expect(merged.data.source_refs).toBeUndefined();
       expect(merged.data.xrefs).toEqual([
-        "memory:output-existing",
-        "env:output-legacy",
-        "memory:primary",
-        "memory:secondary",
-        "memory:primary-xref",
-        "env:primary-legacy",
-        "memory:secondary-xref",
-        "env:secondary-legacy",
+        "memories/output-existing",
+        "env/output-legacy",
+        "memories/primary",
+        "memories/secondary",
+        "memories/primary-xref",
+        "env/primary-legacy",
+        "memories/secondary-xref",
+        "env/secondary-legacy",
       ]);
       expect(ctx.counts.merged).toBe(1);
     });

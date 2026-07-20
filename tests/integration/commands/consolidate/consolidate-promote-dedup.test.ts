@@ -99,10 +99,10 @@ describe("mergePlans — promote op deduplication by source ref", () => {
     // Simulates two LLM chunks both recommending the same source memory for
     // promotion but with different target knowledgeRef values.
     const chunk1: ConsolidateOperation[] = [
-      makePromoteOp("memory:review-efficiency", "knowledge:paged-review-efficiency"),
+      makePromoteOp("memories/review-efficiency", "knowledge/paged-review-efficiency"),
     ];
     const chunk2: ConsolidateOperation[] = [
-      makePromoteOp("memory:review-efficiency", "knowledge:print-review-efficiency"),
+      makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency"),
     ];
 
     const { ops } = mergePlans([chunk1, chunk2]);
@@ -111,31 +111,31 @@ describe("mergePlans — promote op deduplication by source ref", () => {
     // Only one promote op should survive; the Map key is `op.ref` so the last
     // chunk's value wins.
     expect(promoteOps).toHaveLength(1);
-    expect(promoteOps[0]?.ref).toBe("memory:review-efficiency");
+    expect(promoteOps[0]?.ref).toBe("memories/review-efficiency");
   });
 
   it("deduplicates 4 promote ops for the same source ref across 4 chunks", () => {
     // Regression test mirroring the exact bug report:
     // 4 copies of a promote op with different knowledgeRef values from separate chunks.
     const chunks: ConsolidateOperation[][] = [
-      [makePromoteOp("memory:review-efficiency", "knowledge:paged-review-efficiency")],
-      [makePromoteOp("memory:review-efficiency", "knowledge:print-review-efficiency")],
-      [makePromoteOp("memory:review-efficiency", "knowledge:print-review-efficiency-patterns")],
-      [makePromoteOp("memory:review-efficiency", "knowledge:review-agent-efficiency")],
+      [makePromoteOp("memories/review-efficiency", "knowledge/paged-review-efficiency")],
+      [makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency")],
+      [makePromoteOp("memories/review-efficiency", "knowledge/print-review-efficiency-patterns")],
+      [makePromoteOp("memories/review-efficiency", "knowledge/review-agent-efficiency")],
     ];
 
     const { ops } = mergePlans(chunks);
     const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
 
     expect(promoteOps).toHaveLength(1);
-    expect(promoteOps[0]?.ref).toBe("memory:review-efficiency");
+    expect(promoteOps[0]?.ref).toBe("memories/review-efficiency");
   });
 
   it("preserves promote ops for different source refs (no over-deduplication)", () => {
     // Two different source memories promoted to different targets — both must survive.
     const chunk1: ConsolidateOperation[] = [
-      makePromoteOp("memory:review-efficiency", "knowledge:review-efficiency"),
-      makePromoteOp("memory:embedding-fix", "knowledge:akm-embedding-fix"),
+      makePromoteOp("memories/review-efficiency", "knowledge/review-efficiency"),
+      makePromoteOp("memories/embedding-fix", "knowledge/akm-embedding-fix"),
     ];
 
     const { ops } = mergePlans([chunk1]);
@@ -143,18 +143,18 @@ describe("mergePlans — promote op deduplication by source ref", () => {
 
     expect(promoteOps).toHaveLength(2);
     const refs = promoteOps.map((p) => p.ref);
-    expect(refs).toContain("memory:review-efficiency");
-    expect(refs).toContain("memory:embedding-fix");
+    expect(refs).toContain("memories/review-efficiency");
+    expect(refs).toContain("memories/embedding-fix");
   });
 
   it("preserves a single promote op unchanged", () => {
-    const chunk: ConsolidateOperation[] = [makePromoteOp("memory:foo", "knowledge:foo-stable")];
+    const chunk: ConsolidateOperation[] = [makePromoteOp("memories/foo", "knowledge/foo-stable")];
 
     const { ops } = mergePlans([chunk]);
     const promoteOps = ops.filter((op): op is ConsolidatePromoteOp => op.op === "promote");
 
     expect(promoteOps).toHaveLength(1);
-    expect(promoteOps[0]?.knowledgeRef).toBe("knowledge:foo-stable");
+    expect(promoteOps[0]?.knowledgeRef).toBe("knowledge/foo-stable");
   });
 });
 
@@ -186,7 +186,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
 
     // Create the first proposal.
     const result = createProposal(stash, {
-      ref: "knowledge:paged-review-efficiency",
+      ref: "knowledge/paged-review-efficiency",
       source: "consolidate",
       payload: {
         content: CONTENT_WITH_DESCRIPTION,
@@ -219,7 +219,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
 
     // Create a proposal for content1.
     const result1 = createProposal(stash, {
-      ref: "knowledge:pattern-a",
+      ref: "knowledge/pattern-a",
       source: "consolidate",
       payload: { content: content1, frontmatter: { description: "Pattern A" } },
     });
@@ -243,7 +243,7 @@ describe("content-hash dedup — identical content blocked regardless of target 
 
     // Create a 'distill' proposal with the same content.
     const distillResult = createProposal(stash, {
-      ref: "knowledge:shared-knowledge",
+      ref: "knowledge/shared-knowledge",
       source: "distill",
       payload: { content: SHARED_CONTENT, frontmatter: { description: "Shared knowledge" } },
     });
@@ -266,10 +266,10 @@ describe("content-hash dedup — identical content blocked regardless of target 
     const IDENTICAL_CONTENT = `---\ndescription: Review efficiency patterns\n---\n\nWhen reviewing documents, batch similar items together to reduce context switching overhead.\n`;
 
     const refs = [
-      "knowledge:paged-review-efficiency",
-      "knowledge:print-review-efficiency",
-      "knowledge:print-review-efficiency-patterns",
-      "knowledge:review-agent-efficiency",
+      "knowledge/paged-review-efficiency",
+      "knowledge/print-review-efficiency",
+      "knowledge/print-review-efficiency-patterns",
+      "knowledge/review-agent-efficiency",
     ];
 
     const createdIds: string[] = [];
