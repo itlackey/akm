@@ -20,7 +20,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
-import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
+import {
+  buildOrphanBearingStateDb,
+  LIVE_CONTRAST_REFS,
+  ORPHAN_REFS,
+  USAGE_EVENT_ORPHAN_REF,
+} from "../_fixtures/migration/orphan-state";
+import {
+  buildRcTrainFromState,
+  RC_TRAIN_LIVE_REFS,
+  rcTrainFromStatePaths,
+} from "../_fixtures/migration/rc-train-state";
+import { openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "../_fixtures/migration/seed-rows";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -29,13 +40,6 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
-import { buildOrphanBearingStateDb, LIVE_CONTRAST_REFS, ORPHAN_REFS } from "../_fixtures/migration/orphan-state";
-import {
-  buildRcTrainFromState,
-  RC_TRAIN_LIVE_REFS,
-  rcTrainFromStatePaths,
-} from "../_fixtures/migration/rc-train-state";
-import { openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "../_fixtures/migration/seed-rows";
 
 let cleanup: Cleanup | undefined;
 
@@ -98,7 +102,7 @@ function seedOldIndexDb(): void {
   const insUsage = idx.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, 'user')");
   insUsage.run("show", RC_TRAIN_LIVE_REFS.skill); // legacy → re-keyed to SKILL_ITEM_REF
   insUsage.run("show", SKILL_ITEM_REF); // already bundle grammar → carried as-is
-  insUsage.run("feedback", "skill:deleted-ghost"); // orphan legacy → kept + audited
+  insUsage.run("feedback", USAGE_EVENT_ORPHAN_REF); // orphan legacy → kept + audited
   idx.close();
 }
 
@@ -152,9 +156,7 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     // Three DBs: workflow.db gone, index.db quarantined (rename), state.db is home.
     expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
     expect(fs.existsSync(getDbPath())).toBe(false);
-    const quarantined = fs
-      .readdirSync(getDataDir())
-      .filter((f) => f.startsWith("index.db.pre-cutover-"));
+    const quarantined = fs.readdirSync(getDataDir()).filter((f) => f.startsWith("index.db.pre-cutover-"));
     expect(quarantined.length).toBe(1);
 
     const db = readState();
@@ -184,10 +186,10 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
       const usageRefs = refsIn(db, "usage_events", "entry_ref");
       expect(usageRefs.filter((r) => r === SKILL_ITEM_REF).length).toBe(2); // legacy re-keyed + bundle carried
       // The orphan usage_events row is KEPT in place (append-only) and audited.
-      expect(usageRefs).toContain("skill:deleted-ghost");
+      expect(usageRefs).toContain(USAGE_EVENT_ORPHAN_REF);
       const usageOrphan = db
-        .query("SELECT row_count FROM legacy_state WHERE surface = 'usage_events' AND old_ref = 'skill:deleted-ghost'")
-        .get() as { row_count: number } | undefined;
+        .query("SELECT row_count FROM legacy_state WHERE surface = 'usage_events' AND old_ref = ?")
+        .get(USAGE_EVENT_ORPHAN_REF) as { row_count: number } | undefined;
       expect(usageOrphan?.row_count).toBe(1);
     } finally {
       db.close();
@@ -252,7 +254,13 @@ describe("WI-8.2 (c) — fresh install records complete without ATTACH", () => {
     const db = readState();
     try {
       expect(ledgerIds(db).at(-1)).toBe("020-three-db-cutover");
-      for (const table of ["workflow_runs", "workflow_run_steps", "workflow_run_units", "usage_events", "legacy_state"]) {
+      for (const table of [
+        "workflow_runs",
+        "workflow_run_steps",
+        "workflow_run_units",
+        "usage_events",
+        "legacy_state",
+      ]) {
         expect((db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n).toBe(0);
       }
     } finally {
@@ -298,9 +306,9 @@ describe("WI-8.2 (d) — the cutover runs exactly once", () => {
 describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
   test("an unparseable stored ref aborts the cutover and restores the pre-state", async () => {
     const db = openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING);
-    db.prepare(
-      `INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (?, 0.5, 100)`,
-    ).run(RC_TRAIN_LIVE_REFS.skill);
+    db.prepare(`INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (?, 0.5, 100)`).run(
+      RC_TRAIN_LIVE_REFS.skill,
+    );
     // An unparseable legacy-grammar ref (colon at position 0) — an integrity failure.
     db.prepare(`INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (':bad', 0.5, 100)`).run();
     db.close();

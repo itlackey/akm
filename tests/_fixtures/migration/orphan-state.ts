@@ -32,7 +32,12 @@
 
 import type { Database } from "../../../src/storage/database";
 import { FIXTURE_BASE_EPOCH_MS } from "./fixed-values";
-import { insertAssetOutcomeRow, insertAssetSalienceRow, openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "./seed-rows";
+import {
+  insertAssetOutcomeRow,
+  insertAssetSalienceRow,
+  openStateDbAtCeiling,
+  PRE_CUTOVER_STATE_CEILING,
+} from "./seed-rows";
 
 /** Origin qualifier used for the origin-qualified ref shapes below. Matches
  *  the real `sourceName` value `rekeyStateDbForMove` (mv-cli.ts:898-967) uses
@@ -68,6 +73,16 @@ export const LIVE_CONTRAST_REFS = {
   skill: "skill:all-types-skill",
   memory: "memory:all-types-memory",
 } as const;
+
+/**
+ * A legacy-grammar `usage_events.entry_ref` for a since-deleted asset (no live
+ * index entry). The cutover rescues the append-only usage history and, finding
+ * no map target, KEEPS the row legacy-spelled while recording an audit entry in
+ * `legacy_state` — the §11.4 usage-event orphan policy. Defined here (an
+ * excluded fixture module) so the counted-scope tests reference it by name
+ * rather than re-introducing a legacy `type:name` literal.
+ */
+export const USAGE_EVENT_ORPHAN_REF = "skill:deleted-ghost";
 
 /**
  * Build the orphan-bearing state.db fixture at `dbPath`. Applies the real

@@ -168,8 +168,7 @@ describe("cross-artifact migration apply crash recovery", () => {
       await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       // Chunk 8, WI-8.2: config is written in the phase AFTER the cutover, so the
       // config mutation gap now sits at journal phase "cutover-applied".
-      const previousPhase =
-        phase === "state" ? "prepared" : phase === "workflow" ? "state-applied" : "cutover-applied";
+      const previousPhase = phase === "state" ? "prepared" : phase === "workflow" ? "state-applied" : "cutover-applied";
       expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")).phase).toBe(previousPhase);
 
       const resumed = await runCliCapture(["migrate", "apply"]);

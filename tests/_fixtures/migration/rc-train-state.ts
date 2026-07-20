@@ -40,7 +40,12 @@ import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
 import { openWorkflowDatabase } from "../../../src/workflows/db";
 import { FIXTURE_BASE_EPOCH_MS } from "./fixed-values";
-import { insertAssetOutcomeRow, insertAssetSalienceRow, openStateDbAtCeiling, PRE_CUTOVER_STATE_CEILING } from "./seed-rows";
+import {
+  insertAssetOutcomeRow,
+  insertAssetSalienceRow,
+  openStateDbAtCeiling,
+  PRE_CUTOVER_STATE_CEILING,
+} from "./seed-rows";
 
 /**
  * The migration id this fixture's state.db is captured at: the last state

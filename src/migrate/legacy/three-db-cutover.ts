@@ -167,9 +167,7 @@ function addIndexEntryMappings(
   row: { entryKey: string; itemRef: string; stashDir: string | null },
   stashRoots: readonly CutoverStashRoot[] | undefined,
 ): void {
-  const bareTail = row.entryKey.includes("//")
-    ? row.entryKey.slice(row.entryKey.indexOf("//") + 2)
-    : row.entryKey; // `type:name`
+  const bareTail = row.entryKey.includes("//") ? row.entryKey.slice(row.entryKey.indexOf("//") + 2) : row.entryKey; // `type:name`
   const bundle = row.itemRef.includes("//") ? row.itemRef.slice(0, row.itemRef.indexOf("//")) : undefined;
 
   const matched = stashRoots?.find((r) => samePath(r.path, row.stashDir));
@@ -330,7 +328,12 @@ function classifyCutoverRef(ref: string, refMap: Map<string, string>): RefResolu
   return { kind: "orphan" };
 }
 
-function emptyReport(): { rekeyed: Record<string, number>; quarantined: Record<string, number>; merged: Record<string, number>; skipped: string[] } {
+function emptyReport(): {
+  rekeyed: Record<string, number>;
+  quarantined: Record<string, number>;
+  merged: Record<string, number>;
+  skipped: string[];
+} {
   return { rekeyed: {}, quarantined: {}, merged: {}, skipped: [] };
 }
 
@@ -401,7 +404,12 @@ function rekeyScalarTable(
   db: Database,
   spec: { table: string; keyColumn: string; tsColumn: string },
   refMap: Map<string, string>,
-  report: { rekeyed: Record<string, number>; quarantined: Record<string, number>; merged: Record<string, number>; skipped: string[] },
+  report: {
+    rekeyed: Record<string, number>;
+    quarantined: Record<string, number>;
+    merged: Record<string, number>;
+    skipped: string[];
+  },
 ): void {
   let rows: Array<Record<string, SqlValue> & { __rowid: number }>;
   try {
@@ -488,7 +496,12 @@ function rekeyEventTable(
   db: Database,
   spec: { table: string; keyColumn: string },
   refMap: Map<string, string>,
-  report: { rekeyed: Record<string, number>; quarantined: Record<string, number>; merged: Record<string, number>; skipped: string[] },
+  report: {
+    rekeyed: Record<string, number>;
+    quarantined: Record<string, number>;
+    merged: Record<string, number>;
+    skipped: string[];
+  },
 ): void {
   let beforeCount: number;
   let refs: Array<{ ref: string }>;
@@ -520,7 +533,10 @@ function rekeyEventTable(
       bump(report.quarantined, spec.table);
       continue;
     }
-    db.prepare(`UPDATE ${spec.table} SET ${spec.keyColumn} = ? WHERE ${spec.keyColumn} = ?`).run(resolution.target, ref);
+    db.prepare(`UPDATE ${spec.table} SET ${spec.keyColumn} = ? WHERE ${spec.keyColumn} = ?`).run(
+      resolution.target,
+      ref,
+    );
     bump(report.rekeyed, spec.table);
   }
 
@@ -639,9 +655,9 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
 
       rekey = rekeyStateDbCore(db, opts.refMap);
 
-      db.prepare("INSERT INTO akm_cutover_ledger (singleton, operation_id, merged_at) VALUES (1, ?, datetime('now'))").run(
-        opts.operationId,
-      );
+      db.prepare(
+        "INSERT INTO akm_cutover_ledger (singleton, operation_id, merged_at) VALUES (1, ?, datetime('now'))",
+      ).run(opts.operationId);
       db.exec("COMMIT");
     } catch (error) {
       if (db.inTransaction) {
@@ -725,9 +741,9 @@ function rescueUsageEvents(db: Database, refMap: Map<string, string>): number {
   if (!columnNames(db, "main", "usage_events").includes("entry_ref")) return countRows(db, "usage_events");
 
   const legacyRefs = (
-    db
-      .prepare("SELECT DISTINCT entry_ref AS ref FROM main.usage_events WHERE entry_ref IS NOT NULL")
-      .all() as Array<{ ref: string }>
+    db.prepare("SELECT DISTINCT entry_ref AS ref FROM main.usage_events WHERE entry_ref IS NOT NULL").all() as Array<{
+      ref: string;
+    }>
   )
     .map((r) => r.ref)
     .filter((ref) => classifyRefGrammar(ref) === "legacy");
@@ -754,9 +770,7 @@ function carryLegacyState(db: Database, srcSchema: string): void {
   const common = ["surface", "old_ref", "row_count", "reason", "quarantined_at"].filter((c) => srcCols.has(c));
   if (!common.includes("surface") || !common.includes("old_ref")) return;
   const colList = common.join(", ");
-  db.exec(
-    `INSERT OR IGNORE INTO main.legacy_state (${colList}) SELECT ${colList} FROM ${srcSchema}.legacy_state`,
-  );
+  db.exec(`INSERT OR IGNORE INTO main.legacy_state (${colList}) SELECT ${colList} FROM ${srcSchema}.legacy_state`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -819,9 +833,7 @@ export function deleteWorkflowDb(workflowPath: string): { deleted: boolean } {
 // ═══════════════════════════════════════════════════════════════════════
 
 function tableExists(db: Database, schema: string, table: string): boolean {
-  return !!db
-    .prepare(`SELECT 1 FROM ${schema}.sqlite_master WHERE type = 'table' AND name = ?`)
-    .get(table);
+  return !!db.prepare(`SELECT 1 FROM ${schema}.sqlite_master WHERE type = 'table' AND name = ?`).get(table);
 }
 
 function columnNames(db: Database, schema: string, table: string): string[] {
