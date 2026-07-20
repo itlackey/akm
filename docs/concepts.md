@@ -78,15 +78,15 @@ my-stash/
   env/            # Environment files (.env) — groups of related config, loaded whole
   secrets/        # Secrets — one sensitive value per file (auth tokens, keys, certs)
   workflows/      # Workflow documents (.md) and YAML v2 programs (.yaml/.yml)
-  wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
-   lessons/        # Distilled lessons (.md, see akm improve / proposals)
+  wikis/          # LLM Wiki bundles, recognized by the llm-wiki adapter (see docs/wikis.md)
+  lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md)
   .meta/          # Optional stash orientation, not indexed (see "Metadata" below)
 ```
 
 ## Asset Types
 
-There are fourteen asset types:
+There are thirteen asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -98,7 +98,6 @@ There are fourteen asset types:
 | **env** | A `.env` file of related **configuration** for an app/service | Key names and comments, never values. Holds a group of related settings (URLs, flags, and any credentials it needs); values may or may not be sensitive but are always protected. Key names are intentionally discoverable — they appear in `env list`, search results, and agent context by design. Inject via `akm env run <ref> -- <cmd>`; prefer `--clean` in agent contexts so the child starts from a minimal inherited environment. |
 | **secret** | A single sensitive value for **authentication** (token, key, cert) | Name only — the entire file is the value and never appears in output. Use for one credential used on its own; for a group of related config use `env`. Access via `akm secret path` / `akm secret run` |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
-| **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
 | **fact** | A durable stash-level fact | Mostly-static semantic knowledge — personal/team/project details, coding conventions / "constitution", and stash-meta (naming conventions, active projects). `category` scopes it; `pinned: true` marks always-injected core context (see [design note](design/fact-asset-type.md)) |
@@ -172,12 +171,14 @@ them in search. The supported values, from strongest to weakest authority:
 
 When `akm improve` infers a derived memory from a parent (e.g. distilling a
 verbose memory into a focused summary), the derived memory is written with a
-`source: memory:<parent>` frontmatter field and the indexer records the
-parent/child link in the `derived_from` column.
+`source:` frontmatter backref naming the parent and the indexer records the
+parent/child link in the `derived_from` column. (This provenance backref is a
+sanctioned internal channel that carries a bare parent name, not a public ref —
+agents never construct it.)
 
 Search hits for the parent memory are then enriched in-place: the parent's
 description and tags are swapped with the derived child's surface text, and an
-`expandTo: memory:<derived>` field on the hit points at the richer derived
+`expandTo: memories/<derived>` field on the hit points at the richer derived
 ref. The parent ref itself is preserved on the hit, so existing automation
 keeps working — agents that want the deeper summary follow `expandTo`.
 
@@ -187,24 +188,26 @@ Assets are identified by a **ref** -- a compact handle returned by
 `akm search` and consumed by `akm show`. The format is:
 
 ```text
-type:name
+[bundle//]conceptId[#fragment]
 ```
 
-For example: `script:deploy.sh`, `agent:reviewer`, `knowledge:api-guide`,
-`workflow:ship-release`.
+The `conceptId` is subdir-qualified: the placement subdirectory followed by the
+item's canonical name (extension stripped). `type` is not part of a ref — the
+subdirectory carries that signal. For example: `scripts/deploy.sh`,
+`agents/reviewer`, `knowledge/api-guide`, `workflows/ship-release`.
 
-When an asset comes from an installed stash, refs can include an **origin**
-prefix to narrow lookup to that specific source:
+When an item comes from an installed bundle, refs can include a **bundle**
+prefix to narrow lookup to that specific bundle:
 
 ```text
-origin//type:name
+bundle//conceptId
 ```
 
-For example: `npm:@scope/pkg//script:deploy.sh`,
-`github:owner/repo//knowledge:guide`.
+For example: `team-catalog//scripts/deploy.sh`,
+`personal//knowledge/guide`.
 
 Agents should treat refs as opaque tokens -- get them from search, pass them
-to show. The structured fields `type`, `name`, and `origin` in search results
+to show. The structured fields `conceptId` and `bundle` in search results
 provide the same information in a parseable form.
 
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
@@ -217,21 +220,21 @@ flags required. Drop assets under nested directories beneath the type folder
 and the path becomes part of the ref's name. Examples:
 
 ```text
-memories/projectA/auth-tip.md    →  memory:projectA/auth-tip
-memories/teamA/clientX/notes.md  →  memory:teamA/clientX/notes
-skills/projectB/lint-fix.md      →  skill:projectB/lint-fix
-knowledge/clientX/api-guide.md   →  knowledge:clientX/api-guide
+memories/projectA/auth-tip.md    →  memories/projectA/auth-tip
+memories/teamA/clientX/notes.md  →  memories/teamA/clientX/notes
+skills/projectB/lint-fix.md      →  skills/projectB/lint-fix
+knowledge/clientX/api-guide.md   →  knowledge/clientX/api-guide
 ```
 
 This works for **any** asset type. The subpath segments become part of the
-indexed name, so `akm search "projectA" --type memory` narrows results to
-that subtree, and `akm show memory:projectA/auth-tip` resolves the full ref.
-There is also a **ref-prefix query syntax**: `akm search "memory:projectA/"`
-enumerates exactly that subtree (typed, recursive, `/`-boundary exact — a
+conceptId, so `akm search "projectA" --type memory` narrows results to
+that subtree, and `akm show memories/projectA/auth-tip` resolves the full ref.
+There is also a **ref-prefix query syntax**: `akm search "memories/projectA/"`
+enumerates exactly that subtree (recursive, `/`-boundary exact — a
 sibling `projectAlpha/` scope does not leak), and a bare `akm search
-"memory:"` lists the whole type. Ref-prefix hits are a deterministic listing
+"memories/"` lists the whole subdir. Ref-prefix hits are a deterministic listing
 with the fixed browse score `1`, not a relevance ranking. A full ref without
-the trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword
+the trailing slash (`memories/projectA/auth-tip`) stays an ordinary keyword
 search — resolving a single ref is `akm show`'s job — and an explicit
 `--type` flag always wins over the type parsed from the query.
 
@@ -245,12 +248,12 @@ history survives. See [cli.md](cli.md#mv-experimental).
 
 **Which subdirectory?** Choose the partition axis by asset **type**:
 scope-born types (`memory`, `lesson`, `task`, `env`, `secret`) take the current
-**project/client** slug; reuse-born types (`knowledge`, `skill`, `wiki`,
+**project/client** slug; reuse-born types (`knowledge`, `skill`,
 `fact`, `script`) take a stable **domain**; global types (`command`, `agent`,
 `workflow`) stay at the type root or a tool slug. The full rules — depth
 limits, no-volatile-facets, off-axis facets as tags, and how to cross-link for
-retrieval — ship as the `fact:conventions/organization`,
-`fact:conventions/backlinks`, and `fact:conventions/domains` convention facts
+retrieval — ship as the `facts/conventions/organization`,
+`facts/conventions/backlinks`, and `facts/conventions/domains` convention facts
 in the stash skeleton, and are surfaced to agents automatically at authoring
 time. See
 [design/stash-organization-conventions.md](design/stash-organization-conventions.md).
@@ -260,7 +263,7 @@ Future iterations (no committed dates):
 - A `--namespace <ns>` flag will provide a thin name-prefix normalizer on
   `search`, `remember`, `improve`, `distill`, and `feedback` so the same
   prefix doesn't have to be typed every time.
-- A `::` delimiter (for example `projectA::memory:auth-tip`) will provide
+- A `::` delimiter (for example `projectA::memories/auth-tip`) will provide
   strict isolation so refs from different namespaces never collide in
   ranking or recall.
 
@@ -346,32 +349,48 @@ this precedence:
 If none are configured, write commands raise a `ConfigError` pointing at
 `akm setup`.
 
+### Installation is not activation
+
+Installing a bundle grants **nothing** on its own. A bundle can carry tasks, env
+files, and workflows, and none of them fire, inject, or gain write access until
+you explicitly activate them:
+
+- **Tasks** install disabled. The scheduler skips an installed task at fire time
+  until you run `akm tasks enable`; only manual (non-scheduled) runs are exempt.
+- **Env injection** from a registry-installed (third-party) source hard-blocks
+  process-hijacking keys (`LD_PRELOAD`, `PATH`, …); your own first-party stash
+  only warns. A freshly-installed stash carrying dangerous env keys gates the
+  install unless you confirm or pass `--allow-insecure`.
+- **Writes** only ever land in the primary stash or a source explicitly marked
+  `writable: true` — a registry cache is never written in place.
+
+This is enforced at one workspace activation-policy point; installing a bundle is
+safe by construction.
+
 `akm improve` and `akm lint` only operate on writable sources. Read-only
 registry caches (`git`, `npm`, `website`) are excluded from improvement and
 lint passes even if they are indexed.
 
 ## Storage
 
-akm uses four XDG-compliant directories:
+akm uses XDG-compliant directories backed by **three** databases:
 
 | Location | What lives there |
 | --- | --- |
-| `~/.local/share/akm/index.db` | Search index, embeddings, LLM cache, registry index cache |
-| `~/.local/share/akm/workflow.db` | Workflow run state |
-| `~/.local/share/akm/state.db` | Events, proposals, and task history |
-| `~/.local/share/akm/akm.lock` | Installed stash lockfile |
-| `~/.cache/akm/registry/` | Downloaded stash packages (regenerable) |
-| `~/.config/akm/config.json` | User configuration |
-| `~/akm` (or custom `stashDir`) | Your writable working stash |
+| `~/.local/share/akm/index.db` | Search index, embeddings, LLM cache, registry index cache (fully regenerable) |
+| `~/.local/share/akm/state.db` | Events, proposals, task history, workflow run state, and usage events |
+| `~/.local/share/akm/logs.db` | High-volume, purgeable run logs (kept separate, joined via ATTACH) |
+| `~/.local/share/akm/akm.lock` | Installed bundle lockfile |
+| `~/.cache/akm/registry/` | Downloaded bundle packages (regenerable) |
+| `~/.config/akm/config.json` | User configuration (`bundles` / `defaultBundle`) |
+| `~/akm` (the `defaultBundle` path) | Your writable working stash |
 
-Events, proposals, and task history are stored in `state.db` — not in flat
-files or in the search index. The search index (`index.db`) is derived from
-the asset directories and is rebuildable with `akm index`.
-
-Users upgrading from v0.7 should run `akm-migrate-storage --yes`
-once to move `index.db`, `workflow.db`, and flat-file state to their new
-locations. See [migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md) for
-the full guide.
+Events, proposals, task history, and workflow run state all live in `state.db` —
+not in flat files or in the search index. `workflow.db` no longer exists: its
+run/step/unit tables were merged into `state.db` at the 0.9.0 cutover, and
+`usage_events` was rescued from `index.db` into `state.db` so the index is truly
+regenerable. The search index (`index.db`) is derived from the bundle directories
+and is rebuildable with `akm index`.
 
 ## Glossary
 
@@ -386,8 +405,8 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **website source** | A crawled website stored as knowledge | `https://docs.example.com` |
 | **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm setup` |
 | **registry** | A discovery index for finding sources | The official registry, skills.sh |
-| **ref** (asset ref) | A `type:name` handle for an asset | `script:deploy.sh` |
-| **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |
+| **ref** (item ref) | A `[bundle//]conceptId` handle for an item | `scripts/deploy.sh`, `team//skills/review` |
+| **bundle** | Optional prefix narrowing an item ref to a bundle | `team-catalog//scripts/deploy.sh` |
 | **install ref** | A package identifier passed to `akm add` or `akm clone` | `npm:@scope/pkg`, `github:owner/repo` |
 | **git ref** | A branch, tag, or commit (used when installing) | `main`, `v1.0.0` |
 | **search source** | Where to look: `stash` (local), `registry`, or `both` | `--source stash` |

@@ -11,7 +11,7 @@ akm search "<query>" --source both            # Also search registries for insta
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
-akm search "memory:projectA/"                 # Enumerate a typed subtree (ref-prefix; trailing slash required)
+akm search "memories/projectA/"                 # Enumerate a typed subtree (ref-prefix; trailing slash required)
 akm search "knowledge:"                       # List every asset of a type
 akm curate "<task>"                          # Curate the best matches for a task
 ```
@@ -27,7 +27,7 @@ akm curate "<task>"                          # Curate the best matches for a tas
 
 Ref-prefix queries (`"<type>:<prefix>/"` or a bare `"<type>:"`) return a
 deterministic listing, not a relevance ranking. A full ref without the
-trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword search —
+trailing slash (`memories/projectA/auth-tip`) stays an ordinary keyword search —
 resolving a single ref is `akm show`'s job — and an explicit `--type` flag
 wins over the type parsed from the query.
 
@@ -36,16 +36,17 @@ wins over the type parsed from the query.
 Display an asset by ref. Knowledge assets support view modes as positional arguments.
 
 ```sh
-akm show script:deploy.sh                     # Show script (returns run command)
-akm show skill:code-review                    # Show skill (returns full content)
-akm show command:release                      # Show command (returns template)
-akm show agent:architect                      # Show agent (returns system prompt)
-akm show workflow:ship-release                # Show parsed workflow steps
-akm show knowledge:guide toc                  # Table of contents
-akm show knowledge:guide section "Auth"       # Specific section
-akm show knowledge:guide lines 10 30          # Line range
-akm show knowledge:my-doc                    # Show a knowledge asset
-akm show wiki:research                        # Wiki summary (same as akm wiki show research)
+akm show scripts/deploy.sh                     # Show script (returns run command)
+akm show skills/code-review                    # Show skill (returns full content)
+akm show commands/release                      # Show command (returns template)
+akm show agents/architect                      # Show agent (returns system prompt)
+akm show workflows/ship-release                # Show parsed workflow steps
+akm show knowledge/guide toc                  # Table of contents
+akm show knowledge/guide section "Auth"       # Specific section
+akm show knowledge/guide lines 10 30          # Line range
+akm show knowledge/my-doc                    # Show a knowledge asset
+akm show research//pages/ml-basics           # Show a page in the "research" LLM Wiki bundle
+akm wiki show research                        # Wiki summary (bundle-level overview)
 ```
 
 | Type | Key fields returned |
@@ -77,10 +78,10 @@ akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL into knowledge/
 akm import ./doc.md --target my-stash          # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
-akm workflow validate workflow:ship-release    # Validate a workflow file or ref; lists every error
-akm workflow next workflow:ship-release        # Resume the active run or start a new one
-akm feedback skill:code-review --positive      # Record that an asset helped
-akm feedback agent:reviewer --negative         # Record that an asset missed the mark
+akm workflow validate workflows/ship-release    # Validate a workflow file or ref; lists every error
+akm workflow next workflows/ship-release        # Resume the active run or start a new one
+akm feedback skills/code-review --positive      # Record that an asset helped
+akm feedback agents/reviewer --negative         # Record that an asset missed the mark
 ```
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
@@ -101,10 +102,10 @@ akm proposal list                              # List pending proposals
 akm proposal list --status pending|accepted|rejected
 akm proposal show <id>                          # Render the proposal body and metadata
 akm proposal diff <ref-or-id>                   # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
-akm proposal diff skill:akm-dream               # diff accepts full asset ref
+akm proposal diff skills/akm-dream               # diff accepts full asset ref
 akm proposal accept 7c115132                    # Accept by UUID prefix
 akm proposal accept <id>                        # Validate and promote via writeAssetToSource
-akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."         # Archive with a reason; body is preserved
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history                                    # Per-asset (or stash-wide) state-change trail
@@ -187,7 +188,7 @@ akm clone <ref>                               # Clone to working stash
 akm clone <ref> --name new-name               # Rename on clone
 akm clone <ref> --dest ./project/.claude       # Clone to custom location
 akm clone <ref> --force                       # Overwrite existing
-akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
+akm clone "npm:@scope/pkg//scripts/deploy.sh"  # Clone from remote package
 ```
 
 When `--dest` is provided, `akm setup` is not required first.
@@ -203,8 +204,8 @@ and re-keys the index row in place so the asset's learned ranking history
 survives.
 
 ```sh
-akm mv memory:projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
-akm mv memory:solo memory:renamed-solo             # Same-type ref-shaped target also accepted
+akm mv memories/projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
+akm mv memories/solo memories/renamed-solo             # Same-type ref-shaped target also accepted
 ```
 
 Wiki refs, cross-type targets, existing targets, `../` escapes, non-canonical

@@ -136,7 +136,7 @@ marginally relevant ones.
 
 ### Worked example
 
-Query: `"docker homelab"` → asset: `skill:docker-homelab`
+Query: `"docker homelab"` → asset: `skills/docker-homelab`
 
 ```
 Base BM25 (normalized):  1.0    (best FTS match in result set)

@@ -4,7 +4,7 @@
 [![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
-**A package manager for AI agent capabilities** — scripts, skills, commands, agents, knowledge, memories, workflows, wikis, vaults, lessons, and scheduled tasks — that works with any AI coding assistant that can run shell commands.
+**A package manager for AI agent capabilities** — scripts, skills, commands, agents, knowledge, memories, workflows, wikis, env files, secrets, lessons, and scheduled tasks — that works with any AI coding assistant that can run shell commands.
 
 akm gives agents a curated, searchable library built from local directories, GitHub repos, npm packages, and websites. Instead of front-loading a giant prompt, agents pull exactly what they need, when they need it, and feed results back so the library improves over time.
 
@@ -62,7 +62,7 @@ bun run build
   ```
 - **Load assets on demand** — show the full content of any asset by ref [(details)](docs/features/search-discovery.md)
   ```sh
-  akm show workflow:ship-release
+  akm show workflows/ship-release
   ```
 - **Capture local knowledge** — save discoveries as memories, imported docs, or wiki pages [(details)](docs/features/knowledge-management.md)
   ```sh
@@ -71,11 +71,11 @@ bun run build
   ```
 - **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/features/workflows.md)
   ```sh
-  akm workflow start workflow:onboarding
+  akm workflow start workflows/onboarding
   ```
 - **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/features/improvement-loop.md)
   ```sh
-  akm feedback skill:code-review --positive
+  akm feedback skills/code-review --positive
   akm improve && akm proposal list
   ```
 
@@ -86,9 +86,9 @@ akm setup                             # guided first-time setup
 akm add github:itlackey/akm-stash     # install the official onboarding stash
 akm index                             # build the search index
 akm curate "deploy"                   # get a curated shortlist
-akm show workflow:deploy              # load the best match
+akm show workflows/deploy             # load the best match
 akm remember "Deployment needs VPN"  # capture a memory
-akm feedback workflow:deploy --positive
+akm feedback workflows/deploy --positive
 ```
 
 For non-interactive setup: `akm setup --yes` (or `--dir ~/custom-stash` for a custom path).
@@ -99,17 +99,18 @@ See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 
 | Type | What it is | Example ref |
 | --- | --- | --- |
-| **script** | Executable shell or code automation | `script:deploy.sh` |
-| **skill** | A set of agent instructions | `skill:code-review` |
-| **command** | A prompt template with placeholders | `command:summarize` |
-| **agent** | System prompt + model + tool policy | `agent:reviewer` |
-| **knowledge** | A reference document | `knowledge:api-guide` |
-| **vault** | Key/value environment config (keys only, never secrets) | `vault:prod-env` |
-| **workflow** | Structured multi-step procedure with resumable run state | `workflow:ship-release` |
-| **wiki** | A page inside a multi-wiki knowledge base | `wiki:ops/runbook` |
-| **lesson** | Distilled feedback insight | `lesson:prefer-dry-run` |
-| **memory** | Recalled context from a previous session | `memory:vpn-note` |
-| **fact** | Durable stash-level fact (identity, conventions, stash-meta) | `fact:team/tool-stack` |
+| **script** | Executable shell or code automation | `scripts/deploy.sh` |
+| **skill** | A set of agent instructions | `skills/code-review` |
+| **command** | A prompt template with placeholders | `commands/summarize` |
+| **agent** | System prompt + model + tool policy | `agents/reviewer` |
+| **knowledge** | A reference document | `knowledge/api-guide` |
+| **env** | Whole `.env` group (key names surfaced, values never) | `env/prod` |
+| **secret** | A single sensitive value | `secrets/deploy-token` |
+| **workflow** | Structured multi-step procedure with resumable run state | `workflows/ship-release` |
+| **lesson** | Distilled feedback insight | `lessons/prefer-dry-run` |
+| **memory** | Recalled context from a previous session | `memories/vpn-note` |
+| **task** | Scheduled prompt/command/workflow job | `tasks/nightly-review` |
+| **fact** | Durable stash-level fact (identity, conventions, stash-meta) | `facts/team/tool-stack` |
 
 See [docs/concepts.md](docs/concepts.md) for classification rules and the ref format.
 
@@ -120,7 +121,7 @@ See [docs/concepts.md](docs/concepts.md) for classification rules and the ref fo
 akm add github:owner/team-stash
 akm index
 akm search "database migration" --type script
-akm show script:migrate.sh
+akm show scripts/migrate.sh
 ```
 
 **Capture and route knowledge**
@@ -142,7 +143,7 @@ akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442
 
 **Improvement loop**
 ```sh
-akm feedback skill:planner --negative --reason "Doesn't account for merge conflicts"
+akm feedback skills/planner --negative --reason "Doesn't account for merge conflicts"
 akm improve                   # generate proposals from feedback + history
 akm proposal list             # review pending proposals
 akm proposal accept <uuid-or-ref>   # apply a proposal
@@ -151,7 +152,7 @@ akm proposal reject <uuid-or-ref>   # discard it
 
 **Clone and customize an asset**
 ```sh
-akm clone workflow:ship-release --dest ./project/.claude
+akm clone workflows/ship-release --dest ./project/.claude
 # edit the local copy — it wins in subsequent searches automatically
 ```
 
@@ -167,8 +168,8 @@ Add this to your `AGENTS.md`, `CLAUDE.md`, or system prompt:
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI.
-Use `akm -h` for details.
+knowledge, workflows, env files, secrets, wikis, lessons, and memories via the
+`akm` CLI. Use `akm -h` for details.
 ```
 
 No plugins or SDKs required. Platform-specific integrations are available in [akm-plugins](https://github.com/itlackey/akm-plugins).

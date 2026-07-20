@@ -229,7 +229,7 @@ plus feedback events plus a human-graded expected outcome:
   "schemaVersion": 1,
   "id": "probe-01-queued-clear-lesson",
   "assetType": "memory",
-  "assetRef": "memory:probe-01-deploy-secret-rotation",
+  "assetRef": "memories/probe-01-deploy-secret-rotation",
   "asset": {
     "frontmatter": { "description": "...", "captureMode": "hot", "...": "..." },
     "body": "..."

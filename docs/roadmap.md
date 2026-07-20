@@ -23,31 +23,40 @@ more about hardening, simplifying, and freezing what `0.8.0` put in place.
 
 ## 0.9
 
-Release `0.9` is focused on stabilization ahead of the `1.0` contract freeze.
+Release `0.9` is the architecture-consolidation release ahead of the `1.0`
+contract freeze. It replaces the flat asset-type registry with a
+**bundle / adapter** model and settles the durable contracts `1.0` will freeze.
 
-- Finish the remaining pre-`1.0` cleanup from the `0.8` transition: remove
-  deprecated behavior, close migration gaps, and simplify compatibility paths.
-- Lock down the `0.8` command, config, search, and write-path redesign so the
-  surviving public surface is consistent and ready to freeze.
-- Harden the operational parts of the system that now carry more weight after
-  `0.8`: indexing, proposal handling, graph refresh, task execution, and
-  upgrade flows.
-- Improve operator confidence with stronger validation, migration docs, and
-  release-quality testing around the new `0.8` storage and config model.
-- Keep the core product CLI-first and shell-friendly while clarifying which
-  integration points are part of the stable contract versus still evolving.
+- **One canonical ref grammar.** Refs are `[bundle//]conceptId` — a
+  subdir-qualified concept id such as `skills/code-review` or `memories/vpn-note`
+  — replacing the pre-`0.9` `type:name` spelling. Durable state stores the
+  fully-qualified form; the short bundle-omitted form is input sugar. This is a
+  deliberate, one-time break, taken pre-`1.0` while it is still cheap.
+- **Format-neutral bundles.** Installed sources are bundles, each recognized by
+  a built-in adapter (Agent Skills, Claude/OpenCode commands and agents,
+  knowledge, YAML workflows, tasks, env/secret files, scripts, OKF and LLM-wiki
+  knowledge bases) instead of a closed asset-type list.
+- **Storage consolidation.** The durable databases collapse from four to three
+  (`state.db` / `index.db` / a separate `logs.db`); config migrates from the
+  flat `stashDir` / `sources` / `installed` keys to `bundles` / `defaultBundle`.
+  The one-time cutover is journaled and crash-resumable via `akm migrate apply`,
+  with a verified backup taken first.
+- **Debt paydown.** The improve / proposal / workflow internals are decomposed
+  onto one file-change transaction model and an ambient run context, the
+  deprecated `0.8` CLI aliases are removed, and the `vault` asset type is
+  retired in favor of `env` / `secret`.
 
-In short: `0.9` is about reducing ambiguity, paying down pre-`1.0` debt, and
-arriving at a small, durable core built on the capabilities that already
-shipped in `0.8.0`.
+In short: `0.9` reduces ambiguity, pays down pre-`1.0` debt, and arrives at a
+small, durable core ready for the `1.0` freeze.
 
 ## 1.0
 
 Release `1.0` is focused on freezing the public contract and shipping the first
 stable ecosystem layer around that core.
 
-- Freeze the supported source model, ref format, search behavior, write-target
-  rules, and other public contracts documented in the v1 spec.
+- Freeze the supported source model, the `[bundle//]conceptId` ref format,
+  search behavior, write-target rules, and other public contracts documented in
+  the v1 spec.
 - Carry the `0.8` agent and improvement workflow forward as a stable,
   documented product surface rather than a collection of pre-release features.
 - Ship an official akm SDK for building integrations against the stable v1

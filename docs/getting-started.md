@@ -130,7 +130,7 @@ Find assets by keyword:
 akm search "hello"
 ```
 
-Results include a `ref` field (for example `script:hello.sh`) that you pass
+Results include a `ref` field (for example `scripts/hello.sh`) that you pass
 directly to `akm show`. Filter by type or limit results:
 
 ```sh
@@ -144,7 +144,7 @@ See [cli.md](cli.md) for the full set of search flags.
 Inspect an asset by its ref:
 
 ```sh
-akm show script:hello.sh
+akm show scripts/hello.sh
 ```
 
 The output is structured JSON containing everything an agent needs to use
@@ -198,7 +198,7 @@ export AKM_STASH_DIR="$SANDBOX/stash"
 akm setup --yes                 # initialize the sandbox stash
 akm index --full                # empty but valid index
 akm workflow create demo        # create a template-backed workflow asset
-akm workflow start workflow:demo
+akm workflow start workflows/demo
 # ... exercise the flow ...
 
 rm -rf "$SANDBOX"               # tear down when done

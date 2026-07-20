@@ -5,14 +5,14 @@
 - CI runs `bun run check`, which is `bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration`.
 - Before committing, run `bunx biome check --write src/ tests/`. Repo guidance prefers the write-capable Biome pass, not just `bun run lint`.
 - Build with `bun run build`. It compiles `src/**` only into `dist/`; `dist/tests` should never appear.
-- Prefer focused verification with `bun test tests/<file>.test.ts`. Do not rely on `bun run check:changed` without checking it first; the script references `tests/stash-search.test.ts`, which is not present.
+- Prefer focused verification with `bun test tests/<file>.test.ts`. `bun run check:changed` runs a small set of output/contract suites (output-baseline, registry-search, show-argv-entrypoint, output-shapes-unit) plus `bun run lint` and `bunx tsc --noEmit`.
 
 ## Architecture
 - This is a CLI-only package. There is no public API, no barrel exports, and no `exports` map. `src/cli.ts` is the thin dispatcher; add CLI verbs under `src/commands/*.ts`.
 - If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/technical/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
 - Supported source providers are locked to `filesystem`, `git`, `website`, and `npm`. Do not add `context-hub`; do not reintroduce `openviking`.
 - `SourceProvider` is exactly `{ name, kind, init, path, sync? }`. All providers materialize files to local disk.
-- Asset refs are `[origin//]type:name`. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing.
+- Asset refs are `[bundle//]conceptId[#fragment]`, where `conceptId` is subdir-qualified within its bundle (e.g. `skills/code-review`, `memories/vpn-note`, `knowledge/api-guide`, `env/prod`). Durable state stores the fully-qualified `bundle//conceptId`; the short bundle-omitted form is input sugar resolved against `defaultBundle`, then the remaining bundles in installation-priority order. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing. The pre-0.9.0 `[origin//]type:name` grammar is gone (the frozen migrator in `src/migrate/legacy/` is the only place it survives).
 - `show` is local-index only: resolve through the FTS index, then read from disk. No per-provider `show` exists.
 - Registry results are opt-in, stay separate from normal stash hits, and live in `registryHits`, never `hits`.
 - All write-target branching by `source.kind` belongs in `src/core/write-source.ts`.
@@ -35,7 +35,7 @@
   - A tripwire **throws** if any test leaks an `AKM_*` / `XDG_*` / `HOME` env var that wasn't there at preload time, leaves `process.cwd()` changed, or leaves `globalThis.fetch` replaced.
 - Helpers live in `tests/_helpers/sandbox.ts`: `sandboxStashDir()`, `sandboxHome()`, `sandboxXdgConfigHome()`, `sandboxXdgDataHome()`, `writeSandboxConfig(partial)`, and `withMockedFetch(fn, mock)`. Use them rather than mutating env / fetch by hand.
 - New test files should not mutate `process.env.HOME =`, `process.chdir(...)`, or `globalThis.fetch =` directly. The lint rule `bun scripts/lint-tests-isolation.ts` (wired into `bun run lint`) flags new occurrences; existing offenders are allow-listed. Use `withMockedFetch` for fetch swaps and restore cwd in a `finally` block when chdir is unavoidable.
-- Background: the harness was added on `feat/test-isolation-harness` because the per-file save/restore pattern kept regressing — `tests/wiki.test.ts` was reading the developer's real `~/.config/akm/config.json` despite the file's own env-isolation boilerplate. The design lives at `knowledge:projects/akm/test-harness-redesign`.
+- Background: the harness was added on `feat/test-isolation-harness` because the per-file save/restore pattern kept regressing — `tests/wiki.test.ts` was reading the developer's real `~/.config/akm/config.json` despite the file's own env-isolation boilerplate. The design lives at `knowledge/projects/akm/test-harness-redesign`.
 
 ## CLI Contract
 - Failures render to `stderr` as `{ok:false, error, code}`. Exit codes are `2` for usage, `78` for config, and `1` for general errors.
@@ -49,7 +49,7 @@ LLM defaults follow a "works correctly for the lowest common denominator" philos
 - `concurrency` defaults to **1** in `concurrentMap`. Cloud users can set `llm.concurrency: 4` in config.json. Local model servers (LM Studio, Ollama) run one inference at a time — the old default of 4 crashed them with "Model reloaded" / HTTP 500 errors.
 
 ## Code Style
-- Prefer external `.md` (or `.xml`) files over long inline strings in TypeScript. Multi-line template literals containing markdown, XML, or prose belong in a standalone file in the same directory as the module that uses them. Import them with `import x from "./x.md" with { type: "text" }` and use `.replace`/`.replaceAll` with `{{PLACEHOLDER}}` tokens at call time. This keeps templates editable without touching TS source and avoids escaping noise inside template literals. See `src/wiki/wiki-templates.ts`, `src/tasks/backends/schtasks-template.xml`, and `scripts/copy-assets.ts` for the established pattern.
+- Prefer external `.md` (or `.xml`) files over long inline strings in TypeScript. Multi-line template literals containing markdown, XML, or prose belong in a standalone file in the same directory as the module that uses them. Import them with `import x from "./x.md" with { type: "text" }` and use `.replace`/`.replaceAll` with `{{PLACEHOLDER}}` tokens at call time. This keeps templates editable without touching TS source and avoids escaping noise inside template literals. See `src/tasks/backends/schtasks.ts` (which imports `src/assets/backends/schtasks-template.xml`), `src/output/cli-hints.ts`, and `scripts/copy-assets.ts` for the established pattern.
 
 ## Gotchas
 - `prepublishOnly` copies `.github/README.npm.md` over `README.md` before building, and `postpublish` restores `README.md` with `git checkout -- README.md`. Do not treat that README churn as a normal source edit.

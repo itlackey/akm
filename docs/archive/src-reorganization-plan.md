@@ -1,3 +1,6 @@
+> **Archived 2026-07-20 (0.9.0 architecture refactor).** Superseded planning doc: the indexer half is superseded by `docs/analysis/indexer-vertical-slice-refactor-plan.md`; the kernel-nesting guidance landed across the 0.9.0 adapter/three-DB chunk sweep. Retained as a design-decision record.
+> Its examples use the pre-0.9.0 `type:name` ref grammar (historical; the live grammar is `[bundle//]conceptId`, see `docs/technical/ref.md`).
+
 # AKM `src/` Reorganization Plan — Architectural Decision
 
 **Status:** PARTIALLY EXECUTED (2026-06, D-series) — `commands/improve/`, `commands/proposal/`, `commands/graph/`, `commands/env/` slices moved; kernel/indexer nesting still pending.

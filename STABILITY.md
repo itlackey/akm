@@ -13,23 +13,32 @@ treat as still-evolving.
 Scripted use is supported. Behavior changes will be additive within a minor
 release; breaking changes will be called out explicitly in the CHANGELOG.
 
-- **Asset ref syntax** — `<type>:<name>` for the 11 supported asset types
-  (`script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`,
-  `wiki`, `vault`, `lesson`, `task`). The `vault` asset type is deprecated
-  (removed in 0.9.0 — use `env`); it continues to resolve to frozen `vaults/`
-  files for the 0.8 window.
+- **Asset ref syntax** — `[bundle//]conceptId[#fragment]`. A `conceptId` is
+  subdir-qualified within its bundle: `memories/<name>`, `lessons/<name>`,
+  `knowledge/<name>`, `skills/<name>`, `scripts/<name>`, `workflows/<name>`,
+  `env/<name>`, `secrets/<name>`, and `tasks/<name>` (the `commands/`,
+  `agents/`, `facts/`, and `sessions/` component directories follow the same
+  rule). The optional `bundle//` prefix names an installed bundle; omit it and
+  the ref resolves against the workspace `defaultBundle`, then the remaining
+  bundles in installation-priority order. Durable state always stores the
+  fully-qualified `bundle//conceptId`; the short (bundle-omitted) form is
+  accepted input only, at the CLI, the programmatic surface, and inside bundle
+  content (where it resolves against the containing bundle). The pre-0.9.0
+  `<type>:<name>` grammar is **removed** in 0.9.0 — the one-time migrator
+  re-keys all durable state to the new spelling; see the 0.9.0 migration note in
+  the CHANGELOG.
 - **Read commands** — `akm search`, `akm show`, `akm list`, `akm curate`,
-  `akm info`, `akm config get`, `akm config list`, `akm vault list`,
-  `akm vault show`, `akm proposal list` (list filters). The flat `akm proposals`
-  spelling is a deprecated alias (removed in 0.9.0).
+  `akm info`, `akm config get`, `akm config list`, `akm env list`,
+  `akm secret list`, `akm proposal list` (list filters). The flat `akm proposals`
+  spelling and `akm show proposal <id>` were removed in 0.9.0 (use
+  `akm proposal list` / `akm proposal show <id>`).
 - **Write commands core surface** — `akm add`, `akm update`, `akm remove`,
   `akm clone`, `akm import`, `akm sync`, `akm index`, `akm setup`,
   `akm remember`, `akm feedback`, `akm config set`, `akm config unset`,
-  `akm config enable`, `akm config disable`. `akm save` (now `akm sync`) and the
-  top-level `akm enable` / `akm disable` (now `akm config enable` /
-  `akm config disable`) are deprecated aliases that warn on stderr and delegate
-  (removed in 0.9.0). On `akm feedback`, `--note` is a deprecated alias for
-  `--reason` (removed in 0.9.0).
+  `akm config enable`, `akm config disable`. The 0.8-era deprecated aliases
+  were removed in 0.9.0: `akm save` (use `akm sync`), the top-level
+  `akm enable` / `akm disable` (use `akm config enable` / `akm config disable`),
+  and `--note` on `akm feedback` (use `--reason`).
 - **Output contracts** — JSON output shape (the top-level keys, error
   envelope `{ok: false, error, hint}`), and the exit-code table below.
   `--detail` is verbosity only (`brief|normal|full`); `--shape`
@@ -44,6 +53,14 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   | `78` | Configuration error |
 - **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
   / `AKM_INSTALL_DIR` environment override.
+- **On-disk storage** — durable workspace state (events, proposals, history,
+  workflow runs, salience) lives in `state.db`; the search index (`index.db`)
+  is a fully **regenerable** cache rebuilt by `akm index`; high-volume logs stay
+  in a separate `logs.db`. 0.9.0 folded the former `workflow.db` into `state.db`
+  (three databases, down from four) and retired the `.stash.json` metadata
+  sidecars in favor of file-local frontmatter plus the index. Treat the on-disk
+  schema as internal (use `akm` commands, not direct SQL); the one-time 0.9.0
+  cutover is covered by the migration note.
 
 ## Evolving
 
@@ -55,22 +72,34 @@ CHANGELOG with a migration note.
 - **Improvement loop** — `akm improve`, `akm propose`, and the proposal noun
   group `akm proposal {list,show,diff,accept,reject,revert}`. The flat verbs
   `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
-  and `akm revert` are deprecated aliases that warn on stderr and delegate
-   (removed in 0.9.0). Output JSON keys are stable; CLI flags (`--auto-accept`,
-   `--strategy`, `--task`, `--generator`) may add options or tighten validation
-  across releases. On `accept`/`reject`/`history`, `--source` is a deprecated
-  alias for `--generator` (removed in 0.9.0).
+  and `akm revert` were removed in 0.9.0 — use the noun group. Output JSON keys
+  are stable; CLI flags (`--auto-accept`, `--strategy`, `--task`, `--generator`)
+  may add options or tighten validation across releases. On
+  `accept`/`reject`/`history`, `--source` was removed in 0.9.0 (use
+  `--generator`).
 - **Tasks** — `akm tasks` subcommand surface (singular `akm task` is an
   additive alias); strict version-2 YAML for scheduled tasks. Prompt tasks use
   named engines and task history metadata is versioned. Schema additions in
   patch releases; removals only at minor.
-- **Events / log** — `akm events` subcommand surface (`akm log` is an additive
-  alias for the same stream in 0.8; `log` becomes primary in 0.9.0).
+- **Events / log** — `akm log` is the primary event-stream surface in 0.9.0
+  (the 0.8 `akm events` spelling was removed; `akm history` is a different,
+  asset-scoped surface).
 - **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
   additive alias).
-- **Wiki management** — `akm wiki *` subcommands. `akm wiki remove` now confirms
-  before deleting; pass `-y` / `--yes` to skip the prompt. The old
-  `--force` flag is a deprecated alias for `-y` (removed in 0.9.0).
+- **Bundles & the workspace model** — 0.9.0 replaces the flat asset-type
+  registry with a **bundle / adapter** model. Installed sources are *bundles*;
+  each is recognized by a built-in *adapter* (native Agent Skills, Claude and
+  OpenCode commands/agents, knowledge, YAML workflows, tasks, env/secret files,
+  scripts, OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
+  `defaultBundle` (replacing the flat `stashDir` / `sources` / `installed` /
+  `wikiName` keys). The adapter set, bundle-recognition rules, and the `bundles`
+  config shape are new in 0.9.0 and may still shift within the 0.9.x line.
+- **LLM Wiki bundles** — the Karpathy-style LLM wiki is a first-class built-in
+  bundle format (the `llm-wiki` adapter owns `schema.md` / `index.md` /
+  `log.md` / `raw/` / `pages/` and its ingest flow). The former `wiki` *asset
+  type* and `wiki:` refs were removed in 0.9.0; wiki pages are addressed as
+  ordinary concepts inside their bundle. Adapter behavior and page conventions
+  are still iterating.
 - **Agent dispatch** — `akm agent` subcommand. The supported set of
   agent CLI backends (claude, opencode, codex, gemini, aider) will grow.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
@@ -88,11 +117,13 @@ for scripted use.
   (`--shape human|agent|summary`) is new in 0.8. `summary` is implemented
   only on `akm show`; `agent` is implemented on `search`, `show`, and
   `curate`. Coverage will expand. The legacy spellings `--detail summary`,
-  `--detail agent`, and `--for-agent` are deprecated aliases (warn on
-  stderr; removed in 0.9.0). `--detail` is now verbosity only
-  (`brief|normal|full`).
-- **Vault providers** — vault read/write is stable; external/network vault
-  providers (issue #190) are not yet shipped.
+  `--detail agent`, and `--for-agent` were removed in 0.9.0. `--detail` is now
+  verbosity only (`brief|normal|full`).
+- **Protected env & secret values** — `env` (a whole `.env` group; key names
+  are surfaced for discoverability, values never are) and `secret` (a single
+  sensitive value) replace the removed `vault` type. Values are never written
+  to stdout, the index, or structured output; the safe injection path is
+  `akm env run <name> -- <command>` (or `akm secret run <name> <VAR> -- …`).
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
@@ -148,19 +179,28 @@ for scripted use.
   **linear markdown workflows are unchanged and stable**, as is the workflow
   CLI contract (`start`/`next`/`complete`/`status`/`list`).
 
+## Landed in 0.9.0 (were previously on the horizon)
+
+- **Bun/Node cross-runtime support** (issue #465) — the npm package requires
+  Node.js >= 22 as its bootstrap and prefers a working Bun >= 1.0 for execution
+  when both are available. Old, unusable, or absent Bun installations fall back
+  to Node.js. Standalone binaries are runtime-free. The CLI surface does not
+  change; the install instructions do.
+- **Storage layout consolidation** — landed as the three-database model
+  (`state.db` / `index.db` / separate `logs.db`), the `[bundle//]conceptId` ref
+  cutover, and the `bundles` / `defaultBundle` config migration. The one-time
+  cutover is journaled and crash-resumable via `akm migrate apply`; see the
+  0.9.0 migration note in the CHANGELOG.
+
 ## On the horizon
 
 These changes are planned and will land in a known future release. They
 are not part of the current stability contract; you should plan migrations
 around them.
 
-- **0.9.0 — Bun/Node cross-runtime support** (issue #465) — the npm package
-  requires Node.js >= 22 as its bootstrap and prefers a working Bun >= 1.0
-  for execution when both are available. Old, unusable, or absent Bun
-  installations fall back to Node.js. Standalone binaries are runtime-free.
-  The CLI surface does not change; the install instructions do.
-- **Storage layout consolidation**
-  — under user review. Will be announced before any move happens.
+- **1.0 contract freeze** — the `[bundle//]conceptId` ref grammar, the
+  supported source model, search behavior, and write-target rules are frozen at
+  1.0. The SDK and in-process plugin story ship on top of that frozen core.
 
 ## Reporting stability regressions
 

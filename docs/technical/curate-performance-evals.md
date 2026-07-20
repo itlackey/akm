@@ -75,7 +75,7 @@ behavior:
 | Query | Before | After | Metric |
 | --- | --- | --- | --- |
 | `docker homelab` | root skill + child reference both consumed top-level slots | root skill only; child moved to `supportRefs` | family occupancy `2 -> 1` |
-| `docker deploy` | included unrelated `command:release-manager` filler | no `release-manager` filler | banned filler count `1 -> 0` |
+| `docker deploy` | included unrelated `commands/release-manager` filler | no `release-manager` filler | banned filler count `1 -> 0` |
 | `the docker` | no results | relevant docker results returned | result count `0 -> 2` |
 | `how docker` | no results | relevant docker results returned | result count `0 -> 2` |
 
@@ -83,8 +83,8 @@ These are minimum guards, not the full product-quality bar.
 
 ## What To Preserve
 
-- Broad family query: `docker homelab` -> `skill:docker-homelab`
-- Narrow family query: `docker compose reference` -> `knowledge:skills/docker-homelab/references/compose`
+- Broad family query: `docker homelab` -> `skills/docker-homelab`
+- Narrow family query: `docker compose reference` -> `knowledge/skills/docker-homelab/references/compose`
 - Prompt residue fallback: `the docker` should not return an empty list
 - Weak-hit fallback: one weak phrase hit must not suppress stronger token results
 - Explicit type filter: `--type` must still bypass diversification

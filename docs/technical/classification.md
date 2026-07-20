@@ -1,11 +1,32 @@
 # Classification System
 
-akm classifies files with matcher specificity. The highest-specificity match
-wins; ties are broken by registration order, so later matchers win ties.
+akm recognizes files through **bundle adapters**. Each adapter owns a bundle
+format and exposes a `recognize()` primitive that inspects a single file (path +
+frontmatter + content) and returns an `IndexDocument` — the item's
+subdir-qualified `conceptId`, type, renderer, and metadata — or `null` if the
+adapter does not claim the file. There is no longer a global matcher registry;
+the per-format adapter is the unit of recognition.
 
-## Asset Types
+## Built-in adapters
 
-Built-in types today are:
+`registerBuiltinAdapters()` (`src/core/adapter/adapters/index.ts`) registers three
+built-in adapters:
+
+| Adapter id | Format | Recognizes |
+| --- | --- | --- |
+| `akm` | The classic AKM stash layout | scripts, skills, commands, agents, knowledge, workflows, memories, lessons, env, secrets, facts, tasks, sessions |
+| `llm-wiki` | LLM Wiki bundle | a wiki root (`schema.md` + `pages/`) and its pages, raw, xrefs, citations |
+| `okf` | Open Knowledge Format bundle | OKF concept documents |
+
+Adapters are probed in a specific-first order (`llm-wiki` before `okf`) so a more
+specific `looksLikeRoot` probe wins when roots legitimately overlap — an LLM Wiki
+root also carries a root `index.md`, which okf's loose probe would otherwise claim.
+
+## Item types
+
+The `akm` adapter classifies each file into one of the open type set. Types are
+open strings (validated against `KNOWN_TYPES` for AKM-owned presentation/ranking
+tables, but the data space accepts unknown types with a warn-once fallback):
 
 - `script`
 - `skill`
@@ -14,51 +35,41 @@ Built-in types today are:
 - `knowledge`
 - `workflow`
 - `memory`
+- `lesson`
 - `env`
 - `secret`
-- `wiki`
+- `fact`
+- `task`
+- `session`
 
-## Asset Quality Values
+`wiki` is **no longer an item type**. Multi-page wikis are a bundle *format* owned
+by the `llm-wiki` adapter, not a per-file type stamped by the classifier.
 
-The `quality` field marks how an asset was produced. Four values are well-known:
+## Reserved structural files
 
-| Value | Meaning |
-| --- | --- |
-| `"generated"` | Heuristically indexed; included in default search |
-| `"curated"` | Human-authored; included in default search |
-| `"enriched"` | LLM enrichment pass has run for this asset; included in default search |
-| `"proposed"` | Pending review; excluded from default search, opt-in via `--include-proposed` |
+`index.md` and `log.md` are reserved structural files at every level of a bundle
+(OKF §3.1/§6/§7). No adapter emits an `IndexDocument` for them — they are bundle
+structure (directory listing, update history), never concept items. This holds for
+the `akm`, `okf`, and `llm-wiki` adapters alike.
 
-Unknown string values warn once at runtime and remain searchable.
+## The akm adapter's recognition signals
 
-## Built-in Matchers
-
-`src/indexer/matchers.ts` currently registers **five** built-in matchers:
-
-1. `extensionMatcher`
-2. `directoryMatcher`
-3. `parentDirHintMatcher`
-4. `smartMdMatcher`
-5. `wikiMatcher`
-
-## Specificity Levels
+Inside the `akm` adapter, recognition picks a winner by **specificity descending**,
+ties broken by registration order (later wins). The signals:
 
 | Specificity | Signal | Result |
 | --- | --- | --- |
-| 25 | `SKILL.md` outside `wikis/` | `skill` |
+| 25 | `SKILL.md` (skill directory) | `skill` |
 | 20 | `tools` / `toolPolicy` frontmatter | `agent` |
-| 20 | any `.md` under `wikis/<name>/...` | `wiki` |
 | 19 | workflow markdown structure | `workflow` |
-| 18 | command frontmatter/body placeholders | `command` |
+| 18 | command frontmatter / `$ARGUMENTS` body placeholders | `command` |
 | 15 | immediate parent dir hint | directory-specific type |
 | 10 | ancestor dir hint | directory-specific type |
 | 8 | `model` frontmatter only | weak `agent` signal |
 | 5 | fallback markdown | `knowledge` |
 | 3 | known script extension | `script` |
 
-## Directory Signals
-
-The directory-based matchers recognize:
+### Directory signals
 
 - `scripts/` → `script`
 - `skills/` → `skill`
@@ -67,15 +78,12 @@ The directory-based matchers recognize:
 - `knowledge/` → `knowledge`
 - `workflows/` → `workflow`
 - `memories/` → `memory`
+- `lessons/` → `lesson`
 - `env/` → `env`
 - `secrets/` → `secret`
+- `tasks/` → `task`
 
-`wiki` is not classified by these generic directory matchers. It is handled by
-`wikiMatcher`, which requires a path below `wikis/<name>/...`.
-
-## Markdown Signals
-
-`smartMdMatcher` uses these content signals:
+### Markdown signals
 
 | Signal | Type | Specificity |
 | --- | --- | --- |
@@ -86,22 +94,28 @@ The directory-based matchers recognize:
 | `model` in frontmatter only | `agent` | 8 |
 | any other `.md` | `knowledge` | 5 |
 
-## Wiki Override
+## Asset quality values
 
-`wikiMatcher` is registered after `smartMdMatcher`, so wiki pages win a
-same-specificity tie. A wiki page with agent-like frontmatter still classifies
-as `wiki`.
+The `quality` field marks how an item was produced. Four values are well-known:
+
+| Value | Meaning |
+| --- | --- |
+| `"generated"` | Heuristically indexed; included in default search |
+| `"curated"` | Human-authored; included in default search |
+| `"enriched"` | LLM enrichment pass has run for this item; included in default search |
+| `"proposed"` | Pending review; excluded from default search, opt-in via `--include-proposed` |
+
+Unknown string values warn once at runtime and remain searchable.
 
 ## Examples
 
-| File | Winning matcher | Type |
+| File | Winning signal | conceptId |
 | --- | --- | --- |
-| `scripts/deploy.sh` | parentDirHint (15) | `script` |
-| `skills/review/SKILL.md` | extension (25) | `skill` |
-| `commands/release.md` with `agent: coder` | smartMd (18) | `command` |
-| `agents/reviewer.md` with `tools:` | smartMd (20) | `agent` |
-| `workflows/release.md` with workflow structure | smartMd (19) | `workflow` |
-| `env/prod.env` | parentDirHint (15) | `env` |
-| `secrets/deploy-token` | parentDirHint (15) | `secret` |
-| `wikis/research/auth.md` | wikiMatcher (20) | `wiki` |
-| `docs/guide.md` | smartMd (5) | `knowledge` |
+| `scripts/deploy.sh` | parent dir (15) → `script` | `scripts/deploy.sh` |
+| `skills/review/SKILL.md` | `SKILL.md` (25) → `skill` | `skills/review` |
+| `commands/release.md` with `agent: coder` | command frontmatter (18) | `commands/release` |
+| `agents/reviewer.md` with `tools:` | frontmatter (20) → `agent` | `agents/reviewer` |
+| `workflows/release.md` with workflow structure | structure (19) → `workflow` | `workflows/release` |
+| `env/prod.env` | parent dir (15) → `env` | `env/prod` |
+| `secrets/deploy-token` | parent dir (15) → `secret` | `secrets/deploy-token` |
+| `docs/guide.md` | fallback (5) → `knowledge` | `knowledge/guide` |

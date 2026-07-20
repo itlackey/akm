@@ -1,3 +1,6 @@
+> **Archived 2026-07-20 (0.9.0).** The CLI refactoring task list; its subtractive refactors landed across the 0.9.0 chunk sweep (dedup families, one-lock improve, adapter + three-DB cutover). Retained as a design-decision record.
+> Live architecture is documented in `docs/technical/architecture.md` and the `docs/design/akm-0.9.0-*` plan set.
+
 # AKM CLI — Final Refactoring Task List
 
 > Lead-reconciled deliverable. Synthesizes the raw per-slice survey with the three-way Opus debate (correctness/dup, over-engineering skeptic, architecture/value). Only findings that survived **both** verification *and* the over-engineering skeptic are kept. Duplicate cross-slice reports are merged. Rejected/over-engineered items are in the explicit **CUT** section with reasons. Every claim below was spot-checked against the actual source by the lead before inclusion.

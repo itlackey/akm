@@ -33,7 +33,7 @@ working with akm itself. Install it with:
 ```bash
 akm add github:itlackey/akm-stash
 akm index
-akm show skill:akm-quickstart
+akm show skills/akm-quickstart
 ```
 
 ## Managing Registries
@@ -268,10 +268,10 @@ Managed sources are cache-managed and may be overwritten by `akm update`.
 To edit an asset from a managed source, clone it into the working stash:
 
 ```bash
-akm clone "npm:@scope/my-stash//script:deploy.sh"
+akm clone "npm:@scope/my-stash//scripts/deploy.sh"
 
 # Clone with a new name
-akm clone "npm:@scope/my-stash//script:deploy.sh" --name my-deploy.sh
+akm clone "npm:@scope/my-stash//scripts/deploy.sh" --name my-deploy.sh
 ```
 
 The cloned asset lives in the working stash and takes priority over the
@@ -281,7 +281,7 @@ Use `--dest` to clone to a custom directory instead of the working stash:
 
 ```bash
 # Deploy a script directly into a project's .claude directory
-akm clone "npm:@scope/my-stash//script:deploy.sh" --dest ./project/.claude
+akm clone "npm:@scope/my-stash//scripts/deploy.sh" --dest ./project/.claude
 ```
 
 The type subdirectory (`scripts/`, `skills/`, etc.) is appended automatically,

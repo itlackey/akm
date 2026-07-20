@@ -87,10 +87,10 @@ a custom destination) for local editing. After cloning, your local copy wins in
 subsequent searches automatically.
 
 ```sh
-akm clone script:deploy.sh
-akm clone skill:code-review --name my-code-review
-akm clone script:deploy.sh --dest ./project/.claude
-akm clone "npm:@scope/pkg//script:deploy.sh"   # From uninstalled package
+akm clone scripts/deploy.sh
+akm clone skills/code-review --name my-code-review
+akm clone scripts/deploy.sh --dest ./project/.claude
+akm clone "npm:@scope/pkg//scripts/deploy.sh"   # From uninstalled package
 ```
 
 Clone is non-destructive: use `--force` to overwrite an existing local copy.
@@ -100,7 +100,7 @@ copy a single file.
 **Example: clone and customize a workflow**
 
 ```sh
-akm clone workflow:ship-release --dest ./project/.claude
+akm clone workflows/ship-release --dest ./project/.claude
 # Edit ./project/.claude/workflows/ship-release.md
 # The local copy wins in searches from this directory forward
 ```

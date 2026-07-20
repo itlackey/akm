@@ -13,13 +13,13 @@ Feedback influences utility scores at the next index run, so highly-rated assets
 rank higher and underperformers surface less often.
 
 ```sh
-akm feedback skill:code-review --positive
-akm feedback agent:reviewer --negative
-akm feedback workflow:ship-release --positive --reason "Worked end-to-end on 0.8.0"
-akm feedback skill:planner --negative --reason "Doesn't account for merge conflicts"
+akm feedback skills/code-review --positive
+akm feedback agents/reviewer --negative
+akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
+akm feedback skills/planner --negative --reason "Doesn't account for merge conflicts"
 
 # With a structured reason slug (0.8.0+, consumed by improve/distill prompts):
-akm feedback skill:planner --negative --reason "incomplete-edge-cases"
+akm feedback skills/planner --negative --reason "incomplete-edge-cases"
 ```
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
@@ -28,7 +28,7 @@ the current local index.
 **Example: flag a skill that gave bad advice**
 
 ```sh
-akm feedback skill:deploy --negative \
+akm feedback skills/deploy --negative \
   --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
   --reason "missing-safeguard"
 ```
@@ -42,14 +42,14 @@ that every mutating CLI verb writes to.
 ```sh
 # Per-asset audit trail
 akm history                                     # Stash-wide, oldest first
-akm history --ref skill:deploy                  # One asset
+akm history --ref skills/deploy                  # One asset
 akm history --since 2026-05-01T00:00:00Z
 akm history --format text                       # Human-readable
 
 # Realtime event stream
 akm log list                                    # All events
 akm log list --type feedback                    # Filter by event type
-akm log list --ref skill:deploy
+akm log list --ref skills/deploy
 akm log tail --format jsonl                     # Follow new events live
 akm log tail --max-events 20
 ```
@@ -73,7 +73,7 @@ and runs memory inference after consolidation.
 ```sh
 akm improve                           # Full stash pass
 akm improve memory                    # Scope to memory assets only
-akm improve skill:code-review         # One asset
+akm improve skills/code-review         # One asset
 akm improve --task "reduce duplication"
 akm improve --dry-run                 # Show planned refs without generating proposals
 akm improve --limit 10                # Cap assets processed
@@ -111,7 +111,7 @@ memory consolidation, or a deprecation. Review the diff, then accept or reject.
 # List proposals
 akm proposal list
 akm proposal list --status pending
-akm proposal list --ref skill:code-review
+akm proposal list --ref skills/code-review
 
 # Inspect a proposal
 akm proposal show <id>
@@ -119,7 +119,7 @@ akm proposal diff <id>                          # Preview the change vs. the liv
 
 # Apply or discard
 akm proposal accept <uuid-or-prefix>
-akm proposal accept skill:akm-dream --target team-stash
+akm proposal accept skills/akm-dream --target team-stash
 akm proposal reject <uuid-or-prefix> --reason "duplicates existing workflow"
 ```
 

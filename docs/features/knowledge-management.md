@@ -19,7 +19,7 @@ akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secret
 akm remember "VPN required for staging deploys" \
   --tag ops --tag networking \
   --expires 90d \
-  --source "skill:deploy"
+  --source "skills/deploy"
 
 # Heuristic tagging (zero-latency, pure TS):
 akm remember "Found this snippet: curl -fsSL ... | bash" --auto
@@ -73,7 +73,7 @@ the filename or URL path.
 
 ```sh
 akm import ./postmortem-2026-05.md --name postmortem-2026-05
-akm show knowledge:postmortem-2026-05
+akm show knowledge/postmortem-2026-05
 ```
 
 ## akm wiki
@@ -133,18 +133,18 @@ akm env create prod                       # create an empty .env group
 akm env create prod --from-file ./.env    # or ingest an existing .env
 
 # akm no longer edits entries — edit the file with your own editor:
-$EDITOR "$(akm env path env:prod --quiet)"
+$EDITOR "$(akm env path env/prod --quiet)"
 
 akm env list
-akm show env:prod                         # key names only
+akm show env/prod                         # key names only
 
 # Inject the whole .env into a subprocess (never onto stdout):
-akm env run env:prod -- ./deploy.sh
-akm env run env:prod -- $SHELL            # interactive session with the env loaded
+akm env run env/prod -- ./deploy.sh
+akm env run env/prod -- $SHELL            # interactive session with the env loaded
 
 # Store a single credential as a secret:
-printf '%s' "$TOKEN" | akm secret set secret:deploy-token
-akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
+akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 ```
 
 `.env` and secret files are stored at mode 0600 under `env/` in your stash.
@@ -155,7 +155,7 @@ akm's structured output — only key names are shown.
 
 ```sh
 akm env create staging --from-file ./staging.env
-akm env run env:staging -- ./smoke-test.sh
+akm env run env/staging -- ./smoke-test.sh
 ```
 
 ## Security model

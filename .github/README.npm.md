@@ -47,7 +47,7 @@ binaries are runtime-free.
 akm setup                         # Guided setup: configure, initialize, and index
 akm add github:owner/repo         # Add a stash from GitHub
 akm search "deploy"               # Find assets across all sources
-akm show script:deploy.sh         # View details and run command
+akm show scripts/deploy.sh        # View details and run command
 ```
 
 ## Why akm?

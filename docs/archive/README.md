@@ -33,6 +33,9 @@ why it was archived and where current truth lives.
 | `akm-production-readiness-findings.md` | superseded by ratified positioning (review 10-Q4) | no pg client exists; single-owner deployment is the product |
 | `improve-vs-brain-analysis.md` | superseded by `docs/design/improve-self-learning-analysis.md` | neuroscience framing = inspiration, not justification (review 09) |
 | `improve-pipeline-deep-tuning-analysis.md` | superseded by `docs/design/improve-self-learning-analysis.md` | tuning frozen per 12-D2 |
+| `src-reorganization-plan.md` | 0.9.0 (indexer half superseded by `docs/analysis/indexer-vertical-slice-refactor-plan.md`) | D-series slice moves + adapter/three-DB sweep |
+| `refactoring-tasks.md` | 0.9.0 | subtractive refactors landed across the chunk sweep (dedup, one-lock improve, adapter/three-DB cutover) |
+| `search-updated.md` | superseded (docs three-tier sweep) | folded into `docs/technical/search.md`, the canonical search doc |
 
 Live docs are routed from [`docs/README.md`](../README.md); unshipped designs live
 in `docs/design/` until their shipping PR moves them here.

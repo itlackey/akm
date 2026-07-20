@@ -43,14 +43,14 @@ akm search "docker" --source both --detail full
 | `--source` | `stash` (default), `registry`, or `both` |
 | `--detail` | `agent` gives `ref` + score without the full payload — use this from agents |
 
-The `ref` field (e.g. `script:deploy.sh`) is only present at `--detail full`
+The `ref` field (e.g. `scripts/deploy.sh`) is only present at `--detail full`
 or `--shape agent`. Pass that ref directly to `akm show`.
 
 **Example: find a deploy script**
 
 ```sh
 akm search "deploy" --type script --shape agent
-# → [{"type":"script","name":"deploy.sh","ref":"script:deploy.sh","score":0.87,...}]
+# → [{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh","score":0.87,...}]
 ```
 
 ## akm curate
@@ -79,7 +79,7 @@ step-by-step procedures rather than individual scripts or docs.
 
 ```sh
 akm curate "code review" --type skill
-# → ranked shortlist with akm show skill:code-review as the top follow-up
+# → ranked shortlist with akm show skills/code-review as the top follow-up
 ```
 
 ## akm show
@@ -89,12 +89,12 @@ returns type-specific fields: scripts include `run` and `setup`; knowledge docs
 support `toc`, `section`, and `lines` views; workflows return parsed steps.
 
 ```sh
-akm show script:deploy.sh
-akm show skill:code-review
-akm show workflow:ship-release
-akm show knowledge:api-guide toc
-akm show knowledge:api-guide section "Authentication"
-akm show knowledge:api-guide lines 10 30
+akm show scripts/deploy.sh
+akm show skills/code-review
+akm show workflows/ship-release
+akm show knowledge/api-guide toc
+akm show knowledge/api-guide section "Authentication"
+akm show knowledge/api-guide lines 10 30
 ```
 
 The ref format is `type:name` (or `origin//type:name` for assets from a
@@ -104,7 +104,7 @@ specific source). Get refs from `akm search --shape agent` or `akm curate`.
 
 ```sh
 akm curate "database migration" --type script --limit 3
-akm show script:migrate.sh
+akm show scripts/migrate.sh
 ```
 
 ## See also

@@ -481,7 +481,7 @@ A lighter-weight variant of the same idea: ship the loop contract as an
 **akm-authored skill/asset** instead of an inline script — call `next`, do the
 step, call `complete` with a summary that satisfies the criteria, honour a
 `checkin` directive. A Workflow script could then simply
-`agent("Drive akm workflow:ship-release to completion", …)` and get correct
+`agent("Drive akm workflows/ship-release to completion", …)` and get correct
 behaviour, making an akm workflow callable as a single Workflow leaf with zero
 engine changes.
 
@@ -573,7 +573,7 @@ alongside the Markdown runbook. Then akm's existing strengths — `add` from
 GitHub/npm, unified FTS search, `curate`, version pinning, feedback/improve —
 would apply to *executable* Workflow scripts too. `akm curate "release"` could
 surface either a runbook to step through or a harness-executable workflow, and
-`akm show workflow:x` would display the script for the mandatory pre-run audit
+`akm show workflows/x` would display the script for the mandatory pre-run audit
 that akm's security model already demands. This is the version where akm
 becomes a package manager for Claude Code workflows specifically — squarely
 on-mission, but a larger commitment than F.1–F.8.

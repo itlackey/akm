@@ -192,7 +192,7 @@ WAL mode, foreign keys ON. No automatic cleanup — runs persist indefinitely.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID v4 |
-| `workflow_ref` | TEXT NOT NULL | e.g. `workflow:review-todos` |
+| `workflow_ref` | TEXT NOT NULL | e.g. `workflows/review-todos` |
 | `scope_key` | TEXT | Directory hash; isolates runs per project |
 | `workflow_entry_id` | INTEGER | Optional FK into `index.db entries.id` |
 | `workflow_title` | TEXT NOT NULL | Human-readable title |

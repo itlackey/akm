@@ -81,22 +81,23 @@ for "remote" content.
 
 ## Refs
 
-User-facing asset refs are flat:
+User-facing item refs are path-identified:
 
 ```text
-[origin//]type:name
+[bundle//]conceptId[#fragment]
 ```
 
-- `type:name` is the canonical asset identity
-- optional `origin//` narrows lookup to a configured source
-- refs are parsed by `parseAssetRef` in `src/core/asset-ref.ts`
-- markdown-backed asset types strip `.md` from canonical names
+- the subdir-qualified `conceptId` (`skills/code-review`) is the canonical
+  item identity — `type` is no longer part of a ref
+- optional `bundle//` narrows lookup to a configured bundle
+- refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`
+- markdown-backed items strip `.md` from canonical names
 
 Examples:
 
-- `skill:code-review`
-- `workflow:release/train`
-- `team//command:deploy`
+- `skills/code-review`
+- `workflows/release/train`
+- `team//commands/deploy`
 
 URI schemes (`viking://...`, `github://...`) are **not** asset refs. Install
 locators like `github:owner/repo`, `git+https://...`, `npm:@scope/pkg`,

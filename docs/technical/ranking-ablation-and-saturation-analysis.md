@@ -120,7 +120,7 @@ knowledge corpora also live under `$HOME/akm-e6/corpus-*` (public repos: `Anduin
 `philschatz/anatomy-book`, `philschatz/economics-book`). The entire E6 tree is a **sandbox**: every
 `akm` call there uses a wrapper (`$HOME/akm-e6/e6-akm.sh`) that points `AKM_CONFIG_DIR /
 AKM_DATA_DIR / AKM_CACHE_DIR` + the `XDG_*` mirrors at `$HOME/akm-e6/home`, so it never touches the
-live install. **Reproduce isolation exactly** when extending — see `memory:akm-isolate-config-in-init-repros`.
+live install. **Reproduce isolation exactly** when extending — see `memories/akm-isolate-config-in-init-repros`.
 
 ---
 

@@ -108,8 +108,8 @@ Curate should think in terms of asset families, not just isolated types.
 
 Practical examples in this repo:
 
-- `skill:docker-homelab`
-- `knowledge:skills/docker-homelab/references/compose`
+- `skills/docker-homelab`
+- `knowledge/skills/docker-homelab/references/compose`
 
 Desired behavior:
 
@@ -284,10 +284,10 @@ akm search "curate quality baseline"
 
 Historical context refs:
 
-- `memory:curate-weak-for-ui-test-audit.derived`
-- `knowledge:curate-command-flags-inert`
+- `memories/curate-weak-for-ui-test-audit.derived`
+- `knowledge/curate-command-flags-inert`
 
-Note: `knowledge:curate-command-flags-inert` is historical context only. It describes an older output-shaping limitation that is no longer current now that `src/output/shapes/curate.ts` exists.
+Note: `knowledge/curate-command-flags-inert` is historical context only. It describes an older output-shaping limitation that is no longer current now that `src/output/shapes/curate.ts` exists.
 
 ## Next Fix Candidates
 
@@ -296,6 +296,6 @@ Highest-value next changes:
 1. Replace hard one-per-type selection with score-first shortlist selection plus optional soft diversity.
 2. Replace empty-only fallback triggering with weak-result fallback triggering.
 3. Add simple family-aware root/child collapsing for obvious structural bundles.
-4. Add regression tests asserting that docker-specific curate queries stop surfacing unrelated `command:release-manager` filler.
+4. Add regression tests asserting that docker-specific curate queries stop surfacing unrelated `commands/release-manager` filler.
 5. Attach lightweight related-asset hints using existing graph data after ranking quality is fixed.
 6. Revisit `followUp` generation after ranking quality is fixed.

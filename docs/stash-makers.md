@@ -51,7 +51,7 @@ set -euo pipefail
 echo "Deploying $1..."
 ```
 
-When an agent runs `akm show script:deploy.sh`, it gets back a `run` command
+When an agent runs `akm show scripts/deploy.sh`, it gets back a `run` command
 it can execute directly. Interpreters are auto-detected for a wide range of
 extensions (`.sh`, `.ts`, `.js`, `.py`, `.rb`, `.go`, `.pl`, `.php`, `.lua`,
 `.r`, `.swift`, `.kt`/`.kts`, `.ps1`, `.cmd`/`.bat`).
@@ -147,8 +147,8 @@ Agents can request just the table of contents (`toc`) or a specific
 section (`section "Rate Limits"`) to avoid loading the entire document:
 
 ```sh
-akm show knowledge:api-guide toc
-akm show knowledge:api-guide section "Rate Limits"
+akm show knowledge/api-guide toc
+akm show knowledge/api-guide section "Rate Limits"
 ```
 
 ### Memories
@@ -268,15 +268,15 @@ my-stash/
 ---
 purpose:
   - Release engineering + changelog automation for the CLI
-entry_points: [skill:git-release, command:changelog-entry, script:bump-version]
+entry_points: [skills/git-release, commands/changelog-entry, scripts/bump-version]
 conventions:
   - "Scripts are bun-first; shebang #!/usr/bin/env bun"
 maintainer: you <you@example.com>
 ---
 # About this stash
 
-Start with `skill:git-release`. The bump→changelog→tag→push flow lives in
-`script:bump-version` then `command:changelog-entry`.
+Start with `skills/git-release`. The bump→changelog→tag→push flow lives in
+`scripts/bump-version` then `commands/changelog-entry`.
 ```
 
 Key properties:
@@ -311,7 +311,7 @@ akm list
 akm search "deploy"
 
 # Show an asset to verify the output
-akm show script:deploy.sh
+akm show scripts/deploy.sh
 ```
 
 ## Sharing on GitHub
@@ -436,13 +436,13 @@ stashes.
    no `akm add` needed. To fork an asset into the primary stash, use clone:
 
    ```sh
-   akm clone script:deploy.sh
+   akm clone scripts/deploy.sh
    ```
 
    Or clone directly to a project directory with `--dest`:
 
    ```sh
-   akm clone script:deploy.sh --dest ./my-project/.claude
+   akm clone scripts/deploy.sh --dest ./my-project/.claude
    ```
 
 You can mount multiple directories. They are searched in the order listed,

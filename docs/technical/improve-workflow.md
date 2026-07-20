@@ -87,14 +87,14 @@ flowchart TD
         subgraph DISTILL["distillFn subprocess"]
             DISTILL_A[lookup ref file path] --> DISTILL_B[readEvents: feedback for ref\napply excludeFeedbackFromRefs filter]
             DISTILL_B --> DISTILL_C{proposalKind == auto\nAND promotion heuristic passes?}
-            DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge:ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
+            DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge/ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
             DISTILL_C -- no --> DISTILL_D[tryLlmFeature: feedback_distillation\n30 s hard timeout\nnull on gate-disabled or error]
             DISTILL_D --> DISTILL_E{raw == null?}
             DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=skipped\nreturn skipped result]
             DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
             DISTILL_F --> DISTILL_G{findings?}
             DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
-            DISTILL_G -- no --> DISTILL_H[createProposal lesson:slug-lesson\nor knowledge:slug\nsource: distill\nappendEvent: outcome=queued]
+            DISTILL_G -- no --> DISTILL_H[createProposal lessons/slug-lesson\nor knowledge/slug\nsource: distill\nappendEvent: outcome=queued]
             DISTILL_PROMOTE --> DISTILL_RETURN
             DISTILL_SKIP --> DISTILL_RETURN
             DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
@@ -178,14 +178,14 @@ flowchart TD
 
 `akmReflect` is the agent-invocation subprocess. It always emits a `reflect_invoked` event at entry, regardless of success or failure.
 
-For `skill:*` refs, reflect also reviews related distilled lessons as consolidation evidence. When those lessons show strong, repeatable, factual guidance, the agent may propose promoting that guidance into long-term skill documentation, including companion reference docs under `skills/<skill>/references/*.md` via `knowledge:skills/<skill>/references/<topic>` refs.
+For `skills/*` refs, reflect also reviews related distilled lessons as consolidation evidence. When those lessons show strong, repeatable, factual guidance, the agent may propose promoting that guidance into long-term skill documentation, including companion reference docs under `skills/<skill>/references/*.md` via `knowledge/skills/<skill>/references/<topic>` refs.
 
 **Internal steps:**
 
 1. Emit `reflect_invoked` event via `appendEvent`.
 2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal.
 3. Resolve the selected strategy's `reflect.engine`, falling back to `defaults.llmEngine`.
-4. For skill refs, load the canonical derived lesson (`lesson:<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
+4. For skill refs, load the canonical derived lesson (`lessons/<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
 5. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
 6. Dispatch the frozen `RunnerSpec` through `executeRunner`. Unattended improve
    requires an LLM engine; explicit interactive uses may select an agent engine.
@@ -194,7 +194,7 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 
 **What it writes:** one durable proposal row in `state.db`. It never writes asset files directly.
 
-**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skill:*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge:skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after.
+**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skills/*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge/skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after.
 
 ### distill (akmDistill)
 
@@ -216,7 +216,7 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 8. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
 9. Emit `distill_invoked` event with `outcome: "queued"`.
 
-**Lesson-ref derivation rule:** `lesson:<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skill:deploy` → `lesson:skill-deploy-lesson`.
+**Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`.
 
 **What it writes:** one durable proposal row in `state.db`. Never writes asset files directly.
 
@@ -283,7 +283,7 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 ```json
 {
   "id": "<UUID>",
-  "ref": "lesson:skill-deploy-lesson",
+  "ref": "lessons/skill-deploy-lesson",
   "status": "pending",
   "source": "reflect",
   "sourceRun": "reflect-1715000000000",

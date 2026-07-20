@@ -278,7 +278,7 @@ chmod +x "$AKM_STASH_DIR/scripts/deploy/deploy-app.sh"
 
 bun run src/cli.ts index
 bun run src/cli.ts search deploy --detail full
-bun run src/cli.ts show script:deploy-app.sh --detail full
+bun run src/cli.ts show scripts/deploy-app.sh --detail full
 bun run src/cli.ts info --format json
 ```
 

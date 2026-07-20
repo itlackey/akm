@@ -95,7 +95,7 @@ them too, mixed with skills, commands, and everything else. Raw sources
 under `raw/` plus the wiki root infrastructure files `schema.md`,
 `index.md`, and `log.md` are intentionally excluded from the search
 index and search results. Both commands return canonical refs such as
-`wiki:<name>/pages/<page>` that you can pass directly to `akm show`.
+`<name>//pages/<page>` that you can pass directly to `akm show`.
 
 ### The one akm-owned write
 
@@ -214,14 +214,16 @@ akm search "attention" --type wiki
 
 ## Filesystem layout and refs
 
-Wiki pages are addressable as `wiki:<name>/pages/<page-path>`:
+A wiki is its own bundle (recognized by the `llm-wiki` adapter). Its pages are
+addressable as `<name>//pages/<page-path>` — the wiki bundle id, then the page
+conceptId:
 
 | File | Ref |
 | --- | --- |
-| `wikis/research/pages/ml-basics.md` | `wiki:research/pages/ml-basics` |
-| `wikis/research/pages/sub/page.md` | `wiki:research/pages/sub/page` |
+| `wikis/research/pages/ml-basics.md` | `research//pages/ml-basics` |
+| `wikis/research/pages/sub/page.md` | `research//pages/sub/page` |
 
-Use `akm show wiki:research/pages/ml-basics` to read a page with the standard
+Use `akm show research//pages/ml-basics` to read a page with the standard
 akm show machinery — `toc`, `section <heading>`, `lines <start> <end>`,
 and `frontmatter` views all work.
 

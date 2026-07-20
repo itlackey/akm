@@ -81,7 +81,7 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 **What is recorded:**
 - `event_type` — what action was taken (see full list below)
 - `ts` — ISO-8601 UTC timestamp
-- `ref` — the asset ref affected (e.g. `skill:code-review`), if applicable
+- `ref` — the asset ref affected (e.g. `skills/code-review`), if applicable
 - `metadata` — structured payload specific to the event type (e.g. query text for `search`, score for `feedback`)
 
 **What is NOT recorded:**
@@ -164,7 +164,7 @@ akm log tail
 akm log list --type search --limit 20
 
 # Filter by asset ref
-akm log list --ref skill:code-review
+akm log list --ref skills/code-review
 ```
 
 ### Inspect proposals

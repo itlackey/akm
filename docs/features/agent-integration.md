@@ -100,16 +100,16 @@ it immediately without searching.
 
 ```sh
 # Common ref formats:
-akm show skill:code-review
-akm show workflow:ship-release
-akm show script:deploy.sh
-akm show knowledge:api-guide
-akm show env:prod           # shows key names only; values never appear in output
-akm show wiki:ops/runbook
+akm show skills/code-review
+akm show workflows/ship-release
+akm show scripts/deploy.sh
+akm show knowledge/api-guide
+akm show env/prod           # shows key names only; values never appear in output
+akm show ops//pages/runbook # a page in the "ops" LLM Wiki bundle
 
-# From a specific source (origin-qualified ref):
-akm show "npm:@scope/pkg//script:deploy.sh"
-akm show "github:owner/repo//workflow:release"
+# From a specific bundle (bundle-qualified ref):
+akm show "npm:@scope/pkg//scripts/deploy.sh"
+akm show "github:owner/repo//workflows/release"
 ```
 
 **Get refs from search.** Agents should call `akm search --shape agent` or
@@ -123,10 +123,10 @@ results is the stable token to pass to `akm show`.
 akm curate "deploy to production" --limit 3
 
 # 2. Load the best match by ref from the curate output
-akm show workflow:deploy-to-prod
+akm show workflows/deploy-to-prod
 
 # 3. Record outcome
-akm feedback workflow:deploy-to-prod --positive --reason "Completed without issues"
+akm feedback workflows/deploy-to-prod --positive --reason "Completed without issues"
 ```
 
 ## akm agent — dispatching with a stash agent asset
@@ -137,16 +137,16 @@ agent engine with `--engine` and pass the asset ref positionally.
 
 ```sh
 # Embody an agent asset and run a task:
-akm agent agent:code-reviewer --engine opencode --prompt "review src/"
+akm agent agents/code-reviewer --engine opencode --prompt "review src/"
 
 # Model override with a built-in alias (overrides the asset's modelHint):
-akm agent agent:planner --engine claude --model sonnet --prompt "plan the sprint"
+akm agent agents/planner --engine claude --model sonnet --prompt "plan the sprint"
 
 # Exact platform model ID override:
-akm agent agent:code-reviewer --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+akm agent agents/code-reviewer --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
 
 # Interactive launch with an agent asset (no prompt — interactive session):
-akm agent agent:architect --engine opencode
+akm agent agents/architect --engine opencode
 ```
 
 **Built-in model aliases** — `fable`, `opus`, `sonnet`, and `haiku` are

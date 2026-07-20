@@ -255,13 +255,13 @@ akm graph summary
 akm graph entities --limit 25
 akm graph relations --limit 25
 akm graph entity "React Router"
-akm graph related knowledge:react-router
+akm graph related knowledge/react-router
 akm graph orphans --limit 20
 akm graph export --out ./graph.json
 akm graph export --out ./graph.jsonl --format jsonl
 akm graph update                        # Re-extract all eligible files
-akm graph update memory:foo             # Re-extract only this ref
-akm graph update memory:foo skill:bar   # Re-extract multiple refs
+akm graph update memories/foo             # Re-extract only this ref
+akm graph update memories/foo skills/bar   # Re-extract multiple refs
 akm graph update --source my-stash      # Target a specific stash source
 ```
 
@@ -338,13 +338,13 @@ akm search "deploy" --filter user=alice --filter agent=claude
 akm search "deploy" --include-proposed
 
 # Ref-prefix enumeration — list a typed subtree instead of keyword-matching:
-akm search "memory:projectA/"
+akm search "memories/projectA/"
 akm search "knowledge:"
 ```
 
 A query shaped like a **ref prefix** — `<type>:<prefix>/` with a trailing
 slash, or a bare `<type>:` — is not keyword-matched. It enumerates the type's
-entries whose names start with the prefix: `akm search "memory:projectA/"`
+entries whose names start with the prefix: `akm search "memories/projectA/"`
 lists exactly the `projectA/` subtree of memories (recursive, `/`-boundary
 exact — a sibling `projectAlpha/` scope does not leak), and `akm search
 "session:"` lists every session (the parsed type is explicit intent, so the
@@ -352,7 +352,7 @@ default `session` exclusion — an untyped-path policy — does not apply). Hits
 carry the fixed browse score `1` in deterministic listing order, matching the
 empty-query enumeration contract, and compose with `--limit`, `--belief`,
 `--filter`, and named `--source` narrowing. A full ref without the trailing
-slash (`memory:projectA/auth-tip`) stays an ordinary keyword search — use
+slash (`memories/projectA/auth-tip`) stays an ordinary keyword search — use
 `akm show` to resolve a single ref. An explicit `--type` flag wins over the
 type parsed from the query.
 
@@ -378,7 +378,7 @@ The `ref` handle for `akm show` is **only present at `full` detail and under
 intentionally to keep the payload compact. Use `--shape=agent` to get `ref`
 without the full hit payload. Key fields by availability:
 
-- **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`);
+- **`ref`** -- The asset handle to pass to `akm show` (e.g. `scripts/deploy.sh`);
   present at `full` and `agent` only (for local hits)
 - **`name`** -- The asset's filename or identifier; present at all levels
 - **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for
@@ -447,15 +447,15 @@ Display an asset by ref. Knowledge assets support view modes as positional
 arguments after the ref.
 
 ```sh
-akm show script:deploy.sh
-akm show skill:code-review
-akm show agent:architect
-akm show command:release
-akm show workflow:ship-release
-akm show knowledge:guide toc
-akm show knowledge:guide section "Authentication"
-akm show knowledge:guide lines 10 30
-akm show knowledge:guide frontmatter
+akm show scripts/deploy.sh
+akm show skills/code-review
+akm show agents/architect
+akm show commands/release
+akm show workflows/ship-release
+akm show knowledge/guide toc
+akm show knowledge/guide section "Authentication"
+akm show knowledge/guide lines 10 30
+akm show knowledge/guide frontmatter
 
 # Stash .meta/ orientation docs (0.8.2+) — direct-read, not indexed:
 akm show meta                       # working stash's .meta/index.md
@@ -464,8 +464,8 @@ akm show local//meta                # the primary stash explicitly
 akm show github:owner/repo//meta    # an installed stash's .meta/index.md
 
 # Multi-tenant scope filtering (0.7.0+):
-akm show memory:retro --scope user=alice
-akm show memory:retro --scope user=alice --scope agent=claude
+akm show memories/retro --scope user=alice
+akm show memories/retro --scope user=alice --scope agent=claude
 ```
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
@@ -521,14 +521,14 @@ akm workflow template --yaml                  # Print a YAML v2 program starter
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
 akm workflow create review.yaml --from ./review.yaml
-akm workflow validate workflow:ship-release    # Validate a workflow ref
+akm workflow validate workflows/ship-release    # Validate a workflow ref
 akm workflow validate ./workflows/review.yaml  # Validate YAML v2 or markdown
-akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
-akm workflow next workflow:ship-release
-akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
+akm workflow start workflows/ship-release --params '{"version":"1.2.3"}'
+akm workflow next workflows/ship-release
+akm workflow next workflows/ship-release --params '{"version":"1.2.3"}'
 akm workflow complete <run-id> --step validate --state completed --notes "Inputs verified"
 akm workflow status <run-id>
-akm workflow status workflow:ship-release
+akm workflow status workflows/ship-release
 akm workflow resume <run-id>
 akm workflow list --active
 ```
@@ -578,9 +578,9 @@ hierarchical names (e.g. `release/ship`).
 #### workflow next
 
 ```sh
-akm workflow next workflow:ship-release
+akm workflow next workflows/ship-release
 akm workflow next <run-id>
-akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
+akm workflow next workflows/ship-release --params '{"version":"1.2.3"}'
 ```
 
 When multiple active runs exist for the same workflow ref in the current scope,
@@ -622,7 +622,7 @@ akm workflow complete <run-id> --step <step-id> --state skipped
 
 ```sh
 akm workflow status <run-id>
-akm workflow status workflow:ship-release
+akm workflow status workflows/ship-release
 ```
 
 Accepts either a run-id or a workflow ref. When given a workflow ref, resolves
@@ -846,12 +846,12 @@ Copy an asset from any source into the working stash (or a custom
 destination) for editing.
 
 ```sh
-akm clone script:deploy.sh
-akm clone "npm:@scope/pkg//script:deploy.sh"
-akm clone script:deploy.sh --name my-deploy.sh
-akm clone script:deploy.sh --force
-akm clone script:deploy.sh --dest ./project/.claude
-akm clone "npm:@scope/pkg//script:deploy.sh" --dest /tmp/preview
+akm clone scripts/deploy.sh
+akm clone "npm:@scope/pkg//scripts/deploy.sh"
+akm clone scripts/deploy.sh --name my-deploy.sh
+akm clone scripts/deploy.sh --force
+akm clone scripts/deploy.sh --dest ./project/.claude
+akm clone "npm:@scope/pkg//scripts/deploy.sh" --dest /tmp/preview
 ```
 
 | Flag | Description |
@@ -870,10 +870,10 @@ use `akm add` for that.
 
 ```sh
 # Clone a single script from a remote package without installing the full stash
-akm clone "npm:@scope/pkg//script:deploy.sh"
+akm clone "npm:@scope/pkg//scripts/deploy.sh"
 
 # Clone from a local directory that isn't configured as a search path
-akm clone "/path/to/stash//skill:code-review" --dest ./project/.claude
+akm clone "/path/to/stash//skills/code-review" --dest ./project/.claude
 ```
 
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
@@ -893,9 +893,9 @@ history (utility scores, embeddings, salience) is preserved instead of
 resetting the way a delete-and-recreate rename would.
 
 ```sh
-akm mv memory:projectA/old-note projectA/new-note   # Rename (target is a name; subdirectories allowed)
-akm mv memory:solo memory:renamed-solo              # Same-type ref-shaped target also accepted
-akm mv knowledge:guides/old guides/new              # Body refs, xrefs:/refs: lists, and fenced examples all rewritten
+akm mv memories/projectA/old-note projectA/new-note   # Rename (target is a name; subdirectories allowed)
+akm mv memories/solo memories/renamed-solo              # Same-type ref-shaped target also accepted
+akm mv knowledge/guides/old guides/new              # Body refs, xrefs:/refs: lists, and fenced examples all rewritten
 ```
 
 What it does, in order (designed to be safely re-runnable if interrupted):
@@ -916,8 +916,8 @@ What it does, in order (designed to be safely re-runnable if interrupted):
    moves with it), and target names ending in `.derived` (reserved
    distilled-twin suffix). The deterministic `.md`-suffixed alias spelling
    IS accepted — for the source ref and the target name alike — and is
-   canonicalized before anything is keyed off it (`akm mv memory:foo.md
-   bar.md` behaves exactly like `akm mv memory:foo bar`). Supported types:
+   canonicalized before anything is keyed off it (`akm mv memories/foo.md
+   bar.md` behaves exactly like `akm mv memories/foo bar`). Supported types:
    `memory`, `knowledge`, `command`, `agent`, `lesson`, `session`, `fact`
    (flat-markdown layouts; multi-file `skill` directories are out of scope
    for now).
@@ -928,12 +928,12 @@ What it does, in order (designed to be safely re-runnable if interrupted):
    workflows are rewritten as *citers* even though `workflow:` refs cannot
    themselves be moved) — body prose, frontmatter
    ref-list keys (`xrefs:`, `refs:`, `supersededBy:`, …, including
-   flow-style lists like `xrefs: [memory:x]`), and fenced code blocks (a
+   flow-style lists like `xrefs: [memories/x]`), and fenced code blocks (a
    rename must not leave stale examples). Alias spellings the resolver
    treats as the same asset — the `.md`-suffixed form, the
    `local//`-prefixed form, and resolver-fallback forms like the
    knowledge-subdir basename alias — are rewritten to the new **canonical**
-   ref, and a ref followed by sentence punctuation (`See memory:old.`) is
+   ref, and a ref followed by sentence punctuation (`See memories/old.`) is
    rewritten with the punctuation preserved. Matching is complete-ref
    boundary matching: a longer ref that shares the old ref as a prefix is
    untouched.
@@ -1052,7 +1052,7 @@ akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secret
 akm remember "VPN required for staging deploys" \
   --tag ops --tag networking \
   --expires 90d \
-  --source "skill:deploy"
+  --source "skills/deploy"
 
 # Opt-in heuristic tagging — derives `code`, `source`, `observed_at`, `subjective`:
 akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
@@ -1066,13 +1066,13 @@ akm remember "Use staging cluster for blue-green" \
 
 # Cite provenance / related assets in frontmatter `xrefs:` (validated at write time):
 akm remember "The token rotation quirk applies to staging too" \
-  --xref knowledge:auth/vendor-x-token-api \
-  --xref memory:projectA/token-quirk
+  --xref knowledge/auth/vendor-x-token-api \
+  --xref memories/projectA/token-quirk
 
 # Correct an existing memory: write the fix AND demote the stale incumbent
 # (beliefState: superseded + supersededBy on the old asset, in one step):
 akm remember "Staging now uses the new gateway endpoint" \
-  --name new-endpoint --supersedes memory:projectA/old-endpoint
+  --name new-endpoint --supersedes memories/projectA/old-endpoint
 
 # Route the write to a specific writable stash (0.8.0+):
 akm remember "Deployment needs VPN access" --target team-stash
@@ -1089,7 +1089,7 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
-| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge:auth-flow --xref memory:vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so ranking prefers the correction and `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working stash still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--target` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
@@ -1161,10 +1161,10 @@ akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
 
 # Cite provenance in the document's frontmatter `xrefs:` (validated at write time):
-akm import ./notes/oauth-quirks.md --xref knowledge:auth/vendor-x-token-api
+akm import ./notes/oauth-quirks.md --xref knowledge/auth/vendor-x-token-api
 
 # Import a corrected doc AND demote the one it replaces (in one step):
-akm import ./notes/modern-guide.md --supersedes knowledge:legacy-guide
+akm import ./notes/modern-guide.md --supersedes knowledge/legacy-guide
 
 # Route the write to a specific writable stash (0.8.0+):
 akm import ./docs/auth-flow.md --target team-stash
@@ -1207,11 +1207,11 @@ influences utility scores during the next index run, causing highly-rated
 assets to rank higher in search results over time.
 
 ```sh
-akm feedback script:deploy.sh --positive
-akm feedback agent:reviewer --negative
-akm feedback memory:deployment-notes --positive
-akm feedback env:prod --positive
-akm feedback skill:code-review --positive --reason "Worked perfectly for PR reviews"
+akm feedback scripts/deploy.sh --positive
+akm feedback agents/reviewer --negative
+akm feedback memories/deployment-notes --positive
+akm feedback env/prod --positive
+akm feedback skills/code-review --positive --reason "Worked perfectly for PR reviews"
 ```
 
 | Flag | Description |
@@ -1272,10 +1272,10 @@ of what was recorded for an asset (or for the whole stash).
 
 ```sh
 akm history                                    # Stash-wide, oldest first
-akm history --ref skill:deploy                 # Filter to one asset ref
+akm history --ref skills/deploy                 # Filter to one asset ref
 akm history --since 2026-04-01T00:00:00Z       # Filter by ISO timestamp
 akm history --since 1717200000000              # Filter by epoch ms
-akm history --ref skill:deploy --format jsonl  # One entry per line
+akm history --ref skills/deploy --format jsonl  # One entry per line
 akm history --format text                      # Human-readable trail
 ```
 
@@ -1291,14 +1291,14 @@ Output envelope (JSON):
 ```json
 {
   "schemaVersion": 1,
-  "ref": "skill:deploy",
+  "ref": "skills/deploy",
   "since": "2026-04-01 00:00:00",
   "totalCount": 3,
   "entries": [
     {
       "id": 17,
       "eventType": "feedback",
-      "ref": "skill:deploy",
+      "ref": "skills/deploy",
       "entryId": 42,
       "query": null,
       "signal": "positive",
@@ -1331,7 +1331,7 @@ an event row to `<dataDir>/state.db`; `akm log list` reads it and
 ```sh
 akm log list                                      # All events, oldest first
 akm log list --type feedback                      # Filter by event type
-akm log list --ref skill:deploy                   # Filter by asset ref
+akm log list --ref skills/deploy                   # Filter by asset ref
 akm log list --since 2026-04-01T00:00:00Z         # ISO timestamp
 akm log list --since '@offset:12345'              # Resume from a row-id cursor
 akm log tail --max-events 10                      # Follow until 10 events
@@ -1557,14 +1557,14 @@ akm env list
 akm env create prod                          # creates env/prod.env (mode 0600)
 akm env create prod --from-file ./.env        # ingest an existing .env
 akm env create prod --path staging            # creates env/staging/prod.env
-echo "https://db" | akm env set env:prod DATABASE_URL   # set one key (value via stdin)
-akm env set env:prod API_TOKEN --from-env CI_TOKEN      # set from an env var (not argv)
-akm env unset env:prod DEBUG OLD_FLAG          # remove one or more keys
-$EDITOR "$(akm env path env:prod --quiet)"    # edit the file directly
-akm env run env:prod -- npm test              # run a command with the whole file injected
-akm env run env:prod -- $SHELL                # interactive shell with the env loaded
-akm env run env:prod --only DATABASE_URL -- ./migrate   # inject just one var
-akm env remove env:prod --yes                 # remove the whole env file
+echo "https://db" | akm env set env/prod DATABASE_URL   # set one key (value via stdin)
+akm env set env/prod API_TOKEN --from-env CI_TOKEN      # set from an env var (not argv)
+akm env unset env/prod DEBUG OLD_FLAG          # remove one or more keys
+$EDITOR "$(akm env path env/prod --quiet)"    # edit the file directly
+akm env run env/prod -- npm test              # run a command with the whole file injected
+akm env run env/prod -- $SHELL                # interactive shell with the env loaded
+akm env run env/prod --only DATABASE_URL -- ./migrate   # inject just one var
+akm env remove env/prod --yes                 # remove the whole env file
 ```
 
 `env set`/`env unset` do a minimal, comment-preserving edit and use `dotenv`
@@ -1588,12 +1588,12 @@ Subcommands:
 #### env run — the primary value path
 
 ```sh
-akm env run env:prod -- <command>
-akm env run env:prod -- $SHELL          # interactive: a shell with the env loaded
-akm env run env:prod --only A,B -- cmd  # inject only A and B
-akm env run env:prod --except DEBUG -- cmd
-akm env run env:prod --clean -- cmd
-akm env run env:prod --clean --inherit SSH_AUTH_SOCK -- cmd
+akm env run env/prod -- <command>
+akm env run env/prod -- $SHELL          # interactive: a shell with the env loaded
+akm env run env/prod --only A,B -- cmd  # inject only A and B
+akm env run env/prod --except DEBUG -- cmd
+akm env run env/prod --clean -- cmd
+akm env run env/prod --clean --inherit SSH_AUTH_SOCK -- cmd
 ```
 
 Runs the command with the env file's values injected **directly into the child
@@ -1641,7 +1641,7 @@ One entry per env file across all configured stashes. The structured shape is
 omitted from JSON output. Text output uses Markdown sections:
 
 ```md
-## env:prod
+## env/prod
 
 - DATABASE_URL
 - API_KEY
@@ -1650,12 +1650,12 @@ omitted from JSON output. Text output uses Markdown sections:
 #### env path
 
 ```sh
-akm env path env:prod            # warns: don't source the raw file
-akm env path env:prod --quiet    # for `_FILE` / `--env-file` use
+akm env path env/prod            # warns: don't source the raw file
+akm env path env/prod --quiet    # for `_FILE` / `--env-file` use
 ```
 
 Prints the absolute path to the env file — for the Docker `_FILE` convention
-(`MY_VAR_FILE=$(akm env path env:prod --quiet)`), `docker run --env-file`, or
+(`MY_VAR_FILE=$(akm env path env/prod --quiet)`), `docker run --env-file`, or
 editing the file directly. By default a stderr warning steers you away from
 `source`-ing the raw file (its shell substitutions would execute); `--quiet`
 suppresses it for the legitimate file-path uses.
@@ -1663,7 +1663,7 @@ suppresses it for the legitimate file-path uses.
 #### env export
 
 ```sh
-akm env export env:prod --out /tmp/prod.sh && source /tmp/prod.sh && rm -f /tmp/prod.sh
+akm env export env/prod --out /tmp/prod.sh && source /tmp/prod.sh && rm -f /tmp/prod.sh
 ```
 
 Writes a safe, sourceable `export KEY='value'` script to `--out <file>` (mode
@@ -1678,8 +1678,8 @@ generated file can never execute it. `export` **never prints values to stdout**
 ### vault (removed)
 
 > **Removed in 0.9.0 — use [`env`](#env) or [`secret`](#secret).** The `akm vault`
-> verb no longer exists, and parsing a `vault:` ref is now an unknown-type error
-> that points at `env:` (whole `.env` config) and `secret:` (a single value).
+> verb no longer exists, and a `vault/` ref is now an unknown-subdir error
+> that points at `env/` (whole `.env` config) and `secrets/` (a single value).
 > `akm-migrate-storage` still copies a legacy `vaults/` directory to `env/` for
 > upgraders (see the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
 
@@ -1701,12 +1701,12 @@ env var) and `secret path` (hand the command the file path).
 
 ```sh
 akm secret list
-printf '%s' "$TOKEN" | akm secret set secret:deploy-token
-akm secret set secret:deploy-key --from-file ~/.ssh/id_ed25519   # byte-exact
-AKM_VALUE="$TOKEN" akm secret set secret:api --from-env AKM_VALUE
-akm secret path secret:deploy-key                                # absolute path
-akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
-akm secret remove secret:deploy-token --yes
+printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
+akm secret set secrets/deploy-key --from-file ~/.ssh/id_ed25519   # byte-exact
+AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
+akm secret path secrets/deploy-key                                # absolute path
+akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+akm secret remove secrets/deploy-token --yes
 ```
 
 Subcommands:
@@ -1723,13 +1723,13 @@ Subcommands:
 
 ```sh
 # Default: read the value from stdin (never crosses argv)
-printf '%s' "$TOKEN" | akm secret set secret:deploy-token
+printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
 
 # Import an existing file byte-exact (multi-line PEM keys, certs, binary)
-akm secret set secret:deploy-key --from-file ~/.ssh/id_ed25519
+akm secret set secrets/deploy-key --from-file ~/.ssh/id_ed25519
 
 # From an environment variable
-AKM_VALUE="$TOKEN" akm secret set secret:api --from-env AKM_VALUE
+AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
 ```
 
 The value is **never accepted via positional arguments**. With stdin, a single
@@ -1741,9 +1741,9 @@ of multi-line material. Writes are atomic (mode 0600) under an exclusive
 #### secret path
 
 ```sh
-akm secret path secret:deploy-key
+akm secret path secrets/deploy-key
 # Docker `_FILE` convention — hand the command the path, not the value:
-MY_SECRET_FILE="$(akm secret path secret:deploy-key)" ./start.sh
+MY_SECRET_FILE="$(akm secret path secrets/deploy-key)" ./start.sh
 ```
 
 Prints the absolute path to the secret file. The file's contents are never
@@ -1752,8 +1752,8 @@ printed.
 #### secret run
 
 ```sh
-akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0
-akm secret run secret:deploy-token GITHUB_TOKEN --clean -- gh auth status
+akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+akm secret run secrets/deploy-token GITHUB_TOKEN --clean -- gh auth status
 ```
 
 Runs one subprocess with the secret's value set as `$VAR` in the child's
@@ -1927,7 +1927,7 @@ akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [-
 
 | Argument / Flag | Description |
 | --- | --- |
-| `<agent-ref>` | Optional agent asset ref (e.g. `agent:code-reviewer`). Loads system prompt, model, and tool policy from the stash asset. |
+| `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Loads system prompt, model, and tool policy from the stash asset. |
 | `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
 | `--prompt <text>` | Task prompt to pass to the agent |
 | `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
@@ -1964,10 +1964,10 @@ akm agent --engine opencode
 akm agent --engine claude --prompt "summarize recent changes"
 
 # Embody a stash agent asset:
-akm agent agent:code-reviewer --engine opencode --prompt "review src/"
+akm agent agents/code-reviewer --engine opencode --prompt "review src/"
 
 # Model override with alias:
-akm agent agent:planner --engine claude --model sonnet --prompt "plan the sprint"
+akm agent agents/planner --engine claude --model sonnet --prompt "plan the sprint"
 
 # Exact model ID override:
 akm agent --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
@@ -1985,8 +1985,8 @@ Improve existing assets and write the results to the proposal queue.
 ```sh
 akm improve
 akm improve memory
-akm improve skill:code-review
-akm improve workflow:release-checklist --task "reduce duplication"
+akm improve skills/code-review
+akm improve workflows/release-checklist --task "reduce duplication"
 ```
 
 | Flag | Description |
@@ -2073,7 +2073,7 @@ List proposal queue entries.
 ```sh
 akm proposal list
 akm proposal list --status pending|accepted|rejected|reverted
-akm proposal list --ref skill:deploy
+akm proposal list --ref skills/deploy
 ```
 
 | Flag | Description |
@@ -2105,7 +2105,7 @@ Accept a proposal and promote it into the stash. Accepts a full UUID, an
 ```sh
 akm proposal accept <id>
 akm proposal accept 7c115132                  # 8-char UUID prefix
-akm proposal accept skill:akm-dream           # Asset ref
+akm proposal accept skills/akm-dream           # Asset ref
 akm proposal accept <id> --target team-stash
 akm proposal accept --generator reflect -y    # Bulk-accept by generator (requires -y)
 ```
@@ -2122,7 +2122,7 @@ UUID prefix, or an asset ref.
 ```sh
 akm proposal reject <id> --reason "duplicates existing workflow"
 akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
-akm proposal reject skill:my-skill --reason "not ready" # Asset ref
+akm proposal reject skills/my-skill --reason "not ready" # Asset ref
 akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by generator
 ```
 
@@ -2138,7 +2138,7 @@ to `reverted` and appends a `proposal_reverted` event to the audit log.
 
 ```sh
 akm proposal revert <id>
-akm proposal revert skill:akm-dream           # Asset ref
+akm proposal revert skills/akm-dream           # Asset ref
 akm proposal revert <id> --target team-stash
 ```
 
@@ -2158,7 +2158,7 @@ Preview the proposed change against the live asset. Accepts a full UUID, an
 
 ```sh
 akm proposal diff <id>
-akm proposal diff skill:akm-dream             # Asset ref form
+akm proposal diff skills/akm-dream             # Asset ref form
 akm proposal diff 7c115132                    # 8-char UUID prefix
 akm proposal diff <id> --target team-stash
 ```

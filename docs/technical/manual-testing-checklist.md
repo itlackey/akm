@@ -97,11 +97,11 @@ Fixture refs worth using throughout this doc:
 
 | Type      | Ref                                   |
 |-----------|---------------------------------------|
-| skill     | `skill:k8s-deploy`                    |
-| skill     | `skill:docker-homelab`                |
-| knowledge | `knowledge:incident-response-runbook` |
-| agent     | `agent:code-reviewer`                 |
-| command   | `command:release-manager`             |
+| skill     | `skills/k8s-deploy`                    |
+| skill     | `skills/docker-homelab`                |
+| knowledge | `knowledge/incident-response-runbook` |
+| agent     | `agents/code-reviewer`                 |
+| command   | `commands/release-manager`             |
 
 ---
 
@@ -179,32 +179,32 @@ Fixture refs worth using throughout this doc:
 
 ## 6. Show
 
-- [ ] `akm show skill:k8s-deploy` returns structured content including
+- [ ] `akm show skills/k8s-deploy` returns structured content including
       `type`, `name`, `action`, and `content`.
-- [ ] `akm show skill:k8s-deploy --format text` renders a plain-text view that
+- [ ] `akm show skills/k8s-deploy --format text` renders a plain-text view that
       includes header/metadata lines plus the body content.
-- [ ] `akm show skill:k8s-deploy --shape summary` returns the compact summary
+- [ ] `akm show skills/k8s-deploy --shape summary` returns the compact summary
       shape.
-- [ ] `akm show skill:k8s-deploy --shape agent` returns the action-oriented
+- [ ] `akm show skills/k8s-deploy --shape agent` returns the action-oriented
       shape.
-- [ ] `akm show knowledge:incident-response-runbook toc` prints the table of
+- [ ] `akm show knowledge/incident-response-runbook toc` prints the table of
       contents only.
-- [ ] `akm show knowledge:incident-response-runbook section "Severity Levels"`
+- [ ] `akm show knowledge/incident-response-runbook section "Severity Levels"`
       narrows to that section.
-- [ ] `akm show knowledge:incident-response-runbook lines 1 20` returns the
+- [ ] `akm show knowledge/incident-response-runbook lines 1 20` returns the
       requested range.
-- [ ] `akm show knowledge:incident-response-runbook frontmatter` returns only
+- [ ] `akm show knowledge/incident-response-runbook frontmatter` returns only
       frontmatter.
-- [ ] `akm show knowledge:incident-response-runbook full` returns the raw file.
-- [ ] `akm show knowledge:incident-response-runbook section "Not Real"` returns
+- [ ] `akm show knowledge/incident-response-runbook full` returns the raw file.
+- [ ] `akm show knowledge/incident-response-runbook section "Not Real"` returns
       a friendly section-not-found message that points at `toc`.
-- [ ] `akm show skill:does-not-exist` fails with `ASSET_NOT_FOUND`, includes a
+- [ ] `akm show skills/does-not-exist` fails with `ASSET_NOT_FOUND`, includes a
       structured JSON envelope on stderr, and exits non-zero.
 
 ### 6.1 Scoped show
 
-- [ ] `akm show memory:scoped-note --scope user=alice` resolves the memory.
-- [ ] `akm show memory:scoped-note --scope user=bob` fails to resolve it.
+- [ ] `akm show memories/scoped-note --scope user=alice` resolves the memory.
+- [ ] `akm show memories/scoped-note --scope user=bob` fails to resolve it.
 
 ---
 
@@ -261,11 +261,11 @@ These cover the shared write-target path and git-backed save behavior.
 
 - [ ] `akm remember "test memory body" --name test-memory` writes a plain
       memory.
-- [ ] `akm show memory:test-memory` resolves it.
+- [ ] `akm show memories/test-memory` resolves it.
 - [ ] `akm remember "another" --name test-2 --description "desc" --tag foo --tag bar`
       persists `description` and both tags in frontmatter.
 - [ ] `echo "stdin body" | akm remember --name from-stdin` reads from stdin.
-- [ ] `akm remember "vpn note" --name expiring --tag ops --expires 30d --source "skill:k8s-deploy"`
+- [ ] `akm remember "vpn note" --name expiring --tag ops --expires 30d --source "skills/k8s-deploy"`
       persists frontmatter with `tags`, `expires`, and `source`.
 - [ ] `akm remember "Found curl pipe" --name auto-note --auto` succeeds only if
       heuristic tagging derives tags; written frontmatter includes derived data.
@@ -335,11 +335,11 @@ These cover the shared write-target path and git-backed save behavior.
       non-zero.
 - [ ] `akm curate ""` now fails with `MISSING_REQUIRED_ARGUMENT` rather than
       returning ranked filler results.
-- [ ] `akm clone skill:k8s-deploy --dest "$AKM_SANDBOX/clone-target"` copies the
+- [ ] `akm clone skills/k8s-deploy --dest "$AKM_SANDBOX/clone-target"` copies the
       asset to the requested destination.
-- [ ] `akm clone skill:k8s-deploy --name qa-copy --dest "$AKM_SANDBOX/clone-target"`
+- [ ] `akm clone skills/k8s-deploy --name qa-copy --dest "$AKM_SANDBOX/clone-target"`
       renames the cloned output.
-- [ ] `akm clone skill:does-not-exist --dest "$AKM_SANDBOX/clone-doomed"` fails
+- [ ] `akm clone skills/does-not-exist --dest "$AKM_SANDBOX/clone-doomed"` fails
       with `ASSET_NOT_FOUND`.
 
 ---
@@ -380,13 +380,13 @@ Workflows now include authoring, validation, execution, and recovery flows.
       confirming intro prose is accepted.
 - [ ] `akm workflow create test-created --from "$AKM_STASH_DIR/workflows/test.md"`
       writes and indexes the workflow.
-- [ ] `akm workflow validate workflow:test-created` succeeds by ref.
-- [ ] `akm workflow start workflow:test-created` returns a run with `id`,
+- [ ] `akm workflow validate workflows/test-created` succeeds by ref.
+- [ ] `akm workflow start workflows/test-created` returns a run with `id`,
       `workflowRef`, and steps.
 - [ ] `akm workflow status <run-id>` returns the full run state.
-- [ ] `akm workflow status workflow:test-created` resolves the most recent run
+- [ ] `akm workflow status workflows/test-created` resolves the most recent run
       for that ref.
-- [ ] `akm workflow next workflow:test-created` returns the current actionable
+- [ ] `akm workflow next workflows/test-created` returns the current actionable
       step. If no active run exists, it may auto-start one.
 - [ ] `akm workflow complete <run-id> --step <step-id> --state blocked --notes "waiting"`
       marks the step blocked.
@@ -421,8 +421,8 @@ Workflows now include authoring, validation, execution, and recovery flows.
       `engines`.
 - [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass;
       findings may exit non-zero but should still be structured and not crash.
-- [ ] `akm show wiki:my-wiki` returns the same summary class as
-      `akm wiki show my-wiki`.
+- [ ] `akm show my-wiki//pages/<page-slug>` renders a wiki page with the
+      standard `akm show` machinery (toc / section / lines / frontmatter views).
 - [ ] `akm wiki remove my-wiki -y` removes the wiki.
 
 `wiki register` should only be tested against disposable paths or repos. Do not
@@ -437,23 +437,23 @@ Confirm that guarantee carefully.
 
 - [ ] `akm env list` is empty initially.
 - [ ] `akm env create test-env` creates `env/test-env.env`.
-- [ ] `printf '%s' "secret-value" | akm env set env:test-env API_KEY` succeeds.
-- [ ] `akm show env:test-env` lists keys/comments only.
+- [ ] `printf '%s' "secret-value" | akm env set env/test-env API_KEY` succeeds.
+- [ ] `akm show env/test-env` lists keys/comments only.
 - [ ] `akm env list --format json` contains the env under `envs[]` with
       `keys` and no secret values.
-- [ ] `akm env path env:test-env` prints the absolute env file path and not the
+- [ ] `akm env path env/test-env` prints the absolute env file path and not the
       secret values.
-- [ ] `akm env run env:test-env -- bash -lc 'test "$API_KEY" = "secret-value"'`
+- [ ] `akm env run env/test-env -- bash -lc 'test "$API_KEY" = "secret-value"'`
       injects values into the subprocess environment.
-- [ ] `printf '%s' "token-value" | akm secret set secret:test-token` succeeds.
-- [ ] `akm secret list --format json` contains `secret:test-token` with only path
+- [ ] `printf '%s' "token-value" | akm secret set secrets/test-token` succeeds.
+- [ ] `akm secret list --format json` contains `secrets/test-token` with only path
       output.
-- [ ] `akm secret path secret:test-token` prints the absolute secret file path and
+- [ ] `akm secret path secrets/test-token` prints the absolute secret file path and
       no secret value.
-- [ ] `akm secret run secret:test-token CI_TOKEN -- bash -lc 'test "$CI_TOKEN" = "token-value"'`
+- [ ] `akm secret run secrets/test-token CI_TOKEN -- bash -lc 'test "$CI_TOKEN" = "token-value"'`
       injects only that variable.
-- [ ] `akm env unset env:test-env API_KEY` removes the key.
-- [ ] `akm secret remove secret:test-token -y` removes the secret.
+- [ ] `akm env unset env/test-env API_KEY` removes the key.
+- [ ] `akm secret remove secrets/test-token -y` removes the secret.
 
 ---
 
@@ -461,17 +461,17 @@ Confirm that guarantee carefully.
 
 These are core auditability flows to validate in `0.9.x`.
 
-- [ ] `akm feedback skill:k8s-deploy --positive` succeeds.
-- [ ] `akm feedback skill:k8s-deploy --negative --reason "not specific enough"`
+- [ ] `akm feedback skills/k8s-deploy --positive` succeeds.
+- [ ] `akm feedback skills/k8s-deploy --negative --reason "not specific enough"`
       succeeds.
 - [ ] `akm feedback` with no ref fails with `MISSING_REQUIRED_ARGUMENT`.
-- [ ] `akm feedback skill:k8s-deploy --positive --negative` fails with a
+- [ ] `akm feedback skills/k8s-deploy --positive --negative` fails with a
       structured usage error.
-- [ ] `akm history --ref skill:k8s-deploy` returns chronological history entries.
+- [ ] `akm history --ref skills/k8s-deploy` returns chronological history entries.
 - [ ] `akm history --since 2026-01-01T00:00:00Z --format jsonl` emits one JSON
       object per line.
 - [ ] `akm log list` shows appended mutation events.
-- [ ] `akm log list --type feedback --ref skill:k8s-deploy` filters correctly.
+- [ ] `akm log list --type feedback --ref skills/k8s-deploy` filters correctly.
 - [ ] `akm log tail --max-events 2 --format jsonl` streams events and ends
       with a trailer row containing `nextOffset`.
 - [ ] `akm log tail --max-events 1 --format text` emits line-oriented events
@@ -497,7 +497,7 @@ Run only inside the sandbox.
 
 ### 15.2 improve / propose
 
-- [ ] `akm improve skill:k8s-deploy --task "tighten the description"` either
+- [ ] `akm improve skills/k8s-deploy --task "tighten the description"` either
       queues a proposal successfully or fails with a structured config/usage
       envelope if no engine is configured.
 - [ ] `akm improve skill qa-generated-skill --task "simple review helper"`
@@ -507,12 +507,12 @@ Run only inside the sandbox.
 
 ### 15.3 improve / lesson
 
-- [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
+- [ ] `akm improve skills/k8s-deploy` returns `outcome: "skipped"` when
       `improve.strategies.default.processes.distill.enabled` is
       `false`, or queues a lesson proposal when enabled.
-- [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
+- [ ] `akm improve skills/k8s-deploy --exclude-feedback-from "memories/test-memory"`
       accepts valid refs.
-- [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "not-a-ref"` fails
+- [ ] `akm improve skills/k8s-deploy --exclude-feedback-from "not-a-ref"` fails
       with `INVALID_FLAG_VALUE`.
 - [ ] Any successful `improve` emits a `improve_invoked` event.
 
@@ -632,16 +632,16 @@ checklist did not exercise.
 
 #### `env set` and secret set --from-env / stdin behavior
 
-- [ ] `printf '%s' "secret" | akm env set env:prod KEY` writes via stdin.
-- [ ] `AKM_VAL=secret akm env set env:prod KEY --from-env AKM_VAL` writes from
+- [ ] `printf '%s' "secret" | akm env set env/prod KEY` writes via stdin.
+- [ ] `AKM_VAL=secret akm env set env/prod KEY --from-env AKM_VAL` writes from
       the named env var; unset var exits with code 2.
-- [ ] `printf '%s' "secret" | akm secret set secret:prod SECRET_TOKEN` writes via
+- [ ] `printf '%s' "secret" | akm secret set secrets/prod SECRET_TOKEN` writes via
       stdin.
-- [ ] `AKM_VAL=secret akm secret set secret:prod SECRET_TOKEN --from-env AKM_VAL`
+- [ ] `AKM_VAL=secret akm secret set secrets/prod SECRET_TOKEN --from-env AKM_VAL`
       writes from the named env var; unset var exits with code 2.
 - [ ] Piping a payload > 1 MB to `akm env set` is rejected with a
       `UsageError`.
-- [ ] `akm env set env:prod KEY=value` (positional value or KEY=VALUE
+- [ ] `akm env set env/prod KEY=value` (positional value or KEY=VALUE
       form) is rejected with `UsageError`.
 
 #### `--auto-accept=false` regression check
@@ -657,7 +657,7 @@ checklist did not exercise.
 
 - [ ] `akm proposal accept <full-uuid>` works (regression check).
 - [ ] `akm proposal accept <8-char prefix>` works.
-- [ ] `akm proposal accept memory:my-note` resolves the pending proposal by ref.
+- [ ] `akm proposal accept memories/my-note` resolves the pending proposal by ref.
 - [ ] `akm proposal reject` / `akm proposal diff` accept the same forms.
 
 #### `--target` uniformity
@@ -700,11 +700,11 @@ Confirm representative commands are parseable as JSON/YAML/JSONL.
 for cmd in \
   'list' \
   'search docker' \
-  'show skill:k8s-deploy' \
+  'show skills/k8s-deploy' \
   'info' \
   'config list' \
   'curate "review code"' \
-  'history --ref skill:k8s-deploy' \
+  'history --ref skills/k8s-deploy' \
   'log list'; do
   akm $cmd --format json | jq -e . > /dev/null || exit 1
 done

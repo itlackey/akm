@@ -14,8 +14,8 @@ git root, or stash root), so concurrent runs in different directories stay
 independent.
 
 ```sh
-akm workflow start workflow:ship-release
-akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
+akm workflow start workflows/ship-release
+akm workflow start workflows/ship-release --params '{"version":"1.2.3"}'
 ```
 
 The run snapshots the step list at start time. Edits to the source workflow
@@ -24,7 +24,7 @@ file after a run has started do not affect in-flight runs.
 **Example: kick off a release**
 
 ```sh
-akm workflow start workflow:ship-release --params '{"version":"2.0.0"}'
+akm workflow start workflows/ship-release --params '{"version":"2.0.0"}'
 # → {"run": {"id":"<uuid>","status":"active","currentStepId":"validate",...}}
 ```
 
@@ -35,9 +35,9 @@ no active run exists for the given ref in the current scope, it auto-starts
 one. This is the primary command an agent calls in a loop.
 
 ```sh
-akm workflow next workflow:ship-release
+akm workflow next workflows/ship-release
 akm workflow next <run-id>
-akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'  # auto-start params
+akm workflow next workflows/ship-release --params '{"version":"1.2.3"}'  # auto-start params
 ```
 
 The response includes the step object (`title`, `instructions`,
@@ -47,10 +47,10 @@ The response includes the step object (`title`, `instructions`,
 
 ```sh
 # Agent loop:
-akm workflow next workflow:repo-onboarding
+akm workflow next workflows/repo-onboarding
 # read instructions → perform work → mark complete → repeat
 akm workflow complete <run-id> --step setup-ci --notes "CI configured in .github/workflows/"
-akm workflow next workflow:repo-onboarding
+akm workflow next workflows/repo-onboarding
 ```
 
 ## akm workflow status
@@ -60,7 +60,7 @@ evidence — for a given run ID or workflow ref.
 
 ```sh
 akm workflow status <run-id>
-akm workflow status workflow:ship-release
+akm workflow status workflows/ship-release
 # When given a ref, resolves to the most-recently-updated run in the current scope
 ```
 
@@ -91,7 +91,7 @@ input hash.
 ```sh
 akm workflow list              # All runs in this scope (any status)
 akm workflow list --active     # Only status=active (executable) runs
-akm workflow list --ref workflow:ship-release  # Runs for a specific workflow
+akm workflow list --ref workflows/ship-release  # Runs for a specific workflow
 ```
 
 `--active` filters to runs whose status is exactly `active` — currently
@@ -116,7 +116,7 @@ with `akm workflow create`.
 ```sh
 akm workflow template          # Print the template
 akm workflow create my-release --from ./my-release.md
-akm workflow validate workflow:my-release  # Check for errors before using it
+akm workflow validate workflows/my-release  # Check for errors before using it
 ```
 
 **Minimal workflow format:**
@@ -154,8 +154,8 @@ are optional but recommended for human-review gates.
 **Example: run a print book review workflow**
 
 ```sh
-akm workflow start workflow:print-book-review --params '{"draft":"v3.pdf"}'
-akm workflow next workflow:print-book-review
+akm workflow start workflows/print-book-review --params '{"draft":"v3.pdf"}'
+akm workflow next workflows/print-book-review
 # agent reads instructions → runs checks → completes each step in sequence
 ```
 
@@ -163,7 +163,7 @@ akm workflow next workflow:print-book-review
 
 Alongside the stable linear markdown format above, a workflow can be written
 as a **YAML orchestration program** and executed engine-driven with
-`akm workflow run <run-id|workflow:ref>`: akm compiles the program into a
+`akm workflow run <run-id|workflows/ref>`: akm compiles the program into a
 plan graph, freezes that plan on the run, dispatches each step's units to the
 configured engine (fan-out runs units concurrently), records every unit in
 `workflow_run_units`, and advances the run through the normal completion
@@ -183,7 +183,7 @@ byte-identical unit graphs.
 YAML programs live in your stash under `workflows/` with a `.yaml` or `.yml`
 extension and are addressed with the same `workflow:<name>` refs. Print a
 starter with **`akm workflow template --yaml`**, and lint with
-`akm workflow validate <path|workflow:ref>` — validation is backed by the
+`akm workflow validate <path|workflows/ref>` — validation is backed by the
 published JSON Schema at `schemas/akm-workflow.json`.
 
 ```yaml
@@ -486,7 +486,7 @@ work, and neither duplicates any orchestration logic: both call the exact
 same shared step semantics the engine uses, so an engine-driven run and a
 driver-driven run of the same plan produce **byte-identical unit graphs**.
 
-- **`akm workflow brief <run-id|workflow:ref>`** — read-only. It finds the
+- **`akm workflow brief <run-id|workflows/ref>`** — read-only. It finds the
   run's active step, computes the work-list the engine *would* dispatch, and
   tells you exactly what to run and how to report it. It **takes no lease,
   dispatches nothing, and mutates nothing** — it is safe to call as often as
@@ -697,7 +697,7 @@ then loop brief → execute → report:
 
 ```sh
 # Start the run (freezes the plan; does not dispatch).
-akm workflow start workflow:review-changes --params '{"changed_files":["a.ts"]}'
+akm workflow start workflows/review-changes --params '{"changed_files":["a.ts"]}'
 # → {"run":{"id":"r1","status":"active","currentStepId":"discover",...}}
 
 akm workflow brief r1

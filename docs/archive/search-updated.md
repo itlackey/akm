@@ -1,3 +1,6 @@
+> **Archived 2026-07-20 (docs three-tier sweep).** The short implementation companion to `search.md`; the canonical search doc is now `docs/technical/search.md`. Retained as a design-decision record.
+> Current truth: `docs/technical/search.md`.
+
 # Search Implementation Notes
 
 This is the short, implementation-focused companion to `search.md`.
