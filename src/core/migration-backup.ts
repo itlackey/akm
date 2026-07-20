@@ -6,12 +6,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { openDatabase } from "../storage/database";
+import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
 import {
   inspectMigrationLedger,
+  inspectSealedMigrationLedger,
   type Migration,
   type MigrationLedgerState,
+  type SealedMigration,
 } from "../storage/engines/sqlite-migrations";
-import { WORKFLOW_MIGRATIONS } from "../workflows/db";
 import { MAX_CONFIG_FILE_BYTES, MAX_LOCAL_METADATA_BYTES, readTextFileWithLimit, writeFileAtomic } from "./common";
 import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION, validateConfigShape } from "./config/config-schema";
@@ -218,11 +220,38 @@ function inspectSqlite(filePath: string, migrations: readonly Migration[]): Migr
   }
 }
 
+/**
+ * Ledger inspection against a FROZEN `{ id, checksum }` copy. Used for
+ * workflow.db, whose live `WORKFLOW_MIGRATIONS` array is deleted at the
+ * three-DB cutover (WI-8.3) but whose pre-cutover backups must stay verifiable
+ * (plan §3.3 item 1). Behaviourally identical to {@link inspectSqlite}.
+ */
+function inspectSqliteSealed(filePath: string, sealed: readonly SealedMigration[]): MigrationArtifactState {
+  if (!fs.existsSync(filePath)) return { status: "missing" };
+  let db: ReturnType<typeof openDatabase> | undefined;
+  try {
+    db = openDatabase(filePath, { readonly: true });
+    quickCheck(db, filePath);
+    return mapLedgerState(inspectSealedMigrationLedger(db, sealed));
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    db?.close();
+  }
+}
+
+/** Ledger inspection for the two ledger-migrated databases (state.db live array; workflow.db frozen copy). */
+function inspectLedgerArtifact(name: "state.db" | "workflow.db", filePath: string): MigrationArtifactState {
+  return name === "state.db"
+    ? inspectSqlite(filePath, STATE_MIGRATIONS)
+    : inspectSqliteSealed(filePath, WORKFLOW_MIGRATIONS_CHECKSUMS);
+}
+
 export function inspectMigrationState(): MigrationState {
   return {
     config: inspectConfig(getConfigPath()),
     state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
-    workflow: inspectSqlite(getWorkflowDbPath(), WORKFLOW_MIGRATIONS),
+    workflow: inspectSqliteSealed(getWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
   };
 }
 
@@ -368,10 +397,7 @@ export function verifyMigrationBackup(bundlePath = resolveBackupRun()): Migratio
         "INVALID_CONFIG_FILE",
       );
     }
-    const inspected =
-      name === "config.json"
-        ? inspectConfig(artifactPath)
-        : inspectSqlite(artifactPath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+    const inspected = name === "config.json" ? inspectConfig(artifactPath) : inspectLedgerArtifact(name, artifactPath);
     if (!sameState(inspected, artifact)) {
       throw new ConfigError(
         `Migration backup artifact ${artifactPath} failed SQLite/config recoverability verification: expected ${artifact.status}, got ${inspected.status}${inspected.detail ? ` (${inspected.detail})` : ""}.`,
@@ -469,7 +495,7 @@ function createMigrationBackupUnlocked(): MigrationBackupResult {
       const inspected = present
         ? name === "config.json"
           ? inspectConfig(destination)
-          : inspectSqlite(destination, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS)
+          : inspectLedgerArtifact(name, destination)
         : { status: "missing" as const };
       const expectedArtifact = { ...sourceState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
       if (!sameState(inspected, expectedArtifact)) {
@@ -1135,9 +1161,7 @@ function resolveBackupRun(runId?: string): string {
 }
 
 function inspectArtifactAt(name: ArtifactName, filePath: string): MigrationArtifactState {
-  return name === "config.json"
-    ? inspectConfig(filePath)
-    : inspectSqlite(filePath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+  return name === "config.json" ? inspectConfig(filePath) : inspectLedgerArtifact(name, filePath);
 }
 
 function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBackupManifest, rescueRunId: string): void {
