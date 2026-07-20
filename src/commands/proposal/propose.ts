@@ -103,6 +103,24 @@ function proposeItemRef(stashDir: string, type: string, name: string): string {
   return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
+/**
+ * The command-entry `propose_invoked` event. WI-8.5b: the ref carries the same
+ * fully-qualified item_ref the durable proposal is minted under
+ * (`proposeItemRef`), so the entry event and the stored proposal agree.
+ */
+function emitProposeInvoked(stash: string, options: AkmProposeOptions): void {
+  appendEvent({
+    eventType: "propose_invoked",
+    ref: proposeItemRef(stash, options.type, options.name),
+    metadata: {
+      type: options.type,
+      name: options.name,
+      task: options.task,
+      ...(options.engine ? { engine: options.engine } : {}),
+    },
+  });
+}
+
 export async function akmPropose(options: AkmProposeOptions): Promise<AkmProposeResult> {
   if (!options.type?.trim()) {
     throw new UsageError("propose: <type> is required.", "MISSING_REQUIRED_ARGUMENT");
@@ -122,19 +140,8 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
 
   const stash = options.stashDir ?? resolveStashDir();
 
-  // 1. Always emit `propose_invoked`. WI-8.5b: the INPUT ref carries the same
-  // fully-qualified item_ref the durable proposal is minted under
-  // (`proposeItemRef`), so the entry event and the stored proposal agree.
-  appendEvent({
-    eventType: "propose_invoked",
-    ref: proposeItemRef(stash, options.type, options.name),
-    metadata: {
-      type: options.type,
-      name: options.name,
-      task: options.task,
-      ...(options.engine ? { engine: options.engine } : {}),
-    },
-  });
+  // 1. Always emit `propose_invoked` (extracted: emitProposeInvoked).
+  emitProposeInvoked(stash, options);
 
   // 2. Resolve the selected engine exactly once. Propose accepts either kind;
   // the LLM arm uses the caller-specific plain-chat handler below.

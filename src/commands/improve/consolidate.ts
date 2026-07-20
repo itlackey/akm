@@ -681,6 +681,16 @@ function canonicalXref(ref: string): string {
   }
 }
 
+/**
+ * The promoted asset's provenance xref set: existing body-frontmatter xrefs +
+ * the promoted source ref, deduped after canonicalization (WI-8.5b: emitted in
+ * the D-R5 new grammar via {@link canonicalXref}).
+ */
+function promoteProvenanceXrefs(existing: unknown, sourceRef: string): string[] {
+  const priors = Array.isArray(existing) ? existing.map(String) : [];
+  return [...new Set([...priors, sourceRef].map(canonicalXref))];
+}
+
 // ── Archive helper (P1-B: soft-invalidation) ─────────────────────────────────
 
 /**
@@ -2354,14 +2364,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     const mergedBodyFm: Record<string, unknown> = {
       ...(parsedMemory.data ?? {}),
       description,
-      // WI-8.5b: emit provenance xrefs in the D-R5 new grammar (canonicalXref).
-      xrefs: [
-        ...new Set(
-          [...(Array.isArray(parsedMemory.data?.xrefs) ? parsedMemory.data.xrefs.map(String) : []), op.ref].map(
-            canonicalXref,
-          ),
-        ),
-      ],
+      xrefs: promoteProvenanceXrefs(parsedMemory.data?.xrefs, op.ref),
     };
     const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
     const promotedAssetContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
