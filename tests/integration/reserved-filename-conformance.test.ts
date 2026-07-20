@@ -42,6 +42,7 @@ const ALLOWED = new Set([
   "commands/sources/schema-repair.ts", // llm-wiki structural directory-index names
   "indexer/passes/metadata.ts", // WIKI_INFRA_FILES exclusion set
   "migrate/legacy/content-migration.ts", // D-R6 rename step (reserved-name detection)
+  "sources/snapshot-fetchers/website-ingest.ts", // D-R6 remap: crawled pages avoid reserved basenames
 ]);
 
 function walkTs(dir: string, out: string[]): void {
