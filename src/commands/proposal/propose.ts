@@ -122,10 +122,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
 
   const stash = options.stashDir ?? resolveStashDir();
 
-  // 1. Always emit `propose_invoked` at entry so observers see the attempt.
-  // The invoke ref is the pre-proposal INPUT ref (not the durable proposals.ref,
-  // which createProposal mints below) — it stays the legacy spelling like the
-  // sibling reflect_invoked / distill_invoked observability events (WI-8.5b).
+  // 1. Always emit `propose_invoked` (legacy INPUT ref, like reflect_invoked; WI-8.5b).
   appendEvent({
     eventType: "propose_invoked",
     ref: `${options.type}:${options.name}`,

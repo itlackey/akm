@@ -2208,20 +2208,10 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
 
-  // Idempotency: is a pending proposal already queued for this knowledge concept?
-  // Match by conceptId, grammar-independent — WI-8.5a stores proposals.ref as the
-  // item_ref, so an exact `{ ref: knowledge:slug }` filter would miss it.
-  const targetParsed = parseStoredRef(knowledgeRef);
-  const targetConceptId = legacyConceptId(targetParsed.type, targetParsed.name);
-  const existingProposals = listProposals(stashDir, { status: "pending" }).filter((p) => {
-    try {
-      const pp = parseStoredRef(p.ref);
-      return legacyConceptId(pp.type, pp.name) === targetConceptId;
-    } catch {
-      return false;
-    }
-  });
-  if (existingProposals.length > 0) {
+  // Idempotency: a pending proposal already queued for this knowledge concept
+  // (grammar-independent — WI-8.5a stores proposals.ref as the item_ref, so an
+  // exact `{ ref: knowledge:slug }` filter would miss it).
+  if (hasPendingProposalForConcept(stashDir, knowledgeRef)) {
     warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
     pushSkipReason("promote", op.ref, "promote_pending_proposal_exists");
     return;
@@ -2459,6 +2449,24 @@ export async function handleContradictOp(op: ConsolidateContradictOp, ctx: Conso
  * Two slugs that normalise to the same string are considered the same asset
  * for dedup purposes even if they don't share an exact ref.
  */
+/** The conceptId a proposal ref maps to in EITHER grammar (WI-8.5a), or undefined. */
+function conceptIdForRef(ref: string): string | undefined {
+  try {
+    const p = parseStoredRef(ref);
+    return legacyConceptId(p.type, p.name);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is a pending proposal already queued for `conceptRef`'s concept (grammar-independent)? */
+function hasPendingProposalForConcept(stashDir: string, conceptRef: string): boolean {
+  const want = conceptIdForRef(conceptRef);
+  return (
+    want !== undefined && listProposals(stashDir, { status: "pending" }).some((p) => conceptIdForRef(p.ref) === want)
+  );
+}
+
 function normalizeSlugForDedup(ref: string): string {
   // Extract the bare asset name from EITHER grammar (WI-8.5a: proposals.ref is the
   // item_ref `bundle//conceptId`, which carries no `type:` colon — the old
