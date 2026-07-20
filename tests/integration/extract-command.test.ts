@@ -575,7 +575,7 @@ describe("akmExtract — candidate → proposal routing", () => {
 
     expect(result.dryRun).toBe(true);
     expect(result.candidatesCreated).toBe(1);
-    expect(result.proposals[0]).toMatch(/^dry-run:memory:fact-1$/);
+    expect(result.proposals[0]).toMatch(/^dry-run:memories\/fact-1$/);
     // No actual proposal queued
     expect(listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract")).toEqual([]);
   });

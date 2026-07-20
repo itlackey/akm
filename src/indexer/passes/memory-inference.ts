@@ -535,7 +535,7 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
   };
 
   const childName = `${parent.name}.derived`;
-  const childRefStr = `memory:${childName}`;
+  const childRefStr = `memories/${childName}`;
   if (fs.existsSync(derivedChildPath(parent))) {
     // The derived child appeared on disk after the caller's pre-check (#588)
     // — a rare mid-flight race. Report `childExists` so the caller marks the

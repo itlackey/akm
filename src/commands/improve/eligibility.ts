@@ -22,6 +22,7 @@ import { getAllEntries } from "../../storage/repositories/index-entries-reposito
 import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
+import { parseMemoryRef } from "./memory/derived-ref";
 import { improveStateReadRefs } from "./source-identity";
 
 // Eligibility / candidate-selection predicates for improve. Free functions
@@ -289,13 +290,11 @@ export function memoryCleanupParentRef(
     if (!fs.existsSync(candidate)) continue;
     const raw = fs.readFileSync(candidate, "utf8");
     const fm = parseFrontmatter(raw).data;
-    const sourceRef = typeof fm.source === "string" ? fm.source : undefined;
-    if (sourceRef) {
-      try {
-        const parent = parseRefInput(sourceRef.trim());
-        if (parent.type === "memory") return `${parent.type}:${parent.name}`;
-      } catch {}
-    }
+    // The `source:` backref channel keeps the legacy `memory:<name>` spelling
+    // (WI-8.5c) — read it through the legacy-tolerant parseMemoryRef, never
+    // the strict new-grammar parser.
+    const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
+    if (parent) return parent;
   }
 
   return `memory:${parsed.name.slice(0, -".derived".length)}`;

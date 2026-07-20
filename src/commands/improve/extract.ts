@@ -449,7 +449,8 @@ export function deriveExtractCandidateRef(candidate: ExtractCandidate, sourceRef
   if (candidate.type === "memory" || candidate.type === "lesson") {
     const projectName = sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
     const scope = projectName ? canonicalSegment(projectName) : "";
-    return `${candidate.type}:${scope ? `${scope}/` : ""}${leaf}`;
+    const subdir = candidate.type === "memory" ? "memories" : "lessons";
+    return `${subdir}/${scope ? `${scope}/` : ""}${leaf}`;
   }
   return `knowledge/${leaf}`;
 }
