@@ -28,8 +28,8 @@ import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryCount, getIndexedFilePaths } from "../storage/repositories/index-entries-repository";
-import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 import { getMeta } from "../storage/repositories/index-meta-repository";
+import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";

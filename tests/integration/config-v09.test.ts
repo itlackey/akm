@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
-import { bundlesToSourceEntries, loadUserConfig, resetConfigCache, resolveConfiguredSources, saveConfig } from "../../src/core/config/config";
+import {
+  bundlesToSourceEntries,
+  loadUserConfig,
+  resetConfigCache,
+  resolveConfiguredSources,
+  saveConfig,
+} from "../../src/core/config/config";
 import { validateConfigShape } from "../../src/core/config/config-schema";
 import { configSet } from "../../src/core/config/config-walker";
 import { ConfigError } from "../../src/core/errors";

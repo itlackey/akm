@@ -58,9 +58,9 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { isSourceWriteActivated } from "../core/activation-policy";
 import { getAdapters } from "../core/adapter/registry";
-import { isBundleSlug } from "../core/asset/asset-ref";
 import type { BundleInstallation } from "../core/adapter/types";
 import { stashDirFor } from "../core/asset/asset-placement";
+import { isBundleSlug } from "../core/asset/asset-ref";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
 
@@ -105,7 +105,8 @@ function shortHash(input: string): string {
  * runtime installation id by construction (D-R5 no-identity-shift proof).
  */
 export function deriveBundleId(registryId: string | undefined, sourcePath: string, usedIds: Set<string>): string {
-  const preferred = registryId && registryId.length > 0 && isBundleSlug(registryId) ? registryId : slugForPath(sourcePath);
+  const preferred =
+    registryId && registryId.length > 0 && isBundleSlug(registryId) ? registryId : slugForPath(sourcePath);
   const id = ensureUniqueId(preferred, sourcePath, usedIds);
   usedIds.add(id);
   return id;
