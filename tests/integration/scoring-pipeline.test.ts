@@ -103,38 +103,16 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
 
     // Create two entries with identical FTS content, but different quality fields.
     // The curated entry should rank higher AND show a higher score.
-    writeFile(path.join(stashDir, "scripts", "alpha-tool", "alpha-tool.sh"), "#!/bin/bash\necho alpha\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter. Knowledge, like
+    // script, gets no type boost, so the quality-boost mechanics under test are
+    // preserved; only the seeding shape (script+sidecar → knowledge frontmatter) changed.
     writeFile(
-      path.join(stashDir, "scripts", "alpha-tool", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "alpha-tool",
-            type: "script",
-            description: "A special deployment utility for servers",
-            quality: "curated",
-            confidence: 0.9,
-            filename: "alpha-tool.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "alpha-tool.md"),
+      "---\ndescription: A special deployment utility for servers\nquality: curated\n---\n",
     );
-
-    writeFile(path.join(stashDir, "scripts", "beta-tool", "beta-tool.sh"), "#!/bin/bash\necho beta\n");
     writeFile(
-      path.join(stashDir, "scripts", "beta-tool", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "beta-tool",
-            type: "script",
-            description: "A special deployment utility for servers",
-            quality: "generated",
-            confidence: 0.0,
-            filename: "beta-tool.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "beta-tool.md"),
+      "---\ndescription: A special deployment utility for servers\nquality: generated\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -300,38 +278,18 @@ describe("Issue #7: Boost accumulation caps", () => {
     // Only the tag boost differs: 10 matching tags vs 2 matching tags.
     const sharedDesc = "Infrastructure automation toolkit for cloud deployments";
 
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter (no type boost,
+    // so the tag-boost cap mechanics under test are preserved).
     // Entry with 10 matching tags (would get +1.5 boost uncapped, 2.5x multiplier)
-    writeFile(path.join(stashDir, "scripts", "many-tags", "many-tags.sh"), "#!/bin/bash\necho many\n");
     writeFile(
-      path.join(stashDir, "scripts", "many-tags", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "many-tags",
-            type: "script",
-            description: sharedDesc,
-            tags: ["deploy", "server", "cloud", "infra", "ci", "cd", "build", "release", "ship", "prod"],
-            filename: "many-tags.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "many-tags.md"),
+      `---\ndescription: ${sharedDesc}\ntags:\n  - deploy\n  - server\n  - cloud\n  - infra\n  - ci\n  - cd\n  - build\n  - release\n  - ship\n  - prod\n---\n`,
     );
 
     // Entry with exactly 2 matching tags (capped level)
-    writeFile(path.join(stashDir, "scripts", "few-tags", "few-tags.sh"), "#!/bin/bash\necho few\n");
     writeFile(
-      path.join(stashDir, "scripts", "few-tags", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "few-tags",
-            type: "script",
-            description: sharedDesc,
-            tags: ["deploy", "server"],
-            filename: "few-tags.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "few-tags.md"),
+      `---\ndescription: ${sharedDesc}\ntags:\n  - deploy\n  - server\n---\n`,
     );
 
     await buildTestIndex(stashDir, {});
@@ -356,44 +314,18 @@ describe("Issue #7: Boost accumulation caps", () => {
   test("entry with many matching searchHints has capped boost", async () => {
     const stashDir = tmpStash();
 
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter (no type boost,
+    // so the searchHints-boost cap mechanics under test are preserved).
     // Entry with 5 matching hints (would get +0.60 boost uncapped)
-    writeFile(path.join(stashDir, "scripts", "many-hints", "many-hints.sh"), "#!/bin/bash\n");
     writeFile(
-      path.join(stashDir, "scripts", "many-hints", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "many-hints",
-            type: "script",
-            description: "Testing hint caps for search relevance",
-            searchHints: [
-              "deploy web apps",
-              "deploy mobile apps",
-              "deploy backend",
-              "deploy microservices",
-              "deploy containers",
-            ],
-            filename: "many-hints.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "many-hints.md"),
+      "---\ndescription: Testing hint caps for search relevance\nsearchHints:\n  - deploy web apps\n  - deploy mobile apps\n  - deploy backend\n  - deploy microservices\n  - deploy containers\n---\n",
     );
 
     // Entry with 2 matching hints (at the cap level)
-    writeFile(path.join(stashDir, "scripts", "few-hints", "few-hints.sh"), "#!/bin/bash\n");
     writeFile(
-      path.join(stashDir, "scripts", "few-hints", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "few-hints",
-            type: "script",
-            description: "Testing hint caps for search relevance",
-            searchHints: ["deploy web apps", "deploy mobile apps"],
-            filename: "few-hints.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "few-hints.md"),
+      "---\ndescription: Testing hint caps for search relevance\nsearchHints:\n  - deploy web apps\n  - deploy mobile apps\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -422,35 +354,17 @@ describe("Issue #8: Score rounding precision", () => {
 
     // Create two entries with slightly different relevance signals.
     // At 2-decimal rounding, both would be 0.02; at 4-decimal, they should differ.
-    writeFile(path.join(stashDir, "scripts", "precise-a", "precise-a.sh"), "#!/bin/bash\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter (no type boost, so
+    // the tag-boost differentiation under test is preserved). precise-a carries the
+    // matching `widget` tag; precise-b does not.
     writeFile(
-      path.join(stashDir, "scripts", "precise-a", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "precise-a",
-            type: "script",
-            description: "Widget factory for production deployment of services",
-            tags: ["widget"],
-            filename: "precise-a.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "precise-a.md"),
+      "---\ndescription: Widget factory for production deployment of services\ntags:\n  - widget\n---\n",
     );
 
-    writeFile(path.join(stashDir, "scripts", "precise-b", "precise-b.sh"), "#!/bin/bash\n");
     writeFile(
-      path.join(stashDir, "scripts", "precise-b", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "precise-b",
-            type: "script",
-            description: "Widget factory for production deployment of services",
-            filename: "precise-b.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "precise-b.md"),
+      "---\ndescription: Widget factory for production deployment of services\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -472,19 +386,10 @@ describe("Issue #8: Score rounding precision", () => {
   test("scores are rounded to at most 4 decimal places", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "round-check", "round-check.sh"), "#!/bin/bash\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter.
     writeFile(
-      path.join(stashDir, "scripts", "round-check", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "round-check",
-            type: "script",
-            description: "A utility for checking rounding behavior",
-            filename: "round-check.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "round-check.md"),
+      "---\ndescription: A utility for checking rounding behavior\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -507,19 +412,10 @@ describe("Issue #12: buildWhyMatched includes description matches", () => {
   test("whyMatched includes 'matched description' when query matches description", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "desc-match", "desc-match.sh"), "#!/bin/bash\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter.
     writeFile(
-      path.join(stashDir, "scripts", "desc-match", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "desc-match",
-            type: "script",
-            description: "Orchestrates Kubernetes pod lifecycle management",
-            filename: "desc-match.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "desc-match.md"),
+      "---\ndescription: Orchestrates Kubernetes pod lifecycle management\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -576,21 +472,14 @@ describe("Issue #14: Deterministic sort on tied scores", () => {
 
     // Create entries with identical content so they get the same FTS score.
     // Names chosen so alphabetical order is clear: aaa < bbb < ccc
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter. All three carry
+    // an identical description so they tie on FTS score; the tiebreaker-by-name
+    // determinism under test is preserved (knowledge, like script, gets no type boost).
     const names = ["ccc-tool", "aaa-tool", "bbb-tool"];
     for (const name of names) {
-      writeFile(path.join(stashDir, "scripts", name, `${name}.sh`), "#!/bin/bash\necho same content\n");
       writeFile(
-        path.join(stashDir, "scripts", name, ".stash.json"),
-        JSON.stringify({
-          entries: [
-            {
-              name,
-              type: "script",
-              description: "Identical widget factory for production",
-              filename: `${name}.sh`,
-            },
-          ],
-        }),
+        path.join(stashDir, "knowledge", `${name}.md`),
+        "---\ndescription: Identical widget factory for production\n---\n",
       );
     }
 
@@ -705,25 +594,14 @@ describe("Cross-stash deduplication at index time", () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
-    // Same file with same content/metadata in both stashes, but under
-    // different directory prefixes (mimics primary stash + installed stash)
-    const script = "#!/bin/bash\necho github platform adapter\n";
-    const metadata = JSON.stringify({
-      entries: [
-        {
-          name: "github",
-          type: "script",
-          description: "GitHub Platform Adapter for issue tracking",
-          filename: "github.sh",
-        },
-      ],
-    });
+    // Same asset name + metadata in both stashes (mimics primary stash + installed
+    // stash). #39: sidecars retired — seed via knowledge/*.md frontmatter. Dedup
+    // identity is type + entry.name, so identical knowledge/github in both roots
+    // dedupes to one entry (the higher-priority primary stash wins).
+    const asset = "---\ndescription: GitHub Platform Adapter for issue tracking\n---\n";
 
-    writeFile(path.join(primaryStash, "scripts", "platforms", "github.sh"), script);
-    writeFile(path.join(primaryStash, "scripts", "platforms", ".stash.json"), metadata);
-
-    writeFile(path.join(secondStash, "scripts", "platforms", "github.sh"), script);
-    writeFile(path.join(secondStash, "scripts", "platforms", ".stash.json"), metadata);
+    writeFile(path.join(primaryStash, "knowledge", "github.md"), asset);
+    writeFile(path.join(secondStash, "knowledge", "github.md"), asset);
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
@@ -750,37 +628,13 @@ describe("Cross-stash deduplication at index time", () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
-    // Create identical assets with identical descriptions in both stashes
-    // but with DIFFERENT directory structures (so paths differ)
-    writeFile(path.join(primaryStash, "skills", "tracker", "platforms", "github.sh"), "#!/bin/bash\necho adapter\n");
-    writeFile(
-      path.join(primaryStash, "skills", "tracker", "platforms", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "tracker/platforms/github",
-            type: "script",
-            description: "GitHub Platform Adapter wrapping the gh CLI",
-            filename: "github.sh",
-          },
-        ],
-      }),
-    );
-
-    writeFile(path.join(secondStash, "scripts", "platforms", "github.sh"), "#!/bin/bash\necho adapter\n");
-    writeFile(
-      path.join(secondStash, "scripts", "platforms", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "platforms/github",
-            type: "script",
-            description: "GitHub Platform Adapter wrapping the gh CLI",
-            filename: "github.sh",
-          },
-        ],
-      }),
-    );
+    // Create identical descriptions in both stashes but with DIFFERENT canonical
+    // names (nested subpaths), so type + name identity keeps them distinct.
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter; the nested ref
+    // subpath IS the canonical name (knowledge/<subpath>.md → name "<subpath>").
+    const adapterFm = "---\ndescription: GitHub Platform Adapter wrapping the gh CLI\n---\n";
+    writeFile(path.join(primaryStash, "knowledge", "tracker", "platforms", "github.md"), adapterFm);
+    writeFile(path.join(secondStash, "knowledge", "platforms", "github.md"), adapterFm);
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
@@ -803,21 +657,11 @@ describe("Cross-stash deduplication at index time", () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
-    writeFile(path.join(primaryStash, "scripts", "utils", "helper.sh"), "#!/bin/bash\necho primary\n");
-    writeFile(
-      path.join(primaryStash, "scripts", "utils", ".stash.json"),
-      JSON.stringify({
-        entries: [{ name: "helper", type: "script", description: "Build helper for CI", filename: "helper.sh" }],
-      }),
-    );
-
-    writeFile(path.join(secondStash, "scripts", "tools", "helper.sh"), "#!/bin/bash\necho second\n");
-    writeFile(
-      path.join(secondStash, "scripts", "tools", ".stash.json"),
-      JSON.stringify({
-        entries: [{ name: "helper", type: "script", description: "Test helper for local dev", filename: "helper.sh" }],
-      }),
-    );
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter. Both roots
+    // declare the SAME name (`helper`) with DIFFERENT descriptions; type + name
+    // identity dedupes them and the higher-priority primary stash wins.
+    writeFile(path.join(primaryStash, "knowledge", "helper.md"), "---\ndescription: Build helper for CI\n---\n");
+    writeFile(path.join(secondStash, "knowledge", "helper.md"), "---\ndescription: Test helper for local dev\n---\n");
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({

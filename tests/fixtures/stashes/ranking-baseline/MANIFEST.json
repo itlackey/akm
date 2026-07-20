@@ -1,7 +1,7 @@
 {
   "name": "ranking-baseline",
-  "description": "Synthetic 18-asset stash covering skills, commands, agents, knowledge, and scripts across docker, k8s, svelte, and code-review domains.",
-  "purpose": "Baseline fixture for tests/ranking-regression.test.ts. Migrated from tests/ranking-fixtures/stash/ in issue #235; content is byte-identical to that prior location and any change invalidates ranking baselines.",
-  "assets": { "skill": 4, "knowledge": 7, "command": 2, "agent": 2, "script": 3 },
+  "description": "Synthetic 18-asset stash covering skills, commands, agents, and knowledge across docker, k8s, svelte, and code-review domains.",
+  "purpose": "Baseline fixture for tests/ranking-regression.test.ts. Migrated from tests/ranking-fixtures/stash/ in issue #235. #39: the three bare scripts (mem0-search, deploy-check, docker-clean) were re-homed as knowledge/*.md when the .stash.json sidecar readers were retired — knowledge, like script, gets no type boost, so ranking mechanics are preserved. Names are unchanged.",
+  "assets": { "skill": 4, "knowledge": 10, "command": 2, "agent": 2 },
   "consumers": ["tests/ranking-regression.test.ts"]
 }

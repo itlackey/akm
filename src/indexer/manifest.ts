@@ -170,7 +170,6 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
   return entries;
 }
 
-
 /**
  * Generate a compact manifest of all assets in the stash.
  *

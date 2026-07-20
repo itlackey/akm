@@ -550,25 +550,14 @@ describe("Semantic search graceful degradation", () => {
     process.env.XDG_CACHE_HOME = degradationCacheDir;
     process.env.XDG_CONFIG_HOME = degradationConfigDir;
 
-    // Create a minimal stash
+    // Create a minimal stash. #39: sidecars retired — the skill's metadata now
+    // lives in its native SKILL.md frontmatter home (name "hello", type skill).
     stashDir = createTmpDir("akm-semantic-degrade-stash-");
     const skillDir = path.join(stashDir, "skills", "hello");
     fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, "hello.md"), "# Hello Skill\n\nA simple hello world greeting skill.\n");
     fs.writeFileSync(
-      path.join(skillDir, ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "hello",
-            type: "skill",
-            filename: "hello.md",
-            description: "A simple hello world greeting skill",
-            tags: ["hello", "greeting"],
-            quality: "curated",
-          },
-        ],
-      }),
+      path.join(skillDir, "SKILL.md"),
+      "---\ndescription: A simple hello world greeting skill\ntags:\n  - hello\n  - greeting\nquality: curated\n---\n# Hello Skill\n\nA simple hello world greeting skill.\n",
     );
 
     process.env.AKM_STASH_DIR = stashDir;

@@ -1655,7 +1655,11 @@ function verifyIndexState(
   };
 }
 
-function buildIndexedDirCandidate(dirPath: string, indexableFiles: string[], generated: StashFile): IndexedDirCandidate {
+function buildIndexedDirCandidate(
+  dirPath: string,
+  indexableFiles: string[],
+  generated: StashFile,
+): IndexedDirCandidate {
   const stash = generated.entries.length > 0 ? { entries: generated.entries } : null;
   const staleFiles = stash ? resolveIndexedFiles(dirPath, indexableFiles, stash) : indexableFiles;
   return { stash, staleFiles };

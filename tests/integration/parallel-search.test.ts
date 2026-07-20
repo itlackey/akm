@@ -200,19 +200,11 @@ describe("Parallel search: vector unavailable", () => {
   test("search returns FTS results when no embeddings exist in DB", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "lint", "lint.sh"), "#!/bin/bash\necho lint\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter (this test pins
+    // FTS fallback when no embeddings exist, not sidecar behavior).
     writeFile(
-      path.join(stashDir, "scripts", "lint", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "lint",
-            type: "script",
-            description: "Lint source code for errors and style violations",
-            filename: "lint.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "lint.md"),
+      "---\ndescription: Lint source code for errors and style violations\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -298,36 +290,16 @@ describe("Parallel search: FTS result ordering", () => {
     // (FTS + vector) coverage lives in tests/vector-search.test.ts.
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "build", "build.sh"), "#!/bin/bash\necho build\n");
+    // #39: sidecars retired — seed via knowledge/*.md frontmatter (this test pins
+    // score-descending FTS ordering, not sidecar behavior).
     writeFile(
-      path.join(stashDir, "scripts", "build", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "build",
-            type: "script",
-            description: "Build the project from source",
-            tags: ["build", "compile"],
-            filename: "build.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "build.md"),
+      "---\ndescription: Build the project from source\ntags:\n  - build\n  - compile\n---\n",
     );
 
-    writeFile(path.join(stashDir, "scripts", "compile", "compile.sh"), "#!/bin/bash\necho compile\n");
     writeFile(
-      path.join(stashDir, "scripts", "compile", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "compile",
-            type: "script",
-            description: "Compile source code into binary artifacts",
-            tags: ["compile"],
-            filename: "compile.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "knowledge", "compile.md"),
+      "---\ndescription: Compile source code into binary artifacts\ntags:\n  - compile\n---\n",
     );
 
     await buildTestIndex(stashDir, {});
