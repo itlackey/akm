@@ -87,6 +87,9 @@ describe("SQLite migration runner characterization", () => {
         "017-improve-run-strategy",
         "018-drop-dead-lane-schema",
         "019-proposal-fingerprints",
+        // Chunk 8, WI-8.2: the three-DB cutover baseline DDL (pure additive
+        // CREATE TABLE IF NOT EXISTS — the merge-target tables at final shape).
+        "020-three-db-cutover",
       ]);
 
       // The set of durable objects the migrations create.
@@ -102,6 +105,13 @@ describe("SQLite migration runner characterization", () => {
       // survives to the final schema.
       expect(names).not.toContain("table:consolidation_judged");
       expect(names).not.toContain("table:recombine_hypotheses");
+      // Migration 020 (three-DB cutover) folds the workflow.db tables + the
+      // index.db usage_events / legacy_state homes into state.db at final shape.
+      expect(names).toContain("table:workflow_runs");
+      expect(names).toContain("table:workflow_run_steps");
+      expect(names).toContain("table:workflow_run_units");
+      expect(names).toContain("table:usage_events");
+      expect(names).toContain("table:legacy_state");
 
       // Lock the exact DDL snapshot so any drift in the produced schema fails.
       expect(snap).toMatchSnapshot();

@@ -22,6 +22,7 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
     "017-improve-run-strategy",
     "018-drop-dead-lane-schema",
     "019-proposal-fingerprints",
+    "020-three-db-cutover",
   ],
   "schema": [
     {
@@ -189,6 +190,68 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "type": "index",
     },
     {
+      "name": "idx_usage_events_entry",
+      "sql": "CREATE INDEX idx_usage_events_entry ON usage_events(entry_id)",
+      "type": "index",
+    },
+    {
+      "name": "idx_usage_events_ref",
+      "sql": "CREATE INDEX idx_usage_events_ref ON usage_events(entry_ref)",
+      "type": "index",
+    },
+    {
+      "name": "idx_usage_events_source",
+      "sql": "CREATE INDEX idx_usage_events_source ON usage_events(source)",
+      "type": "index",
+    },
+    {
+      "name": "idx_usage_events_type",
+      "sql": "CREATE INDEX idx_usage_events_type ON usage_events(event_type)",
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_run_steps_run_sequence",
+      "sql": 
+"CREATE INDEX idx_workflow_run_steps_run_sequence
+        ON workflow_run_steps(run_id, sequence_index)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_run_units_run_step",
+      "sql": 
+"CREATE INDEX idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_agent_session",
+      "sql": 
+"CREATE INDEX idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_ref",
+      "sql": "CREATE INDEX idx_workflow_runs_ref ON workflow_runs(workflow_ref)",
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_scope_ref_status",
+      "sql": 
+"CREATE INDEX idx_workflow_runs_scope_ref_status
+        ON workflow_runs(scope_key, workflow_ref, status)"
+,
+      "type": "index",
+    },
+    {
+      "name": "idx_workflow_runs_status",
+      "sql": "CREATE INDEX idx_workflow_runs_status ON workflow_runs(status)",
+      "type": "index",
+    },
+    {
       "name": "asset_outcome",
       "sql": 
 "CREATE TABLE asset_outcome (
@@ -336,6 +399,20 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
       "type": "table",
     },
     {
+      "name": "legacy_state",
+      "sql": 
+"CREATE TABLE legacy_state (
+        surface        TEXT NOT NULL,
+        old_ref        TEXT NOT NULL,
+        row_count      INTEGER NOT NULL DEFAULT 0,
+        reason         TEXT NOT NULL,
+        quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (surface, old_ref)
+      )"
+,
+      "type": "table",
+    },
+    {
       "name": "proposal_fingerprints",
       "sql": 
 "CREATE TABLE proposal_fingerprints (
@@ -405,6 +482,103 @@ exports[`SQLite migration runner characterization state.db: fresh-DB migration r
         target_kind   TEXT,
         target_ref    TEXT,
         metadata_json TEXT    NOT NULL DEFAULT '{}'
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "usage_events",
+      "sql": 
+"CREATE TABLE usage_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        query      TEXT,
+        entry_id   INTEGER,
+        entry_ref  TEXT,
+        signal     TEXT,
+        metadata   TEXT,
+        source     TEXT NOT NULL DEFAULT 'user',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_run_steps",
+      "sql": 
+"CREATE TABLE workflow_run_steps (
+        run_id          TEXT NOT NULL,
+        step_id         TEXT NOT NULL,
+        step_title      TEXT NOT NULL,
+        instructions    TEXT NOT NULL,
+        completion_json TEXT,
+        sequence_index  INTEGER NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),
+        notes           TEXT,
+        evidence_json   TEXT,
+        completed_at    TEXT,
+        summary         TEXT,
+        PRIMARY KEY (run_id, step_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_run_units",
+      "sql": 
+"CREATE TABLE workflow_run_units (
+        run_id           TEXT NOT NULL,
+        unit_id          TEXT NOT NULL,
+        step_id          TEXT,
+        node_id          TEXT NOT NULL,
+        parent_unit_id   TEXT,
+        phase            TEXT,
+        runner           TEXT,
+        model            TEXT,
+        status           TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash       TEXT,
+        result_json      TEXT,
+        tokens           INTEGER,
+        failure_reason   TEXT,
+        worktree_path    TEXT,
+        started_at       TEXT,
+        finished_at      TEXT,
+        session_id       TEXT,
+        last_checkin_at  TEXT,
+        attempts         INTEGER NOT NULL DEFAULT 1,
+        claim_holder     TEXT,
+        claim_expires_at TEXT,
+        engine           TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      )"
+,
+      "type": "table",
+    },
+    {
+      "name": "workflow_runs",
+      "sql": 
+"CREATE TABLE workflow_runs (
+        id                  TEXT PRIMARY KEY,
+        workflow_ref        TEXT NOT NULL,
+        workflow_entry_id   INTEGER,
+        workflow_title      TEXT NOT NULL,
+        status              TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
+        params_json         TEXT NOT NULL DEFAULT '{}',
+        current_step_id     TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        completed_at        TEXT,
+        scope_key           TEXT,
+        agent_harness       TEXT,
+        agent_session_id    TEXT,
+        checkin_armed_at    TEXT,
+        plan_json           TEXT,
+        plan_hash           TEXT,
+        engine_lease_until  TEXT,
+        engine_lease_holder TEXT,
+        plan_ir_version     INTEGER
       )"
 ,
       "type": "table",

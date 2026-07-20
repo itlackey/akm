@@ -38,6 +38,20 @@
  *   - CREATE INDEX IF NOT EXISTS …
  *   - CREATE TABLE IF NOT EXISTS … (additive new tables)
  *
+ * ## Three-DB cutover carve-out (Chunk 8, migration `020-three-db-cutover`)
+ *
+ * The 0.9.0 three-DB merge folds workflow.db and index.db's durable rows
+ * (`usage_events`, `legacy_state`) into state.db. That migration is still pure
+ * additive DDL and DROPS NOTHING — it only `CREATE TABLE IF NOT EXISTS`es the
+ * merge-target tables at their final shape. The one-time, filesystem-derived,
+ * fail-closed DATA movement (the workflow.db merge, the usage_events rescue, the
+ * full old-ref→item_ref re-key, and the workflow.db unlink / index.db quarantine
+ * rename) is deliberately NOT a sealed SQL migration body: it is a journaled step
+ * of the migrate-apply coordinator (`src/cli/config-migrate.ts` `cutover-applied`
+ * phase → `src/migrate/legacy/three-db-cutover.ts`). So the no-DROP contract here
+ * is intact — the physical workflow.db deletion happens outside the ledger DDL,
+ * under the backup-verified-restorable fail-closed gate.
+ *
  * ## Schema design: indexed columns vs. metadata_json
  *
  * Each table holds only the columns needed for indexed queries as first-class

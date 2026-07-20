@@ -840,6 +840,137 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         ON proposal_fingerprints(stash_dir, ref);
     `,
   },
+
+  // ── Migration 020 — three-DB cutover baseline DDL (Chunk 8, WI-8.2) ───────────
+  //
+  // The state.db half of the three-DB merge (plan §3.2/§8, normative §11.4,
+  // docs/design/execution/chunk-8/cutover-design.md §1). This migration is PURE,
+  // SEALABLE, IDEMPOTENT DDL ONLY — `CREATE TABLE IF NOT EXISTS` (+ indexes),
+  // never a DROP or a data move. The actual data movement (the workflow.db merge,
+  // the usage_events rescue from index.db, the full old-ref→item_ref re-key, and
+  // the workflow.db delete / index.db quarantine) is CODE — a journaled step of
+  // the migrate-apply flow (`src/cli/config-migrate.ts` `cutover-applied` phase),
+  // driven by `src/migrate/legacy/three-db-cutover.ts`. See the no-DROP contract
+  // carve-out note in `src/core/state-db.ts`.
+  //
+  // The three workflow tables are the 10 `WORKFLOW_MIGRATIONS`
+  // (`src/workflows/db.ts` `ensureBaseSchema` + migrations 001–010) folded into
+  // one baseline at their FINAL post-010 shape — column lists, CHECK constraints,
+  // and indexes copied verbatim. `usage_events` mirrors index.db's
+  // `ensureUsageEventsSchema` (`src/indexer/usage/usage-events.ts`), its new
+  // durable home. `legacy_state` mirrors `ensureLegacyStateTable`
+  // (`src/storage/repositories/index-entries-repository.ts`), the orphan
+  // quarantine archive re-homed from index.db (durable, auditable, purgeable).
+  // Nothing else — NO bindings/lifecycle tables (Tier B / deferred, §3.2).
+  {
+    id: "020-three-db-cutover",
+    up: `
+      -- ── workflow_runs (workflows/db.ts base + migrations 001/002/003/006/010) ──
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id                  TEXT PRIMARY KEY,
+        workflow_ref        TEXT NOT NULL,
+        workflow_entry_id   INTEGER,
+        workflow_title      TEXT NOT NULL,
+        status              TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
+        params_json         TEXT NOT NULL DEFAULT '{}',
+        current_step_id     TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        completed_at        TEXT,
+        scope_key           TEXT,
+        agent_harness       TEXT,
+        agent_session_id    TEXT,
+        checkin_armed_at    TEXT,
+        plan_json           TEXT,
+        plan_hash           TEXT,
+        engine_lease_until  TEXT,
+        engine_lease_holder TEXT,
+        plan_ir_version     INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_ref ON workflow_runs(workflow_ref);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status
+        ON workflow_runs(scope_key, workflow_ref, status);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id);
+
+      -- ── workflow_run_steps (base + migration 003 summary) ─────────────────────
+      CREATE TABLE IF NOT EXISTS workflow_run_steps (
+        run_id          TEXT NOT NULL,
+        step_id         TEXT NOT NULL,
+        step_title      TEXT NOT NULL,
+        instructions    TEXT NOT NULL,
+        completion_json TEXT,
+        sequence_index  INTEGER NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),
+        notes           TEXT,
+        evidence_json   TEXT,
+        completed_at    TEXT,
+        summary         TEXT,
+        PRIMARY KEY (run_id, step_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_sequence
+        ON workflow_run_steps(run_id, sequence_index);
+
+      -- ── workflow_run_units (migration 004 + 005/007/008/009/010 columns) ──────
+      CREATE TABLE IF NOT EXISTS workflow_run_units (
+        run_id           TEXT NOT NULL,
+        unit_id          TEXT NOT NULL,
+        step_id          TEXT,
+        node_id          TEXT NOT NULL,
+        parent_unit_id   TEXT,
+        phase            TEXT,
+        runner           TEXT,
+        model            TEXT,
+        status           TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash       TEXT,
+        result_json      TEXT,
+        tokens           INTEGER,
+        failure_reason   TEXT,
+        worktree_path    TEXT,
+        started_at       TEXT,
+        finished_at      TEXT,
+        session_id       TEXT,
+        last_checkin_at  TEXT,
+        attempts         INTEGER NOT NULL DEFAULT 1,
+        claim_holder     TEXT,
+        claim_expires_at TEXT,
+        engine           TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id);
+
+      -- ── usage_events (index.db ensureUsageEventsSchema — the durable new home) ─
+      CREATE TABLE IF NOT EXISTS usage_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        query      TEXT,
+        entry_id   INTEGER,
+        entry_ref  TEXT,
+        signal     TEXT,
+        metadata   TEXT,
+        source     TEXT NOT NULL DEFAULT 'user',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_source ON usage_events(source);
+
+      -- ── legacy_state (ensureLegacyStateTable — the orphan quarantine archive) ──
+      CREATE TABLE IF NOT EXISTS legacy_state (
+        surface        TEXT NOT NULL,
+        old_ref        TEXT NOT NULL,
+        row_count      INTEGER NOT NULL DEFAULT 0,
+        reason         TEXT NOT NULL,
+        quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (surface, old_ref)
+      );
+    `,
+  },
 ];
 
 /**
