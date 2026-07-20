@@ -233,7 +233,7 @@ describe("remember --xref", () => {
     }
     const args = ["remember", "Heavily cited note"];
     for (let i = 1; i <= 6; i++) {
-      args.push("--xref", `knowledge:doc-${i}`);
+      args.push("--xref", `knowledge/doc-${i}`);
     }
 
     const { code, stdout, stderr } = await runCliCapture(args);
@@ -347,24 +347,23 @@ describe("--xref root set and resolver parity", () => {
     expect(remote.code).toBe(2);
     const remoteJson = JSON.parse(remote.stderr) as { error: string; code?: string };
     expect(remoteJson.code).toBe("INVALID_FLAG_VALUE");
-    expect(remoteJson.error).toContain("origin");
+    expect(remoteJson.error).toContain("bundle slug");
     expect(remoteJson.error).not.toContain("did not resolve");
 
     // Chunk 1.5 opened the type token: "notatype" is no longer rejected by
     // parseAssetRef, so this xref reaches `isFailOpenRefType`
     // (base-linter.ts's `refToRelPath` — "unknown type — skip", pre-existing
-    // code that was unreachable pre-chunk since parseAssetRef gated unknown
-    // types out first). A foreign type's existence can't be checked against
-    // AKM's own TYPE_DIRS layout, so it fails OPEN (accepted, unverified) —
-    // consistent with "foreign/adapter types are valid data" (D1.5-1), not a
-    // resolution bug. `tool`/`vault` stay on the deny-list (D1.5-6), so they
-    // still get the original structured parse error.
+    // Chunk-8: a `type:name` string is no longer a ref AT ALL — any colon-form
+    // spelling gets the same structured parse rejection (the D1.5-6 tool/vault
+    // deny-list distinction died with the type-token grammar; foreign types
+    // live in adapter frontmatter, never in ref syntax).
     const badType = await runCliCapture(["remember", "x", "--xref", "notatype:foo"]);
-    expect(badType.code).toBe(0);
+    expect(badType.code).toBe(2);
+    expect((JSON.parse(badType.stderr) as { code?: string }).code).toBe("INVALID_FLAG_VALUE");
 
     const deniedType = await runCliCapture(["remember", "x", "--xref", "tool:foo"]);
     expect(deniedType.code).toBe(2);
-    expect((JSON.parse(deniedType.stderr) as { error: string }).error.toLowerCase()).toContain("invalid asset type");
+    expect((JSON.parse(deniedType.stderr) as { code?: string }).code).toBe("INVALID_FLAG_VALUE");
 
     // local// names the same local resolution this validator performs —
     // accepted, and persisted in the canonical bare form (the prefix is
@@ -376,18 +375,17 @@ describe("--xref root set and resolver parity", () => {
     expect(localParsed.data.xrefs).toEqual(["knowledge/auth-flow"]);
   });
 
-  test("alias spellings parseAssetRef normalizes are persisted CANONICALLY, validated and deduped as one ref", async () => {
-    // `environment:` is the accepted alias of the canonical `env:` type
-    // (asset-ref.ts TYPE_ALIASES). Validation resolves the parsed components,
-    // so persisting the RAW spelling would store an xref string later
-    // scanners (lint's registry-derived REF_RE, mv's rewriter) never match.
+  test("canonical conceptId xrefs persist as-is; spellings of one asset dedupe to one ref", async () => {
+    // Chunk-8: the legacy type-alias machinery (`environment:` -> `env:`)
+    // died with the old grammar — the conceptId spelling IS the canonical
+    // form, persisted verbatim.
     seedAsset(stashDir, "env/prod.env", "API_URL=https://example.test\n");
 
     const { code, stdout } = await runCliCapture([
       "remember",
       "Note citing the prod environment",
       "--xref",
-      "environment:prod",
+      "env/prod",
     ]);
     expect(code).toBe(0);
     const parsed = parseFrontmatter(fs.readFileSync((JSON.parse(stdout) as { path: string }).path, "utf8"));
