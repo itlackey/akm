@@ -44,6 +44,7 @@ SLOW_TESTS=(
   "**/goldens-proposal-txn.test.ts"
   "**/goldens-signal-delta-gate.test.ts"
   "**/rekey-merge-property.test.ts"
+  "**/cutover-rekey-property-gate.test.ts"
   "**/goldens-cli-output.test.ts"
   "**/engine-ir-v3.test.ts"
   "**/goldens-mv-txn.test.ts"
