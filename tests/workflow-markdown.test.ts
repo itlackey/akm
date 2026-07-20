@@ -69,7 +69,7 @@ describe("parseWorkflow", () => {
   test("accepts canonical xrefs in workflow frontmatter", () => {
     const withXrefs = VALID_WORKFLOW.replace(
       "params:\n",
-      "xrefs:\n  - memory:project-a/deploy-order\n  - lesson:project-a/release-checks\nparams:\n",
+      "xrefs:\n  - memories/project-a/deploy-order\n  - lessons/project-a/release-checks\nparams:\n",
     );
 
     expect(parse(withXrefs).ok).toBe(true);

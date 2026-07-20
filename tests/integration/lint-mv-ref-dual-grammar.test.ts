@@ -67,13 +67,16 @@ describe("F4c M1 — linter missing-ref dual grammar", () => {
     expect(details.some((d) => d.includes("core//memories/ghost"))).toBe(true);
   });
 
-  test("legacy type:name xref keeps working — existing not flagged, missing flagged", () => {
+  test("legacy type:name xref is INERT post-chunk-8 — never recognized, never flagged (§11.1)", () => {
+    // WI-8.5c deleted the linter's legacy ref-list arm: the old grammar is no
+    // longer a ref anywhere outside the frozen migrator, so a legacy xref is
+    // plain text — neither resolved nor reported missing.
     const stash = makeStash();
     writeMemory(stash, "target", "");
     writeMemory(stash, "ok", "xrefs: [memory:target]");
     writeMemory(stash, "bad", "xrefs: [memory:ghost]");
     const details = missingRefDetails(stash);
-    expect(details.some((d) => d.includes("memory:ghost"))).toBe(true);
+    expect(details.some((d) => d.includes("memory:ghost"))).toBe(false);
     expect(details.some((d) => d.includes("memory:target"))).toBe(false);
   });
 

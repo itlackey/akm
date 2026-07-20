@@ -84,7 +84,7 @@ function benchmarkCase(
     expectPromote,
     split,
     input: {
-      inputRef: `memory:${name}`,
+      inputRef: `memories/${name}`,
       assetContent: memoryContent(frontmatter, body),
       feedbackEvents: feedbackSignals.map((signal) => ({ metadata: { signal } })),
     },

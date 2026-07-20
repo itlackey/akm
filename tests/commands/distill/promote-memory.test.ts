@@ -24,7 +24,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 function makeCtx(overrides: Partial<PromoteMemoryContext>): PromoteMemoryContext {
   return {
     targetKind: "lesson",
-    inputRef: "memory:deploy-fact",
+    inputRef: "memories/deploy-fact",
     assetContent: "Some reinforced memory content about deploys.",
     filteredEvents: [],
     config: {} as AkmConfig,

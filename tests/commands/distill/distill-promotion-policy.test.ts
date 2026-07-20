@@ -17,7 +17,7 @@ function fixtureByName(name: string): PromotionBenchmarkCase {
 
 describe("distill promotion policy", () => {
   test("does not copy a memory project scope into the reusable knowledge namespace", () => {
-    expect(deriveKnowledgeRef("memory:project-a/oauth-refresh-race")).toBe("knowledge:oauth-refresh-race");
+    expect(deriveKnowledgeRef("memories/project-a/oauth-refresh-race")).toBe("knowledge/oauth-refresh-race");
   });
 
   test("selected model is derived from a larger train/held-out corpus", () => {
@@ -64,7 +64,7 @@ describe("distill promotion policy", () => {
     expect(promoted.promote).toBe(true);
     expect(promoted.modelName).toBe(DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name);
     expect(promoted.content).toContain("xrefs:");
-    expect(promoted.content).toContain("memory:deploy-vpn-required");
+    expect(promoted.content).toContain("memories/deploy-vpn-required");
     expect(promoted.content).toContain("Always connect the VPN before starting production deploys.");
   });
 

@@ -120,6 +120,18 @@ const MV_SUPPORTED_TYPES: readonly string[] = ["memory", "knowledge", "command",
 const REF_PREFIX_SRC = `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})`;
 const REF_SUFFIX_SRC = `(?!${REF_SLUG_CHAR_CLASS_SRC})`;
 
+/**
+ * Parse `akm mv`'s target argument. The target may be a bare name
+ * ("projectA/new-note") or a full new-grammar ref. Parsing the bare form
+ * through the same ref grammar gives it identical name validation (traversal,
+ * null bytes, absolute paths). A bare name's leading segment maps to no asset
+ * type (`isFullRefInput` is false), so it is qualified with the source type's
+ * conceptId prefix; a full new-grammar ref (`memories/x`) is parsed as-is.
+ */
+function parseMoveTarget(targetArg: string, sourceType: string): ReturnType<typeof parseRefInput> {
+  return parseRefInput(isFullRefInput(targetArg) ? targetArg : conceptIdFromTypeName(sourceType, targetArg));
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1184,15 +1196,7 @@ export const mvCommand = defineJsonCommand({
         );
       }
 
-      // The target may be a bare name ("projectA/new-note") or a full
-      // new-grammar ref. Parsing the bare form through the same ref grammar
-      // gives it identical name validation (traversal, null bytes, absolute
-      // paths). A bare name's leading segment maps to no asset type
-      // (`isFullRefInput` is false), so it is qualified with the source type's
-      // conceptId prefix; a full new-grammar ref (`memories/x`) is parsed as-is.
-      const target = parseRefInput(
-        isFullRefInput(targetArg) ? targetArg : conceptIdFromTypeName(source.type, targetArg),
-      );
+      const target = parseMoveTarget(targetArg, source.type);
       if (target.origin) {
         throw new UsageError(
           `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,
