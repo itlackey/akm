@@ -43,13 +43,13 @@ import type { ExpressionScope } from "../program/expressions";
 import { frozenStepRows, requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import { detectSecretShapedParams } from "./param-secrets";
 import {
   activeGateLoop,
   assertJournaledRouteSelectionsValid,
   computeStepWorkList,
   evaluateRoute,
-  GATE_EVALUATION_PHASE,
   type GateFeedback,
   isWorkListFullyTerminal,
   recoverGateFeedback,

@@ -42,9 +42,10 @@ describe("import-cycle ratchet (shrink-only participant baseline)", () => {
     expect([...CYCLE_PARTICIPANT_BASELINE]).toEqual(sorted);
     expect(new Set(CYCLE_PARTICIPANT_BASELINE).size).toBe(CYCLE_PARTICIPANT_BASELINE.length);
     for (const p of CYCLE_PARTICIPANT_BASELINE) expect(p.startsWith("src/")).toBe(true);
-    // Cardinality pin (adversarial audit): quietly ADDING a baseline entry to
-    // admit a new cycle now also requires loudly editing this number.
-    expect(CYCLE_PARTICIPANT_BASELINE.length).toBeLessThanOrEqual(107);
+    // Cardinality pin (adversarial audit): the baseline emptied at chunk-8
+    // WI-8.6 (DoD 11) and the ratchet is ABSOLUTE — any entry added here to
+    // admit a new cycle is a loud, reviewable violation of that gate.
+    expect(CYCLE_PARTICIPANT_BASELINE.length).toBe(0);
   });
 
   test("dynamic import() counts never grow per file (cycle-laundering guard)", () => {

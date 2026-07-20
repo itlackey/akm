@@ -199,31 +199,16 @@ export function measureCycleParticipants(): string[] {
  * against the live tree (`bun scripts/lint-import-cycles.ts` → 18), not just
  * reasoned about — see `docs/design/execution/chunk-1.5/anchors.md` §E.1.
  */
-export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [
-  // chunk-3 (taxonomy cutover) drove the count 18 → 13: the taxonomy trio
-  // (asset-registry.ts, asset-spec.ts — both deleted — and output/renderers.ts)
-  // left the knot, and with them workflows/renderer.ts +
-  // workflows/runtime/document-cache.ts. Baseline tightened to lock in the drop.
-  "src/core/common.ts",
-  "src/core/config/config-schema.ts",
-  "src/core/config/config.ts",
-  "src/core/paths.ts",
-  // chunk-5 (WI-5a) drove the count 13 → 10: db.ts was split into cohesive
-  // `src/storage/repositories/index-*` repos and schema.ts / entry-mapper.ts
-  // were relocated there, with the shared row/option TYPES lifted into the leaf
-  // `index-entry-types.ts`. The `indexer/db/db.ts` / `entry-mapper.ts` /
-  // `schema.ts` trio (a self-contained SCC: db↔entry-mapper via `DbIndexedEntry`,
-  // db↔schema via the meta/vec helpers) no longer exists, so those three paths
-  // leave the knot. The storage↔indexer arrow inverts with them: the storage
-  // loan helpers now open index.db from a storage sibling, not by reaching up
-  // into the indexer.
-  "src/indexer/passes/metadata-contributors.ts",
-  "src/indexer/passes/metadata.ts",
-  "src/registry/types.ts",
-  "src/workflows/exec/step-work.ts",
-  "src/workflows/runtime/runs.ts",
-  "src/workflows/runtime/unit-checkin.ts",
-];
+// chunk-8 (WI-8.6) drove the count 10 → 0 and the baseline EMPTY — the ratchet
+// is now ABSOLUTE (DoD 11): any import cycle in src/ is a hard failure. The
+// final four knots died by minimal dependency inversion: `common ↔ paths` via
+// the `core/platform.ts` leaf (IS_WINDOWS), the `config → config-schema →
+// registry/types → config` ring by importing `SourceSpec` from its defining
+// leaf `config-types.ts`, `metadata ↔ metadata-contributors` by importing
+// `IndexDocument` from its true home `core/adapter/types.ts`, and the
+// workflows-runtime trio (`step-work → runs → unit-checkin → step-work`) via
+// the `workflows/runtime/unit-phases.ts` leaf (GATE_EVALUATION_PHASE).
+export const CYCLE_PARTICIPANT_BASELINE: readonly string[] = [];
 
 /** Files in a cycle now that are not in the baseline (empty = green). */
 export function checkImportCycleRatchet(participants: readonly string[] = measureCycleParticipants()): string[] {

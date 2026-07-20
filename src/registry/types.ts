@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { SourceSpec } from "../core/config/config";
+// SourceSpec's defining module (config.ts only re-exports it) — importing the
+// leaf directly breaks the config → config-schema → registry/types → config
+// ring (chunk-8 WI-8.6, DoD 11).
+import type { SourceSpec } from "../core/config/config-types";
 
 /**
  * KitSource — the discriminator string of a {@link SourceSpec}.

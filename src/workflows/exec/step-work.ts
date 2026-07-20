@@ -70,6 +70,7 @@ import {
 import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import type { SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
 
@@ -858,15 +859,8 @@ function sortKeys(value: unknown): unknown {
 // engine's (redesign addendum R3, task item 2). `native-executor.test.ts`
 // asserts the round-trip identity.
 
-/**
- * `phase` marker stamped on gate-evaluation unit rows. Step ids cannot contain
- * dots (`PROGRAM_STEP_ID_PATTERN`), so a step can never be NAMED `x.gate` and
- * the synthetic `<stepId>.gate` node id is collision-free against user step
- * ids. The phase column is nonetheless the discriminator we key on — an
- * explicit marker, not a `node_id` suffix match, so recovery stays robust even
- * if the id scheme evolves. Dispatch rows always journal `phase: null`.
- */
-export const GATE_EVALUATION_PHASE = "gate";
+// GATE_EVALUATION_PHASE moved to ../runtime/unit-phases.ts (leaf) so
+// unit-checkin can key on it without closing the exec ↔ runtime cycle.
 
 /** The unit id of a step's gate-evaluation row for a given 1-based loop. */
 export function gateUnitId(stepId: string, loop: number): string {

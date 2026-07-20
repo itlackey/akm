@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { IndexDocument } from "../../core/adapter/types";
 import type { RenderContext } from "../walk/file-context";
-import type { IndexDocument } from "./metadata";
 
 export interface MetadataContext {
   rendererName: string;

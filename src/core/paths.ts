@@ -12,8 +12,8 @@
 
 import os from "node:os";
 import path from "node:path";
-import { IS_WINDOWS } from "./common";
 import { ConfigError } from "./errors";
+import { IS_WINDOWS } from "./platform";
 
 /**
  * Returns true when the current process appears to be running under

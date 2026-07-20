@@ -73,6 +73,7 @@ import { computePlanHash } from "../ir/plan-hash";
 import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "../ir/schema";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge } from "./frozen-judge";
 import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
@@ -84,7 +85,6 @@ import {
   activeGateLoop,
   cascadeSkippedRouter,
   finalizeExecutedStep,
-  GATE_EVALUATION_PHASE,
   type GateFeedback,
   type RouteSkipInfo,
   recoverGateFeedback,
