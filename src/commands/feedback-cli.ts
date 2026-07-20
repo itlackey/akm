@@ -16,6 +16,7 @@ import { withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
+import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
   findEntryIdByRef,
@@ -126,6 +127,41 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
     return null;
   }
   return { strength: strengthList.length };
+}
+
+/**
+ * Persist the feedback usage-event (state.db) and immediately fold it into the
+ * entry's MemRL utility score (index.db). Chunk-8 WI-8.3: usage_events lives in
+ * state.db; entries + utility_scores stay in `indexDb`. Positive signals raise
+ * search ranking on the next read without a full reindex; negatives are durable
+ * but take effect at the next `akm index`. Uses the bounded-step EMA policy
+ * (F-5 / #386, arXiv:2601.03192). Best-effort: a utility-update failure never
+ * fails the feedback record.
+ */
+function recordFeedbackUsage(
+  indexDb: Database,
+  entryId: number,
+  durableEntryRef: string | undefined,
+  signal: "positive" | "negative",
+  metadataStr: string | undefined,
+): ReturnType<typeof applyFeedbackToUtilityScore> | undefined {
+  let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  withStateDb((stateDb) => {
+    insertUsageEvent(stateDb, {
+      event_type: "feedback",
+      entry_ref: durableEntryRef,
+      entry_id: entryId,
+      signal,
+      metadata: metadataStr,
+    });
+    try {
+      const { pos, neg } = countFeedbackSignals(stateDb, entryId);
+      utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
+    } catch {
+      // best-effort — feedback recording succeeds even if utility update fails
+    }
+  });
+  return utilityResult;
 }
 
 // ── Command definition ────────────────────────────────────────────────────────
@@ -301,31 +337,7 @@ export const feedbackCommand = defineJsonCommand({
       durableRef = `${durableOrigin}//${parsedRef.type}:${parsedRef.name}`;
       // The DURABLE usage_events key is the resolved entry's fully-qualified
       // item_ref (`durableRef` above stays the user-facing legacy display).
-      // usage_events lives in state.db (Chunk-8 WI-8.3); entries + utility_scores
-      // stay in index.db (`db`).
-      const durableEntryRef = getItemRefById(db, entryId) ?? undefined;
-      withStateDb((stateDb) => {
-        insertUsageEvent(stateDb, {
-          event_type: "feedback",
-          entry_ref: durableEntryRef,
-          entry_id: entryId,
-          signal,
-          metadata: metadataStr,
-        });
-
-        // Apply feedback-derived utility score adjustment immediately so that
-        // positive/negative signals influence search ranking without requiring
-        // a full reindex. We query the total accumulated feedback counts from
-        // usage_events (state.db) so the delta reflects the entire signal
-        // history, then write the utility score to index.db. Uses MemRL
-        // bounded-step EMA (F-5 / #386, arXiv:2601.03192).
-        try {
-          const { pos, neg } = countFeedbackSignals(stateDb, entryId);
-          utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
-        } catch {
-          // best-effort — feedback recording succeeds even if utility update fails
-        }
-      });
+      utilityResult = recordFeedbackUsage(db, entryId, getItemRefById(db, entryId) ?? undefined, signal, metadataStr);
     } finally {
       closeDatabase(db);
     }
