@@ -28,6 +28,7 @@ import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryCount, getIndexedFilePaths } from "../storage/repositories/index-entries-repository";
+import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 import { getMeta } from "../storage/repositories/index-meta-repository";
 
 export interface EnsureIndexOptions {
@@ -203,6 +204,9 @@ async function runInlineReindex(stashDir: string, signal?: AbortSignal): Promise
  * A rebuild attempt that fails (throws) resolves to `false`.
  */
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
+  // §11.5: warn (once) if the configured bundle ids drifted from the persisted
+  // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
+  warnOnBundleRenameDrift();
   if (options.mode === "blocking") {
     if (!isIndexStale(stashDir)) return false;
     return runInlineReindex(stashDir, options.signal);
