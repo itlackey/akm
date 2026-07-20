@@ -262,14 +262,16 @@ describe("displayRef (F4b output-spelling rule)", () => {
     ).toBe("team-catalog//workflows/release");
   });
 
-  test("registry origin not yet a legal bundle slug → legacy origin//type:name (F4c-deferred)", () => {
-    // github:/npm:/owner/repo carry ':' or '/', so they are not legal bundle
-    // slugs yet — the display stays byte-identical to today's qualified output.
+  test("non-default bundle → bundle//conceptId (WI-8.5c: always the new grammar)", () => {
+    // Post-Chunk-8 the config migration assigned every source a legal slug bundle
+    // id, so a non-default bundle always displays as the new `bundle//conceptId`
+    // grammar — the legacy `origin//type:name` arm is retired. A raw non-slug
+    // registryId reaching here (edge case) is emitted verbatim as the bundle.
     expect(displayRef({ type: "agent", name: "helper", bundleId: "github:evil/pack" })).toBe(
-      "github:evil/pack//agent:helper",
+      "github:evil/pack//agents/helper",
     );
     expect(displayRef({ type: "script", name: "deploy.sh", bundleId: "npm:@scope/pkg" })).toBe(
-      "npm:@scope/pkg//script:deploy.sh",
+      "npm:@scope/pkg//scripts/deploy.sh",
     );
   });
 });
