@@ -1240,7 +1240,7 @@ proposal and log storage, `--format html` output, and per-stage LLM telemetry.
 
 ### Added
 
-- **Cross-runtime: akm now runs on Node.js >= 20.12 in addition to Bun** (#560,
+- **Cross-runtime: akm now runs on Node.js >= 22 in addition to Bun** (#560,
   #465). A two-file runtime boundary (`src/storage/database.ts` owns SQLite via
   `bun:sqlite` on Bun / `better-sqlite3` on Node; `src/runtime.ts` owns every
   `Bun.*` API) contains all runtime-specific code, enforced by a lint guard so it

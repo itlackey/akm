@@ -40,8 +40,8 @@ describe("npm bin contract", () => {
       scripts?: Record<string, string>;
     };
 
-    expect(pkg.engines).toEqual({ node: ">=20.12.0" });
-    expect(pkg.scripts?.preinstall).toContain("Node.js >= 20.12");
+    expect(pkg.engines).toEqual({ node: ">=22" });
+    expect(pkg.scripts?.preinstall).toContain("Node.js >= 22");
     expect(pkg.scripts?.preinstall).toContain("working Bun >= 1.0");
     expect(pkg.scripts?.preinstall).toContain("runtime-free standalone binary");
     expect(pkg.scripts?.preinstall).not.toContain("process.versions.bun");
@@ -50,7 +50,7 @@ describe("npm bin contract", () => {
 
   test("documents one npm runtime contract in diagnostics and active install docs", () => {
     const cli = fs.readFileSync(path.join(REPO_ROOT, "src", "cli.ts"), "utf8");
-    expect(cli).toContain("akm-cli npm package requires Node.js >= 20.12");
+    expect(cli).toContain("akm-cli npm package requires Node.js >= 22");
     expect(cli).toContain("Bun >= 1.0 is optional");
     expect(cli).not.toContain("requires the Bun runtime");
     expect(cli).not.toContain("bun install -g akm-cli");
@@ -59,7 +59,7 @@ describe("npm bin contract", () => {
       const document = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
       const normalized = document.replace(/\s+/g, " ");
       expect(normalized, relativePath).toMatch(/npm package/i);
-      expect(normalized, relativePath).toMatch(/Node\.js(?:\]\([^)]+\))? >= 20\.12/i);
+      expect(normalized, relativePath).toMatch(/Node\.js(?:\]\([^)]+\))? >= 22/i);
       expect(normalized, relativePath).toMatch(/working (?:\[)?Bun(?:\]\([^)]+\))? >= 1\.0/i);
       expect(normalized, relativePath).toMatch(/standalone binar(?:y|ies).*?runtime-free/i);
       expect(document, relativePath).not.toContain("bun install -g akm-cli");
@@ -76,7 +76,7 @@ describe("npm bin contract", () => {
 
     const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(akmLauncher).toContain("requires Node.js >= 20.12 to bootstrap");
+    expect(akmLauncher).toContain("requires Node.js >= 22 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
@@ -85,7 +85,7 @@ describe("npm bin contract", () => {
       "utf8",
     );
     expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(migrateLauncher).toContain("requires Node.js >= 20.12 to bootstrap");
+    expect(migrateLauncher).toContain("requires Node.js >= 22 to bootstrap");
     expect(migrateLauncher).toContain('new URL("./scripts/migrate-storage.js", import.meta.url)');
     expect(migrateLauncher).toContain('await import("./migrate-storage-node.mjs")');
 

@@ -61,7 +61,7 @@ echo "akm setup complete"
 ## 1. Install the Binary
 
 Choose one method based on what runtime is available on the host. The npm
-package requires Node.js >= 20.12; a working Bun >= 1.0 is optional and
+package requires Node.js >= 22; a working Bun >= 1.0 is optional and
 preferred for execution only after Node starts the package launcher. Old,
 unusable, or absent Bun installations fall back to Node.js. The standalone
 binary is runtime-free.
@@ -70,10 +70,10 @@ binary is runtime-free.
 # Option A: Standalone binary (runtime-free)
 curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
 
-# Option B: npm package (Node.js >= 20.12)
+# Option B: npm package (Node.js >= 22)
 npm install -g akm-cli
 
-# Option C: npx (Node.js >= 20.12, one-shot, no global install)
+# Option C: npx (Node.js >= 22, one-shot, no global install)
 npx akm-cli <command>
 ```
 

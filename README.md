@@ -20,7 +20,7 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
-**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 22):**
 
 ```sh
 npm install -g akm-cli

@@ -5,7 +5,7 @@ using search and show to discover capabilities.
 
 ## Runtime Requirement
 
-The npm package requires Node.js >= 20.12 to bootstrap its command on every
+The npm package requires Node.js >= 22 to bootstrap its command on every
 platform. If a working Bun >= 1.0 is also on `PATH`, the package launcher
 prefers Bun for execution; old, unusable, or absent Bun installations fall back
 to Node.js. The standalone binaries are runtime-free.
@@ -25,7 +25,7 @@ irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 Or download a standalone binary directly from the
 [GitHub releases](https://github.com/itlackey/akm/releases) page.
 
-**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 22):**
 
 ```sh
 npm install -g akm-cli

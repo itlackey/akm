@@ -6,7 +6,7 @@ git (the 08-F1 recovery pattern — see step 3).
 
 1. **Install the CLI.** Prebuilt binary (no runtime needed):
    `curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash`
-   — or npm package (Node.js >= 20.12 required): `npm install -g akm-cli`.
+   — or npm package (Node.js >= 22 required): `npm install -g akm-cli`.
    If a working Bun >= 1.0 is also on `PATH`, the package prefers it after Node
    bootstrap; old, unusable, or absent Bun installations fall back to Node.js.
    The standalone binary is runtime-free.

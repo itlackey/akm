@@ -38,13 +38,13 @@ cd ~/code/github/itlackey/akm
 bun run build
 
 # 3. (Optional) install the published version for `stable` mode.
-#    The npm package requires Node.js >= 20.12.
+#    The npm package requires Node.js >= 22.
 npm install -g akm-cli
 ```
 
 If you previously had `alias akm='bun .../src/cli.ts'` in `~/.profile`, `~/.bashrc`, or `~/.zshrc`, remove or comment it out — an alias shadows the wrapper in interactive shells only and makes "which akm runs?" non-deterministic across contexts.
 
-> **Heads up:** the npm package requires Node.js >= 20.12 to bootstrap. Its
+> **Heads up:** the npm package requires Node.js >= 22 to bootstrap. Its
 > launcher prefers a working Bun >= 1.0 on `PATH` and otherwise uses Node.js;
 > the standalone binary remains runtime-free. Keep the npm global as the only
 > stable candidate (plus an explicit `AKM_STABLE_BIN` override) so a stale

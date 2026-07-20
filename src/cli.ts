@@ -3,14 +3,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 20.12
+// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22
 // (#465, #560), then its launcher prefers a working Bun >= 1.0 when available.
 // The runtime boundary (src/runtime.ts, src/storage/database.ts) supports both.
 // Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 20.12: `@clack/core` (prompts) imports
+// the supported entry. The hard floor is Node 22 (Node 20 support dropped 2026-07; `@clack/core` imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
@@ -18,10 +18,10 @@
     const [major = 0, minor = 0, patch = 0] = (process.versions.node ?? "0")
       .split(".")
       .map((part) => Number.parseInt(part, 10) || 0);
-    const nodeOk = major > 20 || (major === 20 && (minor > 12 || (minor === 12 && patch >= 0)));
+    const nodeOk = major >= 22;
     if (!nodeOk) {
       console.error(
-        "\n  ERROR: the akm-cli npm package requires Node.js >= 20.12.\n" +
+        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Bun >= 1.0 is optional for execution; it does not replace the Node.js bootstrap.\n" +
           "  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\n" +
