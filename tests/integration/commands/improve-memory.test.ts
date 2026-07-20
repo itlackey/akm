@@ -243,7 +243,7 @@ describe("akm improve memory cleanup", () => {
         (action) => action.mode === "memory-prune" && action.ref === "memory:deploy-duplicate.derived",
       ),
     ).toBe(true);
-    expect(result.actions?.some((action) => action.mode === "reflect" && action.ref === "memory:deploy")).toBe(true);
+    expect(result.actions?.some((action) => action.mode === "reflect" && action.ref === "memories/deploy")).toBe(true);
     expect(result.plannedRefs.some((planned) => planned.ref === "memory:deploy-duplicate.derived")).toBe(false);
     expect(reflectedRefs).not.toContain("memory:deploy-duplicate.derived");
     expect(distilledRefs).not.toContain("memory:deploy-duplicate.derived");
@@ -662,7 +662,7 @@ describe("akm improve memory cleanup", () => {
     await buildIndex(stashDir);
 
     const result = await akmImprove({
-      scope: "memory:deploy-copy.derived",
+      scope: "memories/deploy-copy.derived",
       stashDir,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
@@ -731,7 +731,7 @@ describe("akm improve memory cleanup", () => {
     const distilledRefs: string[] = [];
 
     const dryRun = await akmImprove({
-      scope: "knowledge:skills/remote-deploy/references/gates",
+      scope: "knowledge/skills/remote-deploy/references/gates",
       dryRun: true,
       stashDir,
       // Dry-run uses the existing index and never invokes this writer seam.
@@ -740,7 +740,7 @@ describe("akm improve memory cleanup", () => {
     expect(dryRun.plannedRefs).toEqual([]);
 
     const result = await akmImprove({
-      scope: "knowledge:skills/remote-deploy/references/gates",
+      scope: "knowledge/skills/remote-deploy/references/gates",
       stashDir,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({
@@ -832,7 +832,7 @@ describe("akm improve memory cleanup", () => {
 
     appendEvent({
       eventType: "feedback",
-      ref: "memory:alpha",
+      ref: "memories/alpha",
       metadata: { signal: "positive", note: "helpful" },
     });
 
@@ -871,8 +871,8 @@ describe("akm improve memory cleanup", () => {
           lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
         }) satisfies AkmDistillResult,
     });
-    expect(withSignal.plannedRefs).toEqual([expect.objectContaining({ ref: "memory:alpha", reason: "scope-type" })]);
-    expect(reflectedWithSignal).toEqual(["memory:alpha"]);
+    expect(withSignal.plannedRefs).toEqual([expect.objectContaining({ ref: "memories/alpha", reason: "scope-type" })]);
+    expect(reflectedWithSignal).toEqual(["memories/alpha"]);
   }, 60_000);
 
   test("derived memories never enter plannedRefs (skip-the-skip churn fix)", async () => {
@@ -958,8 +958,11 @@ describe("akm improve memory cleanup", () => {
     const now = Date.now();
     // Old reflect_invoked event, then a NEWER feedback event → signal-delta
     // gate passes (new signal arrived since the last proposal).
-    appendEvent({ eventType: "reflect_invoked", ref: "memory:deploy" }, { now: () => now - 24 * 60 * 60 * 1000 });
-    appendEvent({ eventType: "feedback", ref: "memory:deploy", metadata: { signal: "positive" } }, { now: () => now });
+    appendEvent({ eventType: "reflect_invoked", ref: "memories/deploy" }, { now: () => now - 24 * 60 * 60 * 1000 });
+    appendEvent(
+      { eventType: "feedback", ref: "memories/deploy", metadata: { signal: "positive" } },
+      { now: () => now },
+    );
 
     await akmImprove({
       scope: "memory",
@@ -994,7 +997,7 @@ describe("akm improve memory cleanup", () => {
         }) satisfies AkmDistillResult,
     });
 
-    expect(reflectedRefs).toContain("memory:deploy");
+    expect(reflectedRefs).toContain("memories/deploy");
   });
 
   test("memory distill is skipped without recent feedback for non-ref scope", async () => {
@@ -1048,7 +1051,7 @@ describe("akm improve memory cleanup", () => {
     expect(
       result.distillSkipped?.samples.some(
         (s) =>
-          s.ref === "memory:deploy" &&
+          s.ref === "memories/deploy" &&
           (s.reason === "no new signal since last proposal" || s.reason === "memory requires recent feedback signal"),
       ),
     ).toBe(true);
@@ -1336,7 +1339,7 @@ describe("akm improve memory cleanup", () => {
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
 
-    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+    appendEvent({ eventType: "feedback", ref: "memories/vpn", metadata: { signal: "positive", note: "good" } });
 
     const result = await akmImprove({
       scope: "memory",
