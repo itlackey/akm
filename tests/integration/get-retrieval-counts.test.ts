@@ -2,8 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getLastUseMsByRef } from "../../src/commands/improve/salience";
+import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -22,22 +24,26 @@ import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/reposi
  *      register as demand (meta-review 05 DRIFT-6).
  */
 describe("getRetrievalCounts", () => {
+  // Chunk-8 WI-8.3: usage_events lives in state.db; entries/utility_scores in
+  // index.db. getRetrievalCounts takes both handles.
   let db: AkmDatabase;
+  let stateDb: AkmDatabase;
 
   beforeEach(() => {
     db = openIndexDatabase(":memory:");
+    stateDb = new Database(":memory:") as unknown as AkmDatabase;
+    ensureUsageEventsSchema(stateDb);
   });
 
   afterEach(() => {
     db.close();
+    stateDb.close();
   });
 
   function seed(eventType: string, entryRef: string | null, source = "user"): void {
-    db.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, ?)").run(
-      eventType,
-      entryRef,
-      source,
-    );
+    stateDb
+      .prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, ?)")
+      .run(eventType, entryRef, source);
   }
 
   test("matches both bare and stash-prefixed stored refs for a bare input ref", () => {
@@ -45,14 +51,14 @@ describe("getRetrievalCounts", () => {
     seed("show", "local//lesson:a"); // stash-prefixed, same asset
     seed("search", "owner/repo//lesson:a"); // registry-prefixed, same asset
 
-    const counts = getRetrievalCounts(db, ["lesson:a"]);
+    const counts = getRetrievalCounts(db, stateDb, ["lesson:a"]);
     // All three rows collapse onto the single bare input ref.
     expect(counts.get("lesson:a")).toBe(3);
   });
 
   test("matches a stash-prefixed input ref against a bare stored ref", () => {
     seed("show", "lesson:b"); // stored bare
-    const counts = getRetrievalCounts(db, ["local//lesson:b"]);
+    const counts = getRetrievalCounts(db, stateDb, ["local//lesson:b"]);
     expect(counts.get("local//lesson:b")).toBe(1);
   });
 
@@ -62,7 +68,7 @@ describe("getRetrievalCounts", () => {
     seed("curate", "skill:deploy");
     seed("feedback", "skill:deploy"); // must NOT be counted
 
-    const counts = getRetrievalCounts(db, ["skill:deploy"]);
+    const counts = getRetrievalCounts(db, stateDb, ["skill:deploy"]);
     expect(counts.get("skill:deploy")).toBe(3);
   });
 
@@ -71,18 +77,18 @@ describe("getRetrievalCounts", () => {
     seed("curate", null);
     seed("curate", "command:release"); // the only counted curate row
 
-    const counts = getRetrievalCounts(db, ["command:release"]);
+    const counts = getRetrievalCounts(db, stateDb, ["command:release"]);
     expect(counts.get("command:release")).toBe(1);
   });
 
   test("returns no entry for refs with no matching events", () => {
     seed("search", "lesson:present");
-    const counts = getRetrievalCounts(db, ["lesson:absent"]);
+    const counts = getRetrievalCounts(db, stateDb, ["lesson:absent"]);
     expect(counts.has("lesson:absent")).toBe(false);
   });
 
   test("empty input returns an empty map", () => {
-    expect(getRetrievalCounts(db, []).size).toBe(0);
+    expect(getRetrievalCounts(db, stateDb, []).size).toBe(0);
   });
 
   test("excludes machine-sourced events (improve, task) from counts", () => {
@@ -90,7 +96,7 @@ describe("getRetrievalCounts", () => {
     seed("search", "skill:probe", "improve"); // improve-loop probe — excluded
     seed("curate", "skill:probe", "task"); // task-runner traffic — excluded
 
-    const counts = getRetrievalCounts(db, ["skill:probe"]);
+    const counts = getRetrievalCounts(db, stateDb, ["skill:probe"]);
     expect(counts.get("skill:probe")).toBe(1);
   });
 
@@ -98,7 +104,7 @@ describe("getRetrievalCounts", () => {
     seed("search", "lesson:machine-only", "improve");
     seed("show", "lesson:machine-only", "task");
 
-    const counts = getRetrievalCounts(db, ["lesson:machine-only"]);
+    const counts = getRetrievalCounts(db, stateDb, ["lesson:machine-only"]);
     expect(counts.has("lesson:machine-only")).toBe(false);
   });
 
@@ -106,7 +112,7 @@ describe("getRetrievalCounts", () => {
     // e.g. a later 'hook' source for agent-session traffic must keep counting.
     seed("show", "agent:reviewer", "hook");
 
-    const counts = getRetrievalCounts(db, ["agent:reviewer"]);
+    const counts = getRetrievalCounts(db, stateDb, ["agent:reviewer"]);
     expect(counts.get("agent:reviewer")).toBe(1);
   });
 
@@ -118,11 +124,12 @@ describe("getRetrievalCounts", () => {
 
     const scoped = (
       getRetrievalCounts as unknown as (
-        database: AkmDatabase,
+        indexDatabase: AkmDatabase,
+        stateDatabase: AkmDatabase,
         refs: string[],
         options: { sourceName: string },
       ) => Map<string, number>
-    )(db, ["skill:duplicate"], { sourceName: "team" });
+    )(db, stateDb, ["skill:duplicate"], { sourceName: "team" });
 
     expect(scoped.get("skill:duplicate")).toBe(2);
   });

@@ -164,8 +164,9 @@ describe("curate command", () => {
     const stashDir = makeStash();
     const { dataDir } = await runCliWithDataDir(stashDir, ["curate", "release", "--format=json"]);
 
-    // Check the database for the curate event
-    const dbPath = path.join(dataDir, "akm", "index.db");
+    // Check the database for the curate event. Chunk-8 WI-8.3: usage_events
+    // lives in state.db now, not index.db.
+    const dbPath = path.join(dataDir, "akm", "state.db");
     expect(fs.existsSync(dbPath)).toBe(true);
 
     const { Database } = require("bun:sqlite");

@@ -6,6 +6,7 @@
  * recomputeUtilityScores aggregation, and whyMatched reporting.
  */
 
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,7 +14,9 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
+import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
+import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
@@ -424,6 +427,9 @@ describe("recomputeUtilityScores", () => {
   test("aggregates search and show events from usage_events", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
+    // Chunk-8 WI-8.3: usage_events lives in state.db; entries + utility_scores
+    // stay in index.db (`db`).
+    const stateDb = new Database(":memory:") as unknown as typeof db;
     try {
       // Insert a test entry
       db.prepare(
@@ -444,14 +450,14 @@ describe("recomputeUtilityScores", () => {
 
       // Record usage events: 5 searches that returned this entry, 3 shows
       for (let i = 0; i < 5; i++) {
-        recordUsageEvent(db, {
+        recordUsageEvent(stateDb, {
           eventType: "search",
           entryId,
           timestamp: new Date().toISOString(),
         });
       }
       for (let i = 0; i < 3; i++) {
-        recordUsageEvent(db, {
+        recordUsageEvent(stateDb, {
           eventType: "show",
           entryId,
           timestamp: new Date().toISOString(),
@@ -459,7 +465,7 @@ describe("recomputeUtilityScores", () => {
       }
 
       // Recompute utility scores
-      recomputeUtilityScores(db);
+      recomputeUtilityScores(db, stateDb);
 
       // Check that utility scores were computed
       const score = getUtilityScore(db, entryId);
@@ -470,12 +476,15 @@ describe("recomputeUtilityScores", () => {
       expect(score?.utility).toBeGreaterThan(0);
     } finally {
       closeDatabase(db);
+      stateDb.close();
     }
   });
 
   test("entries with no usage events get zero utility", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
+    const stateDb = new Database(":memory:") as unknown as typeof db;
+    ensureUsageEventsSchema(stateDb);
     try {
       // Insert a test entry with no usage events
       db.prepare(
@@ -490,7 +499,7 @@ describe("recomputeUtilityScores", () => {
         "script",
       );
 
-      recomputeUtilityScores(db);
+      recomputeUtilityScores(db, stateDb);
 
       const entryRow = db.prepare("SELECT id FROM entries WHERE entry_key = ?").get("test:script:no-usage-test") as {
         id: number;
@@ -502,6 +511,7 @@ describe("recomputeUtilityScores", () => {
       }
     } finally {
       closeDatabase(db);
+      stateDb.close();
     }
   });
 });
@@ -567,19 +577,20 @@ describe("Production path end-to-end", () => {
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
-    // Verify usage_events have entry_id
+    // Verify usage_events have entry_id (usage_events lives in state.db, WI-8.3)
     const dbPath = getDbPath();
     const db = openIndexDatabase(dbPath);
+    const stateDb = openStateDatabase();
     try {
-      const events = db
+      const events = stateDb
         .prepare("SELECT entry_id FROM usage_events WHERE event_type = 'search' AND entry_id IS NOT NULL")
         .all() as Array<{ entry_id: number }>;
       expect(events.length).toBeGreaterThan(0);
 
       // Recompute utility scores
-      recomputeUtilityScores(db);
+      recomputeUtilityScores(db, stateDb);
 
-      // Verify utility_scores populated
+      // Verify utility_scores populated (index.db)
       const scores = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
         entry_id: number;
         utility: number;
@@ -587,6 +598,7 @@ describe("Production path end-to-end", () => {
       expect(scores.length).toBeGreaterThan(0);
     } finally {
       closeDatabase(db);
+      stateDb.close();
     }
   });
 
@@ -601,22 +613,29 @@ describe("Production path end-to-end", () => {
 
     const dbPath = getDbPath();
     const db = openIndexDatabase(dbPath);
+    const stateDb = openStateDatabase();
     try {
       const entries = db.prepare("SELECT id FROM entries LIMIT 1").all() as Array<{ id: number }>;
       const realId = entries[0]?.id;
       expect(realId).toBeGreaterThan(0);
 
       // One legitimate event, one stale event whose entry_id was deleted.
-      db.prepare(
-        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
-      ).run(realId, "skills/real-skill");
+      // usage_events lives in state.db (WI-8.3); the stale entry_id names no
+      // row in index.db's entries — the cross-DB filter must drop it.
+      stateDb
+        .prepare(
+          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+        )
+        .run(realId, "skills/real-skill");
       const staleId = 999999; // not in entries
-      db.prepare(
-        "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
-      ).run(staleId, "skills/vaporware");
+      stateDb
+        .prepare(
+          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+        )
+        .run(staleId, "skills/vaporware");
 
       // This used to throw FOREIGN KEY constraint failed.
-      expect(() => recomputeUtilityScores(db)).not.toThrow();
+      expect(() => recomputeUtilityScores(db, stateDb)).not.toThrow();
 
       // utility_scores should have the live entry but NOT the stale one.
       const scores = db.prepare("SELECT entry_id FROM utility_scores").all() as Array<{ entry_id: number }>;
@@ -625,6 +644,7 @@ describe("Production path end-to-end", () => {
       expect(ids).not.toContain(staleId);
     } finally {
       closeDatabase(db);
+      stateDb.close();
     }
   });
 });

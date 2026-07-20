@@ -19,35 +19,37 @@ import { relinkUsageEvents } from "../../../src/storage/repositories/index-entri
  * qualifier via `parseAssetRef`.
  */
 describe("relinkUsageEvents", () => {
-  let db: AkmDatabase;
+  // Chunk-8 WI-8.3: usage_events lives in state.db; `entries` in index.db. The
+  // relink now spans both handles.
+  let indexDb: AkmDatabase;
+  let stateDb: AkmDatabase;
 
-  /** Minimal `entries` schema — only the columns the resolver reads. */
+  /** Minimal `entries` schema (index.db) — only the columns the resolver reads. */
   function seedEntry(entryKey: string, entryType: string, name: string): number {
     const suffix = `:${entryType}:${name}`;
     const stashDir = entryKey.endsWith(suffix) ? entryKey.slice(0, -suffix.length) : "";
-    const info = db
+    const info = indexDb
       .prepare("INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json) VALUES (?, ?, ?, ?)")
       .run(entryKey, entryType, stashDir, JSON.stringify({ type: entryType, name }));
     return Number(info.lastInsertRowid);
   }
 
   function insertEvent(entryRef: string, entryId: number | null): void {
-    db.prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref) VALUES ('show', ?, ?)").run(
-      entryId,
-      entryRef,
-    );
+    stateDb
+      .prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref) VALUES ('show', ?, ?)")
+      .run(entryId, entryRef);
   }
 
   function entryIdFor(entryRef: string): number | null {
-    const row = db.prepare("SELECT entry_id FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
+    const row = stateDb.prepare("SELECT entry_id FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
       entry_id: number | null;
     };
     return row.entry_id;
   }
 
   beforeEach(() => {
-    db = new Database(":memory:") as unknown as AkmDatabase;
-    db.exec(`
+    indexDb = new Database(":memory:") as unknown as AkmDatabase;
+    indexDb.exec(`
       CREATE TABLE entries (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_key  TEXT NOT NULL,
@@ -56,14 +58,15 @@ describe("relinkUsageEvents", () => {
         entry_json TEXT NOT NULL
       );
     `);
-    ensureUsageEventsSchema(db);
+    stateDb = new Database(":memory:") as unknown as AkmDatabase;
+    ensureUsageEventsSchema(stateDb);
   });
 
   test("relinks a BARE type:name ref after entry ids change (existing behaviour)", () => {
     const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
     insertEvent("skill:deploy", null); // detached (e.g. after a full rebuild)
 
-    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("skill:deploy")).toBe(id);
   });
@@ -76,7 +79,7 @@ describe("relinkUsageEvents", () => {
     );
     insertEvent("github:getsentry/skills//knowledge:skills/skill-writer/references/workflow-routing", null);
 
-    relinkUsageEvents(db, {
+    relinkUsageEvents(indexDb, stateDb, {
       sources: [
         {
           path: "/home/u/.cache/akm/registry/git-github-getsentry-skills/abc/extracted",
@@ -97,7 +100,7 @@ describe("relinkUsageEvents", () => {
     insertEvent("team//memory:duplicate", null);
     insertEvent("memory:duplicate", null);
 
-    relinkUsageEvents(db, {
+    relinkUsageEvents(indexDb, stateDb, {
       sources: [
         { path: stashRoot, registryId: "stash" },
         { path: teamRoot, registryId: "team" },
@@ -115,7 +118,7 @@ describe("relinkUsageEvents", () => {
     seedEntry("/home/u/team:memory:duplicate", "memory", "duplicate");
     insertEvent("memory:duplicate", null);
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("memory:duplicate")).toBeNull();
   });
@@ -124,7 +127,7 @@ describe("relinkUsageEvents", () => {
     seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
     insertEvent("script:does-not-exist", null);
 
-    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("script:does-not-exist")).toBeNull();
   });
@@ -135,7 +138,7 @@ describe("relinkUsageEvents", () => {
     // resolvable ref.
     insertEvent("skill:deploy", 99);
 
-    relinkUsageEvents(db, { defaultStashDir: "/home/u/akm" });
+    relinkUsageEvents(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(entryIdFor("skill:deploy")).toBe(id);
   });
@@ -144,7 +147,7 @@ describe("relinkUsageEvents", () => {
     const id = seedEntry("/home/u/akm:skill:deploy", "skill", "deploy");
     insertEvent("skill:deploy", id);
 
-    relinkUsageEvents(db);
+    relinkUsageEvents(indexDb, stateDb);
 
     expect(entryIdFor("skill:deploy")).toBe(id);
   });

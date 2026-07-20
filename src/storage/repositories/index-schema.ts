@@ -15,7 +15,6 @@
 
 import { bestEffort } from "../../core/best-effort";
 import { warn } from "../../core/warn";
-import { ensureUsageEventsSchema } from "../../indexer/usage/usage-events";
 import type { Database } from "../database";
 import { getMeta, setMeta } from "./index-meta-repository";
 import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
@@ -51,7 +50,16 @@ import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 // (`rekeyUsageEventsToItemRef`, index finalize) with orphan quarantine in
 // `legacy_state`. The index is regenerable, so a rebuild is an acceptable
 // fallback if the UNIQUE upgrade finds a duplicate on a partially-migrated DB.
-export const DB_VERSION = 19;
+//
+// v19→v20 (Chunk-8 WI-8.3, three-DB merge): index.db STOPS owning `usage_events`
+// + `legacy_state`. Both are durable, non-regenerable state and now live in
+// state.db (folded by state migration 020; the cutover rescues the old index.db
+// rows across). index.db is a regenerable cache, so dropping their DDL from the
+// schema path needs no migration — a rebuild simply no longer re-creates them.
+// STANDARD REBUILD NOTE: after this bump, any index.db opened at v19 is rebuilt
+// from the stash on the next `akm index`; usage_events/legacy_state are read
+// exclusively from state.db thereafter.
+export const DB_VERSION = 20;
 export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4
 // as a marker; the actual migration is the targeted drop in migrateGraphFilesSchema.
@@ -313,7 +321,9 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     `);
   }
 
-  // Usage events table — created by ensureUsageEventsSchema() at runtime.
+  // usage_events + legacy_state moved to state.db (Chunk-8 WI-8.3, DB_VERSION
+  // v20). index.db no longer creates them; usage_events writers/readers open
+  // state.db. utility_scores (a regenerable index.db cache) stays here.
 
   // Utility scores table (aggregated per-entry utility metrics)
   db.exec(`
@@ -469,8 +479,8 @@ export function ensureSchema(db: Database, embeddingDim: number | undefined): vo
     }
   }
 
-  // Usage telemetry table
-  ensureUsageEventsSchema(db);
+  // Usage telemetry (usage_events) lives in state.db since Chunk-8 WI-8.3 —
+  // no longer created here.
 
   // Registry index cache table — caches remote registry index documents so
   // `akm search` does not hit the network on every invocation.

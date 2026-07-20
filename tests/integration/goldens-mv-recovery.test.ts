@@ -313,8 +313,11 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
       | { id: number }
       | undefined;
     if (!before) throw new Error("missing indexed source row");
-    insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
     closeDatabase(db);
+    // usage_events lives in state.db (Chunk-8 WI-8.3).
+    const stateSeed = openStateDatabase();
+    insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
+    stateSeed.close();
 
     await crashAt("filesystem-committed", ref, `${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`);
     await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -326,10 +329,12 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
     const after = db
       .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
       .get(`%:${memoryStoredRef(`${MV_RECOVERY_ENTRY_INDEXER_FULL_NAME}-new`)}`) as { id: number } | undefined;
-    const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as
+    closeDatabase(db);
+    const stateVerify = openStateDatabase();
+    const usage = stateVerify.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as
       | { entry_ref: string; entry_id: number }
       | undefined;
-    closeDatabase(db);
+    stateVerify.close();
     if (!after) throw new Error("recovered row missing");
     // F4c §11.4: the mv re-key rewrites the usage-event ref to the new NAME, then
     // the full index migrates it onto the entry's fully-qualified item_ref — the
@@ -489,18 +494,22 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
           | { id: number }
           | undefined;
         if (!before) throw new Error("missing indexed source row");
-        insertUsageEvent(db, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
         closeDatabase(db);
+        const stateSeed = openStateDatabase();
+        insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: storedRef });
+        stateSeed.close();
         await crashAt("filesystem-committed", ref, `${name}-new`);
         await akmIndex({ stashDir: storage.stashDir, full: true });
         db = openExistingDatabase(getDbPath());
         const after = db
           .prepare("SELECT id FROM entries WHERE entry_key LIKE ?")
           .get(`%:${memoryStoredRef(`${name}-new`)}`) as { id: number } | undefined;
-        const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as
-          | { entry_ref: string; entry_id: number }
-          | undefined;
         closeDatabase(db);
+        const stateVerify = openStateDatabase();
+        const usage = stateVerify
+          .prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'")
+          .get() as { entry_ref: string; entry_id: number } | undefined;
+        stateVerify.close();
         return {
           recovered: fs.existsSync(path.join(storage.stashDir, "memories", `${name}-new.md`)),
           // The re-keyed usage event carries the fully-qualified item_ref

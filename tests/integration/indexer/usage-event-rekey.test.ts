@@ -18,15 +18,18 @@ import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { rekeyUsageEventsToItemRef } from "../../../src/storage/repositories/index-entries-repository";
 
 describe("rekeyUsageEventsToItemRef (§11.4)", () => {
-  let db: AkmDatabase;
+  // Chunk-8 WI-8.3: usage_events + legacy_state live in state.db; `entries` stays
+  // in index.db. The oracle now drives the cross-DB re-key with both handles.
+  let indexDb: AkmDatabase;
+  let stateDb: AkmDatabase;
 
-  /** Minimal `entries` fixture carrying both the legacy key and item_ref. */
+  /** Minimal `entries` fixture (index.db) carrying both the legacy key and item_ref. */
   function seedEntry(entryKey: string, entryType: string, name: string, itemRef: string): number {
     const suffix = `:${entryType}:${name}`;
     const stashDir = entryKey.endsWith(suffix) ? entryKey.slice(0, -suffix.length) : "";
     const conceptId = itemRef.slice(itemRef.indexOf("//") + 2);
     const bundleId = itemRef.slice(0, itemRef.indexOf("//"));
-    const info = db
+    const info = indexDb
       .prepare(
         `INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json, item_ref, concept_id, bundle_id, type)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -45,28 +48,27 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
   }
 
   function insertEvent(entryRef: string, entryId: number | null = null): void {
-    db.prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref) VALUES ('show', ?, ?)").run(
-      entryId,
-      entryRef,
-    );
+    stateDb
+      .prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref) VALUES ('show', ?, ?)")
+      .run(entryId, entryRef);
   }
 
   function refRows(): Array<{ entry_ref: string; entry_id: number | null }> {
-    return db.prepare("SELECT entry_ref, entry_id FROM usage_events ORDER BY id").all() as Array<{
+    return stateDb.prepare("SELECT entry_ref, entry_id FROM usage_events ORDER BY id").all() as Array<{
       entry_ref: string;
       entry_id: number | null;
     }>;
   }
 
   function quarantine(): Array<{ old_ref: string; row_count: number; reason: string }> {
-    return db
+    return stateDb
       .prepare("SELECT old_ref, row_count, reason FROM legacy_state WHERE surface = 'usage_events' ORDER BY old_ref")
       .all() as Array<{ old_ref: string; row_count: number; reason: string }>;
   }
 
   beforeEach(() => {
-    db = new Database(":memory:") as unknown as AkmDatabase;
-    db.exec(`
+    indexDb = new Database(":memory:") as unknown as AkmDatabase;
+    indexDb.exec(`
       CREATE TABLE entries (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_key  TEXT NOT NULL,
@@ -79,7 +81,8 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
         type       TEXT
       );
     `);
-    ensureUsageEventsSchema(db);
+    stateDb = new Database(":memory:") as unknown as AkmDatabase;
+    ensureUsageEventsSchema(stateDb);
   });
 
   test("HAPPY PATH — a bare type:name ref re-keys onto the primary's item_ref", () => {
@@ -87,7 +90,7 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
     insertEvent("skill:deploy");
     insertEvent("skill:deploy"); // two rows of the same logical ref, carried as-is
 
-    const result = rekeyUsageEventsToItemRef(db, { defaultStashDir: "/home/u/akm" });
+    const result = rekeyUsageEventsToItemRef(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(result).toEqual({ rekeyed: 1, quarantined: 0, deferred: 0 });
     expect(refRows()).toEqual([
@@ -103,7 +106,7 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
     insertEvent("memory:gone"); // orphan — no matching entry
     insertEvent("memory:gone"); // second orphan row (same ref)
 
-    const result = rekeyUsageEventsToItemRef(db, { defaultStashDir: "/home/u/akm" });
+    const result = rekeyUsageEventsToItemRef(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(result).toEqual({ rekeyed: 1, quarantined: 1, deferred: 0 });
     // The orphan rows are KEPT IN PLACE, legacy-spelled — never deleted.
@@ -123,7 +126,7 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
     insertEvent("stash//memory:shared");
     insertEvent("team//memory:shared");
 
-    const result = rekeyUsageEventsToItemRef(db, {
+    const result = rekeyUsageEventsToItemRef(indexDb, stateDb, {
       sources: [
         { path: "/home/u/akm", registryId: "stash" },
         { path: "/home/u/team", registryId: "team" },
@@ -141,12 +144,14 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
 
   test("DEFER — a NULL-item_ref write-back straggler is left legacy-spelled (heals next index)", () => {
     // Entry exists but item_ref is still NULL.
-    db.prepare(
-      "INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json, item_ref) VALUES (?, 'skill', '/home/u/akm', ?, NULL)",
-    ).run("/home/u/akm:skill:deploy", JSON.stringify({ type: "skill", name: "deploy" }));
+    indexDb
+      .prepare(
+        "INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json, item_ref) VALUES (?, 'skill', '/home/u/akm', ?, NULL)",
+      )
+      .run("/home/u/akm:skill:deploy", JSON.stringify({ type: "skill", name: "deploy" }));
     insertEvent("skill:deploy");
 
-    const result = rekeyUsageEventsToItemRef(db, { defaultStashDir: "/home/u/akm" });
+    const result = rekeyUsageEventsToItemRef(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
 
     expect(result).toEqual({ rekeyed: 0, quarantined: 0, deferred: 1 });
     expect(refRows()).toEqual([{ entry_ref: "skill:deploy", entry_id: null }]);
@@ -157,10 +162,10 @@ describe("rekeyUsageEventsToItemRef (§11.4)", () => {
     seedEntry("/home/u/akm:skill:deploy", "skill", "deploy", "core//skills/deploy");
     insertEvent("skill:deploy");
 
-    const first = rekeyUsageEventsToItemRef(db, { defaultStashDir: "/home/u/akm" });
+    const first = rekeyUsageEventsToItemRef(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
     expect(first).toEqual({ rekeyed: 1, quarantined: 0, deferred: 0 });
 
-    const second = rekeyUsageEventsToItemRef(db, { defaultStashDir: "/home/u/akm" });
+    const second = rekeyUsageEventsToItemRef(indexDb, stateDb, { defaultStashDir: "/home/u/akm" });
     expect(second).toEqual({ rekeyed: 0, quarantined: 0, deferred: 0 });
     expect(refRows()).toEqual([{ entry_ref: "core//skills/deploy", entry_id: expect.any(Number) }]);
   });

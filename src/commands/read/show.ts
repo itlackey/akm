@@ -27,6 +27,7 @@ import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { hasGraphData } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
@@ -261,14 +262,17 @@ function logShowEvent(
         const entryId = filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef);
         // The DURABLE usage-event key is the resolved entry's fully-qualified
         // `item_ref`; the new-grammar `eventRef` is the fallback for an
-        // unresolved / not-yet-indexed show.
+        // unresolved / not-yet-indexed show. entry_id/item_ref resolve from
+        // index.db (`db`); the usage_events write lands in state.db (WI-8.3).
         const entryRef = (entryId !== undefined ? getItemRefById(db, entryId) : null) ?? eventRef;
-        insertUsageEvent(db, {
-          event_type: "show",
-          entry_ref: entryRef,
-          entry_id: entryId,
-          source: eventSource,
-        });
+        withStateDbTelemetry((stateDb) => {
+          insertUsageEvent(stateDb, {
+            event_type: "show",
+            entry_ref: entryRef,
+            entry_id: entryId,
+            source: eventSource,
+          });
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

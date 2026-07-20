@@ -3,11 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
-import { getDbPath } from "../../src/core/paths";
+import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import type { SourceSearchHit } from "../../src/sources/types";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -87,7 +86,7 @@ describe("akm feedback", () => {
     });
     expect(envResult.stdout).not.toContain("super-secret-value");
 
-    const db = openIndexDatabase(getDbPath());
+    const db = openStateDatabase(); // usage_events lives in state.db (WI-8.3)
     try {
       const events = db
         .prepare(
@@ -104,7 +103,7 @@ describe("akm feedback", () => {
       expect(events[1]?.entry_id).toEqual(expect.any(Number));
       expect(events[1]?.signal).toBe("positive");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -196,7 +195,7 @@ describe("akm feedback", () => {
       status: 0,
     });
 
-    const db = openIndexDatabase(getDbPath());
+    const db = openStateDatabase(); // usage_events lives in state.db (WI-8.3)
     try {
       const refs = db
         .prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback' ORDER BY entry_ref")
@@ -205,7 +204,7 @@ describe("akm feedback", () => {
       // origin — the cross-origin distinction is preserved, never collapsed.
       expect(refs.map((row) => row.entry_ref)).toEqual(["stash//memories/shared", "team//memories/shared"]);
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 

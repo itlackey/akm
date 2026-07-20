@@ -193,6 +193,27 @@ export function withStateDbAsync<T>(
   return withManagedDbAsync(() => openStateDatabase(opts?.path), fn, opts);
 }
 
+/**
+ * Fire-and-forget telemetry write to state.db (Chunk-8 WI-8.3: usage_events'
+ * durable home). Skips entirely when state.db does not exist yet (never
+ * fabricates an un-migrated DB); otherwise opens the migrated DB and lowers
+ * `busy_timeout` to a short window so a contended state.db (e.g. a reindex
+ * finalize holding the write lock while relinking usage_events) never stalls a
+ * hot path — mirrors `withIndexDb`'s `TELEMETRY_BUSY_TIMEOUT_MS`. WAL mode lets
+ * the read-only migration-preflight run concurrently with a writer, so the open
+ * itself does not block. Callers wrap this in their own try/catch.
+ */
+export function withStateDbTelemetry(fn: (db: Database) => void, busyTimeoutMs = 250): void {
+  if (!fs.existsSync(getStateDbPath())) return;
+  const db = openStateDatabase();
+  try {
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(busyTimeoutMs))}`);
+    fn(db);
+  } finally {
+    db.close();
+  }
+}
+
 // ── Migration engine ─────────────────────────────────────────────────────────
 //
 // The MIGRATIONS registry + runMigrations live in ./state/migrations (the single

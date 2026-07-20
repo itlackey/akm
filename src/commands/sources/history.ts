@@ -20,11 +20,11 @@
 
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
+import { openStateDatabase } from "../../core/state-db";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
 import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
 import { parseStoredRef } from "../../migrate/legacy-ref-grammar";
 import type { Database } from "../../storage/database";
-import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { listProposals } from "../proposal/repository";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -110,7 +110,10 @@ export interface HistoryOptions {
   acceptRateBySource?: boolean;
   /** Override stash directory for proposal store access. */
   stashDir?: string;
-  /** Test seam — caller-supplied DB. Defaults to opening the cache DB. */
+  /**
+   * Test seam — caller-supplied state.db handle (usage_events' durable home
+   * since Chunk-8 WI-8.3). Defaults to opening state.db.
+   */
   db?: Database;
   /** Test seam — overrides events.jsonl path and clock for proposal events. */
   eventsCtx?: EventsContext;
@@ -186,7 +189,9 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
 
   const sinceNormalized = options.since !== undefined ? isoToSqlite(parseSinceToIso(options.since)) : undefined;
 
-  const db = options.db ?? openExistingDatabase();
+  // usage_events lives in state.db (Chunk-8 WI-8.3); getUsageEvents reads it
+  // there (no entries join), so `history` opens state.db, not index.db.
+  const db = options.db ?? openStateDatabase();
   const ownsDb = options.db === undefined;
   try {
     const rows: UsageEventRow[] = getUsageEvents(db, {
@@ -298,6 +303,6 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     };
     return response;
   } finally {
-    if (ownsDb) closeDatabase(db);
+    if (ownsDb) db.close();
   }
 }

@@ -206,14 +206,15 @@ function bareRefCandidates(ref: string): string[] {
  * (pre-column rows) count as user demand.
  */
 export function getRetrievalCounts(
-  db: Database,
+  indexDb: Database,
+  stateDb: Database,
   refs: string[],
   options: RetrievalCountOptions = {},
 ): Map<string, number> {
   if (refs.length === 0) return new Map();
 
   if (options.sourceName || options.stashDir) {
-    return getSourceScopedRetrievalCounts(db, refs, options);
+    return getSourceScopedRetrievalCounts(indexDb, stateDb, refs, options);
   }
 
   // Map each candidate bare form (both spellings) back to the input ref(s) that
@@ -240,7 +241,9 @@ export function getRetrievalCounts(
     // rfind, but stored origins never themselves contain `//`, so a stash ref
     // has exactly one `//` and `substr(... instr ...)` is exact; bare refs have
     // no `//` and pass through unchanged.
-    const rows = db
+    // usage_events lives in state.db (Chunk-8 WI-8.3) — this global count needs
+    // no entries join, so it reads state.db directly.
+    const rows = stateDb
       .prepare(
         `SELECT
            CASE
@@ -277,7 +280,8 @@ export function getRetrievalCounts(
 }
 
 function getSourceScopedRetrievalCounts(
-  db: Database,
+  indexDb: Database,
+  stateDb: Database,
   refs: string[],
   options: RetrievalCountOptions,
 ): Map<string, number> {
@@ -290,17 +294,27 @@ function getSourceScopedRetrievalCounts(
     }
   }
 
+  // Cross-DB (Chunk-8 WI-8.3): usage_events rows come from state.db; the
+  // per-row `stash_dir` (formerly a LEFT JOIN on entries) is resolved from
+  // index.db by entry_id. Read the usage rows first, then batch-look-up the
+  // stash_dir for their entry_ids and join in JS.
+  const entryStashDir = indexDb.prepare("SELECT stash_dir FROM entries WHERE id = ?");
+  const stashDirFor = (entryId: number | null): string | null => {
+    if (entryId === null) return null;
+    const row = entryStashDir.get(entryId) as { stash_dir: string | null } | undefined;
+    return row?.stash_dir ?? null;
+  };
+
   const countsByBare = new Map<string, number>();
   const bareForms = [...bareToInputs.keys()];
   const selectedRoot = options.stashDir ? path.resolve(options.stashDir) : undefined;
   for (let i = 0; i < bareForms.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = bareForms.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(", ");
-    const rows = db
+    const rawRows = stateDb
       .prepare(
-        `SELECT ue.entry_ref, ue.entry_id, e.stash_dir
+        `SELECT ue.entry_ref, ue.entry_id
            FROM usage_events ue
-           LEFT JOIN entries e ON e.id = ue.entry_id
           WHERE ue.event_type IN ('search','show','curate')
             AND ue.entry_ref IS NOT NULL
             AND (ue.source IS NULL OR ue.source NOT IN ('improve','task'))
@@ -313,8 +327,8 @@ function getSourceScopedRetrievalCounts(
       .all(...(chunk as SqlValue[])) as Array<{
       entry_ref: string;
       entry_id: number | null;
-      stash_dir: string | null;
     }>;
+    const rows = rawRows.map((r) => ({ ...r, stash_dir: stashDirFor(r.entry_id) }));
 
     for (const row of rows) {
       const bare = bareRef(row.entry_ref);

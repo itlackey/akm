@@ -7,9 +7,23 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getUsageEvents, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { withIndexDb } from "../../../src/storage/repositories/index-db";
+
+// Chunk-8 WI-8.3: usage_events moved to state.db, so this index.db loan
+// characterization exercises the loan against an index.db-resident table
+// (`entries`) instead.
+function insertEntry(db: AkmDatabase, entryKey: string): void {
+  db.prepare(
+    "INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type) VALUES (?, '/s', '/s/a.md', '/s', '{}', ?, 'skill')",
+  ).run(entryKey, entryKey);
+}
+function entryKeys(db: AkmDatabase): string[] {
+  return (db.prepare("SELECT entry_key FROM entries ORDER BY entry_key").all() as Array<{ entry_key: string }>).map(
+    (r) => r.entry_key,
+  );
+}
 
 /**
  * Characterization tests for {@link withIndexDb}, the `index.db` loan-pattern
@@ -39,7 +53,7 @@ describe("withIndexDb loan helper (WS5)", () => {
     // Seed the index.db at exactly the location withIndexDb will open.
     const dbPath = path.join(dataDir, "index.db");
     const seed = openIndexDatabase(dbPath);
-    insertUsageEvent(seed, { event_type: "search", query: "deploy", entry_ref: "skills/deploy" });
+    insertEntry(seed, "skills/deploy");
     seed.close();
   });
 
@@ -50,10 +64,8 @@ describe("withIndexDb loan helper (WS5)", () => {
   });
 
   test("opens index.db at the resolved StorageLocations.indexDb and runs fn against it", () => {
-    const rows = withIndexDb((db) => getUsageEvents(db));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.event_type).toBe("search");
-    expect(rows[0]?.entry_ref).toBe("skills/deploy");
+    const rows = withIndexDb((db) => entryKeys(db));
+    expect(rows).toEqual(["skills/deploy"]);
   });
 
   test("returns whatever fn returns", () => {
@@ -63,19 +75,19 @@ describe("withIndexDb loan helper (WS5)", () => {
 
   test("fully-materialised results survive after the scope closes (WS5 lifetime rule)", () => {
     // The returned array is read AFTER withIndexDb has already closed the db.
-    const rows = withIndexDb((db) => getUsageEvents(db));
+    const rows = withIndexDb((db) => entryKeys(db));
     // No connection is open here; reading the array must still work.
-    expect(rows.map((r) => r.entry_ref)).toEqual(["skills/deploy"]);
+    expect(rows).toEqual(["skills/deploy"]);
   });
 
   test("writes through the loan scope land in the same file", () => {
     withIndexDb((db) => {
-      insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
+      insertEntry(db, "skills/rollback");
     });
     // Re-open the file independently and confirm the write persisted.
     const verify = new Database(path.join(dataDir, "index.db"));
     try {
-      const count = (verify.prepare("SELECT COUNT(*) AS c FROM usage_events").get() as { c: number }).c;
+      const count = (verify.prepare("SELECT COUNT(*) AS c FROM entries").get() as { c: number }).c;
       expect(count).toBe(2);
     } finally {
       verify.close();

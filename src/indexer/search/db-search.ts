@@ -443,10 +443,7 @@ async function searchDatabase(
   // query here would be pure overhead. The boost > 1.0 sub-gate then skips the
   // query when the configured boost is a no-op (1.5^count when boost==1 is 1).
   const positiveFeedbackCounts = shouldQueryPositiveFeedbackCounts(utilityDecayRaw)
-    ? getPositiveFeedbackCountsByIds(
-        db,
-        scored.map((item) => item.id),
-      )
+    ? getPositiveFeedbackCountsByIds(scored.map((item) => item.id))
     : undefined;
 
   // Resolve per-project scope key for scoped utility scoring.

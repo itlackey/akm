@@ -11,9 +11,11 @@
  * leaf types + mapper modules rather than from the old `db.ts` hub.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { bestEffort } from "../../core/best-effort";
+import { getStateDbPath, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
@@ -332,47 +334,58 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     if (newItemRef !== null) {
       db.prepare("UPDATE entries SET item_ref = ?, concept_id = ? WHERE id = ?").run(newItemRef, newConceptId, row.id);
     }
-    // Re-point usage history at the new ref (see the docstring): the bare
-    // spelling exactly, and the origin-qualified spelling by rewriting only
-    // the part after the last `//` (stored origins never contain `//`, so a
-    // qualified ref has exactly one — same normalization as
-    // getRetrievalCounts). Legacy DBs may predate usage_events.
-    try {
-      // Live-asset-wins collision policy, mirroring the stale-entries eviction
-      // above and mv's state.db re-key: DETACHED orphan events (entry_id NULL
-      // — a deleted asset's history retained by a full rebuild) already
-      // sitting AT the new ref are evicted BEFORE the old→new rewrite. No
-      // stale entries row exists for them, so the deleteRelatedRows path
-      // never sees them (it deletes by entry_id only) — left in place, the
-      // moved asset would adopt the stranger's history: getRetrievalCounts
-      // reads by entry_ref immediately, and the next full rebuild's
-      // relinkUsageEvents would attach every stranger event by ref.
-      if (opts.sourceName) {
-        const origins = new Set([opts.sourceName]);
-        if (opts.sourceName === "stash" && opts.includeLegacyBare) origins.add("local");
-        for (const origin of origins) {
-          const oldQualifiedRef = `${origin}//${opts.oldRef}`;
-          const newQualifiedRef = `${origin}//${opts.newRef}`;
-          db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(newQualifiedRef);
-          db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(newQualifiedRef, oldQualifiedRef);
-        }
-      }
-      if (opts.includeLegacyBare || !opts.sourceName) {
-        db.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
-        db.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const missingLegacyUsageSchema =
-        /no such table:\s*(?:main\.)?usage_events\b/i.test(message) ||
-        /no such column:\s*(?:usage_events\.)?(?:entry_id|entry_ref)\b/i.test(message) ||
-        /table\s+usage_events\s+has no column named\s+(?:entry_id|entry_ref)\b/i.test(message);
-      if (!missingLegacyUsageSchema) throw error;
-    }
     db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)").run(row.id);
   })();
 
+  // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
+  // state.db now, so this is a SEPARATE cross-DB transaction (best-effort — the
+  // rename itself already committed above; on failure the next full index's
+  // relinkUsageEvents re-attaches by ref). See the docstring for the spellings
+  // and the live-asset-wins collision policy.
+  rewriteUsageEventRefForMove(opts);
+
   return row.id;
+}
+
+/**
+ * Rewrite `usage_events.entry_ref` from `opts.oldRef` to `opts.newRef` in
+ * state.db (both the bare `type:name` and the origin-qualified `origin//type:name`
+ * spellings). DETACHED orphan events (entry_id NULL) already sitting AT the new
+ * ref are evicted first so the moved asset never adopts a deleted stranger's
+ * history (live-asset-wins). Best-effort + guarded on state.db's existence; a
+ * legacy state.db predating usage_events is tolerated.
+ */
+function rewriteUsageEventRefForMove(opts: RekeyEntryOptions): void {
+  if (!fs.existsSync(getStateDbPath())) return;
+  try {
+    withStateDb((stateDb) => {
+      stateDb.transaction(() => {
+        if (opts.sourceName) {
+          const origins = new Set([opts.sourceName]);
+          if (opts.sourceName === "stash" && opts.includeLegacyBare) origins.add("local");
+          for (const origin of origins) {
+            const oldQualifiedRef = `${origin}//${opts.oldRef}`;
+            const newQualifiedRef = `${origin}//${opts.newRef}`;
+            stateDb.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(newQualifiedRef);
+            stateDb
+              .prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?")
+              .run(newQualifiedRef, oldQualifiedRef);
+          }
+        }
+        if (opts.includeLegacyBare || !opts.sourceName) {
+          stateDb.prepare("DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref = ?").run(opts.newRef);
+          stateDb.prepare("UPDATE usage_events SET entry_ref = ? WHERE entry_ref = ?").run(opts.newRef, opts.oldRef);
+        }
+      })();
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const missingLegacyUsageSchema =
+      /no such table:\s*(?:main\.)?usage_events\b/i.test(message) ||
+      /no such column:\s*(?:usage_events\.)?(?:entry_id|entry_ref)\b/i.test(message) ||
+      /table\s+usage_events\s+has no column named\s+(?:entry_id|entry_ref)\b/i.test(message);
+    if (!missingLegacyUsageSchema) throw error;
+  }
 }
 
 /**
@@ -384,33 +397,40 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
  * positive feedback event — missing ids implicitly map to `0`. Chunks at
  * `SQLITE_CHUNK_SIZE` (500) to respect `SQLITE_MAX_VARIABLE_NUMBER`.
  *
- * Cheap when called with zero ids, and silently empty when the
- * `usage_events` table is missing.
+ * Cheap when called with zero ids, and silently empty when state.db (or its
+ * `usage_events` table) is absent.
+ *
+ * Chunk-8 WI-8.3: usage_events lives in state.db — this reads it there (no
+ * entries join needed; the ids are supplied by the caller). Gated by the caller
+ * (`shouldQueryPositiveFeedbackCounts`) so the state.db open is not on the
+ * default search hot path.
  */
-export function getPositiveFeedbackCountsByIds(db: Database, ids: number[]): Map<number, number> {
+export function getPositiveFeedbackCountsByIds(ids: number[]): Map<number, number> {
   const result = new Map<number, number>();
-  if (ids.length === 0) return result;
-  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(",");
-    bestEffort(() => {
-      const rows = db
-        .prepare(
-          `SELECT entry_id, COUNT(*) AS cnt
-             FROM usage_events
-             WHERE event_type = 'feedback'
-               AND signal = 'positive'
-               AND entry_id IN (${placeholders})
-             GROUP BY entry_id`,
-        )
-        .all(...chunk) as Array<{ entry_id: number | null; cnt: number }>;
-      for (const row of rows) {
-        if (row.entry_id !== null && row.cnt > 0) {
-          result.set(row.entry_id, row.cnt);
+  if (ids.length === 0 || !fs.existsSync(getStateDbPath())) return result;
+  bestEffort(() => {
+    withStateDb((stateDb) => {
+      for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+        const placeholders = chunk.map(() => "?").join(",");
+        const rows = stateDb
+          .prepare(
+            `SELECT entry_id, COUNT(*) AS cnt
+               FROM usage_events
+               WHERE event_type = 'feedback'
+                 AND signal = 'positive'
+                 AND entry_id IN (${placeholders})
+               GROUP BY entry_id`,
+          )
+          .all(...chunk) as Array<{ entry_id: number | null; cnt: number }>;
+        for (const row of rows) {
+          if (row.entry_id !== null && row.cnt > 0) {
+            result.set(row.entry_id, row.cnt);
+          }
         }
       }
-    }, "usage_events table may be missing on legacy DBs — treat as zero counts");
-  }
+    });
+  }, "usage_events table may be missing on legacy state.db — treat as zero counts");
   return result;
 }
 
@@ -518,11 +538,23 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
       () => db.prepare(`DELETE FROM utility_scores_scoped WHERE entry_id IN (${placeholders})`).run(...chunk),
       "delete utility_scores_scoped for entries",
     );
-    // Clean up usage events before deleting entries
-    bestEffort(
-      () => db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk),
-      "delete usage_events for entries",
-    );
+  }
+
+  // Clean up usage events for the deleted entries. Chunk-8 WI-8.3: usage_events
+  // lives in state.db now, so this is a SEPARATE cross-DB delete (guarded on
+  // state.db's existence; only runs when there ARE deletions, so the extra open
+  // is bounded). Live-asset-wins collision eviction (the moved asset must not
+  // adopt a deleted stranger's id-linked history) depends on this delete.
+  if (fs.existsSync(getStateDbPath())) {
+    bestEffort(() => {
+      withStateDb((stateDb) => {
+        for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
+          const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          stateDb.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
+        }
+      });
+    }, "delete usage_events (state.db) for entries");
   }
 
   // #624-P1: graph_files is NO LONGER keyed on entries.id, so deleting an
@@ -938,37 +970,50 @@ function resolveUsageEventEntryId(db: Database, ref: string, options: RelinkUsag
  *
  * After a full rebuild, entry IDs change. This restores each event's link
  * using the stable `entry_ref` column so usage history survives a reindex.
+ *
+ * Cross-DB (Chunk-8 WI-8.3): `usage_events` lives in `stateDb` while `entries`
+ * lives in `indexDb`. The stale-id null-out (formerly a single-DB
+ * `NOT IN (SELECT id FROM entries)`) is done in two bounded passes — the set of
+ * distinct linked entry_ids in usage_events is small — and the re-resolution
+ * reads `entries` from `indexDb`.
  */
-export function relinkUsageEvents(db: Database, options: RelinkUsageEventsOptions = {}): void {
+export function relinkUsageEvents(indexDb: Database, stateDb: Database, options: RelinkUsageEventsOptions = {}): void {
   bestEffort(() => {
     // Step 1: null out stale entry_ids (entry was deleted, re-keyed, etc).
-    // Leaving them in place would let `recomputeUtilityScores` aggregate
-    // by an entry_id that no longer exists in `entries`, then trip the FK
-    // constraint on the utility_scores INSERT and roll back the entire
-    // finalize transaction. Nulled rows can be re-resolved by step 2 below;
-    // events whose entry is permanently gone simply stay null and age out
-    // via the 90-day retention policy.
-    db.exec(`
-      UPDATE usage_events
-      SET entry_id = NULL
-      WHERE entry_id IS NOT NULL
-        AND entry_id NOT IN (SELECT id FROM entries)
-    `);
+    // Leaving them in place would let `recomputeUtilityScores` aggregate by an
+    // entry_id that no longer exists in `entries`, then trip the FK constraint
+    // on the utility_scores INSERT and roll back the entire finalize
+    // transaction. Nulled rows can be re-resolved by step 2 below; events whose
+    // entry is permanently gone simply stay null and age out via retention.
+    const linkedIds = (
+      stateDb.prepare("SELECT DISTINCT entry_id AS id FROM usage_events WHERE entry_id IS NOT NULL").all() as Array<{
+        id: number;
+      }>
+    ).map((r) => r.id);
+    const entryExists = indexDb.prepare("SELECT 1 FROM entries WHERE id = ?");
+    const staleIds = linkedIds.filter((id) => entryExists.get(id) == null);
+    if (staleIds.length > 0) {
+      const nullOut = stateDb.prepare("UPDATE usage_events SET entry_id = NULL WHERE entry_id = ?");
+      const nullTx = stateDb.transaction(() => {
+        for (const id of staleIds) nullOut.run(id);
+      });
+      nullTx();
+    }
 
     // Step 2: re-resolve each distinct ref inside its source boundary. Qualified
     // refs require an origin→root mapping; bare legacy refs require the explicit
     // historical/default root. This keeps duplicate refs from adopting whichever
     // entries row SQLite happens to return first while retaining indexed lookups.
-    const refs = db
+    const refs = stateDb
       .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_id IS NULL AND entry_ref IS NOT NULL")
       .all() as { ref: string }[];
 
-    const update = db.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
-    const relinkTx = db.transaction(() => {
+    const update = stateDb.prepare("UPDATE usage_events SET entry_id = ? WHERE entry_ref = ? AND entry_id IS NULL");
+    const relinkTx = stateDb.transaction(() => {
       for (const { ref } of refs) {
         let id: number | undefined;
         try {
-          id = resolveUsageEventEntryId(db, ref, options);
+          id = resolveUsageEventEntryId(indexDb, ref, options);
         } catch (err) {
           if (err instanceof Error && err.name === "UsageError") continue;
           throw err;
@@ -1004,27 +1049,33 @@ export function relinkUsageEvents(db: Database, options: RelinkUsageEventsOption
  * Returns `{ rekeyed, quarantined }` distinct-ref counts for logging/tests.
  */
 export function rekeyUsageEventsToItemRef(
-  db: Database,
+  indexDb: Database,
+  stateDb: Database,
   options: RelinkUsageEventsOptions = {},
 ): { rekeyed: number; quarantined: number; deferred: number } {
   const result = { rekeyed: 0, quarantined: 0, deferred: 0 };
   bestEffort(() => {
-    ensureLegacyStateTable(db);
-    const rows = db.prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_ref IS NOT NULL").all() as {
+    // Cross-DB (Chunk-8 WI-8.3): usage_events + legacy_state live in stateDb;
+    // the resolver joins against `entries` in indexDb. state migration 020
+    // owns the tables, so ensureLegacyStateTable is a defensive no-op here.
+    ensureLegacyStateTable(stateDb);
+    const rows = stateDb
+      .prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE entry_ref IS NOT NULL")
+      .all() as {
       ref: string;
     }[];
     const legacyRefs = rows.map((r) => r.ref).filter((ref) => classifyRefGrammar(ref) === "legacy");
     if (legacyRefs.length === 0) return;
 
-    const update = db.prepare("UPDATE usage_events SET entry_ref = ?, entry_id = ? WHERE entry_ref = ?");
-    const countRows = db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE entry_ref = ?");
-    const quarantine = db.prepare(
+    const update = stateDb.prepare("UPDATE usage_events SET entry_ref = ?, entry_id = ? WHERE entry_ref = ?");
+    const countRows = stateDb.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE entry_ref = ?");
+    const quarantine = stateDb.prepare(
       `INSERT OR REPLACE INTO legacy_state (surface, old_ref, row_count, reason, quarantined_at)
        VALUES ('usage_events', ?, ?, 'orphan', datetime('now'))`,
     );
-    const tx = db.transaction(() => {
+    const tx = stateDb.transaction(() => {
       for (const oldRef of legacyRefs) {
-        const resolution = classifyLegacyRefForRekey(db, oldRef, options);
+        const resolution = classifyLegacyRefForRekey(indexDb, oldRef, options);
         if (resolution.kind === "rekey") {
           update.run(resolution.itemRef, resolution.entryId, oldRef);
           result.rekeyed += 1;

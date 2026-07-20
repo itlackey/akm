@@ -1552,23 +1552,28 @@ function fetchRetrievalSignals(args: {
   let dbForRetrieval: import("../../storage/database").Database | undefined;
   try {
     dbForRetrieval = openExistingDatabase();
-    const showEventCount = countUsageEventsByType(dbForRetrieval, "show");
-    if (showEventCount === 0) {
-      warn(
-        "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
-      );
-    }
-    // Fetch retrieval counts for ALL candidates — not only the zero-feedback pool.
-    // Previously only noFeedbackCandidates were looked up, so feedback-bearing refs
-    // had retrievalFreq=0 in computeSalience(), collapsing their retrievalSalience
-    // to 0 regardless of actual use. Two assets of the same type — one
-    // heavily-retrieved, one never-touched — would receive identical rankScores.
-    // Fix (WS-1 blocker 3): union the feedback pool into the lookup.
-    const allCandidateRefs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];
-    retrievalCounts = getRetrievalCounts(dbForRetrieval, allCandidateRefs, {
-      sourceName: options.sourceName,
-      stashDir: primaryStashDir,
-      includeLegacyBare: options.legacyBareState,
+    // usage_events lives in state.db (Chunk-8 WI-8.3); entries stay in index.db,
+    // so the retrieval-count reads take both handles.
+    const dbForRetrievalIndex = dbForRetrieval;
+    withStateDb((stateDb) => {
+      const showEventCount = countUsageEventsByType(stateDb, "show");
+      if (showEventCount === 0) {
+        warn(
+          "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
+        );
+      }
+      // Fetch retrieval counts for ALL candidates — not only the zero-feedback pool.
+      // Previously only noFeedbackCandidates were looked up, so feedback-bearing refs
+      // had retrievalFreq=0 in computeSalience(), collapsing their retrievalSalience
+      // to 0 regardless of actual use. Two assets of the same type — one
+      // heavily-retrieved, one never-touched — would receive identical rankScores.
+      // Fix (WS-1 blocker 3): union the feedback pool into the lookup.
+      const allCandidateRefs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];
+      retrievalCounts = getRetrievalCounts(dbForRetrievalIndex, stateDb, allCandidateRefs, {
+        sourceName: options.sourceName,
+        stashDir: primaryStashDir,
+        includeLegacyBare: options.legacyBareState,
+      });
     });
     lastUseMsForProactive = getLastUseMsByRef(
       dbForRetrieval,

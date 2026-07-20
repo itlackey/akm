@@ -26,6 +26,7 @@ import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key"
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../../sources/providers/index";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
@@ -337,21 +338,41 @@ function logSearchEvent(
     withIndexDb(
       (db) => {
         const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
-        for (const { entryId, ref } of resolved) {
-          insertUsageEvent(db, {
+        // usage_events telemetry now writes to state.db (Chunk-8 WI-8.3);
+        // entry_id/entry_ref are resolved from index.db above and carried across.
+        const stashHitCount = response.hits.length;
+        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
+        withStateDbTelemetry((stateDb) => {
+          for (const { entryId, ref } of resolved) {
+            insertUsageEvent(stateDb, {
+              event_type: "search",
+              query,
+              entry_id: entryId,
+              entry_ref: ref,
+              source: eventSource,
+            });
+          }
+          // Count registry hits separately so registry-only searches record a
+          // non-zero resultCount. response.hits is always [] when source="registry".
+          insertUsageEvent(stateDb, {
             event_type: "search",
             query,
-            entry_id: entryId,
-            entry_ref: ref,
+            metadata: JSON.stringify({
+              resultCount: stashHitCount + registryHitCount,
+              stashHitCount,
+              registryHitCount,
+              resolvedCount: resolved.length,
+              mode,
+            }),
             source: eventSource,
           });
-        }
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
         // Bump utility scores for all resolved entries (MemRL retrieval signal).
         // The indexer overwrites these at next reindex; bumps are temporary hints.
         // Gated to user-sourced events: pipeline searches (improve probes, task
         // runner) must not feed the utility signal (meta-review 05 DRIFT-6 —
         // the bump previously fired unconditionally, so even correctly-tagged
-        // machine traffic inflated utility).
+        // machine traffic inflated utility). utility_scores stays in index.db.
         const resolvedIds =
           eventSource === "user" ? resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined) : [];
         if (resolvedIds.length > 0) {
@@ -365,22 +386,6 @@ function logSearchEvent(
           }
           bumpUtilityScoresBatch(db, resolvedIds, 1.0, 0.1, scopeKey);
         }
-        // Count registry hits separately so registry-only searches record a
-        // non-zero resultCount. response.hits is always [] when source="registry".
-        const stashHitCount = response.hits.length;
-        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
-        insertUsageEvent(db, {
-          event_type: "search",
-          query,
-          metadata: JSON.stringify({
-            resultCount: stashHitCount + registryHitCount,
-            stashHitCount,
-            registryHitCount,
-            resolvedCount: resolved.length,
-            mode,
-          }),
-          source: eventSource,
-        });
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

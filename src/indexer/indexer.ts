@@ -12,6 +12,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { recoverTxnsForRoot } from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
+import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { readLegacyStashOverrides } from "../migrate/legacy-stash-json";
@@ -101,7 +102,7 @@ import {
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
 } from "./search/semantic-status";
-import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage/usage-events";
+import { purgeOldUsageEvents } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import type { IndexRunContext, IndexVerification } from "./walk/index-context";
 import { walkStashFlat } from "./walk/walker";
@@ -352,12 +353,18 @@ async function runFinalizePhase(ctx: IndexRunContext): Promise<void> {
   // re-link detached usage_events and recompute utility scores. The re-key runs
   // FIRST (entries is now authoritative — the last-good index §11.4 joins
   // against) so relink sees the canonical spelling; both are idempotent.
-  onProgress({ phase: "finalize", message: "Re-keying usage events (§11.4)." });
-  rekeyUsageEventsToItemRef(db, { sources, defaultStashDir: stashDir });
-  onProgress({ phase: "finalize", message: "Relinking usage events." });
-  relinkUsageEvents(db, { sources, defaultStashDir: stashDir });
-  onProgress({ phase: "finalize", message: "Recomputing utility scores." });
-  recomputeUtilityScores(db);
+  //
+  // Chunk-8 WI-8.3: usage_events lives in state.db now (index.db no longer holds
+  // it), so these cross-DB passes take both handles — entries in `db` (index.db),
+  // usage_events in the loaned state.db.
+  withStateDb((stateDb) => {
+    onProgress({ phase: "finalize", message: "Re-keying usage events (§11.4)." });
+    rekeyUsageEventsToItemRef(db, stateDb, { sources, defaultStashDir: stashDir });
+    onProgress({ phase: "finalize", message: "Relinking usage events." });
+    relinkUsageEvents(db, stateDb, { sources, defaultStashDir: stashDir });
+    onProgress({ phase: "finalize", message: "Recomputing utility scores." });
+    recomputeUtilityScores(db, stateDb);
+  });
 
   // Purge LLM cache entries for assets that no longer exist in the index.
   try {
@@ -1026,13 +1033,10 @@ function persistDirRecords(
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM utility_scores");
       db.exec("DELETE FROM index_dir_state");
-      // Detach usage_events from entries about to be deleted — null out entry_id
-      // but keep entry_ref so events can be re-linked after entries are rebuilt.
-      try {
-        db.exec("UPDATE usage_events SET entry_id = NULL WHERE entry_id IS NOT NULL");
-      } catch {
-        /* ignore if table doesn't exist */
-      }
+      // Chunk-8 WI-8.3: usage_events lives in state.db now (not index.db), so the
+      // wipe no longer detaches it here. The finalize pass's relinkUsageEvents
+      // (cross-DB) nulls entry_ids that no longer resolve to a rebuilt entry and
+      // re-resolves the rest by entry_ref — subsuming the old detach.
       db.exec("DELETE FROM entries");
     }
 
@@ -1972,14 +1976,12 @@ const USAGE_EVENT_RETENTION_DAYS = 90;
  *
  * Called during `akm index` after FTS rebuild.
  */
-export function recomputeUtilityScores(db: Database): void {
+export function recomputeUtilityScores(db: Database, stateDb: Database): void {
   const EMA_DECAY = 0.7;
 
-  // Ensure usage_events table exists before querying
-  ensureUsageEventsSchema(db);
-
-  // Purge stale usage events (90-day retention)
-  purgeOldUsageEvents(db, USAGE_EVENT_RETENTION_DAYS);
+  // Purge stale usage events (90-day retention). usage_events lives in state.db
+  // (Chunk-8 WI-8.3); its table is created by state migration 020.
+  purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Time-proportional decay: apply one round of EMA per elapsed day so
   // indexing frequency doesn't affect how fast scores decay.
@@ -1992,15 +1994,14 @@ export function recomputeUtilityScores(db: Database): void {
   const emaDecay = EMA_DECAY ** elapsedDays;
   const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
-  // Single aggregate query instead of N+1 per-entry queries.
-  // Only processes entries that actually have usage events AND still exist
-  // in `entries`. The latter check is critical: usage_events has no FK to
-  // entries, so its entry_id can become stale (entry deleted, re-keyed,
-  // moved between sources). Without the JOIN, writing the derived row to
-  // utility_scores (which DOES have an FK) raises "FOREIGN KEY constraint
-  // failed" and rolls back the whole finalize transaction — failing every
-  // index run.
-  const usageRows = db
+  // Aggregate per entry_id from state.db's usage_events, then keep only entries
+  // that STILL EXIST in index.db's `entries` (the former in-SQL JOIN is now a
+  // cross-DB filter). This latter check is critical: usage_events has no FK to
+  // entries, so its entry_id can become stale (entry deleted, re-keyed, moved
+  // between sources). Without it, writing the derived row to utility_scores
+  // (which DOES have an FK) raises "FOREIGN KEY constraint failed" and rolls
+  // back the whole finalize transaction — failing every index run.
+  const aggregatedRows = stateDb
     .prepare(`
       SELECT u.entry_id,
              SUM(CASE WHEN u.event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
@@ -2009,7 +2010,6 @@ export function recomputeUtilityScores(db: Database): void {
              SUM(CASE WHEN u.event_type = 'feedback' AND u.signal = 'negative' THEN 1 ELSE 0 END) AS negative_feedback_count,
              MAX(u.created_at) AS last_used_at
       FROM usage_events u
-      JOIN entries e ON e.id = u.entry_id
       WHERE u.entry_id IS NOT NULL
       GROUP BY u.entry_id
     `)
@@ -2021,6 +2021,8 @@ export function recomputeUtilityScores(db: Database): void {
     negative_feedback_count: number;
     last_used_at: string | null;
   }>;
+  const entryExists = db.prepare("SELECT 1 FROM entries WHERE id = ?");
+  const usageRows = aggregatedRows.filter((row) => entryExists.get(row.entry_id) != null);
 
   if (usageRows.length === 0) {
     setMeta(db, "last_utility_computed_at", new Date().toISOString());

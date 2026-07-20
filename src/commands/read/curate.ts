@@ -21,6 +21,7 @@ import { parseRefInput } from "../../core/asset/resolve-ref";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
@@ -159,33 +160,38 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
   try {
     withIndexDb(
       (db) => {
-        insertUsageEvent(db, {
-          event_type: "curate",
-          query,
-          metadata: JSON.stringify({
-            itemCount: result.items.length,
-            itemRefs,
-          }),
-          source: eventSource,
-        });
-        for (const item of result.items) {
-          if (!("ref" in item) || typeof item.ref !== "string") continue;
-          // F4c: resolve the entry and persist its DURABLE fully-qualified
-          // `item_ref` (D-R3), keying the event on entry_id so the count survives
-          // a rebuild via the id join.
-          const entryId = findEntryIdByRef(db, item.ref);
-          const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
-          // Post-flip the resolved row carries `item_ref`; fall back to the
-          // item's own (new-grammar) ref for an unresolved straggler.
-          const entryRef = itemRef ?? item.ref;
-          insertUsageEvent(db, {
+        // Resolve each curated item's DURABLE fully-qualified `item_ref` (D-R3)
+        // + entry_id from index.db (`db`); the usage_events writes land in
+        // state.db (Chunk-8 WI-8.3).
+        const perItem = result.items
+          .filter((item): item is typeof item & { ref: string } => "ref" in item && typeof item.ref === "string")
+          .map((item) => {
+            const entryId = findEntryIdByRef(db, item.ref);
+            const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
+            // Post-flip the resolved row carries `item_ref`; fall back to the
+            // item's own (new-grammar) ref for an unresolved straggler.
+            return { entryRef: itemRef ?? item.ref, entryId };
+          });
+        withStateDbTelemetry((stateDb) => {
+          insertUsageEvent(stateDb, {
             event_type: "curate",
             query,
-            entry_ref: entryRef,
-            entry_id: entryId,
+            metadata: JSON.stringify({
+              itemCount: result.items.length,
+              itemRefs,
+            }),
             source: eventSource,
           });
-        }
+          for (const { entryRef, entryId } of perItem) {
+            insertUsageEvent(stateDb, {
+              event_type: "curate",
+              query,
+              entry_ref: entryRef,
+              entry_id: entryId,
+              source: eventSource,
+            });
+          }
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

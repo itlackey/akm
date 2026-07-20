@@ -225,12 +225,15 @@ describe("mv durable journal crash recovery", () => {
       .get() as {
       id: number;
     };
-    insertUsageEvent(db, {
+    closeDatabase(db);
+    // usage_events lives in state.db (Chunk-8 WI-8.3); seed it there.
+    const stateSeed = openStateDatabase();
+    insertUsageEvent(stateSeed, {
       event_type: "show",
       entry_id: before.id,
       entry_ref: "memory:crash-before-full-index",
     });
-    closeDatabase(db);
+    stateSeed.close();
 
     await crashAt("filesystem-committed", "memories/crash-before-full-index", "crash-before-full-index-new");
     await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -239,11 +242,15 @@ describe("mv durable journal crash recovery", () => {
     const after = db
       .prepare("SELECT id FROM entries WHERE entry_key LIKE '%:memory:crash-before-full-index-new'")
       .get() as { id: number };
-    const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as {
+    closeDatabase(db);
+    const stateVerify = openStateDatabase();
+    const usage = stateVerify
+      .prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'")
+      .get() as {
       entry_ref: string;
       entry_id: number;
     };
-    closeDatabase(db);
+    stateVerify.close();
     // F4c §11.4: the move rewrites the usage-event ref to the new name, then the
     // full index re-keys it onto the entry's fully-qualified item_ref.
     expect(usage).toEqual({ entry_ref: "stash//memories/crash-before-full-index-new", entry_id: after.id });

@@ -4,7 +4,7 @@ import path from "node:path";
 import { akmHistory } from "../../../src/commands/sources/history";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
-import { getDbPath } from "../../../src/core/paths";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { ensureUsageEventsSchema, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -182,14 +182,15 @@ describe("akm history CLI", () => {
       `team//${bareRef}-extra`,
       `memory:history-unrelated-${process.pid}`,
     ];
-    const db = openIndexDatabase(getDbPath());
+    // usage_events lives in state.db (Chunk-8 WI-8.3); seed it there so the
+    // `history` CLI (which reads state.db) surfaces these rows.
+    const db = openStateDatabase();
     try {
-      ensureUsageEventsSchema(db);
       for (const entryRef of entryRefs) {
         insertUsageEvent(db, { event_type: "show", entry_ref: entryRef });
       }
     } finally {
-      closeDatabase(db);
+      db.close();
     }
 
     try {
@@ -203,13 +204,13 @@ describe("akm history CLI", () => {
       const qualified = parseJsonOutput(qualifiedResult);
       expect((qualified.entries as Array<{ ref: string }>).map((entry) => entry.ref)).toEqual([`stash//${bareRef}`]);
     } finally {
-      const cleanupDb = openIndexDatabase(getDbPath());
+      const cleanupDb = openStateDatabase();
       try {
         cleanupDb
           .prepare(`DELETE FROM usage_events WHERE entry_ref IN (${entryRefs.map(() => "?").join(", ")})`)
           .run(...entryRefs);
       } finally {
-        closeDatabase(cleanupDb);
+        cleanupDb.close();
       }
     }
   });
@@ -250,15 +251,15 @@ describe("akm history CLI", () => {
     expect(typeof stashWideJson.totalCount).toBe("number");
     expect((stashWideJson.totalCount as number) >= 1).toBe(true);
 
-    // Confirm the database actually contains the feedback row we created.
-    const db = openIndexDatabase(getDbPath());
+    // Confirm state.db (usage_events' home) contains the feedback row we created.
+    const db = openStateDatabase();
     try {
       const events = db
         .prepare("SELECT entry_ref, event_type FROM usage_events WHERE event_type = 'feedback'")
         .all() as Array<{ entry_ref: string; event_type: string }>;
       expect(events.find((event) => event.entry_ref.endsWith("//memories/alpha"))).toBeDefined();
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -599,13 +600,12 @@ describe("akm history --generator CLI flag", () => {
     const feedback = await runCli(["feedback", "memories/alpha", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
 
-    // Insert an improve event directly.
-    const db = openIndexDatabase(getDbPath());
+    // Insert an improve event directly into state.db (usage_events' home).
+    const db = openStateDatabase();
     try {
-      ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "search", query: "improve search", source: "improve" });
     } finally {
-      closeDatabase(db);
+      db.close();
     }
 
     // Filter to user events only.

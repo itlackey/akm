@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
+import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
@@ -62,26 +63,36 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
   expect(rows.map((row) => row.stash_dir)).toEqual([stashDir]);
   const stashId = rows.find((row) => row.stash_dir === stashDir)?.id;
   expect(stashId).toBeNumber();
-  const insert = db.prepare(
+  closeDatabase(db);
+
+  // Chunk-8 WI-8.3: usage_events lives in state.db now — seed it there.
+  const stateDb = openStateDatabase();
+  const insert = stateDb.prepare(
     "INSERT INTO usage_events (event_type, entry_id, entry_ref, created_at) VALUES ('show', ?, ?, datetime('now'))",
   );
   insert.run(null, "team//memory:duplicate");
   insert.run(stashId as number, "stash//memory:duplicate");
   insert.run(stashId as number, "memory:duplicate");
-  closeDatabase(db);
+  stateDb.close();
 
   await akmIndex({ stashDir, full: true });
 
   db = openExistingDatabase(dbPath);
-  const linked = db
-    .prepare(
-      `SELECT u.entry_ref, e.stash_dir
-         FROM usage_events u
-         LEFT JOIN entries e ON e.id = u.entry_id
-        WHERE u.event_type = 'show'
-        ORDER BY u.entry_ref`,
-    )
-    .all() as Array<{ entry_ref: string; stash_dir: string | null }>;
+  const stateDb2 = openStateDatabase();
+  // usage_events rows come from state.db; the per-row stash_dir (formerly an
+  // in-SQL LEFT JOIN) is looked up from index.db by entry_id (cross-DB).
+  const stashDirById = db.prepare("SELECT stash_dir FROM entries WHERE id = ?");
+  const linked = (
+    stateDb2
+      .prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show' ORDER BY entry_ref")
+      .all() as Array<{ entry_ref: string; entry_id: number | null }>
+  ).map((r) => ({
+    entry_ref: r.entry_ref,
+    stash_dir:
+      r.entry_id === null
+        ? null
+        : ((stashDirById.get(r.entry_id) as { stash_dir: string } | undefined)?.stash_dir ?? null),
+  }));
   // F4c §11.4 re-key (origin-faithful): the bare `memory:duplicate` and the
   // `stash//memory:duplicate` events both resolve to the WINNING stash row, so
   // both re-key onto its fully-qualified item_ref (`stash//memories/duplicate`)
@@ -94,23 +105,24 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
   expect(stashLinked.every((r) => r.entry_ref.endsWith("//memories/duplicate"))).toBe(true);
   const teamRow = linked.filter((r) => r.entry_ref === "team//memory:duplicate");
   expect(teamRow).toEqual([{ entry_ref: "team//memory:duplicate", stash_dir: null }]);
-  const quarantined = db
+  const quarantined = stateDb2
     .prepare("SELECT old_ref, row_count, reason FROM legacy_state WHERE surface = 'usage_events'")
     .all() as Array<{ old_ref: string; row_count: number; reason: string }>;
   expect(quarantined).toEqual([{ old_ref: "team//memory:duplicate", row_count: 1, reason: "orphan" }]);
   expect(
-    getRetrievalCounts(db, ["memory:duplicate"], {
+    getRetrievalCounts(db, stateDb2, ["memory:duplicate"], {
       stashDir: teamDir,
       sourceName: "team",
       includeLegacyBare: false,
     }).get("memory:duplicate"),
   ).toBe(1);
   expect(
-    getRetrievalCounts(db, ["memory:duplicate"], {
+    getRetrievalCounts(db, stateDb2, ["memory:duplicate"], {
       stashDir,
       sourceName: "stash",
       includeLegacyBare: true,
     }).get("memory:duplicate"),
   ).toBe(2);
   closeDatabase(db);
+  stateDb2.close();
 });

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { countFeedbackSignals, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -53,6 +54,8 @@ test("usage + feedback survive a full rebuild, re-keyed onto item_ref (§11.4)",
   //   - positive/negative feedback for alpha.
   const dbPath = getDbPath();
   let db = openExistingDatabase(dbPath);
+  // Chunk-8 WI-8.3: usage_events lives in state.db; entries in index.db.
+  let stateDb = openStateDatabase();
   // Entries are keyed by the new-grammar `item_ref` post-flip; look them up by
   // the conceptId. The DURABLE state seeded below stays legacy-spelled (the
   // migration input the §11.4 re-key must survive).
@@ -64,46 +67,59 @@ test("usage + feedback survive a full rebuild, re-keyed onto item_ref (§11.4)",
   expect(alphaItemRef).toContain("//memories/alpha");
 
   for (const ev of ["search", "search", "show"] as const) {
-    insertUsageEvent(db, { event_type: ev, entry_ref: "memory:alpha", entry_id: alphaId });
+    insertUsageEvent(stateDb, { event_type: ev, entry_ref: "memory:alpha", entry_id: alphaId });
   }
-  insertUsageEvent(db, { event_type: "search", entry_ref: "memory:beta", entry_id: betaId });
-  insertUsageEvent(db, { event_type: "feedback", signal: "positive", entry_ref: "memory:alpha", entry_id: alphaId });
-  insertUsageEvent(db, { event_type: "feedback", signal: "negative", entry_ref: "memory:alpha", entry_id: alphaId });
+  insertUsageEvent(stateDb, { event_type: "search", entry_ref: "memory:beta", entry_id: betaId });
+  insertUsageEvent(stateDb, {
+    event_type: "feedback",
+    signal: "positive",
+    entry_ref: "memory:alpha",
+    entry_id: alphaId,
+  });
+  insertUsageEvent(stateDb, {
+    event_type: "feedback",
+    signal: "negative",
+    entry_ref: "memory:alpha",
+    entry_id: alphaId,
+  });
 
   // Retrieval + feedback counts BEFORE the rebuild (legacy-keyed).
-  const beforeCounts = getRetrievalCounts(db, ["memory:alpha", "memory:beta"]);
+  const beforeCounts = getRetrievalCounts(db, stateDb, ["memory:alpha", "memory:beta"]);
   expect(beforeCounts.get("memory:alpha")).toBe(3);
   expect(beforeCounts.get("memory:beta")).toBe(1);
-  expect(countFeedbackSignals(db, alphaId as number)).toEqual({ pos: 1, neg: 1 });
+  expect(countFeedbackSignals(stateDb, alphaId as number)).toEqual({ pos: 1, neg: 1 });
   closeDatabase(db);
+  stateDb.close();
 
   // FULL REBUILD — entry ids change, entry_ref re-keys onto item_ref, relink.
   await akmIndex({ stashDir, full: true });
 
   db = openExistingDatabase(dbPath);
+  stateDb = openStateDatabase();
   // Entry ids may have changed; resolve afresh (new-grammar conceptId lookup).
   const alphaId2 = findEntryIdByRef(db, "memories/alpha") as number;
   const betaId2 = findEntryIdByRef(db, "memories/beta") as number;
 
   // Retrieval counts SURVIVE and are still keyed by the caller's ref (the count
   // reader is spelling-agnostic across the re-key).
-  const afterCounts = getRetrievalCounts(db, ["memory:alpha", "memory:beta"]);
+  const afterCounts = getRetrievalCounts(db, stateDb, ["memory:alpha", "memory:beta"]);
   expect(afterCounts.get("memory:alpha")).toBe(3);
   expect(afterCounts.get("memory:beta")).toBe(1);
 
   // Feedback SURVIVES via the id relink (entry_id restored on rebuild).
-  expect(countFeedbackSignals(db, alphaId2)).toEqual({ pos: 1, neg: 1 });
+  expect(countFeedbackSignals(stateDb, alphaId2)).toEqual({ pos: 1, neg: 1 });
   void betaId2;
 
   // The stored spelling is now the fully-qualified item_ref — the durable key.
-  const storedRefs = db.prepare("SELECT DISTINCT entry_ref FROM usage_events ORDER BY entry_ref").all() as Array<{
+  const storedRefs = stateDb.prepare("SELECT DISTINCT entry_ref FROM usage_events ORDER BY entry_ref").all() as Array<{
     entry_ref: string;
   }>;
   expect(storedRefs.every((r) => r.entry_ref.includes("//memories/"))).toBe(true);
   expect(storedRefs.some((r) => r.entry_ref.endsWith("//memories/alpha"))).toBe(true);
 
   // No durable rows were lost — 6 usage rows in, 6 out.
-  const total = db.prepare("SELECT COUNT(*) AS n FROM usage_events").get() as { n: number };
+  const total = stateDb.prepare("SELECT COUNT(*) AS n FROM usage_events").get() as { n: number };
   expect(total.n).toBe(6);
   closeDatabase(db);
+  stateDb.close();
 });

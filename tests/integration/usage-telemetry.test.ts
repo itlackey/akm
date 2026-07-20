@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../src/core/state-db";
 import { getUsageEvents, insertUsageEvent } from "../../src/indexer/usage/usage-events";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -42,12 +42,14 @@ afterEach(() => {
   envCleanup = () => {};
 });
 
-// ── Test 1: usage_events table is created by ensureSchema ────────────────
+// ── Test 1: usage_events table exists in state.db (state migration 020) ───
+// Chunk-8 WI-8.3: usage_events is a state.db table now (folded by migration
+// 020), not an index.db one; these telemetry-function tests open state.db.
 
 describe("Usage Telemetry", () => {
-  test("usage_events table is created by ensureSchema", () => {
+  test("usage_events table exists in state.db (state migration 020)", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='usage_events'").get() as
         | { name: string }
@@ -55,7 +57,7 @@ describe("Usage Telemetry", () => {
       expect(row).toBeDefined();
       expect(row?.name).toBe("usage_events");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -63,7 +65,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a search event", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "search",
@@ -76,7 +78,7 @@ describe("Usage Telemetry", () => {
       expect(events[0].event_type).toBe("search");
       expect(events[0].query).toBe("deploy tool");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -84,7 +86,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a show event", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "show",
@@ -96,7 +98,7 @@ describe("Usage Telemetry", () => {
       expect(events[0].event_type).toBe("show");
       expect(events[0].entry_ref).toBe("skills/deploy");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -104,7 +106,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent writes a feedback event with positive signal", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
@@ -119,13 +121,13 @@ describe("Usage Telemetry", () => {
       expect(events[0].signal).toBe("positive");
       expect(events[0].entry_ref).toBe("skills/deploy");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
   test("insertUsageEvent writes a feedback event with negative signal", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "feedback",
@@ -137,7 +139,7 @@ describe("Usage Telemetry", () => {
       expect(events).toHaveLength(1);
       expect(events[0].signal).toBe("negative");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -145,7 +147,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents filters by event_type", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "search", query: "test query" });
       insertUsageEvent(db, { event_type: "show", entry_ref: "skills/a" });
@@ -166,7 +168,7 @@ describe("Usage Telemetry", () => {
       expect(feedbackEvents).toHaveLength(1);
       expect(feedbackEvents[0].event_type).toBe("feedback");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -174,7 +176,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents filters by entry_ref", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
       insertUsageEvent(db, { event_type: "show", entry_ref: "skills/test" });
@@ -189,7 +191,7 @@ describe("Usage Telemetry", () => {
       const testEvents = getUsageEvents(db, { entry_ref: "skills/test" });
       expect(testEvents).toHaveLength(1);
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -197,7 +199,7 @@ describe("Usage Telemetry", () => {
 
   test("insertUsageEvent does not throw on DB errors (fire-and-forget)", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       // Drop the usage_events table to force an error
       db.exec("DROP TABLE IF EXISTS usage_events");
@@ -207,7 +209,7 @@ describe("Usage Telemetry", () => {
         insertUsageEvent(db, { event_type: "search", query: "should not throw" });
       }).not.toThrow();
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -215,7 +217,7 @@ describe("Usage Telemetry", () => {
 
   test("created_at is auto-populated", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "search", query: "auto timestamp" });
 
@@ -226,7 +228,7 @@ describe("Usage Telemetry", () => {
       // Verify it looks like a datetime string (YYYY-MM-DD HH:MM:SS)
       expect(events[0].created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -234,7 +236,7 @@ describe("Usage Telemetry", () => {
 
   test("metadata field stores JSON and is retrievable and parseable", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       const meta = { entry_refs: ["skills/deploy", "commands/rollback"], resultCount: 5 };
       insertUsageEvent(db, {
@@ -250,7 +252,7 @@ describe("Usage Telemetry", () => {
       expect(parsed.entry_refs).toEqual(["skills/deploy", "commands/rollback"]);
       expect(parsed.resultCount).toBe(5);
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -258,7 +260,7 @@ describe("Usage Telemetry", () => {
 
   test("getUsageEvents supports combined event_type and entry_ref filters", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, { event_type: "show", entry_ref: "skills/deploy" });
       insertUsageEvent(db, { event_type: "feedback", entry_ref: "skills/deploy", signal: "positive" });
@@ -269,7 +271,7 @@ describe("Usage Telemetry", () => {
       expect(filtered[0].event_type).toBe("show");
       expect(filtered[0].entry_ref).toBe("skills/deploy");
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 
@@ -277,7 +279,7 @@ describe("Usage Telemetry", () => {
 
   test("entry_id field is stored correctly", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       insertUsageEvent(db, {
         event_type: "show",
@@ -289,7 +291,7 @@ describe("Usage Telemetry", () => {
       expect(events).toHaveLength(1);
       expect(events[0].entry_id).toBe(42);
     } finally {
-      closeDatabase(db);
+      db.close();
     }
   });
 });
