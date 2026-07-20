@@ -83,6 +83,7 @@ import {
 import { EXIT_CODES, emitJsonError, output, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { backupCommand } from "./commands/backup-cli";
+import { bundleCommand } from "./commands/bundle/bundle-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
 import { envCommand } from "./commands/env/env-cli";
@@ -514,6 +515,7 @@ export const main = defineCommand({
     health: healthCommand,
     info: infoCommand,
     graph: graphCommand,
+    bundle: bundleCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
