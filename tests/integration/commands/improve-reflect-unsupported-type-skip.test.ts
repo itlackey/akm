@@ -156,10 +156,10 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     await indexStash(stash);
 
     // Inject positive feedback so both refs pass the signal filter inside improve.
-    appendEvent({ eventType: "feedback", ref: "script:deploy.sh", metadata: { signal: "positive", note: "fixture" } });
+    appendEvent({ eventType: "feedback", ref: "scripts/deploy.sh", metadata: { signal: "positive", note: "fixture" } });
     appendEvent({
       eventType: "feedback",
-      ref: "skill:deploy-guide",
+      ref: "skills/deploy-guide",
       metadata: { signal: "positive", note: "fixture" },
     });
 
@@ -185,7 +185,7 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
 
     // Core assertion 1: akmReflect was never called for the script ref.
     const reflectedRefs = reflectCalls.map((c) => c.ref ?? "");
-    expect(reflectedRefs.filter((r) => r.startsWith("script:"))).toEqual([]);
+    expect(reflectedRefs.filter((r) => r.startsWith("scripts/"))).toEqual([]);
 
     // Core assertion 2: 2026-05-27 planner pre-filter — script:* refs are
     // refused by BOTH reflect and distill on the default profile, so the
@@ -195,18 +195,18 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     // 2× synthetic skip actions per cron run; that audit trail is now a
     // single `improve_skipped` event with reason `strategy_filtered_all_passes`
     // plus an envelope entry under `strategyFilteredRefs`.
-    const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "script:deploy.sh");
+    const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "scripts/deploy.sh");
     expect(scriptRefsInPlan).toEqual([]);
-    const scriptActions = (result.actions ?? []).filter((a) => a.ref === "script:deploy.sh");
+    const scriptActions = (result.actions ?? []).filter((a) => a.ref === "scripts/deploy.sh");
     expect(scriptActions).toEqual([]);
     const strategyFiltered = result.strategyFilteredRefs ?? [];
-    const scriptFiltered = strategyFiltered.filter((p) => p.ref === "script:deploy.sh");
+    const scriptFiltered = strategyFiltered.filter((p) => p.ref === "scripts/deploy.sh");
     expect(scriptFiltered.length).toBe(1);
     expect(scriptFiltered[0]?.reason).toBe("strategy_filtered_all_passes");
 
     // Core assertion 3: the allowed-type skill ref IS reflected normally (type
     // guard must not block allowed types).
-    const skillActions = (result.actions ?? []).filter((a) => a.ref === "skill:deploy-guide");
+    const skillActions = (result.actions ?? []).filter((a) => a.ref === "skills/deploy-guide");
     const skillReflectActions = skillActions.filter((a) => a.mode === "reflect");
     expect(skillReflectActions.length).toBeGreaterThan(0);
   });
@@ -232,7 +232,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
     await indexStash(stash);
     appendEvent({
       eventType: "feedback",
-      ref: "skill:deploy-guide",
+      ref: "skills/deploy-guide",
       metadata: { signal: "positive", note: "fixture" },
     });
 
@@ -261,7 +261,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
       distillFn: async (options): Promise<AkmDistillResult> => makeStubDistillResult(options.ref),
     });
 
-    const skillActions = (result.actions ?? []).filter((a) => a.ref === "skill:deploy-guide");
+    const skillActions = (result.actions ?? []).filter((a) => a.ref === "skills/deploy-guide");
     expect(skillActions.length).toBeGreaterThan(0);
     // MUST be reflect-skipped, NOT reflect-failed.
     expect(skillActions.filter((a) => a.mode === "reflect-failed")).toEqual([]);
