@@ -146,9 +146,11 @@ describe("akm add website", () => {
 
       expect(parsed.sourceAdded?.stashRoot).toBeDefined();
       const knowledgeFiles = fs.readdirSync(path.join(parsed.sourceAdded?.stashRoot as string, "knowledge")).sort();
-      expect(knowledgeFiles).toEqual(["getting-started.md", "index.md"]);
+      // The home page must NOT be cached as `index.md` — that is a D-R6
+      // reserved structural filename the indexer refuses to classify.
+      expect(knowledgeFiles).toEqual(["getting-started.md", "index-content.md"]);
       const homeDoc = fs.readFileSync(
-        path.join(parsed.sourceAdded?.stashRoot as string, "knowledge", "index.md"),
+        path.join(parsed.sourceAdded?.stashRoot as string, "knowledge", "index-content.md"),
         "utf8",
       );
       expect(homeDoc).toContain("Example Docs");

@@ -15,7 +15,7 @@ disposition, per the execution-workflow's per-chunk ledger rule.
 | 8.5a-d | ✅ | Writer flip to item_ref; display/content arm flips with §15-rule-5 golden re-designations; `parseStoredRef` + `legacy-ref-grammar` retired outside `src/migrate/` (grep gates 0); dual readers deleted; content migration (`.stash.json` fold + D-R6 reserved-file handling, journaled, idempotent, reported); mv re-key item_ref-only |
 | 8.6 | ✅ | report.ts five-phase decomposition + finalize-lock split; ALL FOUR residual import-cycle knots killed — baseline EMPTY, ratchet absolute |
 | 8.7 | ✅ | ≥1000-case re-key property gate vs the REAL `rekeyStateDb` (green, ~300s, slow-listed); orphan/rc-train/cross-binary/crash suites |
-| CI-green | ✅ | 207 integration failures → 1 (network-only); node-smoke re-keyed; three missed src ref-construction bugs fixed (memory-inference child mint, extract candidate mint, cleanup parent read) |
+| CI-green | ✅ | 207 integration failures → 0; node-smoke re-keyed; five missed src bugs fixed (memory-inference child mint, extract candidate mint, cleanup parent read, website-crawler D-R6 reserved-name cache, enumerate-path nondeterministic listing order) |
 
 ## Gate results (chunk close)
 
@@ -58,8 +58,7 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
    coherent: old-shape-alone loads, mixed shape hard-rejects, migrator emits bundles.
 2. **#39** — `.stash.json` live-reader removal blocked on a script-asset curated-metadata mechanism
    (no frontmatter equivalent for non-`.md`); sidecars are already folded+deleted at cutover.
-3. `add website` integration test needs live network (fails in restricted containers; CI-dependent).
-4. `derived_from`/`source:` legacy channel (above) — candidate for a 0.9.x content migration.
+3. `derived_from`/`source:` legacy channel (above) — candidate for a 0.9.x content migration.
 
 ## Process notes (for future chunk runs)
 
@@ -69,3 +68,10 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
 - Never read a gate's verdict through a pipe (`| tail`) — capture the exit code; two premature
   pushes this chunk trace to pipe-masked exits.
 - Run heavy batteries sequentially; parallel unit+integration runs starve each other.
+- Distrust "environmental" failure labels: `add website` was carried for weeks as "needs live
+  network" when the test serves from a local `Bun.serve` — the real failure was the crawler caching
+  the home page as D-R6-reserved `index.md` (fixed: `index`/`log` basenames remap to `*-content`).
+- A golden must never pin an un-`ORDER BY`'d SELECT's row order: it tracks the query plan and
+  index-insertion (readdir) order, both machine-dependent — it passes on the capture machine and
+  fails everywhere else. `enumerateEntries` now sorts type→name→filePath explicitly and the
+  scored-vs-enumerate golden was re-captured under that order (registry notes updated).

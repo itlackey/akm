@@ -168,7 +168,7 @@ async function scrapeWebsiteToStash(
 
   const usedPaths = new Set<string>();
   for (const page of pages) {
-    const relPath = urlToRelativePath(page.url);
+    const relPath = avoidReservedBasename(urlToRelativePath(page.url));
     const uniquePath = uniqueSlug(relPath, usedPaths);
     const filePath = path.join(knowledgeDir, `${uniquePath}.md`);
     const dir = path.dirname(filePath);
@@ -446,6 +446,21 @@ function normalizeCrawlUrl(rawUrl: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * D-R6: `index.md`/`log.md` are OKF reserved structural filenames at every
+ * depth — no adapter indexes them, so a crawled page must never land on one.
+ * Same remap convention as the content migration (`index.md` →
+ * `index-content.md`). Segments are already lowercased by slugifySegment.
+ */
+function avoidReservedBasename(relPath: string): string {
+  const segments = relPath.split("/");
+  const last = segments[segments.length - 1] ?? "";
+  if (last === "index" || last === "log") {
+    segments[segments.length - 1] = `${last}-content`;
+  }
+  return segments.join("/");
 }
 
 function urlToRelativePath(rawUrl: string): string {

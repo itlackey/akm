@@ -569,8 +569,8 @@ async function searchDatabase(
  * empty/unsearchable queries and SPEC-4 ref-prefix queries (`<type>:` /
  * `<type>:<prefix>/`). Applies the same post-ranking filters as the scored
  * path (source narrowing, scope, proposed-quality, belief) before the limit
- * slice. Hits carry the fixed browse score 1 in insertion order — this is a
- * deterministic listing, not a relevance ranking.
+ * slice. Hits carry the fixed browse score 1 in type-then-name order — this is
+ * a deterministic listing, not a relevance ranking.
  */
 async function enumerateEntries(opts: {
   db: Database;
@@ -600,6 +600,16 @@ async function enumerateEntries(opts: {
 }): Promise<{ hits: SourceSearchHit[] }> {
   const { db, query, sources, config, rendererRegistry, filters, beliefFilter } = opts;
   const allEntries = getAllEntries(db, opts.typeFilter, opts.excludeTypes);
+  // Explicit listing order: type, then name, then filePath. The underlying
+  // SELECT carries no ORDER BY, so its row order tracks the query plan and the
+  // index-insertion (file-walk) order — both machine-dependent. A browse
+  // listing must not change order across hosts or SQLite versions.
+  allEntries.sort(
+    (a, b) =>
+      a.entry.type.localeCompare(b.entry.type) ||
+      a.entry.name.localeCompare(b.entry.name) ||
+      a.filePath.localeCompare(b.filePath),
+  );
   // SPEC-4: narrow to the requested subtree. `startsWith` on the full
   // slash-retaining prefix is exact — "projecta/" cannot match a sibling
   // "projectalpha/…" scope.
