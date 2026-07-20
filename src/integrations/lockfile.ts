@@ -17,25 +17,42 @@ import type { InstallKind } from "../registry/types";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /**
- * LockfileEntry — install-time provenance for an installed source.
+ * LockfileEntry — resolved lock state for one bundle (spec §10.2).
  *
- * Companion to the source config entry: the config describes *where* a
- * source is configured to come from (declared in config); the LockfileEntry
- * records *what was actually installed* (resolved version, integrity hash,
- * etc.).
+ * SHAPE BUMP (Chunk-8 WI-8.4): evolved from the pre-cutover per-source entry
+ * (`{ id, source, ref, resolvedVersion?, resolvedRevision?, integrity? }`) to
+ * the §10.2 bundle lock shape — ONE entry per bundle id, adding the optional
+ * resolved fields the spec lists as SHOULD: `localRoot` (materialized root),
+ * `manifestDigest`, `adapterIds`, and `installedAt`. The core identity/locator
+ * fields are UNCHANGED (`id` = bundle id; `source` = source kind; `ref` =
+ * locator), so old per-source `akm.lock` files still read (shape-tolerant:
+ * `readLockfile` validates only id/source/ref and carries unknown/absent
+ * optional fields through); an entry is upgraded to the new shape lazily on its
+ * next `upsertLockEntry` write. The desired configuration lives in config.json's
+ * `bundles`; this file records ONLY the resolved cache state (spec §10.2: the
+ * config MUST NOT duplicate resolved cache paths/revisions).
  *
- * Lock entries are keyed by `id` (the stable identifier shared with the
- * matching source config). The lockfile lives at `<configDir>/akm.lock` and
- * is managed independently from `config.json`.
+ * The lockfile lives at `<dataDir>/akm.lock` and is managed independently from
+ * `config.json`.
  */
 export interface LockfileEntry {
-  /** Stable identifier. */
+  /** Bundle id (the stable identifier shared with the matching bundle config). */
   id: string;
+  /** Source kind. */
   source: InstallKind;
+  /** Source locator (the install ref). */
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
   integrity?: string;
+  /** Local materialized root (spec §10.2 "local materialized root"). */
+  localRoot?: string;
+  /** Manifest digest (spec §10.2), when the install flow computed one. */
+  manifestDigest?: string;
+  /** Component adapter ids (spec §10.2), when known. */
+  adapterIds?: string[];
+  /** Installation timestamp (spec §10.2). */
+  installedAt?: string;
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────

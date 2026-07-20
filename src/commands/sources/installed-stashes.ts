@@ -250,6 +250,9 @@ async function updateRegistryEntry(
     resolvedVersion: synced.resolvedVersion,
     resolvedRevision: synced.resolvedRevision,
     integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
+    // §10.2 resolved lock state the sync flow has on hand.
+    localRoot: synced.contentDir,
+    installedAt: synced.syncedAt,
   });
   if (entry.cacheDir !== synced.cacheDir && shouldCleanupCache(entry)) {
     cleanupDirectoryBestEffort(entry.cacheDir);

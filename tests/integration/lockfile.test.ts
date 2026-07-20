@@ -111,6 +111,32 @@ describe("readLockfile", () => {
     expect(result[0].integrity).toBe("sha512-xyz");
   });
 
+  test("preserves the §10.2 bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
+    const entry = validEntry({
+      localRoot: "/cache/kit/content",
+      manifestDigest: "sha256-manifest",
+      adapterIds: ["akm", "okf"],
+      installedAt: "2026-07-20T00:00:00Z",
+    });
+    writeRawLockfile(JSON.stringify([entry]));
+    const result = readLockfile();
+    expect(result).toHaveLength(1);
+    expect(result[0].localRoot).toBe("/cache/kit/content");
+    expect(result[0].manifestDigest).toBe("sha256-manifest");
+    expect(result[0].adapterIds).toEqual(["akm", "okf"]);
+    expect(result[0].installedAt).toBe("2026-07-20T00:00:00Z");
+  });
+
+  test("reads a pre-cutover per-source entry unchanged (shape-tolerant read)", () => {
+    // The old shape had only id/source/ref (+ resolved*). It stays valid and the
+    // absent §10.2 fields are simply undefined until the next upsert.
+    writeRawLockfile(JSON.stringify([{ id: "old", source: "git", ref: "owner/repo", resolvedRevision: "deadbeef" }]));
+    const result = readLockfile();
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "old", source: "git", ref: "owner/repo", resolvedRevision: "deadbeef" });
+    expect(result[0].localRoot).toBeUndefined();
+  });
+
   test("accepts all valid source types", () => {
     const entries = [
       validEntry({ id: "a", source: "npm" }),

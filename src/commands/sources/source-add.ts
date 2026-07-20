@@ -211,6 +211,9 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     resolvedVersion: synced.resolvedVersion,
     resolvedRevision: synced.resolvedRevision,
     integrity: synced.integrity,
+    // §10.2 resolved lock state the install flow has on hand.
+    localRoot: synced.contentDir,
+    installedAt: synced.syncedAt,
   });
 
   // Clean up old cache directory on re-install
