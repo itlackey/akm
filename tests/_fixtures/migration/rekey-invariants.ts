@@ -40,6 +40,7 @@ import type { GeneratedRekeyState } from "./rekey-generator";
 import {
   bareRef,
   canonicalRef,
+  type LogicalAssetKey,
   qualifiedRef,
   type RawRow,
   type RekeyFn,
@@ -51,6 +52,22 @@ import { copyStateDb, snapshotRekeyState } from "./rekey-snapshot";
 export interface RekeyInvariantResult {
   readonly ok: boolean;
   readonly violations: string[];
+}
+
+/**
+ * The canonical merged-key spelling every logical asset's spellings must collapse
+ * onto post-rekey. Defaults to `canonicalRef` (the legacy `origin//type:name`
+ * form the 0b reference impls produce). Chunk 8's REAL cutover fn re-keys onto
+ * the fully-qualified `bundle//conceptId` `item_ref` instead, so it passes a
+ * `keyFor` that mirrors its own map targets — the harness then checks against
+ * that spelling WITHOUT any change to the reference-impl / merge-property suites,
+ * which keep the default. (WI-8.2, §15.3: extend, never rewrite.)
+ */
+export type RekeyKeyFor = (key: LogicalAssetKey) => string;
+
+export interface CheckRekeyInvariantsOptions {
+  /** Override the canonical merged-key spelling (default {@link canonicalRef}). */
+  readonly keyFor?: RekeyKeyFor;
 }
 
 /** Rows in `rows` whose `keyColumn` equals `refValue`. Ref strings are globally unique per logical asset by construction (see `rekey-generator.ts`), so exact string match is a safe per-asset filter. */
@@ -72,11 +89,17 @@ const ALL_TABLES = [...SCALAR_TABLES, ...EVENT_TABLES];
 
 // ── Invariant 1 -- no key lost ──────────────────────────────────────────────
 
-function checkNoKeyLost(model: RekeyModel, before: RekeySnapshot, after: RekeySnapshot, violations: string[]): void {
+function checkNoKeyLost(
+  model: RekeyModel,
+  before: RekeySnapshot,
+  after: RekeySnapshot,
+  violations: string[],
+  keyFor: RekeyKeyFor,
+): void {
   for (const asset of model.assets) {
     const bare = bareRef(asset.key);
     const qualified = qualifiedRef(asset.key);
-    const canonical = canonicalRef(asset.key);
+    const canonical = keyFor(asset.key);
     for (const table of ALL_TABLES) {
       const hadBefore =
         rowsAt(before[table.name], table.keyColumn, bare).length +
@@ -113,11 +136,12 @@ function checkEventRowsCarried(
   before: RekeySnapshot,
   after: RekeySnapshot,
   violations: string[],
+  keyFor: RekeyKeyFor,
 ): void {
   for (const asset of model.assets) {
     const bare = bareRef(asset.key);
     const qualified = qualifiedRef(asset.key);
-    const canonical = canonicalRef(asset.key);
+    const canonical = keyFor(asset.key);
     for (const table of EVENT_TABLES) {
       const beforeRows = [
         ...rowsAt(before[table.name], table.keyColumn, bare),
@@ -158,11 +182,12 @@ function checkScalarMergeWins(
   before: RekeySnapshot,
   after: RekeySnapshot,
   violations: string[],
+  keyFor: RekeyKeyFor,
 ): void {
   for (const asset of model.assets) {
     const bare = bareRef(asset.key);
     const qualified = qualifiedRef(asset.key);
-    const canonical = canonicalRef(asset.key);
+    const canonical = keyFor(asset.key);
     for (const table of SCALAR_TABLES) {
       const bareRows = rowsAt(before[table.name], table.keyColumn, bare);
       const qualifiedRows = rowsAt(before[table.name], table.keyColumn, qualified);
@@ -220,7 +245,12 @@ function snapshotsEqual(a: RekeySnapshot, b: RekeySnapshot): boolean {
  * `generated.dbPath` untouched (works on disposable copies); cleans up its
  * own temp working directory before returning.
  */
-export function checkRekeyInvariants(generated: GeneratedRekeyState, rekeyFn: RekeyFn): RekeyInvariantResult {
+export function checkRekeyInvariants(
+  generated: GeneratedRekeyState,
+  rekeyFn: RekeyFn,
+  options: CheckRekeyInvariantsOptions = {},
+): RekeyInvariantResult {
+  const keyFor = options.keyFor ?? canonicalRef;
   const violations: string[] = [];
   const before = snapshotRekeyState(generated.dbPath);
 
@@ -233,9 +263,9 @@ export function checkRekeyInvariants(generated: GeneratedRekeyState, rekeyFn: Re
     rekeyFn(dbA, generated.model);
     const afterA = snapshotRekeyState(dbA);
 
-    checkNoKeyLost(generated.model, before, afterA, violations);
-    checkEventRowsCarried(generated.model, before, afterA, violations);
-    checkScalarMergeWins(generated.model, before, afterA, violations);
+    checkNoKeyLost(generated.model, before, afterA, violations, keyFor);
+    checkEventRowsCarried(generated.model, before, afterA, violations, keyFor);
+    checkScalarMergeWins(generated.model, before, afterA, violations, keyFor);
 
     // Invariant 4 -- deterministic: an INDEPENDENT fresh copy of the same
     // pristine generated db, re-keyed separately, must match afterA exactly.
