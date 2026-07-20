@@ -28,8 +28,9 @@ export interface WithIndexDbOptions {
 /**
  * Scoped-resource (loan pattern) helper for the index database (`index.db`).
  *
- * This is the `index.db` twin of {@link ../../workflows/db withWorkflowDb} /
- * {@link ./workflow-runs-repository withWorkflowRunsRepo}: it opens the index
+ * This is the `index.db` twin of the state.db loan helpers ({@link
+ * ../../core/state-db withStateDb} / {@link ./workflow-runs-repository
+ * withWorkflowRunsRepo}): it opens the index
  * database bound to {@link StorageLocations.indexDb}, runs `fn` against the live
  * {@link Database}, and closes the connection exactly once when `fn` returns —
  * even if `fn` throws. Callers no longer hand-roll `open / try / finally / close`

@@ -5,15 +5,16 @@
 /**
  * Shared SQLite migration engine.
  *
- * state.db (`src/core/state-db.ts`) and workflow.db (`src/workflows/db.ts`)
- * both evolve their schema through an identical, idempotent, transaction-per-
- * migration runner backed by a `schema_migrations` ledger. The two runners
- * were byte-identical except for ONE line: workflow.db must back-fill a
- * `schema_migrations` row for pre-versioning databases before evaluating the
- * migration list (see `bootstrapPreVersioningDb` in workflows/db.ts).
+ * state.db (`src/core/state-db.ts`) evolves its schema through this idempotent,
+ * transaction-per-migration runner backed by a `schema_migrations` ledger. The
+ * migrator's frozen pre-cutover workflow-schema roll
+ * (`src/migrate/legacy/workflow-migrations-bodies.ts`, driven by
+ * `config-migrate.ts`) reuses the SAME runner. The `bootstrap` hook — a one-line
+ * pre-versioning back-fill — is now unused by live callers (the pre-cutover
+ * workflow.db that once needed it fails closed at migrate time).
  *
- * This module factors that runner out once. Each DB module supplies only its
- * own `MIGRATIONS` array; workflow.db additionally passes a `bootstrap` hook.
+ * This module factors that runner out once. Each caller supplies only its own
+ * `MIGRATIONS` array (plus, historically, an optional `bootstrap` hook).
  *
  * Migration-safety contract:
  *   - `id` is permanent and must never be reused.

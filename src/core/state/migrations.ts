@@ -853,12 +853,12 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   // driven by `src/migrate/legacy/three-db-cutover.ts`. See the no-DROP contract
   // carve-out note in `src/core/state-db.ts`.
   //
-  // The three workflow tables are the 10 `WORKFLOW_MIGRATIONS`
-  // (`src/workflows/db.ts` `ensureBaseSchema` + migrations 001–010) folded into
-  // one baseline at their FINAL post-010 shape — column lists, CHECK constraints,
-  // and indexes copied verbatim. `usage_events` mirrors index.db's
-  // `ensureUsageEventsSchema` (`src/indexer/usage/usage-events.ts`), its new
-  // durable home. `legacy_state` mirrors `ensureLegacyStateTable`
+  // The three workflow tables are the 10 pre-cutover workflow migrations
+  // (the frozen `src/migrate/legacy/workflow-migrations-bodies.ts` base schema +
+  // 001–010) folded into one baseline at their FINAL post-010 shape — column
+  // lists, CHECK constraints, and indexes copied verbatim. `usage_events` mirrors
+  // index.db's former `ensureUsageEventsSchema` (`src/indexer/usage/usage-events.ts`),
+  // its new durable home. `legacy_state` mirrors `ensureLegacyStateTable`
   // (`src/storage/repositories/index-entries-repository.ts`), the orphan
   // quarantine archive re-homed from index.db (durable, auditable, purgeable).
   // Nothing else — NO bindings/lifecycle tables (Tier B / deferred, §3.2).
