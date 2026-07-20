@@ -99,7 +99,7 @@ describe("akm proposal drain strategy selector", () => {
   });
 });
 
-function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
+function seedProposal(stash: string, ref = "lessons/rg-over-grep") {
   const result = createProposal(stash, {
     ref,
     source: "reflect",
@@ -113,9 +113,9 @@ function seedProposal(stash: string, ref = "lesson:rg-over-grep") {
 describe("akm proposal list (CLI)", () => {
   test("supports --ref filtering", async () => {
     const stash = makeStashDir();
-    seedProposal(stash, "lesson:rg-over-grep");
-    seedProposal(stash, "lesson:docker-cleanup");
-    const result = await runCli(["proposal", "list", "--ref", "lesson:docker-cleanup", "--format=json"], {
+    seedProposal(stash, "lessons/rg-over-grep");
+    seedProposal(stash, "lessons/docker-cleanup");
+    const result = await runCli(["proposal", "list", "--ref", "lessons/docker-cleanup", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(0);
@@ -126,8 +126,8 @@ describe("akm proposal list (CLI)", () => {
 
   test("supports --type filtering (asset type derived from ref)", async () => {
     const stash = makeStashDir();
-    seedProposal(stash, "lesson:rg-over-grep");
-    seedProposal(stash, "knowledge:docker-cleanup");
+    seedProposal(stash, "lessons/rg-over-grep");
+    seedProposal(stash, "knowledge/docker-cleanup");
     const onlyLessons = await runCli(["proposal", "list", "--type", "lesson", "--format=json"], { stashDir: stash });
     expect(onlyLessons.status).toBe(0);
     const parsed = JSON.parse(onlyLessons.stdout);

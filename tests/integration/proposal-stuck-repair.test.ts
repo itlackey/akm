@@ -77,7 +77,7 @@ function fakeAccept() {
       schemaVersion: 1,
       ok: true,
       id: opts.id,
-      ref: "lesson:fake",
+      ref: "lessons/fake",
       assetPath: "/tmp/fake.md",
       proposal: { id: opts.id } as Proposal,
     }),
@@ -90,7 +90,7 @@ function fakeReject() {
       schemaVersion: 1,
       ok: true,
       id: opts.id,
-      ref: "lesson:fake",
+      ref: "lessons/fake",
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       proposal: { id: opts.id } as Proposal,
     }),
@@ -117,7 +117,7 @@ const VALID_EXTRACT = `---\ndescription: Use ripgrep before grep for speed\nwhen
 describe("Bug 1 — drain skips auto-rejected proposals", () => {
   test("drain does NOT reclassify a proposal stamped auto-rejected to auto-accepted", async () => {
     const stash = makeStashDir();
-    const proposal = seedProposal(stash, "lesson:drain-skip-test", VALID_EXTRACT);
+    const proposal = seedProposal(stash, "lessons/drain-skip-test", VALID_EXTRACT);
 
     // Stamp the proposal as auto-rejected (as the improve confidence gate would).
     recordGateDecision(stash, proposal.id, {
@@ -147,7 +147,7 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
 
   test("drain accepts normal pending extract proposal (no auto-rejected stamp)", async () => {
     const stash = makeStashDir();
-    const proposal = seedProposal(stash, "lesson:normal-drain-test", VALID_EXTRACT);
+    const proposal = seedProposal(stash, "lessons/normal-drain-test", VALID_EXTRACT);
 
     // No gateDecision stamp — drain should accept it normally.
     const acceptFn = fakeAccept();
@@ -163,14 +163,14 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
   test("drain skips auto-rejected and accepts clean proposal in same batch", async () => {
     const stash = makeStashDir();
 
-    const rejected = seedProposal(stash, "lesson:skip-me", VALID_EXTRACT);
+    const rejected = seedProposal(stash, "lessons/skip-me", VALID_EXTRACT);
     recordGateDecision(stash, rejected.id, {
       outcome: "auto-rejected",
       reason: "validation:truncated",
       gate: "improve:reflect",
     });
 
-    const clean = seedProposal(stash, "lesson:accept-me", VALID_EXTRACT);
+    const clean = seedProposal(stash, "lessons/accept-me", VALID_EXTRACT);
 
     const acceptFn = fakeAccept();
     const rejectFn = fakeReject();
@@ -188,7 +188,7 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
 
   test("an opted-in judgment runner never reopens an authoritative rejection", async () => {
     const stash = makeStashDir();
-    const proposal = seedProposal(stash, "lesson:judge-must-not-reopen", VALID_EXTRACT);
+    const proposal = seedProposal(stash, "lessons/judge-must-not-reopen", VALID_EXTRACT);
     recordGateDecision(stash, proposal.id, {
       outcome: "auto-rejected",
       reason: "validation:unsafe",
@@ -369,7 +369,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
     // Build a minimal proposal and validate.
     const proposal = {
       id: "test-pseudo-fm",
-      ref: "lesson:deploy-pipelines",
+      ref: "lessons/deploy-pipelines",
       status: "pending" as const,
       source: "extract",
       createdAt: new Date().toISOString(),
@@ -402,7 +402,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
 
     const proposal = {
       id: "test-double-fence",
-      ref: "lesson:repo-management",
+      ref: "lessons/repo-management",
       status: "pending" as const,
       source: "extract",
       createdAt: new Date().toISOString(),
@@ -430,7 +430,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
 
     const proposal = {
       id: "test-too-short",
-      ref: "lesson:short-desc",
+      ref: "lessons/short-desc",
       status: "pending" as const,
       source: "extract",
       createdAt: new Date().toISOString(),

@@ -194,7 +194,7 @@ function proposalsModuleHref(): string {
 describe("state.db is the canonical proposal store", () => {
   test("createProposal writes a row to the proposals table and no .akm/proposals tree", () => {
     const stash = makeStashDir();
-    const created = mustCreate(stash, "lesson:sqlite-canonical");
+    const created = mustCreate(stash, "lessons/sqlite-canonical");
 
     expect(countRows(stash, "pending")).toBe(1);
     const db = openStateDatabase(getStateDbPath());
@@ -222,7 +222,7 @@ describe("state.db is the canonical proposal store", () => {
     const lessonPath = path.join(stash, "lessons", "sqlite-cycle.md");
     fs.writeFileSync(lessonPath, `---\ndescription: Old\nwhen_to_use: Old\n---\n\nORIGINAL.\n`, "utf8");
 
-    const created = mustCreate(stash, "lesson:sqlite-cycle", "distill");
+    const created = mustCreate(stash, "lessons/sqlite-cycle", "distill");
 
     expect(listProposals(stash).map((p) => p.id)).toEqual([created.id]);
     expect(akmProposalShow({ stashDir: stash, id: created.id }).proposal.status).toBe("pending");
@@ -246,7 +246,7 @@ describe("state.db is the canonical proposal store", () => {
     const dbPath = path.join(makeTempDir("akm-prop-sql-db-"), "alt-state.db");
     const created = createProposal(
       stash,
-      { ref: "lesson:seam", source: "reflect", force: true, payload: { content: VALID_LESSON } },
+      { ref: "lessons/seam", source: "reflect", force: true, payload: { content: VALID_LESSON } },
       { dbPath },
     );
     if (isProposalSkipped(created)) throw new Error("unexpected skip");
@@ -260,7 +260,7 @@ describe("state.db is the canonical proposal store", () => {
   test("stash_dir partitions queues: proposals in one stash are invisible to another", () => {
     const stashA = makeStashDir();
     const stashB = makeStashDir();
-    const a = mustCreate(stashA, "lesson:partition");
+    const a = mustCreate(stashA, "lessons/partition");
 
     expect(listProposals(stashA).map((p) => p.id)).toEqual([a.id]);
     expect(listProposals(stashB)).toHaveLength(0);
@@ -270,8 +270,8 @@ describe("state.db is the canonical proposal store", () => {
 
   test("UUID-prefix resolution queries the pending queue and rejects ambiguity", () => {
     const stash = makeStashDir();
-    const a = mustCreate(stash, "lesson:prefix-a");
-    const b = mustCreate(stash, "lesson:prefix-b");
+    const a = mustCreate(stash, "lessons/prefix-a");
+    const b = mustCreate(stash, "lessons/prefix-b");
 
     expect(resolveProposalId(stash, a.id.slice(0, 12)).id).toBe(a.id);
 
@@ -352,7 +352,7 @@ describe("legacy filesystem proposals are imported on first store access", () =>
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const id = "33333333-3333-4333-8333-333333333333";
-    writeLegacyProposal(stash, legacyRecord(id, "lesson:legacy-revert", "accepted", { backup: "backup.md" }), {
+    writeLegacyProposal(stash, legacyRecord(id, "lessons/legacy-revert", "accepted", { backup: "backup.md" }), {
       archive: true,
       backupBody: "---\ndescription: Prior\nwhen_to_use: Prior\n---\n\nPRIOR BODY.\n",
     });
@@ -411,7 +411,7 @@ describe("legacy filesystem proposals are imported on first store access", () =>
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const id = "99999999-9999-4999-8999-999999999999";
-    writeLegacyProposal(stash, legacyRecord(id, "lesson:legacy-accept", "pending"));
+    writeLegacyProposal(stash, legacyRecord(id, "lessons/legacy-accept", "pending"));
 
     const result = await akmProposalAccept({ stashDir: stash, id, config });
     expect(result.ok).toBe(true);
@@ -431,7 +431,7 @@ describe("concurrent create + list safety (WAL)", () => {
     const reader = openStateDatabase(getStateDbPath());
     try {
       for (let i = 0; i < 5; i += 1) {
-        mustCreate(stash, `lesson:wal-${i}`);
+        mustCreate(stash, `lessons/wal-${i}`);
         const row = reader.prepare("SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ?").get(stash) as {
           c: number;
         };
@@ -445,7 +445,7 @@ describe("concurrent create + list safety (WAL)", () => {
 
   test("interleaved creates from parallel async callers all land exactly once", async () => {
     const stash = makeStashDir();
-    const refs = Array.from({ length: 10 }, (_, i) => `lesson:parallel-${i}`);
+    const refs = Array.from({ length: 10 }, (_, i) => `lessons/parallel-${i}`);
     await Promise.all(refs.map((ref) => Promise.resolve().then(() => mustCreate(stash, ref))));
     const listed = listProposals(stash);
     const expectedStored = Array.from({ length: 10 }, (_, i) => durableRef(stash, "lesson", `parallel-${i}`));
@@ -460,7 +460,7 @@ describe("concurrent create + list safety (WAL)", () => {
       const dbPath = path.join(makeTempDir("akm-prop-sql-concurrency-db-"), "state.db");
       openStateDatabase(dbPath).close();
 
-      const ref = "lesson:concurrent-duplicate";
+      const ref = "lessons/concurrent-duplicate";
       const source = "reflect";
       const workerA = startProposalWorker<Record<string, unknown>>({
         action: "create",
@@ -514,7 +514,7 @@ describe("concurrent create + list safety (WAL)", () => {
       openStateDatabase(dbPath).close();
       const created = createProposal(
         stash,
-        { ref: "lesson:mutation-race", source: "reflect", force: true, payload: { content: VALID_LESSON } },
+        { ref: "lessons/mutation-race", source: "reflect", force: true, payload: { content: VALID_LESSON } },
         { dbPath },
       );
       if (isProposalSkipped(created)) throw new Error("unexpected skip");
