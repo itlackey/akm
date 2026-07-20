@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type GateFeedback } from "../../../src/workflows/exec/step-work";
@@ -49,7 +49,7 @@ function seedRun(opts: {
   params?: Record<string, unknown>;
   steps: Array<{ id: string; title?: string; criteria?: string[] }>;
 }): void {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -66,7 +66,7 @@ function seedRun(opts: {
       ).run(RUN_ID, step.id, step.title ?? step.id, step.criteria ? JSON.stringify(step.criteria) : null, i);
     });
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -79,11 +79,11 @@ function usePlan(yamlText: string): () => Promise<WorkflowPlanGraph> {
 }
 
 function useFrozenPlan(frozen: WorkflowPlanGraph): () => Promise<WorkflowPlanGraph> {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     storeFrozenWorkflowPlan(db, RUN_ID, frozen);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
   return async () => frozen;
 }

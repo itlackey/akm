@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { buildWorkflowBrief } from "../../../src/workflows/exec/brief";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { reportWorkflowUnit } from "../../../src/workflows/exec/report";
@@ -67,11 +67,11 @@ function writeProgram(name: string, yamlText: string): void {
 
 /** Direct-SQL escape hatch for planting / tampering journal rows (crash sim). */
 function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>): void {
-  const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
+  const db = openStateDatabase(resolveStorageLocations().stateDb);
   try {
     db.prepare(sql).run(...params);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

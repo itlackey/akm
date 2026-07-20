@@ -10,9 +10,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { WorkflowRunStatus } from "../../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { buildWorkflowBrief } from "../../../src/workflows/exec/brief";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
@@ -36,7 +36,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "12345678-1234-4123-8123-123456789abc";
 
 function dbPath(): string {
-  return path.join(tmpDir, "workflow.db");
+  return path.join(tmpDir, "state.db");
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
@@ -77,7 +77,7 @@ function seedRun(opts: {
   units?: SeedUnit[];
   lease?: { holder: string; until: string };
 }): void {
-  const db = openWorkflowDatabase(dbPath());
+  const db = openStateDatabase(dbPath());
   try {
     const now = new Date().toISOString();
     const frozen = opts.plan === null ? null : (opts.plan ?? null);
@@ -150,7 +150,7 @@ function seedRun(opts: {
       );
     }
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

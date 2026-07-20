@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { formatWorkflowNextPlain, formatWorkflowStatusPlain } from "../../../src/output/text/helpers";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { CHECKIN_STALL_MS } from "../../../src/workflows/runtime/checkin";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 
@@ -25,7 +25,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "22222222-2222-4222-8222-222222222222";
 
 function seedStalledRun(dbPath: string): void {
-  const db = openWorkflowDatabase(dbPath);
+  const db = openStateDatabase(dbPath);
   try {
     const stale = new Date(Date.now() - CHECKIN_STALL_MS * 3).toISOString();
     db.prepare(
@@ -41,7 +41,7 @@ function seedStalledRun(dbPath: string): void {
        VALUES (?, 'step-1', 'Do the thing', 'instructions', NULL, 0, 'pending')`,
     ).run(RUN_ID);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -49,7 +49,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-checkin-surfacing-"));
   prevDataDir = process.env.AKM_DATA_DIR;
   process.env.AKM_DATA_DIR = tmpDir;
-  seedStalledRun(path.join(tmpDir, "workflow.db"));
+  seedStalledRun(path.join(tmpDir, "state.db"));
 });
 
 afterEach(() => {

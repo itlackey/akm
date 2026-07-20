@@ -9,20 +9,26 @@ import os from "node:os";
 import path from "node:path";
 import { runMigrations as runStateMigrations } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
+import { FROZEN_WORKFLOW_MIGRATIONS } from "../../src/migrate/legacy/workflow-migrations-bodies";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { migrationChecksum, runMigrations as runSqliteMigrations } from "../../src/storage/engines/sqlite-migrations";
-import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../../src/workflows/db";
+import { openLegacyWorkflowDb } from "../_helpers/legacy-workflow-db";
 
 /**
- * Characterization test for the two SQLite migration runners (state.db and
- * workflow.db). Written BEFORE the WS3a shared-runner extraction so the
- * observable contract is locked: applying each module's MIGRATIONS array to a
- * fresh DB must produce a byte-identical set of `schema_migrations` rows AND a
- * byte-identical final schema (the DDL in sqlite_master).
+ * Characterization test for the two SQLite migration runners (state.db and the
+ * pre-cutover workflow.db chain).
  *
- * This holds the runners' behaviour invariant through the extract-and-delegate
- * refactor — the shared runner with an optional bootstrap hook must reproduce
- * these exact snapshots.
+ * WI-8.3: `src/workflows/db.ts` is deleted; the workflow-runner half now targets
+ * the FROZEN migration bodies (`src/migrate/legacy/workflow-migrations-bodies.ts`)
+ * driven through the shared engine (`openLegacyWorkflowDb` = base schema +
+ * `runSqliteMigrations(FROZEN_WORKFLOW_MIGRATIONS)`) — the exact path
+ * `config-migrate.ts#runFrozenWorkflowRoll` uses at cutover time. Because the
+ * frozen bodies + base DDL are byte-identical to the deleted live ones, the
+ * produced schema/ledger snapshots are unchanged (the old-behaviour invariant is
+ * still locked, now against the frozen source).
+ *
+ * Applying each source's migrations to a fresh DB must produce a byte-identical
+ * set of `schema_migrations` rows AND a byte-identical final schema.
  */
 
 /**
@@ -134,7 +140,7 @@ describe("SQLite migration runner characterization", () => {
   });
 
   test("workflow.db: fresh-DB migration replay produces a stable schema + ledger", () => {
-    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    const db = openLegacyWorkflowDb(path.join(tmpDir, "workflow.db"));
     try {
       const snap = snapshotSchema(db);
 
@@ -166,10 +172,10 @@ describe("SQLite migration runner characterization", () => {
 
   test("workflow.db: runMigrations is idempotent (second run is a no-op)", () => {
     const dbPath = path.join(tmpDir, "workflow.db");
-    const db = openWorkflowDatabase(dbPath);
+    const db = openLegacyWorkflowDb(dbPath);
     try {
       const first = snapshotSchema(db);
-      runWorkflowMigrations(db);
+      runSqliteMigrations(db, FROZEN_WORKFLOW_MIGRATIONS);
       const second = snapshotSchema(db);
       expect(second).toEqual(first);
     } finally {
@@ -177,11 +183,12 @@ describe("SQLite migration runner characterization", () => {
     }
   });
 
-  test("workflow.db: pre-versioning DB (scope_key already present) is bootstrapped, not re-applied", () => {
+  test("workflow.db: pre-versioning DB (scope_key already present) is rejected — bootstrap retired", () => {
     // Simulate a database created before schema_migrations existed: the base
     // tables plus the scope_key column added ad-hoc, but NO schema_migrations
-    // ledger. The bootstrap hook must back-fill the 001 row instead of
-    // re-running the ALTER (which would fail with "duplicate column name").
+    // ledger. WI-8.3 retired the bootstrap back-fill (0.7-era DBs are out of the
+    // migrator FROM-state), so the frozen roll re-runs migration 001's ALTER and
+    // fails closed with "duplicate column name".
     const dbPath = path.join(tmpDir, "workflow-preversioning.db");
     const seed = new Database(dbPath);
     seed.exec(`
@@ -201,28 +208,7 @@ describe("SQLite migration runner characterization", () => {
     `);
     seed.close();
 
-    // Opening must not throw, and must record 001 as applied via bootstrap.
-    const db = openWorkflowDatabase(dbPath);
-    try {
-      const snap = snapshotSchema(db);
-      expect(snap.migrations).toEqual([
-        "001-add-scope-key",
-        "002-add-agent-identity",
-        "003-checkin-and-step-summary",
-        "004-workflow-run-units",
-        "005-unit-session-id",
-        "006-frozen-plan-and-lease",
-        "007-unit-last-checkin",
-        "008-unit-attempts",
-        "009-unit-claim",
-        "010-ir-v3-engine",
-      ]);
-      // The scope_key column must exist exactly once (bootstrap did not re-ALTER).
-      const cols = db.prepare<{ name: string }>("PRAGMA table_info(workflow_runs)").all();
-      expect(cols.filter((c) => c.name === "scope_key").length).toBe(1);
-    } finally {
-      db.close();
-    }
+    expect(() => openLegacyWorkflowDb(dbPath)).toThrow(/duplicate column|scope_key/i);
   });
 
   test("rejects an unknown future migration before applying local migrations", () => {

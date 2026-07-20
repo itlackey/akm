@@ -257,10 +257,6 @@ export function getMaintenanceBarrierPath(): string {
   return path.join(getDataDir(), "maintenance.barrier.lock");
 }
 
-export function getWorkflowDbPath(): string {
-  return path.join(getDataDir(), "workflow.db");
-}
-
 /** Path to the state.db file in $DATA. */
 export function getStateDbPathInDataDir(): string {
   return path.join(getDataDir(), "state.db");

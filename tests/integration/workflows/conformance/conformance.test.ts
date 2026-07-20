@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../../src/storage/repositories/workflow-runs-repository";
 import { cpuDerivedUnitConcurrency } from "../../../../src/workflows/concurrency-policy";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../../src/workflows/db";
 import { runWorkflowSteps } from "../../../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../../../src/workflows/ir/schema";
 import { frozenStepRows } from "../../../../src/workflows/runtime/plan-classifier";
@@ -62,7 +62,7 @@ function compileMarkdown(markdown: string): WorkflowPlanGraph {
 
 function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>): void {
   const steps = frozenStepRows(plan);
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -79,7 +79,7 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>): void
       ).run(RUN_ID, step.stepId, step.stepTitle, step.instructions, step.completionJson, step.sequenceIndex);
     });
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -88,11 +88,11 @@ const BACKENDS = [
   {
     name: "native",
     run: (plan: WorkflowPlanGraph) => {
-      const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+      const db = openStateDatabase(path.join(tmpDir, "state.db"));
       try {
         storeFrozenWorkflowPlan(db, RUN_ID, plan);
       } finally {
-        closeWorkflowDatabase(db);
+        db.close();
       }
       return runWorkflowSteps({
         target: RUN_ID,

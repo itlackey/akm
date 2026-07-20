@@ -13,7 +13,6 @@ import {
   getRegistryCacheDir,
   getRegistryIndexCacheDir,
   getTaskHistoryStateDir,
-  getWorkflowDbPath,
 } from "../../src/core/paths";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
@@ -401,13 +400,9 @@ describe("getDbPath", () => {
   });
 });
 
-describe("getWorkflowDbPath", () => {
-  test("returns workflow.db under data dir", () => {
-    process.env.XDG_DATA_HOME = "/data";
-    delete process.env.AKM_DATA_DIR;
-    expect(getWorkflowDbPath()).toBe(path.join("/data", "akm", "workflow.db"));
-  });
-});
+// getWorkflowDbPath removed in Chunk-8 WI-8.3 (workflow.db folded into state.db;
+// the physical path literal survives only in the migrator home,
+// src/migrate/legacy/legacy-paths.ts).
 
 // ── getLockfilePath / getLockfileLockPath ───────────────────────────────────
 

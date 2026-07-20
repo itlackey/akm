@@ -14,9 +14,10 @@
  * Covered open paths:
  *   - index.db:    openIndexDatabase() and openExistingDatabase() (src/indexer/db/db.ts)
  *   - state.db:    openStateDatabase()                       (src/core/state-db.ts)
- *   - workflow.db: openWorkflowDatabase()                    (src/workflows/db.ts)
- *     (previously set NO busy_timeout at all → 0 ms default, instant
- *     SQLITE_BUSY on any concurrent writer)
+ *
+ * (Chunk-8 WI-8.3: workflow.db is deleted; its rows moved into state.db, so the
+ * former openWorkflowDatabase() open path — which had set NO busy_timeout, an
+ * instant-SQLITE_BUSY hazard — is gone with it.)
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -31,7 +32,6 @@ import {
   openExistingDatabase,
   openIndexDatabase,
 } from "../../src/storage/repositories/index-connection";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 
 const EXPECTED_BUSY_TIMEOUT_MS = 30_000;
 
@@ -81,12 +81,6 @@ describe("#589: busy_timeout is 30 000 ms on every DB open path", () => {
   test("state.db: openStateDatabase()", () => {
     const db = openStateDatabase(makeTempDbPath("state.db"));
     openHandles.push(() => db.close());
-    expect(busyTimeoutOf(db)).toBe(EXPECTED_BUSY_TIMEOUT_MS);
-  });
-
-  test("workflow.db: openWorkflowDatabase()", () => {
-    const db = openWorkflowDatabase(makeTempDbPath("workflow.db"));
-    openHandles.push(() => closeWorkflowDatabase(db));
     expect(busyTimeoutOf(db)).toBe(EXPECTED_BUSY_TIMEOUT_MS);
   });
 });

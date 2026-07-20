@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { formatWorkflowStatusPlain } from "../../../src/output/text/helpers";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 
 /**
@@ -25,7 +25,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "44444444-4444-4444-8444-444444444444";
 
 function seedRun(dbPath: string): void {
-  const db = openWorkflowDatabase(dbPath);
+  const db = openStateDatabase(dbPath);
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -35,7 +35,7 @@ function seedRun(dbPath: string): void {
        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'work', ?, ?)`,
     ).run(RUN_ID, now, now);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -43,7 +43,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-status-units-"));
   prevDataDir = process.env.AKM_DATA_DIR;
   process.env.AKM_DATA_DIR = tmpDir;
-  seedRun(path.join(tmpDir, "workflow.db"));
+  seedRun(path.join(tmpDir, "state.db"));
 });
 
 afterEach(() => {

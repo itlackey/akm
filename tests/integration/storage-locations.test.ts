@@ -11,7 +11,6 @@ import {
   getDefaultStashDir,
   getLockfileLockPath,
   getLockfilePath,
-  getWorkflowDbPath,
 } from "../../src/core/paths";
 import { getStateDbPath } from "../../src/core/state-db";
 import { resolveStorageLocations } from "../../src/storage/locations";
@@ -50,7 +49,6 @@ describe("resolveStorageLocations", () => {
 
       expect(locations.indexDb).toBe(getDbPath());
       expect(locations.stateDb).toBe(getStateDbPath());
-      expect(locations.workflowDb).toBe(getWorkflowDbPath());
       expect(locations.lockfile).toBe(getLockfilePath());
       expect(locations.lockfileSentinel).toBe(getLockfileLockPath());
       expect(locations.dataDir).toBe(getDataDir());
@@ -67,7 +65,6 @@ describe("resolveStorageLocations", () => {
       expect(locations.dataDir).toBe(getDataDir());
       expect(locations.indexDb).toBe(getDbPath());
       expect(locations.stateDb).toBe(getStateDbPath());
-      expect(locations.workflowDb).toBe(getWorkflowDbPath());
       expect(locations.lockfile).toBe(getLockfilePath());
       expect(locations.lockfileSentinel).toBe(getLockfileLockPath());
     });
@@ -77,17 +74,7 @@ describe("resolveStorageLocations", () => {
     await withEnv(isolatedEnv, () => {
       const locations = resolveStorageLocations();
       expect(Object.keys(locations).sort()).toEqual(
-        [
-          "cacheDir",
-          "configDir",
-          "dataDir",
-          "indexDb",
-          "lockfile",
-          "lockfileSentinel",
-          "stashDir",
-          "stateDb",
-          "workflowDb",
-        ].sort(),
+        ["cacheDir", "configDir", "dataDir", "indexDb", "lockfile", "lockfileSentinel", "stashDir", "stateDb"].sort(),
       );
     });
   });

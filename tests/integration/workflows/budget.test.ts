@@ -5,9 +5,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
@@ -56,11 +56,11 @@ function writeProgram(name: string, yamlText: string): void {
 
 /** Direct-SQL escape hatch for planting journaled token spend. */
 function execOnWorkflowDb(sql: string, ...params: Array<string | number>): void {
-  const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
+  const db = openStateDatabase(resolveStorageLocations().stateDb);
   try {
     db.prepare(sql).run(...params);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

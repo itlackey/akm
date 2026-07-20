@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import {
   WorkflowRunsRepository,
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 
 /**
  * Characterization tests for WorkflowRunsRepository (WS5).
@@ -31,7 +31,7 @@ const RUN_A = "aaaaaaaa-1111-4111-8111-111111111111";
 const RUN_B = "bbbbbbbb-2222-4222-8222-222222222222";
 
 function seed(): void {
-  const db = openWorkflowDatabase(dbPath);
+  const db = openStateDatabase(dbPath);
   try {
     db.prepare(
       `INSERT INTO workflow_runs
@@ -58,7 +58,7 @@ function seed(): void {
        VALUES (?, 'step-1', 'First', 'do first', ?, 0, 'completed', 'all good')`,
     ).run(RUN_A, JSON.stringify(["done"]));
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -66,7 +66,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wf-repo-"));
   prevDataDir = process.env.AKM_DATA_DIR;
   process.env.AKM_DATA_DIR = tmpDir;
-  dbPath = path.join(tmpDir, "workflow.db");
+  dbPath = path.join(tmpDir, "state.db");
   seed();
 });
 
@@ -137,7 +137,7 @@ describe("WorkflowRunsRepository reads", () => {
 
   test("listRuns activeOnly excludes a BLOCKED run; plain list keeps it (owner finding 1)", async () => {
     const RUN_BLOCKED = "cccccccc-3333-4333-8333-333333333333";
-    const db = openWorkflowDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       db.prepare(
         `INSERT INTO workflow_runs
@@ -147,7 +147,7 @@ describe("WorkflowRunsRepository reads", () => {
                  '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
       ).run(RUN_BLOCKED);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
 
     // --active means EXACTLY status='active' — a blocked run is NOT executable
@@ -167,7 +167,7 @@ describe("WorkflowRunsRepository reads", () => {
   test("scope guards split active-only from active-or-blocked (per-call-site semantics)", async () => {
     const RUN_BLOCKED = "dddddddd-4444-4444-8444-444444444444";
     // A scope whose ONLY run is blocked — isolates the two guards' divergent intent.
-    const db = openWorkflowDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     try {
       db.prepare(
         `INSERT INTO workflow_runs
@@ -177,7 +177,7 @@ describe("WorkflowRunsRepository reads", () => {
                  '2026-01-05T00:00:00.000Z', '2026-01-06T00:00:00.000Z', NULL)`,
       ).run(RUN_BLOCKED);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
 
     // The START guard (findActiveRunForScope, status='active' only): a blocked
@@ -238,9 +238,9 @@ describe("WorkflowRunsRepository connection lifetime", () => {
       expect(repo).toBeInstanceOf(WorkflowRunsRepository);
     });
     // Re-open and confirm the helper's connection is independent / reusable.
-    const db = openWorkflowDatabase(dbPath);
+    const db = openStateDatabase(dbPath);
     seen.push(db);
-    closeWorkflowDatabase(db);
+    db.close();
     expect(seen.length).toBe(1);
   });
 });

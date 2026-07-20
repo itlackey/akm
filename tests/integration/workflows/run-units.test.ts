@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
 
 /**
@@ -22,7 +22,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 
 function seedRun(dbPath: string): void {
-  const db = openWorkflowDatabase(dbPath);
+  const db = openStateDatabase(dbPath);
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -32,7 +32,7 @@ function seedRun(dbPath: string): void {
        VALUES (?, 'workflow:demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', 'step-1', ?, ?)`,
     ).run(RUN_ID, now, now);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -40,7 +40,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-run-units-"));
   prevDataDir = process.env.AKM_DATA_DIR;
   process.env.AKM_DATA_DIR = tmpDir;
-  seedRun(path.join(tmpDir, "workflow.db"));
+  seedRun(path.join(tmpDir, "state.db"));
 });
 
 afterEach(() => {
@@ -243,13 +243,13 @@ describe("workflow_run_units persistence (migration 004)", () => {
         startedAt: new Date().toISOString(),
       });
     });
-    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    const db = openStateDatabase(path.join(tmpDir, "state.db"));
     try {
       db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(RUN_ID);
       const rows = db.prepare("SELECT * FROM workflow_run_units WHERE run_id = ?").all(RUN_ID);
       expect(rows).toHaveLength(0);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
   });
 });

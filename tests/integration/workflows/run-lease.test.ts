@@ -5,12 +5,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import {
   WorkflowRunsRepository,
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { reportWorkflowUnit } from "../../../src/workflows/exec/report";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
@@ -86,11 +86,11 @@ async function plantLease(runId: string, holder: string, until: string): Promise
 
 /** Direct-SQL escape hatch — tamper the frozen plan / run state a run row. */
 function execOnWorkflowDb(sql: string, ...params: Array<string | number | null>): void {
-  const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
+  const db = openStateDatabase(resolveStorageLocations().stateDb);
   try {
     db.prepare(sql).run(...params);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

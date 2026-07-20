@@ -38,7 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Database } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
-import { openWorkflowDatabase } from "../../../src/workflows/db";
+import { createLegacyWorkflowDb } from "../../_helpers/legacy-workflow-db";
 import { FIXTURE_BASE_EPOCH_MS } from "./fixed-values";
 import {
   insertAssetOutcomeRow,
@@ -112,12 +112,12 @@ export function buildRcTrainFromState(dir: string): void {
     stateDb.close();
   }
 
-  // Created the real way src/workflows/db.ts creates workflow.db: the base
-  // schema + its own migration chain via openWorkflowDatabase. No rows are
-  // seeded — "workflow.db present" (anchors.md E.4) only requires the file
-  // and its schema to exist pre-cutover, not populated run history.
-  const workflowDb = openWorkflowDatabase(workflowDbPath);
-  workflowDb.close();
+  // A faithful pre-cutover workflow.db: base schema + the workflow migration
+  // chain, rolled from the FROZEN bodies (src/workflows/db.ts is deleted in
+  // WI-8.3; the frozen copy is byte-identical). No rows are seeded —
+  // "workflow.db present" (anchors.md E.4) only requires the file and its schema
+  // to exist pre-cutover, not populated run history.
+  createLegacyWorkflowDb(workflowDbPath);
 }
 
 function seedLiveState(db: Database): void {

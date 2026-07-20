@@ -6,11 +6,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  acquireMaintenanceActivity,
-  acquireMaintenanceBarrier,
-  withMaintenanceStartBarrier,
-} from "../../src/core/maintenance-barrier";
+import { acquireMaintenanceActivity, acquireMaintenanceBarrier } from "../../src/core/maintenance-barrier";
 import {
   createMigrationBackup,
   getMigrationBackupDir,
@@ -23,12 +19,12 @@ import {
   getDbPath,
   getLockfileLockPath,
   getStateDbPathInDataDir,
-  getWorkflowDbPath,
 } from "../../src/core/paths";
 import { runMigrations as runStateMigrations } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
 import { acquireIndexWriterLease } from "../../src/indexer/index-writer-lock";
-import { openWorkflowDatabase, runMigrations as runWorkflowMigrations } from "../../src/workflows/db";
+import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
+import { openLegacyWorkflowDb } from "../_helpers/legacy-workflow-db";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 let cleanup: Cleanup | undefined;
@@ -80,14 +76,14 @@ describe("0.9 migration backup", () => {
     state.exec("UPDATE durable SET value='after'");
     state.close();
     fs.writeFileSync(getConfigPath(), '{"configVersion":"0.9.0"}\n');
-    const workflow = new Database(getWorkflowDbPath());
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec("CREATE TABLE should_be_removed(value TEXT)");
     workflow.close();
 
     expect(() => restoreMigrationBackup(false)).toThrow(/--confirm/);
     restoreMigrationBackup(true, result.manifest.runId);
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(configBefore);
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
     const restored = new Database(getStateDbPathInDataDir(), { readonly: true });
     expect((restored.query("SELECT value FROM durable").get() as { value: string }).value).toBe("before");
     restored.close();
@@ -147,8 +143,8 @@ describe("0.9 migration backup", () => {
 
   test("refuses restore while a workflow engine lease is live", () => {
     createMigrationBackup();
-    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
-    const workflow = new Database(getWorkflowDbPath());
+    fs.mkdirSync(path.dirname(getLegacyWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec(`
       CREATE TABLE workflow_runs(
         id TEXT PRIMARY KEY,
@@ -163,17 +159,17 @@ describe("0.9 migration backup", () => {
     workflow.close();
 
     expect(() => restoreMigrationBackup(true)).toThrow(/run=run-live/);
-    const update = new Database(getWorkflowDbPath());
+    const update = new Database(getLegacyWorkflowDbPath());
     update.prepare("UPDATE workflow_runs SET engine_lease_until = ?").run(new Date(now - 60_000).toISOString());
     update.close();
     restoreMigrationBackup(true);
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
   });
 
   test("refuses restore while an external workflow unit claim is live", () => {
     createMigrationBackup();
-    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
-    const workflow = new Database(getWorkflowDbPath());
+    fs.mkdirSync(path.dirname(getLegacyWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec(`
       CREATE TABLE workflow_run_units(
         run_id TEXT,
@@ -193,8 +189,8 @@ describe("0.9 migration backup", () => {
 
   test("workflow blocker reporting samples at most 100 active rows", () => {
     createMigrationBackup();
-    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
-    const workflow = new Database(getWorkflowDbPath());
+    fs.mkdirSync(path.dirname(getLegacyWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec(`
       CREATE TABLE workflow_runs(
         id TEXT PRIMARY KEY,
@@ -220,8 +216,8 @@ describe("0.9 migration backup", () => {
 
   test("workflow blocker diagnostics truncate oversized fields and control characters by bytes", () => {
     createMigrationBackup();
-    fs.mkdirSync(path.dirname(getWorkflowDbPath()), { recursive: true });
-    const workflow = new Database(getWorkflowDbPath());
+    fs.mkdirSync(path.dirname(getLegacyWorkflowDbPath()), { recursive: true });
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec(`
       CREATE TABLE workflow_runs(
         id TEXT PRIMARY KEY,
@@ -305,25 +301,11 @@ describe("0.9 migration backup", () => {
     restoreMigrationBackup(true);
   });
 
-  test("restore refuses for the full lifetime of a workflow.db handle", () => {
-    createMigrationBackup();
-    const workflow = openWorkflowDatabase();
-    try {
-      workflow.prepare("SELECT COUNT(*) AS count FROM workflow_runs").get();
-      expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*workflow-db/);
-    } finally {
-      workflow.close();
-    }
-    restoreMigrationBackup(true);
-  });
-
-  test("a canonical workflow.db handle can register inside its owning maintenance barrier", () => {
-    createMigrationBackup();
-    withMaintenanceStartBarrier(() => {
-      const workflow = openWorkflowDatabase();
-      workflow.close();
-    });
-  });
+  // Chunk-8 WI-8.3: workflow.db no longer has a runtime opener (openWorkflowDatabase
+  // is deleted; the workflow tables live in state.db). The canonical-handle
+  // maintenance-activity blocking that these two tests pinned is now the "state-db"
+  // activity, covered by the state.db handle test above and by
+  // workflow-db-maintenance.test.ts.
 
   test("canonical database opens capture both historical databases before migrations 017 and 010", () => {
     seedLegacyConfig();
@@ -371,7 +353,7 @@ describe("0.9 migration backup", () => {
     }
     state.close();
 
-    const workflow = new Database(getWorkflowDbPath());
+    const workflow = new Database(getLegacyWorkflowDbPath());
     workflow.exec(`
       CREATE TABLE workflow_runs(id TEXT PRIMARY KEY, workflow_ref TEXT, status TEXT, scope_key TEXT);
       CREATE TABLE workflow_run_steps(run_id TEXT, step_id TEXT, sequence_index INTEGER);
@@ -398,9 +380,10 @@ describe("0.9 migration backup", () => {
     const stateToMigrate = new Database(getStateDbPathInDataDir());
     runStateMigrations(stateToMigrate as never);
     stateToMigrate.close();
-    const workflowToMigrate = new Database(getWorkflowDbPath());
-    runWorkflowMigrations(workflowToMigrate as never);
-    workflowToMigrate.close();
+    // Roll the pre-cutover workflow.db to its final ledger (010) via the frozen
+    // bodies — the way config-migrate.ts#runFrozenWorkflowRoll does it now that
+    // src/workflows/db.ts is deleted.
+    openLegacyWorkflowDb(getLegacyWorkflowDbPath()).close();
 
     const stateBackup = new Database(path.join(backup.path, "state.db"), { readonly: true });
     const workflowBackup = new Database(path.join(backup.path, "workflow.db"), { readonly: true });
@@ -411,7 +394,7 @@ describe("0.9 migration backup", () => {
     workflowBackup.close();
 
     const migratedState = new Database(getStateDbPathInDataDir(), { readonly: true });
-    const migratedWorkflow = new Database(getWorkflowDbPath(), { readonly: true });
+    const migratedWorkflow = new Database(getLegacyWorkflowDbPath(), { readonly: true });
     expect(hasColumn(migratedState, "improve_runs", "strategy")).toBe(true);
     expect(hasColumn(migratedWorkflow, "workflow_runs", "plan_ir_version")).toBe(true);
     expect(hasColumn(migratedWorkflow, "workflow_run_units", "engine")).toBe(true);

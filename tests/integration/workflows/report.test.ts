@@ -10,9 +10,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireMaintenanceBarrier } from "../../../src/core/maintenance-barrier";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { WorkflowRunStatus } from "../../../src/sources/types";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { buildWorkflowBrief } from "../../../src/workflows/exec/brief";
 import { normalizeFailureReason, reportWorkflowUnit, settleWorkflowSpine } from "../../../src/workflows/exec/report";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
@@ -43,7 +43,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "abcdef01-2345-4678-8abc-def012345678";
 
 function dbPath(): string {
-  return path.join(tmpDir, "workflow.db");
+  return path.join(tmpDir, "state.db");
 }
 
 function plan(yamlText: string): WorkflowPlanGraph {
@@ -83,7 +83,7 @@ function seedRun(opts: {
   units?: SeedUnit[];
   lease?: { holder: string; until: string };
 }): void {
-  const db = openWorkflowDatabase(dbPath());
+  const db = openStateDatabase(dbPath());
   try {
     const now = new Date().toISOString();
     const planJson = canonicalPlanJson(opts.plan);
@@ -155,7 +155,7 @@ function seedRun(opts: {
       );
     }
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

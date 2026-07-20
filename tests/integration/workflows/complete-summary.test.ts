@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -40,7 +40,7 @@ steps:
 `);
 
 function seedRun(dbPath: string): void {
-  const db = openWorkflowDatabase(dbPath);
+  const db = openStateDatabase(dbPath);
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -56,7 +56,7 @@ function seedRun(dbPath: string): void {
     ).run(RUN_ID, JSON.stringify(["Thing is done", "Tests pass"]));
     storeFrozenWorkflowPlan(db, RUN_ID, PLAN);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -64,7 +64,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-complete-summary-"));
   prevDataDir = process.env.AKM_DATA_DIR;
   process.env.AKM_DATA_DIR = tmpDir;
-  seedRun(path.join(tmpDir, "workflow.db"));
+  seedRun(path.join(tmpDir, "state.db"));
 });
 
 afterEach(() => {
@@ -144,12 +144,12 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
 
   test("getNextWorkflowStep surfaces a continue directive when the run is stalled", async () => {
     // Back-date updated_at + checkin_armed_at far enough to exceed the stall window.
-    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    const db = openStateDatabase(path.join(tmpDir, "state.db"));
     try {
       const old = new Date(Date.now() - 10 * 60_000).toISOString();
       db.prepare("UPDATE workflow_runs SET updated_at = ?, checkin_armed_at = ? WHERE id = ?").run(old, old, RUN_ID);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
     const next = await getNextWorkflowStep(RUN_ID);
     expect(next.checkin?.signal).toBe("continue");

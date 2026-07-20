@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { openWorkflowDatabase } from "../../../src/workflows/db";
 
 const [mode, readyPath, releasePath] = process.argv.slice(2);
 
@@ -16,7 +16,7 @@ function waitForRelease(): void {
 }
 
 if (mode === "direct") {
-  const db = openWorkflowDatabase();
+  const db = openStateDatabase();
   try {
     db.prepare("SELECT COUNT(*) AS count FROM workflow_runs").get();
     waitForRelease();

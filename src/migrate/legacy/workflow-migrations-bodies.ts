@@ -59,14 +59,38 @@ export const FROZEN_WORKFLOW_BASE_SCHEMA_DDL =
  * workflow.db.
  */
 export const FROZEN_WORKFLOW_MIGRATIONS: readonly Migration[] = [
-  { id: "001-add-scope-key", up: "\n      ALTER TABLE workflow_runs ADD COLUMN scope_key TEXT;\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status\n        ON workflow_runs(scope_key, workflow_ref, status);\n    " },
-  { id: "002-add-agent-identity", up: "\n      ALTER TABLE workflow_runs ADD COLUMN agent_harness TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN agent_session_id TEXT;\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session\n        ON workflow_runs(agent_harness, agent_session_id);\n    " },
-  { id: "003-checkin-and-step-summary", up: "\n      ALTER TABLE workflow_runs ADD COLUMN checkin_armed_at TEXT;\n      ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;\n    " },
-  { id: "004-workflow-run-units", up: "\n      CREATE TABLE IF NOT EXISTS workflow_run_units (\n        run_id         TEXT NOT NULL,\n        unit_id        TEXT NOT NULL,\n        step_id        TEXT,\n        node_id        TEXT NOT NULL,\n        parent_unit_id TEXT,\n        phase          TEXT,\n        runner         TEXT,\n        model          TEXT,\n        status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),\n        input_hash     TEXT,\n        result_json    TEXT,\n        tokens         INTEGER,\n        failure_reason TEXT,\n        worktree_path  TEXT,\n        started_at     TEXT,\n        finished_at    TEXT,\n        PRIMARY KEY (run_id, unit_id),\n        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE\n      );\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step\n        ON workflow_run_units(run_id, step_id);\n    " },
+  {
+    id: "001-add-scope-key",
+    up: "\n      ALTER TABLE workflow_runs ADD COLUMN scope_key TEXT;\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status\n        ON workflow_runs(scope_key, workflow_ref, status);\n    ",
+  },
+  {
+    id: "002-add-agent-identity",
+    up: "\n      ALTER TABLE workflow_runs ADD COLUMN agent_harness TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN agent_session_id TEXT;\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session\n        ON workflow_runs(agent_harness, agent_session_id);\n    ",
+  },
+  {
+    id: "003-checkin-and-step-summary",
+    up: "\n      ALTER TABLE workflow_runs ADD COLUMN checkin_armed_at TEXT;\n      ALTER TABLE workflow_run_steps ADD COLUMN summary TEXT;\n    ",
+  },
+  {
+    id: "004-workflow-run-units",
+    up: "\n      CREATE TABLE IF NOT EXISTS workflow_run_units (\n        run_id         TEXT NOT NULL,\n        unit_id        TEXT NOT NULL,\n        step_id        TEXT,\n        node_id        TEXT NOT NULL,\n        parent_unit_id TEXT,\n        phase          TEXT,\n        runner         TEXT,\n        model          TEXT,\n        status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),\n        input_hash     TEXT,\n        result_json    TEXT,\n        tokens         INTEGER,\n        failure_reason TEXT,\n        worktree_path  TEXT,\n        started_at     TEXT,\n        finished_at    TEXT,\n        PRIMARY KEY (run_id, unit_id),\n        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE\n      );\n\n      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step\n        ON workflow_run_units(run_id, step_id);\n    ",
+  },
   { id: "005-unit-session-id", up: "\n      ALTER TABLE workflow_run_units ADD COLUMN session_id TEXT;\n    " },
-  { id: "006-frozen-plan-and-lease", up: "\n      ALTER TABLE workflow_runs ADD COLUMN plan_json TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN plan_hash TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN engine_lease_until TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN engine_lease_holder TEXT;\n    " },
+  {
+    id: "006-frozen-plan-and-lease",
+    up: "\n      ALTER TABLE workflow_runs ADD COLUMN plan_json TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN plan_hash TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN engine_lease_until TEXT;\n      ALTER TABLE workflow_runs ADD COLUMN engine_lease_holder TEXT;\n    ",
+  },
   { id: "007-unit-last-checkin", up: "\n      ALTER TABLE workflow_run_units ADD COLUMN last_checkin_at TEXT;\n    " },
-  { id: "008-unit-attempts", up: "\n      ALTER TABLE workflow_run_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;\n    " },
-  { id: "009-unit-claim", up: "\n      ALTER TABLE workflow_run_units ADD COLUMN claim_holder TEXT;\n      ALTER TABLE workflow_run_units ADD COLUMN claim_expires_at TEXT;\n    " },
-  { id: "010-ir-v3-engine", up: "\n      ALTER TABLE workflow_runs ADD COLUMN plan_ir_version INTEGER;\n      ALTER TABLE workflow_run_units ADD COLUMN engine TEXT;\n    " },
+  {
+    id: "008-unit-attempts",
+    up: "\n      ALTER TABLE workflow_run_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1;\n    ",
+  },
+  {
+    id: "009-unit-claim",
+    up: "\n      ALTER TABLE workflow_run_units ADD COLUMN claim_holder TEXT;\n      ALTER TABLE workflow_run_units ADD COLUMN claim_expires_at TEXT;\n    ",
+  },
+  {
+    id: "010-ir-v3-engine",
+    up: "\n      ALTER TABLE workflow_runs ADD COLUMN plan_ir_version INTEGER;\n      ALTER TABLE workflow_run_units ADD COLUMN engine TEXT;\n    ",
+  },
 ];

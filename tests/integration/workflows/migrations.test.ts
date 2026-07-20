@@ -3,19 +3,26 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { FROZEN_WORKFLOW_MIGRATIONS } from "../../../src/migrate/legacy/workflow-migrations-bodies";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
-import { closeWorkflowDatabase, openWorkflowDatabase, runMigrations } from "../../../src/workflows/db";
+import { runMigrations as runSqliteMigrations } from "../../../src/storage/engines/sqlite-migrations";
+import { openLegacyWorkflowDb } from "../../_helpers/legacy-workflow-db";
 
 /**
- * Tests for the workflow.db migration framework.
+ * Tests for the PRE-CUTOVER workflow.db migration chain (Chunk-8 WI-8.3).
  *
- * Covers:
- *  - Fresh DB: schema_migrations table is created and the scope_key migration
- *    is applied exactly once.
- *  - Pre-versioning DB (scope_key column already exists, no schema_migrations
- *    table): the runner bootstraps a schema_migrations row without re-applying
- *    the ALTER.
- *  - Idempotency: a second open does not add another schema_migrations row.
+ * `src/workflows/db.ts` (`openWorkflowDatabase` / live `WORKFLOW_MIGRATIONS`) is
+ * deleted; the migration BODIES survive frozen in
+ * `src/migrate/legacy/workflow-migrations-bodies.ts` and are rolled through the
+ * shared engine by `config-migrate.ts#runFrozenWorkflowRoll` at cutover time.
+ * `openLegacyWorkflowDb` (test helper) drives that same base-schema + frozen
+ * migration chain. Covers:
+ *  - Fresh DB: schema_migrations table is created and every frozen migration is
+ *    applied exactly once, materialising all columns.
+ *  - Pre-versioning DB (scope_key column present, no schema_migrations): the
+ *    old bootstrap back-fill is RETIRED (0.7-era DBs are out of the migrator
+ *    FROM-state), so the roll now FAILS CLOSED instead of bootstrapping.
+ *  - Idempotency: a second roll adds no schema_migrations row.
  *  - Transactional safety: a failing migration leaves schema_migrations
  *    unchanged.
  */
@@ -74,9 +81,9 @@ function hasColumn(db: AkmDatabase, table: string, column: string): boolean {
   return rows.some((r) => r.name === column);
 }
 
-describe("workflow.db migrations", () => {
+describe("workflow.db migrations (frozen pre-cutover chain)", () => {
   test("fresh DB creates schema_migrations and applies scope-key migration exactly once", () => {
-    const db = openWorkflowDatabase(dbPath);
+    const db = openLegacyWorkflowDb(dbPath);
     try {
       // schema_migrations table must exist
       const tableInfo = db
@@ -118,15 +125,19 @@ describe("workflow.db migrations", () => {
       const applied = listAppliedMigrations(db);
       expect(applied).toEqual(ALL_MIGRATION_IDS);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
   });
 
-  test("pre-versioning DB with scope_key column already present is bootstrapped, not re-migrated", () => {
-    // Simulate a workflow.db created by the pre-versioning code: the legacy
-    // schema had no scope_key column initially and the ad-hoc check appended
-    // it via ALTER TABLE. The resulting DB has the column but NO
-    // schema_migrations table.
+  test("pre-versioning DB (scope_key present, no ledger) is rejected — bootstrap retired", () => {
+    // Simulate a workflow.db created by the 0.7-era pre-versioning code: the
+    // legacy schema had no scope_key column initially and the ad-hoc check
+    // appended it via ALTER TABLE. The resulting DB has the column but NO
+    // schema_migrations table. WI-8.3 retired the bootstrap back-fill; such DBs
+    // are out of the migrator FROM-state, so the frozen roll fails closed
+    // (migration 001's ALTER ADD scope_key hits "duplicate column name" — the
+    // clean operator message lives in config-migrate.ts#runFrozenWorkflowRoll's
+    // pre-versioning guard).
     const legacy = new Database(dbPath);
     legacy.exec("PRAGMA journal_mode = WAL");
     legacy.exec("PRAGMA foreign_keys = ON");
@@ -182,46 +193,33 @@ describe("workflow.db migrations", () => {
       );
     legacy.close();
 
-    // Re-open via the new code path: migrations should bootstrap, not
-    // re-apply the ALTER (which would fail with duplicate column name).
-    const db = openWorkflowDatabase(dbPath);
-    try {
-      const applied = listAppliedMigrations(db);
-      expect(applied).toEqual(ALL_MIGRATION_IDS);
-
-      // The legacy row must still be there with its scope_key intact.
-      const row = db.prepare("SELECT id, scope_key FROM workflow_runs WHERE id = 'legacy-run-1'").get() as
-        | { id: string; scope_key: string }
-        | undefined;
-      expect(row?.id).toBe("legacy-run-1");
-      expect(row?.scope_key).toBe("dir:v1:legacy-scope");
-    } finally {
-      closeWorkflowDatabase(db);
-    }
+    // The frozen roll re-applies the ALTER (no bootstrap back-fill), which fails
+    // with "duplicate column name" — the fail-closed rejection.
+    expect(() => openLegacyWorkflowDb(dbPath)).toThrow(/duplicate column|scope_key/i);
   });
 
   test("re-running migrations is idempotent — row count stays 1", () => {
-    const db1 = openWorkflowDatabase(dbPath);
-    closeWorkflowDatabase(db1);
+    const db1 = openLegacyWorkflowDb(dbPath);
+    db1.close();
 
-    const db2 = openWorkflowDatabase(dbPath);
+    const db2 = openLegacyWorkflowDb(dbPath);
     try {
       const applied = listAppliedMigrations(db2);
       expect(applied).toEqual(ALL_MIGRATION_IDS);
 
       // Explicit re-run on the same connection is also a no-op.
-      runMigrations(db2);
-      runMigrations(db2);
+      runSqliteMigrations(db2, FROZEN_WORKFLOW_MIGRATIONS);
+      runSqliteMigrations(db2, FROZEN_WORKFLOW_MIGRATIONS);
       const afterReRun = listAppliedMigrations(db2);
       expect(afterReRun).toEqual(ALL_MIGRATION_IDS);
     } finally {
-      closeWorkflowDatabase(db2);
+      db2.close();
     }
   });
 
   test("failed migration leaves schema_migrations unchanged (transaction rollback)", () => {
     // Open once so the scope-key migration is recorded.
-    const db = openWorkflowDatabase(dbPath);
+    const db = openLegacyWorkflowDb(dbPath);
     try {
       const before = listAppliedMigrations(db);
       expect(before).toEqual(ALL_MIGRATION_IDS);
@@ -245,7 +243,7 @@ describe("workflow.db migrations", () => {
         .get();
       expect(stillExists ?? undefined).toBeUndefined();
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
   });
 });

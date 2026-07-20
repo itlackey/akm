@@ -23,11 +23,12 @@ import {
   verifyMigrationBackup,
 } from "../../src/core/migration-backup";
 import { _setAfterPendingOperationCheckHookForTests } from "../../src/core/migration-operation";
-import { getConfigPath, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
+import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
-import { openWorkflowDatabase } from "../../src/workflows/db";
+import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { runCliCapture } from "../_helpers/cli";
+import { createLegacyWorkflowDb } from "../_helpers/legacy-workflow-db";
 import {
   type Cleanup,
   sandboxHome,
@@ -126,7 +127,7 @@ function seedPreCutoverState(value = "before"): void {
 }
 
 function seedPreCutoverWorkflow(): void {
-  const db = new Database(getWorkflowDbPath());
+  const db = new Database(getLegacyWorkflowDbPath());
   db.exec(`
     CREATE TABLE workflow_runs(id TEXT PRIMARY KEY, workflow_ref TEXT, status TEXT, scope_key TEXT);
     CREATE TABLE workflow_run_steps(run_id TEXT, step_id TEXT, sequence_index INTEGER);
@@ -137,7 +138,7 @@ function seedPreCutoverWorkflow(): void {
 }
 
 function seedFailingPreCutoverWorkflow(): void {
-  const db = new Database(getWorkflowDbPath());
+  const db = new Database(getLegacyWorkflowDbPath());
   db.exec(`
     CREATE TABLE workflow_runs(id TEXT PRIMARY KEY, workflow_ref TEXT, status TEXT, scope_key TEXT);
     CREATE TABLE workflow_run_steps(run_id TEXT, step_id TEXT, sequence_index INTEGER);
@@ -174,7 +175,7 @@ function restoreJournalEntries(
   const destinations: Record<string, string> = {
     "config.json": getConfigPath(),
     "state.db": getStateDbPathInDataDir(),
-    "workflow.db": getWorkflowDbPath(),
+    "workflow.db": getLegacyWorkflowDbPath(),
     // Manifest v3 (chunk-8 WI-8.1) adds the pre-rescue index.db artifact; the
     // journal's entry set must exactly match the source manifest's artifact set.
     ...(backup.manifest.artifacts["index.db"] ? { "index.db": getDbPath() } : {}),
@@ -337,10 +338,10 @@ describe("migration lifecycle regressions", () => {
 
   test("current config writes and current canonical database opens do not require a historical bundle", () => {
     writeConfig("0.9.0");
+    // The workflow tables live in state.db post-cutover, so a single canonical
+    // state.db open covers the former state.db + workflow.db pair.
     const state = openStateDatabase();
     state.close();
-    const workflow = openWorkflowDatabase();
-    workflow.close();
 
     saveConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });
     expect(fs.existsSync(getMigrationBackupRoot())).toBe(false);
@@ -398,8 +399,12 @@ describe("migration lifecycle regressions", () => {
     seedPreCutoverState();
     seedPreCutoverWorkflow();
 
+    // The runtime durable home is state.db; its old-ledger refusal is the live
+    // guard. The pre-cutover workflow.db's old ledger is classified by the
+    // migrator (inspectMigrationState below / the apply flow), not a runtime
+    // opener (src/workflows/db.ts is deleted).
     expect(() => openStateDatabase()).toThrow(/migration|required|old|current/i);
-    expect(() => openWorkflowDatabase()).toThrow(/migration|required|old|current/i);
+    expect(inspectMigrationState().workflow).toMatchObject({ status: "old" });
 
     expect(fs.existsSync(getMigrationBackupRoot())).toBe(false);
     const db = new Database(getStateDbPathInDataDir(), { readonly: true });
@@ -448,8 +453,6 @@ describe("migration lifecycle regressions", () => {
         opened.close();
       }
     }).toThrow(/restore|replacement|journal|recovery/i);
-    expect(() => openWorkflowDatabase()).toThrow(/restore|replacement|journal|recovery/i);
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
 
     const published = new Database(getStateDbPathInDataDir(), { readonly: true });
     try {
@@ -491,16 +494,10 @@ describe("migration lifecycle regressions", () => {
       state.close();
     }
 
-    const workflow = openWorkflowDatabase();
-    workflow.prepare("DELETE FROM schema_migrations WHERE id = ?").run("010-ir-v3-engine");
-    try {
-      const blockedByWorkflow = await runCliCapture(["migrate", "apply"]);
-      expect(blockedByWorkflow.code).not.toBe(0);
-      expect(blockedByWorkflow.stderr).toMatch(/workflow-db|maintenance-activities|active/i);
-      expect(fs.existsSync(getMigrationBackupRoot())).toBe(false);
-    } finally {
-      workflow.close();
-    }
+    // (Chunk-8 WI-8.3: the former "an open canonical workflow.db handle blocks
+    // migrate apply" arm is subsumed by the state.db handle arm above — the
+    // workflow tables share state.db's single durable home and maintenance
+    // activity; there is no separate workflow.db runtime opener to hold.)
 
     const release = await acquireMaintenanceActivity("migration-review-live-activity");
     try {
@@ -525,10 +522,9 @@ describe("migration lifecycle regressions", () => {
     expect(fs.existsSync(getStateDbPathInDataDir())).toBe(false);
     fs.rmSync(journalPath, { force: true });
 
-    _setAfterPendingOperationCheckHookForTests(raceJournalIntoPlace);
-    expect(() => openWorkflowDatabase()).toThrow(/recovery is pending/i);
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
-    fs.rmSync(journalPath, { force: true });
+    // (The workflow-tables home is state.db; the recovery-pending guard on it is
+    // pinned by the openStateDatabase() case above. No separate workflow.db
+    // opener exists post-cutover.)
 
     writeConfig("0.9.0");
     const before = fs.readFileSync(getConfigPath());
@@ -604,13 +600,17 @@ describe("migration lifecycle regressions", () => {
   test("current but unsealed ledgers require migration and are sealed only by backed-up apply", async () => {
     writeConfig("0.9.0");
     openStateDatabase().close();
-    openWorkflowDatabase().close();
+    // A pre-cutover workflow.db at its final (unsealed) ledger, built from the
+    // frozen bodies (src/workflows/db.ts is deleted). The migrate-apply cutover
+    // rolls + merges + deletes it.
+    createLegacyWorkflowDb(getLegacyWorkflowDbPath());
     removeLedgerChecksums(getStateDbPathInDataDir());
-    removeLedgerChecksums(getWorkflowDbPath());
+    removeLedgerChecksums(getLegacyWorkflowDbPath());
 
     expect(inspectMigrationState()).toMatchObject({ state: { status: "old" }, workflow: { status: "old" } });
+    // state.db's unsealed ledger is refused by the live opener; the pre-cutover
+    // workflow.db's is classified by the migrator (above), not a runtime opener.
     expect(() => openStateDatabase()).toThrow(/migration|required|checksum|current/i);
-    expect(() => openWorkflowDatabase()).toThrow(/migration|required|checksum|current/i);
 
     const applied = await runCliCapture(["migrate", "apply"]);
     expect(applied.code, applied.stderr).toBe(0);
@@ -630,7 +630,7 @@ describe("migration lifecycle regressions", () => {
     } finally {
       state.close();
     }
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
     expect(fs.existsSync(getMigrationBackupRoot())).toBe(true);
   });
 
@@ -929,7 +929,7 @@ describe("migration lifecycle regressions", () => {
       if (artifact === "config.json") {
         fs.appendFileSync(getConfigPath(), " \n");
       } else {
-        const published = new Database(artifact === "state.db" ? getStateDbPathInDataDir() : getWorkflowDbPath());
+        const published = new Database(artifact === "state.db" ? getStateDbPathInDataDir() : getLegacyWorkflowDbPath());
         if (artifact === "state.db") published.exec("UPDATE durable SET value='tampered'");
         else published.exec("CREATE TABLE committed_tamper(value TEXT)");
         published.close();
@@ -942,7 +942,7 @@ describe("migration lifecycle regressions", () => {
           ? getConfigPath()
           : artifact === "state.db"
             ? getStateDbPathInDataDir()
-            : getWorkflowDbPath();
+            : getLegacyWorkflowDbPath();
       const artifactEntry = entries.find((entry) => entry.destination === artifactDestination) as Record<
         string,
         unknown

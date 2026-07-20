@@ -6,13 +6,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import { codexBuilder } from "../../../src/integrations/harnesses/codex/agent-builder";
 import { copilotBuilder } from "../../../src/integrations/harnesses/copilot/agent-builder";
 import { geminiBuilder } from "../../../src/integrations/harnesses/gemini/agent-builder";
 import { piBuilder } from "../../../src/integrations/harnesses/pi/agent-builder";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import {
   buildAgentDispatchRequest,
   executeStepPlan as executeFrozenStepPlan,
@@ -50,7 +50,7 @@ let prevDataDir: string | undefined;
 const RUN_ID = "44444444-4444-4444-8444-444444444444";
 
 function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: string; title: string }> }): void {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -67,7 +67,7 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
       ).run(RUN_ID, step.id, step.title, i);
     });
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -88,11 +88,11 @@ function usePlan(yamlText: string): () => Promise<WorkflowPlanGraph> {
 }
 
 function useFrozenPlan(frozen: WorkflowPlanGraph): () => Promise<WorkflowPlanGraph> {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     storeFrozenWorkflowPlan(db, RUN_ID, frozen);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
   return async () => frozen;
 }
@@ -447,7 +447,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     expect(first.ok).toBe(true);
 
     // Corrupt the journaled result_json directly (a truncated / hand-edited row).
-    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    const db = openStateDatabase(path.join(tmpDir, "state.db"));
     try {
       db.prepare("UPDATE workflow_run_units SET result_json = ? WHERE run_id = ? AND unit_id = ?").run(
         "{ this is not json",
@@ -455,7 +455,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
         "review.unit:ac8d8342bbb2",
       );
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
 
     let dispatches = 0;
@@ -1432,11 +1432,11 @@ steps:
         { id: "second", title: "Second" },
       ],
     });
-    const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+    const db = openStateDatabase(path.join(tmpDir, "state.db"));
     try {
       db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
     } finally {
-      closeWorkflowDatabase(db);
+      db.close();
     }
     let dispatches = 0;
     await expect(

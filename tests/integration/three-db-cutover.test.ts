@@ -19,7 +19,9 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
+import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
+import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
+import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
   LIVE_CONTRAST_REFS,
@@ -108,7 +110,7 @@ function seedOldIndexDb(): void {
 
 /** Seed a workflow_run + step + unit into workflow.db so the merge has real rows to carry. */
 function seedWorkflowRun(): void {
-  const wf = new Database(getWorkflowDbPath());
+  const wf = new Database(getLegacyWorkflowDbPath());
   wf.prepare(
     `INSERT INTO workflow_runs (id, workflow_ref, workflow_title, status, params_json, created_at, updated_at)
      VALUES ('run-1', 'workflows/ship', 'Ship it', 'active', '{}', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')`,
@@ -154,7 +156,7 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     expect(applied.code, applied.stderr).toBe(0);
 
     // Three DBs: workflow.db gone, index.db quarantined (rename), state.db is home.
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
     expect(fs.existsSync(getDbPath())).toBe(false);
     const quarantined = fs.readdirSync(getDataDir()).filter((f) => f.startsWith("index.db.pre-cutover-"));
     expect(quarantined.length).toBe(1);
@@ -193,6 +195,35 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
       expect(usageOrphan?.row_count).toBe(1);
     } finally {
       db.close();
+    }
+
+    // WI-8.3: the 4→3 collapse also holds for the RUNTIME. workflow.db is gone,
+    // yet a workflow write through the runtime gateway (withWorkflowRunsRepo)
+    // lands in state.db's merged workflow_runs — no workflow.db is re-created.
+    await withWorkflowRunsRepo((repo) =>
+      repo.insertRun({
+        id: "runtime-run",
+        workflowRef: "workflows/ship",
+        scopeKey: null,
+        workflowEntryId: null,
+        workflowTitle: "Runtime write",
+        paramsJson: "{}",
+        currentStepId: null,
+        createdAt: "2026-02-01T00:00:00Z",
+        updatedAt: "2026-02-01T00:00:00Z",
+        agentHarness: null,
+        agentSessionId: null,
+        checkinArmedAt: null,
+      }),
+    );
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false); // no workflow.db resurrected
+    const after = readState();
+    try {
+      expect(
+        (after.query("SELECT COUNT(*) AS n FROM workflow_runs WHERE id = 'runtime-run'").get() as { n: number }).n,
+      ).toBe(1);
+    } finally {
+      after.close();
     }
   }, 30_000);
 });
@@ -247,7 +278,7 @@ describe("WI-8.2 (c) — fresh install records complete without ATTACH", () => {
     expect(applied.code, applied.stderr).toBe(0);
 
     // ATTACH is never issued when the file is absent, so no stray file is CREATEd.
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(fs.readdirSync(getDataDir()).some((f) => f.startsWith("index.db.pre-cutover-"))).toBe(false);
 
@@ -288,7 +319,7 @@ describe("WI-8.2 (d) — the cutover runs exactly once", () => {
     expect(second.code, second.stderr).toBe(0);
     // Byte-identical state.db (no re-merge, no duplicated rows) and workflow.db stays gone.
     expect(fs.readFileSync(getStateDbPathInDataDir())).toEqual(afterFirst);
-    expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
 
     const db = readState();
     try {

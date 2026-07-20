@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getMigrationApplyJournalPath, inspectMigrationState } from "../../src/core/migration-backup";
-import { getConfigPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../../src/core/paths";
+import { getConfigPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
+import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -99,7 +100,7 @@ function seed(options?: { failingWorkflow?: boolean }): string {
   `);
   ledger(state, STATE_IDS);
   state.close();
-  const workflow = new Database(getWorkflowDbPath());
+  const workflow = new Database(getLegacyWorkflowDbPath());
   workflow.exec(
     options?.failingWorkflow
       ? "CREATE TABLE workflow_runs(id TEXT PRIMARY KEY);"
@@ -121,6 +122,12 @@ describe("cross-artifact migration apply crash recovery", () => {
   // config → committed. After the cutover, workflow.db is DELETED (its rows are
   // merged into state.db), so the post-apply workflow artifact status is
   // "missing" — the intended terminal state, not a failure.
+  //
+  // WI-8.3 backward-read: the `workflow` phase now rolls the pre-cutover
+  // workflow.db to 010 via the FROZEN migration bodies (src/workflows/db.ts is
+  // deleted), NOT the live array. The CRASH_AFTER="workflow" case pins that a
+  // journal at phase "workflow-applied" resumes forward into cutover-applied →
+  // committed (workflow ends "missing") — the required journal backward-read.
   for (const phase of ["state", "workflow", "cutover", "config"] as const) {
     test(`resumes after SIGKILL between ${phase} and the next apply step`, async () => {
       const prepared = seed();

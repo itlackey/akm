@@ -24,9 +24,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../src/core/state-db";
 import { __setServerFactory, closeServer } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import {
   defaultUnitDispatcher,
   executeStepPlan,
@@ -88,7 +88,7 @@ function makeGitRepo(): string {
 }
 
 function seedRun(steps: Array<{ id: string; title: string }>, params: Record<string, unknown> = {}): void {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -105,7 +105,7 @@ function seedRun(steps: Array<{ id: string; title: string }>, params: Record<str
       ).run(RUN_ID, step.id, step.title, i);
     });
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

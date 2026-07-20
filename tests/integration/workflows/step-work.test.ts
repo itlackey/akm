@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { WorkflowRunUnitRow } from "../../../src/storage/repositories/workflow-runs-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../src/workflows/db";
 import { buildWorkflowBrief } from "../../../src/workflows/exec/brief";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { reportWorkflowUnit } from "../../../src/workflows/exec/report";
@@ -571,7 +571,7 @@ function plan(yamlText: string): WorkflowPlanGraph {
 }
 
 function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: WorkflowPlanGraph): void {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -589,7 +589,7 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: Work
     });
     storeFrozenWorkflowPlan(db, RUN_ID, frozen);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 
@@ -804,7 +804,7 @@ function routeState(selected: string): WorkflowNextResult {
 
 /** Seed a DB run parked after a completed (route) `triage` with a tampered selection. */
 function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
-  const db = openWorkflowDatabase(path.join(tmpDir, "workflow.db"));
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -828,7 +828,7 @@ function seedRouteRunDb(routePlan: WorkflowPlanGraph, selected: string): void {
     });
     storeFrozenWorkflowPlan(db, RUN_ID, routePlan);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

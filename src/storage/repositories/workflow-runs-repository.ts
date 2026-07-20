@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { openStateDatabase } from "../../core/state-db";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../workflows/db";
 import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 
@@ -205,8 +205,10 @@ export interface ListRunsFilter {
 /**
  * Repository owning every raw SQL statement against `workflow_runs` and
  * `workflow_run_steps`. It is DB-location-agnostic: the lifecycle helper
- * {@link withWorkflowRunsRepo} binds it to {@link StorageLocations.workflowDb}
- * so a future storage move (#489) changes only `locations.ts`.
+ * {@link withWorkflowRunsRepo} binds it to {@link StorageLocations.stateDb}
+ * (the three-DB cutover folded workflow.db into state.db; the tables exist via
+ * state migration `020-three-db-cutover`) so a future storage move (#489)
+ * changes only `locations.ts`.
  *
  * ## Connection-lifetime contract (WS5)
  *
@@ -639,19 +641,23 @@ export class WorkflowRunsRepository {
 }
 
 /**
- * Open the workflow database (bound to {@link StorageLocations.workflowDb}),
- * run `fn` against a {@link WorkflowRunsRepository}, and close the connection
- * exactly once when `fn` settles.
+ * Open state.db (bound to {@link StorageLocations.stateDb}, the post-cutover
+ * home of the `workflow_runs` / `workflow_run_steps` / `workflow_run_units`
+ * tables), run `fn` against a {@link WorkflowRunsRepository}, and close the
+ * connection exactly once when `fn` settles.
  *
- * Generalises the former `withWorkflowDb` loan pattern in runs.ts. Repository
- * read methods fully materialise their results, so closing here never truncates
- * lazy iteration (WS5 connection-lifetime rule).
+ * Fresh-connection-per-call, mirroring the former workflow.db loan pattern:
+ * `openStateDatabase` acquires its own maintenance activity + asserts the
+ * current ledger, and the repository owns all table-scoped SQL, so the merge
+ * into state.db is a zero-SQL-rewrite repoint. Repository read methods fully
+ * materialise their results, so closing here never truncates lazy iteration
+ * (WS5 connection-lifetime rule).
  */
 export async function withWorkflowRunsRepo<T>(fn: (repo: WorkflowRunsRepository) => T | Promise<T>): Promise<T> {
-  const db = openWorkflowDatabase(resolveStorageLocations().workflowDb);
+  const db = openStateDatabase(resolveStorageLocations().stateDb);
   try {
     return await Promise.resolve(fn(new WorkflowRunsRepository(db)));
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }

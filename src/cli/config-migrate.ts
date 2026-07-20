@@ -40,8 +40,9 @@ import {
   sameMigrationGeneration,
   verifyMigrationBackup,
 } from "../core/migration-backup";
-import { getConfigPath, getDbPath, getStateDbPathInDataDir, getWorkflowDbPath } from "../core/paths";
+import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
+import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import {
   buildCutoverRefMap,
   type CutoverStashRoot,
@@ -50,8 +51,13 @@ import {
   quarantineIndexDb,
   runThreeDbCutover,
 } from "../migrate/legacy/three-db-cutover";
+import {
+  FROZEN_WORKFLOW_BASE_SCHEMA_DDL,
+  FROZEN_WORKFLOW_MIGRATIONS,
+} from "../migrate/legacy/workflow-migrations-bodies";
 import { openDatabase } from "../storage/database";
-import { runMigrations as runWorkflowMigrations } from "../workflows/db";
+import { runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
+import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { EXIT_CODES } from "./shared";
 
 const MANUAL_GUIDANCE =
@@ -187,7 +193,7 @@ function detectAdjacentGeneration(
     journal.phase === "prepared"
       ? hasGenerationMarker(getStateDbPathInDataDir(), journal.operationId, "state-applied")
       : journal.phase === "state-applied"
-        ? hasGenerationMarker(getWorkflowDbPath(), journal.operationId, "workflow-applied")
+        ? hasGenerationMarker(getLegacyWorkflowDbPath(), journal.operationId, "workflow-applied")
         : false;
   const current = fingerprintMigrationGeneration();
   const unchanged = (...names: Array<keyof MigrationGenerationFingerprint>): boolean =>
@@ -503,6 +509,44 @@ function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
 }
 
 /**
+ * Roll a pre-cutover workflow.db forward to its final ledger (010) using the
+ * FROZEN migration bodies (`src/migrate/legacy/workflow-migrations-bodies.ts`)
+ * through the shared engine — never the live `WORKFLOW_MIGRATIONS` array
+ * (`src/workflows/db.ts` is deleted in WI-8.3). The roll materialises every
+ * migration-added column + DEFAULT so the subsequent state.db merge carries
+ * faithful data.
+ *
+ * Pre-versioning (0.7-era) workflow.dbs — rows present but NO `schema_migrations`
+ * ledger — are OUT of the migrator FROM-state (the rc-train fixtures pin a
+ * versioned ledger). We FAIL CLOSED with a clear message rather than
+ * bootstrapping (the old `bootstrapPreVersioningDb` back-fill is retired).
+ */
+function runFrozenWorkflowRoll(operationId: string): void {
+  const workflowPath = getLegacyWorkflowDbPath();
+  const db = openDatabase(workflowPath);
+  try {
+    applyStandardPragmas(db, { dataDir: path.dirname(workflowPath) });
+    const hasRuns = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get();
+    const hasLedger = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get();
+    if (hasRuns && !hasLedger) {
+      throw new ConfigError(
+        `Refusing to migrate a pre-versioning workflow.db at ${workflowPath} (no schema_migrations ledger). ` +
+          "Pre-0.8 workflow databases are not a supported migrator source; upgrade through a 0.8.x release first.",
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    // Idempotent baseline (CREATE TABLE IF NOT EXISTS) then the pending frozen
+    // migrations — a workflow.db already at 010 is a no-op.
+    db.exec(FROZEN_WORKFLOW_BASE_SCHEMA_DDL);
+    runSqliteMigrations(db, FROZEN_WORKFLOW_MIGRATIONS, {
+      generationMarker: { operationId, phase: "workflow-applied" },
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * The `cutover-applied` phase (Chunk 8, WI-8.2). Builds + persists the
  * old-ref → item_ref map, runs the fail-closed three-DB merge/re-key
  * transaction, then the idempotent index-quarantine / workflow.db-unlink
@@ -511,7 +555,7 @@ function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
  */
 function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
   const statePath = getStateDbPathInDataDir();
-  const workflowPath = getWorkflowDbPath();
+  const workflowPath = getLegacyWorkflowDbPath();
   const indexPath = getDbPath();
 
   if (!cutoverMergeCommitted(statePath)) {
@@ -758,16 +802,19 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
         advanceApplyJournal(journal, "state-applied");
         crashAfterForTests("state");
 
+        // Chunk 8, WI-8.3: the pre-cutover workflow.db is rolled to its final
+        // ledger (010) so every migration-added column + default is materialised
+        // faithfully BEFORE the merge. The runtime no longer opens workflow.db
+        // (src/workflows/db.ts is deleted); the roll runs the FROZEN migration
+        // bodies (src/migrate/legacy/) through the shared engine, never the live
+        // array. Its generation marker (phase "workflow-applied") authenticates
+        // the crash-adjacency detection exactly as before, so all resume paths
+        // and their tests are unchanged. Pre-versioning (0.7-era) workflow.dbs
+        // are OUT of the migrator FROM-state — runFrozenWorkflowRoll fails closed
+        // with a clear message instead of bootstrapping.
         const beforeWorkflow = inspectMigrationState();
         if (beforeWorkflow.workflow.status === "old") {
-          const db = openDatabase(getWorkflowDbPath());
-          try {
-            runWorkflowMigrations(db, {
-              generationMarker: { operationId: journal.operationId, phase: "workflow-applied" },
-            });
-          } finally {
-            db.close();
-          }
+          runFrozenWorkflowRoll(journal.operationId);
         } else if (beforeWorkflow.workflow.status !== "current" && beforeWorkflow.workflow.status !== "missing") {
           throw new ConfigError(
             `Cannot resume workflow.db from ${beforeWorkflow.workflow.status} state.`,

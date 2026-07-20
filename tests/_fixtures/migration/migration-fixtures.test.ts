@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { type Database, openDatabase } from "../../../src/storage/database";
-import { openWorkflowDatabase } from "../../../src/workflows/db";
+import { openLegacyWorkflowDb } from "../../_helpers/legacy-workflow-db";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { buildOrphanBearingStateDb, LIVE_CONTRAST_REFS, ORPHAN_REFS } from "./orphan-state";
 import {
@@ -198,9 +198,11 @@ describe("WI-0b.6b — rc-train FROM-state builder", () => {
       stateDb.close();
     }
 
-    // workflow.db: loads via the real openWorkflowDatabase runner (proves the
-    // migration ledger is current) and is untouched/unseeded (schema only).
-    const workflowDb = openWorkflowDatabase(workflowDbPath);
+    // workflow.db: loads via the frozen-bodies runner (proves the pre-cutover
+    // migration ledger rolls to its ceiling) and is untouched/unseeded (schema
+    // only). src/workflows/db.ts is deleted (WI-8.3); the frozen bodies are
+    // byte-identical to the pre-deletion live array.
+    const workflowDb = openLegacyWorkflowDb(workflowDbPath);
     try {
       const runsCount = workflowDb.prepare("SELECT COUNT(*) AS n FROM workflow_runs").get() as { n: number };
       expect(runsCount.n).toBe(0);

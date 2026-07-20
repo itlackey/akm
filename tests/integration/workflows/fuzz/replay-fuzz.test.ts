@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../../src/workflows/db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import {
   executeStepPlan,
   type UnitDispatchRequest,
@@ -154,7 +154,7 @@ describe("replay fuzz — duplicate canonical items fail before dispatch", () =>
 
 /** Seed a run + one pending step so the executor's journal has FK targets. */
 function seedRun(runId: string, params: Record<string, unknown>): void {
-  const db = openWorkflowDatabase();
+  const db = openStateDatabase();
   try {
     const now = new Date().toISOString();
     db.prepare(
@@ -169,7 +169,7 @@ function seedRun(runId: string, params: Record<string, unknown>): void {
        VALUES (?, 'work', 'Work', 'instructions', NULL, 0, 'pending')`,
     ).run(runId);
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

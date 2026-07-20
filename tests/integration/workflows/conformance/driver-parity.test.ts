@@ -9,11 +9,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import {
   type WorkflowRunUnitRow,
   withWorkflowRunsRepo,
 } from "../../../../src/storage/repositories/workflow-runs-repository";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../../../src/workflows/db";
 import { buildWorkflowBrief, type WorkflowBriefUnit } from "../../../../src/workflows/exec/brief";
 import type { UnitDispatcher } from "../../../../src/workflows/exec/native-executor";
 import { reportWorkflowUnit, settleWorkflowSpine } from "../../../../src/workflows/exec/report";
@@ -293,7 +293,7 @@ function assertGraphsIdentical(engine: GraphLine[], driver: GraphLine[], label: 
 // ── Run seeding + the two surface drivers ────────────────────────────────────
 
 function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps: SeedStep[]): void {
-  const db = openWorkflowDatabase(path.join(process.env.AKM_DATA_DIR ?? rootDir, "workflow.db"));
+  const db = openStateDatabase(path.join(process.env.AKM_DATA_DIR ?? rootDir, "state.db"));
   try {
     const now = new Date().toISOString();
     const current = steps[0]?.id ?? null;
@@ -320,7 +320,7 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>, steps
       );
     });
   } finally {
-    closeWorkflowDatabase(db);
+    db.close();
   }
 }
 

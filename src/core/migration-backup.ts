@@ -5,8 +5,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
-import { openDatabase } from "../storage/database";
+import { type Database, openDatabase } from "../storage/database";
 import {
   inspectMigrationLedger,
   inspectSealedMigrationLedger,
@@ -33,7 +34,6 @@ import {
   getIndexWriterLockPath,
   getLockfileLockPath,
   getStateDbPathInDataDir,
-  getWorkflowDbPath,
 } from "./paths";
 import { STATE_MIGRATIONS } from "./state/migrations";
 
@@ -139,7 +139,7 @@ function expectedSourcePaths(): Record<ArtifactName, string> {
   return {
     "config.json": getConfigPath(),
     "state.db": getStateDbPathInDataDir(),
-    "workflow.db": getWorkflowDbPath(),
+    "workflow.db": getLegacyWorkflowDbPath(),
     "index.db": getDbPath(),
   };
 }
@@ -298,7 +298,7 @@ export function inspectMigrationState(): MigrationState {
   return {
     config: inspectConfig(getConfigPath()),
     state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
-    workflow: inspectSqliteSealed(getWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
+    workflow: inspectSqliteSealed(getLegacyWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
     index: inspectIndexDbArtifact(getDbPath()),
   };
 }
@@ -492,7 +492,7 @@ function backupSqlite(source: string, destination: string): void {
   }
   const resolvedSource = path.resolve(source);
   const activityName =
-    resolvedSource === path.resolve(getWorkflowDbPath())
+    resolvedSource === path.resolve(getLegacyWorkflowDbPath())
       ? "workflow-db"
       : resolvedSource === path.resolve(getStateDbPathInDataDir())
         ? "state-db"
@@ -714,63 +714,90 @@ function activeRestoreLocks(bundlePath?: string): string[] {
   return [...active, ...overflowBlockers];
 }
 
-function activeWorkflowClaims(): string[] {
-  const maxSamples = MAX_WORKFLOW_BLOCKER_SAMPLES;
-  const workflowPath = getWorkflowDbPath();
-  if (!fs.existsSync(workflowPath)) return [];
-  const db = openDatabase(workflowPath, { readonly: true });
-  try {
-    const blockers: string[] = [];
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
-      const columns = new Set(
-        (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+/**
+ * Scan ONE open workflow-table home (state.db post-cutover, or a pre-cutover
+ * workflow.db) for active engine leases + unit claims, tagging each blocker with
+ * `dbPath` so the operator can tell which artifact holds the lock. Same blocker
+ * semantics for both sources — the tables/columns are byte-identical between the
+ * pre-cutover workflow.db and the merged state.db (state migration 020 folds the
+ * final shape).
+ */
+function scanWorkflowClaimsFrom(db: Database, dbPath: string, maxSamples: number): string[] {
+  const blockers: string[] = [];
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
+    const columns = new Set(
+      (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
+      const leases = db
+        .prepare(
+          `SELECT substr(CAST(id AS TEXT), 1, 257) AS id, substr(CAST(engine_lease_holder AS TEXT), 1, 257) AS holder, substr(CAST(engine_lease_until AS TEXT), 1, 129) AS expires FROM workflow_runs WHERE engine_lease_holder IS NOT NULL AND engine_lease_until >= ? LIMIT ${maxSamples + 1}`,
+        )
+        .all(new Date().toISOString()) as Array<{ id: string; holder: string; expires: string }>;
+      blockers.push(
+        ...leases
+          .slice(0, maxSamples)
+          .map(
+            (lease) =>
+              `${sanitizeDiagnosticField(dbPath)}#run=${sanitizeDiagnosticField(lease.id)},holder=${sanitizeDiagnosticField(lease.holder)},expires=${sanitizeDiagnosticField(lease.expires, 128)}`,
+          ),
       );
-      if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
-        const leases = db
-          .prepare(
-            `SELECT substr(CAST(id AS TEXT), 1, 257) AS id, substr(CAST(engine_lease_holder AS TEXT), 1, 257) AS holder, substr(CAST(engine_lease_until AS TEXT), 1, 129) AS expires FROM workflow_runs WHERE engine_lease_holder IS NOT NULL AND engine_lease_until >= ? LIMIT ${maxSamples + 1}`,
-          )
-          .all(new Date().toISOString()) as Array<{ id: string; holder: string; expires: string }>;
-        blockers.push(
-          ...leases
-            .slice(0, maxSamples)
-            .map(
-              (lease) =>
-                `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(lease.id)},holder=${sanitizeDiagnosticField(lease.holder)},expires=${sanitizeDiagnosticField(lease.expires, 128)}`,
-            ),
-        );
-        if (leases.length > maxSamples) {
-          blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
-          return blockers;
-        }
+      if (leases.length > maxSamples) {
+        blockers.push(`${dbPath}#additional-active-workflow-blockers`);
+        return blockers;
       }
     }
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_units'").get())
-      return blockers;
-    const columns = new Set(
-      (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
-    );
-    if (!columns.has("claim_holder") || !columns.has("claim_expires_at")) return blockers;
-    const remaining = maxSamples - blockers.length;
-    if (remaining <= 0) return blockers;
-    const claims = db
-      .prepare(
-        `SELECT substr(CAST(run_id AS TEXT), 1, 257) AS runId, substr(CAST(unit_id AS TEXT), 1, 257) AS unitId, substr(CAST(claim_holder AS TEXT), 1, 257) AS holder, substr(CAST(claim_expires_at AS TEXT), 1, 129) AS expires FROM workflow_run_units WHERE status='running' AND claim_holder IS NOT NULL AND claim_expires_at >= ? LIMIT ${remaining + 1}`,
-      )
-      .all(new Date().toISOString()) as Array<{ runId: string; unitId: string; holder: string; expires: string }>;
-    blockers.push(
-      ...claims
-        .slice(0, remaining)
-        .map(
-          (claim) =>
-            `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(claim.runId)},unit=${sanitizeDiagnosticField(claim.unitId)},holder=${sanitizeDiagnosticField(claim.holder)},expires=${sanitizeDiagnosticField(claim.expires, 128)}`,
-        ),
-    );
-    if (claims.length > remaining) blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
-    return blockers;
-  } finally {
-    db.close();
   }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_units'").get())
+    return blockers;
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  if (!columns.has("claim_holder") || !columns.has("claim_expires_at")) return blockers;
+  const remaining = maxSamples - blockers.length;
+  if (remaining <= 0) return blockers;
+  const claims = db
+    .prepare(
+      `SELECT substr(CAST(run_id AS TEXT), 1, 257) AS runId, substr(CAST(unit_id AS TEXT), 1, 257) AS unitId, substr(CAST(claim_holder AS TEXT), 1, 257) AS holder, substr(CAST(claim_expires_at AS TEXT), 1, 129) AS expires FROM workflow_run_units WHERE status='running' AND claim_holder IS NOT NULL AND claim_expires_at >= ? LIMIT ${remaining + 1}`,
+    )
+    .all(new Date().toISOString()) as Array<{ runId: string; unitId: string; holder: string; expires: string }>;
+  blockers.push(
+    ...claims
+      .slice(0, remaining)
+      .map(
+        (claim) =>
+          `${sanitizeDiagnosticField(dbPath)}#run=${sanitizeDiagnosticField(claim.runId)},unit=${sanitizeDiagnosticField(claim.unitId)},holder=${sanitizeDiagnosticField(claim.holder)},expires=${sanitizeDiagnosticField(claim.expires, 128)}`,
+      ),
+  );
+  if (claims.length > remaining) blockers.push(`${dbPath}#additional-active-workflow-blockers`);
+  return blockers;
+}
+
+/**
+ * Active engine leases / unit claims that must block artifact replacement.
+ *
+ * Chunk-8 dual source: the durable home of the workflow tables is now state.db
+ * (the three-DB cutover merged workflow.db into it via state migration 020), so
+ * the primary probe reads state.db. But a PRE-CUTOVER generation still has a
+ * physical workflow.db (not yet merged/deleted), so the read-only workflow.db
+ * file probe is RETAINED — if that file is present it is scanned too. Both use
+ * the same frozen-copy inspection and the same blocker semantics. A read-only
+ * open of each avoids ledger assertions / maintenance-activity acquisition
+ * during the blocker check.
+ */
+function activeWorkflowClaims(): string[] {
+  const maxSamples = MAX_WORKFLOW_BLOCKER_SAMPLES;
+  const blockers: string[] = [];
+  for (const dbPath of [getStateDbPathInDataDir(), getLegacyWorkflowDbPath()]) {
+    if (!fs.existsSync(dbPath)) continue;
+    const db = openDatabase(dbPath, { readonly: true });
+    try {
+      blockers.push(...scanWorkflowClaimsFrom(db, dbPath, maxSamples));
+    } finally {
+      db.close();
+    }
+  }
+  return blockers;
 }
 
 /** Caller must hold the maintenance start barrier while checking and replacing artifacts. */
@@ -836,7 +863,7 @@ function matchesFingerprint(filePath: string, fingerprint: FileFingerprint | nul
 
 export function fingerprintMigrationGeneration(): MigrationGenerationFingerprint {
   const statePath = getStateDbPathInDataDir();
-  const workflowPath = getWorkflowDbPath();
+  const workflowPath = getLegacyWorkflowDbPath();
   return {
     config: { main: fingerprintFile(getConfigPath()), wal: null, shm: null },
     state: {

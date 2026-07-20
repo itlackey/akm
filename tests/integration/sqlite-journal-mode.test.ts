@@ -7,13 +7,15 @@
  * with optional network-filesystem auto-fallback (WAL → DELETE).
  *
  * These tests pin the contract for src/storage/sqlite-pragmas.ts (the new
- * resolver + unified pragma helper) and assert that ALL FIVE journal_mode exec
- * sites across FOUR openers honor the env knob:
+ * resolver + unified pragma helper) and assert that ALL FOUR journal_mode exec
+ * sites across THREE openers honor the env knob:
  *   - openStateDatabase()      (src/core/state-db.ts)
- *   - openWorkflowDatabase()   (src/workflows/db.ts)
  *   - openLogsDatabase()       (src/core/logs-db.ts)   ← the opener the issue missed
  *   - openIndexDatabase()           (src/indexer/db/db.ts, main path)
  *   - openExistingDatabase()   (src/indexer/db/db.ts, 2nd path)
+ *
+ * (Chunk-8 WI-8.3: openWorkflowDatabase() is deleted with workflow.db; its rows
+ * live in state.db, already covered by openStateDatabase() above.)
  *
  * Modeled on tests/db-busy-timeout.test.ts: mkdtempSync temp dirs + afterEach
  * cleanup, no host state. AKM_SQLITE_JOURNAL_MODE is isolated per-test via the
@@ -46,7 +48,6 @@ import {
   resolveConfiguredJournalMode,
   resolveJournalMode,
 } from "../../src/storage/sqlite-pragmas";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "../../src/workflows/db";
 import { withEnv } from "../_helpers/sandbox";
 
 const EXPECTED_BUSY_TIMEOUT_MS = 30_000;
@@ -153,19 +154,11 @@ describe("#628 AC-e: isNetworkFilesystem() pure classifier", () => {
 });
 
 // ── AC-a: every opener honors AKM_SQLITE_JOURNAL_MODE=DELETE ─────────────────
-describe("#628 AC-a: all 5 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
+describe("#628 AC-a: all 4 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
   test("openStateDatabase() reports delete", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: "DELETE" }, () => {
       const db = openStateDatabase(makeTempDbPath("state.db"));
       openHandles.push(() => db.close());
-      expect(journalModeOf(db)).toBe("delete");
-    });
-  });
-
-  test("openWorkflowDatabase() reports delete", async () => {
-    await withEnv({ AKM_SQLITE_JOURNAL_MODE: "DELETE" }, () => {
-      const db = openWorkflowDatabase(makeTempDbPath("workflow.db"));
-      openHandles.push(() => closeWorkflowDatabase(db));
       expect(journalModeOf(db)).toBe("delete");
     });
   });
@@ -213,19 +206,13 @@ describe("#628 AC-a: all 5 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
 
 // ── AC-b: default (env unset) is byte-identical to today ─────────────────────
 describe("#628 AC-b: default mode unchanged (WAL) when env unset", () => {
-  test("all 5 openers report wal + busy_timeout=30000 + correct foreign_keys", async () => {
+  test("all 4 openers report wal + busy_timeout=30000 + correct foreign_keys", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: undefined }, () => {
       const state = openStateDatabase(makeTempDbPath("state.db"));
       openHandles.push(() => state.close());
       expect(journalModeOf(state)).toBe("wal");
       expect(busyTimeoutOf(state)).toBe(EXPECTED_BUSY_TIMEOUT_MS);
       expect(foreignKeysOf(state)).toBe(1);
-
-      const wf = openWorkflowDatabase(makeTempDbPath("workflow.db"));
-      openHandles.push(() => closeWorkflowDatabase(wf));
-      expect(journalModeOf(wf)).toBe("wal");
-      expect(busyTimeoutOf(wf)).toBe(EXPECTED_BUSY_TIMEOUT_MS);
-      expect(foreignKeysOf(wf)).toBe(1);
 
       const logs = openLogsDatabase(makeTempDbPath("logs.db"));
       openHandles.push(() => logs.close());
