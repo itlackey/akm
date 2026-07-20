@@ -61,8 +61,12 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
 1. **#37** — full old-config-shape retirement (setup emits bundles; `stashDir`/`sources`/`installed`
    out of schema; installed→bundle re-sync; desired-vs-resolved lock split). Transitional state is
    coherent: old-shape-alone loads, mixed shape hard-rejects, migrator emits bundles.
-2. **#39** — `.stash.json` live-reader removal blocked on a script-asset curated-metadata mechanism
-   (no frontmatter equivalent for non-`.md`); sidecars are already folded+deleted at cutover.
+2. **#39 — CLOSED (2026-07-20, user decision)**: `.stash.json` sidecar metadata is dropped outright
+   ("officially retired two versions ago"). The three live readers
+   (`indexer/manifest.ts`, `indexer/indexer.ts`, `registry/build-index.ts`) no longer call
+   `readLegacyStashOverrides`; sidecar-only dirs (including never-migrated remote registry stashes)
+   contribute only frontmatter-recognized entries with generated metadata. The module survives in
+   `src/migrate/legacy/` for the cutover's fold step only.
 3. `derived_from`/`source:` legacy channel (above) — candidate for a 0.9.x content migration.
 
 ## Process notes (for future chunk runs)

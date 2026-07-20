@@ -19,7 +19,6 @@ import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries, getEntryCount } from "../storage/repositories/index-entries-repository";
@@ -150,14 +149,11 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
     }
 
     for (const [dirPath, files] of dirGroups) {
-      const generated = recognizeStashEntries(currentStashDir, files);
-      // Chunk-8: dies with the content migration.
-      const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
-      const mergedEntries = legacyOverrides
-        ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
-        : generated.entries;
-      const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
-      if (!stash || stash.entries.length === 0) continue;
+      // `.stash.json` sidecar overrides retired (#39): the cutover's content
+      // migration folded sidecar metadata into frontmatter and deleted the
+      // files; the runtime no longer reads them.
+      const stash = recognizeStashEntries(currentStashDir, files);
+      if (stash.entries.length === 0) continue;
 
       const source = sources.find((s) => dirPath.startsWith(path.resolve(s.path) + path.sep));
 
@@ -174,10 +170,6 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
   return entries;
 }
 
-function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
-  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
-  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
-}
 
 /**
  * Generate a compact manifest of all assets in the stash.

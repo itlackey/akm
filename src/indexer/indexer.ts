@@ -15,7 +15,6 @@ import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 /**
  * M-4 / #395 — Index Consistency Architecture Decision Record
  *
@@ -933,9 +932,10 @@ async function scanSourceDirs(
         ? { entries: drained.entries, warnings: drained.warnings }
         : { entries: drained.entries };
 
-      // Chunk-8: dies with the content migration.
-      const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
-      const { stash, staleFiles } = buildIndexedDirCandidate(dirPath, indexableFiles, generated, legacyOverrides);
+      // `.stash.json` sidecar overrides retired (#39): the cutover's content
+      // migration folded sidecar metadata into frontmatter and deleted the
+      // files; the runtime no longer reads them.
+      const { stash, staleFiles } = buildIndexedDirCandidate(dirPath, indexableFiles, generated);
 
       if (generated.entries.length > 0) {
         generatedCount += generated.entries.length;
@@ -1655,16 +1655,8 @@ function verifyIndexState(
   };
 }
 
-function buildIndexedDirCandidate(
-  dirPath: string,
-  indexableFiles: string[],
-  generated: StashFile,
-  legacyOverrides: StashFile | null,
-): IndexedDirCandidate {
-  const mergedEntries = legacyOverrides
-    ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
-    : generated.entries;
-  const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+function buildIndexedDirCandidate(dirPath: string, indexableFiles: string[], generated: StashFile): IndexedDirCandidate {
+  const stash = generated.entries.length > 0 ? { entries: generated.entries } : null;
   const staleFiles = stash ? resolveIndexedFiles(dirPath, indexableFiles, stash) : indexableFiles;
   return { stash, staleFiles };
 }
@@ -1837,20 +1829,6 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   }
 
   return null;
-}
-
-function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
-  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
-  if (!legacy) return entry;
-
-  return {
-    ...entry,
-    ...legacy,
-    filename: entry.filename,
-    source: legacy.source ?? entry.source,
-    quality: legacy.quality ?? entry.quality,
-    confidence: legacy.confidence ?? entry.confidence,
-  };
 }
 
 // `buildSearchFields` and `buildSearchText` were previously re-exported from

@@ -20,7 +20,6 @@ import type { IndexDocument } from "../indexer/passes/metadata";
 import { recognizeStashEntries } from "../indexer/scan/drain-dir";
 import { walkStashFlat } from "../indexer/walk/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
-import { readLegacyStashOverrides } from "../migrate/legacy/legacy-stash-json";
 import { writeResponseToFile } from "../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/include";
 import { detectStashRoot } from "../sources/providers/provider-utils";
@@ -356,24 +355,16 @@ async function enumerateAssets(stashRoot: string): Promise<IndexDocument[]> {
 
   const entries: IndexDocument[] = [];
   for (const [dirPath, files] of dirGroups) {
-    const generated = recognizeStashEntries(stashRoot, files);
-    // Chunk-8: dies with the content migration.
-    const legacyOverrides = readLegacyStashOverrides(dirPath, { requireFilename: true });
-    const mergedEntries = legacyOverrides
-      ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
-      : generated.entries;
-    const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
-    if (!stash || stash.entries.length === 0) continue;
+    // `.stash.json` sidecar overrides retired (#39): a published stash that
+    // still ships sidecars (pre-0.9.0, never migrated) contributes only its
+    // frontmatter-recognized entries.
+    const stash = recognizeStashEntries(stashRoot, files);
+    if (stash.entries.length === 0) continue;
 
     entries.push(...stash.entries.filter((entry) => !!entry.filename).map((entry) => attachFileSize(dirPath, entry)));
   }
 
   return entries.sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
-}
-
-function mergeLegacyEntry(entry: IndexDocument, legacyEntries: IndexDocument[]): IndexDocument {
-  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
-  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }
 
 function attachFileSize(dirPath: string, entry: IndexDocument): IndexDocument {
