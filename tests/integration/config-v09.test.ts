@@ -181,6 +181,51 @@ describe("0.9 config contract", () => {
     ).toBe(true);
   });
 
+  test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
+    const ok = validateConfigShape({
+      configVersion: "0.9.0",
+      bundles: {
+        primary: { path: "/home/u/akm", writable: true },
+        catalog: { git: "https://example.test/catalog.git" },
+        docs: { website: { url: "https://example.test/docs/", maxPages: 50 } },
+      },
+      defaultBundle: "primary",
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  test("rejects a half-migrated config carrying bundles alongside the retired source keys", () => {
+    for (const legacy of [{ stashDir: "/s" }, { sources: [] }, { installed: [] }]) {
+      const res = validateConfigShape({
+        configVersion: "0.9.0",
+        bundles: { primary: { path: "/s" } },
+        defaultBundle: "primary",
+        ...legacy,
+      });
+      expect(res.ok).toBe(false);
+    }
+  });
+
+  test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
+    // Illegal slug key (contains ':').
+    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(
+      false,
+    );
+    // Zero source descriptors.
+    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { a: { writable: true } } }).ok).toBe(false);
+    // Two source descriptors.
+    expect(
+      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok,
+    ).toBe(false);
+  });
+
+  test("rejects defaultBundle that names no bundle and a stray bindings block", () => {
+    expect(
+      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s" } }, defaultBundle: "missing" }).ok,
+    ).toBe(false);
+    expect(validateConfigShape({ configVersion: "0.9.0", bindings: { release: { export: "a//x" } } }).ok).toBe(false);
+  });
+
   test("normalizes model aliases to lowercase and rejects case-insensitive collisions", () => {
     const normalized = validateConfigShape({
       configVersion: "0.9.0",

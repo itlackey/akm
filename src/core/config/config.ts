@@ -42,6 +42,7 @@ import { warn } from "../warn";
 // move (the runtime values live here; the types are documentation-only).
 export type {
   AkmConfig,
+  BundleConfigEntry,
   ConfiguredSource,
   EmbeddingConnectionConfig,
   EngineConfig,

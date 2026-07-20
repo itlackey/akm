@@ -36,6 +36,7 @@
  */
 import { z } from "zod";
 import type { InstalledBundle } from "../../registry/types";
+import { isBundleSlug } from "../asset/asset-ref";
 import { validateExtraParams } from "../extra-params";
 import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "./config-types";
 import {
@@ -813,6 +814,94 @@ export const InstalledStashEntrySchema = z
     }
   });
 
+// ── Bundles (0.9.0 config-shape cutover, spec §10.1 / D-R5) ─────────────────
+//
+// `bundles` + `defaultBundle` are the 0.9.0 desired-configuration shape that
+// supersedes the pre-cutover `stashDir` / `sources[]` / `installed[]` trio. Each
+// bundle entry carries ONE source descriptor (`path` | `git` | `website` | `npm`
+// — mirroring today's source types), an optional `writable`, an optional
+// `registryId` locator (the original registry install id, preserved verbatim so
+// a non-slug-legal id like `github:owner/repo` is not lost when its slug-legal
+// bundle KEY is derived), and an optional single-entry `components` map (spec
+// §10.1; the transitional one-component-per-bundle coupling — NOT multi-component
+// machinery). The map KEY is the workspace bundle slug (spec §11.1 charset: no
+// `/`, `:`, `.`, `#`, whitespace), validated with {@link isBundleSlug}.
+//
+// The config migrator ({@link migrateConfigSourcesToBundles}) emits these keyed
+// by exactly what `deriveInstallations` derives today (D-R5). `bindings` (spec
+// §10.1) is Tier B and is NEVER accepted here (the top-level superRefine rejects
+// it) — it is not part of the 0.9.0 config-shape cutover.
+
+/** Website source descriptor for a bundle entry (spec §10.1). */
+const BundleWebsiteDescriptorSchema = z
+  .object({
+    url: httpUrl,
+    refresh: z.string().min(1).optional(),
+    maxPages: positiveInt.optional(),
+    maxDepth: positiveInt.optional(),
+  })
+  .passthrough();
+
+/** One component of a bundle (spec §10.1). Single-entry, transitional. */
+const BundleComponentConfigSchema = z
+  .object({
+    root: z.string().min(1).optional(),
+    adapter: nonEmptyString.optional(),
+    writable: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const BundleConfigEntrySchema = z
+  .object({
+    // Exactly one source descriptor (enforced in superRefine below):
+    path: z.string().min(1).optional(),
+    git: z.string().min(1).optional(),
+    website: BundleWebsiteDescriptorSchema.optional(),
+    npm: z.string().min(1).optional(),
+    writable: z.boolean().optional(),
+    // The original registry install id when the bundle KEY was slug-derived from
+    // it (e.g. registryId `github:owner/repo` → key `repo`). Preserved so the
+    // source locator survives the config-shape migration (D-R5). Absent when the
+    // bundle key already equals the source's stable id.
+    registryId: z.string().min(1).optional(),
+    components: z.record(z.string().min(1), BundleComponentConfigSchema).optional(),
+  })
+  .passthrough()
+  .superRefine((entry, ctx) => {
+    const descriptors = (["path", "git", "website", "npm"] as const).filter((k) => entry[k] !== undefined);
+    if (descriptors.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "a bundle entry must carry exactly one source descriptor (path, git, website, or npm)",
+      });
+    } else if (descriptors.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `a bundle entry must carry exactly one source descriptor; got ${descriptors.join(", ")}`,
+      });
+    }
+    if (entry.writable === true && (entry.website !== undefined || entry.npm !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["writable"],
+        message: "writable: true is only supported on path and git bundle sources",
+      });
+    }
+  });
+
+/**
+ * `bundles` map. Keys are workspace bundle slugs (spec §11.1 / D-R5 charset).
+ * The key charset is validated with {@link isBundleSlug} so a key can never carry
+ * `/`, `:`, `.`, `#`, or whitespace (which would break the `bundle//conceptId`
+ * ref grammar).
+ */
+export const BundlesConfigSchema = z.record(
+  z.string().min(1).refine(isBundleSlug, {
+    message: "bundle key must be a legal slug (no '/', ':', '.', '#', or whitespace)",
+  }),
+  BundleConfigEntrySchema,
+);
+
 // ── Output ──────────────────────────────────────────────────────────────────
 
 export const OutputConfigSchema = z
@@ -1212,6 +1301,15 @@ export const AkmConfigShape = {
   >,
   registries: z.array(RegistryConfigEntrySchema).optional(),
   sources: z.array(SourceConfigEntrySchema).optional(),
+  // 0.9.0 config-shape cutover (spec §10.1 / D-R5). `bundles` supersedes the
+  // `stashDir`/`sources`/`installed` trio above; the migrator emits it and
+  // removes those. Both shapes remain individually loadable during the
+  // transition (an old-shape config still resolves sources), but a config that
+  // carries `bundles` alongside any of the retired source keys is HALF-MIGRATED
+  // and is rejected by the top-level superRefine (fails loudly). `defaultBundle`
+  // names the primary bundle (spec §11.1 short-ref resolution / D-R4).
+  bundles: BundlesConfigSchema.optional(),
+  defaultBundle: nonEmptyString.optional(),
   output: OutputConfigSchema.optional(),
   writable: z.boolean().optional(),
   defaultWriteTarget: nonEmptyString.optional(),
@@ -1233,6 +1331,49 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: [key],
         message: `${key} is retired in 0.9; configure engines and improve.strategies instead`,
+      });
+    }
+  }
+  // `bindings` (spec §10.1) is Tier B — never emitted, never accepted. The
+  // top-level schema is `.passthrough()`, so without this it would round-trip
+  // silently; reject it loudly so a stray/hand-written bindings block is caught.
+  if ("bindings" in raw) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["bindings"],
+      message: "bindings is not supported in 0.9.0 (Tier B); it is neither emitted nor accepted",
+    });
+  }
+  // Half-migrated config: `bundles` (new shape) MUST NOT co-exist with the
+  // retired `stashDir`/`sources`/`installed` trio. The migrator emits `bundles`
+  // and removes those keys atomically, so a config carrying both is a failed /
+  // partial migration — fail loudly rather than resolving an ambiguous source
+  // set. (An old-shape config WITHOUT `bundles` still loads — the transitional
+  // runtime resolves it; `inspectConfig` classifies it "old" for migration.)
+  if (config.bundles !== undefined) {
+    for (const key of ["stashDir", "sources", "installed"]) {
+      if (key in raw && raw[key] !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} is the pre-cutover source shape and cannot co-exist with bundles (half-migrated config); run \`akm migrate apply\``,
+        });
+      }
+    }
+  }
+  // `defaultBundle`, when present, must name a configured bundle.
+  if (config.defaultBundle !== undefined) {
+    if (config.bundles === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultBundle"],
+        message: "defaultBundle requires a bundles map",
+      });
+    } else if (!(config.defaultBundle in config.bundles)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultBundle"],
+        message: `defaultBundle "${config.defaultBundle}" does not name a configured bundle`,
       });
     }
   }

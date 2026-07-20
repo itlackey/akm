@@ -555,6 +555,85 @@
         "additionalProperties": true
       }
     },
+    "bundles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "git": {
+            "type": "string",
+            "minLength": 1
+          },
+          "website": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "refresh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxPages": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "maxDepth": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": true
+          },
+          "npm": {
+            "type": "string",
+            "minLength": 1
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "registryId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "components": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "root": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "adapter": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "writable": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": true
+            },
+            "propertyNames": {
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "defaultBundle": {
+      "type": "string",
+      "minLength": 1
+    },
     "output": {
       "type": "object",
       "properties": {
@@ -2238,6 +2317,85 @@
             ],
             "additionalProperties": true
           }
+        },
+        "bundles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "git": {
+                "type": "string",
+                "minLength": 1
+              },
+              "website": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "refresh": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "maxPages": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "maxDepth": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": true
+              },
+              "npm": {
+                "type": "string",
+                "minLength": 1
+              },
+              "writable": {
+                "type": "boolean"
+              },
+              "registryId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "components": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "root": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "adapter": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "writable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "propertyNames": {
+                  "minLength": 1
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "defaultBundle": {
+          "type": "string",
+          "minLength": 1
         },
         "output": {
           "type": "object",

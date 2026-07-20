@@ -78,6 +78,14 @@ export type ImproveProfileConfig = z.infer<typeof import("./config-schema").Impr
 export type RegistryConfigEntry = z.infer<typeof import("./config-schema").RegistryConfigEntrySchema>;
 
 /**
+ * A single `bundles.<slug>` entry (0.9.0 config-shape cutover, spec §10.1 /
+ * D-R5). Carries one source descriptor (`path` | `git` | `website` | `npm`),
+ * optional `writable`, an optional preserved `registryId` source locator, and an
+ * optional single-entry `components` map. See config-schema.ts for the shape.
+ */
+export type BundleConfigEntry = z.infer<typeof import("./config-schema").BundleConfigEntrySchema>;
+
+/**
  * SourceSpec — discriminated union describing *where* a stash comes from.
  * The on-disk config keeps the flat `{ type, path, url, ... }` shape; a
  * SourceSpec value is derived at load time and attached to ConfiguredSource.

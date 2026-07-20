@@ -50,6 +50,22 @@ describe("config schema drift pins", () => {
     expect(Object.keys(search.properties ?? {})).toContain("graphBoost");
   });
 
+  test("0.9.0 bundles/defaultBundle config-shape keys are present (spec §10.1 / D-R5)", () => {
+    const schema = readSchema();
+    const props = schema.properties as Record<string, Record<string, unknown>>;
+    // `bundles` is an object keyed by bundle slug; each entry carries the
+    // source descriptors path/git/website/npm.
+    const bundles = props.bundles as { type?: string; additionalProperties?: { properties?: Record<string, unknown> } };
+    expect(bundles.type).toBe("object");
+    const entryProps = Object.keys(bundles.additionalProperties?.properties ?? {});
+    for (const key of ["path", "git", "website", "npm", "writable", "registryId", "components"]) {
+      expect(entryProps).toContain(key);
+    }
+    expect(props.defaultBundle).toEqual({ type: "string", minLength: 1 });
+    // `bindings` (Tier B) is never part of the accepted config surface.
+    expect(props.bindings).toBeUndefined();
+  });
+
   test("legacy llm/agent/features top-level entries are gone from the schema", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, unknown>;
