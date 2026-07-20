@@ -114,14 +114,14 @@ function hangingSpawn(): SpawnFn {
 }
 
 const VALID_LESSON_PAYLOAD = JSON.stringify({
-  ref: "lesson:rg-over-grep",
+  ref: "lessons/rg-over-grep",
   content:
     "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
   frontmatter: { description: "Use ripgrep before grep", when_to_use: "Searching large repos for patterns" },
 });
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
-  ref: "skill:hello",
+  ref: "skills/hello",
   content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
 });
 
@@ -162,7 +162,7 @@ describe("akm reflect", () => {
     let prompt = "";
 
     const result = await akmReflect({
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       sourceName: "team",
       stashDir: selected,
       config: quietQualityGateConfig(),
@@ -184,7 +184,7 @@ describe("akm reflect", () => {
     const echoed = VALID_LESSON_PAYLOAD.replace("Prefer rg.", `Prefer rg. ${sentinel}`);
     const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
       akmReflect({
-        ref: "lesson:rg-over-grep",
+        ref: "lessons/rg-over-grep",
         stashDir: stash,
         config: quietQualityGateConfig(),
         runAgentOptions: { spawn: fakeSpawn(echoed, "", 0) },
@@ -199,7 +199,7 @@ describe("akm reflect", () => {
   test("happy path: produces a queued proposal with source=reflect", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
@@ -216,13 +216,13 @@ describe("akm reflect", () => {
 
     const events = readEvents({ type: "reflect_invoked" });
     expect(events.events.length).toBe(1);
-    expect(events.events[0]?.ref).toBe("lesson:rg-over-grep");
+    expect(events.events[0]?.ref).toBe("lessons/rg-over-grep");
   });
 
   test("attribution: eligibilitySource stamps reflect_invoked event + proposal record", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
@@ -245,7 +245,7 @@ describe("akm reflect", () => {
   test("attribution: omitted eligibilitySource leaves reflect_invoked + proposal unstamped", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
@@ -266,7 +266,7 @@ describe("akm reflect", () => {
   test("emits reflect_invoked even when the agent fails", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:bad",
+      ref: "lessons/bad",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
@@ -284,7 +284,7 @@ describe("akm reflect", () => {
   test("spawn_failed → no proposal, structured envelope", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:any",
+      ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spawnFailedSpawn() },
@@ -298,7 +298,7 @@ describe("akm reflect", () => {
   test("parse_error → agent stdout is not a valid proposal payload", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:any",
+      ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("not a json object", "", 0) },
@@ -312,7 +312,7 @@ describe("akm reflect", () => {
   test("raw markdown output for an existing ref falls back to proposal content", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:any",
+      ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("# Title\n\nUse rg for recursive search.\n", "", 0) },
@@ -346,7 +346,7 @@ describe("akm reflect", () => {
     }) as unknown as typeof clearTimeout;
 
     const result = await akmReflect({
-      ref: "lesson:any",
+      ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
       timeoutMs: 5,
@@ -362,10 +362,10 @@ describe("akm reflect", () => {
     const stash = makeStashDir();
     appendEvent({
       eventType: "feedback",
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       metadata: { signal: "negative", note: "too vague" },
     });
-    appendEvent({ eventType: "feedback", ref: "skill:hello", metadata: { signal: "positive", note: "nice greeting" } });
+    appendEvent({ eventType: "feedback", ref: "skills/hello", metadata: { signal: "positive", note: "nice greeting" } });
     let prompt = "";
     const result = await akmReflect({
       stashDir: stash,
@@ -381,8 +381,8 @@ describe("akm reflect", () => {
     if (!result.ok) throw new Error("expected ok");
     expect(listProposals(stash).length).toBe(1);
     expect(prompt).toContain("No target ref was supplied.");
-    expect(prompt).toContain("lesson:rg-over-grep [negative] too vague");
-    expect(prompt).toContain("skill:hello [positive] nice greeting");
+    expect(prompt).toContain("lessons/rg-over-grep [negative] too vague");
+    expect(prompt).toContain("skills/hello [positive] nice greeting");
     expect(prompt).toContain("Task / focus: Focus on the highest-value recent signal");
 
     const events = readEvents({ type: "reflect_invoked" });
@@ -398,7 +398,7 @@ describe("akm reflect", () => {
     let capturedStdoutMode: string | undefined;
     let capturedStderrMode: string | undefined;
     const result = await akmReflect({
-      ref: "lesson:rg-over-grep",
+      ref: "lessons/rg-over-grep",
       stashDir: stash,
       task: "Tighten the guidance",
       config: quietQualityGateConfig(),
@@ -532,7 +532,7 @@ describe("akm propose", () => {
       task: "Say hi",
       stashDir: stash,
       agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn('{"ref": "skill:hello"}', "", 0) }, // missing content
+      runAgentOptions: { spawn: fakeSpawn('{"ref": "skills/hello"}', "", 0) }, // missing content
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -543,7 +543,7 @@ describe("akm propose", () => {
   test("parse_error: rejects agent refs whose type does not match the requested type", async () => {
     const stash = makeStashDir();
     const mismatchedPayload = JSON.stringify({
-      ref: "lesson:hello",
+      ref: "lessons/hello",
       content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
     });
     const result = await akmPropose({
@@ -590,7 +590,7 @@ describe("akm propose", () => {
       const stash = makeStashDir();
       fs.mkdirSync(path.join(stash, "widgets"), { recursive: true });
       const widgetPayload = JSON.stringify({
-        ref: "widget:gear",
+        ref: "widgets/gear",
         content: "---\ndescription: a gear widget\nwhen_to_use: when grinding\n---\n\nbody.\n",
       });
       const result = await akmPropose({

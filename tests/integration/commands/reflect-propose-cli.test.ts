@@ -90,13 +90,13 @@ function hangingSpawn(): SpawnFn {
 }
 
 const VALID_LESSON_PAYLOAD = JSON.stringify({
-  ref: "lesson:rg-over-grep",
+  ref: "lessons/rg-over-grep",
   content:
     "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
 });
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
-  ref: "skill:hello",
+  ref: "skills/hello",
   content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
 });
 
@@ -158,8 +158,8 @@ function coerceProposeArgs(args: Record<string, unknown>): {
 
 describe("citty argv → akmReflect coercion", () => {
   test("string fields trimmed; empty strings → undefined", () => {
-    expect(coerceReflectArgs({ ref: "lesson:foo", task: "  ", engine: "" })).toEqual({
-      ref: "lesson:foo",
+    expect(coerceReflectArgs({ ref: "lessons/foo", task: "  ", engine: "" })).toEqual({
+      ref: "lessons/foo",
       task: undefined,
       engine: undefined,
     });
@@ -204,7 +204,7 @@ describe("citty argv → akmPropose coercion", () => {
 describe("akmReflect — argv-coerced calls (happy + failure)", () => {
   test("happy: argv-shape passed through coercion → queues a proposal", async () => {
     const stash = makeStashDir();
-    const coerced = coerceReflectArgs({ ref: "lesson:rg-over-grep", task: "focus on speed", "timeout-ms": "5000" });
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", task: "focus on speed", "timeout-ms": "5000" });
     let capturedCmd: string[] = [];
     const result = await akmReflect({
       ...coerced,
@@ -224,7 +224,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
 
   test("parse_error: agent stdout is malformed → ok:false envelope", async () => {
     const stash = makeStashDir();
-    const coerced = coerceReflectArgs({ ref: "lesson:rg-over-grep" });
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep" });
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
@@ -238,7 +238,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
 
   test("timeout: short --timeout-ms is honoured by the wrapper", async () => {
     const stash = makeStashDir();
-    const coerced = coerceReflectArgs({ ref: "lesson:rg-over-grep", "timeout-ms": "1" });
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", "timeout-ms": "1" });
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
@@ -267,7 +267,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     let thrown: unknown;
     try {
       await akmReflect({
-        ref: "lesson:rg-over-grep",
+        ref: "lessons/rg-over-grep",
         stashDir: stash,
         // No config file exists under the sandboxed XDG_CONFIG_HOME.
       });

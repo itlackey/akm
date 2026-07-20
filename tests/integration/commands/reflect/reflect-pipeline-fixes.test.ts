@@ -133,7 +133,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     };
 
     const result = await akmReflect({
-      ref: "script:deploy.ts",
+      ref: "scripts/deploy.ts",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spy },
@@ -156,7 +156,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("env:* ref is rejected (.env files must never get YAML frontmatter)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "env:default",
+      ref: "env/default",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
@@ -175,7 +175,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
       return fakeSpawn("", "", 0)(cmd, {});
     };
     const result = await akmReflect({
-      ref: "secret:signing-key",
+      ref: "secrets/signing-key",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: spy },
@@ -192,7 +192,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "task:nightly-backup",
+      ref: "tasks/nightly-backup",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn("", "", 0) },
@@ -206,11 +206,11 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const stash = makeStashDir();
     // No source asset on disk — reflect produces a proposal without size-guard checks.
     const payload = JSON.stringify({
-      ref: "knowledge:foo",
+      ref: "knowledge/foo",
       content: "---\ndescription: Foo doc\n---\n\nBody of foo.",
     });
     const result = await akmReflect({
-      ref: "knowledge:foo",
+      ref: "knowledge/foo",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
@@ -246,10 +246,10 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
 
     // LLM rewrites the body only — no frontmatter (correct per new prompt).
     const llmBody = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
-    const payload = JSON.stringify({ ref: "knowledge:policies/release", content: llmBody });
+    const payload = JSON.stringify({ ref: "knowledge/policies/release", content: llmBody });
 
     const result = await akmReflect({
-      ref: "knowledge:policies/release",
+      ref: "knowledge/policies/release",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -282,10 +282,10 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
       "",
       LONG_SOURCE_BODY,
     ].join("\n");
-    const payload = JSON.stringify({ ref: "knowledge:x", content: llmBlob });
+    const payload = JSON.stringify({ ref: "knowledge/x", content: llmBlob });
 
     const result = await akmReflect({
-      ref: "knowledge:x",
+      ref: "knowledge/x",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -328,12 +328,12 @@ describe("Reflect quality gate — source context", () => {
     let judgePrompt = "";
 
     const result = await akmReflect({
-      ref: "knowledge:quality-source",
+      ref: "knowledge/quality-source",
       stashDir: stash,
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge:quality-source", content: candidateContent }), "", 0),
+        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge/quality-source", content: candidateContent }), "", 0),
       },
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
@@ -365,13 +365,13 @@ describe("Reflect quality gate — source context", () => {
     let judgeInvoked = false;
 
     const result = await akmReflect({
-      ref: "knowledge:invalid-before-judge",
+      ref: "knowledge/invalid-before-judge",
       stashDir: stash,
       config,
       assetContent: sourceContent,
       runAgentOptions: {
         spawn: fakeSpawn(
-          JSON.stringify({ ref: "knowledge:invalid-before-judge", content: "Tiny replacement." }),
+          JSON.stringify({ ref: "knowledge/invalid-before-judge", content: "Tiny replacement." }),
           "",
           0,
         ),
@@ -396,10 +396,10 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // LLM returns a 3-line body (catastrophic shrinkage seen in the May 2026 review).
     const tinyBody = "Use AdGuard.\nDone.\n";
-    const payload = JSON.stringify({ ref: "knowledge:shrink", content: tinyBody });
+    const payload = JSON.stringify({ ref: "knowledge/shrink", content: tinyBody });
 
     const result = await akmReflect({
-      ref: "knowledge:shrink",
+      ref: "knowledge/shrink",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -421,10 +421,10 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // LLM quintupled the asset with speculative material (5× > 2500-byte absolute ceiling).
     const bloatedBody = `${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}`;
-    const payload = JSON.stringify({ ref: "knowledge:expand", content: bloatedBody });
+    const payload = JSON.stringify({ ref: "knowledge/expand", content: bloatedBody });
 
     const result = await akmReflect({
-      ref: "knowledge:expand",
+      ref: "knowledge/expand",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -446,10 +446,10 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // Small, justified addition.
     const improvedBody = `${LONG_SOURCE_BODY}\n\n## Notes\n\nVerify with the on-call.`;
-    const payload = JSON.stringify({ ref: "knowledge:modest", content: improvedBody });
+    const payload = JSON.stringify({ ref: "knowledge/modest", content: improvedBody });
 
     const result = await akmReflect({
-      ref: "knowledge:modest",
+      ref: "knowledge/modest",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -464,12 +464,12 @@ describe("Reflect size guard — diff-size safety rails", () => {
     // 4× expansion would normally trip the guard, but source body is below the
     // REFLECT_SIZE_GUARD_MIN_BYTES floor so the rail is intentionally permissive.
     const payload = JSON.stringify({
-      ref: "lesson:tiny",
+      ref: "lessons/tiny",
       content: "Use rg for searching large repositories. rg is faster than grep and respects .gitignore.\n",
     });
 
     const result = await akmReflect({
-      ref: "lesson:tiny",
+      ref: "lessons/tiny",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: "---\ndescription: tiny\n---\nUse rg.\n",
@@ -511,10 +511,10 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
       "A genuinely new troubleshooting paragraph added by the agent.",
     ].join("\n");
-    const payload = JSON.stringify({ ref: "skill:openpalm-stack-diagnostics", content: llmBlob });
+    const payload = JSON.stringify({ ref: "skills/openpalm-stack-diagnostics", content: llmBlob });
 
     const result = await akmReflect({
-      ref: "skill:openpalm-stack-diagnostics",
+      ref: "skills/openpalm-stack-diagnostics",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -548,10 +548,10 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
       "A genuinely new paragraph added by the agent.",
     ].join("\n");
-    const payload = JSON.stringify({ ref: "knowledge:id-protected", content: llmBlob });
+    const payload = JSON.stringify({ ref: "knowledge/id-protected", content: llmBlob });
 
     const result = await akmReflect({
-      ref: "knowledge:id-protected",
+      ref: "knowledge/id-protected",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
@@ -572,10 +572,10 @@ describe("Reflect positive control — markdown assets still flow through", () =
     const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
 
     const improved = LONG_SOURCE_BODY.replace("## Verification", "## Verification steps");
-    const payload = JSON.stringify({ ref: "knowledge:control", content: improved });
+    const payload = JSON.stringify({ ref: "knowledge/control", content: improved });
 
     const result = await akmReflect({
-      ref: "knowledge:control",
+      ref: "knowledge/control",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
