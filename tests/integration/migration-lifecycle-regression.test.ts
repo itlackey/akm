@@ -318,6 +318,24 @@ describe("migration lifecycle regressions", () => {
     fs.writeFileSync(getConfigPath(), '{"configVersion":"0.9.0","sources":"not-an-array"}\n');
     expect(inspectMigrationState().config.status).toBe("corrupt");
 
+    // WI-8.4 config-shape cutover: a version-current config still in the
+    // pre-cutover source shape (stashDir/sources/installed, no bundles) is
+    // migration-eligible → "old", not corrupt.
+    fs.writeFileSync(getConfigPath(), '{"configVersion":"0.9.0","stashDir":"/home/u/akm"}\n');
+    expect(inspectMigrationState().config.status).toBe("old");
+    // The migrated new shape (bundles) is "current".
+    fs.writeFileSync(
+      getConfigPath(),
+      '{"configVersion":"0.9.0","bundles":{"akm":{"path":"/home/u/akm","writable":true}},"defaultBundle":"akm"}\n',
+    );
+    expect(inspectMigrationState().config.status).toBe("current");
+    // A half-migrated config (bundles + a retired source key) fails loudly.
+    fs.writeFileSync(
+      getConfigPath(),
+      '{"configVersion":"0.9.0","bundles":{"akm":{"path":"/s"}},"defaultBundle":"akm","stashDir":"/s"}\n',
+    );
+    expect(inspectMigrationState().config.status).toBe("corrupt");
+
     fs.rmSync(getStateDbPathInDataDir(), { force: true });
     fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
     const future = new Database(getStateDbPathInDataDir());

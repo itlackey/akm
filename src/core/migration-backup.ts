@@ -205,6 +205,21 @@ function mapLedgerState(state: MigrationLedgerState): MigrationArtifactState {
   };
 }
 
+/**
+ * True when a raw config still carries the pre-cutover source shape
+ * (`stashDir`/`sources`/`installed`) and has NOT yet grown the 0.9.0 `bundles`
+ * map. Such a config is the version-current-but-OLD-SHAPE case that the
+ * config-shape migration (WI-8.4) rewrites; {@link inspectConfig} classifies it
+ * "old" (migration-eligible, backup-eligible) rather than "corrupt". A config
+ * carrying BOTH `bundles` and an old source key is half-migrated and is left to
+ * {@link validateConfigShape}, which rejects it → "corrupt". (Kept inline — a
+ * trivial key probe — to avoid importing the migrator's derivation graph here.)
+ */
+function isPreCutoverSourceShape(raw: Record<string, unknown>): boolean {
+  if (raw.bundles !== undefined) return false;
+  return ["stashDir", "sources", "installed"].some((k) => k in raw && raw[k] !== undefined);
+}
+
 function inspectConfig(configPath: string): MigrationArtifactState {
   if (!fs.existsSync(configPath)) return { status: "missing" };
   try {
@@ -215,11 +230,17 @@ function inspectConfig(configPath: string): MigrationArtifactState {
     if (comparison > 0) return { status: "newer" };
     const validated = validateConfigShape(raw);
     if (!validated.ok) {
+      // Malformed at 0.9.0 — including a half-migrated config carrying `bundles`
+      // alongside a retired source key (rejected by superRefine).
       return {
         status: "corrupt",
         detail: validated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
       };
     }
+    // 0.9.0 config-shape cutover: a VALID config still in the pre-cutover source
+    // shape (no `bundles`) is migration-eligible → "old" (drives the
+    // migrate-apply UX + backup eligibility), not "current".
+    if (isPreCutoverSourceShape(raw)) return { status: "old" };
     return { status: "current" };
   } catch (error) {
     return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };

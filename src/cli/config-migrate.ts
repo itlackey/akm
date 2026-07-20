@@ -18,7 +18,7 @@ import {
   resetConfigCache,
   sanitizeConfigForWrite,
 } from "../core/config/config";
-import { backupExistingConfig, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
+import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
 import { ConfigError } from "../core/errors";
 import { withMaintenanceStartBarrier } from "../core/maintenance-barrier";
 import {
@@ -42,6 +42,7 @@ import {
 } from "../core/migration-backup";
 import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
+import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import {
   buildCutoverRefMap,
@@ -585,6 +586,25 @@ function unsafeArtifact(name: string, state: MigrationArtifactState): string | u
   return `${name} is ${state.status}${state.detail ? `: ${state.detail}` : ""}`;
 }
 
+/**
+ * Parse + validate a migration TARGET config, applying the Chunk-8 config-shape
+ * migration (`stashDir`/`sources[]`/`installed[]` → `bundles`/`defaultBundle`)
+ * as a pre-validation transform. This is why a target still carrying the
+ * pre-cutover source shape loads (and reports "current" in `migrate status`)
+ * even though the runtime loader now rejects that shape once `bundles` exists:
+ * the migrator normalizes it FIRST, then the strict schema gates the result.
+ *
+ * The transform is idempotent, so an already-migrated prepared config, or the
+ * new-shape config re-parsed from the apply journal, passes through untouched.
+ */
+function parseMigrationTargetConfig(text: string, sourcePath?: string): AkmConfig {
+  const raw = parseConfigText(text, sourcePath);
+  const migrated = migrateConfigSourcesToBundles(raw);
+  // Re-serialize the normalized object through the canonical validator so the
+  // version check, schema validation, and defaults merge stay in one place.
+  return parseAndValidateConfigText(JSON.stringify(migrated), sourcePath);
+}
+
 function loadTargetConfig(
   preparedConfigPath: string | undefined,
   artifacts: MigrationState,
@@ -618,7 +638,7 @@ function loadTargetConfig(
         source: preparedConfigPath ? "prepared" : "active",
         path: targetPath,
       },
-      config: parseAndValidateConfigText(text, targetPath),
+      config: parseMigrationTargetConfig(text, targetPath),
     };
   } catch (error) {
     return {

@@ -66,7 +66,20 @@ function writeConfigs(): string {
   fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
   fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.8.0" })}\n`, { mode: 0o600 });
   const prepared = path.join(path.dirname(getConfigPath()), "prepared-0.9.json");
-  fs.writeFileSync(prepared, `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" })}\n`);
+  // WI-8.4: the prepared 0.9 config still carries the pre-cutover source shape
+  // (stashDir primary + a named source + an installed entry). The config-applied
+  // phase auto-translates it to `bundles`/`defaultBundle` and removes the old
+  // keys (asserted in scenario (a)).
+  fs.writeFileSync(
+    prepared,
+    `${JSON.stringify({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      stashDir: path.join(getDataDir(), "stash"),
+      sources: [{ type: "filesystem", path: path.join(getDataDir(), "team"), name: "team", writable: true }],
+      installed: [{ id: "reg-kit", source: "npm", ref: "@scope/kit", stashRoot: path.join(getDataDir(), "kit") }],
+    })}\n`,
+  );
   return prepared;
 }
 
@@ -160,6 +173,21 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     expect(fs.existsSync(getDbPath())).toBe(false);
     const quarantined = fs.readdirSync(getDataDir()).filter((f) => f.startsWith("index.db.pre-cutover-"));
     expect(quarantined.length).toBe(1);
+
+    // WI-8.4: the config emerged in the 0.9.0 bundles shape — old source keys
+    // gone, bundles keyed by the derived ids, defaultBundle = the stashDir bundle.
+    const appliedConfig = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
+    expect(appliedConfig.stashDir).toBeUndefined();
+    expect(appliedConfig.sources).toBeUndefined();
+    expect(appliedConfig.installed).toBeUndefined();
+    const appliedBundles = appliedConfig.bundles as Record<string, Record<string, unknown>>;
+    // ids: stashDir slug "stash", the named source "team", the slug-legal
+    // installed id "reg-kit" (kept verbatim — it needs no slug fallback).
+    expect(Object.keys(appliedBundles)).toEqual(["stash", "team", "reg-kit"]);
+    expect(appliedConfig.defaultBundle).toBe("stash");
+    expect(appliedBundles.stash).toMatchObject({ path: path.join(getDataDir(), "stash"), writable: true });
+    expect(appliedBundles.team).toMatchObject({ path: path.join(getDataDir(), "team"), writable: true });
+    expect(appliedBundles["reg-kit"]).toEqual({ path: path.join(getDataDir(), "kit") });
 
     const db = readState();
     try {
