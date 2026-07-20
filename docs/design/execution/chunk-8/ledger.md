@@ -1,6 +1,7 @@
 # Chunk 8 — execution ledger
 
-Status: CLOSING (2026-07-20). Companion to `brief.md` + `cutover-design.md`.
+Status: CLOSED (2026-07-20). CI fully green at 69a48aa4 — check (lint+tsc+unit+integration,
+sharded) + node-smoke (22, 24) + smoke + actionlint. Companion to `brief.md` + `cutover-design.md`.
 Records the landed work, every gate result, and every deviation with its
 disposition, per the execution-workflow's per-chunk ledger rule.
 
