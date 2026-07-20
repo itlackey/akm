@@ -365,7 +365,11 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       metadata: { signal: "negative", note: "too vague" },
     });
-    appendEvent({ eventType: "feedback", ref: "skills/hello", metadata: { signal: "positive", note: "nice greeting" } });
+    appendEvent({
+      eventType: "feedback",
+      ref: "skills/hello",
+      metadata: { signal: "positive", note: "nice greeting" },
+    });
     let prompt = "";
     const result = await akmReflect({
       stashDir: stash,
