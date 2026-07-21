@@ -63,10 +63,16 @@ describe("current engine and strategy configuration contract", () => {
 
   test("active documentation scan covers public entry points and excludes historical and design trees", () => {
     const scanned = activeMarkdownDocs().map((docPath) => path.relative(repoRoot, docPath));
-    const helpDocs = fs
-      .readdirSync(path.join(repoRoot, "src", "assets", "help"))
-      .filter((name) => name.endsWith(".md"))
-      .map((name) => path.join("src", "assets", "help", name));
+    // The static help-asset dir was emptied when its orphaned files were pruned
+    // (nothing loaded them); the scan must mirror whatever exists — including
+    // nothing — so tolerate the dir's absence.
+    const helpRoot = path.join(repoRoot, "src", "assets", "help");
+    const helpDocs = fs.existsSync(helpRoot)
+      ? fs
+          .readdirSync(helpRoot)
+          .filter((name) => name.endsWith(".md"))
+          .map((name) => path.join("src", "assets", "help", name))
+      : [];
 
     expect(scanned).toEqual(
       expect.arrayContaining(["README.md", path.join(".github", "README.npm.md"), "SECURITY.md", "STABILITY.md"]),

@@ -326,25 +326,30 @@ async function searchDatabase(
   // itself explicit intent, so `defaultExcludeTypes` does not apply — a bare
   // `session:` enumerates sessions exactly like `--type session` does.
   const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, placementTypes()) : null;
+  // Shared args for the two browse paths below; browse never runs semantic
+  // ranking, so both return usedSemantic: false.
+  const browseArgs = {
+    db,
+    query,
+    limit,
+    stashDir,
+    allSourceDirs,
+    sources,
+    config,
+    rendererRegistry,
+    filters,
+    includeProposed,
+    beliefFilter,
+    restrictToSources,
+  };
   if (refPrefix) {
-    // Browse path (ref-prefix enumeration) never runs semantic ranking.
+    // Browse path (ref-prefix enumeration).
     return {
       ...(await enumerateEntries({
-        db,
-        query,
+        ...browseArgs,
         typeFilter: refPrefix.type,
         excludeTypes: [],
         namePrefix: refPrefix.namePrefix,
-        limit,
-        stashDir,
-        allSourceDirs,
-        sources,
-        config,
-        rendererRegistry,
-        filters,
-        includeProposed,
-        beliefFilter,
-        restrictToSources,
       })),
       usedSemantic: false,
     };
@@ -354,23 +359,12 @@ async function searchDatabase(
   // tokens such as "." — should enumerate matching entries instead of
   // returning an empty result set from FTS.
   if (!hasSearchableTokens) {
-    // Browse path (empty/unsearchable query) never runs semantic ranking.
+    // Browse path (empty/unsearchable query).
     return {
       ...(await enumerateEntries({
-        db,
-        query,
+        ...browseArgs,
         typeFilter: searchType === "any" ? undefined : searchType,
         excludeTypes: defaultExcludes,
-        limit,
-        stashDir,
-        allSourceDirs,
-        sources,
-        config,
-        rendererRegistry,
-        filters,
-        includeProposed,
-        beliefFilter,
-        restrictToSources,
       })),
       usedSemantic: false,
     };

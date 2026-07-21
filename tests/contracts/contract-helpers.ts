@@ -37,8 +37,13 @@ export function activeMarkdownDocs(): string[] {
     }
   };
   walk(docsRoot);
-  for (const entry of fs.readdirSync(HELP_DOCS_ROOT, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name.endsWith(".md")) docs.push(path.join(HELP_DOCS_ROOT, entry.name));
+  // The static help-asset dir was emptied when its orphaned files were pruned
+  // (nothing loads them); tolerate its absence so the scan covers it only when
+  // help assets exist again.
+  if (fs.existsSync(HELP_DOCS_ROOT)) {
+    for (const entry of fs.readdirSync(HELP_DOCS_ROOT, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".md")) docs.push(path.join(HELP_DOCS_ROOT, entry.name));
+    }
   }
   return docs.sort();
 }
