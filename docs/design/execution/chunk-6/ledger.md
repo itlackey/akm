@@ -3,7 +3,7 @@
 Opened at HEAD `b393317f` (W1-a residuals closed, full check green
 4481/0/55). Work items land per brief order; this ledger records each
 item's deletions, behavior changes, gate evidence, and net LOC as it
-lands. Status: IN PROGRESS.
+lands. Status: CLOSED (header corrected 2026-07-21 — the body's close-out record was already present; this line had gone stale).
 
 ## Baseline records (pre-work)
 

@@ -3,7 +3,7 @@
 Opened at HEAD `365f5b09` (chunk 6 closed; full check green 4454/0/55 in
 the integration stage, exit 0 overall). Work items land per brief order;
 this ledger records each item's deletions, behavior changes, gate
-evidence, and net LOC as it lands. Status: IN PROGRESS.
+evidence, and net LOC as it lands. Status: CLOSED (header corrected 2026-07-21 — the body's close-out record was already present; this line had gone stale).
 
 ## Baseline records (pre-work, at 365f5b09)
 
