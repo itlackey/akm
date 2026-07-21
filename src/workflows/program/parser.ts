@@ -24,7 +24,6 @@
  * obviously malformed templates fail at lint time.
  */
 
-import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import {
@@ -40,6 +39,7 @@ import {
   WORKFLOW_MAX_STEPS,
 } from "../resource-limits";
 import type { SourceRef, WorkflowError } from "../schema";
+import { parseTemplate } from "./expressions";
 import {
   PROGRAM_ISOLATION_KINDS,
   PROGRAM_ON_ERROR,
@@ -925,65 +925,10 @@ function checkTemplates(ctx: Ctx, text: string, path: Path, label: string): void
     idx = close + 2;
   }
 
-  const checker = loadExpressionChecker();
-  if (checker) {
-    const message = checker(text);
-    if (message !== null) ctx.err(path, `${label}: ${message}`);
+  const result = parseTemplate(text);
+  if (!result.ok && result.errors.length > 0) {
+    ctx.err(path, `${label}: ${result.errors[0]!.message}`);
   }
-  // TODO(R1): when ./expressions is absent (parallel task not landed yet)
-  // only the unterminated check above runs; the compiler task enforces the
-  // closed expression grammar fully.
-}
-
-type ExpressionChecker = (text: string) => string | null;
-
-let cachedExpressionChecker: ExpressionChecker | null | undefined;
-
-/** Test seam: force a re-probe of ./expressions (e.g. after mocking). */
-export function resetExpressionCheckerForTests(): void {
-  cachedExpressionChecker = undefined;
-}
-
-function loadExpressionChecker(): ExpressionChecker | null {
-  if (cachedExpressionChecker !== undefined) return cachedExpressionChecker;
-  cachedExpressionChecker = null;
-  let candidate: ((text: string) => unknown) | undefined;
-  try {
-    const requireModule = createRequire(import.meta.url);
-    // Non-literal specifier keeps tsc from resolving the module at compile
-    // time — it may not exist yet (written by a parallel task).
-    const specifier = "./expressions";
-    const mod = requireModule(specifier) as Record<string, unknown>;
-    candidate = [mod.parseTemplate, mod.compileTemplate, mod.parseTemplateString, mod.tokenizeTemplate].find(
-      (fn): fn is (text: string) => unknown => typeof fn === "function",
-    );
-  } catch {
-    return cachedExpressionChecker; // module not present — skip the pass
-  }
-  if (!candidate) return cachedExpressionChecker;
-  const parseTemplate = candidate;
-  cachedExpressionChecker = (text) => {
-    try {
-      const result = parseTemplate(text);
-      if (isPlainRecord(result) && result.ok === false) {
-        const errs = result.errors;
-        if (Array.isArray(errs) && errs.length > 0) {
-          const first: unknown = errs[0];
-          if (typeof first === "string") return first;
-          if (isPlainRecord(first) && typeof first.message === "string") return first.message;
-        }
-        if (typeof result.error === "string") return result.error;
-        return `malformed \${{ … }} expression`;
-      }
-      return null;
-    } catch {
-      // A throw here is as likely an API-signature mismatch with the
-      // parallel expressions task as a real template error — never turn it
-      // into a false lint failure. The compiler task enforces the grammar.
-      return null;
-    }
-  };
-  return cachedExpressionChecker;
 }
 
 // ---------------------------------------------------------------------------
