@@ -188,7 +188,7 @@ function parseGithubShorthand(input: string, originalRef: string): ParsedGithubR
     throw new Error("Invalid GitHub ref. Expected owner/repo or owner/repo#ref.");
   }
   const owner = segments[0];
-  const repo = segments[1].replace(/\.git$/i, "");
+  const repo = segments[1]!.replace(/\.git$/i, "");
   if (!owner || !repo) {
     throw new Error("Invalid GitHub ref. Expected owner/repo.");
   }
@@ -222,8 +222,8 @@ function parseGithubUrl(url: URL, rawUrl: string): ParsedGithubRef {
   if (segments.length < 2) {
     throw new Error("Invalid GitHub URL. Expected https://github.com/owner/repo.");
   }
-  const owner = segments[0];
-  const repo = segments[1].replace(/\.git$/i, "");
+  const owner = segments[0]!;
+  const repo = segments[1]!.replace(/\.git$/i, "");
   const requestedRef = url.hash ? decodeURIComponent(url.hash.slice(1)) : undefined;
 
   return {

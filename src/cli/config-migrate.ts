@@ -166,7 +166,7 @@ function hasGenerationMarker(dbPath: string, operationId: string, phase: string)
     const rows = db
       .prepare("SELECT operation_id, phase FROM akm_migration_generation WHERE singleton=1 LIMIT 2")
       .all() as Array<{ operation_id: string; phase: string }>;
-    return rows.length === 1 && rows[0].operation_id === operationId && rows[0].phase === phase;
+    return rows.length === 1 && rows[0]!.operation_id === operationId && rows[0]!.phase === phase;
   } finally {
     db.close();
   }

@@ -46,7 +46,7 @@ export function deduplicateGraph(
 
   for (let i = 0; i < extractions.length; i++) {
     const ref = assetRefs?.[i] ?? "unknown";
-    for (const raw of extractions[i].entities) {
+    for (const raw of extractions[i]!.entities) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
       const normalized = trimmed.toLowerCase();
@@ -68,7 +68,7 @@ export function deduplicateGraph(
 
   for (let i = 0; i < extractions.length; i++) {
     const ref = assetRefs?.[i] ?? "unknown";
-    for (const rel of extractions[i].relations) {
+    for (const rel of extractions[i]!.relations) {
       const fromNorm = rel.from.trim().toLowerCase();
       const toNorm = rel.to.trim().toLowerCase();
       const typeNorm = normalizeRelationType(rel.type);

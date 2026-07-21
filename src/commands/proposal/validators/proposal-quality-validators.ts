@@ -133,7 +133,7 @@ export function isValidDescription(
     return { ok: false, reason: `description ends with truncation indicator "${last}"` };
   const lastWordMatch = v.match(/([A-Za-z']+)[.!?]*$/);
   if (lastWordMatch) {
-    const lastWord = lastWordMatch[1].toLowerCase();
+    const lastWord = lastWordMatch[1]!.toLowerCase();
     if (TRUNCATION_TRAILING_WORDS.has(lastWord))
       return { ok: false, reason: `description ends with truncation-indicator word "${lastWord}"` };
   }

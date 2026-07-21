@@ -288,7 +288,7 @@ function locateWriteRefInRoot(type: string, name: string, root: string): string 
 
 /** Build the shared exit-2 error for refs that resolved in no root. */
 function unresolvedRefsError(flag: "--xref" | "--supersedes", unresolved: ParsedWriteRef[]): UsageError {
-  const first = unresolved[0];
+  const first = unresolved[0]!;
   return new UsageError(
     `${flag} ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.map((u) => u.ref).join(", ")}`,
     "INVALID_FLAG_VALUE",

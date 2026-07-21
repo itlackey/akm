@@ -99,7 +99,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     throw new NotFoundError(
       `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => makeSecretRef(n)).join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0])}\`.`,
+      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0]!)}\`.`,
     );
   }
   envValues = substituted;

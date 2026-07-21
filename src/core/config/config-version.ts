@@ -22,7 +22,7 @@ export function compareConfigVersion(
 function normalize(value: string | number | undefined): number[] | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return [0, Math.trunc(value), 0];
   if (typeof value !== "string" || !value.trim()) return undefined;
-  const parts = value.trim().replace(/^v/i, "").split(/[-+]/, 1)[0].split(".");
+  const parts = value.trim().replace(/^v/i, "").split(/[-+]/, 1)[0]!.split(".");
   if (parts.some((part) => !/^\d+$/.test(part))) return undefined;
   return parts.map(Number);
 }

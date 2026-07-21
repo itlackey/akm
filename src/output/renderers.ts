@@ -185,7 +185,7 @@ function extractParameters(template: string): string[] | undefined {
   }
 
   for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
-    const parameter = match[1];
+    const parameter = match[1]!;
     if (!parameters.includes(parameter)) {
       parameters.push(parameter);
     }

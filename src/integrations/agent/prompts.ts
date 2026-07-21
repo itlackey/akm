@@ -428,7 +428,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     // compares body-only lengths. Inline regex avoids importing parseFrontmatter.
     const rawContent = input.assetContent.trimEnd();
     const fmBodyMatch = rawContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1] : rawContent).trim().length;
+    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1]! : rawContent).trim().length;
     // Compute concrete char bounds matching checkReflectSize constants:
     //   REFLECT_SIZE_GUARD_MIN_BYTES=200, REFLECT_SHRINK_RATIO_MIN=0.5,
     //   REFLECT_ABSOLUTE_FLOOR_BYTES=150, REFLECT_EXPAND_RATIO_MAX=2.5,

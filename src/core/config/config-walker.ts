@@ -392,7 +392,8 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
 
 function setPath(config: Record<string, unknown>, path: Path, value: unknown): Record<string, unknown> {
   if (path.length === 0) return config;
-  const [head, ...rest] = path;
+  const head = path[0]!; // non-empty: guarded by the `path.length === 0` check above
+  const rest = path.slice(1);
   const next = { ...config };
   if (rest.length === 0) {
     if (value === undefined) {
@@ -413,7 +414,8 @@ function setPath(config: Record<string, unknown>, path: Path, value: unknown): R
 
 function unsetPath(config: Record<string, unknown>, path: Path): Record<string, unknown> {
   if (path.length === 0) return config;
-  const [head, ...rest] = path;
+  const head = path[0]!; // non-empty: guarded by the `path.length === 0` check above
+  const rest = path.slice(1);
   const next = { ...config };
   if (rest.length === 0) {
     delete next[head];

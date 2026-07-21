@@ -85,7 +85,7 @@ export function nodeFs(): NodeFs {
  */
 export function spawnCommand(args: string[]): ExecResult {
   const [bin, ...rest] = args;
-  const r = spawnSync(bin, rest);
+  const r = spawnSync(bin!, rest);
   return {
     status: r.status ?? 1,
     stdout: decodeCommandOutput(r.stdout),
@@ -169,8 +169,8 @@ function decodeUtf16Be(output: Buffer): string {
   const evenLength = output.length - (output.length % 2);
   const swapped = Buffer.allocUnsafe(evenLength);
   for (let i = 0; i < evenLength; i += 2) {
-    swapped[i] = output[i + 1];
-    swapped[i + 1] = output[i];
+    swapped[i] = output[i + 1]!;
+    swapped[i + 1] = output[i]!;
   }
   return swapped.toString("utf16le");
 }

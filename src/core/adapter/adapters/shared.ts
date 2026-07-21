@@ -83,7 +83,7 @@ function checkUnquotedColon(frontmatterText: string | null): string | null {
   for (const line of frontmatterText.split(/\r?\n/)) {
     const match = line.match(/^description:\s*(.*)/);
     if (!match) continue;
-    const value = match[1].trim();
+    const value = match[1]!.trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       return null;
     }
@@ -150,7 +150,7 @@ function extractRefTokens(text: string): string[] {
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const fullRef = match[1];
+    const fullRef = match[1]!;
     if (fullRef.includes("$(") || fullRef.includes("${")) continue; // shell variables
     if (fullRef.includes("::")) continue; // ACP type notation
     let ref = fullRef;

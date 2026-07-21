@@ -282,7 +282,7 @@ const AKM_GLOBAL_VALUE_OPTIONS = new Set(["--format", "--output", "--detail", "-
 function findImproveSubcommandIndex(cmd: readonly string[], akmIndex: number): number | undefined {
   let index = akmIndex + 1;
   while (index < cmd.length) {
-    const part = cmd[index];
+    const part = cmd[index]!;
     if (part === "improve") return index;
     if (AKM_GLOBAL_BOOLEAN_OPTIONS.has(part)) {
       index += 1;

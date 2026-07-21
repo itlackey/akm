@@ -62,7 +62,7 @@ function classify(relPath: string): DotenvType | null {
   const segs = posix.split("/").filter((s) => s.length > 0);
   if (segs.length < 2) return null;
   const head = segs[0];
-  const base = segs[segs.length - 1];
+  const base = segs[segs.length - 1]!;
   if (head === ENV_DIR) {
     return base === ".env" || base.endsWith(".env") ? "env" : null;
   }
@@ -78,9 +78,11 @@ function scanKeyNames(raw: string): string[] {
   const seen = new Set<string>();
   for (const line of raw.split(/\r?\n/)) {
     const m = line.match(ASSIGN_RE);
-    if (!m || seen.has(m[1])) continue;
-    seen.add(m[1]);
-    keys.push(m[1]);
+    if (!m) continue;
+    const key = m[1]!;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
   }
   return keys;
 }

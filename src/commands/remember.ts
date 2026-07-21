@@ -193,7 +193,7 @@ function detectObservedAt(body: string): string | undefined {
 
   // Normalise the matched phrase: lowercase, collapse internal whitespace,
   // so "last  week" matches the lookup table key.
-  const phrase = relMatch[1].toLowerCase().replace(/\s+/g, " ");
+  const phrase = relMatch[1]!.toLowerCase().replace(/\s+/g, " ");
   const offset = RELATIVE_DATE_OFFSETS[phrase];
   if (!offset) return undefined;
 

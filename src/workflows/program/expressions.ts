@@ -196,9 +196,9 @@ export function parseExpression(source: string): { ok: true; expr: ExpressionAst
 
 /** `<ident>` is `[A-Za-z_][A-Za-z0-9_-]*`. Returns null when no ident starts at `start`. */
 function readIdent(text: string, start: number): { name: string; end: number } | null {
-  if (start >= text.length || !/[A-Za-z_]/.test(text[start])) return null;
+  if (start >= text.length || !/[A-Za-z_]/.test(text[start]!)) return null;
   let end = start + 1;
-  while (end < text.length && /[A-Za-z0-9_-]/.test(text[end])) end++;
+  while (end < text.length && /[A-Za-z0-9_-]/.test(text[end]!)) end++;
   return { name: text.slice(start, end), end };
 }
 
@@ -220,7 +220,7 @@ function parsePath(
       i = ident.end;
     } else if (char === "[") {
       let j = i + 1;
-      while (j < text.length && /[0-9]/.test(text[j])) j++;
+      while (j < text.length && /[0-9]/.test(text[j]!)) j++;
       if (j === i + 1 || text[j] !== "]") {
         return {
           ok: false,

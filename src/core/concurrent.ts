@@ -27,7 +27,7 @@ export async function concurrentMap<T, R>(
       if (opts?.signal?.aborted) return;
       const i = nextIndex++;
       try {
-        results[i] = await fn(items[i], i);
+        results[i] = await fn(items[i]!, i);
       } catch {
         // individual failure: leave undefined, caller checks
       }

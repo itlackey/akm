@@ -76,17 +76,17 @@ function looksLikeTableRow(line: string): boolean {
  */
 export function findEndOfTable(lines: string[], headerLine: number): number {
   if (headerLine < 0 || headerLine >= lines.length) return -1;
-  if (!looksLikeTableRow(lines[headerLine])) return -1;
+  if (!looksLikeTableRow(lines[headerLine]!)) return -1;
   const sepLine = headerLine + 1;
   if (sepLine >= lines.length) return -1;
-  if (!TABLE_SEPARATOR_RE.test(lines[sepLine])) return -1;
+  if (!TABLE_SEPARATOR_RE.test(lines[sepLine]!)) return -1;
 
   // Walk forward through data rows. A blank line, EOF, or a line that does
   // not look like a table row terminates the table.
   let i = sepLine + 1;
   while (i < lines.length) {
-    if (lines[i].trim() === "") break;
-    if (!looksLikeTableRow(lines[i])) break;
+    if (lines[i]!.trim() === "") break;
+    if (!looksLikeTableRow(lines[i]!)) break;
     i += 1;
   }
   return i;
@@ -105,8 +105,8 @@ export function isInsideTable(lines: string[], lineIdx: number): number {
   // (i.e. a line followed by a separator row), up to the nearest blank
   // line or start-of-file.
   for (let i = lineIdx; i >= 0; i -= 1) {
-    if (lines[i].trim() === "") return -1; // blank line — out of any table
-    if (!looksLikeTableRow(lines[i])) return -1;
+    if (lines[i]!.trim() === "") return -1; // blank line — out of any table
+    if (!looksLikeTableRow(lines[i]!)) return -1;
     const end = findEndOfTable(lines, i);
     if (end !== -1 && lineIdx < end) return end;
     // Continue scanning backwards — this row looks like a table row but
@@ -146,13 +146,13 @@ export function findFenceRegions(lines: string[]): FenceRegion[] {
   let openFence = "";
 
   for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i].match(FENCE_RE);
+    const match = lines[i]!.match(FENCE_RE);
     if (!match) continue;
-    const fence = match[2];
+    const fence = match[2]!;
     if (openIdx === -1) {
       // Opening fence
       openIdx = i;
-      openFence = fence[0]; // ``` or ~~~
+      openFence = fence[0]!; // ``` or ~~~
       continue;
     }
     // Inside a fence — only a matching fence character closes it, and the
@@ -201,8 +201,8 @@ export function isInsideHtmlTable(lines: string[], lineIdx: number): number {
 
   let openIdx = -1;
   for (let i = 0; i <= lineIdx; i += 1) {
-    if (/<table[\s>]/i.test(lines[i])) openIdx = i;
-    if (/<\/table\s*>/i.test(lines[i]) && openIdx !== -1 && i >= openIdx) {
+    if (/<table[\s>]/i.test(lines[i]!)) openIdx = i;
+    if (/<\/table\s*>/i.test(lines[i]!) && openIdx !== -1 && i >= openIdx) {
       // Closing tag before lineIdx — table already finished, reset.
       if (i < lineIdx) openIdx = -1;
       else return i + 1;
@@ -212,7 +212,7 @@ export function isInsideHtmlTable(lines: string[], lineIdx: number): number {
 
   // We're after a `<table` opener — find the matching `</table>`.
   for (let i = lineIdx; i < lines.length; i += 1) {
-    if (/<\/table\s*>/i.test(lines[i])) return i + 1;
+    if (/<\/table\s*>/i.test(lines[i]!)) return i + 1;
   }
   // Unterminated table — extend to EOF so we don't inject into malformed HTML.
   return lines.length;
@@ -235,7 +235,7 @@ export function isInsideIndentedCode(lines: string[], lineIdx: number): number {
   if (lineIdx < 0 || lineIdx >= lines.length) return -1;
 
   const isIndented = (s: string) => /^( {4}|\t)/.test(s);
-  if (!isIndented(lines[lineIdx])) return -1;
+  if (!isIndented(lines[lineIdx]!)) return -1;
 
   // Walk backwards: every line above must be either indented or blank, and
   // we must eventually hit a blank line (or BOF) before any non-indented
@@ -244,11 +244,11 @@ export function isInsideIndentedCode(lines: string[], lineIdx: number): number {
   // or paragraph).
   let foundBlankBoundary = false;
   for (let i = lineIdx - 1; i >= 0; i -= 1) {
-    if (lines[i].trim() === "") {
+    if (lines[i]!.trim() === "") {
       foundBlankBoundary = true;
       break;
     }
-    if (!isIndented(lines[i])) {
+    if (!isIndented(lines[i]!)) {
       return -1; // probably a list continuation, not a code block
     }
   }
@@ -262,19 +262,19 @@ export function isInsideIndentedCode(lines: string[], lineIdx: number): number {
   // Walk forwards to find the end of the block.
   let i = lineIdx + 1;
   while (i < lines.length) {
-    if (lines[i].trim() === "") {
+    if (lines[i]!.trim() === "") {
       // A blank line MAY terminate the block, but per CommonMark a single
       // blank line followed by more indented lines is still part of the
       // same block. Peek ahead.
       let j = i + 1;
-      while (j < lines.length && lines[j].trim() === "") j += 1;
-      if (j >= lines.length || !isIndented(lines[j])) {
+      while (j < lines.length && lines[j]!.trim() === "") j += 1;
+      if (j >= lines.length || !isIndented(lines[j]!)) {
         break; // block ends at the blank line
       }
       i = j;
       continue;
     }
-    if (!isIndented(lines[i])) break;
+    if (!isIndented(lines[i]!)) break;
     i += 1;
   }
   return i;

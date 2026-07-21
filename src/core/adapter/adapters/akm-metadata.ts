@@ -101,7 +101,7 @@ function extractDescriptionFromComments(filePath: string): string | null {
   if (blockStart >= 0) {
     const desc: string[] = [];
     for (let i = blockStart; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i]!;
       if (i > blockStart && /\*\//.test(line)) break;
       const cleaned = line
         .replace(/^\s*\/?\*\*?\s?/, "")
@@ -116,7 +116,7 @@ function extractDescriptionFromComments(filePath: string): string | null {
   if (lines[0]?.startsWith("#!")) start = 1;
   const hashLines: string[] = [];
   for (let i = start; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (line.startsWith("#") && !line.startsWith("#!")) {
       hashLines.push(line.replace(/^#+\s*/, "").trim());
     } else if (line === "") {

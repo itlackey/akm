@@ -71,7 +71,7 @@
 
 function getFlagValueFrom(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const arg = argv[i]!;
     if (arg === flag) return argv[i + 1];
     if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
   }
@@ -85,7 +85,7 @@ function hasFlagIn(argv: readonly string[], flag: string): boolean {
 function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
   const values: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const arg = argv[i]!;
     if (arg === flag && i + 1 < argv.length) {
       values.push(argv[i + 1] as string);
       // BUG-M4: skip the value index so `--tag --tag` (literal `--tag` value)
@@ -222,7 +222,7 @@ function isCittyValueFlag(flag: string, argsDef: CittyArgsDefinitionForScan): bo
  */
 export function findCittyTopLevelCommandIndex(rawArgs: readonly string[], argsDef: CittyArgsDefinitionForScan): number {
   for (let i = 0; i < rawArgs.length; i += 1) {
-    const arg = rawArgs[i];
+    const arg = rawArgs[i]!;
     if (arg === "--") return -1;
     if (arg.startsWith("-")) {
       if (!arg.includes("=") && isCittyValueFlag(arg, argsDef)) i += 1;

@@ -57,7 +57,7 @@ export function findEnvSource(origin: string | undefined): IndexSearchSource {
   if (sources.length === 0) {
     throw new UsageError("No stashes configured. Run `akm init` to create your working stash.");
   }
-  if (!origin || origin === "local") return sources[0];
+  if (!origin || origin === "local") return sources[0]!;
   const named = sources.find((source) => source.registryId === origin);
   if (!named) {
     throw new NotFoundError(`Source not found for origin: ${origin}`);

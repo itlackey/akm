@@ -584,9 +584,9 @@ function getCurateFamily(ref: string): CurateFamily | undefined {
     const match = /^skills\/(.+?)\/references\/(.+)$/.exec(parsed.name);
     if (!match) return undefined;
     return {
-      key: match[1],
+      key: match[1]!,
       role: "reference",
-      topicTokens: match[2]
+      topicTokens: match[2]!
         .split(/[^a-z0-9]+/i)
         .map((token) => token.trim().toLowerCase())
         .filter(Boolean),
@@ -743,7 +743,7 @@ function preferBroadRootRepresentative(
   if (!match) return { selected, supportRefsByRef };
 
   const lower = query.toLowerCase();
-  const topicTokens = match[2].split(/[^a-z0-9]+/i).filter(Boolean);
+  const topicTokens = match[2]!.split(/[^a-z0-9]+/i).filter(Boolean);
   const wantsReference =
     CURATE_REFERENCE_QUERY_RE.test(lower) ||
     topicTokens.some((token) => token.length >= 3 && lower.includes(token.toLowerCase()));

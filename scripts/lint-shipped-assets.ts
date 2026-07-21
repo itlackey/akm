@@ -117,8 +117,8 @@ function scanFile(abs: string, rel: string, offenses: Offense[]): void {
   }
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    for (const m of lines[i].matchAll(TOKEN)) {
-      const run = m[1];
+    for (const m of lines[i]!.matchAll(TOKEN)) {
+      const run = m[1]!;
       // LIVE ref-prefix search shape (`<type>:<prefix>/`) - deterministic
       // subtree enumeration, still current. Not a dead ref.
       if (run.endsWith("/")) continue;

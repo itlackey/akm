@@ -284,15 +284,15 @@ export function unifiedDiff(before: string, after: string, label: string): strin
   while (ai < a.length || bi < b.length) {
     const eq = eqPairs[pi];
     if (eq && eq.ai === ai && eq.bi === bi) {
-      ops.push({ type: "eq", line: a[ai], ai, bi });
+      ops.push({ type: "eq", line: a[ai]!, ai, bi });
       ai++;
       bi++;
       pi++;
     } else if (ai < a.length && (!eq || ai < eq.ai)) {
-      ops.push({ type: "del", line: a[ai], ai, bi });
+      ops.push({ type: "del", line: a[ai]!, ai, bi });
       ai++;
     } else {
-      ops.push({ type: "add", line: b[bi], ai, bi });
+      ops.push({ type: "add", line: b[bi]!, ai, bi });
       bi++;
     }
   }
@@ -331,7 +331,7 @@ export function unifiedDiff(before: string, after: string, label: string): strin
 
   for (let k = 0; k < ops.length; k++) {
     if (include.has(k)) {
-      hunkOps.push(ops[k]);
+      hunkOps.push(ops[k]!);
       prevIncluded = true;
     } else if (prevIncluded) {
       flushHunk();
@@ -349,8 +349,10 @@ function lcsLinePairs(a: string[], b: string[]): Array<{ ai: number; bi: number 
   if (m === 0 || n === 0) return [];
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
   for (let i = 1; i <= m; i++) {
+    const row = dp[i]!;
+    const prevRow = dp[i - 1]!;
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      row[j] = a[i - 1] === b[j - 1] ? prevRow[j - 1]! + 1 : Math.max(prevRow[j]!, row[j - 1]!);
     }
   }
   const result: Array<{ ai: number; bi: number }> = [];
@@ -361,7 +363,7 @@ function lcsLinePairs(a: string[], b: string[]): Array<{ ai: number; bi: number 
       result.unshift({ ai: i - 1, bi: j - 1 });
       i--;
       j--;
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+    } else if (dp[i - 1]![j]! > dp[i]![j - 1]!) {
       i--;
     } else {
       j--;

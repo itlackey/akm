@@ -268,7 +268,7 @@ function inspectConfig(configPath: string): MigrationArtifactState {
 
 function quickCheck(db: ReturnType<typeof openDatabase>, filePath: string): void {
   const rows = db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>;
-  if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") {
+  if (rows.length !== 1 || Object.values(rows[0]!)[0] !== "ok") {
     throw new ConfigError(`SQLite quick_check failed for ${filePath}.`, "INVALID_CONFIG_FILE");
   }
 }

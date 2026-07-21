@@ -94,7 +94,7 @@ function collectDangerousKeyFindings(
     for (const finding of findings) {
       // Extract the key name from the detail string for the summary line.
       const keyMatch = finding.detail.match(/Env key `([^`]+)`/);
-      const keyName = keyMatch ? keyMatch[1] : finding.file;
+      const keyName = keyMatch ? keyMatch[1]! : finding.file;
       allFindings.push({ vaultRef, keyName, relPath });
     }
   }

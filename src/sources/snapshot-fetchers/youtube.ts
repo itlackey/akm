@@ -148,7 +148,7 @@ function chooseCaptionTrack(tracks: YoutubeCaptionTrack[]): string | null {
     normalized.find((track) => track.languageCode === "en" && track.kind !== "asr") ??
     normalized.find((track) => track.languageCode.startsWith("en") && track.kind !== "asr") ??
     normalized.find((track) => track.languageCode.startsWith("en")) ??
-    normalized[0];
+    normalized[0]!;
   return preferred.baseUrl;
 }
 

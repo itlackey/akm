@@ -107,8 +107,9 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
         registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
     );
     if (idx >= 0) {
-      const wasEnabled = registries[idx].enabled !== false;
-      registries[idx].enabled = enabled;
+      const target = registries[idx]!;
+      const wasEnabled = target.enabled !== false;
+      target.enabled = enabled;
       changed = wasEnabled !== enabled;
       return { ...config, registries };
     }

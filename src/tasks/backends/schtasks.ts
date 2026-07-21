@@ -190,7 +190,7 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       for (const line of (r.stdout ?? "").split(/\r?\n/)) {
         const m = line.match(/^"([^"]+)",/);
         if (!m) continue;
-        const name = m[1];
+        const name = m[1]!;
         if (name.startsWith(folder)) {
           ids.push(name.slice(folder.length));
         }
@@ -504,17 +504,17 @@ function parseXml(xml: string): XmlElement {
       const match = token.match(/^<\s*([^\s/>]+)([\s\S]*?)\/?\s*>$/);
       if (!match) throw new Error("Invalid XML opening tag.");
       const element: XmlElement = {
-        name: localXmlName(match[1]),
-        attributes: parseXmlAttributes(match[2]),
+        name: localXmlName(match[1]!),
+        attributes: parseXmlAttributes(match[2]!),
         children: [],
       };
-      stack[stack.length - 1].children.push(element);
+      stack[stack.length - 1]!.children.push(element);
       if (!selfClosing) stack.push(element);
       continue;
     }
 
     const text = decodeXml(token.trim());
-    if (text.length > 0) stack[stack.length - 1].children.push(text);
+    if (text.length > 0) stack[stack.length - 1]!.children.push(text);
   }
 
   if (stack.length !== 1) throw new Error("Unclosed XML tag.");
@@ -525,8 +525,8 @@ function parseXmlAttributes(raw: string): Record<string, string> {
   const attributes: Record<string, string> = {};
   const pattern = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   for (const match of raw.matchAll(pattern)) {
-    const name = localXmlName(match[1]);
-    if (match[1] === "xmlns" || match[1].startsWith("xmlns:")) continue;
+    const name = localXmlName(match[1]!);
+    if (match[1] === "xmlns" || match[1]!.startsWith("xmlns:")) continue;
     attributes[name] = decodeXml(match[2] ?? match[3] ?? "");
   }
   return attributes;

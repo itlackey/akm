@@ -109,7 +109,7 @@ export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnS
     };
   }
   const [bin, ...args] = cmd;
-  const r = nodeSpawnSync(bin, args, { cwd: options.cwd, env: options.env ?? process.env });
+  const r = nodeSpawnSync(bin!, args, { cwd: options.cwd, env: options.env ?? process.env });
   const exitCode = r.status;
   return {
     success: r.error === undefined && exitCode === 0,
@@ -121,7 +121,7 @@ export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnS
 
 function nodeSpawnAdapter(cmd: string[], options: SpawnOptions): Subprocess {
   const [bin, ...args] = cmd;
-  const child: ChildProcess = nodeSpawn(bin, args, {
+  const child: ChildProcess = nodeSpawn(bin!, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     detached: options.detached,

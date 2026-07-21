@@ -76,7 +76,7 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = linkRe.exec(body)) !== null) {
-    let target = match[1].trim();
+    let target = match[1]!.trim();
     // Drop an optional markdown link title: `[x](/a.md "Title")`.
     const wsIdx = target.search(/\s/);
     if (wsIdx >= 0) target = target.slice(0, wsIdx);

@@ -1197,13 +1197,13 @@ async function judgeConsolidationChunks(args: {
         // rejected). Without this, the accounting invariant fails by
         // `Σ(unattempted_chunk.length)` whenever the abort fires.
         for (let i = chunkIdx; i < chunks.length; i++) {
-          accounting.failedChunkMemories += chunks[i].length;
+          accounting.failedChunkMemories += chunks[i]!.length;
         }
         break;
       }
     }
 
-    const chunk = chunks[chunkIdx];
+    const chunk = chunks[chunkIdx]!;
 
     // All-hot chunk early-exit. The per-prompt hot-list block (see
     // buildChunkPrompt) only *discourages* delete proposals on a mixed chunk;
@@ -1592,7 +1592,7 @@ async function applyConsolidationPlan(
   // Thin dispatch over the op discriminator — each branch is now an isolated,
   // independently-testable handler that mutates `opCtx`.
   for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
-    const op = allOps[opIndex];
+    const op = allOps[opIndex]!;
     const opDisplayRef =
       op.op === "merge" ? op.primary : op.op === "contradict" ? `${op.ref} ↔ ${op.contradictedByRef}` : op.ref;
     warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${opDisplayRef}`);
@@ -2699,7 +2699,7 @@ async function generateMergedContent(
 ): Promise<MergeResult> {
   // Only handle single-secondary merges per design (one call per merge op)
   const secRef = secondaryRefs[0];
-  const secEntry = memoryByRef.get(secRef);
+  const secEntry = secRef !== undefined ? memoryByRef.get(secRef) : undefined;
   if (!secEntry) return { error: "merge_read_failed", detail: `secondary ${secRef} not in memoryByRef` };
 
   let secBody = "";

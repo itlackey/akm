@@ -70,7 +70,7 @@ export function ndcgAtK(returned: string[], relevant: Set<string>, k: number): n
   const top = returned.slice(0, k);
   let dcg = 0;
   for (let i = 0; i < top.length; i++) {
-    if (relevant.has(top[i])) dcg += 1 / Math.log2(i + 2);
+    if (relevant.has(top[i]!)) dcg += 1 / Math.log2(i + 2);
   }
   const idealCount = Math.min(k, relevant.size);
   let idcg = 0;
@@ -88,7 +88,7 @@ export function recallAtK(returned: string[], relevant: Set<string>, k: number):
 
 export function mrr(returned: string[], relevant: Set<string>): number {
   for (let i = 0; i < returned.length; i++) {
-    if (relevant.has(returned[i])) return 1 / (i + 1);
+    if (relevant.has(returned[i]!)) return 1 / (i + 1);
   }
   return 0;
 }

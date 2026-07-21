@@ -768,7 +768,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
 
     // 3. UUID prefix (pending queue only).
     const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
-    if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]);
+    if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
     if (prefixMatches.length > 1) {
       throw new UsageError(
         `Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`,

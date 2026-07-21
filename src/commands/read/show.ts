@@ -582,7 +582,7 @@ export function normalizeShowArgv(argv: string[]): string[] {
   const showArgs: string[] = [];
 
   for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
+    const arg = rest[i]!;
     if (arg === "--quiet" || arg === "-q" || arg === "--verbose") {
       globalFlags.push(arg);
       continue;
@@ -593,8 +593,9 @@ export function normalizeShowArgv(argv: string[]): string[] {
     }
     if (arg === "--format" || arg === "--detail" || arg === "--shape") {
       globalFlags.push(arg);
-      if (rest[i + 1] !== undefined) {
-        globalFlags.push(rest[i + 1]);
+      const nextArg = rest[i + 1];
+      if (nextArg !== undefined) {
+        globalFlags.push(nextArg);
         i++;
       }
       continue;

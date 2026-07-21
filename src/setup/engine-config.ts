@@ -95,7 +95,8 @@ export function writeAgentEngines(config: AkmConfig, selection: AgentEngineSelec
   }
   if (selection?.default) defaults.engine = selection.default;
   const engines = { ...(config.engines ?? {}), ...(selection?.engines ?? {}) };
-  if (selection?.default && engines[selection.default] && engines[selection.default].kind !== "agent") {
+  const selectedEngine = selection?.default ? engines[selection.default] : undefined;
+  if (selection?.default && selectedEngine && selectedEngine.kind !== "agent") {
     throw new ConfigError(
       `Cannot select agent engine ${JSON.stringify(selection.default)} because that name belongs to an LLM engine.`,
       "INVALID_CONFIG_FILE",

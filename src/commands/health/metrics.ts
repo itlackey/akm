@@ -151,7 +151,7 @@ export function computeEnrichmentMintingRollup(
     const byLane: Record<string, { minted: number; updated: number }> = {};
     for (const row of rows) {
       byLane[row.lane] ??= { minted: 0, updated: 0 };
-      const entry = byLane[row.lane];
+      const entry = byLane[row.lane]!;
       if (row.is_minted === 1) entry.minted += row.cnt;
       else entry.updated += row.cnt;
     }

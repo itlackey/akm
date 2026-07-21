@@ -106,7 +106,7 @@ function parseArgs(argv: string[]): Options {
     }
 
     if (arg === "--root" && i + 1 < argv.length) {
-      rootDir = path.resolve(argv[i + 1]);
+      rootDir = path.resolve(argv[i + 1]!);
       i += 1;
       continue;
     }
@@ -248,9 +248,10 @@ function applyFixes(original: string, frontmatter: string, validation: { descrip
 function truncateDescription(frontmatter: string): string {
   const lines = frontmatter.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
-    if (!lines[i].startsWith("description:")) continue;
+    const line = lines[i]!;
+    if (!line.startsWith("description:")) continue;
 
-    const value = lines[i].slice("description:".length).trim();
+    const value = line.slice("description:".length).trim();
     const parsed = parseDescriptionValue(value);
     if (!parsed) return frontmatter;
 

@@ -278,7 +278,7 @@ export function windowToMs(window: string): number {
   if (!m) return 0;
   const n = Number(m[1]);
   const mult =
-    { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2].toLowerCase() as "m" | "h" | "d" | "w"] ?? 0;
+    { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2]!.toLowerCase() as "m" | "h" | "d" | "w"] ?? 0;
   return n * mult;
 }
 

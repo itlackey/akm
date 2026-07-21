@@ -152,8 +152,8 @@ export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { sco
   const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
   if (results.length === 0) return ftsScoreMap;
 
-  const bestBm25 = results[0].bm25Score;
-  const worstBm25 = results[results.length - 1].bm25Score;
+  const bestBm25 = results[0]!.bm25Score;
+  const worstBm25 = results[results.length - 1]!.bm25Score;
   const range = bestBm25 - worstBm25;
 
   for (const result of results) {

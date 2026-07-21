@@ -41,7 +41,7 @@ export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] |
   const ordered = defaultKey ? [defaultKey, ...keys.filter((k) => k !== defaultKey)] : keys;
   const entries: SourceConfigEntry[] = [];
   for (const key of ordered) {
-    const entry = bundleEntryToSourceEntry(key, bundles[key], key === defaultKey);
+    const entry = bundleEntryToSourceEntry(key, bundles[key]!, key === defaultKey);
     if (entry) entries.push(entry);
   }
   return entries;

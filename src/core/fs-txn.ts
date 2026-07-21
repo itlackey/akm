@@ -251,7 +251,7 @@ export function beginTxn<P>(args: {
   const journal: TxnJournal<P> = {
     version: 1,
     kind: args.kind,
-    phase: handler.phases[0],
+    phase: handler.phases[0]!,
     transactionId,
     root: canonicalTxnRoot(args.root),
     changes: args.changes,

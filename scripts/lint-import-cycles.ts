@@ -123,7 +123,7 @@ function cyclicComponents(graph: Map<string, Set<string>>): string[][] {
     onStack.add(root);
 
     while (frames.length > 0) {
-      const frame = frames[frames.length - 1];
+      const frame = frames[frames.length - 1]!;
       if (frame.child !== null) {
         // Returning from a child visit: fold its lowlink into ours.
         lowLink.set(frame.node, Math.min(lowLink.get(frame.node) ?? 0, lowLink.get(frame.child) ?? 0));
@@ -156,7 +156,7 @@ function cyclicComponents(graph: Map<string, Set<string>>): string[][] {
           component.push(popped);
           if (popped === frame.node) break;
         }
-        const selfLoop = component.length === 1 && (graph.get(component[0])?.has(component[0]) ?? false);
+        const selfLoop = component.length === 1 && (graph.get(component[0]!)?.has(component[0]!) ?? false);
         if (component.length > 1 || selfLoop) components.push(component.sort());
       }
       frames.pop();

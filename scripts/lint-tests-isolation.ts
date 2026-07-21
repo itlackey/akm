@@ -335,7 +335,7 @@ function findEnvAssignments(src: string): Array<{ envVar: string; line: number }
     // out comparison operators.
     const pattern = new RegExp(`process\\.env(?:\\[["']${envVar}["']\\]|\\.${envVar})\\s*=(?!=)`);
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
       if (pattern.test(l)) found.push({ envVar, line: i + 1 });
     }
@@ -386,7 +386,7 @@ function lintFile(filePath: string): Violation[] {
   if (!rel.startsWith("tests/_helpers/")) {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       // mkdtempSync(...) whose call arguments contain an "akm-test" literal.
       if (/mkdtempSync\s*\([^)]*akm-test[^)]*\)/.test(l)) {
@@ -411,7 +411,7 @@ function lintFile(filePath: string): Violation[] {
         file: rel,
         rule: "unguarded-env",
         detail: `assigns ${vars.join(", ")} without a restoring wrapper (use withEnv/sandbox* or add a justified ENV_ASSIGN_ALLOWED entry)`,
-        line: assigns[0].line,
+        line: assigns[0]!.line,
         envVars: vars,
       });
     }
@@ -428,7 +428,7 @@ function lintFile(filePath: string): Violation[] {
     const spawnCall = /(\b(?:spawnSync|execSync|execFileSync)\s*\(|(?:^|[^.\w])spawn\s*\(|Bun\.spawn(?:Sync)?\s*\()/;
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       if (/\bspyOn\s*\(/.test(l)) continue;
       if (spawnCall.test(l)) {
@@ -449,7 +449,7 @@ function lintFile(filePath: string): Violation[] {
   {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       if (/\bmock\.module\s*\(/.test(l)) {
         violations.push({
@@ -475,7 +475,7 @@ function lintFile(filePath: string): Violation[] {
   {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       const m = l.match(/expect\(\s*([A-Za-z_$][\w$]*)\s*\)\.toBe(LessThan|GreaterThan)(OrEqual)?\(/);
       if (!m) continue;
@@ -519,13 +519,13 @@ function lintFile(filePath: string): Violation[] {
           file: rel,
           rule: "nonatomic-now",
           detail: `${hits.length} \`new Date(Date.now() …)\` reads in one scope (lines ${hits.join(", ")}) — capture the clock once (\`const now = Date.now()\`) and derive every timestamp from \`now\`, else an exact delta assertion flakes under CI load (#499 class)`,
-          line: hits[0],
+          line: hits[0]!,
         });
       }
       hits = [];
     };
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
       if (SCOPE_START.test(l)) flush();
       const matches = l.match(NOW_TS);

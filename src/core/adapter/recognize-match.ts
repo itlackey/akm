@@ -57,7 +57,7 @@ const AKM_MATCHERS: readonly AssetMatcher[] = [
 export function recognizeMatch(file: FileContext): MatchResult | null {
   const hits: Array<{ result: MatchResult; index: number }> = [];
   for (let i = 0; i < AKM_MATCHERS.length; i++) {
-    const result = AKM_MATCHERS[i](file);
+    const result = AKM_MATCHERS[i]!(file);
     if (result !== null) hits.push({ result, index: i });
   }
   if (hits.length === 0) return null;
@@ -66,5 +66,5 @@ export function recognizeMatch(file: FileContext): MatchResult | null {
     if (specDiff !== 0) return specDiff;
     return b.index - a.index;
   });
-  return hits[0].result;
+  return hits[0]!.result;
 }

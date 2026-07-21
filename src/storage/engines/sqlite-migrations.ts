@@ -128,7 +128,7 @@ function inspectLedgerAgainst(db: Database, expected: readonly SealedMigration[]
 
   for (let index = 0; index < rows.length; index += 1) {
     const entry = expected[index];
-    const row = rows[index];
+    const row = rows[index]!;
     if (!entry) {
       return { status: "newer", migrationIds, checksums, detail: `unknown migration ID ${row.id}` };
     }
@@ -249,7 +249,7 @@ export function runMigrations(db: Database, migrations: readonly Migration[], op
   db.transaction(() => {
     const update = db.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = ? AND checksum IS NULL");
     for (let index = 0; index < ledger.migrationIds.length; index += 1) {
-      update.run(migrationChecksum(migrations[index]), ledger.migrationIds[index]);
+      update.run(migrationChecksum(migrations[index]!), ledger.migrationIds[index]!);
     }
     if (opts?.generationMarker) {
       db.exec(`

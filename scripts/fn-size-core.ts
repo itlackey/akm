@@ -58,7 +58,7 @@ function localName(node: ts.Node, sf: ts.SourceFile): string {
   if (parent && ts.isPropertyAssignment(parent)) return parent.name.getText(sf);
   if (parent && ts.isPropertyDeclaration(parent) && parent.name) return parent.name.getText(sf);
   if (parent && ts.isCallExpression(parent)) {
-    const callee = parent.expression.getText(sf).split("\n")[0].slice(0, 40);
+    const callee = parent.expression.getText(sf).split("\n")[0]!.slice(0, 40);
     const idx = parent.arguments.indexOf(node as ts.Expression);
     return `${callee}#arg${idx}`;
   }

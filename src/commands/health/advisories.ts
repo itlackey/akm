@@ -37,7 +37,7 @@ export function collectImproveAdvisories(
   // rich in-session signal is no longer deferrable.
   const proxyInvertedEvents = readEvents({ since, type: "outcome_proxy_inverted" }, { dbPath: stateDbPath }).events;
   if (proxyInvertedEvents.length > 0) {
-    const lastEvent = proxyInvertedEvents[proxyInvertedEvents.length - 1];
+    const lastEvent = proxyInvertedEvents[proxyInvertedEvents.length - 1]!;
     const correlation =
       typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
     advisories.push({
@@ -58,7 +58,7 @@ export function collectImproveAdvisories(
   // is as much a failure as an inverted one — it just fails silently.
   const proxyDeadEvents = readEvents({ since, type: "outcome_proxy_dead" }, { dbPath: stateDbPath, db }).events;
   if (proxyDeadEvents.length > 0) {
-    const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1];
+    const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1]!;
     const correlation =
       typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
     advisories.push({

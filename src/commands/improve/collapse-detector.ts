@@ -173,7 +173,7 @@ export function ensureCanarySet(
 ): { canarySetId: string; canaries: CanaryQueryRow[] } | null {
   const existing = getActiveCanaries(stateDb);
   if (existing.length > 0) {
-    return { canarySetId: existing[0].canary_set_id, canaries: existing };
+    return { canarySetId: existing[0]!.canary_set_id, canaries: existing };
   }
 
   const minted = buildMintList(stateDb, preloadedEntries ?? getAllEntries(indexDb), cfg);
@@ -245,7 +245,7 @@ export function normHash(text: string): string {
 function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
   const results = searchFts(indexDb, canary.query, k);
   for (let i = 0; i < Math.min(results.length, k); i++) {
-    const r = results[i];
+    const r = results[i]!;
     // Chunk-8 WI-8.5c: match the stored anchor (SHORT conceptId) and the
     // canonical `xrefs` provenance (also conceptIds post WI-8.5a) on the
     // conceptId spelling.
@@ -326,7 +326,7 @@ export function computeCycleMetrics(
   let diversitySum = 0;
   let diversityCount = 0;
   for (let i = 0; i < learningTexts.length; i += step) {
-    diversitySum += computeBigramDiversity(learningTexts[i].text);
+    diversitySum += computeBigramDiversity(learningTexts[i]!.text);
     diversityCount++;
   }
 
@@ -353,9 +353,10 @@ export function computeCycleMetrics(
 // ── Alert evaluation (pure) ───────────────────────────────────────────────────
 
 function median(values: number[]): number {
+  if (values.length === 0) return Number.NaN;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 /**
@@ -385,6 +386,9 @@ export function evaluateCollapseAlerts(
   const W = cfg.windowCycles ?? DEFAULT_WINDOW_CYCLES;
   const hist = history.slice(-W);
   if (hist.length < W) return alerts; // no baseline yet
+  // Window is non-empty here: `windowCycles` is schema-bounded to ≥2 (default 5),
+  // so `hist.length >= W >= 2`. `windowStart` is the oldest row in the window.
+  const windowStart = hist[0]!;
 
   const recallDrop = cfg.recallDropThreshold ?? DEFAULT_RECALL_DROP_THRESHOLD;
   const entropyDrop = cfg.entropyDropThreshold ?? DEFAULT_ENTROPY_DROP_THRESHOLD;
@@ -403,14 +407,14 @@ export function evaluateCollapseAlerts(
 
   // COLLAPSE 2 — monotonic distinct-content-ratio decline over the window.
   const series = [...hist.map((h) => h.distinct_content_ratio), current.distinct_content_ratio];
-  const monotonicNonIncreasing = series.every((v, i) => i === 0 || v <= series[i - 1]);
-  const totalDecline = hist[0].distinct_content_ratio - current.distinct_content_ratio;
+  const monotonicNonIncreasing = series.every((v, i) => i === 0 || v <= series[i - 1]!);
+  const totalDecline = windowStart.distinct_content_ratio - current.distinct_content_ratio;
   if (monotonicNonIncreasing && totalDecline >= entropyDrop) {
     alerts.push({
       kind: "collapse-entropy",
       detail: `distinct-content ratio declined monotonically by ${totalDecline.toFixed(3)} (≥${entropyDrop}) over ${W} cycles — store content is converging`,
       metrics: {
-        windowStart: hist[0].distinct_content_ratio,
+        windowStart: windowStart.distinct_content_ratio,
         current: current.distinct_content_ratio,
         decline: totalDecline,
       },
@@ -419,10 +423,10 @@ export function evaluateCollapseAlerts(
 
   // COLLAPSE 3 — store shrinking BECAUSE of re-merging (not deletion hygiene).
   const maxStore = Math.max(...hist.map((h) => h.store_total));
-  if (current.store_total < 0.8 * maxStore && current.over_generation_count > hist[0].over_generation_count) {
+  if (current.store_total < 0.8 * maxStore && current.over_generation_count > windowStart.over_generation_count) {
     alerts.push({
       kind: "collapse-shrink",
-      detail: `store shrank >20% (${current.store_total} vs window max ${maxStore}) while over-generation count rose (${hist[0].over_generation_count} → ${current.over_generation_count})`,
+      detail: `store shrank >20% (${current.store_total} vs window max ${maxStore}) while over-generation count rose (${windowStart.over_generation_count} → ${current.over_generation_count})`,
       metrics: {
         storeTotal: current.store_total,
         windowMax: maxStore,
@@ -443,7 +447,7 @@ export function evaluateCollapseAlerts(
     alerts.push({
       kind: "churn",
       detail: `${acceptedSum} accepted actions over ${W} cycles with flat canary score and flat entropy — write volume with no retrieval-visible effect`,
-      metrics: { acceptedSum, ndcgDelta: current.mean_ndcg - hist[0].mean_ndcg },
+      metrics: { acceptedSum, ndcgDelta: current.mean_ndcg - windowStart.mean_ndcg },
     });
   }
 

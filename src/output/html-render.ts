@@ -44,7 +44,7 @@ const TOKEN_RE = /%%[A-Z_]+%%/g;
  */
 export function renderHtml(templatePath: string, replacements: Record<string, string>): string {
   const html = fs.readFileSync(templatePath, "utf8");
-  return html.replace(TOKEN_RE, (token) => (token in replacements ? replacements[token] : token));
+  return html.replace(TOKEN_RE, (token) => replacements[token] ?? token);
 }
 
 /**

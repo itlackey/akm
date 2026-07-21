@@ -57,7 +57,7 @@ function checkUnquotedColon(frontmatterText: string | null): string | null {
   for (const line of frontmatterText.split(/\r?\n/)) {
     const match = line.match(/^description:\s*(.*)/);
     if (!match) continue;
-    const value = match[1].trim();
+    const value = match[1]!.trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       return null;
     }
@@ -74,10 +74,10 @@ function fixUnquotedColon(raw: string): string {
   const closeIdx = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
   if (closeIdx === -1) return raw;
   for (let i = 1; i < closeIdx; i++) {
-    const m = lines[i].match(/^(description:\s*)(.*)/);
+    const m = lines[i]!.match(/^(description:\s*)(.*)/);
     if (!m) continue;
     const prefix = m[1];
-    const value = m[2].trim();
+    const value = m[2]!.trim();
     if (
       (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
       (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
@@ -301,7 +301,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const token = match[1]; // e.g. "core//memories/foo"
+    const token = match[1]!; // e.g. "core//memories/foo"
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;
@@ -319,7 +319,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
  * mapping.
  */
 function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
-  const conceptId = rawConceptId.split("#", 1)[0];
+  const conceptId = rawConceptId.split("#", 1)[0]!;
   const legacy = typeNameFromConceptId(conceptId);
   if (legacy === undefined) return null; // foreign type / not a local asset ref
   return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
@@ -490,7 +490,7 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
   // Skip up to three blank/header lines, then require `---` to open the block.
   const lines = body.split(/\r?\n/);
   let i = 0;
-  while (i < lines.length && i < 3 && lines[i].trim() === "") i += 1;
+  while (i < lines.length && i < 3 && lines[i]!.trim() === "") i += 1;
   if (lines[i] !== "---") return null;
   const open = i;
   let close = -1;
@@ -508,13 +508,13 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
   for (const line of block) {
     const listItem = line.match(/^(?: {2})?- (.*)$/);
     if (listItem && currentList) {
-      currentList.push(listItem[1].trim().replace(/^["'](.*)["']$/, "$1"));
+      currentList.push(listItem[1]!.trim().replace(/^["'](.*)["']$/, "$1"));
       continue;
     }
     const inlineFlow = line.match(/^(\w[\w-]*):\s*\[(.*)\]\s*$/);
     if (inlineFlow) {
-      currentKey = inlineFlow[1];
-      const items = inlineFlow[2]
+      currentKey = inlineFlow[1]!;
+      const items = inlineFlow[2]!
         .split(",")
         .map((s) => s.trim().replace(/^["'](.*)["']$/, "$1"))
         .filter(Boolean);
@@ -524,8 +524,8 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
     }
     const kv = line.match(/^(\w[\w-]*):\s*(.*)$/);
     if (!kv) continue;
-    currentKey = kv[1];
-    const value = kv[2].trim();
+    currentKey = kv[1]!;
+    const value = kv[2]!.trim();
     if (value === "") {
       currentList = [];
       data[currentKey] = currentList;

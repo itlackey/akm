@@ -131,7 +131,7 @@ function resolveGraphStashPath(source?: string): string {
   if (sources.length === 0) {
     throw new NotFoundError("No stash sources are configured.", "STASH_NOT_FOUND");
   }
-  if (!source || source === "primary") return sources[0].path;
+  if (!source || source === "primary") return sources[0]!.path;
   const matched = sources.find((entry) => entry.registryId === source || entry.path === source);
   if (!matched) {
     throw new NotFoundError(`Source not found: ${source}`, "SOURCE_NOT_FOUND", "Run `akm list` to see source names.");

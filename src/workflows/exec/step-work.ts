@@ -294,7 +294,7 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
   const timeoutMs = frozenInvocation.timeoutMs;
 
   const units: StepWorkUnit[] = items.map((item, index) => {
-    const unitId = unitIds[index];
+    const unitId = unitIds[index]!;
     // Gate loops (>= 2) journal under `<unitId>~l<loop>` so loop 1's rows are
     // never clobbered; the content-derived identity (and the prompt's
     // {{UNIT_ID}}) stays the base id.
@@ -577,7 +577,7 @@ export function buildEvidence(
   if (reducer === "vote") {
     evidence.output = null;
   } else {
-    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]);
+    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]!);
   }
 
   if (reducer === "vote") {
@@ -593,11 +593,11 @@ export function buildEvidence(
     const ranked = [...counts.values()].sort((a, b) => b.count - a.count);
     if (ranked.length === 0) {
       evidence.voteError = "Vote reducer had no successful unit results to count.";
-    } else if (ranked.length > 1 && ranked[0].count === ranked[1].count) {
-      evidence.voteError = `Vote reducer tied at ${ranked[0].count} vote(s) — no majority.`;
+    } else if (ranked.length > 1 && ranked[0]!.count === ranked[1]!.count) {
+      evidence.voteError = `Vote reducer tied at ${ranked[0]!.count} vote(s) — no majority.`;
     } else {
-      evidence.vote = { winner: ranked[0].value, votes: ranked[0].count, total: units.length };
-      evidence.output = ranked[0].value;
+      evidence.vote = { winner: ranked[0]!.value, votes: ranked[0]!.count, total: units.length };
+      evidence.output = ranked[0]!.value;
     }
   }
 

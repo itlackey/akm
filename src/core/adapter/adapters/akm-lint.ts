@@ -136,7 +136,7 @@ function scanKeys(text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     const m = line.match(ASSIGN_RE);
     if (!m) continue;
-    const key = m[1];
+    const key = m[1]!;
     if (seen.has(key)) continue;
     seen.add(key);
     keys.push(key);
@@ -154,7 +154,7 @@ function collectSuppressedKeys(raw: string): Set<string> {
     if (trimmed === "") continue;
     const keyMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
     if (keyMatch && prevNonEmpty.toLowerCase() === SUPPRESSION_COMMENT) {
-      suppressed.add(keyMatch[1]);
+      suppressed.add(keyMatch[1]!);
     }
     prevNonEmpty = trimmed;
   }

@@ -165,7 +165,7 @@ function extractRemoteOriginUrl(content: string): string | null {
     }
     if (inOrigin) {
       const m = trimmed.match(/^url\s*=\s*(.+)$/i);
-      if (m) return m[1].trim();
+      if (m) return m[1]!.trim();
     }
   }
   return null;

@@ -169,14 +169,14 @@ function parseBlocks(existing: string): ParsedCronBlock[] {
     const begin = line.match(BLOCK_RE);
     if (begin) {
       if (currentId !== null) throw malformedBlockError(currentId);
-      currentId = begin[1];
+      currentId = begin[1]!;
       start = index;
       body = [];
       continue;
     }
     const end = line.match(BLOCK_END_RE);
     if (end) {
-      if (currentId === null || end[1] !== currentId) throw malformedBlockError(currentId ?? end[1]);
+      if (currentId === null || end[1] !== currentId) throw malformedBlockError(currentId ?? end[1]!);
       out.push({ id: currentId, body: body.join("\n"), start, end: index });
       currentId = null;
       start = -1;

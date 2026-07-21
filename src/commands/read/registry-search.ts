@@ -58,7 +58,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   const allAssetHits: RegistryAssetSearchHit[] = [];
 
   for (let i = 0; i < results.length; i++) {
-    const result = results[i];
+    const result = results[i]!;
     if (result.status === "rejected") {
       warnings.push(toErrorMessage(result.reason));
       continue;
@@ -66,7 +66,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
     const value = result.value;
     if (!value) continue;
 
-    const registryLabel = entries[i].name ? `"${entries[i].name}"` : entries[i].url;
+    const registryLabel = entries[i]!.name ? `"${entries[i]!.name}"` : entries[i]!.url;
     let dropped = 0;
 
     const validHits: RegistrySearchHit[] = [];
@@ -207,10 +207,10 @@ function normalizeScores(hits: Array<{ score?: number }>): void {
   const min = Math.min(...rawScores);
   const range = max - min;
   for (let i = 0; i < hits.length; i++) {
-    const raw = rawScores[i];
+    const raw = rawScores[i]!;
     // Min-max normalize: [0, 1]. When all scores are equal (range === 0),
     // fall back to dividing by max so the value stays in [0, 1].
-    hits[i].score = range > 0 ? (raw - min) / range : raw / max;
+    hits[i]!.score = range > 0 ? (raw - min) / range : raw / max;
   }
 }
 

@@ -212,6 +212,7 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
     for (const duplicates of byFingerprint.values()) {
       if (duplicates.length < 2) continue;
       const [survivor, ...rest] = sortRecordsForSurvival(duplicates);
+      if (survivor === undefined) continue;
       for (const duplicate of rest) {
         planPrune(duplicate, "duplicate-derived", survivor.ref);
       }
@@ -237,7 +238,7 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
         parentRef,
         signal,
         refs: ordered.map((record) => record.ref),
-        suggestedSurvivorRef: ordered[0].ref,
+        suggestedSurvivorRef: ordered[0]!.ref,
       });
     }
   }
@@ -461,7 +462,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
 
     const outgoing = outgoingComponents.get(index);
     if (!outgoing || outgoing.size === 0) {
-      const refs = [...components[index]].sort();
+      const refs = [...components[index]!].sort();
       reachableSinkRefsMemo.set(index, refs);
       return refs;
     }
@@ -488,7 +489,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
         ref: record.ref,
         parentRef: record.parentRef,
         reason: "contradicted-derived",
-        contradictedByRef: currentRefs[0],
+        contradictedByRef: currentRefs[0]!,
         contradictedByRefs: currentRefs,
         currentBeliefRefs: currentRefs,
       });
@@ -512,7 +513,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
       continue;
     }
 
-    const componentRefs = [...components[componentIndex]].sort();
+    const componentRefs = [...components[componentIndex]!].sort();
     const peerCurrentRefs = componentRefs.filter((ref) => ref !== record.ref);
     // `deprecated` is a frozen historical state — never refresh to active.
     // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
@@ -589,7 +590,7 @@ function stronglyConnectedComponents(
 
   const componentIndexByRef = new Map<string, number>();
   for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
-    for (const ref of components[componentIndex]) {
+    for (const ref of components[componentIndex]!) {
       componentIndexByRef.set(ref, componentIndex);
     }
   }

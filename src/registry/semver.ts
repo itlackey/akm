@@ -26,9 +26,9 @@ function parseSemver(version: string): SemverParts | undefined {
   const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
   if (!match) return undefined;
   return {
-    major: parseInt(match[1], 10),
-    minor: parseInt(match[2], 10),
-    patch: parseInt(match[3], 10),
+    major: parseInt(match[1]!, 10),
+    minor: parseInt(match[2]!, 10),
+    patch: parseInt(match[3]!, 10),
     prerelease: match[4],
   };
 }
@@ -62,9 +62,9 @@ function satisfiesRange(version: SemverParts, range: string): boolean {
   // ^1.2.3 — compatible with version: same major, >= minor.patch
   const caretMatch = range.match(/^\^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
   if (caretMatch) {
-    const rMajor = parseInt(caretMatch[1], 10);
-    const rMinor = parseInt(caretMatch[2], 10);
-    const rPatch = parseInt(caretMatch[3], 10);
+    const rMajor = parseInt(caretMatch[1]!, 10);
+    const rMinor = parseInt(caretMatch[2]!, 10);
+    const rPatch = parseInt(caretMatch[3]!, 10);
     if (version.major !== rMajor) return false;
     // ^0.x has special behavior: ^0.2.3 means >=0.2.3 <0.3.0
     if (rMajor === 0) {
@@ -77,18 +77,18 @@ function satisfiesRange(version: SemverParts, range: string): boolean {
   // ~1.2.3 — same major.minor, patch >= specified
   const tildeMatch = range.match(/^~(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
   if (tildeMatch) {
-    const rMajor = parseInt(tildeMatch[1], 10);
-    const rMinor = parseInt(tildeMatch[2], 10);
-    const rPatch = parseInt(tildeMatch[3], 10);
+    const rMajor = parseInt(tildeMatch[1]!, 10);
+    const rMinor = parseInt(tildeMatch[2]!, 10);
+    const rPatch = parseInt(tildeMatch[3]!, 10);
     return version.major === rMajor && version.minor === rMinor && version.patch >= rPatch;
   }
 
   // >=1.2.3
   const gteMatch = range.match(/^>=(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
   if (gteMatch) {
-    const rMajor = parseInt(gteMatch[1], 10);
-    const rMinor = parseInt(gteMatch[2], 10);
-    const rPatch = parseInt(gteMatch[3], 10);
+    const rMajor = parseInt(gteMatch[1]!, 10);
+    const rMinor = parseInt(gteMatch[2]!, 10);
+    const rPatch = parseInt(gteMatch[3]!, 10);
     return semverGte(version, { major: rMajor, minor: rMinor, patch: rPatch });
   }
 
@@ -109,5 +109,5 @@ export function maxSatisfying(versions: string[], range: string): string | undef
   }
   if (candidates.length === 0) return undefined;
   candidates.sort((a, b) => compareSemver(b.parsed, a.parsed));
-  return candidates[0].version;
+  return candidates[0]!.version;
 }

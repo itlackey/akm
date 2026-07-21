@@ -452,7 +452,7 @@ function rekeyScalarTable(
 
   // Groups: collapse each onto its canonical key (most-recently-updated wins).
   for (const [target, group] of groups) {
-    if (group.length === 1 && String(group[0][spec.keyColumn]) === target) continue; // already canonical, nothing maps onto it
+    if (group.length === 1 && String(group[0]![spec.keyColumn]) === target) continue; // already canonical, nothing maps onto it
     const winner = group.reduce((best, candidate) => (mruWins(candidate, best, spec.tsColumn) ? candidate : best));
     for (const row of group) db.prepare(`DELETE FROM ${spec.table} WHERE rowid = ?`).run(row.__rowid);
     reinsertRow(db, spec.table, winner, spec.keyColumn, target);
@@ -488,7 +488,7 @@ function reinsertRow(
   const columns = Object.keys(row);
   const placeholders = columns.map(() => "?").join(", ");
   db.prepare(`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})`).run(
-    ...columns.map((c) => row[c]),
+    ...columns.map((c) => row[c]!),
   );
 }
 

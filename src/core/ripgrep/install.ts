@@ -183,7 +183,7 @@ function getRgVersion(rgPath: string): string {
   const result = spawnSync(rgPath, ["--version"], { encoding: "utf8", timeout: 5_000, env: process.env });
   if (result.status === 0 && result.stdout) {
     const match = result.stdout.match(/ripgrep\s+([\d.]+)/);
-    return match ? match[1] : "unknown";
+    return match ? match[1]! : "unknown";
   }
   return "unknown";
 }

@@ -231,7 +231,7 @@ export function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
     }
 
     const owner = sanitizeString(segments[0]);
-    const repo = sanitizeString(segments[1].replace(/\.git$/i, ""));
+    const repo = sanitizeString(segments[1]!.replace(/\.git$/i, ""));
 
     if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
       throw new ConfigError(`Unsupported repository URL: "${rawUrl}"`);

@@ -465,7 +465,7 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
   }
 
   for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
-    const name = match[1];
+    const name = match[1]!;
     if (!params.some((p) => p.name === name)) {
       params.push({ name });
     }
@@ -542,7 +542,7 @@ export function shouldIndexStashFile(stashRoot: string, file: string): boolean {
 
   const wikiRelativeSegments = segments.slice(wikisIdx + 2);
   if (wikiRelativeSegments.length === 0) return true;
-  return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]));
+  return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]!));
 }
 
 /**
@@ -572,7 +572,7 @@ export function extractScriptParameters(filePath: string, content?: string): Ass
   for (const line of lines) {
     const match = line.match(paramRegex);
     if (match) {
-      const param: AssetParameter = { name: match[2] };
+      const param: AssetParameter = { name: match[2]! };
       if (match[1]) param.type = match[1].trim();
       if (match[3]) param.description = match[3].trim();
       params.push(param);
@@ -674,7 +674,7 @@ function parseIntentCommentLine(cleaned: string, metadata: CommentMetadata): boo
   const intentMatch = cleaned.match(/^@intent(?:\.(when|input|output))?\s+(.+)$/);
   if (!intentMatch) return false;
   metadata.intent ??= {};
-  const value = intentMatch[2].trim();
+  const value = intentMatch[2]!.trim();
   const key = intentMatch[1];
   if (key === "when") metadata.intent.when = value;
   else if (key === "input") metadata.intent.input = value;
@@ -709,61 +709,61 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
 
     const descMatch = cleaned.match(/^@description\s+(.+)$/);
     if (descMatch) {
-      metadata.description = descMatch[1].trim();
+      metadata.description = descMatch[1]!.trim();
       continue;
     }
 
     const tagsMatch = cleaned.match(/^@tags?\s+(.+)$/);
     if (tagsMatch) {
-      metadata.tags = splitCommentList(tagsMatch[1]);
+      metadata.tags = splitCommentList(tagsMatch[1]!);
       continue;
     }
 
     const aliasesMatch = cleaned.match(/^@aliases?\s+(.+)$/);
     if (aliasesMatch) {
-      metadata.aliases = splitCommentList(aliasesMatch[1]);
+      metadata.aliases = splitCommentList(aliasesMatch[1]!);
       continue;
     }
 
     const hintsMatch = cleaned.match(/^@searchHints?\s+(.+)$/);
     if (hintsMatch) {
-      metadata.searchHints = splitCommentList(hintsMatch[1]);
+      metadata.searchHints = splitCommentList(hintsMatch[1]!);
       continue;
     }
 
     const usageMatch = cleaned.match(/^@usage\s+(.+)$/);
     if (usageMatch) {
-      metadata.usage = [...(metadata.usage ?? []), usageMatch[1].trim()];
+      metadata.usage = [...(metadata.usage ?? []), usageMatch[1]!.trim()];
       continue;
     }
 
     const examplesMatch = cleaned.match(/^@examples?\s+(.+)$/);
     if (examplesMatch) {
-      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1].trim()];
+      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1]!.trim()];
       continue;
     }
 
     const runMatch = cleaned.match(/^@run\s+(.+)$/);
     if (runMatch) {
-      metadata.run = runMatch[1].trim();
+      metadata.run = runMatch[1]!.trim();
       continue;
     }
 
     const setupMatch = cleaned.match(/^@setup\s+(.+)$/);
     if (setupMatch) {
-      metadata.setup = setupMatch[1].trim();
+      metadata.setup = setupMatch[1]!.trim();
       continue;
     }
 
     const cwdMatch = cleaned.match(/^@cwd\s+(.+)$/);
     if (cwdMatch) {
-      metadata.cwd = cwdMatch[1].trim();
+      metadata.cwd = cwdMatch[1]!.trim();
       continue;
     }
 
     const scopeMatch = cleaned.match(/^@scope\s+(.+)$/);
     if (scopeMatch) {
-      const scope = parseCommentScope(scopeMatch[1]);
+      const scope = parseCommentScope(scopeMatch[1]!);
       if (scope) metadata.scope = scope;
     }
   }
@@ -898,7 +898,7 @@ function isBodyOpeningIndexingEnabled(): boolean {
  */
 function findInnerFrontmatterBlock(lines: string[]): { open: number; close: number } | null {
   let i = 0;
-  while (i < lines.length && i < 3 && lines[i].trim() === "") i += 1;
+  while (i < lines.length && i < 3 && lines[i]!.trim() === "") i += 1;
   if (lines[i] !== "---") return null;
   for (let j = i + 1; j < lines.length; j += 1) {
     if (lines[j] === "---") return { open: i, close: j };
@@ -919,7 +919,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
   const block = findInnerFrontmatterBlock(lines);
   if (!block) return false;
   for (let i = block.open + 1; i < block.close; i += 1) {
-    if (/^akm_memory_kind:\s*\S/.test(lines[i])) return true;
+    if (/^akm_memory_kind:\s*\S/.test(lines[i]!)) return true;
   }
   return false;
 }
@@ -936,7 +936,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
  */
 function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {
   for (let i = block.open + 1; i < block.close; i += 1) {
-    const line = lines[i];
+    const line = lines[i]!;
     if (line.trim() === "") continue;
     if (/^\s/.test(line)) continue; // indented continuation / nested value
     if (/^[A-Za-z0-9_.-]+:(\s|$)/.test(line)) continue; // top-level key
@@ -972,12 +972,12 @@ export function extractBodyOpening(body: string): string | undefined {
   let fenceChar = "";
   let inHtmlComment = false;
   for (let i = start; i < lines.length; i += 1) {
-    const trimmed = lines[i].trim();
+    const trimmed = lines[i]!.trim();
     const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
     if (inFence) {
       // Fence interiors are never prose (and may be secrets-adjacent command
       // text); skip until the matching closing marker.
-      if (fenceMatch && fenceMatch[1][0] === fenceChar) inFence = false;
+      if (fenceMatch && fenceMatch[1]!.charAt(0) === fenceChar) inFence = false;
       continue;
     }
     if (inHtmlComment) {
@@ -989,7 +989,7 @@ export function extractBodyOpening(body: string): string | undefined {
     if (fenceMatch) {
       if (paragraph.length > 0) break; // a fence ends an open paragraph
       inFence = true;
-      fenceChar = fenceMatch[1][0];
+      fenceChar = fenceMatch[1]!.charAt(0);
       continue;
     }
     if (trimmed.startsWith("<!--")) {
@@ -1332,7 +1332,7 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (blockStart >= 0) {
     const desc: string[] = [];
     for (let i = blockStart; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i]!;
       if (i > blockStart && /\*\//.test(line)) break;
       const cleaned = line
         .replace(/^\s*\/?\*\*?\s?/, "")
@@ -1348,7 +1348,7 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (lines[0]?.startsWith("#!")) start = 1;
   const hashLines: string[] = [];
   for (let i = start; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (line.startsWith("#") && !line.startsWith("#!")) {
       hashLines.push(line.replace(/^#+\s*/, "").trim());
     } else if (line === "") {

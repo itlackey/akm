@@ -1482,9 +1482,9 @@ async function generateEmbeddingsForDb(
       const totalBatches = Math.ceil(texts.length / EMBED_BATCH_SIZE);
       for (let i = 0; i < texts.length; i++) {
         const batchNum = Math.floor(i / EMBED_BATCH_SIZE) + 1;
-        const chars = texts[i].length;
-        const tokens = estimateTokenCount(texts[i]);
-        const ref = allEntries[i].entryKey.split(":").slice(1).join(":"); // strip stashDir prefix
+        const chars = texts[i]!.length;
+        const tokens = estimateTokenCount(texts[i]!);
+        const ref = allEntries[i]!.entryKey.split(":").slice(1).join(":"); // strip stashDir prefix
         warnVerbose(`[embed] ${ref} (${chars} chars, est. ${tokens} tokens) → batch ${batchNum}/${totalBatches}`);
       }
     }
@@ -1506,7 +1506,7 @@ async function generateEmbeddingsForDb(
       let skippedCount = 0;
       db.transaction(() => {
         for (let i = 0; i < allEntries.length; i++) {
-          if (upsertEmbedding(db, allEntries[i].id, embeddings[i])) {
+          if (upsertEmbedding(db, allEntries[i]!.id, embeddings[i]!)) {
             storedCount++;
           } else {
             skippedCount++;
@@ -1800,7 +1800,7 @@ async function enhanceStashWithLlm(
   // concurrentMap returns Array<T | undefined>; filter out undefined slots
   // (which can only occur if the callback itself returned undefined, which
   // it never does above — but TypeScript needs the filter for type safety).
-  const enhanced: IndexDocument[] = results.map((r, i) => r ?? stash.entries[i]);
+  const enhanced: IndexDocument[] = results.map((r, i) => r ?? stash.entries[i]!);
   return { entries: enhanced };
 }
 
@@ -1903,7 +1903,7 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 
     const candidateDirs: string[] = (() => {
       if (!ref.origin) return sources.map((s) => s.path);
-      if (ref.origin === "local") return [sources[0].path];
+      if (ref.origin === "local") return [sources[0]!.path];
       const named = sources.find((s) => s.registryId === ref.origin);
       return named ? [named.path] : [];
     })();

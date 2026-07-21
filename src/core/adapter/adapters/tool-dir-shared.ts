@@ -104,7 +104,7 @@ function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification
   const posix = toPosix(relPath);
   const segs = posix.split("/").filter((s) => s.length > 0);
   if (segs.length === 0) return null;
-  const base = segs[segs.length - 1];
+  const base = segs[segs.length - 1]!;
   if (isReserved(base)) return null;
 
   // Root instruction file.
@@ -112,14 +112,14 @@ function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification
     return { type: "instruction", conceptId: layout.instructionConceptId, name: layout.instructionConceptId };
   }
 
-  const head = segs[0];
+  const head = segs[0]!;
   const ext = path.extname(base).toLowerCase();
 
   // skill: <skillDir>/<name>/SKILL.md — the item is the DIRECTORY. Any other
   // file under a skill dir (bundled resources) is part of the item, not a concept.
   if (layout.skillDirs.has(head)) {
     if (segs.length >= 3 && base === SKILL_MANIFEST) {
-      return { type: "skill", conceptId: `${segs[0]}/${segs[1]}`, name: segs[1] };
+      return { type: "skill", conceptId: `${segs[0]}/${segs[1]}`, name: segs[1]! };
     }
     return null;
   }
@@ -179,9 +179,9 @@ export function placeNewToolDir(layout: ToolDirLayout, c: BundleComponent, conce
   const head = segs[0];
   const rest = segs.slice(1).join("/");
   if (rest.length > 0) {
-    if (layout.skillDirs.has(head)) return path.join(c.root, CANONICAL_SKILL_DIR, rest, SKILL_MANIFEST);
-    if (layout.commandDirs.has(head)) return path.join(c.root, CANONICAL_COMMAND_DIR, `${rest}.md`);
-    if (layout.agentDirs.has(head)) return path.join(c.root, CANONICAL_AGENT_DIR, `${rest}.md`);
+    if (layout.skillDirs.has(head!)) return path.join(c.root, CANONICAL_SKILL_DIR, rest, SKILL_MANIFEST);
+    if (layout.commandDirs.has(head!)) return path.join(c.root, CANONICAL_COMMAND_DIR, `${rest}.md`);
+    if (layout.agentDirs.has(head!)) return path.join(c.root, CANONICAL_AGENT_DIR, `${rest}.md`);
   }
   return path.join(c.root, `${posix}.md`);
 }

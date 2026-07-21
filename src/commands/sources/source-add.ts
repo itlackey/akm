@@ -132,7 +132,7 @@ async function addWebsiteSource(
     const website = { url: normalizedUrl, ...(maxPages !== undefined ? { maxPages } : {}) };
     const nextBundle: BundleConfigEntry = { ...(existingKey ? bundles[key] : {}), website };
     if (JSON.stringify(bundles[key]) === JSON.stringify(nextBundle)) {
-      entry = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+      entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
       return config;
     }
     bundles[key] = nextBundle;

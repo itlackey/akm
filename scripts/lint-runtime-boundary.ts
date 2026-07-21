@@ -199,7 +199,7 @@ function lintFile(filePath: string): Violation[] {
           line: i + 1,
           ruleId: rule.id,
           message: rule.message,
-          snippet: rawLines[i].trim(),
+          snippet: rawLines[i]!.trim(),
         });
       }
     }

@@ -398,9 +398,10 @@ function resolveWindowComparePhase(
     });
     // Preserve backward compat: top-level improve/metrics reflect window 0.
     if (windowResults.length > 0) {
-      topLevelImprove = windowResults[0].improve;
-      topLevelMetrics = { ...windowResults[0].metrics, probeRoundTripMs: probe.durationMs };
-      topLevelSince = windowResults[0].since;
+      const firstWindow = windowResults[0]!;
+      topLevelImprove = firstWindow.improve;
+      topLevelMetrics = { ...firstWindow.metrics, probeRoundTripMs: probe.durationMs };
+      topLevelSince = firstWindow.since;
     }
     if (windowResults.length >= 2) {
       // Deltas always read chronologically: `from` = earliest window,
@@ -411,7 +412,7 @@ function resolveWindowComparePhase(
       // `current` for --window-compare), but the delta direction is
       // independent of that array order.
       const sorted = [...windowResults].sort((a, b) => new Date(a.since).getTime() - new Date(b.since).getTime());
-      deltas = computeDeltas(sorted[0], sorted[sorted.length - 1]);
+      deltas = computeDeltas(sorted[0]!, sorted[sorted.length - 1]!);
     }
   }
 

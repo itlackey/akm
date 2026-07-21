@@ -93,7 +93,7 @@ const dryRun = process.argv.includes("--dry-run");
 function rekey(content: string): string | null {
   const m = ORIGINLESS.exec(content);
   if (!m) return null;
-  return legacyConceptId(m[1], m[2]);
+  return legacyConceptId(m[1]!, m[2]!);
 }
 
 function loadSkipList(): Set<string> {
@@ -156,7 +156,7 @@ function collectTsEdits(text: string, fileName: string, counts: FileCounts): Edi
       const headText = node.head.text;
       const hm = HEAD_PREFIX.exec(headText);
       if (hm) {
-        const newHead = legacyConceptId(hm[1], hm[2]); // `stashDir/<prefix>`
+        const newHead = legacyConceptId(hm[1]!, hm[2]!); // `stashDir/<prefix>`
         const rawHead = text.slice(node.head.getStart(src), node.head.getEnd());
         // rawHead = "`" + headText + "${"  →  keep the delimiters, swap the body.
         const rebuilt = `\`${newHead}\${`;
@@ -183,7 +183,7 @@ function collectJsonEdits(text: string, counts: FileCounts): Edit[] {
   let m: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: standard regex exec loop
   while ((m = stringRe.exec(text)) !== null) {
-    const content = m[1];
+    const content = m[1]!;
     const conceptId = rekey(content);
     if (conceptId !== null) {
       edits.push({ start: m.index, end: m.index + m[0].length, replacement: `"${conceptId}"` });

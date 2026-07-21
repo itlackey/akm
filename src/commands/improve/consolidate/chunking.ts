@@ -95,7 +95,8 @@ export function buildChunkPrompt(
   standardsContext = "",
 ): string {
   const start = memories[0] ? `memories/${memories[0].name}` : "";
-  const end = memories[memories.length - 1] ? `memories/${memories[memories.length - 1].name}` : "";
+  const lastMemory = memories[memories.length - 1];
+  const end = lastMemory ? `memories/${lastMemory.name}` : "";
 
   // First pass: classify each memory's annotations + collect hot refs so a
   // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
@@ -152,8 +153,9 @@ export function buildChunkPrompt(
   }
 
   for (let i = 0; i < memories.length; i++) {
-    const m = memories[i];
-    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i];
+    const m = memories[i]!;
+    // `annotationsByIndex` has exactly one entry per memory (built in the loop above).
+    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i]!;
 
     const annotations: string[] = [];
     if (isHot) annotations.push("captureMode: hot");

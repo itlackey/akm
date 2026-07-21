@@ -119,7 +119,7 @@ export function renderSyncCommitMessage(
     triage_rejected: String(result.triage?.rejected ?? 0),
     runId: result.runId ?? "",
   };
-  return template.replace(/\{(\w+)\}/g, (match, key: string) => (Object.hasOwn(tokens, key) ? tokens[key] : match));
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => tokens[key] ?? match);
 }
 
 export function armBudgetWatchdog(

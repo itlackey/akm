@@ -75,7 +75,7 @@ function skillPackage(relPath: string): { conceptId: string; dirName: string } |
   // possibly nested `<a>/<b>/SKILL.md`); a bare root SKILL.md is not a package.
   if (segs.length < 2 || segs[segs.length - 1] !== SKILL_MANIFEST) return null;
   const conceptId = segs.slice(0, segs.length - 1).join("/");
-  const dirName = segs[segs.length - 2];
+  const dirName = segs[segs.length - 2]!;
   return { conceptId, dirName };
 }
 

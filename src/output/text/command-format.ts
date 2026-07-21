@@ -371,7 +371,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   if (hits.length >= 1) {
     // Prefer skill/command/agent type hits for the "Next:" ref — knowledge docs are
     // supplementary context, not the authoritative schema agents should load first.
-    const preferredHit = hits.find((h) => h.type === "skill" || h.type === "command" || h.type === "agent") ?? hits[0];
+    const preferredHit = hits.find((h) => h.type === "skill" || h.type === "command" || h.type === "agent") ?? hits[0]!;
     const topRef = typeof preferredHit.ref === "string" ? preferredHit.ref : null;
     const hasWorkflowHit = hits.some((h) => h.type === "workflow");
     if (topRef) {

@@ -112,7 +112,7 @@ function expandAlias(raw: string): string {
     throw new UsageError("Schedule is empty.", "MISSING_REQUIRED_ARGUMENT");
   }
   const lower = trimmed.toLowerCase();
-  if (lower in ALIAS_TO_CRON) return ALIAS_TO_CRON[lower];
+  if (lower in ALIAS_TO_CRON) return ALIAS_TO_CRON[lower]!;
   return trimmed;
 }
 
@@ -126,11 +126,11 @@ function parseCronFields(cron: string, original: string): ScheduleFields {
   }
   const [m, h, dom, mon, dow] = parts;
   return {
-    minute: parseField(m, "minute", FIELD_LIMITS.minute, original),
-    hour: parseField(h, "hour", FIELD_LIMITS.hour, original),
-    dom: parseField(dom, "day-of-month", FIELD_LIMITS.dom, original),
-    month: parseField(mon, "month", FIELD_LIMITS.month, original),
-    dow: parseField(dow, "day-of-week", FIELD_LIMITS.dow, original),
+    minute: parseField(m!, "minute", FIELD_LIMITS.minute, original),
+    hour: parseField(h!, "hour", FIELD_LIMITS.hour, original),
+    dom: parseField(dom!, "day-of-month", FIELD_LIMITS.dom, original),
+    month: parseField(mon!, "month", FIELD_LIMITS.month, original),
+    dow: parseField(dow!, "day-of-week", FIELD_LIMITS.dow, original),
   };
 }
 

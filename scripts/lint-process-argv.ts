@@ -176,7 +176,7 @@ function lintFile(filePath: string): ProcessArgvViolation[] {
     const subject = stripped[i];
     if (subject === undefined || !PROCESS_ARGV_PATTERN.test(subject)) continue;
     if (isAllowedRuntimeMainPathAccess(rel, subject)) continue;
-    violations.push({ file: rel, line: i + 1, snippet: rawLines[i].trim() });
+    violations.push({ file: rel, line: i + 1, snippet: rawLines[i]!.trim() });
   }
   return violations;
 }

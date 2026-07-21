@@ -572,7 +572,7 @@ export interface ReflectSanitizeResult {
 function splitFrontmatter(raw: string): { fmText: string | null; body: string } {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!m) return { fmText: null, body: raw };
-  return { fmText: m[1], body: m[2] };
+  return { fmText: m[1]!, body: m[2]! };
 }
 
 /**
@@ -589,7 +589,7 @@ function stripAppendedFrontmatter(body: string): string {
   const match = body.match(fencePattern);
   if (!match) return body;
   // Only strip when the captured block looks like YAML frontmatter.
-  if (!/^\w[\w-]*:/m.test(match[1])) return body;
+  if (!/^\w[\w-]*:/m.test(match[1]!)) return body;
   return body.slice(0, body.indexOf(match[0])).replace(/\s+$/, "");
 }
 

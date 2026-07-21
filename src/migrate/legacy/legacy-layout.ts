@@ -362,7 +362,10 @@ export function deriveCanonicalAssetNameFromStashRoot(
   const relPath = toPosix(path.relative(stashRoot, filePath));
   const segments = relPath.split("/").filter(Boolean);
   const firstSegment = segments[0];
-  const typeRoot = firstSegment === TYPE_DIRS[assetType] ? path.join(stashRoot, firstSegment) : stashRoot;
+  const typeRoot =
+    firstSegment !== undefined && firstSegment === TYPE_DIRS[assetType]
+      ? path.join(stashRoot, firstSegment)
+      : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);
 }
 
@@ -591,7 +594,7 @@ export function resolveSourcesForOrigin(origin: string | undefined, allSources: 
 
   // "local" means the primary stash (first entry)
   if (origin === "local") {
-    return allSources.length > 0 ? [allSources[0]] : [];
+    return allSources.length > 0 ? [allSources[0]!] : [];
   }
 
   // Exact registryId match (e.g. origin is "npm:@scope/pkg")
@@ -757,7 +760,7 @@ function parseGithubShorthand(input: string, originalRef: string): ParsedGithubR
     throw new LegacyResolverError("Invalid GitHub ref. Expected owner/repo or owner/repo#ref.");
   }
   const owner = segments[0];
-  const repo = segments[1].replace(/\.git$/i, "");
+  const repo = segments[1]!.replace(/\.git$/i, "");
   if (!owner || !repo) {
     throw new LegacyResolverError("Invalid GitHub ref. Expected owner/repo.");
   }
@@ -791,8 +794,8 @@ function parseGithubUrl(url: URL, rawUrl: string): ParsedGithubRef {
   if (segments.length < 2) {
     throw new LegacyResolverError("Invalid GitHub URL. Expected https://github.com/owner/repo.");
   }
-  const owner = segments[0];
-  const repo = segments[1].replace(/\.git$/i, "");
+  const owner = segments[0]!;
+  const repo = segments[1]!.replace(/\.git$/i, "");
   const requestedRef = url.hash ? decodeURIComponent(url.hash.slice(1)) : undefined;
 
   return {

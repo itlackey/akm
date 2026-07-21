@@ -240,7 +240,10 @@ export function deriveCanonicalAssetNameFromStashRoot(
   // Otherwise fall back to stashRoot — this preserves the full relative path
   // as the canonical name, which is correct for installed stashes that live
   // under custom directories (e.g. "tools/agents/svelte-file-editor").
-  const typeRoot = firstSegment === stashDirFor(assetType) ? path.join(stashRoot, firstSegment) : stashRoot;
+  const typeRoot =
+    firstSegment !== undefined && firstSegment === stashDirFor(assetType)
+      ? path.join(stashRoot, firstSegment)
+      : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);
 }
 

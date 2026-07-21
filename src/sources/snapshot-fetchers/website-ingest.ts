@@ -690,7 +690,8 @@ function isLoopbackWebsiteHostname(hostname: string): boolean {
 function isForbiddenIpv4(hostname: string): boolean {
   const parts = hostname.split(".").map((part) => Number.parseInt(part, 10));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
+  const a = parts[0]!;
+  const b = parts[1]!;
   return (
     a === 0 ||
     a === 10 ||
@@ -710,8 +711,8 @@ function extractIpv4MappedAddress(normalizedHostname: string): string | null {
   const match = normalizedHostname.match(/^::ffff:(?:(\d{1,3}(?:\.\d{1,3}){3})|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
   if (!match) return null;
   if (match[1]) return match[1];
-  const high = Number.parseInt(match[2], 16);
-  const low = Number.parseInt(match[3], 16);
+  const high = Number.parseInt(match[2]!, 16);
+  const low = Number.parseInt(match[3]!, 16);
   return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 }
 

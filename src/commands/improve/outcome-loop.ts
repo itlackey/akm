@@ -417,8 +417,8 @@ export function computeProxyAdequacy(rows: AssetOutcomeRow[]): ProxyAdequacyResu
   let varX = 0;
   let varY = 0;
   for (let i = 0; i < n; i++) {
-    const dx = xs[i] - meanX;
-    const dy = ys[i] - meanY;
+    const dx = xs[i]! - meanX;
+    const dy = ys[i]! - meanY;
     covXY += dx * dy;
     varX += dx * dx;
     varY += dy * dy;

@@ -112,7 +112,7 @@ function parseFrontmatterLenient(frontmatter: string): Record<string, unknown> {
   for (const line of frontmatter.split(/\r?\n/)) {
     const m = line.match(/^([\w][\w-]*):\s*(.*)$/);
     if (!m) continue;
-    const key = m[1];
+    const key = m[1]!;
     const rawValue = (m[2] ?? "").trim();
     try {
       const singleEntry = yamlParse(`k: ${rawValue}`) as unknown;
@@ -172,12 +172,12 @@ export function parseFrontmatterBlock(
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
   if (match) {
     // Strip any \r characters from the frontmatter block to normalise CRLF → LF
-    const frontmatter = match[1].replace(/\r/g, "");
-    const content = match[2];
+    const frontmatter = match[1]!.replace(/\r/g, "");
+    const content = match[2]!;
     return {
       frontmatter,
       content,
-      bodyStartLine: countLines(raw.slice(0, match[0].length - match[2].length)) + 1,
+      bodyStartLine: countLines(raw.slice(0, match[0]!.length - content.length)) + 1,
     };
   }
   // Empty frontmatter (---\n---): the content-bearing regex above requires at
@@ -187,7 +187,7 @@ export function parseFrontmatterBlock(
   // string as body content.
   const emptyMatch = raw.match(/^---\r?\n---(?:\r\n|\r|\n)([\s\S]*)$/);
   if (emptyMatch) {
-    return { frontmatter: "", content: emptyMatch[1], bodyStartLine: 3 };
+    return { frontmatter: "", content: emptyMatch[1]!, bodyStartLine: 3 };
   }
   return null;
 }

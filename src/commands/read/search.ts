@@ -144,7 +144,7 @@ export async function akmSearch(input: {
   }
   // Primary stash directory — used for DB path lookups and as the default
   // stash root. Safe because the empty-sources case is handled above.
-  const stashDir = allSources[0].path;
+  const stashDir = allSources[0]!.path;
   // Expose the filtered source list to downstream search calls.
   const sources = allSources;
 

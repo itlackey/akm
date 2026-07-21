@@ -783,7 +783,7 @@ function parseTimeoutField(ctx: Ctx, raw: unknown, path: Path, label: string): n
     ctx.err(path, `${label} has an invalid timeout "${raw}". ${TIMEOUT_HINT}.`);
     return undefined;
   }
-  const n = Number.parseInt(match[1], 10);
+  const n = Number.parseInt(match[1]!, 10);
   const unit = match[2] ?? "ms";
   const timeoutMs = unit === "m" ? n * 60_000 : unit === "s" ? n * 1_000 : n;
   if (timeoutMs <= 0) {

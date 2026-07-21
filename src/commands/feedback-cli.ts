@@ -42,7 +42,7 @@ function validateFeedbackTags(raw: string[]): string[] {
         "INVALID_FLAG_VALUE",
       );
     }
-    const key = parts[0];
+    const key = parts[0]!;
     if (!TAG_KEY_RE.test(key)) {
       throw new UsageError(
         `Invalid tag key "${key}" in "${tag}". Key must match [a-z_][a-z0-9_]*.`,

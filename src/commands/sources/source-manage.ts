@@ -87,7 +87,7 @@ export function addStash(opts: {
       bundles[key] = { path: resolvedPath, ...(writable === true ? { writable: true } : {}) };
     }
     const next = { ...config, bundles };
-    const entry = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+    const entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
     result = { sources: bundlesToSourceEntries(next) ?? [], added: true, entry };
     return next;
   });
@@ -132,7 +132,7 @@ export function removeStash(target: string): SourceRemoveResult {
       result = { sources: getSources(config), removed: false, message: "No matching source found" };
       return config;
     }
-    const removed = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+    const removed = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
     delete bundles[key];
     const next = { ...config, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
     result = { sources: bundlesToSourceEntries(next) ?? [], removed: true, entry: removed };

@@ -67,7 +67,7 @@ export interface AkmAgentDispatchResult {
 function fillPlaceholders(template: string, args: string[]): string {
   return template.replace(/\{\{(\d+)\}\}/g, (match, idx) => {
     const i = Number.parseInt(idx, 10);
-    return i < args.length ? args[i] : match;
+    return i < args.length ? args[i]! : match;
   });
 }
 
