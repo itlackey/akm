@@ -716,8 +716,8 @@ describe("workflow engine v3 contracts", () => {
     // 10k-item expansion is CPU-heavy (~8s alone, ~18s under 4-way shard
     // contention in sandboxed CI containers); the timeout guards against a
     // hang, not a performance contract — keep it clear of contended runs.
-  // 180s: this 10k-fan-out contract runs ~60s solo on a loaded 4-core box
-  // (comfortably faster on CI); the budget exists to catch hangs, not to
-  // police throughput on shared hardware.
+    // 180s: this 10k-fan-out contract runs ~60s solo on a loaded 4-core box
+    // (comfortably faster on CI); the budget exists to catch hangs, not to
+    // police throughput on shared hardware.
   }, 180_000);
 });
