@@ -70,6 +70,7 @@ import {
   getEmbeddingCount,
   isVecAvailable,
   purgeEmbeddings,
+  setVecFastPathReady,
   upsertEmbedding,
   warnIfVecMissing,
 } from "../storage/repositories/index-vec-repository";
@@ -1246,7 +1247,7 @@ async function enhanceDirsWithLlm(
   // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
   // as a single visible warning instead of silently degrading every entry
   // and leaving the user wondering why nothing got enhanced.
-  const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
+  const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, skipped: 0, failureSamples: [] };
   let completedDirs = 0;
   let completedEntries = 0;
   const totalDirs = dirsNeedingLlm.length;
@@ -1415,14 +1416,16 @@ async function enhanceDirsWithLlm(
     );
   }
 
-  if (summary.attempted > 0 && summary.succeeded === 0) {
+  // Gate-closed (`skipped`) entries are not failures — exclude them so a
+  // deliberately disabled feature never surfaces as an enrichment error.
+  const failed = summary.attempted - summary.succeeded - summary.skipped;
+  if (failed > 0 && summary.succeeded === 0) {
     const sample = summary.failureSamples.length ? ` Example: ${summary.failureSamples[0]}` : "";
     warn(
-      `LLM enhancement failed for all ${summary.attempted} attempted entries — index built without LLM enrichment.` +
+      `LLM enhancement failed for all ${failed} attempted entries — index built without LLM enrichment.` +
         ` Check llm.endpoint and llm.model in your config.${sample}`,
     );
-  } else if (summary.attempted > 0 && summary.succeeded < summary.attempted) {
-    const failed = summary.attempted - summary.succeeded;
+  } else if (failed > 0) {
     const sample = summary.failureSamples.length ? ` Examples: ${summary.failureSamples.join("; ")}` : "";
     warn(`LLM enhancement failed for ${failed}/${summary.attempted} entries — they were left un-enhanced.${sample}`);
   }
@@ -1504,13 +1507,16 @@ async function generateEmbeddingsForDb(
       // state is rolled back on failure rather than leaving the table half-filled.
       let storedCount = 0;
       let skippedCount = 0;
+      let vecFailedCount = 0;
       db.transaction(() => {
         for (let i = 0; i < allEntries.length; i++) {
-          if (upsertEmbedding(db, allEntries[i]!.id, embeddings[i]!)) {
+          const res = upsertEmbedding(db, allEntries[i]!.id, embeddings[i]!);
+          if (res.stored) {
             storedCount++;
           } else {
             skippedCount++;
           }
+          if (res.vec === "failed") vecFailedCount++;
         }
       })();
       if (skippedCount > 0) {
@@ -1518,12 +1524,24 @@ async function generateEmbeddingsForDb(
           `[embed] ${skippedCount} embedding${skippedCount === 1 ? "" : "s"} skipped (entry deleted between queue and write)`,
         );
       }
+      // Record the ACTUAL vec-insert outcome so semantic search reflects it
+      // instead of inferring readiness from stored-BLOB counts. Any failure
+      // marks the fast path degraded, routing search to the JS-cosine fallback
+      // over the (complete) BLOB table — honest degradation, not a hard failure.
+      setVecFastPathReady(db, vecFailedCount === 0);
+      if (vecFailedCount > 0) {
+        warn(
+          `[embed] ${vecFailedCount} sqlite-vec fast-path insert${vecFailedCount === 1 ? "" : "s"} failed — ` +
+            "semantic search will use the slower JS-cosine fallback over stored embeddings. " +
+            "Rebuild with 'akm index --full' after resolving the vec table (often a vector-dimension mismatch).",
+        );
+      }
       onProgress({
         phase: "embeddings",
         message: `Stored ${storedCount} embedding${storedCount === 1 ? "" : "s"}.`,
       });
       setMeta(db, "embeddingFingerprint", currentFingerprint);
-      return { success: true };
+      return { success: true, vecInsertFailures: vecFailedCount };
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
@@ -1546,6 +1564,13 @@ interface EmbeddingGenerationResult {
   success: boolean;
   reason?: import("./search/semantic-status").SemanticSearchReason;
   message?: string;
+  /**
+   * Count of sqlite-vec fast-path inserts that failed while their BLOB rows
+   * still wrote. > 0 means the index is degraded-but-working: semantic search
+   * falls back to JS-cosine over the BLOB table. Absent on paths with no vec
+   * writes (already up to date, disabled, or the error path).
+   */
+  vecInsertFailures?: number;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1686,6 +1711,12 @@ function resolveIndexedFiles(dirPath: string, files: string[], stash: StashFile)
 interface LlmEnhancementSummary {
   attempted: number;
   succeeded: number;
+  /**
+   * Entries the LLM never enhanced because the `metadata_enhance` gate was
+   * closed. Not a failure — excluded from the failed count so a deliberately
+   * disabled feature does not surface as an enrichment error.
+   */
+  skipped: number;
   /** Sample of error messages from failed entries (first 3, deduped). */
   failureSamples: string[];
 }
@@ -1700,7 +1731,7 @@ async function enhanceStashWithLlm(
   entryKeys?: string[],
   reEnrich?: boolean,
   akmConfig?: AkmConfig,
-  onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
+  onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" | "skipped" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
   const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import(
@@ -1755,12 +1786,37 @@ async function enhanceStashWithLlm(
           }
         }
 
-        const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal, akmConfig);
+        const outcome = await enhanceMetadata(llmConfig, entry, fileContent, signal, akmConfig);
+
+        if (outcome.status !== "enriched") {
+          // Not a genuine LLM success: the gate was closed (`skipped`) or the
+          // call errored/timed out (`failed`). Do NOT mark the entry enriched
+          // and do NOT write the LLM cache — caching here would poison the
+          // entry into a permanent enrichment skip even though nothing was
+          // enhanced. Surface failures honestly; stay silent on gated-off skips.
+          if (outcome.status === "failed") {
+            const msg = outcome.error ?? "metadata enrichment failed";
+            if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
+              summary.failureSamples.push(msg);
+            }
+            onEntryDone?.({ entryName: entry.name, outcome: "failed" });
+          } else {
+            summary.skipped++;
+            onEntryDone?.({ entryName: entry.name, outcome: "skipped" });
+          }
+          return entry;
+        }
+
+        const improvements = outcome.metadata;
         const updated = { ...entry };
         if (improvements.description) updated.description = improvements.description;
         if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
         if (improvements.tags?.length) updated.tags = improvements.tags;
-        // Mark as enriched so subsequent index runs skip re-enrichment (P2)
+        // Mark as enriched so subsequent index runs skip re-enrichment (P2).
+        // An empty-but-successful response is still cached: the LLM was paid
+        // for this body_hash and produced no improvements, so re-running would
+        // only re-pay for the same no-op. (The cache protects against re-paying
+        // for the LLM call when the file body is unchanged.)
         updated.quality = "enriched";
 
         // Persist to cache so the next run can skip the LLM call when the

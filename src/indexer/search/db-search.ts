@@ -247,7 +247,7 @@ export async function searchLocal(input: {
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs } = await searchDatabase(
+    const { hits, embedMs, rankMs, usedSemantic } = await searchDatabase(
       db,
       query,
       searchType,
@@ -274,7 +274,9 @@ export async function searchLocal(input: {
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
-      mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
+      // Report the mode the search ACTUALLY used, carried explicitly from the
+      // vector scorer — not inferred from elapsed embedding milliseconds.
+      mode: usedSemantic ? "semantic" : "keyword",
     };
   } finally {
     closeDatabase(db);
@@ -304,6 +306,8 @@ async function searchDatabase(
   hits: SourceSearchHit[];
   embedMs?: number;
   rankMs?: number;
+  /** True only when the embedding/vector search actually executed for ranking. */
+  usedSemantic: boolean;
 }> {
   const hasSearchableTokens = query.length > 0 && sanitizeFtsQuery(query).length > 0;
 
@@ -323,45 +327,53 @@ async function searchDatabase(
   // `session:` enumerates sessions exactly like `--type session` does.
   const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, placementTypes()) : null;
   if (refPrefix) {
-    return enumerateEntries({
-      db,
-      query,
-      typeFilter: refPrefix.type,
-      excludeTypes: [],
-      namePrefix: refPrefix.namePrefix,
-      limit,
-      stashDir,
-      allSourceDirs,
-      sources,
-      config,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-    });
+    // Browse path (ref-prefix enumeration) never runs semantic ranking.
+    return {
+      ...(await enumerateEntries({
+        db,
+        query,
+        typeFilter: refPrefix.type,
+        excludeTypes: [],
+        namePrefix: refPrefix.namePrefix,
+        limit,
+        stashDir,
+        allSourceDirs,
+        sources,
+        config,
+        rendererRegistry,
+        filters,
+        includeProposed,
+        beliefFilter,
+        restrictToSources,
+      })),
+      usedSemantic: false,
+    };
   }
 
   // Empty queries — including ones that sanitize down to no searchable FTS
   // tokens such as "." — should enumerate matching entries instead of
   // returning an empty result set from FTS.
   if (!hasSearchableTokens) {
-    return enumerateEntries({
-      db,
-      query,
-      typeFilter: searchType === "any" ? undefined : searchType,
-      excludeTypes: defaultExcludes,
-      limit,
-      stashDir,
-      allSourceDirs,
-      sources,
-      config,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-    });
+    // Browse path (empty/unsearchable query) never runs semantic ranking.
+    return {
+      ...(await enumerateEntries({
+        db,
+        query,
+        typeFilter: searchType === "any" ? undefined : searchType,
+        excludeTypes: defaultExcludes,
+        limit,
+        stashDir,
+        allSourceDirs,
+        sources,
+        config,
+        rendererRegistry,
+        filters,
+        includeProposed,
+        beliefFilter,
+        restrictToSources,
+      })),
+      usedSemantic: false,
+    };
   }
 
   // Start the async embedding request without awaiting, then run FTS
@@ -372,6 +384,12 @@ async function searchDatabase(
   const ftsResults = searchFts(db, query, limit * 3, typeFilter, defaultExcludes);
   const embeddingScores = await embeddingPromise;
   const embedMs = Date.now() - tEmbed0;
+  // The vector scorer returns a (possibly empty) Map when the embedding + vector
+  // search actually executed, or null when semantic was not runnable (disabled,
+  // no embeddings, or the embed call threw). This is the AUTHORITATIVE "semantic
+  // mode was used" signal — carried out to telemetry instead of guessing from
+  // elapsed milliseconds (which timed the concurrent FTS work too).
+  const usedSemantic = embeddingScores !== null;
 
   const tRank0 = Date.now();
 
@@ -551,7 +569,7 @@ async function searchDatabase(
     }),
   );
 
-  return { embedMs, rankMs, hits };
+  return { embedMs, rankMs, hits, usedSemantic };
 }
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────

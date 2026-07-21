@@ -16,7 +16,7 @@ import { warn } from "../../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
 import type { DbVecResult } from "./index-entry-types";
-import { setMeta } from "./index-meta-repository";
+import { getMeta, setMeta } from "./index-meta-repository";
 
 // ── sqlite-vec extension ────────────────────────────────────────────────────
 
@@ -43,6 +43,31 @@ export function loadVecExtension(db: Database): void {
 
 export function isVecAvailable(db: Database): boolean {
   return vecStatus.get(db) ?? false;
+}
+
+/**
+ * Meta key persisting whether the sqlite-vec fast-path table (`entries_vec`) is
+ * fully populated and trustworthy for this index. Set to "0" by the embedding
+ * phase when one or more vec inserts FAILED (e.g. a vec0 dimension mismatch)
+ * while their BLOB rows still wrote — so semantic search reads the complete
+ * BLOB table via the JS-cosine fallback instead of a partial/mismatched vec
+ * table. Absent (legacy indexes) and "1" both mean the fast path is trusted.
+ */
+const VEC_FAST_PATH_READY_META = "vecFastPathReady";
+
+/** Persist whether the sqlite-vec fast path is trustworthy (see the meta doc). */
+export function setVecFastPathReady(db: Database, ready: boolean): void {
+  setMeta(db, VEC_FAST_PATH_READY_META, ready ? "1" : "0");
+}
+
+/**
+ * True unless the embedding phase recorded a vec insert failure. Reflects the
+ * ACTUAL insert outcomes recorded at index time — not an inference from how many
+ * BLOB rows exist — so a degraded vec table routes search to the JS fallback
+ * rather than silently returning partial fast-path results.
+ */
+export function isVecFastPathReady(db: Database): boolean {
+  return getMeta(db, VEC_FAST_PATH_READY_META) !== "0";
 }
 
 const VEC_DOCS_URL = "https://github.com/itlackey/akm/blob/main/docs/configuration.md#sqlite-vec-extension";
@@ -99,37 +124,63 @@ export function purgeEmbeddings(db: Database, opts?: { dropVecTable?: boolean })
 
 // ── Vector operations ───────────────────────────────────────────────────────
 
-export function upsertEmbedding(db: Database, entryId: number, embedding: EmbeddingVector): boolean {
+/** Outcome of the sqlite-vec fast-path write for a single embedding. */
+export type VecInsertOutcome = "ok" | "unavailable" | "failed";
+
+export interface EmbeddingUpsertResult {
+  /** BLOB row written. False only on the FK pre-flight skip (entry deleted). */
+  stored: boolean;
+  /**
+   * - `ok`          — vec fast-path row inserted.
+   * - `unavailable` — sqlite-vec not loaded; the JS-cosine fallback is expected
+   *                   (this is normal degradation, NOT a failure).
+   * - `failed`      — the extension is loaded but the vec insert threw (vec0
+   *                   dimension mismatch / missing table / constraint). The
+   *                   caller counts, warns, and marks the fast path degraded.
+   */
+  vec: VecInsertOutcome;
+}
+
+export function upsertEmbedding(db: Database, entryId: number, embedding: EmbeddingVector): EmbeddingUpsertResult {
   // Pre-flight FK guard: when an entry is deleted between when its id is queued
   // for embedding and when this INSERT runs (e.g. consolidation deletes during
   // a concurrent improve cycle), the INSERT throws "FOREIGN KEY constraint failed"
   // and rolls back the entire batch transaction in the caller, losing every
   // embedding for that run. A cheap SELECT here turns the race into a clean skip.
   const exists = db.prepare("SELECT 1 FROM entries WHERE id = ?").get(entryId);
-  if (!exists) return false;
+  if (!exists) return { stored: false, vec: "unavailable" };
 
   const buf = float32Buffer(embedding);
 
-  // Always write to BLOB table (works without sqlite-vec)
+  // Always write to BLOB table (works without sqlite-vec; the JS-cosine fallback
+  // reads it, so semantic search survives a vec fast-path failure).
   db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(entryId, buf);
 
-  // Also write to sqlite-vec table when available (fast path).
-  // Wrapped in a transaction so a crash between DELETE and INSERT does not
-  // leave the entry missing from the vec table.
-  if (isVecAvailable(db)) {
-    bestEffort(() => {
-      db.transaction(() => {
-        db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId);
-        db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
-      })();
-    }, "vec table unavailable or constraint failure");
+  if (!isVecAvailable(db)) return { stored: true, vec: "unavailable" };
+
+  // Fast path: mirror into the sqlite-vec table. Wrapped in a transaction so a
+  // crash between DELETE and INSERT does not leave the entry missing. A THROW
+  // here — previously swallowed silently by bestEffort — is now surfaced to the
+  // caller so the embedding phase can count it, warn, and route search to the
+  // (complete) BLOB table rather than a partial/mismatched vec table.
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId);
+      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf);
+    })();
+    return { stored: true, vec: "ok" };
+  } catch {
+    return { stored: true, vec: "failed" };
   }
-  return true;
 }
 
 export function searchVec(db: Database, queryEmbedding: EmbeddingVector, k: number): DbVecResult[] {
-  // Fast path: use sqlite-vec when available
-  if (isVecAvailable(db)) {
+  // Fast path: sqlite-vec, but ONLY when the extension is loaded AND the
+  // embedding phase did not record a vec insert failure. A degraded fast-path
+  // table (partial or dimension-mismatched) would return wrong or missing
+  // neighbours, so we honestly fall back to the JS-cosine scan over the
+  // complete BLOB table instead.
+  if (isVecAvailable(db) && isVecFastPathReady(db)) {
     const buf = float32Buffer(queryEmbedding);
     try {
       return db

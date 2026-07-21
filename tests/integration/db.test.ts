@@ -26,7 +26,13 @@ import {
 import { rebuildFts, searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { getMeta, setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { DB_VERSION } from "../../src/storage/repositories/index-schema";
-import { isVecAvailable, searchVec, upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
+import {
+  isVecAvailable,
+  isVecFastPathReady,
+  searchVec,
+  setVecFastPathReady,
+  upsertEmbedding,
+} from "../../src/storage/repositories/index-vec-repository";
 import {
   getRegistryIndexCache,
   upsertRegistryIndexCache,
@@ -692,6 +698,55 @@ describe("Vector / Embedding integration", () => {
 
       const results = searchVec(db, [1, 0, 0, 0], 2);
       expect(results.length).toBe(2);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsertEmbedding surfaces a vec fast-path insert failure instead of swallowing it", () => {
+    const dbPath = tmpDbPath();
+    // entries_vec is created at dim 4; a dim-3 vector makes the vec0 INSERT
+    // throw while the BLOB row (which has no dimension constraint) still writes.
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    try {
+      expect(isVecAvailable(db)).toBe(true);
+      const id = insertTestEntry(db, "vec-mismatch", { searchText: "mismatch" });
+
+      const res = upsertEmbedding(db, id, [1, 0, 0]);
+
+      // The BLOB is written (semantic search can still fall back)...
+      expect(res.stored).toBe(true);
+      // ...but the vec fast-path failure is REPORTED, not silently swallowed.
+      expect(res.vec).toBe("failed");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("a degraded vec fast path routes searchVec to the JS-cosine BLOB fallback", () => {
+    const dbPath = tmpDbPath();
+    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    try {
+      const id = insertTestEntry(db, "vec-degraded", { searchText: "degraded" });
+      // BLOB + vec rows both written by a healthy upsert.
+      expect(upsertEmbedding(db, id, [1, 0, 0, 0]).vec).toBe("ok");
+
+      // Simulate the state after failed/partial vec inserts: the BLOB table is
+      // complete but the vec table is empty.
+      db.prepare("DELETE FROM entries_vec").run();
+
+      // Trusting the (now-empty) fast path returns nothing — the dishonest case.
+      setVecFastPathReady(db, true);
+      expect(isVecFastPathReady(db)).toBe(true);
+      expect(searchVec(db, [1, 0, 0, 0], 10).length).toBe(0);
+
+      // Marking the fast path degraded routes search to the complete BLOB table
+      // via JS-cosine — honest degradation, not a hard failure.
+      setVecFastPathReady(db, false);
+      expect(isVecFastPathReady(db)).toBe(false);
+      const fallback = searchVec(db, [1, 0, 0, 0], 10);
+      expect(fallback.length).toBe(1);
+      expect(fallback[0]!.id).toBe(id);
     } finally {
       closeDatabase(db);
     }
