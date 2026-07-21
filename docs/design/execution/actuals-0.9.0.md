@@ -88,9 +88,13 @@ in the close-out task list:
   −250 target) — never attempted; `a0c3ee02` kept the linters because
   `akmLint --fix` is live and the frozen lint golden pins their dispatch.
 - DoD-5's three-verb naming (`revise`/`learn`) — the decomposition half
-  shipped (chunk 7); the naming half is an open user decision (execute in
-  0.9.1 alongside the `derived_from` content migration, or record as a
-  permanent deviation).
+  shipped (chunk 7); the naming half: USER RULING 2026-07-21 — deferred to
+  0.9.1 as a recorded deviation (alongside `item_links`, L0/L1/L2, and
+  `jsonColumn`, same ruling; §13.2 prove-or-delete, Tier B, and the memory
+  lifecycle model also confirmed 0.9.1+). The same ruling ordered the Group-A
+  unlanded deletions/consolidations, the Group-C residue, and the 8
+  format-family adapters ADDRESSED ON THIS BRANCH before merge — tracked as
+  close-out tasks #45/#46/#47.
 - The 8 spec'd non-akm format-family adapters — deliberately pivoted out
   (chunk-2 ledger); goldens retained as specifications.
 
