@@ -518,14 +518,3 @@ export function entryMatchesScopeFilters(
   }
   return true;
 }
-
-/**
- * Merge stash hits and registry hits via simple concatenation.
- */
-export function mergeSearchHits(
-  localHits: SourceSearchHit[],
-  registryHits: RegistrySearchResultHit[],
-  limit: number,
-): SearchHit[] {
-  return [...localHits, ...registryHits].slice(0, limit);
-}
