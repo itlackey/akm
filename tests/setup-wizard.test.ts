@@ -5,6 +5,7 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _setClackForTests } from "../src/cli/clack";
+import { mergeLockEntriesSync } from "../src/integrations/lockfile";
 import { onCancel } from "../src/setup/prompt";
 import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader";
 import { describeSemanticSearchAssets } from "../src/setup/semantic-assets";
@@ -185,7 +186,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
 
   test("allows an existing recommended source to be unchecked and removed", async () => {
     const cfg = {
-      sources: [{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }],
+      bundles: { "itlackey-akm-stash": { git: "https://github.com/itlackey/akm-stash" } },
     };
 
     q.multiselects.push([], []);
@@ -199,7 +200,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   test("preserves an existing git stash that points at the legacy context-hub URL", async () => {
     const ctxHubUrl = "https://github.com/andrewyng/context-hub";
     const cfg = {
-      sources: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
+      bundles: { "context-hub": { git: ctxHubUrl } },
     };
 
     q.multiselects.push([`git:${ctxHubUrl}`], [ctxHubUrl]);
@@ -214,10 +215,10 @@ describe("stepAddSources – recommended GitHub repos", () => {
 
   test("shows existing configured sources as a toggle list before recommendations", async () => {
     const cfg = {
-      sources: [
-        { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
-        { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
-      ],
+      bundles: {
+        "itlackey-akm-stash": { git: "https://github.com/itlackey/akm-stash" },
+        "custom-stash": { path: "/tmp/custom-stash" },
+      },
     };
 
     q.multiselects.push(
@@ -231,7 +232,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
     expect(q.logged.some((entry) => entry.includes("Configured stash sources"))).toBe(true);
     expect(q.multiselectConfigs[0]?.message).toContain("Configured stash sources");
     expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual([
-      "itlackey/akm-stash",
+      "itlackey-akm-stash",
       "custom-stash",
     ]);
     expect(q.multiselectConfigs[0]?.initialValues).toEqual([
@@ -239,7 +240,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
       "filesystem:/tmp/custom-stash",
     ]);
     expect(result).toEqual([
-      { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
+      { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey-akm-stash" },
       { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
     ]);
   });
@@ -248,28 +249,30 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
 
+    // #37: "managed" is a bundle whose key has a lock entry (config carries the
+    // desired descriptor; the lock carries the resolved state).
+    mergeLockEntriesSync([{ id: "demo-skills", source: "github", ref: "github:demo/skills", localRoot: "/tmp/demo" }]);
     await stepAddSources({
-      sources: [],
-      installed: [{ id: "github:demo/skills", source: "github", stashRoot: "/tmp/demo" }] as never,
+      bundles: { "demo-skills": { git: "https://github.com/demo/skills", registryId: "github:demo/skills" } },
     } as never);
 
     expect(q.logged.some((entry) => entry.includes("Installed managed stashes"))).toBe(true);
-    expect(q.logged.some((entry) => entry.includes("github:demo/skills (github)"))).toBe(true);
+    expect(q.logged.some((entry) => entry.includes("demo-skills (git)"))).toBe(true);
   });
 
   test("allows existing configured sources to be unchecked and removed", async () => {
     const cfg = {
-      sources: [
-        { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
-        { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
-      ],
+      bundles: {
+        "itlackey-akm-stash": { git: "https://github.com/itlackey/akm-stash" },
+        "custom-stash": { path: "/tmp/custom-stash" },
+      },
     };
 
     q.multiselects.push(["git:https://github.com/itlackey/akm-stash"], ["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(result).toEqual([{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }]);
+    expect(result).toEqual([{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey-akm-stash" }]);
   });
 });
 

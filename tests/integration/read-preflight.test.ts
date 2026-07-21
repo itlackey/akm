@@ -39,10 +39,11 @@ describe("read preflight helpers", () => {
     }
 
     writeSandboxConfig({
-      sources: [
-        { type: "filesystem", name: "library", path: additional.dir },
-        { type: "filesystem", name: "primary", path: storage.stashDir, primary: true },
-      ],
+      bundles: {
+        primary: { path: storage.stashDir },
+        library: { path: additional.dir },
+      },
+      defaultBundle: "primary",
     });
     resetConfigCache();
 

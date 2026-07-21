@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmInit } from "../../src/commands/sources/init";
-import { loadUserConfig, saveConfig } from "../../src/core/config/config";
+import { loadUserConfig, primaryBundlePath, saveConfig } from "../../src/core/config/config";
 import { resolveTypeConventions } from "../../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -176,33 +176,38 @@ describe("akm init", () => {
 
   // ── Default-stash persist decision matrix (#footgun: --dir must not clobber) ──
   describe("default stash persist decision matrix", () => {
-    test("no --dir, no existing stashDir → default-path init persists stashDir", async () => {
-      expect(loadUserConfig().stashDir).toBeUndefined();
+    // 0.9.0 (spec §10.1): the persisted primary stash is the defaultBundle's
+    // path; `saveWithPrimary` seeds it the way `akm init` now writes it.
+    const saveWithPrimary = (dir: string) =>
+      saveConfig({ ...loadUserConfig(), bundles: { main: { path: dir, writable: true } }, defaultBundle: "main" });
+
+    test("no --dir, no existing primary → default-path init persists the primary bundle", async () => {
+      expect(primaryBundlePath(loadUserConfig())).toBeUndefined();
       const result = await akmInit();
       expect(result.defaultStashUpdated).toBe(true);
       expect(result.previousStashDir).toBeUndefined();
-      expect(loadUserConfig().stashDir).toBe(result.stashDir);
+      expect(primaryBundlePath(loadUserConfig())).toBe(result.stashDir);
     });
 
-    test("--dir X, NO existing stashDir → first-time bootstrap persists X", async () => {
+    test("--dir X, NO existing primary → first-time bootstrap persists X", async () => {
       const dirX = makeTempDir("akm-init-bootstrap-");
       fs.rmSync(dirX, { recursive: true, force: true });
-      expect(loadUserConfig().stashDir).toBeUndefined();
+      expect(primaryBundlePath(loadUserConfig())).toBeUndefined();
       const result = await akmInit({ dir: dirX });
       expect(result.defaultStashUpdated).toBe(true);
-      expect(loadUserConfig().stashDir).toBe(dirX);
+      expect(primaryBundlePath(loadUserConfig())).toBe(dirX);
     });
 
-    test("--dir X, existing stashDir=Y, NO --set-default → Y preserved, X scaffolded", async () => {
+    test("--dir X, existing primary=Y, NO --set-default → Y preserved, X scaffolded", async () => {
       const dirY = makeTempDir("akm-init-existing-Y-");
-      saveConfig({ ...loadUserConfig(), stashDir: dirY });
+      saveWithPrimary(dirY);
 
       const dirX = makeTempDir("akm-init-secondary-X-");
       fs.rmSync(dirX, { recursive: true, force: true });
       const result = await akmInit({ dir: dirX });
 
       // Config still points at Y — default pointer left alone.
-      expect(loadUserConfig().stashDir).toBe(dirY);
+      expect(primaryBundlePath(loadUserConfig())).toBe(dirY);
       expect(result.stashDir).toBe(dirX);
       expect(result.defaultStashUpdated).toBe(false);
       expect(result.previousStashDir).toBe(dirY);
@@ -213,25 +218,25 @@ describe("akm init", () => {
       expect(fs.existsSync(conventionPath(dirX, "skill"))).toBe(true);
     });
 
-    test("--dir X, existing stashDir=Y, WITH --set-default → config now points at X", async () => {
+    test("--dir X, existing primary=Y, WITH --set-default → config now points at X", async () => {
       const dirY = makeTempDir("akm-init-setdefault-Y-");
-      saveConfig({ ...loadUserConfig(), stashDir: dirY });
+      saveWithPrimary(dirY);
 
       const dirX = makeTempDir("akm-init-setdefault-X-");
       fs.rmSync(dirX, { recursive: true, force: true });
       const result = await akmInit({ dir: dirX, setDefault: true });
 
-      expect(loadUserConfig().stashDir).toBe(dirX);
+      expect(primaryBundlePath(loadUserConfig())).toBe(dirX);
       expect(result.defaultStashUpdated).toBe(true);
       expect(result.previousStashDir).toBeUndefined();
     });
 
-    test("--dir X where X equals existing stashDir → no-op, no spurious rewrite", async () => {
+    test("--dir X where X equals existing primary → no-op, no spurious rewrite", async () => {
       const dirX = makeTempDir("akm-init-equal-");
-      saveConfig({ ...loadUserConfig(), stashDir: dirX });
+      saveWithPrimary(dirX);
       const result = await akmInit({ dir: dirX });
       expect(result.defaultStashUpdated).toBe(false);
-      expect(loadUserConfig().stashDir).toBe(dirX);
+      expect(primaryBundlePath(loadUserConfig())).toBe(dirX);
     });
   });
 

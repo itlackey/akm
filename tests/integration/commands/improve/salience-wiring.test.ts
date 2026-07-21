@@ -125,6 +125,29 @@ const minimalConfig = () =>
     },
   } as import("../../../../src/core/config/config").AkmConfig);
 
+/**
+ * Declare the working stash as the primary `defaultBundle` on a config (#37:
+ * the 0.9.0 config shape). The improve loop's legacy-bare improve-state gate
+ * (`shouldReadLegacyBareImproveState`) resolves the historical local stash via
+ * `primaryBundlePath(config)` — the `defaultBundle`'s filesystem `path`. Tests
+ * that pre-#37 relied on the implicit `stashDir`→primary synthesis must now
+ * declare that primary bundle so the seeded bare-ref salience/no-op state is
+ * still recognized as belonging to the primary stash.
+ */
+function withPrimaryStashBundle(
+  config: import("../../../../src/core/config/config").AkmConfig,
+  stash: string,
+): import("../../../../src/core/config/config").AkmConfig {
+  // A config that already declares its own bundles (e.g. a named-source scenario)
+  // owns its primary; only synthesize the default "stash" primary otherwise.
+  if (config.bundles) return config;
+  return {
+    ...config,
+    bundles: { stash: { path: stash, writable: true } },
+    defaultBundle: "stash",
+  } as import("../../../../src/core/config/config").AkmConfig;
+}
+
 // ── Test 1: first run emits improve_salience_first_run ────────────────────────
 
 describe("WS-1 wiring — first run (empty table)", () => {
@@ -136,7 +159,7 @@ describe("WS-1 wiring — first run (empty table)", () => {
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -162,7 +185,7 @@ describe("WS-1 wiring — first run (empty table)", () => {
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -184,8 +207,8 @@ describe("WS-1 wiring — first run (empty table)", () => {
     await buildIndex(stash);
     const config = {
       ...minimalConfig(),
-      stashDir: stash,
-      sources: [{ type: "filesystem" as const, name: "team", path: stash, writable: true }],
+      bundles: { team: { path: stash, writable: true } },
+      defaultBundle: "team",
       defaultWriteTarget: "team",
     };
 
@@ -233,7 +256,7 @@ describe("WS-1 step 7 — first-run forgetting guard fires on cutover (scenario 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -267,7 +290,7 @@ describe("WS-1 wiring — subsequent run (table has rows)", () => {
     const runOpts = {
       scope: "skill" as const,
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }: { ref?: string }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }: { ref?: string }) => queuedDistill(ref ?? ""),
@@ -315,7 +338,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => noChangeReflect(ref ?? ""),
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
@@ -362,7 +385,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -445,7 +468,7 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => trackingReflect(ref ?? ""),
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
@@ -508,7 +531,7 @@ describe("WS-1 wiring — rank positions are stash-wide, not pool-relative", () 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -529,7 +552,7 @@ describe("WS-1 wiring — rank positions are stash-wide, not pool-relative", () 
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => queuedDistill(ref ?? ""),
@@ -582,7 +605,7 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => noChangeReflect(ref ?? ""),
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
@@ -620,7 +643,7 @@ describe("WS-1 step 7 — protective consolidation pass (forgetting-safety lane)
     await akmImprove({
       scope: "skill",
       stashDir: stash,
-      config: minimalConfig(),
+      config: withPrimaryStashBundle(minimalConfig(), stash),
       ...noopIndexFns,
       reflectFn: async (opts: AkmReflectOptions) => {
         capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
@@ -680,16 +703,21 @@ describe("#608 high-salience admission gate", () => {
     }
 
     const localConfig = configWithSalience({ salienceThreshold: 0.75 });
-    localConfig.stashDir = localStash;
-    localConfig.sources = [{ type: "filesystem", name: "local", path: localStash, writable: true }];
+    localConfig.bundles = { local: { path: localStash, writable: true } };
+    localConfig.defaultBundle = "local";
     localConfig.defaultWriteTarget = "local";
     const localLanes = await runAndCaptureLanes({ stash: localStash, config: localConfig, target: "local" });
     expect(localLanes.get("skills/legacy-local")).toBe("high-salience");
 
     await buildIndex(teamStash);
     const teamConfig = configWithSalience({ salienceThreshold: 0.75 });
-    teamConfig.stashDir = localStash;
-    teamConfig.sources = [{ type: "filesystem", name: "team", path: teamStash, writable: true }];
+    // The historical local stash stays the primary bundle; "team" is a distinct
+    // named source at another root that must NOT inherit local's bare salience.
+    teamConfig.bundles = {
+      local: { path: localStash, writable: true },
+      team: { path: teamStash, writable: true },
+    };
+    teamConfig.defaultBundle = "local";
     teamConfig.defaultWriteTarget = "team";
     const teamLanes = await runAndCaptureLanes({ stash: teamStash, config: teamConfig, target: "team" });
     expect(teamLanes.has("skills/legacy-team")).toBe(false);
@@ -889,7 +917,7 @@ async function runAndCaptureLanes(opts: {
   await akmImprove({
     scope: (opts.scope ?? "skill") as never,
     stashDir: opts.stash,
-    config: opts.config,
+    config: withPrimaryStashBundle(opts.config, opts.stash),
     ...(opts.target ? { target: opts.target } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.requireFeedbackSignal !== undefined ? { requireFeedbackSignal: opts.requireFeedbackSignal } : {}),
@@ -1081,7 +1109,8 @@ describe("#610 bounded replay budget", () => {
     await buildIndex(stash);
     seedSalience("skills/qualified-converged", 0.9, 3);
     const config = configWithSalience({ replayBudget: 1 });
-    config.sources = [{ type: "filesystem", name: "team", path: stash, writable: true }];
+    config.bundles = { team: { path: stash, writable: true } };
+    config.defaultBundle = "team";
     config.defaultWriteTarget = "team";
 
     const lanes = await runAndCaptureLanes({ stash, config, target: "team" });
@@ -1097,8 +1126,8 @@ describe("#610 bounded replay budget", () => {
     seedSalience("skills/legacy-active", 0.9, 0);
     seedSalience("skills/legacy-converged", 0.95, 3);
     const config = configWithSalience({ replayBudget: 2, salienceThreshold: 1 });
-    config.stashDir = stash;
-    config.sources = [{ type: "filesystem", name: "local", path: stash, writable: true }];
+    config.bundles = { local: { path: stash, writable: true } };
+    config.defaultBundle = "local";
     config.defaultWriteTarget = "local";
 
     const lanes = await runAndCaptureLanes({ stash, config, target: "local" });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../../src/core/config/config";
+import type { AkmConfig, BundleConfigEntry } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
 import {
   ensureSourceCaches,
@@ -12,6 +12,22 @@ import {
   resolveAllStashDirs,
   resolveSourceEntries,
 } from "../../src/indexer/search/search-source";
+import { mergeLockEntriesSync } from "../../src/integrations/lockfile";
+import type { InstallKind } from "../../src/registry/types";
+
+/**
+ * Seed a lock-backed registry-managed source (a git/npm `bundles` entry + its
+ * §10.2 lock entry) the way `akm add` persists it.
+ */
+function seedManagedBundle(
+  key: string,
+  descriptor: BundleConfigEntry,
+  lock: { source: InstallKind; ref: string; localRoot: string },
+): void {
+  saveConfig({ semanticSearchMode: "off", bundles: { [key]: descriptor } });
+  mergeLockEntriesSync([{ id: key, source: lock.source, ref: lock.ref, localRoot: lock.localRoot }]);
+}
+
 import * as gitProvider from "../../src/sources/providers/git";
 import { NpmSourceProvider } from "../../src/sources/providers/npm";
 import * as websiteIngest from "../../src/sources/snapshot-fetchers/website-ingest";
@@ -76,7 +92,7 @@ describe("resolveSourceEntries", () => {
   test("includes valid stash paths", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: extraDir }] });
+      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } });
       const sources = resolveSourceEntries();
       expect(sources.length).toBe(2);
       expect(sources[1].path).toBe(extraDir);
@@ -85,16 +101,23 @@ describe("resolveSourceEntries", () => {
     }
   });
 
-  test("git sources fall back to repo root when content/ does not exist", () => {
+  test("git bundle resolves to its lock localRoot (already the materialized content root)", () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-git-root-"));
     try {
       for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
         fs.mkdirSync(path.join(repoRoot, sub), { recursive: true });
       }
-      saveConfig({
-        semanticSearchMode: "off",
-        sources: [{ type: "git", path: repoRoot, name: "git-root" }],
-      });
+      // 0.9.0 (spec §10.2): the resolved content root lives in the lock — the
+      // content/-subdir resolution happens at install time, not at resolve time.
+      seedManagedBundle(
+        "git-root",
+        { git: "https://example.test/repo.git" },
+        {
+          source: "git",
+          ref: "https://example.test/repo.git",
+          localRoot: repoRoot,
+        },
+      );
       const sources = resolveSourceEntries();
       expect(sources[1]?.path).toBe(repoRoot);
     } finally {
@@ -102,15 +125,21 @@ describe("resolveSourceEntries", () => {
     }
   });
 
-  test("git sources index content/ when that layout exists", () => {
+  test("git bundle resolves the content/ layout that install materialized into localRoot", () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-git-content-"));
     try {
       const contentRoot = path.join(repoRoot, "content");
       fs.mkdirSync(path.join(contentRoot, "knowledge"), { recursive: true });
-      saveConfig({
-        semanticSearchMode: "off",
-        sources: [{ type: "git", path: repoRoot, name: "git-content" }],
-      });
+      // The install flow already resolved content/ and recorded it as localRoot.
+      seedManagedBundle(
+        "git-content",
+        { git: "https://example.test/repo.git" },
+        {
+          source: "git",
+          ref: "https://example.test/repo.git",
+          localRoot: contentRoot,
+        },
+      );
       const sources = resolveSourceEntries();
       expect(sources[1]?.path).toBe(contentRoot);
     } finally {
@@ -121,31 +150,28 @@ describe("resolveSourceEntries", () => {
   test("skips non-existent stash paths", () => {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: "/nonexistent/path/should/not/exist" }],
+      bundles: { missing: { path: "/nonexistent/path/should/not/exist" } },
     });
     const sources = resolveSourceEntries();
     expect(sources.length).toBe(1);
   });
 
-  test("includes installed registry entries with registryId", () => {
+  test("includes registry-managed bundles resolved from the lock localRoot", () => {
     const installedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installed-"));
     try {
-      saveConfig({
-        semanticSearchMode: "off",
-        installed: [
-          {
-            id: "npm:test-pkg",
-            source: "npm",
-            ref: "npm:test-pkg@1.0.0",
-            artifactUrl: "https://example.test/test-pkg.tgz",
-            stashRoot: installedDir,
-            cacheDir: installedDir,
-            installedAt: new Date().toISOString(),
-          },
-        ],
-      });
+      // The bundle key is the SearchSource registryId; the original install id is
+      // preserved on the bundle's registryId.
+      seedManagedBundle(
+        "test-pkg",
+        { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
+        {
+          source: "npm",
+          ref: "npm:test-pkg@1.0.0",
+          localRoot: installedDir,
+        },
+      );
       const sources = resolveSourceEntries();
-      const installed = sources.find((s) => s.registryId === "npm:test-pkg");
+      const installed = sources.find((s) => s.registryId === "test-pkg");
       expect(installed).toBeDefined();
       expect(installed?.path).toBe(installedDir);
     } finally {
@@ -153,32 +179,25 @@ describe("resolveSourceEntries", () => {
     }
   });
 
-  test("preserves ordering: primary, stashes, installed", () => {
+  test("preserves ordering: primary, plain source, managed", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     const installedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installed-"));
     try {
       saveConfig({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: extraDir }],
-        installed: [
-          {
-            id: "npm:test-pkg",
-            source: "npm",
-            ref: "npm:test-pkg@1.0.0",
-            artifactUrl: "https://example.test/test-pkg.tgz",
-            stashRoot: installedDir,
-            cacheDir: installedDir,
-            installedAt: new Date().toISOString(),
-          },
-        ],
+        bundles: {
+          extra: { path: extraDir },
+          "test-pkg": { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
+        },
       });
+      mergeLockEntriesSync([{ id: "test-pkg", source: "npm", ref: "npm:test-pkg@1.0.0", localRoot: installedDir }]);
       const sources = resolveSourceEntries();
       expect(sources[0].path).toBe(stashDir);
       expect(sources[0].registryId).toBeUndefined();
       expect(sources[1].path).toBe(extraDir);
-      expect(sources[1].registryId).toBeUndefined();
+      expect(sources[1].registryId).toBe("extra");
       expect(sources[2].path).toBe(installedDir);
-      expect(sources[2].registryId).toBe("npm:test-pkg");
+      expect(sources[2].registryId).toBe("test-pkg");
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
       fs.rmSync(installedDir, { recursive: true, force: true });
@@ -257,7 +276,7 @@ describe("isEditable", () => {
   test("files in stash paths are editable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: extraDir }] });
+      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } });
       const filePath = path.join(extraDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(true);
     } finally {
@@ -265,23 +284,20 @@ describe("isEditable", () => {
     }
   });
 
-  test("files in cache-managed dirs are NOT editable", () => {
+  test("files under a non-writable managed bundle's lock localRoot are NOT editable (Decision D)", () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-cache-"));
     try {
-      saveConfig({
-        semanticSearchMode: "off",
-        installed: [
-          {
-            id: "npm:test-pkg",
-            source: "npm",
-            ref: "npm:test-pkg@1.0.0",
-            artifactUrl: "https://example.test/test-pkg.tgz",
-            stashRoot: cacheDir,
-            cacheDir: cacheDir,
-            installedAt: new Date().toISOString(),
-          },
-        ],
-      });
+      // A lock-backed npm bundle (not writable) → files under its localRoot are
+      // cache-managed and overwritten on `akm update`, so not editable.
+      seedManagedBundle(
+        "test-pkg",
+        { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
+        {
+          source: "npm",
+          ref: "npm:test-pkg@1.0.0",
+          localRoot: cacheDir,
+        },
+      );
       const filePath = path.join(cacheDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(false);
     } finally {
@@ -298,32 +314,25 @@ describe("isEditable", () => {
 // ── ensureSourceCaches ────────────────────────────────────────────────────────
 
 describe("ensureSourceCaches", () => {
-  test("completes without error when sources[] is empty", async () => {
-    const config: AkmConfig = { semanticSearchMode: "off", sources: [] };
+  test("completes without error when there are no bundles", async () => {
+    const config: AkmConfig = { semanticSearchMode: "off", bundles: {} };
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
   });
 
-  test("completes without error when sources[] has filesystem entries (no sync needed)", async () => {
+  test("completes without error for filesystem bundles (no sync needed)", async () => {
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: stashDir }],
+      bundles: { s: { path: stashDir } },
     };
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
   });
 
-  test("reads from sources[] not stashes[] — git entries in sources[] are processed", async () => {
-    // A config where sources[] has a git entry and stashes is undefined.
+  test("git bundles are processed via the provider sync loop", async () => {
     // We can't run a real git mirror in unit tests, but we verify that the
     // function does NOT throw even when the git URL is unreachable (it warns).
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [
-        {
-          type: "git",
-          url: "https://github.com/example/nonexistent-repo.git",
-          name: "test-git",
-        },
-      ],
+      bundles: { "test-git": { git: "https://github.com/example/nonexistent-repo.git" } },
     };
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     try {
@@ -339,13 +348,7 @@ describe("ensureSourceCaches", () => {
     // The mirror will fail (unreachable host) but the function warns, not throws.
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [
-        {
-          type: "website",
-          url: "https://example.invalid/docs",
-          name: "test-website",
-        },
-      ],
+      bundles: { "test-website": { website: { url: "https://example.invalid/docs" } } },
     };
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
   });
@@ -365,14 +368,7 @@ describe("ensureSourceCaches", () => {
     });
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [
-        {
-          type: "npm",
-          url: "npm:test-pkg@1.2.3",
-          name: "npm-source",
-          options: { ref: "npm:test-pkg@1.2.3" },
-        },
-      ],
+      bundles: { "npm-source": { npm: "npm:test-pkg@1.2.3" } },
     };
     try {
       await ensureSourceCaches(config);
@@ -393,10 +389,10 @@ describe("ensureSourceCaches", () => {
     });
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [
-        { type: "git", url: "https://github.com/example/repo", name: "git-source" },
-        { type: "website", url: "https://example.com/docs", name: "website-source" },
-      ],
+      bundles: {
+        "git-source": { git: "https://github.com/example/repo" },
+        "website-source": { website: { url: "https://example.com/docs" } },
+      },
     };
     try {
       await ensureSourceCaches(config);
@@ -417,10 +413,10 @@ describe("ensureSourceCaches", () => {
     });
     const config: AkmConfig = {
       semanticSearchMode: "off",
-      sources: [
-        { type: "git", url: "https://github.com/example/repo", name: "git-source" },
-        { type: "website", url: "https://example.com/docs", name: "website-source" },
-      ],
+      bundles: {
+        "git-source": { git: "https://github.com/example/repo" },
+        "website-source": { website: { url: "https://example.com/docs" } },
+      },
     };
 
     await ensureSourceCaches(config, { force: true });

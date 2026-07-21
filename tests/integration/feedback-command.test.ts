@@ -177,11 +177,11 @@ describe("akm feedback", () => {
     writeFile(path.join(teamDir, "memories", "shared.md"), "---\ndescription: team copy\n---\nTeam.\n");
     saveConfig({
       semanticSearchMode: "off",
-      stashDir,
-      sources: [
-        { type: "filesystem", name: "stash", path: stashDir, primary: true, writable: true },
-        { type: "filesystem", name: "team", path: teamDir, writable: true },
-      ],
+      bundles: {
+        stash: { path: stashDir, writable: true },
+        team: { path: teamDir, writable: true },
+      },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
     });
     expect(resolveSourceEntries(undefined, loadConfig()).map((source) => source.path)).toContain(teamDir);

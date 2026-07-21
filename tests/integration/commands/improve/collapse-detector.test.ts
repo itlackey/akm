@@ -47,7 +47,8 @@ beforeEach(() => {
   saveConfig(
     withTestImproveLlm({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: storage.stashDir }],
+      bundles: { stash: { path: storage.stashDir } },
+      defaultBundle: "stash",
       registries: [],
     }),
   );

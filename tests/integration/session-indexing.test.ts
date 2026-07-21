@@ -62,7 +62,8 @@ beforeEach(() => {
   saveConfig({
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: stashDir }],
+    bundles: { stash: { path: stashDir } },
+    defaultBundle: "stash",
     registries: [],
   } as AkmConfig);
   const dbPath = getDbPath();
@@ -95,8 +96,8 @@ function configFor(stash: string, indexSessions?: boolean, extractEnabled = true
     // FTS-only keeps the round-trip fast + deterministic (no embedding model
     // download); the summary body is fully searchable via FTS.
     semanticSearchMode: "off",
-    stashDir: stash,
-    sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+    bundles: { stash: { path: stash, writable: true } },
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
     engines: {
       default: {

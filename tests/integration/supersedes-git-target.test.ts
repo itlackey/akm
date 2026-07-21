@@ -72,7 +72,7 @@ describe("--supersedes on a git write target", () => {
 
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", name: "team", url: repoUrl, writable: true }],
+      bundles: { team: { git: repoUrl, writable: true } },
     });
 
     const sourcePath = path.join(cache.rootDir, "corrected-guide.md");

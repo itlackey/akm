@@ -71,7 +71,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "writable-target", path: targetDir, writable: true }],
+      bundles: { "writable-target": { path: targetDir, writable: true } },
     });
 
     const { stashDir, result } = await runCli([
@@ -97,7 +97,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-target", path: targetDir, writable: true }],
+      bundles: { "real-target": { path: targetDir, writable: true } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "nope"]);
@@ -112,7 +112,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "read-only", path: targetDir, writable: false }],
+      bundles: { "read-only": { path: targetDir, writable: false } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "read-only"]);
@@ -139,7 +139,7 @@ describe("remember --target", () => {
     const secondaryDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "secondary", path: secondaryDir, writable: true }],
+      bundles: { secondary: { path: secondaryDir, writable: true } },
     });
 
     const { stashDir, result } = await runCli(["remember", "Pinned note for secondary stash", "--target", "secondary"]);
@@ -160,7 +160,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+      bundles: { "real-stash": { path: targetDir, writable: true } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "ghost-stash"]);
@@ -175,7 +175,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "frozen-stash", path: targetDir, writable: false }],
+      bundles: { "frozen-stash": { path: targetDir, writable: false } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "frozen-stash"]);

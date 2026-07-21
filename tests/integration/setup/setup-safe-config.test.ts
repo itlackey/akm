@@ -61,15 +61,26 @@ function backupDir(): string {
   return path.join(process.env.XDG_CACHE_HOME as string, "akm", "config-backups");
 }
 
-/** A fully-populated, persistent (non-transient) starting config. */
+/**
+ * A fully-populated, persistent (non-transient) starting config.
+ *
+ * #37: the pre-cutover `stashDir` + `sources[]` primary/secondary trio became a
+ * `bundles` map. Setup MANAGES the primary bundle — it re-derives it from the
+ * resolved working stash, keying it by the stash path's basename slug (`akm`)
+ * and marking it `writable: true`. The seed is written in exactly that canonical
+ * shape so the "no pre-existing key is silently dropped / idempotent" contracts
+ * hold: setup is a no-op on an already-normalized primary bundle. (Setup does
+ * not round-trip arbitrary secondary bundles — a behavior change from the old
+ * `sources[]` preservation; the primary bundle is the config-management unit.)
+ */
 function seedFullConfig(): void {
   writeSandboxConfig({
-    stashDir: "/home/tester/akm",
     semanticSearchMode: "off",
     output: { format: "json", detail: "full" },
     engines: { claude: { kind: "agent", platform: "claude", bin: "claude" } },
     defaults: { engine: "claude" },
-    sources: [{ path: "/home/tester/akm/skills", type: "filesystem" }],
+    bundles: { akm: { path: "/home/tester/akm", writable: true } },
+    defaultBundle: "akm",
     registries: [{ name: "default", url: "https://example.com/registry" }],
   });
   // writeSandboxConfig writes straight to disk, bypassing saveConfig's cache
@@ -147,7 +158,7 @@ describe("runSetupFromConfig — deep merge", () => {
     // And unrelated top-level keys are untouched.
     expect(written.engines).toEqual({ claude: { kind: "agent", platform: "claude", bin: "claude" } });
     expect(written.defaults).toEqual({ engine: "claude" });
-    expect(written.sources).toEqual([{ path: "/home/tester/akm/skills", type: "filesystem" }]);
+    expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
   });
 
@@ -259,7 +270,7 @@ describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () =>
     expect(output.format).toBe("text");
     expect(output.detail).toBe("full");
     // Existing values preserved; defaults only fill what was missing.
-    expect(written.stashDir).toBe("/home/tester/akm");
+    expect((written.bundles as Record<string, { path: string }>).akm.path).toBe("/home/tester/akm");
     expect(written.defaults).toEqual({ engine: "claude" });
   });
 });
@@ -284,9 +295,9 @@ describe("runSetupWithDefaults — idempotency", () => {
 
     // No pre-existing value was overwritten by a default.
     const written = JSON.parse(first) as Record<string, unknown>;
-    expect(written.stashDir).toBe("/home/tester/akm");
+    expect((written.bundles as Record<string, { path: string }>).akm.path).toBe("/home/tester/akm");
     expect(written.output).toEqual({ format: "json", detail: "full" });
-    expect(written.sources).toEqual([{ path: "/home/tester/akm/skills", type: "filesystem" }]);
+    expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
     // The pre-existing agent default must survive untouched. Detection (#514)
     // may ADD other defaults (e.g. an LLM engine when a live local server is

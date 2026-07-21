@@ -21,7 +21,8 @@ let configDir = "";
 
 function makeConfig(partial: Partial<AkmConfig>): AkmConfig {
   return {
-    stashDir,
+    bundles: { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"],
+    defaultBundle: "stash",
     semanticSearchMode: "off",
     ...partial,
   } as AkmConfig;

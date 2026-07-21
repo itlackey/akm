@@ -18,6 +18,7 @@ import { deriveInstallations } from "../../../src/indexer/installations";
 import {
   hasOldSourceShape,
   migrateConfigSourcesToBundles,
+  migratedLockEntries,
   oldConfigToSearchSources,
 } from "../../../src/migrate/legacy/config-source-migration";
 
@@ -72,8 +73,22 @@ describe("migrateConfigSourcesToBundles", () => {
     expect(migrated.bundles.akm).toEqual({ path: "/home/u/akm", writable: true });
     expect(migrated.bundles.team).toEqual({ path: "/home/u/team", writable: true });
     expect(migrated.bundles.catalog).toEqual({ git: "https://example.test/catalog.git" });
-    // The materialized root becomes a filesystem bundle; original id preserved.
-    expect(migrated.bundles.repo).toEqual({ path: "/cache/repo", registryId: "github:owner/repo" });
+    // WI-8.5 desired/resolved split (spec §10.2): the installed github entry emits
+    // its DESIRED git locator (the re-installable ref), NOT the resolved cache
+    // root; the original id is preserved. The materialized root belongs in the lock.
+    expect(migrated.bundles.repo).toEqual({ git: "owner/repo", registryId: "github:owner/repo" });
+    // §10.2:453 — an installed bundle's config entry carries NO resolved cache path.
+    expect(migrated.bundles.repo.path).toBeUndefined();
+  });
+
+  test("emits §10.2 lock entries for installed git/npm bundles (resolved root out of config)", () => {
+    const locks = migratedLockEntries(oldShapeConfig());
+    // Only the installed github bundle needs a lock; its localRoot is the resolved
+    // cache root, keyed by the SAME derived bundle id as the bundles map ("repo").
+    expect(locks).toEqual([{ id: "repo", source: "github", ref: "owner/repo", localRoot: "/cache/repo" }]);
+    // No lock entries for an already-migrated or old-shape-free config.
+    expect(migratedLockEntries({ configVersion: "0.9.0", bundles: { a: { path: "/s" } } })).toEqual([]);
+    expect(migratedLockEntries({ configVersion: "0.9.0", engines: {} })).toEqual([]);
   });
 
   test("removes the old source keys and the result verifies current", () => {

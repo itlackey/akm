@@ -134,10 +134,10 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
         { url: "https://example.com/index.json", name: "reg", enabled: true },
         { url: "https://disabled.example.com", name: "off", enabled: false },
       ],
-      sources: [
-        { type: "git", url: "https://github.com/x/y.git", name: "team" },
-        { type: "filesystem", path: "/stash", name: "local" },
-      ],
+      bundles: {
+        team: { git: "https://github.com/x/y.git" },
+        local: { path: "/stash" },
+      },
       engines: {
         judge: { kind: "llm", endpoint: "http://127.0.0.1:1234/v1/chat/completions" },
         agent: { kind: "agent" },
@@ -156,7 +156,7 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
   });
 
   test("silent when no remote endpoints are configured", () => {
-    expect(collectEgressAdvisory({ sources: [{ type: "filesystem", path: "/stash" }] })).toBeUndefined();
+    expect(collectEgressAdvisory({ bundles: { local: { path: "/stash" } } })).toBeUndefined();
     expect(collectEgressAdvisory(undefined)).toBeUndefined();
   });
 });

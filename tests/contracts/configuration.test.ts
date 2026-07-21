@@ -35,16 +35,17 @@ describe("current engine and strategy configuration contract", () => {
     expect(AkmConfigSchema.safeParse({ defaults: { agent: "reviewer" } }).success).toBe(false);
   });
 
-  test("rejects writable cache-backed website and npm sources", () => {
+  test("rejects writable cache-backed website and npm bundles (#37: sources key itself is retired)", () => {
     expect(
       AkmConfigSchema.safeParse({
-        sources: [{ type: "website", name: "docs", url: "https://example.test", writable: true }],
+        bundles: { docs: { website: { url: "https://example.test" }, writable: true } },
       }).success,
     ).toBe(false);
-    expect(
-      AkmConfigSchema.safeParse({ sources: [{ type: "npm", name: "pkg", package: "example", writable: true }] })
-        .success,
-    ).toBe(false);
+    expect(AkmConfigSchema.safeParse({ bundles: { pkg: { npm: "example", writable: true } } }).success).toBe(false);
+    // And the retired source-shape keys are rejected outright.
+    expect(AkmConfigSchema.safeParse({ sources: [] }).success).toBe(false);
+    expect(AkmConfigSchema.safeParse({ stashDir: "/tmp/x" }).success).toBe(false);
+    expect(AkmConfigSchema.safeParse({ installed: [] }).success).toBe(false);
   });
 
   test("current docs define engines, strategies, and retired profile keys", () => {

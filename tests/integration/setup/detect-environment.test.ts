@@ -277,7 +277,16 @@ describe("akm setup --detect-only", () => {
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-detect-state-"));
     const configPath = path.join(xdgConfig, "akm", "config.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    const original = JSON.stringify({ configVersion: "0.9.0", stashDir: workDir, archiveRetentionDays: 42 }, null, 2);
+    const original = JSON.stringify(
+      {
+        configVersion: "0.9.0",
+        bundles: { stash: { path: workDir, writable: true } },
+        defaultBundle: "stash",
+        archiveRetentionDays: 42,
+      },
+      null,
+      2,
+    );
     fs.writeFileSync(configPath, original, "utf8");
 
     try {
@@ -340,7 +349,8 @@ describe("akm setup --reset-recommended", () => {
       JSON.stringify(
         {
           configVersion: "0.9.0",
-          stashDir: workDir,
+          bundles: { stash: { path: workDir, writable: true } },
+          defaultBundle: "stash",
           // A pre-existing custom key that must survive the merge.
           archiveRetentionDays: 7,
           registries: [{ name: "custom-reg", url: "https://example.com/registry.json", enabled: true }],
@@ -417,7 +427,19 @@ describe("akm setup --reset-recommended", () => {
       AKM_LLM_API_KEY: undefined,
     };
     expect((await runCli(["backup", "create", "--for", "0.9.0", "--format", "json"], setupEnv)).status).toBe(0);
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", stashDir: workDir }, null, 2), "utf8");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          configVersion: "0.9.0",
+          bundles: { stash: { path: workDir, writable: true } },
+          defaultBundle: "stash",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     try {
       let openAiRequests = 0;

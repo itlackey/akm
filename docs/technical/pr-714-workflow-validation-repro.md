@@ -99,7 +99,8 @@ cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
     "format": "json",
     "detail": "brief"
   },
-  "stashDir": "/tmp/opencode/workflow-pr714-repro/stash",
+  "bundles": { "stash": { "path": "/tmp/opencode/workflow-pr714-repro/stash", "writable": true } },
+  "defaultBundle": "stash",
   "defaults": { "engine": "opencode" },
   "engines": {
     "opencode": {
@@ -574,7 +575,8 @@ cat > "$XDG_CONFIG_HOME/akm/config.json" <<'EOF'
     "format": "json",
     "detail": "brief"
   },
-  "stashDir": "/tmp/opencode/workflow-multi-harness-check/stash",
+  "bundles": { "stash": { "path": "/tmp/opencode/workflow-multi-harness-check/stash", "writable": true } },
+  "defaultBundle": "stash",
   "defaults": { "engine": "opencode" },
   "engines": {
     "opencode": {

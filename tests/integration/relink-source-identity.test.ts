@@ -27,10 +27,11 @@ beforeEach(() => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultWriteTarget: "stash",
-    sources: [
-      { type: "filesystem", name: "stash", path: stashDir, primary: true, writable: true },
-      { type: "filesystem", name: "team", path: teamDir, enabled: true, writable: false },
-    ],
+    bundles: {
+      stash: { path: stashDir, writable: true },
+      team: { path: teamDir },
+    },
+    defaultBundle: "stash",
   });
 });
 

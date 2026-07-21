@@ -606,7 +606,7 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      bundles: { second: { path: secondStash } },
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 
@@ -639,7 +639,7 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      bundles: { second: { path: secondStash } },
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 
@@ -666,7 +666,7 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      bundles: { second: { path: secondStash } },
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 

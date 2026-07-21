@@ -180,7 +180,7 @@ beforeEach(() => {
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: secondaryStashDir, name: "sec-a" }],
+    bundles: { "sec-a": { path: secondaryStashDir } },
   });
 });
 

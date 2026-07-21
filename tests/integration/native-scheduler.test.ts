@@ -166,7 +166,7 @@ test.skipIf(!ENABLED)(
       ownsGateDir = true;
       fs.writeFileSync(
         configPath,
-        `${JSON.stringify({ configVersion: "0.9.0", stashDir, sources: [], semanticSearchMode: "off" })}\n`,
+        `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
         { mode: 0o600 },
       );
 
@@ -295,7 +295,7 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
       ownsGateDir = true;
       fs.writeFileSync(
         configPath,
-        `${JSON.stringify({ configVersion: "0.9.0", stashDir, sources: [], semanticSearchMode: "off" })}\n`,
+        `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
         { mode: 0o600 },
       );
 

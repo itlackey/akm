@@ -37,7 +37,7 @@ beforeEach(() => {
 
   saveConfig({
     semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: searchPathDir }],
+    bundles: { searchpath: { path: searchPathDir } },
   });
 });
 

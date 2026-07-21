@@ -134,8 +134,8 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
     const stash = happyStash();
     const config: AkmConfig = {
       configVersion: "0.9.0",
-      stashDir: stash,
-      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       engines: {
         default: {
@@ -166,8 +166,8 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
     const stash = happyStash();
     const config: AkmConfig = {
       configVersion: "0.9.0",
-      stashDir: stash,
-      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       engines: {
         default: {

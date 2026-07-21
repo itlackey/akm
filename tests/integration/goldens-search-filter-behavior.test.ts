@@ -119,7 +119,8 @@ beforeAll(async () => {
   // the determinism precondition documented in the file header.
   saveConfig({
     semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: FIXTURE_STASH }],
+    bundles: { stash: { path: FIXTURE_STASH } },
+    defaultBundle: "stash",
     registries: [],
   });
 

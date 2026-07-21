@@ -123,8 +123,8 @@ describe("akm improve — triage pre-pass", () => {
       await akmIndex({ stashDir, full: true });
       const config = {
         ...triageEnabledConfig(true),
-        stashDir,
-        sources: [{ type: "filesystem" as const, name: "team", path: stashDir, writable: true }],
+        bundles: { team: { path: stashDir, writable: true } },
+        defaultBundle: "team",
         defaultWriteTarget: "team",
       };
       let captured: import("../../../../src/commands/proposal/drain").DrainOptions | undefined;

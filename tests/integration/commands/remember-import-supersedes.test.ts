@@ -375,7 +375,7 @@ describe("remember --supersedes", () => {
     const oldRaw = fs.readFileSync(oldPath, "utf8");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "team", path: teamDir, writable: true }],
+      bundles: { team: { path: teamDir, writable: true } },
     });
 
     const { code, stdout } = await runCliCapture([
@@ -410,7 +410,7 @@ describe("remember --supersedes", () => {
     const oldRaw = fs.readFileSync(oldPath, "utf8");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "readonly-extra", path: extraDir, writable: false }],
+      bundles: { "readonly-extra": { path: extraDir, writable: false } },
     });
 
     const { code, stdout, stderr } = await runCliCapture([

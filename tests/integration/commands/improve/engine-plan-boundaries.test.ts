@@ -61,9 +61,9 @@ describe("improve engine-plan boundaries", () => {
       fs.writeFileSync(filePath, "---\nwhen_to_use: Testing\n---\n\nBody.\n");
       const config: AkmConfig = {
         configVersion: "0.9.0",
-        stashDir: stash.dir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        bundles: { stash: { path: stash.dir, writable: true } },
+        defaultBundle: "stash",
         defaults: { improveStrategy: "structural" },
         improve: { strategies: { structural: { processes: disabledProcesses() } } },
       };
@@ -142,9 +142,9 @@ describe("improve engine-plan boundaries", () => {
     try {
       const config: AkmConfig = {
         configVersion: "0.9.0",
-        stashDir: stash.dir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        bundles: { stash: { path: stash.dir, writable: true } },
+        defaultBundle: "stash",
         engines: { consolidate: llm("contradiction-model") },
         improve: {
           strategies: {
@@ -200,9 +200,9 @@ describe("improve engine-plan boundaries", () => {
       fs.writeFileSync(path.join(memoryDir, "source.md"), "---\ntype: memory\n---\n\nSource.\n");
       const config: AkmConfig = {
         configVersion: "0.9.0",
-        stashDir: stash.dir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        bundles: { stash: { path: stash.dir, writable: true } },
+        defaultBundle: "stash",
         engines: { reflect: llm("reflect-model"), distill: llm("distill-model") },
         improve: {
           strategies: {
@@ -288,9 +288,9 @@ describe("improve engine-plan boundaries", () => {
     try {
       const config: AkmConfig = {
         configVersion: "0.9.0",
-        stashDir: stash.dir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        bundles: { stash: { path: stash.dir, writable: true } },
+        defaultBundle: "stash",
         engines: { graph: llm("graph-model") },
         index: {
           graph: { graphExtractionIncludeTypes: ["knowledge"], graphExtractionBatchSize: 99 },
@@ -356,9 +356,9 @@ describe("improve engine-plan boundaries", () => {
     try {
       const config: AkmConfig = {
         configVersion: "0.9.0",
-        stashDir: stash.dir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stash.dir, writable: true }],
+        bundles: { stash: { path: stash.dir, writable: true } },
+        defaultBundle: "stash",
         defaults: { improveStrategy: "disabled" },
         improve: { strategies: { disabled: { processes: disabledProcesses() } } },
       };

@@ -95,7 +95,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "writable-target", path: targetDir, writable: true }],
+      bundles: { "writable-target": { path: targetDir, writable: true } },
     });
     const sourcePath = makeKnowledgeFile("auth-flow.md", "# Auth flow\n\nOAuth2 walk-through.\n");
 
@@ -117,7 +117,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-target", path: targetDir, writable: true }],
+      bundles: { "real-target": { path: targetDir, writable: true } },
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
@@ -134,7 +134,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "read-only", path: targetDir, writable: false }],
+      bundles: { "read-only": { path: targetDir, writable: false } },
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
@@ -150,7 +150,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "secondary-stash", path: targetDir, writable: true }],
+      bundles: { "secondary-stash": { path: targetDir, writable: true } },
     });
     const sourcePath = makeKnowledgeFile("overview.md", "# Overview\n\nSome content.\n");
 
@@ -189,7 +189,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+      bundles: { "real-stash": { path: targetDir, writable: true } },
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
@@ -206,7 +206,7 @@ describe("import --target", () => {
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "locked-stash", path: targetDir, writable: false }],
+      bundles: { "locked-stash": { path: targetDir, writable: false } },
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 

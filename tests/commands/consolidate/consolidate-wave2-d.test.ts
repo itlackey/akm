@@ -164,15 +164,17 @@ describe("config-cli parseConfigValue sources error message (#16)", () => {
     }
   });
 
-  test("invalid array element shows 'sources.0' not 'stashes.0'", () => {
-    // Post-rewrite: Zod uses dotted indexing in error paths (sources.0).
+  test("invalid array element shows dotted zod indexing ('registries.0') — sources key retired (#37)", () => {
+    // Post-rewrite: Zod uses dotted indexing in error paths. The original pin
+    // used `sources`, which the 0.9.0 bundles cutover retired outright; the
+    // surviving `registries` array key exercises the same error-path shape.
     try {
-      parseConfigValue("sources", "[{}]");
+      parseConfigValue("registries", "[{}]");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       const msg = (err as UsageError).message;
-      expect(msg).toContain("sources.0");
+      expect(msg).toContain("registries.0");
       expect(msg).not.toContain("stashes.0");
     }
   });

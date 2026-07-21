@@ -719,10 +719,11 @@ describe("akm improve memory cleanup", () => {
     saveConfig(
       withTestImproveLlm({
         semanticSearchMode: "off",
-        sources: [
-          { type: "filesystem", name: "local", path: stashDir, writable: true },
-          { type: "website", name: "docs-site", url: websiteUrl },
-        ],
+        bundles: {
+          local: { path: stashDir, writable: true },
+          "docs-site": { website: { url: websiteUrl } },
+        },
+        defaultBundle: "local",
         improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
       }),
     );

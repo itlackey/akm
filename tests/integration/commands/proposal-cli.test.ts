@@ -67,7 +67,8 @@ describe("akm proposal drain strategy selector", () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
       configVersion: "0.9.0",
-      stashDir,
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
       defaults: { improveStrategy: "queue-only" },
       improve: {
         strategies: {

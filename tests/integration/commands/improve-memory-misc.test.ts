@@ -317,8 +317,8 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
   };
   const contradictionConfig = (stashDir: string): AkmConfig => ({
     semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
     engines: { default: { kind: "llm", endpoint: "http://localhost/v1/chat", model: "test" } },
     defaults: { llmEngine: "default" },
@@ -332,8 +332,8 @@ describe("M-1: contradiction-detection pass writes contradictedBy edges (#367)",
     writeMemory(stashDir, "auth-tips.derived2", { inferred: true, source: "memory:auth-tips" }, "VPN is optional.");
 
     const result = await detectAndWriteContradictions(stashDir, {
-      stashDir,
-      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      bundles: { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"],
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       // No llm config — should be a no-op.
     } as Parameters<typeof detectAndWriteContradictions>[1]);

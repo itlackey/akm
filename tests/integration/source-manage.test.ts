@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addStash, listStashes, removeStash } from "../../src/commands/sources/source-manage";
-import { loadConfig, saveConfig } from "../../src/core/config/config";
+import { getSources, loadConfig, saveConfig } from "../../src/core/config/config";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -55,9 +55,9 @@ describe("addStash", () => {
 
     // Verify persisted
     const config = loadConfig();
-    expect(config.sources).toHaveLength(1);
-    expect(config.sources?.[0].type).toBe("filesystem");
-    expect(config.sources?.[0].path).toBe(path.resolve(stashPath));
+    expect(getSources(config)).toHaveLength(1);
+    expect(getSources(config)[0].type).toBe("filesystem");
+    expect(getSources(config)[0].path).toBe(path.resolve(stashPath));
   });
 
   test("adds a filesystem path with a name", () => {
@@ -105,9 +105,9 @@ describe("addStash", () => {
     expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
-    expect(config.sources).toHaveLength(1);
-    expect(config.sources?.[0].type).toBe("website");
-    expect(config.sources?.[0].url).toBe(url);
+    expect(getSources(config)).toHaveLength(1);
+    expect(getSources(config)[0].type).toBe("website");
+    expect(getSources(config)[0].url).toBe(url);
   });
 
   test("adds a URL source with name and options", () => {
@@ -140,7 +140,7 @@ describe("addStash", () => {
   test("rejects unsupported custom provider types", () => {
     const url = "https://custom.example.com";
     expect(() => addStash({ target: url, providerType: "custom-provider" })).toThrow(/unsupported source type/);
-    expect(loadConfig().sources ?? []).toEqual([]);
+    expect(getSources(loadConfig())).toEqual([]);
   });
 
   test("adds an http:// URL source", () => {
@@ -182,26 +182,26 @@ describe("addStash", () => {
     addStash({ target: "https://git.example.com/repo.git", providerType: "git" });
 
     const config = loadConfig();
-    expect(config.sources).toHaveLength(3);
-    expect(config.sources?.[0].type).toBe("filesystem");
-    expect(config.sources?.[1].type).toBe("website");
-    expect(config.sources?.[2].type).toBe("git");
+    expect(getSources(config)).toHaveLength(3);
+    expect(getSources(config)[0].type).toBe("filesystem");
+    expect(getSources(config)[1].type).toBe("website");
+    expect(getSources(config)[2].type).toBe("git");
   });
 
   test("preserves existing sources when adding", () => {
     const config = loadConfig();
     saveConfig({
       ...config,
-      sources: [{ type: "website", url: "https://existing.example.com", name: "existing" }],
+      bundles: { existing: { website: { url: "https://existing.example.com" } } },
     });
 
     const fsPath = createTmpDir("akm-preserve-");
     addStash({ target: fsPath });
 
-    const updated = loadConfig();
-    expect(updated.sources).toHaveLength(2);
-    expect(updated.sources?.[0].url).toBe("https://existing.example.com");
-    expect(updated.sources?.[1].type).toBe("filesystem");
+    const updated = getSources(loadConfig());
+    expect(updated).toHaveLength(2);
+    expect(updated[0].url).toBe("https://existing.example.com");
+    expect(updated[1].type).toBe("filesystem");
   });
 });
 
@@ -218,7 +218,7 @@ describe("removeStash", () => {
     expect(result.entry?.path).toBe(path.resolve(fsPath));
 
     const config = loadConfig();
-    expect(config.sources).toHaveLength(0);
+    expect(getSources(config)).toHaveLength(0);
   });
 
   test("removes a URL source by URL", () => {
@@ -230,7 +230,7 @@ describe("removeStash", () => {
     expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
-    expect(config.sources).toHaveLength(0);
+    expect(getSources(config)).toHaveLength(0);
   });
 
   test("removes a source by name", () => {
@@ -256,24 +256,25 @@ describe("removeStash", () => {
     removeStash(fsPath);
 
     const config = loadConfig();
-    expect(config.sources).toHaveLength(1);
-    expect(config.sources?.[0].type).toBe("website");
+    expect(getSources(config)).toHaveLength(1);
+    expect(getSources(config)[0].type).toBe("website");
   });
 
   test("prefers URL match over name match", () => {
+    // 0.9.0 (spec §11.1): a source name IS its bundle key (slug-legal), so it can
+    // never equal a URL; removeStash still matches by URL before falling back to
+    // the key, which this exercises.
     const url = "https://example.com";
     addStash({ target: url, providerType: "website", name: "my-source" });
-    addStash({ target: "https://other.example.com", providerType: "website", name: url });
+    addStash({ target: "https://other.example.com", providerType: "website", name: "other-source" });
 
-    // Should match by URL (first entry), not by name (second entry)
     const result = removeStash(url);
     expect(result.removed).toBe(true);
     expect(result.entry?.name).toBe("my-source");
 
-    // The second entry (whose name matches the URL) should still exist
     const config = loadConfig();
-    expect(config.sources).toHaveLength(1);
-    expect(config.sources?.[0].name).toBe(url);
+    expect(getSources(config)).toHaveLength(1);
+    expect(getSources(config)[0].name).toBe("other-source");
   });
 
   test("prefers path match over name match", () => {
@@ -396,14 +397,12 @@ describe("round-trip integration", () => {
       target: url,
       providerType: "git",
       name: "git-rt",
-      options: { key: "value" },
     });
 
     const listed = listStashes();
     const entry = listed.sources.find((s) => s.name === "git-rt");
     expect(entry).toBeDefined();
     expect(entry?.type).toBe("git");
-    expect(entry?.options).toEqual({ key: "value" });
 
     removeStash("git-rt");
     const afterRemove = listStashes();

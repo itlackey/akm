@@ -446,7 +446,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: dir, name: "explicit", writable: true }],
+        bundles: { explicit: { path: dir, writable: true } },
       },
       "explicit",
     );
@@ -464,7 +464,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "git", url, name: "team", writable: true }],
+        bundles: { team: { git: url, writable: true } },
       },
       "team",
     );
@@ -489,7 +489,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "git", url, name: "team", writable: true }],
+        bundles: { team: { git: url, writable: true } },
       },
       "team",
     );
@@ -510,7 +510,7 @@ describe("resolveWriteTarget", () => {
     const dir = makeTempDir("akm-target-default-");
     const result = resolveWriteTarget({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: dir, name: "default-one", writable: true }],
+      bundles: { "default-one": { path: dir, writable: true } },
       defaultWriteTarget: "default-one",
     });
     expect(result.selector).toBe("default-one");
@@ -531,7 +531,7 @@ describe("resolveWriteTarget", () => {
     expect(() =>
       resolveWriteTarget({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: "/tmp/akm-missing", name: "exists", writable: true }],
+        bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
         defaultWriteTarget: "ghost",
       }),
     ).toThrow(ConfigError);
@@ -542,7 +542,7 @@ describe("resolveWriteTarget", () => {
       resolveWriteTarget(
         {
           semanticSearchMode: "off",
-          sources: [{ type: "filesystem", path: "/tmp/akm-other", name: "other", writable: true }],
+          bundles: { other: { path: "/tmp/akm-other", writable: true } },
         },
         "nope",
       ),

@@ -108,9 +108,9 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       repairValidationFailures: false,
       config: {
         configVersion: "0.9.0",
-        stashDir,
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+        bundles: { stash: { path: stashDir, writable: true } },
+        defaultBundle: "stash",
         improve: {
           strategies: {
             "index-order": {

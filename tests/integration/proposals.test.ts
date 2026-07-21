@@ -1090,11 +1090,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const other = makeStashDir();
     const config = {
-      stashDir: stash,
-      sources: [
-        { type: "filesystem", name: "primary", path: stash, writable: true },
-        { type: "filesystem", name: "other", path: other, writable: true },
-      ],
+      bundles: {
+        primary: { path: stash, writable: true },
+        other: { path: other, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "primary",
       defaultWriteTarget: "primary",
     } as AkmConfig;
     const assetPath = path.join(stash, "lessons", "legacy-safe-revert.md");
@@ -1134,11 +1134,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const other = makeStashDir();
     const config = {
-      stashDir: stash,
-      sources: [
-        { type: "filesystem", name: "primary", path: stash, writable: true },
-        { type: "filesystem", name: "other", path: other, writable: true },
-      ],
+      bundles: {
+        primary: { path: stash, writable: true },
+        other: { path: other, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "primary",
       defaultWriteTarget: "primary",
     } as AkmConfig;
     const assetPath = path.join(stash, "lessons", "legacy-ambiguous-revert.md");
@@ -1208,11 +1208,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const other = makeStashDir();
     const config = {
-      stashDir: stash,
-      sources: [
-        { type: "filesystem", name: "primary", path: stash, writable: true },
-        { type: "filesystem", name: "other", path: other, writable: true },
-      ],
+      bundles: {
+        primary: { path: stash, writable: true },
+        other: { path: other, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "primary",
       defaultWriteTarget: "primary",
     } as AkmConfig;
     const assetPath = path.join(stash, "lessons", "legacy-absent-ambiguous.md");
@@ -1284,11 +1284,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const stash = makeStashDir();
     const other = makeStashDir();
     const config = {
-      stashDir: stash,
-      sources: [
-        { type: "filesystem", name: "primary", path: stash, writable: true },
-        { type: "filesystem", name: "other", path: other, writable: true },
-      ],
+      bundles: {
+        primary: { path: stash, writable: true },
+        other: { path: other, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "primary",
       defaultWriteTarget: "primary",
     } as AkmConfig;
     const original =

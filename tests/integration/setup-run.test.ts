@@ -296,7 +296,9 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     const saved = readSavedConfig();
-    expect(saved.stashDir).toBe(DEFAULT_STASH_DIR);
+    // 0.9.0 (spec §10.1): the primary stash is the defaultBundle's path.
+    const savedBundles = saved.bundles as Record<string, { path?: string }> | undefined;
+    expect(savedBundles?.[saved.defaultBundle as string]?.path).toBe(DEFAULT_STASH_DIR);
     expect(saved.semanticSearchMode).toBe("off");
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);

@@ -65,7 +65,8 @@ beforeAll(() => {
   resetConfigCache();
   saveConfig({
     semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: stashDir }],
+    bundles: { stash: { path: stashDir } },
+    defaultBundle: "stash",
     registries: [],
   });
 

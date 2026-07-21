@@ -29,6 +29,7 @@ import { getDbPath } from "../../../src/core/paths";
 import { replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { mergeLockEntriesSync } from "../../../src/integrations/lockfile";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 // Trigger source-provider self-registration.
 import "../../../src/sources/providers/index";
@@ -54,18 +55,17 @@ beforeEach(async () => {
   // `resolveSourcesForOrigin("catalog", …)` matches it by registryId.
   saveConfig({
     semanticSearchMode: "off",
-    installed: [
-      {
-        id: "catalog",
-        source: "npm",
-        ref: "catalog",
-        artifactUrl: "https://example.com/catalog.tgz",
-        stashRoot: catalogRoot,
-        cacheDir: catalogRoot,
-        installedAt: new Date().toISOString(),
-      },
-    ],
+    bundles: { catalog: { npm: "catalog" } },
   });
+  mergeLockEntriesSync([
+    {
+      id: "catalog",
+      source: "npm",
+      ref: "catalog",
+      localRoot: catalogRoot,
+      installedAt: new Date().toISOString(),
+    },
+  ]);
 
   await akmIndex({ stashDir: storage.stashDir });
 });

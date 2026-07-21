@@ -16,7 +16,8 @@ async function withIndexedStash<T>(fn: (stashDir: string) => Promise<T>): Promis
   try {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: storage.stashDir }],
+      bundles: { stash: { path: storage.stashDir } },
+      defaultBundle: "stash",
       registries: [],
     });
     return await fn(storage.stashDir);

@@ -64,8 +64,8 @@ function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmC
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
     engines: {
       default: {
@@ -428,8 +428,8 @@ describe("akmDistill — LLM error paths", () => {
   test("no `llm` block configured at all → llm_failed (gate is open, but the LLM call has no profile to dispatch to)", async () => {
     const stash = makeStashDir();
     const config = {
-      stashDir: stash,
-      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       // 0.8.0: the distill gate defaults to true; with no llm profile wired,
       // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
@@ -1224,8 +1224,8 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // Gate is open (distill enabled) but no llm profile is wired.
     const config: AkmConfig = {
       semanticSearchMode: "auto",
-      stashDir: stash,
-      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       improve: { strategies: { default: { processes: { distill: { enabled: true } } } } },
     };

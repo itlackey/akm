@@ -59,9 +59,16 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
 
 ## Open deferrals (tracked)
 
-1. **#37** — full old-config-shape retirement (setup emits bundles; `stashDir`/`sources`/`installed`
-   out of schema; installed→bundle re-sync; desired-vs-resolved lock split). Transitional state is
-   coherent: old-shape-alone loads, mixed shape hard-rejects, migrator emits bundles.
+1. **#37 — CLOSED (2026-07-21)**: full old-config-shape retirement landed. Schema hard-rejects
+   `stashDir`/`sources`/`installed` whenever present (migrate-apply hint); every writer emits
+   `bundles`/`defaultBundle`; installed bundles carry the DESIRED descriptor (git/npm + registryId)
+   with resolved roots only in the §10.2 lock (the lock shape itself landed in WI-8.4 — the split
+   was config-side); readers moved to bundles+lock (isEditable via writable+localRoot;
+   source-identity via defaultBundle path); `inspectConfig` still classifies old-shape configs as
+   migration-eligible via the normalizing probe. Notable semantics ratified at close: locator-form
+   origins (`github:owner/repo//…`) do not resolve — the canonical bundle segment is the configured
+   key per D-R5; concurrent setup+add on `bundles` is a genuine same-field precommit conflict
+   (fail-closed); non-interactive setup preserves existing plain secondary bundles.
 2. **#39 — CLOSED (2026-07-20, user decision)**: `.stash.json` sidecar metadata is dropped outright
    ("officially retired two versions ago"). The three live readers
    (`indexer/manifest.ts`, `indexer/indexer.ts`, `registry/build-index.ts`) no longer call

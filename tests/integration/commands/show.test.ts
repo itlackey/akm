@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../../src/commands/read/show";
 import { saveConfig } from "../../../src/core/config/config";
+import { mergeLockEntriesSync } from "../../../src/integrations/lockfile";
 
 // Trigger source-provider self-registration
 import "../../../src/sources/providers/index";
@@ -86,19 +87,17 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-
-      installed: [
-        {
-          id: "test-pkg",
-          source: "npm",
-          ref: "test-pkg",
-          artifactUrl: "https://example.com/test-pkg.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "test-pkg": { npm: "test-pkg" } },
     });
+    mergeLockEntriesSync([
+      {
+        id: "test-pkg",
+        source: "npm",
+        ref: "test-pkg",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
 
     // Use an origin that is NOT installed so resolveSourcesForOrigin returns
     // empty, triggering the add-guidance error path.
@@ -114,24 +113,22 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-
-      installed: [
-        {
-          id: "github:sveltejs/ai-tools",
-          source: "github",
-          ref: "github:sveltejs/ai-tools",
-          artifactUrl: "https://example.com/svelte-tools.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
     });
+    mergeLockEntriesSync([
+      {
+        id: "ai-tools",
+        source: "github",
+        ref: "github:sveltejs/ai-tools",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
 
-    const result = await akmShow({ ref: "github:sveltejs/ai-tools//agents/tools/agents/svelte-file-editor" });
+    const result = await akmShow({ ref: "ai-tools//agents/tools/agents/svelte-file-editor" });
 
     expect(result.type).toBe("agent");
-    expect(result.origin).toBe("github:sveltejs/ai-tools");
+    expect(result.origin).toBe("ai-tools");
     expect(result.path).toContain(path.join("tools", "agents", "svelte-file-editor.md"));
     expect(result.prompt).toContain("Use Svelte tools.");
   });
@@ -145,24 +142,22 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-
-      installed: [
-        {
-          id: "github:sveltejs/ai-tools",
-          source: "github",
-          ref: "github:sveltejs/ai-tools",
-          artifactUrl: "https://example.com/svelte-tools.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
     });
+    mergeLockEntriesSync([
+      {
+        id: "ai-tools",
+        source: "github",
+        ref: "github:sveltejs/ai-tools",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
 
-    const result = await akmShow({ ref: "github:sveltejs/ai-tools//skills/tools/skills/svelte-code-writer" });
+    const result = await akmShow({ ref: "ai-tools//skills/tools/skills/svelte-code-writer" });
 
     expect(result.type).toBe("skill");
-    expect(result.origin).toBe("github:sveltejs/ai-tools");
+    expect(result.origin).toBe("ai-tools");
     expect(result.path).toContain(path.join("tools", "skills", "svelte-code-writer", "SKILL.md"));
     expect(result.content).toContain("# Svelte writer");
   });
@@ -194,21 +189,20 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "github:evil/pack",
-          source: "github",
-          ref: "github:evil/pack",
-          artifactUrl: "https://example.com/x.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { pack: { git: "github:evil/pack", registryId: "github:evil/pack" } },
     });
-    const result = await akmShow({ ref: "github:evil/pack//agents/tools/agents/helper" });
+    mergeLockEntriesSync([
+      {
+        id: "pack",
+        source: "github",
+        ref: "github:evil/pack",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+    const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.origin).toBe("github:evil/pack");
+    expect(result.origin).toBe("pack");
     // Provenance ceiling: only the primary stash may self-grant; an installed
     // pack is not the primary stash.
     expect(result.toolPolicy).toBeUndefined();
@@ -222,20 +216,18 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "git:contrib/pack",
-          source: "git",
-          ref: "git:contrib/pack",
-          artifactUrl: "https://example.com/x.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-          writable: true,
-        },
-      ],
+      bundles: { pack: { git: "git:contrib/pack", writable: true, registryId: "git:contrib/pack" } },
     });
-    const result = await akmShow({ ref: "git:contrib/pack//agents/tools/agents/helper" });
+    mergeLockEntriesSync([
+      {
+        id: "pack",
+        source: "git",
+        ref: "git:contrib/pack",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+    const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.toolPolicy).toBeUndefined();
   });
@@ -247,7 +239,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
     writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: thirdPartyDir }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { "third-party": { path: thirdPartyDir } } });
 
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
@@ -264,7 +256,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     // would be wrongly honoured.
     const nestedDir = path.join(stashDir, "vendor");
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: nestedDir }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
 
     const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
@@ -279,7 +271,7 @@ describe("akmShow search path", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
 
     const result = await akmShow({ ref: "scripts/deploy.sh" });
 
@@ -310,12 +302,15 @@ describe("akmShow editability", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
     writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
 
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
 
     const result = await akmShow({ ref: "scripts/remote.sh" });
 
     expect(result.type).toBe("script");
-    expect(result.origin).toBeNull();
+    // #37: a configured search-path source is a named bundle, so its assets now
+    // carry that bundle key as their origin (was null under the old unnamed
+    // filesystem-source shape). Editability is unchanged — a real on-disk path.
+    expect(result.origin).toBe("searchpath");
     expect(result.editable).toBe(true);
     expect(result.editHint).toBeUndefined();
   });
@@ -326,19 +321,17 @@ describe("akmShow editability", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-
-      installed: [
-        {
-          id: "installed-pkg",
-          source: "npm",
-          ref: "npm:installed-pkg",
-          artifactUrl: "https://example.com/installed-pkg.tgz",
-          stashRoot: installedStashRoot,
-          cacheDir: installedStashRoot,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "installed-pkg": { npm: "installed-pkg" } },
     });
+    mergeLockEntriesSync([
+      {
+        id: "installed-pkg",
+        source: "npm",
+        ref: "npm:installed-pkg",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
 
     const result = await akmShow({ ref: "scripts/deploy.sh" });
 

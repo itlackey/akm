@@ -42,7 +42,8 @@ describe("curate relevance improvements", () => {
       fs.cpSync(RANKING_BASELINE_FIXTURE, storage.stashDir, { recursive: true });
       saveConfig({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: storage.stashDir }],
+        bundles: { stash: { path: storage.stashDir } },
+        defaultBundle: "stash",
         registries: [],
       });
       await akmIndex({ stashDir: storage.stashDir, full: true });

@@ -61,16 +61,16 @@ describe("config CLI helpers", () => {
     ).toThrow(/Invalid input/);
   });
 
-  test("parseConfigValue rejects writable website sources through config CLI", () => {
+  test("parseConfigValue rejects the retired sources key outright (#37)", () => {
     expect(() =>
       parseConfigValue("sources", '[{"type":"website","url":"https://example.com","writable":true}]'),
-    ).toThrow("writable: true is only supported on filesystem and git sources");
+    ).toThrow(/Unknown config key: sources/);
   });
 
-  test("parseConfigValue rejects writable npm sources through config CLI", () => {
-    expect(() => parseConfigValue("sources", '[{"type":"npm","path":"left-pad","writable":true}]')).toThrow(
-      "writable: true is only supported on filesystem and git sources",
-    );
+  test("parseConfigValue rejects writable non-filesystem bundles through config CLI", () => {
+    expect(() =>
+      parseConfigValue("bundles", '{"w":{"website":{"url":"https://example.com"},"writable":true}}'),
+    ).toThrow("writable: true is only supported on path and git bundle sources");
   });
 
   test("setConfigValue sets embedding via JSON", () => {
@@ -308,16 +308,11 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
 // #462 strict typo-catching on source/registry entries: unknown fields are now
 // preserved rather than rejected. Known fields are still type-validated.
 describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
-  test("set sources tolerates and preserves an unknown field on a source entry", () => {
+  test("set sources is rejected — the key retired with the 0.9.0 bundles cutover (#37)", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const updated = setConfigValue(
-      base,
-      "sources",
-      '[{"type":"git","name":"x","url":"https://example.com/r.git","secret":"oops"}]',
-    );
-    const src = (updated.sources?.[0] ?? {}) as Record<string, unknown>;
-    expect(src.name).toBe("x");
-    expect(src.secret).toBe("oops"); // preserved, not rejected
+    expect(() =>
+      setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git"}]'),
+    ).toThrow(/Unknown config key: sources/);
   });
 
   test("set registries tolerates and preserves an unknown field on a registry entry", () => {

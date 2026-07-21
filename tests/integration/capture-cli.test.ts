@@ -111,8 +111,15 @@ describe("capture commands", () => {
     expect(fs.existsSync(path.join(customDir, "knowledge"))).toBe(true);
     expect(fs.existsSync(path.join(homeDir, "akm"))).toBe(false);
 
-    const config = JSON.parse(fs.readFileSync(json.configPath, "utf8")) as { stashDir?: string };
-    expect(config.stashDir).toBe(path.resolve(customDir));
+    // #37: init persists the primary as a bundle (never the retired stashDir key).
+    const config = JSON.parse(fs.readFileSync(json.configPath, "utf8")) as {
+      stashDir?: string;
+      defaultBundle?: string;
+      bundles?: Record<string, { path?: string }>;
+    };
+    expect(config.stashDir).toBeUndefined();
+    const primary = config.defaultBundle ? config.bundles?.[config.defaultBundle] : undefined;
+    expect(primary?.path).toBe(path.resolve(customDir));
   }
 
   test("init honors --dir for a custom stash path", async () => {

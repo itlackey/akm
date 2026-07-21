@@ -226,9 +226,9 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
           })) as never,
           config: {
             configVersion: "0.9.0",
-            stashDir,
             semanticSearchMode: "off",
-            sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+            bundles: { stash: { path: stashDir, writable: true } },
+            defaultBundle: "stash",
             engines: {
               judge: {
                 kind: "llm",

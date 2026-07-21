@@ -8,6 +8,7 @@ import {
   type ImproveProfileConfig,
   loadConfig,
   loadUserConfig,
+  primaryBundlePath,
   resetConfigCache,
   saveConfig,
   updateConfig,
@@ -230,36 +231,45 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow(/stashes is retired in 0\.9/);
   });
 
-  test("rejects retired openviking sources instead of dropping them", () => {
-    writeCurrentConfig({
-      sources: [
-        { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
-        { type: "filesystem", path: "/keep", name: "keep" },
-      ],
-    });
+  test("hard-rejects the retired `sources[]` key (0.9.0 cutover) instead of loading it", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        sources: [
+          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
+          { type: "filesystem", path: "/keep", name: "keep" },
+        ],
+      }),
+    );
 
     expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/sources\.0\.type/);
+    expect(() => loadConfig()).toThrow(/sources is the retired pre-cutover source shape/);
+    expect(() => loadConfig()).toThrow(/akm migrate apply/);
   });
 
-  test("throws ConfigError when installed npm entry is marked writable", () => {
-    writeCurrentConfig({
-      installed: [
-        {
-          id: "npm:left-pad",
-          source: "npm",
-          ref: "npm:left-pad",
-          artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-          stashRoot: "/tmp/left-pad",
-          cacheDir: "/tmp/cache",
-          installedAt: "2026-05-01T00:00:00.000Z",
-          writable: true,
-        },
-      ],
-    });
+  test("hard-rejects the retired `installed[]` key (0.9.0 cutover)", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        installed: [
+          {
+            id: "npm:left-pad",
+            source: "npm",
+            ref: "npm:left-pad",
+            artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+            stashRoot: "/tmp/left-pad",
+            cacheDir: "/tmp/cache",
+            installedAt: "2026-05-01T00:00:00.000Z",
+            writable: true,
+          },
+        ],
+      }),
+    );
 
     expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
+    expect(() => loadConfig()).toThrow(/installed is the retired pre-cutover source shape/);
   });
 
   test("emits a one-time deprecation warning when a project-level config is discovered (#457)", () => {
@@ -303,7 +313,7 @@ describe("saveConfig", () => {
     const config = {
       configVersion: "0.9.0" as const,
       semanticSearchMode: "off" as const,
-      sources: [{ type: "filesystem" as const, path: "/extra" }],
+      bundles: { extra: { path: "/extra" } },
     };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
@@ -315,25 +325,19 @@ describe("saveConfig", () => {
   test("roundtrips with loadConfig", () => {
     const config = {
       semanticSearchMode: "off" as const,
-      sources: [
-        { type: "filesystem" as const, path: "/a" },
-        { type: "filesystem" as const, path: "/b" },
-      ],
+      bundles: { a: { path: "/a" }, b: { path: "/b" } },
     };
     saveConfig(config);
     const loaded = loadConfig();
     expect(loaded.semanticSearchMode).toBe("off");
-    expect(loaded.sources).toEqual([
-      { type: "filesystem", path: "/a" },
-      { type: "filesystem", path: "/b" },
-    ]);
+    expect(loaded.bundles).toEqual({ a: { path: "/a" }, b: { path: "/b" } });
     expect(loaded.output).toEqual({ format: "json", detail: "brief" });
   });
 
   test("roundtrips output config", () => {
     const config = {
       semanticSearchMode: "off" as const,
-      sources: [{ type: "filesystem" as const, path: "/a" }],
+      bundles: { a: { path: "/a" } },
       output: { format: "yaml" as const, detail: "full" as const },
     };
     saveConfig(config);
@@ -419,17 +423,17 @@ describe("saveConfig", () => {
 
 describe("updateConfig", () => {
   test("merges partial update over existing config", () => {
-    saveConfig({ semanticSearchMode: "auto", sources: [{ type: "filesystem", path: "/a" }] });
+    saveConfig({ semanticSearchMode: "auto", bundles: { a: { path: "/a" } } });
     const updated = updateConfig({ semanticSearchMode: "off" });
     expect(updated.semanticSearchMode).toBe("off");
-    expect(updated.sources).toEqual([{ type: "filesystem", path: "/a" }]);
+    expect(updated.bundles).toEqual({ a: { path: "/a" } });
     expect(loadConfig()).toEqual(updated);
   });
 
   test("creates config.json if it does not exist", () => {
     const updated = updateConfig({ semanticSearchMode: "off" });
     expect(updated.semanticSearchMode).toBe("off");
-    expect(updated.sources).toBeUndefined();
+    expect(updated.bundles).toBeUndefined();
     expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
@@ -721,30 +725,37 @@ describe("getImproveProcessConfig", () => {
   });
 });
 
-// ── stashDir config ──────────────────────────────────────────────────────────
+// ── primary stash (defaultBundle) config ─────────────────────────────────────
 
-describe("stashDir config", () => {
-  test("loads stashDir from config.json", () => {
-    writeCurrentConfig({ stashDir: "/home/user/my-stash" });
-    expect(loadConfig().stashDir).toBe("/home/user/my-stash");
+describe("primary stash config", () => {
+  test("resolves the primary stash from the defaultBundle path", () => {
+    writeCurrentConfig({
+      bundles: { main: { path: "/home/user/my-stash", writable: true } },
+      defaultBundle: "main",
+    });
+    expect(primaryBundlePath(loadConfig())).toBe("/home/user/my-stash");
   });
 
-  test("stashDir is undefined by default", () => {
-    expect(loadConfig().stashDir).toBeUndefined();
+  test("primary stash is undefined by default", () => {
+    expect(primaryBundlePath(loadConfig())).toBeUndefined();
   });
 
-  test("roundtrips stashDir via updateConfig", () => {
-    updateConfig({ stashDir: "/custom/stash" });
-    expect(loadConfig().stashDir).toBe("/custom/stash");
+  test("roundtrips the primary bundle via updateConfig", () => {
+    updateConfig({ bundles: { main: { path: "/custom/stash", writable: true } }, defaultBundle: "main" });
+    expect(primaryBundlePath(loadConfig())).toBe("/custom/stash");
   });
 
-  test("saves and preserves stashDir", () => {
-    const config = { semanticSearchMode: "auto" as const, stashDir: "/my/stash" };
+  test("saves and preserves the primary bundle", () => {
+    const config = {
+      semanticSearchMode: "auto" as const,
+      bundles: { main: { path: "/my/stash", writable: true } },
+      defaultBundle: "main",
+    };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
     const parsed = JSON.parse(raw);
-    expect(parsed.stashDir).toBe("/my/stash");
-    expect(loadConfig().stashDir).toBe("/my/stash");
+    expect(parsed.bundles.main.path).toBe("/my/stash");
+    expect(primaryBundlePath(loadConfig())).toBe("/my/stash");
   });
 });
 

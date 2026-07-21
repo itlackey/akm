@@ -261,7 +261,7 @@ describe("akm search ref-prefix enumeration (SPEC-4)", () => {
       );
       saveConfig({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: extra.dir, name: "extra" }],
+        bundles: { extra: { path: extra.dir } },
       });
       await reindex();
 

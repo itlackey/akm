@@ -229,7 +229,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
     writeSingleStepWorkflow(extraStash, "shared-flow");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: extraStash, name: "extra" }],
+      bundles: { extra: { path: extraStash } },
     });
     expect((await runCliCapture(["index", "--full"])).code).toBe(0);
 
@@ -251,7 +251,7 @@ describe("akm workflow validate — origin-qualified refs resolve through the so
   });
 
   test("an unknown origin-qualified ref is a clean UsageError, not a crash", async () => {
-    writeSandboxConfig({ semanticSearchMode: "off", sources: [] });
+    writeSandboxConfig({ semanticSearchMode: "off" });
     const { code, stderr } = await runCliCapture(["--json", "workflow", "validate", "nowhere//workflows/missing-flow"]);
     expect(code).toBe(2);
     const env = JSON.parse(stderr) as { ok: boolean; error: string };

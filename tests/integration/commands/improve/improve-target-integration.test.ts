@@ -20,12 +20,12 @@ function targetConfig(primary: string, team: string, readonly: string): AkmConfi
   return withTestImproveLlm({
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    stashDir: primary,
-    sources: [
-      { type: "filesystem", name: "primary", path: primary, writable: true },
-      { type: "filesystem", name: "team", path: team, writable: true },
-      { type: "filesystem", name: "vendor", path: readonly, writable: false },
-    ],
+    bundles: {
+      primary: { path: primary, writable: true },
+      team: { path: team, writable: true },
+      vendor: { path: readonly, writable: false },
+    },
+    defaultBundle: "primary",
     defaultWriteTarget: "primary",
   } as AkmConfig);
 }
@@ -146,8 +146,11 @@ describe("improve named target integration", () => {
       const config = withTestImproveLlm({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        stashDir: primary,
-        sources: [{ type: "git", name: "team", url, writable: true }],
+        bundles: {
+          stash: { path: primary, writable: true },
+          team: { git: url, writable: true },
+        },
+        defaultBundle: "stash",
         defaultWriteTarget: "team",
       } as AkmConfig);
       let selectedRoot: string | undefined;

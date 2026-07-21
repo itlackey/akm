@@ -208,7 +208,7 @@ describe("remember --xref", () => {
     seedAsset(extraDir, "knowledge/shared-doc.md");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "extra-stash", path: extraDir, writable: false }],
+      bundles: { "extra-stash": { path: extraDir, writable: false } },
     });
 
     const { code, stdout } = await runCliCapture([
@@ -288,7 +288,7 @@ describe("--xref root set and resolver parity", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultWriteTarget: "team",
-      sources: [{ type: "filesystem", name: "team", path: teamDir, writable: true }],
+      bundles: { team: { path: teamDir, writable: true } },
     });
 
     const { code, stdout } = await runCliCapture([

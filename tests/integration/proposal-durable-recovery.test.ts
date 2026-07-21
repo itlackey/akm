@@ -111,8 +111,8 @@ describe("proposal accept durable crash recovery", () => {
       if (fs.statSync(stashDir).dev === fs.statSync(storage.dataDir).dev) return;
       fs.mkdirSync(path.join(stashDir, "lessons"), { recursive: true });
       const config = {
-        stashDir,
-        sources: [{ type: "filesystem", name: "shm", path: stashDir, writable: true }],
+        bundles: { shm: { path: stashDir, writable: true } } as AkmConfig["bundles"],
+        defaultBundle: "shm",
         defaultWriteTarget: "shm",
       } as AkmConfig;
       const proposal = createProposal(stashDir, {
@@ -171,10 +171,8 @@ describe("proposal accept durable crash recovery", () => {
     fs.mkdirSync(path.join(targetA, "lessons"), { recursive: true });
     fs.mkdirSync(path.join(targetB, "lessons"), { recursive: true });
     writeSandboxConfig({
-      sources: [
-        { type: "filesystem", name: "a", path: targetA, writable: true },
-        { type: "filesystem", name: "b", path: targetB, writable: true },
-      ],
+      bundles: { a: { path: targetA, writable: true }, b: { path: targetB, writable: true } },
+      defaultBundle: "a",
       defaultWriteTarget: "a",
       semanticSearchMode: "off",
     });
@@ -207,10 +205,8 @@ describe("proposal accept durable crash recovery", () => {
     fs.mkdirSync(path.join(targetA, "lessons"), { recursive: true });
     fs.mkdirSync(path.join(targetB, "lessons"), { recursive: true });
     writeSandboxConfig({
-      sources: [
-        { type: "filesystem", name: "a", path: targetA, writable: true },
-        { type: "filesystem", name: "b", path: targetB, writable: true },
-      ],
+      bundles: { a: { path: targetA, writable: true }, b: { path: targetB, writable: true } },
+      defaultBundle: "a",
       defaultWriteTarget: "a",
       semanticSearchMode: "off",
     });

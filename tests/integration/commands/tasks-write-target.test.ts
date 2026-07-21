@@ -56,7 +56,7 @@ describe("task asset mutations honor write-target resolution", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
-        sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
+        bundles: { target: { path: target.dir, writable: true } },
       });
 
       const result = await tasksModule.akmTasksAdd({
@@ -83,7 +83,7 @@ describe("task asset mutations honor write-target resolution", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
-        sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
+        bundles: { target: { path: target.dir, writable: true } },
       });
       backendState.failInstallFor.add("broken");
 
@@ -110,7 +110,7 @@ describe("task asset mutations honor write-target resolution", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultWriteTarget: "target",
-        sources: [{ type: "filesystem", name: "target", path: target.dir, writable: true }],
+        bundles: { target: { path: target.dir, writable: true } },
       });
 
       await tasksModule.akmTasksAdd({

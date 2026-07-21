@@ -338,7 +338,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathStash }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathStash } } });
     await akmIndex({ stashDir: workingStash, full: true });
 
     const result = await akmSearch({ query: "foundry", source: "local" });
@@ -369,7 +369,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathStash }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathStash } } });
     const indexResult = await akmIndex({ stashDir: workingStash, full: true });
 
     // All 4 assets from the search path should be indexed

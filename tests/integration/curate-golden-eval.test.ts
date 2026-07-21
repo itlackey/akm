@@ -61,7 +61,8 @@ async function withSeededGolden<T>(
     fs.rmSync(path.join(storage.stashDir, "judgments.json"), { force: true });
     saveConfig({
       semanticSearchMode: "auto",
-      sources: [{ type: "filesystem", path: storage.stashDir }],
+      bundles: { stash: { path: storage.stashDir } },
+      defaultBundle: "stash",
       registries: [],
     });
     await akmIndex({ stashDir: storage.stashDir, full: true });

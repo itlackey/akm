@@ -85,12 +85,16 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
 }
 
 /**
- * A minimal single-filesystem-source config pointing at `stashDir`.
+ * A minimal single-bundle config pointing at `stashDir` (#37: the old
+ * `stashDir`/`sources`/`installed` trio is hard-rejected by the 0.9.0 schema;
+ * the primary bundle keeps the historical "stash" key so `defaultWriteTarget`
+ * and `--source stash` pins keep resolving).
  */
 export function makeConfig(stashDir: string): AkmConfig {
+  const bundles = { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"];
   return {
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles,
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
   } as AkmConfig;
 }

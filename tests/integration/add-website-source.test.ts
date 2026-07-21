@@ -138,11 +138,10 @@ describe("akm add website", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
         sources?: Array<{ type?: string; url?: string; name?: string }>;
       };
-      expect(config.sources).toContainEqual({
-        type: "website",
-        url: normalizedWebsiteUrl,
-        name: "docs-site",
-      });
+      // #37: the add flow persists a bundles entry keyed by --name.
+      expect(
+        (config as { bundles?: Record<string, { website?: { url?: string } }> }).bundles?.["docs-site"]?.website?.url,
+      ).toBe(normalizedWebsiteUrl);
 
       expect(parsed.sourceAdded?.stashRoot).toBeDefined();
       const knowledgeFiles = fs.readdirSync(path.join(parsed.sourceAdded?.stashRoot as string, "knowledge")).sort();

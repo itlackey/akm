@@ -8,6 +8,7 @@ import { akmInit } from "../../src/commands/sources/init";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getBinDir, getConfigPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
+import { mergeLockEntriesSync } from "../../src/integrations/lockfile";
 import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
 
 const createdTmpDirs: string[] = [];
@@ -148,7 +149,7 @@ describe("source commands and resolution", () => {
     writeFile(path.join(searchPathDir, "scripts", "group", "nested", "job.js"), "console.log('job')\n");
     writeFile(path.join(searchPathDir, "scripts", "group", "package.json"), '{"name":"group"}');
 
-    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
+    saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: searchPathDir } } });
 
     process.env.AKM_STASH_DIR = primaryStashDir;
     await akmIndex({ stashDir: primaryStashDir, full: true });
@@ -208,24 +209,18 @@ describe("source commands and resolution", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "npm:@scope/deploy-stash",
-          source: "npm",
-          ref: "@scope/deploy-stash",
-          artifactUrl: "https://example.com/deploy-stash.tgz",
-          stashRoot: installedStash,
-          cacheDir: installedStash,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "deploy-stash": { npm: "@scope/deploy-stash", registryId: "npm:@scope/deploy-stash" } },
     });
+    mergeLockEntriesSync([
+      { id: "deploy-stash", source: "npm", ref: "@scope/deploy-stash", localRoot: installedStash },
+    ]);
     process.env.AKM_STASH_DIR = stashDir;
 
     await akmIndex({ stashDir, full: true });
     const result = await akmSearch({ query: "deploy", type: "script" });
 
-    expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-stash")).toBe(true);
+    // The hit's origin is the bundle id (the slug-legal bundle key).
+    expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "deploy-stash")).toBe(true);
   });
 
   test("akmShow returns full payloads for skill/command/agent", async () => {

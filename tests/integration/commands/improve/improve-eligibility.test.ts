@@ -144,22 +144,24 @@ afterEach(() => {
 // ── Reflect signal-delta ────────────────────────────────────────────────────
 
 describe("source-qualified durable eligibility keys", () => {
-  test("defaultWriteTarget stash retains legacy state while other named sources remain isolated", () => {
+  test("the primary (defaultBundle) stash retains legacy state while other sources remain isolated", () => {
+    // Decision C: the historical bare improve state belongs only to the primary
+    // bundle (defaultBundle); a source at any other root never inherits it.
     expect(
       shouldReadLegacyBareImproveState("stash", "/tmp/historical", {
         semanticSearchMode: "off",
-        defaultWriteTarget: "stash",
-        sources: [{ type: "filesystem", name: "stash", path: "/tmp/historical", writable: true }],
+        bundles: { stash: { path: "/tmp/historical", writable: true } },
+        defaultBundle: "stash",
       }),
     ).toBe(true);
     expect(
       shouldReadLegacyBareImproveState("team", "/tmp/team", {
         semanticSearchMode: "off",
-        defaultWriteTarget: "stash",
-        sources: [
-          { type: "filesystem", name: "stash", path: "/tmp/historical", writable: true },
-          { type: "filesystem", name: "team", path: "/tmp/team", writable: true },
-        ],
+        bundles: {
+          stash: { path: "/tmp/historical", writable: true },
+          team: { path: "/tmp/team", writable: true },
+        },
+        defaultBundle: "stash",
       }),
     ).toBe(false);
   });

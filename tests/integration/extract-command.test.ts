@@ -60,8 +60,8 @@ function configEnabled(stashDir: string): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
     engines: {
       default: {
@@ -89,8 +89,8 @@ function configDisabled(stashDir: string): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles: { stash: { path: stashDir, writable: true } },
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
     engines: {
       default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
@@ -693,8 +693,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
     return {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      stashDir,
-      sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
       defaultWriteTarget: "stash",
       engines: {
         default: {

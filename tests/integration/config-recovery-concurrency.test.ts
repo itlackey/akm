@@ -153,11 +153,23 @@ describe("locked config mutation", () => {
 
   test("different config-mutating commands preserve each other's concurrent updates", async () => {
     const env = { ...process.env };
+    // #37: setup runs FIRST, sequentially. Setup and `akm add` both write the
+    // `bundles` field now, so running them concurrently is a GENUINE
+    // same-field conflict the precommit layer rejects by design (fail-closed,
+    // "rerun setup") rather than silently losing an update. The concurrency
+    // pin below covers writers of three DIFFERENT fields.
+    const setup = Bun.spawn(["bun", "src/cli.ts", "setup", "--yes", "--no-init", "--format", "json"], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await setup.exited).toBe(0);
+
     const commands = [
       ["config", "set", "--silent", "output.detail", "full"],
       ["registry", "add", "https://registry-one.example/index.json", "--name", "registry-one"],
       ["add", "https://source-one.example", "--provider", "website", "--name", "source-one"],
-      ["setup", "--yes", "--no-init", "--format", "json"],
     ];
     const children = commands.map((args) =>
       Bun.spawn(["bun", "src/cli.ts", ...args], {
@@ -174,10 +186,11 @@ describe("locked config mutation", () => {
     const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as {
       output: { detail: string };
       registries: Array<{ name?: string }>;
-      sources: Array<{ name?: string }>;
+      bundles: Record<string, { website?: { url?: string } }>;
     };
     expect(written.output.detail).toBe("full");
     expect(written.registries.some((registry) => registry.name === "registry-one")).toBe(true);
-    expect(written.sources.some((source) => source.name === "source-one")).toBe(true);
+    // #37: `akm add` writes a bundles entry keyed by the --name.
+    expect(written.bundles["source-one"]?.website?.url).toBeDefined();
   }, 20_000);
 });

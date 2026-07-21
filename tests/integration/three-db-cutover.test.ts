@@ -194,7 +194,9 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     expect(appliedConfig.defaultBundle).toBe("stash");
     expect(appliedBundles.stash).toMatchObject({ path: path.join(getDataDir(), "stash"), writable: true });
     expect(appliedBundles.team).toMatchObject({ path: path.join(getDataDir(), "team"), writable: true });
-    expect(appliedBundles["reg-kit"]).toEqual({ path: path.join(getDataDir(), "kit") });
+    // WI-8.5 desired/resolved split (spec §10.2): the installed npm entry emits its
+    // DESIRED locator, NOT the resolved cache root (that moves to the lock's localRoot).
+    expect(appliedBundles["reg-kit"]).toEqual({ npm: "@scope/kit" });
 
     const db = readState();
     try {

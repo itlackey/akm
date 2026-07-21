@@ -103,10 +103,11 @@ describe("akm search --source <name> filters hits to that source", () => {
     process.env.AKM_STASH_DIR = primary;
     saveConfig({
       semanticSearchMode: "off",
-      sources: [
-        { type: "filesystem", name: "primary", path: primary, writable: true },
-        { type: "filesystem", name: "library", path: library, writable: false },
-      ],
+      bundles: {
+        primary: { path: primary, writable: true },
+        library: { path: library },
+      },
+      defaultBundle: "primary",
     });
     await akmIndex({ stashDir: primary, full: true });
 
