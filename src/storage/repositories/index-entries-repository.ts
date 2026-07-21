@@ -754,6 +754,26 @@ function findEntryIdByBundleRef(db: Database, ref: string, stashDir?: string): n
  * known, else the `//conceptId` SUFFIX (short ref — any bundle). The suffix
  * uses `substr(...) = ...` (never LIKE) so `_`/`%` in a conceptId are literal,
  * and includes the `//` boundary so a segment split never false-matches.
+ *
+ * ── Deterministic winner (`ORDER BY id ASC`) ──
+ *
+ * A SHORT ref can match one concept id across MULTIPLE bundles (e.g. the same
+ * `knowledge/guide` in the primary stash and an installed source). The bare
+ * `LIMIT 1` this replaced picked whichever row SQLite happened to visit first —
+ * a nondeterministic winner when two bundles share a conceptId. We now impose a
+ * total order (`ORDER BY id ASC`) so the winner is STABLE across runs.
+ *
+ * `id ASC` is also the SENSIBLE choice, not just a stable tiebreak: a full index
+ * walks its sources in installation-precedence order (`resolveSourceEntries`,
+ * primary stash first — the same order `resolveSourcesForOrigin` calls "local"),
+ * so the highest-precedence source's rows carry the LOWEST ids. Ascending id
+ * therefore prefers the primary/highest-precedence bundle — mirroring what a
+ * precedence-ordered scan would pick — while staying a pure config-free leaf
+ * (true installation-priority resolution against an injected bundle list is
+ * `resolveRef`'s job; this DB helper takes no config handle). The exact-bundle
+ * arm is single-row under the UNIQUE `item_ref` index; `ORDER BY id ASC` there
+ * keeps it deterministic on a partially-migrated DB whose fallback index is
+ * non-unique.
  */
 function matchIdByItemRef(
   db: Database,
@@ -765,7 +785,7 @@ function matchIdByItemRef(
   if (bundle !== undefined) {
     const itemRef = `${bundle}//${conceptId}`;
     const row = db
-      .prepare(`SELECT id FROM entries WHERE item_ref = ? ${scope} LIMIT 1`)
+      .prepare(`SELECT id FROM entries WHERE item_ref = ? ${scope} ORDER BY id ASC LIMIT 1`)
       .get(itemRef, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;
     return row?.id;
   }
@@ -776,6 +796,7 @@ function matchIdByItemRef(
        WHERE item_ref IS NOT NULL
          AND substr(item_ref, length(item_ref) - length(?) + 1) = ?
          ${scope}
+       ORDER BY id ASC
        LIMIT 1`,
     )
     .get(suffix, suffix, ...(stashDir ? [stashDir] : [])) as { id: number } | undefined;

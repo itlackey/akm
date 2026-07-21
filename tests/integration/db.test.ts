@@ -13,6 +13,7 @@ import {
 import {
   collectTagSetFromEntries,
   deleteEntriesByDir,
+  findEntryIdByRef,
   getAllEntries,
   getEmbeddableEntryCount,
   getEntriesByDir,
@@ -285,6 +286,62 @@ describe("Entry CRUD", () => {
       insertTestEntry(db, "tool-a");
       insertTestEntry(db, "tool-b");
       expect(getEntryCount(db)).toBe(2);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("a short ref matching one conceptId across two bundles resolves deterministically (primary/lowest-id wins)", () => {
+    // Two sources carry the SAME conceptId (`scripts/my-tool`) under different
+    // bundle slugs → two `//scripts/my-tool`-suffixed item_refs. The short-ref
+    // suffix match must pick a STABLE winner, not whichever row SQLite visits
+    // first. The primary/highest-precedence source is indexed first (lowest id),
+    // so `ORDER BY id ASC` deterministically returns it.
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      const type = "script";
+      const name = "my-tool";
+      // Insert the primary bundle FIRST (it gets the lower id, mirroring a
+      // precedence-ordered index walk).
+      const primaryProv = deriveEntryProvenance(
+        { bundleId: "primary-kb", componentId: "primary-kb", adapterId: "akm" },
+        type,
+        name,
+      );
+      const primaryId = upsertEntry(
+        db,
+        "primary-kb-my-tool",
+        "/p/dir",
+        "/p/dir/my-tool.ts",
+        "/p",
+        makeEntry({ name, type, description: "primary" }),
+        "my-tool primary",
+        primaryProv,
+      );
+      const secondaryProv = deriveEntryProvenance(
+        { bundleId: "zzz-source", componentId: "zzz-source", adapterId: "akm" },
+        type,
+        name,
+      );
+      const secondaryId = upsertEntry(
+        db,
+        "zzz-source-my-tool",
+        "/z/dir",
+        "/z/dir/my-tool.ts",
+        "/z",
+        makeEntry({ name, type, description: "secondary" }),
+        "my-tool secondary",
+        secondaryProv,
+      );
+      expect(getEntryCount(db)).toBe(2);
+      expect(primaryId).toBeLessThan(secondaryId);
+
+      // Short ref → lowest-id (primary) row, and the same answer every call.
+      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
+      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
+      // Bundle-qualified refs still address each row exactly.
+      expect(findEntryIdByRef(db, "primary-kb//scripts/my-tool")).toBe(primaryId);
+      expect(findEntryIdByRef(db, "zzz-source//scripts/my-tool")).toBe(secondaryId);
     } finally {
       closeDatabase(db);
     }
