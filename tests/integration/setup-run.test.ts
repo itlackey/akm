@@ -287,10 +287,13 @@ describe("runSetupWizard", () => {
 
     // Real wizard prompt order (see SETUP_RUN_CAPTURE): stash dir -> LLM
     // provider -> semantic search -> registries -> registry stashes ->
-    // add-another-source loop -> output format/detail -> server install ->
-    // scheduled tasks -> small-model provider -> agent connection -> save.
+    // add-another-source loop -> output format/detail -> small-model provider
+    // -> agent connection -> save -> server install -> scheduled tasks. The
+    // scheduled-tasks work now runs AFTER the save confirm and config persist,
+    // so its confirm ("server install") trails the "Save this configuration?"
+    // confirm in the queue.
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, false, false, true);
+    promptState.confirms.push(false, false, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await runSetupWizard();
@@ -309,7 +312,7 @@ describe("runSetupWizard", () => {
     installSetupSeams();
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, true, true, false, true);
+    promptState.confirms.push(false, true, true, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
     setupState.checkEmbeddingResult = {
       available: false,
@@ -330,7 +333,7 @@ describe("runSetupWizard", () => {
     installSetupSeams();
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, false, false, true);
+    promptState.confirms.push(false, false, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
     setupState.indexError = new Error("index exploded");
 
@@ -369,7 +372,7 @@ describe("runSetupWizard", () => {
       "skip",
       "none",
     );
-    promptState.confirms.push(false, true, true, false, true);
+    promptState.confirms.push(false, true, true, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
     promptState.texts.push("384");
 
@@ -392,7 +395,7 @@ describe("runSetupWizard", () => {
     };
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, true, true, false, true);
+    promptState.confirms.push(false, true, true, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await runSetupWizard();
@@ -412,7 +415,7 @@ describe("runSetupWizard", () => {
     process.env.TMPDIR = path.join(storage.stashDir, "no-such-tmpdir");
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, true, true, false, true);
+    promptState.confirms.push(false, true, true, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     try {
@@ -430,7 +433,7 @@ describe("runSetupWizard", () => {
     installSetupSeams();
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, true, false, false, true);
+    promptState.confirms.push(false, true, false, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await runSetupWizard();
@@ -461,11 +464,35 @@ describe("runSetupWizard", () => {
     });
 
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
-    promptState.confirms.push(false, false, false, true);
+    promptState.confirms.push(false, false, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
     expect(setupState.indexCalls).toHaveLength(0);
+  });
+
+  test("cancelling at the final confirm persists nothing and never touches the scheduler", async () => {
+    installSetupSeams();
+    installIndexerNeverRunsSeam();
+
+    // Answer through to the "Save this configuration?" confirm, then decline it
+    // (last confirm = false). The scheduled-tasks work — the "server install"
+    // confirm plus the "scheduled core tasks" multiselect, the wizard's only
+    // OS-visible side effect — now runs ONLY after that save. Declining must
+    // reach neither it, nor stash init, nor the index, and must write no
+    // config: cancelling leaves no task files or scheduler entries behind.
+    promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
+    promptState.confirms.push(false, false, false); // apply / semantic / SAVE=false
+    promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
+
+    // bail() calls process.exit(0), which the harness turns into a throw.
+    await expect(runSetupWizard()).rejects.toThrow(/process\.exit\(0\)/);
+
+    expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
+    expect(setupState.initCalls).toEqual([]);
+    expect(setupState.indexCalls).toHaveLength(0);
+    expect(promptState.trace.some((line) => line.includes("server install"))).toBe(false);
+    expect(promptState.trace.some((line) => line.includes("scheduled core tasks"))).toBe(false);
   });
 });

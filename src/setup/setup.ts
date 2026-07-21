@@ -460,16 +460,13 @@ export function buildSetupSteps(options: {
         ctx.apply({ output });
       },
     },
-    {
-      id: "scheduled-tasks",
-      label: "Scheduled Tasks",
-      // Interactive-only: `akm init` / `--yes` skip this step so headless
-      // runs never enable a scheduled task (see issue #512).
-      async run() {
-        await stepDefaultImproveTasks();
-        await stepScheduledTasks();
-      },
-    },
+    // NOTE: the "Scheduled Tasks" step is deliberately NOT part of this list.
+    // It is the only wizard step with externally-visible side effects (task
+    // files + OS scheduler entries), so `runSetupWizard` runs it by hand AFTER
+    // the config is confirmed and persisted — see the call there. Keeping it
+    // out of the step list also preserves the issue #512 guard: the
+    // non-interactive entry points (`akm init` / `--yes`) run this list but
+    // never that step, so headless runs never enable a scheduled task.
   ];
 
   return { steps, outcome };
@@ -592,6 +589,19 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const { config: savedConfig } = await saveSetupConfig(current, finalConfig, async () => {
     if (!opts?.noInit) await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
   });
+
+  // Scheduled tasks are the wizard's only externally-visible side effect
+  // (task files + OS scheduler entries). Run them ONLY now that the config is
+  // confirmed and persisted, so cancelling at the final confirm above leaves
+  // nothing behind. The task-setup path re-reads config via `loadConfig()`,
+  // which now returns the just-saved config (the cache is invalidated on
+  // write) — so tasks register against the confirmed engine/connection rather
+  // than the stale pre-wizard config. This is interactive-only: `akm init` /
+  // `--yes` go through the non-interactive entry points, which never reach
+  // here (issue #512).
+  p.log.step("Scheduled Tasks");
+  await stepDefaultImproveTasks();
+  await stepScheduledTasks();
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();

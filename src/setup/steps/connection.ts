@@ -269,7 +269,6 @@ export async function stepLlm(
       endpoint: verified.endpoint,
       model: harness.model ?? "",
       temperature: 0.3,
-      maxTokens: 1024,
       ...(harness.apiKeyEnvVar ? { apiKey: `\${${harness.apiKeyEnvVar}}` } : {}),
     };
     if (harness.provider) llmConfig.provider = harness.provider as LlmConnectionConfig["provider"];

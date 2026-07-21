@@ -164,15 +164,18 @@ describe("stepScheduledTasks", () => {
 });
 
 describe("scheduled-tasks step registration", () => {
-  test("is interactive-only (not nonInteractive) so --yes / init skip it", () => {
+  test("is NOT part of buildSetupSteps so --yes / init never touch the scheduler", () => {
+    // The scheduled-tasks step is the only wizard step with externally-visible
+    // side effects (task files + OS scheduler entries). It was pulled out of
+    // the shared step list so `runSetupWizard` can run it by hand only AFTER
+    // the config is confirmed and persisted. Keeping it out of the list is
+    // what preserves the issue #512 guard: the non-interactive entry points
+    // run this list but never the scheduled-tasks work.
     const { steps } = buildSetupSteps({
       online: false,
       semanticSearchOutcome: { mode: "off", prepareAssets: false },
     });
-    const step = steps.find((s) => s.id === "scheduled-tasks");
-    expect(step).toBeDefined();
-    expect(step?.label).toBe("Scheduled Tasks");
-    expect(step?.nonInteractive).toBeFalsy();
-    expect(steps[steps.length - 1]?.id).toBe("scheduled-tasks");
+    expect(steps.find((s) => s.id === "scheduled-tasks")).toBeUndefined();
+    expect(steps[steps.length - 1]?.id).toBe("output");
   });
 });

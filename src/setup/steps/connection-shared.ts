@@ -30,7 +30,6 @@ export function llmConnection(
     endpoint,
     model,
     temperature: 0.3,
-    maxTokens: 1024,
     ...(extra ?? {}),
   };
 }
