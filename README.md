@@ -64,10 +64,10 @@ bun run build
   ```sh
   akm show workflows/ship-release
   ```
-- **Capture local knowledge** — save discoveries as memories, imported docs, or wiki pages [(details)](docs/features/knowledge-management.md)
+- **Capture local knowledge** — save discoveries as memories or imported docs [(details)](docs/features/knowledge-management.md)
   ```sh
   akm remember "Staging deploys require VPN"
-  akm import ./notes/runbook.md --wiki ops
+  akm import ./notes/runbook.md
   ```
 - **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/features/workflows.md)
   ```sh
@@ -127,19 +127,17 @@ akm show scripts/migrate.sh
 **Capture and route knowledge**
 ```sh
 akm remember "Hot-fix deploys skip staging" --target team-stash
-akm import ./incident-report.md --wiki ops
-akm wiki create ops
+akm import ./incident-report.md
 ```
 
-**Build a living wiki (Karpathy LLM wiki pattern)**
+**Use a living wiki (Karpathy LLM wiki pattern)**
 ```sh
-akm wiki create research                   # scaffold wikis/research/ with schema/index/log/raw/
-akm wiki stash research https://arxiv.org/abs/2404.01744  # fetch raw source into raw/
-akm wiki stash research ./notes/meeting.md # stash local notes as immutable raw
-akm wiki ingest research                   # dispatch defaults.engine to run the ingest workflow end-to-end
+akm add github:team/research-wiki          # install an LLM-wiki bundle (schema.md + pages/ + raw/)
+akm search "attention"                     # its pages are indexed like any other content
+akm show research-wiki//pages/attention    # read a page by bundle//conceptId ref
 ```
 
-akm implements [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: raw sources live in `raw/` (immutable), the agent writes synthesized pages alongside them, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. akm surfaces paths and invariants; your agent does the writing. See [docs/wikis.md](docs/wikis.md).
+akm supports [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern as a first-class **bundle format**: raw sources live in `raw/` (immutable), the agent writes synthesized pages under `pages/`, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. A bundle whose root holds `schema.md` plus `pages/` is recognized automatically at install time; there is no separate wiki command family — your agent does the writing, akm indexes the result. See [docs/wikis.md](docs/wikis.md).
 
 **Improvement loop**
 ```sh

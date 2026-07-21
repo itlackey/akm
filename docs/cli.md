@@ -94,7 +94,7 @@ akm setup --yes                  # Non-interactive, accepts all defaults
 
 Creates one subdirectory per asset type under the stash path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
-`memories/`, `env/`, `secrets/`, `wikis/`, and `lessons/`. See
+`memories/`, `env/`, `secrets/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ```sh
@@ -358,7 +358,7 @@ type parsed from the query.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `wiki`, `lesson`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `lesson`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
@@ -426,7 +426,7 @@ akm curate "learn the release workflow" --source both --format text
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `wiki`, `lesson`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `env`, `secret`, `lesson`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
@@ -506,10 +506,6 @@ Assets from non-writable sources (git clones, npm packages, websites) return
 `editable: false`. `akm show` queries the local FTS5 index directly — there
 is no remote-provider fallback. If the ref points to a package origin that
 is not installed, `akm show` returns guidance to run `akm add <origin>` first.
-
-`akm show wiki:<name>` returns the same summary as `akm wiki show <name>` —
-path, description from `schema.md`, page and raw counts, and the last 3
-`log.md` entries.
 
 ### workflow
 
@@ -688,7 +684,6 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | `--provider` | Provider type (e.g. `website`, `npm`). Required for URL sources where inference would be ambiguous |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
-| `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
 | `--allow-insecure` | Bypass plain-HTTP source rejection **and** dangerous env key blocking. Accepts two risks: (1) plain-HTTP download without TLS, (2) env keys that can hijack process execution. Use only after reviewing the stash manually |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
@@ -901,12 +896,11 @@ akm mv knowledge/guides/old guides/new              # Body refs, xrefs:/refs: li
 What it does, in order (designed to be safely re-runnable if interrupted):
 
 1. **Validates everything first** — a failure exits `2` with the standard
-   error envelope and moves nothing. Rejected: wiki refs (wikis have their
-   own xref + lint system — use `akm wiki lint`), workflow refs (workflows
+   error envelope and moves nothing. Rejected: workflow refs (workflows
    may be `.yaml`/`.yml` programs — rename the file manually under
    `workflows/`, keeping its extension, fix inbound refs in the same pass,
-   and verify with `akm lint`), cross-type targets (`memory:` →
-   `knowledge:`), an already-existing target (including a memory target
+   and verify with `akm lint`), cross-type targets (`memories/` →
+   `knowledge/`), an already-existing target (including a memory target
    whose orphaned `<name>.derived.md` twin still exists — a rename must not
    silently adopt a stranger's distillation), an unresolvable source ref,
    targets escaping the type root (`../`), non-canonical source spellings
@@ -1076,9 +1070,6 @@ akm remember "Staging now uses the new gateway endpoint" \
 
 # Route the write to a specific writable stash (0.8.0+):
 akm remember "Deployment needs VPN access" --target team-stash
-
-# Save into a wiki directory instead of memories/ (0.8.0+):
-akm remember "Deployment needs VPN access" --wiki architecture
 ```
 
 | Flag | Description |
@@ -1098,7 +1089,6 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
-| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/`) instead of `memories/`. The wiki must already exist (created with `akm wiki create`). |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.

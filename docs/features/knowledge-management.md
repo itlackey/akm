@@ -29,9 +29,6 @@ cat long-meeting-notes.md | akm remember --name meeting-2026-05 --enrich
 
 # Route to a named writable stash:
 akm remember "Use staging cluster for blue-green" --target team-stash
-
-# Save into a wiki instead of memories/:
-akm remember "Auth service uses mTLS on port 8443" --wiki architecture
 ```
 
 Memories support scope flags (`--user`, `--agent`, `--run`, `--channel`) for
@@ -59,10 +56,6 @@ akm import https://example.com/docs/auth
 
 # Route to a named writable stash:
 akm import ./docs/auth-flow.md --target team-stash
-
-# Save into a wiki's raw/ directory:
-akm import ./incident-report.md --wiki ops
-akm import https://arxiv.org/abs/2404.01744 --wiki research
 ```
 
 URL imports fetch only the exact page you pass; they do not crawl linked
@@ -76,47 +69,24 @@ akm import ./postmortem-2026-05.md --name postmortem-2026-05
 akm show knowledge/postmortem-2026-05
 ```
 
-## akm wiki
+## LLM wikis
 
-`akm wiki` provides multi-wiki knowledge bases following the Karpathy LLM-wiki
-pattern: raw immutable sources live in `raw/`, an AI agent writes synthesized
-pages alongside them, and a `schema.md` rulebook keeps voice and structure
-consistent across sessions. akm surfaces paths and invariants; your agent does
-the actual writing.
-
-```sh
-# Lifecycle
-akm wiki create research
-akm wiki list
-akm wiki show research
-akm wiki remove research -y
-
-# Add raw source material
-akm wiki stash research ./paper.md
-akm wiki stash research https://arxiv.org/abs/2404.01744
-echo "# Notes" | akm wiki stash research - --as my-notes
-
-# Navigate and maintain
-akm wiki pages research
-akm wiki search research "attention mechanism"
-akm wiki lint research       # structural checks: orphans, broken xrefs, stale index
-akm wiki ingest research     # dispatch defaults.engine to run the ingest workflow
-```
-
-Three layers: **raw sources** (`raw/`) that you never edit after stashing,
-**wiki pages** that your agent writes using its native file tools, and a
-**schema** (`schema.md`) you define to set the voice and conventions.
-`akm index` regenerates each wiki's `index.md` as a side effect.
-
-**Example: build a research wiki from arxiv papers**
+As of 0.9.0, an LLM wiki (the Karpathy pattern — raw immutable sources in
+`raw/`, agent-authored pages under `pages/`, a `schema.md` rulebook) is a
+**bundle format**, not an akm asset type; the `akm wiki` command family was
+removed. A bundle whose root holds `schema.md` plus `pages/` is recognized
+automatically at install time, and its pages are indexed like any other
+content:
 
 ```sh
-akm wiki create ml-research
-akm wiki stash ml-research https://arxiv.org/abs/1706.03762 --as attention
-akm wiki ingest ml-research   # agent runs the ingest workflow and writes the pages
-akm index
-akm wiki lint ml-research
+akm add github:team/research-wiki        # install a wiki bundle (or a local dir)
+akm search "attention mechanism"         # pages rank alongside all other assets
+akm show research-wiki//pages/attention  # read a page by bundle//conceptId ref
 ```
+
+Writing pages, ingesting raw material, and maintaining `index.md`/`log.md`
+are your agent's job, guided by `schema.md` — akm indexes the result. See
+[Wikis](../wikis.md) for the full format.
 
 ## akm env / akm secret
 
@@ -203,5 +173,5 @@ a secret needs to be expunged from history.
 - [Search & Discovery](search-discovery.md) — finding assets you have captured
 - [Sources & Registries](sources-registries.md) — bringing in external knowledge at scale
 - [Workflows](workflows.md) — structured procedures as a knowledge format
-- [CLI Reference](../cli.md) — full flag documentation for `remember`, `import`, `wiki`, `env`, and `secret`
-- [Wikis](../wikis.md) — detailed wiki lifecycle and ingest workflow
+- [CLI Reference](../cli.md) — full flag documentation for `remember`, `import`, `env`, and `secret`
+- [Wikis](../wikis.md) — the LLM-wiki bundle format

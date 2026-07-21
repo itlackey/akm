@@ -1,7 +1,7 @@
 ---
 category: convention
 description: Where to place an asset in the stash — the one path partition axis, chosen by asset type, so refs stay stable and slug search (akm search "<slug>" --type <type>) co-locates related assets.
-when_to_use: Surfaced to authoring agents when they create or move any non-wiki asset and must decide its subdirectory/name.
+when_to_use: Surfaced to authoring agents when they create or move any asset and must decide its subdirectory/name.
 ---
 
 <!--
@@ -43,11 +43,9 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   - `lessons/clientX/migration-rollback-gotcha`
   - `secrets/clientX/api-key`
 - **Reuse-born types → stable domain from a short vocabulary.**
-  `knowledge`, `skill`, `wiki`, `fact`, `script`. These are meant to be reused
+  `knowledge`, `skill`, `fact`, `script`. These are meant to be reused
   across projects, so co-locate them by subject — any project retrieves them
-  with `akm search "<domain>" --type <type>`. For a wiki the domain names the
-  wiki itself (`wikis/auth/`); inside it, its `schema.md` and wiki lint govern
-  layout, not these rules.
+  with `akm search "<domain>" --type <type>`.
   - `knowledge/auth/oauth-refresh-races`
   - `skills/testing/flaky-test-triage`
   - `facts/policies/pii-handling`
@@ -115,7 +113,7 @@ cross-project reuse.
   xref-fixing operation: grep the stash for the old ref string and fix every
   inbound reference in the same pass.
 - When a project-scoped note turns out to be domain-general, **append, don't
-  promote**: write a new `knowledge:<domain>/…` asset that xrefs the originating
+  promote**: write a new `knowledge/<domain>/…` asset that xrefs the originating
   memory. Never rename the memory up a rung — that breaks its ref. The atomic
   note still serves factoid recall; the new synthesis serves reuse; the xref
   bridges them.

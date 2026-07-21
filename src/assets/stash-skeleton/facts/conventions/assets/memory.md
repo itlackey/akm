@@ -44,4 +44,4 @@ Use a memory when a future agent would make a better decision by knowing a speci
   answer, so no per-asset judgment is needed. Add the subject as a tag
   (`tags: [auth, projectA]`) for cross-cutting recall.
 - When a memory turns out to be domain-general, **append** a new
-  `knowledge:<domain>/…` asset that xrefs it — never rename the memory up a rung.
+  `knowledge/<domain>/…` asset that xrefs it — never rename the memory up a rung.

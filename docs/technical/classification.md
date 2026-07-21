@@ -9,18 +9,30 @@ the per-format adapter is the unit of recognition.
 
 ## Built-in adapters
 
-`registerBuiltinAdapters()` (`src/core/adapter/adapters/index.ts`) registers three
-built-in adapters:
+The registry is a **static frozen list** (`BUILTIN_ADAPTERS` in
+`src/core/adapter/adapters/index.ts`, exposed through
+`src/core/adapter/registry.ts`) — always populated at module load, no
+registration call required. Eleven built-ins, in probe order:
 
 | Adapter id | Format | Recognizes |
 | --- | --- | --- |
-| `akm` | The classic AKM stash layout | scripts, skills, commands, agents, knowledge, workflows, memories, lessons, env, secrets, facts, tasks, sessions |
+| `website-snapshot` | Crawled website snapshot bundle (read-only) | snapshot pages |
+| `agent-skills` | Agent-skills package (root `SKILL.md`) | skills |
+| `claude` | A `.claude/` tool directory | commands, agents, skills, settings-adjacent files |
+| `opencode` | An `.opencode/` tool directory | commands, agents, skills |
+| `dotenv` | Env-file bundle | env/secret whole-file assets (values never indexed) |
+| `akm-workflow` | Workflow-dir component | workflow programs |
+| `akm-task` | Task-dir component | scheduled task definitions |
 | `llm-wiki` | LLM Wiki bundle | a wiki root (`schema.md` + `pages/`) and its pages, raw, xrefs, citations |
 | `okf` | Open Knowledge Format bundle | OKF concept documents |
+| `akm` | The classic AKM stash layout | scripts, skills, commands, agents, knowledge, workflows, memories, lessons, env, secrets, facts, tasks, sessions |
+| `generic-files` | Catch-all file mount | explicit configuration only — never auto-probed |
 
-Adapters are probed in a specific-first order (`llm-wiki` before `okf`) so a more
-specific `looksLikeRoot` probe wins when roots legitimately overlap — an LLM Wiki
-root also carries a root `index.md`, which okf's loose probe would otherwise claim.
+`looksLikeRoot` probes run most-specific-first in the list order above; the
+first match wins and the winner is recorded per component. A root matching no
+probe falls back to `akm` (a recorded deviation from spec §1.2(3)'s `okf`
+fallback — see `FALLBACK_ADAPTER_ID` in `src/indexer/installations.ts`).
+`generic-files` never participates in probing.
 
 ## Item types
 

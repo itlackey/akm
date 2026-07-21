@@ -1,7 +1,7 @@
 ---
 category: convention
-description: The closed vocabulary of domain prefixes for reuse-born assets (knowledge/skill/wiki/fact/script), plus canonical entity spellings. Edit this to match your stash.
-when_to_use: Surfaced to authoring agents alongside the other convention facts; consult it when picking a domain prefix for a knowledge, skill, fact, or script asset (for wikis, the domain names the wiki).
+description: The closed vocabulary of domain prefixes for reuse-born assets (knowledge/skill/fact/script), plus canonical entity spellings. Edit this to match your stash.
+when_to_use: Surfaced to authoring agents alongside the other convention facts; consult it when picking a domain prefix for a knowledge, skill, fact, or script asset.
 ---
 
 <!--
@@ -14,10 +14,9 @@ when_to_use: Surfaced to authoring agents alongside the other convention facts; 
 
 # Domain vocabulary
 
-Reuse-born assets (`knowledge`, `skill`, `wiki`, `fact`, `script`) take a
+Reuse-born assets (`knowledge`, `skill`, `fact`, `script`) take a
 **domain prefix** from this list, e.g. `knowledge/auth/oauth-refresh-races`,
-`skills/testing/flaky-test-triage` (for a wiki, the domain names the wiki:
-`wikis/auth/`). Pick the closest match. If two fit, take the one naming the
+`skills/testing/flaky-test-triage`. Pick the closest match. If two fit, take the one naming the
 SUBJECT of the doc (what it teaches, not where it was met) and put the other in
 tags; if still tied, the earlier entry in this list wins. If nothing fits, write
 the asset at the type root and propose an addition here — do **not** invent a
