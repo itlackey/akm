@@ -60,9 +60,11 @@ When metadata enhancement is enabled, the enrichment pass runs after all
 entries are upserted and FTS is rebuilt. Key properties:
 
 **Concurrency** — directories are enriched in parallel using a bounded
-concurrency pool of 4 workers (`concurrentMap(..., 4)` from
-`src/core/concurrent.ts`). Individual entry failures within a directory are
-isolated; the pool continues with remaining work.
+concurrency pool (`concurrentMap` from `src/core/concurrent.ts`). The pool
+width defaults to 2 for remote LLM endpoints and 1 for local model servers
+(localhost endpoints — one loaded model at a time); `llm.concurrency` in
+config.json overrides the default. Individual entry failures within a
+directory are isolated; the pool continues with remaining work.
 
 **`quality: "enriched"` caching** — after a successful LLM enrichment call,
 the entry's `quality` field is set to `"enriched"` and written back to the

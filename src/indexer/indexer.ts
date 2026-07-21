@@ -201,17 +201,23 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
+export function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
   if (typeof llmConfig?.concurrency === "number") return llmConfig.concurrency;
   if (!llmConfig?.endpoint) return 1;
   try {
     const url = new URL(llmConfig.endpoint);
-    const host = url.hostname.toLowerCase();
+    // URL.hostname keeps IPv6 brackets ("[::1]") — strip them so the loopback
+    // comparison actually matches.
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) return 1;
   } catch {
     return 1;
   }
-  return 4;
+  // Remote endpoints default to a modest 2-wide pool (owner ruling 2026-07-21):
+  // enough to overlap request latency without hammering rate-limited APIs.
+  // Local model servers stay at 1 (single loaded model; parallel requests
+  // trigger reload thrash). `llm.concurrency` in config.json overrides both.
+  return 2;
 }
 
 // ── Phase functions ──────────────────────────────────────────────────────────
@@ -1400,10 +1406,9 @@ async function enhanceDirsWithLlm(
         });
         return undefined;
       },
-      // Default concurrency of 4 works well for cloud LLM APIs. Local model
-      // servers (LM Studio, Ollama) run one inference at a time — set
-      // `llm.concurrency: 1` in config.json to avoid "Model reloaded" / 500
-      // errors from concurrent request overload.
+      // Defaults: 2 for remote LLM APIs, 1 for local model servers (LM
+      // Studio, Ollama run one inference at a time — parallel requests cause
+      // "Model reloaded" / 500 errors). `llm.concurrency` overrides.
       getDefaultLlmConcurrency(llmConfig),
     );
   } finally {
@@ -1848,8 +1853,8 @@ async function enhanceStashWithLlm(
         return entry;
       }
     },
-    // Default concurrency of 4 works well for cloud LLM APIs. Set
-    // `llm.concurrency: 1` in config.json for local model servers.
+    // Defaults: 2 for remote LLM APIs, 1 for local model servers.
+    // `llm.concurrency` in config.json overrides.
     getDefaultLlmConcurrency(llmConfig),
   );
 
