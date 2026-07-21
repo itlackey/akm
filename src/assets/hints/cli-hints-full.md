@@ -102,7 +102,7 @@ asset type — there is no `akm wiki` command family. akm's LLM Wiki adapter
 recognizes one deterministically at install time: a bundle component whose root
 holds a `schema.md` plus a `pages/` directory is mounted as an `llm-wiki`
 component. Its pages are then indexed like any other content and resolve to
-`bundle//conceptId` refs (e.g. `team-catalog//wiki/attention`).
+`bundle//conceptId` refs (e.g. `team-catalog//pages/attention`).
 
 Install one as a source, then search and read its pages with the ordinary
 commands — no wiki-specific verbs:
@@ -110,7 +110,7 @@ commands — no wiki-specific verbs:
 ```sh
 akm add owner/llm-wiki-repo                    # Install an LLM Wiki bundle as a source (npm, GitHub, git, or local dir)
 akm search "attention"                         # Wiki pages surface in ordinary search results
-akm show team-catalog//wiki/attention          # Read a page by its bundle//conceptId ref (copy the ref from search)
+akm show team-catalog//pages/attention          # Read a page by its bundle//conceptId ref (copy the ref from search)
 akm list                                       # Confirm the bundle is installed
 ```
 

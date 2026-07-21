@@ -37,7 +37,7 @@ assets:
 - **`facts/conventions/organization`** — the single path axis, chosen by asset
   type. **Scope-born** types (`memory`, `lesson`, `task`, `env`, `secret`) go
   under the current **project/client** slug; **reuse-born** types (`knowledge`,
-  `skill`, `wiki`, `fact`, `script`) go under a stable **domain**; global types
+  `skill`, `fact`, `script`) go under a stable **domain**; global types
   stay at the type root.
 - **`facts/conventions/backlinks`** — how to cross-link: a provenance xref
   whenever an asset derives from another, sparse real associative links,
