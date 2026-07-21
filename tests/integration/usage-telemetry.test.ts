@@ -75,8 +75,8 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].event_type).toBe("search");
-      expect(events[0].query).toBe("deploy tool");
+      expect(events[0]!.event_type).toBe("search");
+      expect(events[0]!.query).toBe("deploy tool");
     } finally {
       db.close();
     }
@@ -95,8 +95,8 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].event_type).toBe("show");
-      expect(events[0].entry_ref).toBe("skills/deploy");
+      expect(events[0]!.event_type).toBe("show");
+      expect(events[0]!.entry_ref).toBe("skills/deploy");
     } finally {
       db.close();
     }
@@ -117,9 +117,9 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].event_type).toBe("feedback");
-      expect(events[0].signal).toBe("positive");
-      expect(events[0].entry_ref).toBe("skills/deploy");
+      expect(events[0]!.event_type).toBe("feedback");
+      expect(events[0]!.signal).toBe("positive");
+      expect(events[0]!.entry_ref).toBe("skills/deploy");
     } finally {
       db.close();
     }
@@ -137,7 +137,7 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].signal).toBe("negative");
+      expect(events[0]!.signal).toBe("negative");
     } finally {
       db.close();
     }
@@ -162,11 +162,11 @@ describe("Usage Telemetry", () => {
 
       const showEvents = getUsageEvents(db, { event_type: "show" });
       expect(showEvents).toHaveLength(1);
-      expect(showEvents[0].event_type).toBe("show");
+      expect(showEvents[0]!.event_type).toBe("show");
 
       const feedbackEvents = getUsageEvents(db, { event_type: "feedback" });
       expect(feedbackEvents).toHaveLength(1);
-      expect(feedbackEvents[0].event_type).toBe("feedback");
+      expect(feedbackEvents[0]!.event_type).toBe("feedback");
     } finally {
       db.close();
     }
@@ -223,10 +223,10 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].created_at).toBeDefined();
-      expect(typeof events[0].created_at).toBe("string");
+      expect(events[0]!.created_at).toBeDefined();
+      expect(typeof events[0]!.created_at).toBe("string");
       // Verify it looks like a datetime string (YYYY-MM-DD HH:MM:SS)
-      expect(events[0].created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(events[0]!.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     } finally {
       db.close();
     }
@@ -247,8 +247,8 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].metadata).toBeDefined();
-      const parsed = JSON.parse(events[0].metadata ?? "");
+      expect(events[0]!.metadata).toBeDefined();
+      const parsed = JSON.parse(events[0]!.metadata ?? "");
       expect(parsed.entry_refs).toEqual(["skills/deploy", "commands/rollback"]);
       expect(parsed.resultCount).toBe(5);
     } finally {
@@ -268,8 +268,8 @@ describe("Usage Telemetry", () => {
 
       const filtered = getUsageEvents(db, { event_type: "show", entry_ref: "skills/deploy" });
       expect(filtered).toHaveLength(1);
-      expect(filtered[0].event_type).toBe("show");
-      expect(filtered[0].entry_ref).toBe("skills/deploy");
+      expect(filtered[0]!.event_type).toBe("show");
+      expect(filtered[0]!.entry_ref).toBe("skills/deploy");
     } finally {
       db.close();
     }
@@ -289,7 +289,7 @@ describe("Usage Telemetry", () => {
 
       const events = getUsageEvents(db);
       expect(events).toHaveLength(1);
-      expect(events[0].entry_id).toBe(42);
+      expect(events[0]!.entry_id).toBe(42);
     } finally {
       db.close();
     }

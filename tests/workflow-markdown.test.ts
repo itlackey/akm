@@ -55,15 +55,15 @@ describe("parseWorkflow", () => {
       { name: "version", description: "Version being released" },
     ]);
     expect(doc.steps).toHaveLength(2);
-    expect(doc.steps[0].id).toBe("validate");
-    expect(doc.steps[0].title).toBe("Validate Release Inputs");
-    expect(doc.steps[0].instructions.text).toBe("Confirm release notes, tag, and version are present.");
-    expect(doc.steps[0].completionCriteria?.map((c) => c.text)).toEqual([
+    expect(doc.steps[0]!.id).toBe("validate");
+    expect(doc.steps[0]!.title).toBe("Validate Release Inputs");
+    expect(doc.steps[0]!.instructions.text).toBe("Confirm release notes, tag, and version are present.");
+    expect(doc.steps[0]!.completionCriteria?.map((c) => c.text)).toEqual([
       "Release notes reviewed",
       "Version matches tag",
     ]);
-    expect(doc.steps[0].sequenceIndex).toBe(0);
-    expect(doc.steps[1].completionCriteria).toBeUndefined();
+    expect(doc.steps[0]!.sequenceIndex).toBe(0);
+    expect(doc.steps[1]!.completionCriteria).toBeUndefined();
   });
 
   test("accepts canonical xrefs in workflow frontmatter", () => {
@@ -95,19 +95,19 @@ describe("parseWorkflow", () => {
 
     // VALID_WORKFLOW: frontmatter ends at line 8, "# Workflow: Ship Release" at line 10,
     // first "## Step:" at line 12, second "## Step:" at line 22.
-    expect(first.source.path).toBe("workflows/test.md");
-    expect(first.source.start).toBe(12);
-    expect(first.instructions.source.start).toBeGreaterThanOrEqual(first.source.start);
-    expect(first.instructions.source.end).toBeLessThan(second.source.start);
-    expect(first.completionCriteria?.[0].source.start).toBeGreaterThan(first.instructions.source.end);
-    expect(second.source.start).toBe(22);
+    expect(first!.source.path).toBe("workflows/test.md");
+    expect(first!.source.start).toBe(12);
+    expect(first!.instructions.source.start).toBeGreaterThanOrEqual(first!.source.start);
+    expect(first!.instructions.source.end).toBeLessThan(second!.source.start);
+    expect(first!.completionCriteria![0]!.source.start).toBeGreaterThan(first!.instructions.source.end);
+    expect(second!.source.start).toBe(22);
   });
 
   test("rejects missing workflow title", () => {
     const result = parse(VALID_WORKFLOW.replace("# Workflow: Ship Release\n\n", ""));
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.errors[0].message).toContain('"# Workflow: <title>"');
+    expect(result.errors[0]!.message).toContain('"# Workflow: <title>"');
   });
 
   test("rejects duplicate step ids", () => {
@@ -204,8 +204,8 @@ Do the thing.
     expectOk(result);
     expect(result.document.title).toBe("Example");
     expect(result.document.steps).toHaveLength(1);
-    expect(result.document.steps[0].id).toBe("first-step");
-    expect(result.document.steps[0].title).toBe("First Step");
+    expect(result.document.steps[0]!.id).toBe("first-step");
+    expect(result.document.steps[0]!.title).toBe("First Step");
   });
 
   test("existing valid workflows without intro paragraph parse identically", () => {
@@ -213,8 +213,8 @@ Do the thing.
     expectOk(result);
     expect(result.document.title).toBe("Ship Release");
     expect(result.document.steps).toHaveLength(2);
-    expect(result.document.steps[0].id).toBe("validate");
-    expect(result.document.steps[1].id).toBe("deploy");
+    expect(result.document.steps[0]!.id).toBe("validate");
+    expect(result.document.steps[1]!.id).toBe("deploy");
   });
 
   test("rejects workflow with intro paragraph but no steps", () => {

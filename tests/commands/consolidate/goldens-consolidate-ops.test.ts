@@ -279,7 +279,7 @@ describe("handleMergeOp — merge 1 primary + 1 secondary", () => {
       expect(fs.existsSync(secondary.filePath)).toBe(false);
       const archived = listArchiveFiles(root);
       expect(archived).toHaveLength(1);
-      const archivedAsset = readArchiveAsset(root, archived[0]);
+      const archivedAsset = readArchiveAsset(root, archived[0]!);
       expect(archivedAsset.frontmatter.status).toBe("superseded");
       expect(archivedAsset.frontmatter.superseded_by).toBe(primary.ref);
       expect(archivedAsset.frontmatter.superseded_reason).toBe("merged into primary");
@@ -551,7 +551,7 @@ describe("handleDeleteOp", () => {
       expect(fs.existsSync(filePath)).toBe(false);
       const archived = listArchiveFiles(root);
       expect(archived).toHaveLength(1);
-      const archivedAsset = readArchiveAsset(root, archived[0]);
+      const archivedAsset = readArchiveAsset(root, archived[0]!);
       expect(archivedAsset.frontmatter.status).toBe("superseded");
       expect(archivedAsset.frontmatter.superseded_reason).toBe("redundant");
       expect(archivedAsset.frontmatter.superseded_by).toBeUndefined();

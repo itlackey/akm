@@ -112,7 +112,7 @@ function snapshotSandboxRoots(stashDir: string): Record<string, Map<string, stri
 function expectSandboxRootsUnchanged(before: Record<string, Map<string, string>>, stashDir: string): void {
   const after = snapshotSandboxRoots(stashDir);
   const diffs = Object.keys(before).flatMap((name) =>
-    diffSnapshots(before[name], after[name]).map((diff) => `${name}: ${diff}`),
+    diffSnapshots(before[name]!, after[name]!).map((diff) => `${name}: ${diff}`),
   );
   if (diffs.length > 0) {
     throw new Error(`Dry-run leaked AKM artifacts:\n${diffs.join("\n")}`);
@@ -154,7 +154,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
       await akmIndex({ stashDir, full: true });
 
       const before = snapshotSandboxRoots(stashDir);
-      expect(before.stash.size).toBeGreaterThan(0);
+      expect(before.stash!.size).toBeGreaterThan(0);
 
       const result = await akmImprove({
         scope: "memory",

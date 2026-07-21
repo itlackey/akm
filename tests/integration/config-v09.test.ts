@@ -244,9 +244,9 @@ describe("0.9 config contract", () => {
     const resolved = resolveConfiguredSources(config);
     expect(resolved.map((s) => s.name)).toEqual(["primary", "catalog", "docs"]);
     expect(resolved[0]).toMatchObject({ name: "primary", primary: true, writable: true });
-    expect(resolved[0].source).toEqual({ type: "filesystem", path: "/home/u/akm" });
-    expect(resolved[1].source).toEqual({ type: "git", url: "https://example.test/catalog.git" });
-    expect(resolved[2].source).toMatchObject({ type: "website", url: "https://example.test/docs/", maxPages: 25 });
+    expect(resolved[0]!.source).toEqual({ type: "filesystem", path: "/home/u/akm" });
+    expect(resolved[1]!.source).toEqual({ type: "git", url: "https://example.test/catalog.git" });
+    expect(resolved[2]!.source).toMatchObject({ type: "website", url: "https://example.test/docs/", maxPages: 25 });
   });
 
   test("rejects defaultBundle that names no bundle and a stray bindings block", () => {

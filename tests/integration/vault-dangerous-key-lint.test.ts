@@ -157,11 +157,11 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/.env", "vault:default");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].issue).toBe("dangerous-vault-key");
-    expect(findings[0].file).toBe("vaults/.env");
-    expect(findings[0].detail).toContain("LD_PRELOAD");
-    expect(findings[0].detail).toContain("akm env run");
-    expect(findings[0].fixed).toBe(false);
+    expect(findings[0]!.issue).toBe("dangerous-vault-key");
+    expect(findings[0]!.file).toBe("vaults/.env");
+    expect(findings[0]!.detail).toContain("LD_PRELOAD");
+    expect(findings[0]!.detail).toContain("akm env run");
+    expect(findings[0]!.fixed).toBe(false);
   });
 
   test("returns one finding per dangerous key", () => {
@@ -224,7 +224,7 @@ describe("checkVaultForDangerousKeys", () => {
     const vaultPath = writeVault(stashDir, "staging.env", "BASH_ENV=/evil/rc\n");
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/staging.env", "vault:staging");
 
-    expect(findings[0].detail).toContain("vault:staging");
+    expect(findings[0]!.detail).toContain("vault:staging");
   });
 
   test("flags LD_BIND_NOW (extended LD_* family)", () => {
@@ -233,7 +233,7 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/ld.env", "vault:ld");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].detail).toContain("LD_BIND_NOW");
+    expect(findings[0]!.detail).toContain("LD_BIND_NOW");
   });
 
   test("flags GIT_SSH_COMMAND (git RCE vector)", () => {
@@ -242,7 +242,7 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/git.env", "vault:git");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].detail).toContain("GIT_SSH_COMMAND");
+    expect(findings[0]!.detail).toContain("GIT_SSH_COMMAND");
   });
 
   test("flags GIT_CONFIG_* variables (git config injection family)", () => {
@@ -251,7 +251,7 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/git-config.env", "vault:git-config");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].detail).toContain("GIT_CONFIG_GLOBAL");
+    expect(findings[0]!.detail).toContain("GIT_CONFIG_GLOBAL");
   });
 
   test("flags NODE_TLS_REJECT_UNAUTHORIZED (MITM enabler)", () => {
@@ -260,7 +260,7 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/tls.env", "vault:tls");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].detail).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
+    expect(findings[0]!.detail).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
   });
 
   test("flags BASH_FUNC_ prefixed keys (Shellshock pattern check)", () => {
@@ -271,7 +271,7 @@ describe("checkVaultForDangerousKeys", () => {
     const findings = checkVaultForDangerousKeys(vaultPath, "vaults/shock.env", "vault:shock");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].detail).toContain("BASH_FUNC_evil");
+    expect(findings[0]!.detail).toContain("BASH_FUNC_evil");
   });
 });
 
@@ -286,8 +286,8 @@ describe("akmLint dangerous-vault-key integration", () => {
 
     const dangerous = result.flagged.filter((i) => i.issue === "dangerous-vault-key");
     expect(dangerous).toHaveLength(1);
-    expect(dangerous[0].detail).toContain("LD_PRELOAD");
-    expect(dangerous[0].file).toContain(".env");
+    expect(dangerous[0]!.detail).toContain("LD_PRELOAD");
+    expect(dangerous[0]!.file).toContain(".env");
     // `result.ok` reflects "lint ran successfully", not "no findings".
     // Dangerous-vault-key findings now surface via summary.flagged; CLI
     // exit code is gated on --fail-on-flagged separately.

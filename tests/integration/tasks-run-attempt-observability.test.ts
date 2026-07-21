@@ -78,7 +78,7 @@ function assertRecordedFailure(input: {
   try {
     const rows = getTaskHistoryRuns(stateDb, input.taskId);
     expect(rows).toHaveLength(1);
-    row = rows[0];
+    row = rows[0]!;
   } finally {
     stateDb.close();
   }
@@ -99,8 +99,8 @@ function assertRecordedFailure(input: {
 
   const historyResult = readTaskHistory({ id: input.taskId });
   expect(historyResult).toHaveLength(1);
-  expect(historyResult[0].status).toBe("failed");
-  expect(historyResult[0].target).toEqual({ kind: "unknown" });
+  expect(historyResult[0]!.status).toBe("failed");
+  expect(historyResult[0]!.target).toEqual({ kind: "unknown" });
 
   if (row.log_path === null) throw new Error("expected a per-run log path");
   expect(fs.existsSync(row.log_path)).toBe(true);
@@ -276,7 +276,7 @@ describe("tasks run attempt observability", () => {
         failed_at: null,
         log_path: "/first.log",
       });
-      expect(decodeTaskHistoryMetadata(row.metadata_json)).toMatchObject({
+      expect(decodeTaskHistoryMetadata(row!.metadata_json)).toMatchObject({
         durationMs: 60_000,
         detail: { exitCode: 0 },
       });

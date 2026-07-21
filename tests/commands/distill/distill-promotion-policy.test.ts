@@ -59,7 +59,7 @@ describe("distill promotion policy", () => {
   });
 
   test("promoted fixtures emit knowledge payload content", () => {
-    const promoted = assessMemoryKnowledgePromotionCandidate(DEFAULT_PROMOTION_POLICY_CORPUS[0].input);
+    const promoted = assessMemoryKnowledgePromotionCandidate(DEFAULT_PROMOTION_POLICY_CORPUS[0]!.input);
 
     expect(promoted.promote).toBe(true);
     expect(promoted.modelName).toBe(DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name);

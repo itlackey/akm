@@ -122,8 +122,8 @@ describe("source commands and resolution", () => {
     const hit = result.hits.filter(isLocalHit)[0];
 
     expect(result.hits.length).toBe(1);
-    expect(hit.run).toContain("bun");
-    expect(hit.run).toContain("job.js");
+    expect(hit!.run).toContain("bun");
+    expect(hit!.run).toContain("job.js");
   });
 
   test("akmSearch detects setup from package.json in nearby directory", async () => {
@@ -137,8 +137,8 @@ describe("source commands and resolution", () => {
     const hit = result.hits.filter(isLocalHit)[0];
     expect(result.hits.length).toBe(1);
     // Search hits only expose run, not setup/cwd
-    expect(hit.run).toContain("bun");
-    expect(hit.run).toContain("job.js");
+    expect(hit!.run).toContain("bun");
+    expect(hit!.run).toContain("job.js");
   });
 
   test("akmSearch resolves script run correctly for search path directories", async () => {
@@ -173,15 +173,15 @@ describe("source commands and resolution", () => {
     const result = await akmSearch({ query: "summarize diff", type: "script" });
 
     expect(result.hits.length).toBeGreaterThan(0);
-    expect(result.hits[0].whyMatched).toBeDefined();
+    expect(result.hits[0]!.whyMatched).toBeDefined();
     // Ranking mode depends on whether semantic search (embeddings) is available.
     // Accept "fts bm25 relevance", "semantic similarity", or "hybrid (fts + semantic)".
     expect(
-      result.hits[0].whyMatched?.includes("fts bm25 relevance") ||
-        result.hits[0].whyMatched?.includes("semantic similarity") ||
-        result.hits[0].whyMatched?.includes("hybrid (fts + semantic)"),
+      result.hits[0]!.whyMatched?.includes("fts bm25 relevance") ||
+        result.hits[0]!.whyMatched?.includes("semantic similarity") ||
+        result.hits[0]!.whyMatched?.includes("hybrid (fts + semantic)"),
     ).toBe(true);
-    expect(result.hits[0].whyMatched).toContain("matched name tokens");
+    expect(result.hits[0]!.whyMatched).toContain("matched name tokens");
   });
 
   test("akmSearch includes ref, action, and size for local hits", async () => {
@@ -196,9 +196,9 @@ describe("source commands and resolution", () => {
     const result = await akmSearch({ query: "deploy", type: "script" });
     const hit = result.hits.filter(isLocalHit)[0];
 
-    expect(hit.ref).toContain("scripts/deploy.sh");
-    expect(hit.action).toContain("akm show");
-    expect(hit.size).toBe("small");
+    expect(hit!.ref).toContain("scripts/deploy.sh");
+    expect(hit!.action).toContain("akm show");
+    expect(hit!.size).toBe("small");
   });
 
   test("akmSearch includes origin for installed-source hits", async () => {
@@ -353,8 +353,8 @@ Creates a user.
     const result = await akmSearch({ query: "", type: "knowledge" });
 
     expect(result.hits.length).toBe(1);
-    expect(result.hits[0].type).toBe("knowledge");
-    expect(result.hits[0].name).toBe("api-guide");
+    expect(result.hits[0]!.type).toBe("knowledge");
+    expect(result.hits[0]!.name).toBe("api-guide");
   });
 
   test("akmShow returns full content for knowledge by default", async () => {
@@ -559,8 +559,8 @@ Creates a user.
       const hit = result.hits.filter(isLocalHit)[0];
 
       expect(result.hits.length).toBe(1);
-      expect(hit.run).toBeTruthy();
-      expect(hit.run).toContain("bash");
+      expect(hit!.run).toBeTruthy();
+      expect(hit!.run).toContain("bash");
     } finally {
       if (origStashDir === undefined) {
         delete process.env.AKM_STASH_DIR;

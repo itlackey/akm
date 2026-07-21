@@ -69,7 +69,7 @@ describe("upsertBodyEmbeddings + getBodyEmbeddings (WS-3a)", () => {
     expect(result.has(hash)).toBe(true);
     const retrieved = result.get(hash) as number[];
     expect(retrieved).toHaveLength(3);
-    expect(Math.abs(retrieved[0] - 0.1)).toBeLessThan(1e-6);
+    expect(Math.abs(retrieved[0]! - 0.1)).toBeLessThan(1e-6);
   });
 
   test("bulk lookup returns only existing hashes (misses → absent)", () => {
@@ -106,7 +106,7 @@ describe("upsertBodyEmbeddings + getBodyEmbeddings (WS-3a)", () => {
     const vec = result.get(hash) as number[];
     expect(vec).toHaveLength(2);
     // Should have the second write's values.
-    expect(Math.abs(vec[0] - 0.0)).toBeLessThan(1e-6);
-    expect(Math.abs(vec[1] - 1.0)).toBeLessThan(1e-6);
+    expect(Math.abs(vec[0]! - 0.0)).toBeLessThan(1e-6);
+    expect(Math.abs(vec[1]! - 1.0)).toBeLessThan(1e-6);
   });
 });

@@ -97,9 +97,9 @@ describe("akm manifest", () => {
     const entry = result.entries[0];
 
     // Must have the compact fields
-    expect(typeof entry.name).toBe("string");
-    expect(typeof entry.type).toBe("string");
-    expect(typeof entry.ref).toBe("string");
+    expect(typeof entry!.name).toBe("string");
+    expect(typeof entry!.type).toBe("string");
+    expect(typeof entry!.ref).toBe("string");
 
     // Must NOT have full search hit fields like path, tags, score, action, whyMatched
     const raw = entry as unknown as Record<string, unknown>;

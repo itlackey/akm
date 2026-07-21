@@ -20,7 +20,7 @@ import { resolveProjectContext } from "../../src/indexer/walk/project-context";
 function buildFs(files: Record<string, string>) {
   return {
     readFileSync(filePath: string, _enc: BufferEncoding): string {
-      if (filePath in files) return files[filePath];
+      if (filePath in files) return files[filePath]!;
       const err = new Error(`ENOENT: no such file or directory, open '${filePath}'`) as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;

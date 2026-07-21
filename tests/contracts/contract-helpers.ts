@@ -50,9 +50,9 @@ function withoutRetiredSections(doc: string): string {
   for (const line of lines) {
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);
     if (heading) {
-      const depth = heading[1].length;
+      const depth = heading[1]!.length;
       if (ignoredHeadingDepth !== undefined && depth <= ignoredHeadingDepth) ignoredHeadingDepth = undefined;
-      if (/\b(?:legacy|migration|retired)\b/i.test(heading[2])) ignoredHeadingDepth = depth;
+      if (/\b(?:legacy|migration|retired)\b/i.test(heading[2]!)) ignoredHeadingDepth = depth;
     }
     if (ignoredHeadingDepth === undefined) kept.push(line);
   }

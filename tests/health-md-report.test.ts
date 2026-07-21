@@ -170,8 +170,8 @@ describe("renderRunsDetailMd", () => {
   test("keeps ok boolean and exposes decoder status in a separate column", () => {
     const out = renderRunsDetailMd([makeRun({ ok: false, resultStatus: "normalized" })]);
     const [header, row] = out.split("\n");
-    const headers = header.trim().split(/\s{2,}/);
-    const cells = row.trim().split(/\s{2,}/);
+    const headers = header!.trim().split(/\s{2,}/);
+    const cells = row!.trim().split(/\s{2,}/);
 
     expect(headers).toEqual([
       "ts",
@@ -237,7 +237,7 @@ describe("renderRunsDetailMd", () => {
     expect(data).toContain("7/3/4"); // mem inference
     expect(data).toContain("2/10/6"); // graph
     // padded columns keep the header/data aligned to equal visual width
-    expect(lines[0].length).toBe(lines[1].length);
+    expect(lines[0]!.length).toBe(lines[1]!.length);
   });
 
   test("empty runs -> header only", () => {

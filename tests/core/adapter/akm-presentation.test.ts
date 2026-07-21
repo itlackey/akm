@@ -124,7 +124,7 @@ describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbat
       const action = presentationFor(type).action;
       expect(action, `action defined for ${type}`).toBeDefined();
       for (const ref of SAMPLE_REFS) {
-        expect(action?.(ref), `action(${ref}) for ${type}`).toBe(ACTION_BUILDERS[type](ref));
+        expect(action?.(ref), `action(${ref}) for ${type}`).toBe(ACTION_BUILDERS[type]!(ref));
       }
     }
   });
@@ -132,11 +132,11 @@ describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbat
   test("the workflow action reproduces buildWorkflowAction (single-quoted ref, resume/next form)", () => {
     const out = presentationFor("workflow").action?.("team//workflows/release");
     expect(out).toBe("Resume the active run or start a new run with `akm workflow next 'team//workflows/release'`.");
-    expect(out).toBe(ACTION_BUILDERS.workflow("team//workflows/release"));
+    expect(out).toBe(ACTION_BUILDERS.workflow!("team//workflows/release"));
   });
 
   test("the task action reproduces the `task:` prefix strip", () => {
-    expect(presentationFor("task").action?.("task:deploy")).toBe(ACTION_BUILDERS.task("task:deploy"));
+    expect(presentationFor("task").action?.("task:deploy")).toBe(ACTION_BUILDERS.task!("task:deploy"));
     expect(presentationFor("task").action?.("task:deploy")).toContain("akm tasks show deploy ->");
   });
 });

@@ -140,7 +140,7 @@ function makeFakeExec(events?: string[]): FakeLaunchdExec {
         loadedLabels.delete(targetLabel);
       }
       if (verb === "bootstrap") {
-        loadedLabels.add(path.basename(args[3], ".plist"));
+        loadedLabels.add(path.basename(args[3]!, ".plist"));
       }
       if (verb === "enable") disabledLabels.delete(targetLabel);
       if (verb === "disable") disabledLabels.add(targetLabel);
@@ -236,7 +236,7 @@ function makeTransactionalBackend() {
       if (verb === "bootout") activePlist = undefined;
       if (verb === "enable") disabledLabels.delete(targetLabel);
       if (verb === "disable") disabledLabels.add(targetLabel);
-      if (verb === "bootstrap") activePlist = fakeFs.readFile(args[3]);
+      if (verb === "bootstrap") activePlist = fakeFs.readFile(args[3]!);
       if (verb === failNextVerb) {
         failNextVerb = undefined;
         result = { status: 1, stdout: "", stderr: `injected ${verb} failure` };
@@ -500,8 +500,8 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
     const listed = backend.list() as Array<{ id: string; signature?: string }>;
 
     expect(listed).toHaveLength(1);
-    expect(listed[0].signature).toBeDefined();
-    expect(listed[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listed[0]!.signature).toBeDefined();
+    expect(listed[0]!.signature).toBe(backend.expectedSignature?.(task));
     expect(exec.calls).toEqual([
       ["launchctl", "print-disabled", "gui/501"],
       ["launchctl", "print", "gui/501/com.akm.task.ping"],
@@ -568,14 +568,14 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       expect(drifted).toEqual([
         { id: "ping", signature: backend.expectedSignature?.({ ...makeTask("0 9 * * *"), enabled: false }) },
       ]);
-      expect(drifted[0].signature).not.toBe(backend.expectedSignature?.(makeTask("0 9 * * *")));
+      expect(drifted[0]!.signature).not.toBe(backend.expectedSignature?.(makeTask("0 9 * * *")));
 
       const result = await akmTasksSync({ backend });
 
       expect(result.updated).toEqual(["ping"]);
       expect(result.unchanged).toEqual([]);
       expect(exec.disabledLabels.has("com.akm.task.ping")).toBe(false);
-      expect((backend.list() as Array<{ signature?: string }>)[0].signature).toBe(
+      expect((backend.list() as Array<{ signature?: string }>)[0]!.signature).toBe(
         backend.expectedSignature?.(makeTask("0 9 * * *")),
       );
       expect(exec.calls).toContainEqual(["launchctl", "print-disabled", "gui/501"]);

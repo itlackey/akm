@@ -50,7 +50,7 @@ steps:
 `;
 
 const PLAN = freezeWorkflowProgram(MAP_WF, "workflows/f.yaml");
-const STEP = PLAN.steps[0];
+const STEP = PLAN.steps[0]!;
 const ENGINES = PLAN.execution.engines;
 const NODE_ID = "work.unit"; // STEP.root (map).template.id
 

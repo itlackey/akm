@@ -132,30 +132,30 @@ describe("akm-workflow adapter — lint golden", () => {
   test("the markdown workflow validates clean ([])", async () => {
     const md = perType.workflowMd;
     const change: FileChange = {
-      path: md.relPath,
+      path: md!.relPath,
       op: "update",
-      after: fs.readFileSync(path.join(FIXTURE_ROOT, md.relPath), "utf8"),
+      after: fs.readFileSync(path.join(FIXTURE_ROOT, md!.relPath), "utf8"),
     };
     const diags = await akmWorkflowAdapter.validate(component(), [change], ctx);
-    expect(diags.map((d) => d.issue)).toEqual((md.issues ?? []).map((i) => i.issue));
+    expect(diags.map((d) => d.issue)).toEqual((md!.issues ?? []).map((i) => i.issue));
   });
 
   test("the YAML program validates clean AND parseWorkflowProgram matches the golden shape", async () => {
     const yaml = perType.workflowProgramYaml;
-    const raw = fs.readFileSync(path.join(FIXTURE_ROOT, yaml.relPath), "utf8");
+    const raw = fs.readFileSync(path.join(FIXTURE_ROOT, yaml!.relPath), "utf8");
     const diags = await akmWorkflowAdapter.validate(
       component(),
-      [{ path: yaml.relPath, op: "update", after: raw }],
+      [{ path: yaml!.relPath, op: "update", after: raw }],
       ctx,
     );
     expect(diags).toEqual([]);
 
     // The workflowProgramYaml correctness surface (spec golden): parseWorkflowProgram.
-    expect(yaml.correctnessCheck).toBe("parseWorkflowProgram");
-    const parsed = parseWorkflowProgram(raw, { path: yaml.relPath });
+    expect(yaml!.correctnessCheck).toBe("parseWorkflowProgram");
+    const parsed = parseWorkflowProgram(raw, { path: yaml!.relPath });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw new Error("unreachable");
-    const expectedProgram = yaml.result?.program as Record<string, unknown>;
+    const expectedProgram = yaml!.result?.program as Record<string, unknown>;
     expect(parsed.program.version).toBe(expectedProgram.version as number);
     expect(parsed.program.name).toBe(expectedProgram.name as string);
     expect(parsed.program.description).toBe(expectedProgram.description as string);

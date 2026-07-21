@@ -49,7 +49,7 @@ describe("read preflight helpers", () => {
 
     const { sources, primarySource } = resolveReadSources();
     expect(primarySource?.path).toBe(storage.stashDir);
-    expect(sources[0].path).toBe(storage.stashDir);
+    expect(sources[0]!.path).toBe(storage.stashDir);
     expect(sources.some((source) => source.path === additional.dir)).toBe(true);
   });
 

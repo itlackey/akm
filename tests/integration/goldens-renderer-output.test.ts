@@ -141,7 +141,7 @@ describe("renderer parity: all 14 all-types fixture assets render via their docu
     for (const [relPath, expectedType] of Object.entries(EXPECTED_TYPE_BY_REL_PATH)) {
       const response = await renderFixture(relPath);
       expect(response.type, `type for ${relPath}`).toBe(expectedType);
-      expect(response.name, `name for ${relPath}`).toBe(CANONICAL_NAME_BY_REL_PATH[relPath]);
+      expect(response.name, `name for ${relPath}`).toBe(CANONICAL_NAME_BY_REL_PATH[relPath]!);
       expect(response.path.startsWith(STASH_ROOT), `path for ${relPath} should be absolute under STASH_ROOT`).toBe(
         true,
       );

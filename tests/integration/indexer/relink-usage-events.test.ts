@@ -35,7 +35,7 @@ describe("relinkUsageEvents", () => {
       .prepare(
         "INSERT INTO entries (entry_key, entry_type, stash_dir, entry_json, item_ref, bundle_id, concept_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(`${stashDir}:${conceptId}`, conceptId.split("/")[0], stashDir, "{}", itemRef, bundle, conceptId);
+      .run(`${stashDir}:${conceptId}`, conceptId.split("/")[0]!, stashDir, "{}", itemRef, bundle, conceptId);
     return Number(info.lastInsertRowid);
   }
 

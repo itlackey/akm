@@ -35,9 +35,9 @@ describe("registerOutputShape", () => {
     const input = { x: 1 };
     shapeForCommand("mock-command", input, "normal", "agent");
     expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBe(input);
-    expect(calls[0][1]).toBe("normal");
-    expect(calls[0][2]).toBe("agent");
+    expect(calls[0]![0]).toBe(input);
+    expect(calls[0]![1]).toBe("normal");
+    expect(calls[0]![2]).toBe("agent");
   });
 
   test("handler return value is used by shapeForCommand", () => {
@@ -87,8 +87,8 @@ describe("registerTextFormatter", () => {
     const input = { v: 42 };
     formatPlain("mock-text-command", input, "full");
     expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toEqual(input);
-    expect(calls[0][1]).toBe("full");
+    expect(calls[0]![0]).toEqual(input);
+    expect(calls[0]![1]).toBe("full");
   });
 
   test("handler return value is used by formatPlain", () => {

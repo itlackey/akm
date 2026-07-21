@@ -129,8 +129,8 @@ describe("runTask — workflow target", () => {
 
     const rows = readTaskHistory({ id: "wf" });
     expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe("wf");
-    expect(rows[0].status).toBe("completed");
+    expect(rows[0]!.id).toBe("wf");
+    expect(rows[0]!.status).toBe("completed");
   });
 
   // M4: mapWorkflowStatus is now an exhaustive switch over WorkflowRunStatus
@@ -383,7 +383,7 @@ describe("runTask — prompt target", () => {
 
     const rows = readTaskHistory({ id: "prompt" });
     expect(rows).toHaveLength(1);
-    expect(rows[0].target).toEqual({ kind: "prompt", engine: "opencode" });
+    expect(rows[0]!.target).toEqual({ kind: "prompt", engine: "opencode" });
 
     // #579: the same run is queryable from logs.db by task_id AND run_id,
     // with the captured agent stdout stored as stream='stdout' rows.
@@ -572,8 +572,8 @@ describe("runTask — disabled tasks", () => {
     // #579: even a skipped run leaves a queryable trace in logs.db.
     const logRows = readRunLogRows("off");
     expect(logRows).toHaveLength(1);
-    expect(logRows[0].line).toContain("disabled");
-    expect(logRows[0].run_id).toBe(buildTaskRunId("off", result.startedAt));
+    expect(logRows[0]!.line).toContain("disabled");
+    expect(logRows[0]!.run_id).toBe(buildTaskRunId("off", result.startedAt));
   });
 });
 

@@ -231,7 +231,7 @@ steps:
     const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
     const dispatchRows = units.filter((u) => u.phase !== "gate");
     expect(dispatchRows).toHaveLength(1);
-    expect(dispatchRows[0].attempts).toBe(2);
+    expect(dispatchRows[0]!.attempts).toBe(2);
 
     await resumeWorkflowRun(runId);
 
@@ -258,7 +258,7 @@ steps:
       (u) => u.phase !== "gate",
     );
     expect(finalRows).toHaveLength(1);
-    expect(finalRows[0].attempts).toBe(2);
+    expect(finalRows[0]!.attempts).toBe(2);
   });
 
   test("seeding: journaled dispatches from a prior invocation count against max_units", async () => {

@@ -77,7 +77,7 @@ describe("config schema drift pins", () => {
   test("engine and improve-strategy property names match runtime grammar and reserved prefixes", () => {
     const schema = readSchema();
     const properties = schema.properties as Record<string, Record<string, unknown>>;
-    const engineNames = properties.engines.propertyNames as { maxLength?: number; pattern?: string };
+    const engineNames = properties.engines!.propertyNames as { maxLength?: number; pattern?: string };
     const improve = properties.improve as { properties?: Record<string, Record<string, unknown>> };
     const strategyNames = improve.properties?.strategies?.propertyNames as { maxLength?: number; pattern?: string };
     expect(engineNames).toEqual({ maxLength: 63, pattern: ENGINE_NAME_PATTERN_SOURCE });

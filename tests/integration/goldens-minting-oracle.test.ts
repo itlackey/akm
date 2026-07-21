@@ -329,7 +329,7 @@ describe("golden fixture: deriveCanonicalAssetNameFromStashRoot minting oracle (
     const pureFunction: Record<string, Record<string, { relFilePath: string; name: string | undefined }>> = {};
     for (const c of CASES) {
       pureFunction[c.type] ??= {};
-      pureFunction[c.type][c.label] = { relFilePath: c.relFilePath, name: runCase(c) };
+      pureFunction[c.type]![c.label] = { relFilePath: c.relFilePath, name: runCase(c) };
     }
 
     const steersToCanonicalSpelling = await (async () => {

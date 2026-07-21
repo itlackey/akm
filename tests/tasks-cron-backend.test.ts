@@ -122,7 +122,7 @@ describe("cron backend helpers", () => {
   test("renderBlock with enabled=false comments the cron line", () => {
     const block = renderBlock("ping", "* * * * * /bin/akm tasks run ping", false);
     const middle = block.split("\n")[1];
-    expect(middle.startsWith("# akm:disabled ")).toBe(true);
+    expect(middle!.startsWith("# akm:disabled ")).toBe(true);
   });
 
   test("upsertBlock inserts when absent", () => {
@@ -260,15 +260,15 @@ describe("cron backend drift detection", () => {
     backend.install(SYNC_TASK);
     const listed = listSync(backend);
     expect(listed).toHaveLength(1);
-    expect(listed[0].id).toBe("ping");
-    expect(listed[0].signature).toBe(backend.expectedSignature?.(SYNC_TASK));
+    expect(listed[0]!.id).toBe("ping");
+    expect(listed[0]!.signature).toBe(backend.expectedSignature?.(SYNC_TASK));
   });
 
   test("expectedSignature changes when the schedule changes (drift is detectable)", () => {
     const exec = memoryExec();
     const backend = CRON_BACKEND(opts(exec));
     backend.install(SYNC_TASK);
-    const installedSig = listSync(backend)[0].signature;
+    const installedSig = listSync(backend)[0]!.signature;
     const rescheduled: TaskDocument = { ...SYNC_TASK, schedule: "45 */6 * * *" };
     expect(backend.expectedSignature?.(rescheduled)).not.toBe(installedSig);
   });
@@ -283,9 +283,9 @@ describe("cron backend drift detection", () => {
   test("signature is stable across reinstall when nothing changed", () => {
     const backend = CRON_BACKEND(opts(memoryExec()));
     backend.install(SYNC_TASK);
-    const sig1 = listSync(backend)[0].signature;
+    const sig1 = listSync(backend)[0]!.signature;
     backend.install(SYNC_TASK);
-    const sig2 = listSync(backend)[0].signature;
+    const sig2 = listSync(backend)[0]!.signature;
     expect(sig1).toBe(sig2);
     expect(sig1).toBe(backend.expectedSignature?.(SYNC_TASK));
   });
@@ -301,9 +301,9 @@ describe("cron backend drift detection", () => {
       scheduledContext: SCHEDULED_CONTEXT,
     });
     backend.install(SYNC_TASK);
-    const sig1 = listSync(backend)[0].signature;
+    const sig1 = listSync(backend)[0]!.signature;
     backend.install(SYNC_TASK);
-    const sig2 = listSync(backend)[0].signature;
+    const sig2 = listSync(backend)[0]!.signature;
     expect(sig1).toBe(sig2);
     expect(sig1).toBe(backend.expectedSignature?.(SYNC_TASK));
   });

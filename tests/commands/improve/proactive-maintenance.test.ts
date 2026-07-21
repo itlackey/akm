@@ -146,7 +146,7 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
       sizeBytesOf: () => 1000,
       now: NOW,
     });
-    expect(DEFAULT_TYPE_ENCODING_WEIGHTS.skill).toBeGreaterThan(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+    expect(DEFAULT_TYPE_ENCODING_WEIGHTS.skill).toBeGreaterThan(DEFAULT_TYPE_ENCODING_WEIGHTS.memory!);
     expect(res.selected.map((s) => s.ref)).toEqual(["skill:s", "memory:m"]);
   });
 
@@ -172,7 +172,7 @@ describe("selectProactiveMaintenanceRefs — top-N bound", () => {
     expect(res.dueTotal).toBe(50);
     expect(res.selected.length).toBe(25);
     // The 25 highest-frequency refs (s49..s25) should win.
-    expect(res.selected[0].ref).toBe("skill:s49");
+    expect(res.selected[0]!.ref).toBe("skill:s49");
     expect(res.selected.some((s) => s.ref === "skill:s0")).toBe(false);
   });
 

@@ -188,7 +188,7 @@ describe("BUNDLE_REF_RE — body-ref recognition (prose)", () => {
     const out: string[] = [];
     let m: RegExpExecArray | null;
     // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-    while ((m = re.exec(body)) !== null) out.push(m[1]);
+    while ((m = re.exec(body)) !== null) out.push(m[1]!);
     return out;
   }
 

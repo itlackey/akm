@@ -89,7 +89,7 @@ function workListFor(
   params: Record<string, unknown>,
   stepOutputs: Record<string, unknown> = {},
 ): Array<{ unitId: string; inputHash: string }> {
-  const computed = computeStepWorkList(plan.steps[stepIndex], {
+  const computed = computeStepWorkList(plan.steps[stepIndex]!, {
     runId,
     params,
     stepOutputs,
@@ -216,7 +216,7 @@ describe("chaos: crash / resume (durable-row)", () => {
     expect(dispatchUnits.every((u) => u.status === "completed")).toBe(true);
     const finalStatus = await getWorkflowStatus(runId);
     expect(finalStatus.run.status).toBe("completed");
-    expect(finalStatus.workflow.steps[0].evidence?.output).toHaveLength(4);
+    expect(finalStatus.workflow.steps[0]!.evidence?.output).toHaveLength(4);
   });
 });
 
@@ -288,7 +288,7 @@ describe("chaos: crash INSIDE the completion path", () => {
     expect(rows.filter((u) => u.node_id === "review.gate")).toHaveLength(1);
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
   });
 
   test("units done + no gate row: a driver's idempotent re-report finalizes the step (engine/driver crash-recovery symmetry)", async () => {
@@ -320,7 +320,7 @@ describe("chaos: crash INSIDE the completion path", () => {
     // hash → the guarded write is idempotent, but the step still finalizes.
     const result = await reportWorkflowUnit({
       target: runId,
-      unitId: workUnits[0].unitId,
+      unitId: workUnits[0]!.unitId,
       status: "completed",
       resultRaw: JSON.stringify({ verdict: "ok" }),
       summaryJudge: acceptJudge,
@@ -335,7 +335,7 @@ describe("chaos: crash INSIDE the completion path", () => {
     expect(rows.filter((u) => u.node_id === "review.gate")).toHaveLength(1);
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
   });
 
   test("a DANGLING running gate row (crash mid-judge): resume replaces it — no duplicate row, no double promotion", async () => {
@@ -388,12 +388,12 @@ describe("chaos: crash INSIDE the completion path", () => {
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "review"));
     const gateRows = rows.filter((u) => u.node_id === "review.gate");
     expect(gateRows).toHaveLength(1);
-    expect(gateRows[0].unit_id).toBe("review.gate:l1");
-    expect(gateRows[0].status).toBe("completed");
+    expect(gateRows[0]!.unit_id).toBe("review.gate:l1");
+    expect(gateRows[0]!.status).toBe("completed");
     // The artifact was promoted exactly once — not doubled.
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "ok" }]);
   });
 });
 
@@ -490,7 +490,7 @@ describe("chaos: lease contention", () => {
     const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const [ua] = workListFor(plan, 0, runId, params);
+    const ua = workListFor(plan, 0, runId, params)[0]!;
 
     const until = new Date(Date.now() + 60_000).toISOString();
     await withWorkflowRunsRepo((repo) => {
@@ -617,7 +617,7 @@ describe("chaos: hostile content — single-pass resolution", () => {
 
     // The promoted artifact is the literal hostile string — stored as data.
     const status = await getWorkflowStatus(runId);
-    expect(status.workflow.steps[0].evidence?.output).toEqual({ token: HOSTILE_TOKEN });
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual({ token: HOSTILE_TOKEN });
   });
 });
 
@@ -695,7 +695,7 @@ describe("chaos: hostile content — events, clipping, brief safety", () => {
     // Per-unit evidence text is clipped at its own 2000-char bound (+1 for the
     // single ellipsis `clip` appends when it truncates).
     const status = await getWorkflowStatus(runId);
-    const evUnits = (status.workflow.steps[0].evidence?.units ?? []) as Array<{ text?: string }>;
+    const evUnits = (status.workflow.steps[0]!.evidence?.units ?? []) as Array<{ text?: string }>;
     expect(evUnits.length).toBeGreaterThan(0);
     for (const u of evUnits) if (typeof u.text === "string") expect(u.text.length).toBeLessThanOrEqual(2_001);
   });
@@ -716,7 +716,7 @@ steps:
     const started = await startWorkflowRun("workflows/hostile-loop", {});
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const [unit] = workListFor(plan, 0, runId, {});
+    const unit = workListFor(plan, 0, runId, {})[0]!;
 
     // Drive ONE completion attempt through the report path (the R3 surface does
     // a single attempt per report, unlike the engine which loops internally):
@@ -744,7 +744,7 @@ steps:
     expect(brief.gateFeedback?.feedback).toBe(HOSTILE_FEEDBACK);
     // …and the loop-2 unit prompt embeds the feedback literally: the `${{ … }}`
     // inside it is NOT resolved against params.
-    const loopUnit = brief.workList.units[0];
+    const loopUnit = brief.workList.units[0]!;
     expect(loopUnit.resolved.ok).toBe(true);
     if (loopUnit.resolved.ok) {
       expect(loopUnit.resolved.instructions).toContain("${{ params.secret }}");
@@ -782,7 +782,7 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     // Brief BEFORE any dispatch: the env binding is surfaced as a REF NAME
     // only, and the whole brief document contains no secret value.
     const preBrief = await buildWorkflowBrief(runId);
-    expect(preBrief.workList.units[0].env).toEqual(["env/leak"]);
+    expect(preBrief.workList.units[0]!.env).toEqual(["env/leak"]);
     expect(JSON.stringify(preBrief)).not.toContain(FAKE_SECRET);
 
     // Drive the step: the resolved value DOES reach the dispatched child env
@@ -828,7 +828,7 @@ describe("chaos: replay divergence under a tampered journal", () => {
     const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const [ua] = workListFor(plan, 0, runId, params);
+    const ua = workListFor(plan, 0, runId, params)[0]!;
 
     // Tamper: a completed unit row whose input_hash cannot have come from the
     // frozen plan (a corrupted / hand-edited journal).
@@ -861,7 +861,7 @@ describe("chaos: replay divergence under a tampered journal", () => {
     const started = await startWorkflowRun("workflows/leased-fanout", params);
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const [ua] = workListFor(plan, 0, runId, params);
+    const ua = workListFor(plan, 0, runId, params)[0]!;
 
     seedUnitRow({
       runId,
@@ -911,7 +911,7 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
   /** Seed a completed loop-1 row (engine's own hash under the ORIGINAL params), then tamper params. */
   async function seedThenTamper(runId: string): Promise<{ unitId: string }> {
     const plan = await frozenPlan(runId);
-    const [unit] = workListFor(plan, 0, runId, { mode: "alpha" });
+    const unit = workListFor(plan, 0, runId, { mode: "alpha" })[0]!;
     seedUnitRow({
       runId,
       unitId: unit.unitId,
@@ -1016,7 +1016,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
     const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
     const plan = await frozenPlan(runId);
-    const [unit] = workListFor(plan, 0, runId, {});
+    const unit = workListFor(plan, 0, runId, {})[0]!;
 
     const result = await reportWorkflowUnit({
       target: runId,
@@ -1076,7 +1076,7 @@ describe("chaos: gate judge failures journal a terminal gate row on both surface
 
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("active");
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
 
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "work"));
     const gate = rows.find((u) => u.node_id === "work.gate");

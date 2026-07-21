@@ -68,9 +68,9 @@ test("loadStashFile reads valid .stash.json", () => {
   const result = loadStashFile(dir);
   expect(result).not.toBeNull();
   expect(result?.entries).toHaveLength(1);
-  expect(result?.entries[0].name).toBe("docker-build");
-  expect(result?.entries[0].description).toBe("build docker images");
-  expect(result?.entries[0].tags).toEqual(["docker", "build"]);
+  expect(result!.entries[0]!.name).toBe("docker-build");
+  expect(result!.entries[0]!.description).toBe("build docker images");
+  expect(result!.entries[0]!.tags).toEqual(["docker", "build"]);
 });
 
 test("loadStashFile returns null for missing file", () => {
@@ -105,7 +105,7 @@ test("loadStashFile parses intent field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result?.entries[0].intent).toEqual({
+  expect(result!.entries[0]!.intent).toEqual({
     when: "user needs to deploy",
     input: "service name",
     output: "deployment status",
@@ -254,14 +254,14 @@ test("generateMetadata creates entries from script files with filename heuristic
 
   const stash = await generateMetadata(dir, "script", [tool1]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].name).toBe("summarize-diff.ts");
-  expect(stash.entries[0].type).toBe("script");
-  expect(stash.entries[0].description).toBe("summarize diff");
-  expect(stash.entries[0].quality).toBe("generated");
-  expect(stash.entries[0].source).toBe("filename");
-  expect(stash.entries[0].confidence).toBe(0.55);
-  expect(stash.entries[0].aliases).toContain("summarize diff");
-  expect(stash.entries[0].filename).toBe("summarize-diff.ts");
+  expect(stash.entries[0]!.name).toBe("summarize-diff.ts");
+  expect(stash.entries[0]!.type).toBe("script");
+  expect(stash.entries[0]!.description).toBe("summarize diff");
+  expect(stash.entries[0]!.quality).toBe("generated");
+  expect(stash.entries[0]!.source).toBe("filename");
+  expect(stash.entries[0]!.confidence).toBe(0.55);
+  expect(stash.entries[0]!.aliases).toContain("summarize diff");
+  expect(stash.entries[0]!.filename).toBe("summarize-diff.ts");
 });
 
 test("generateMetadata extracts description from code comments", async () => {
@@ -270,8 +270,8 @@ test("generateMetadata extracts description from code comments", async () => {
   writeFile(tool1, `#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n`);
 
   const stash = await generateMetadata(dir, "script", [tool1]);
-  expect(stash.entries[0].description).toBe("Deploy services to production");
-  expect(stash.entries[0].source).toBe("comments");
+  expect(stash.entries[0]!.description).toBe("Deploy services to production");
+  expect(stash.entries[0]!.source).toBe("comments");
 });
 
 test("generateMetadata extracts metadata from package.json", async () => {
@@ -284,10 +284,10 @@ test("generateMetadata extracts metadata from package.json", async () => {
   );
 
   const stash = await generateMetadata(dir, "script", [tool1]);
-  expect(stash.entries[0].description).toBe("Git diff summarizer");
-  expect(stash.entries[0].source).toBe("package");
-  expect(stash.entries[0].confidence).toBe(0.8);
-  expect(stash.entries[0].tags).toEqual(["git", "diff"]);
+  expect(stash.entries[0]!.description).toBe("Git diff summarizer");
+  expect(stash.entries[0]!.source).toBe("package");
+  expect(stash.entries[0]!.confidence).toBe(0.8);
+  expect(stash.entries[0]!.tags).toEqual(["git", "diff"]);
 });
 
 test("generateMetadata skips non-script extensions for script type", async () => {
@@ -308,10 +308,10 @@ test("generateMetadata handles multi-script directories", async () => {
 
   const stash = await generateMetadata(dir, "script", [tool1, tool2]);
   expect(stash.entries).toHaveLength(2);
-  expect(stash.entries[0].name).toBe("docker-build.ts");
-  expect(stash.entries[0].description).toBe("Build docker images");
-  expect(stash.entries[1].name).toBe("docker-compose.ts");
-  expect(stash.entries[1].description).toBe("Generate docker compose stacks");
+  expect(stash.entries[0]!.name).toBe("docker-build.ts");
+  expect(stash.entries[0]!.description).toBe("Build docker images");
+  expect(stash.entries[1]!.name).toBe("docker-compose.ts");
+  expect(stash.entries[1]!.description).toBe("Generate docker compose stacks");
 });
 
 // ── validateStashEntry with searchHints ─────────────────────────────────────────
@@ -381,7 +381,7 @@ test("loadStashFile parses usage field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result?.entries[0].usage).toEqual(["Run after fetching main", "Use --stat for quick output"]);
+  expect(result!.entries[0]!.usage).toEqual(["Run after fetching main", "Use --stat for quick output"]);
 });
 
 test("loadStashFile parses searchHints field", () => {
@@ -399,7 +399,7 @@ test("loadStashFile parses searchHints field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result?.entries[0].searchHints).toEqual(["summarize git commits", "explain what changed"]);
+  expect(result!.entries[0]!.searchHints).toEqual(["summarize git commits", "explain what changed"]);
 });
 
 // ── generateMetadata populates searchHints ──────────────────────────────────────
@@ -411,7 +411,7 @@ test("generateMetadata does not generate heuristic searchHints (LLM-only)", asyn
 
   const stash = await generateMetadata(dir, "script", [tool]);
   // Search hints are only generated when LLM is configured, not heuristically
-  expect(stash.entries[0].searchHints).toBeUndefined();
+  expect(stash.entries[0]!.searchHints).toBeUndefined();
 });
 
 test("extractCommentMetadata parses curated header tags from scripts", () => {
@@ -511,7 +511,7 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
     scope: { user: "alice", agent: "opencode" },
     source: "frontmatter",
   });
-  expect(stash.entries[0].aliases).toEqual(expect.arrayContaining(["release service", "deploy production"]));
+  expect(stash.entries[0]!.aliases).toEqual(expect.arrayContaining(["release service", "deploy production"]));
 });
 
 test("generateMetadata preserves curated aliases from comment metadata", async () => {
@@ -520,7 +520,7 @@ test("generateMetadata preserves curated aliases from comment metadata", async (
   writeFile(file, ["#!/usr/bin/env bash", "# @aliases release workflow, ship service", "echo deploy"].join("\n"));
 
   const stash = await generateMetadata(dir, "script", [file]);
-  expect(stash.entries[0].aliases).toEqual(
+  expect(stash.entries[0]!.aliases).toEqual(
     expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
   );
 });
@@ -755,7 +755,7 @@ test("generateMetadata populates entry.category from fact frontmatter (SPEC-6 en
 
   const stash = await generateMetadata(factsRoot, "fact", [file]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].name).toBe("conventions/organization");
+  expect(stash.entries[0]!.name).toBe("conventions/organization");
   expect(entryCategory(stash.entries[0])).toBe("convention");
 });
 
@@ -839,7 +839,7 @@ test("generateMetadata merges directory tokens into explicit tags for nested ass
 
   const stash = await generateMetadata(memRoot, "memory", [file]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  expect(stash.entries[0]!.name).toBe("projectA/auth-tip");
   // Explicit tag kept AND the directory scope token added; filename tokens
   // ("auth-tip" -> "tip") must NOT be merged when explicit tags exist.
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
@@ -854,7 +854,7 @@ test("generateMetadata adds no directory tokens for an explicit-tags asset at th
   expect(stash.entries).toHaveLength(1);
   // No directory segments at the type root: explicit tags stay exact — no
   // filename tokens ("root", "note") sneak in.
-  expect(stash.entries[0].tags).toEqual(["auth"]);
+  expect(stash.entries[0]!.tags).toEqual(["auth"]);
 });
 
 test("generateMetadata keeps the empty-tags path-derived fallback unchanged for nested assets (SPEC-2)", async () => {
@@ -886,10 +886,10 @@ test("generateMetadataFlat merges directory tokens from the canonical ref subpat
 
   const stash = recognizeStashEntries(stashRoot, [file]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].type).toBe("memory");
+  expect(stash.entries[0]!.type).toBe("memory");
   // canonicalName is the ref subpath relative to the TYPE root ("memories"),
   // so "memories" itself is not a tag — only the scope dir "projectA" is.
-  expect(stash.entries[0].name).toBe("projectA/auth-tip");
+  expect(stash.entries[0]!.name).toBe("projectA/auth-tip");
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
 });
 
@@ -917,7 +917,7 @@ test("author-restated scope token is deduped by normalizeTerms after the merge (
 
   const stash = await generateMetadata(memRoot, "memory", [file]);
   expect(stash.entries).toHaveLength(1);
-  const tags = stash.entries[0].tags ?? [];
+  const tags = stash.entries[0]!.tags ?? [];
   expect(tags.filter((t) => t === "projecta")).toHaveLength(1);
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
 });
@@ -937,7 +937,7 @@ test("generateMetadata merges directory tokens into package.json-keyword tags fo
 
   const stash = await generateMetadata(dir, "script", [tool]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].name).toBe("tools/run.ts");
+  expect(stash.entries[0]!.name).toBe("tools/run.ts");
   expect(sortedTags(stash.entries[0])).toEqual(["diff", "git", "tools"]);
 });
 
@@ -961,8 +961,8 @@ test("loadStashFile keeps literal tags for nested-name entries — no dir-token 
 
   const result = loadStashFile(dir);
   expect(result?.entries).toHaveLength(1);
-  expect(result?.entries[0].name).toBe("projectA/deploy");
-  expect(result?.entries[0].tags).toEqual(["auth"]);
+  expect(result!.entries[0]!.name).toBe("projectA/deploy");
+  expect(result!.entries[0]!.tags).toEqual(["auth"]);
 });
 
 test("multi-token directory segments tokenize like extractTagsFromPath in the merge (SPEC-2)", async () => {
@@ -1045,7 +1045,7 @@ test("flag on: bodyOpening folds into the content search field, not hints (SPEC-
     writeFile(file, memoryDocWithBody([OPENING_PARA]));
 
     const stash = await generateMetadata(memRoot, "memory", [file]);
-    const fields = buildSearchFields(stash.entries[0]);
+    const fields = buildSearchFields(stash.entries[0]!);
     // Lowest-weight catch-all column carries the (lowercased) opening…
     expect(fields.content).toContain("situates the auth-refresh work");
     // …and no higher-weight column picks it up (SPEC-8 explicitly rejects
@@ -1055,7 +1055,7 @@ test("flag on: bodyOpening folds into the content search field, not hints (SPEC-
     expect(fields.description).not.toContain("situates");
     expect(fields.tags).not.toContain("situates");
     // The concatenated search/embedding text picks it up via content.
-    expect(buildSearchText(stash.entries[0])).toContain("situates the auth-refresh work");
+    expect(buildSearchText(stash.entries[0]!)).toContain("situates the auth-refresh work");
   });
 });
 
@@ -1197,7 +1197,7 @@ test("flag on: session-kind memories are excluded via the outer akm_memory_kind 
     // Still indexed as a memory — only the body-opening capture is skipped.
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
-    expect(buildSearchText(stash.entries[0])).not.toContain("transcript paragraph");
+    expect(buildSearchText(stash.entries[0]!)).not.toContain("transcript paragraph");
   });
 });
 
@@ -1229,7 +1229,7 @@ test("flag on: session-kind memories are excluded via the inner nested akm_memor
     const stash = await generateMetadata(memRoot, "memory", [file]);
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
-    expect(buildSearchText(stash.entries[0])).not.toContain("transcript prose");
+    expect(buildSearchText(stash.entries[0]!)).not.toContain("transcript prose");
   });
 });
 
@@ -1244,10 +1244,10 @@ test("flag on: secret files are never read for bodyOpening (SPEC-8)", async () =
 
     const stash = recognizeStashEntries(stashRoot, [secretFile]);
     expect(stash.entries).toHaveLength(1);
-    expect(stash.entries[0].type).toBe("secret");
+    expect(stash.entries[0]!.type).toBe("secret");
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
     expect(JSON.stringify(stash.entries[0])).not.toContain("walrus");
-    expect(buildSearchText(stash.entries[0])).not.toContain("walrus");
+    expect(buildSearchText(stash.entries[0]!)).not.toContain("walrus");
   });
 });
 
@@ -1259,11 +1259,11 @@ test("flag on: env files are never read for bodyOpening (SPEC-8)", async () => {
 
     const stash = recognizeStashEntries(stashRoot, [envFile]);
     expect(stash.entries).toHaveLength(1);
-    expect(stash.entries[0].type).toBe("env");
+    expect(stash.entries[0]!.type).toBe("env");
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
     // Key NAMES may surface (existing behavior); comment text and values never.
     expect(JSON.stringify(stash.entries[0])).not.toContain("walrus");
-    expect(buildSearchText(stash.entries[0])).not.toContain("walrus");
+    expect(buildSearchText(stash.entries[0]!)).not.toContain("walrus");
   });
 });
 
@@ -1275,7 +1275,7 @@ test("flag on: flat-walk memories gain bodyOpening through the shared pipeline (
 
     const stash = recognizeStashEntries(stashRoot, [file]);
     expect(stash.entries).toHaveLength(1);
-    expect(stash.entries[0].type).toBe("memory");
+    expect(stash.entries[0]!.type).toBe("memory");
     expect(entryBodyOpening(stash.entries[0])).toBe(OPENING_PARA);
   });
 });
@@ -1294,11 +1294,11 @@ test("default (flag absent): no bodyOpening and body prose reaches no search fie
     expect(entryBodyOpening(entry)).toBeUndefined();
     // Byte-identical-to-today pin: the sentinel body token appears in NO FTS
     // field and not in the concatenated search/embedding text.
-    const fields = buildSearchFields(entry);
+    const fields = buildSearchFields(entry!);
     for (const value of Object.values(fields)) {
       expect(value).not.toContain("zebrafish");
     }
-    expect(buildSearchText(entry)).not.toContain("zebrafish");
+    expect(buildSearchText(entry!)).not.toContain("zebrafish");
   });
 });
 
@@ -1314,7 +1314,7 @@ test("index.indexBodyOpening: false behaves exactly like the default (SPEC-8)", 
     const stash = await generateMetadata(memRoot, "memory", [file]);
     const entry = stash.entries[0];
     expect(entryBodyOpening(entry)).toBeUndefined();
-    expect(buildSearchText(entry)).not.toContain("zebrafish");
+    expect(buildSearchText(entry!)).not.toContain("zebrafish");
   });
 });
 

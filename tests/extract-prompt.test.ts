@@ -48,7 +48,7 @@ describe("EXTRACT_JSON_SCHEMA", () => {
 
   test("candidate items require type, name, description, body, confidence, evidence", () => {
     const candItem = (EXTRACT_JSON_SCHEMA as { properties: Record<string, { items: { required: string[] } }> })
-      .properties.candidates.items;
+      .properties.candidates!.items;
     for (const key of ["type", "name", "description", "body", "confidence", "evidence"]) {
       expect(candItem.required).toContain(key);
     }

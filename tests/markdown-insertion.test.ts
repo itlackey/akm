@@ -408,9 +408,9 @@ describe("regression: akm-cli-reference table corruption", () => {
     // The table header + separator + 3 data rows remain contiguous (indices 2..6).
     expect(result[2]).toBe("| Command | Purpose |");
     expect(result[3]).toBe("|---|---|");
-    expect(result[4].startsWith("| `akm run")).toBe(true);
-    expect(result[5].startsWith("| `akm workflow")).toBe(true);
-    expect(result[6].startsWith("| `akm tasks")).toBe(true);
+    expect(result[4]!.startsWith("| `akm run")).toBe(true);
+    expect(result[5]!.startsWith("| `akm workflow")).toBe(true);
+    expect(result[6]!.startsWith("| `akm tasks")).toBe(true);
     // The callout lands at index 7 (immediately after the last data row), which
     // is fine because the original blank line then follows.
     expect(result[7]).toBe("> NOTE: Task files must be `.yml`.");

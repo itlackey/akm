@@ -45,8 +45,8 @@ describe("mergeStashHits — fair score merge", () => {
     const local = [makeStashHit("a", 0.03), makeStashHit("b", 0.02)];
     const result = mergeStashHits(local, [], 10);
     expect(result).toHaveLength(2);
-    expect(result[0].name).toBe("a");
-    expect(result[1].name).toBe("b");
+    expect(result[0]!.name).toBe("a");
+    expect(result[1]!.name).toBe("b");
   });
 
   test("respects limit when additionalHits is empty", () => {
@@ -63,16 +63,16 @@ describe("mergeStashHits — fair score merge", () => {
 
     expect(result).toHaveLength(5);
     // Sorted by score descending — remote-1 (0.9) ranks above local-1 (0.85)
-    expect(result[0].name).toBe("remote-1");
-    expect(result[0].score).toBe(0.9);
-    expect(result[1].name).toBe("local-1");
-    expect(result[1].score).toBe(0.85);
-    expect(result[2].name).toBe("local-2");
-    expect(result[2].score).toBe(0.65);
-    expect(result[3].name).toBe("remote-2");
-    expect(result[3].score).toBe(0.5);
-    expect(result[4].name).toBe("local-3");
-    expect(result[4].score).toBe(0.4);
+    expect(result[0]!.name).toBe("remote-1");
+    expect(result[0]!.score).toBe(0.9);
+    expect(result[1]!.name).toBe("local-1");
+    expect(result[1]!.score).toBe(0.85);
+    expect(result[2]!.name).toBe("local-2");
+    expect(result[2]!.score).toBe(0.65);
+    expect(result[3]!.name).toBe("remote-2");
+    expect(result[3]!.score).toBe(0.5);
+    expect(result[4]!.name).toBe("local-3");
+    expect(result[4]!.score).toBe(0.4);
   });
 
   test("duplicate items: local version wins, provider copy dropped", () => {
@@ -104,13 +104,13 @@ describe("mergeStashHits — fair score merge", () => {
     const result = mergeStashHits(local, additional, 10);
 
     expect(result).toHaveLength(3);
-    expect(result[0].name).toBe("local-1");
-    expect(result[0].score).toBe(0.85);
+    expect(result[0]!.name).toBe("local-1");
+    expect(result[0]!.score).toBe(0.85);
     // Provider scores are preserved exactly
-    expect(result[1].name).toBe("remote-1");
-    expect(result[1].score).toBe(0.7);
-    expect(result[2].name).toBe("remote-2");
-    expect(result[2].score).toBe(0.3);
+    expect(result[1]!.name).toBe("remote-1");
+    expect(result[1]!.score).toBe(0.7);
+    expect(result[2]!.name).toBe("remote-2");
+    expect(result[2]!.score).toBe(0.3);
   });
 
   test("empty localHits: provider hits keep their scores", () => {
@@ -118,10 +118,10 @@ describe("mergeStashHits — fair score merge", () => {
     const result = mergeStashHits([], additional, 10);
 
     expect(result).toHaveLength(2);
-    expect(result[0].name).toBe("remote-1");
-    expect(result[0].score).toBe(0.8);
-    expect(result[1].name).toBe("remote-2");
-    expect(result[1].score).toBe(0.5);
+    expect(result[0]!.name).toBe("remote-1");
+    expect(result[0]!.score).toBe(0.8);
+    expect(result[1]!.name).toBe("remote-2");
+    expect(result[1]!.score).toBe(0.5);
   });
 });
 
@@ -132,15 +132,15 @@ describe("mergeSearchHits — simple concatenation", () => {
     const local = [makeStashHit("a", 0.85)];
     const result = mergeSearchHits(local, [], 10);
     expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("a");
-    expect(result[0].score).toBe(0.85);
+    expect(result[0]!.name).toBe("a");
+    expect(result[0]!.score).toBe(0.85);
   });
 
   test("returns registry hits when localHits is empty", () => {
     const registry = [makeRegistryHit("pkg-a", 0.9)];
     const result = mergeSearchHits([], registry, 10);
     expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("pkg-a");
+    expect(result[0]!.name).toBe("pkg-a");
   });
 
   test("concatenates local and registry hits", () => {
@@ -150,10 +150,10 @@ describe("mergeSearchHits — simple concatenation", () => {
     const result = mergeSearchHits(local, registry, 10);
 
     expect(result).toHaveLength(4);
-    expect(result[0].name).toBe("local-1");
-    expect(result[1].name).toBe("local-2");
-    expect(result[2].name).toBe("pkg-1");
-    expect(result[3].name).toBe("pkg-2");
+    expect(result[0]!.name).toBe("local-1");
+    expect(result[1]!.name).toBe("local-2");
+    expect(result[2]!.name).toBe("pkg-1");
+    expect(result[3]!.name).toBe("pkg-2");
   });
 
   test("respects limit parameter", () => {

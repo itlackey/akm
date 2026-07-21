@@ -258,9 +258,9 @@ describe("workflow brief — solo step", () => {
     expect(brief.step?.gate.judgesArtifact).toBe(true);
     expect(brief.workList.units).toHaveLength(1);
 
-    const u = brief.workList.units[0];
+    const u = brief.workList.units[0]!;
     // Predicts the engine: unit id + input hash equal computeStepWorkList.
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: { target: "widget" },
       stepOutputs: {},
@@ -268,9 +268,9 @@ describe("workflow brief — solo step", () => {
     });
     expect(engine.ok).toBe(true);
     if (engine.ok) {
-      expect(u.unitId).toBe(engine.list.units[0].unitId);
-      if (u.resolved.ok && engine.list.units[0].resolved.ok) {
-        expect(u.resolved.inputHash).toBe(engine.list.units[0].resolved.inputHash);
+      expect(u.unitId).toBe(engine.list.units[0]!.unitId);
+      if (u.resolved.ok && engine.list.units[0]!.resolved.ok) {
+        expect(u.resolved.inputHash).toBe(engine.list.units[0]!.resolved.inputHash);
         expect(u.resolved.instructions).toContain("Build widget.");
       }
     }
@@ -335,7 +335,7 @@ describe("workflow brief — fan-out with mixed journaled statuses", () => {
   test("surfaces per-unit journaled status and predicts every content-derived id", async () => {
     const p = plan(FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params,
       stepOutputs: {},
@@ -343,7 +343,9 @@ describe("workflow brief — fan-out with mixed journaled statuses", () => {
     });
     expect(engine.ok).toBe(true);
     if (!engine.ok) return;
-    const [ua, ub, uc] = engine.list.units;
+    const ua = engine.list.units[0]!;
+    const ub = engine.list.units[1]!;
+    const uc = engine.list.units[2]!;
 
     // a.ts already completed, b.ts failed, c.ts never dispatched.
     seedRun({
@@ -414,9 +416,9 @@ describe("workflow brief — gate loop 2", () => {
     expect(brief.step?.gate.currentLoop).toBe(2);
     expect(brief.gateFeedback).toEqual({ feedback: "Add the analysis.", missing: ["the work is thorough"] });
 
-    const u = brief.workList.units[0];
+    const u = brief.workList.units[0]!;
     // The engine would compute loop 2 the same way — ids, hashes, prompt.
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
@@ -425,10 +427,10 @@ describe("workflow brief — gate loop 2", () => {
       engines: p.execution?.engines,
     });
     expect(engine.ok).toBe(true);
-    if (engine.ok && u.resolved.ok && engine.list.units[0].resolved.ok) {
-      expect(u.unitId).toBe(engine.list.units[0].unitId);
-      expect(u.resolved.inputHash).toBe(engine.list.units[0].resolved.inputHash);
-      expect(u.resolved.instructions).toBe(engine.list.units[0].resolved.prompt);
+    if (engine.ok && u.resolved.ok && engine.list.units[0]!.resolved.ok) {
+      expect(u.unitId).toBe(engine.list.units[0]!.unitId);
+      expect(u.resolved.inputHash).toBe(engine.list.units[0]!.resolved.inputHash);
+      expect(u.resolved.instructions).toBe(engine.list.units[0]!.resolved.prompt);
       expect(u.resolved.instructions).toContain("Add the analysis.");
     }
   });
@@ -547,14 +549,14 @@ describe("workflow brief — secret-shaped params (#13)", () => {
 describe("workflow brief — unit action states (#15)", () => {
   test("a live-claimed running unit is `claimed`; a live engine lease makes it `do_not_run`", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
       engines: p.execution.engines,
     });
     if (!engine.ok) throw new Error("compute failed");
-    const solo = engine.list.units[0];
+    const solo = engine.list.units[0]!;
     seedRun({
       plan: p,
       steps: [{ id: "work", criteria: ["thorough"] }],
@@ -571,26 +573,26 @@ describe("workflow brief — unit action states (#15)", () => {
       ],
     });
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("claimed");
-    expect(brief.workList.units[0].journaled?.claimedBy).toBe("claim:other");
+    expect(brief.workList.units[0]!.action).toBe("claimed");
+    expect(brief.workList.units[0]!.journaled?.claimedBy).toBe("claim:other");
     // Finding 2: a live-claimed unit's report command MUST carry the holder's
     // --session-id (only that holder can finish it), so a second driver reads it
     // as spoken-for rather than free, runnable work.
-    const claimedCmd = brief.workList.units[0].report ?? "";
+    const claimedCmd = brief.workList.units[0]!.report ?? "";
     expect(claimedCmd).toContain("--session-id claim:other");
     expect(claimedCmd).toContain("--status completed");
   });
 
   test("a running unit silent past the window is `stale` and reclaimable", async () => {
     const p = plan(LOOP_WF);
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
       engines: p.execution.engines,
     });
     if (!engine.ok) throw new Error("compute failed");
-    const solo = engine.list.units[0];
+    const solo = engine.list.units[0]!;
     const old = new Date(Date.now() - 10 * 60_000).toISOString();
     seedRun({
       plan: p,
@@ -608,11 +610,11 @@ describe("workflow brief — unit action states (#15)", () => {
       ],
     });
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("stale");
-    expect(brief.workList.units[0].report).toBeDefined();
+    expect(brief.workList.units[0]!.action).toBe("stale");
+    expect(brief.workList.units[0]!.report).toBeDefined();
     // An EXPIRED/silent claim is freely reclaimable, so its report command is the
     // plain completed form — NO --session-id (contrast the live `claimed` case).
-    expect(brief.workList.units[0].report).not.toContain("--session-id");
+    expect(brief.workList.units[0]!.report).not.toContain("--session-id");
     expect(brief.staleUnits.some((s) => s.unitId === solo.unitId)).toBe(true);
   });
 
@@ -620,7 +622,7 @@ describe("workflow brief — unit action states (#15)", () => {
     const p = plan(LOOP_WF);
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
     const brief = await buildWorkflowBrief(RUN_ID);
-    const u0 = brief.workList.units[0];
+    const u0 = brief.workList.units[0]!;
     expect(u0.action).toBe("pending");
     expect(u0.journaled).toBeUndefined();
     expect(u0.report).toContain("--status completed");
@@ -635,8 +637,8 @@ describe("workflow brief — unit action states (#15)", () => {
       lease: { holder: "engine-live", until: new Date(Date.now() + 60_000).toISOString() },
     });
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("do_not_run");
-    expect(brief.workList.units[0].report).toBeUndefined();
+    expect(brief.workList.units[0]!.action).toBe("do_not_run");
+    expect(brief.workList.units[0]!.report).toBeUndefined();
   });
 });
 
@@ -657,14 +659,14 @@ steps:
    *  but its only unit already ran to completion — the fully-terminal recovery
    *  state a required-gate block + resume (or a crash before completion) leaves. */
   function seedResumedFullyTerminal(p: WorkflowPlanGraph): { unitId: string; nodeId: string } {
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
       engines: p.execution.engines,
     });
     if (!engine.ok) throw new Error("compute failed");
-    const solo = engine.list.units[0];
+    const solo = engine.list.units[0]!;
     seedRun({
       plan: p,
       currentStepId: "work",
@@ -689,8 +691,8 @@ steps:
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.active).toBe(true);
     expect(brief.workList.units).toHaveLength(1);
-    expect(brief.workList.units[0].action).toBe("done");
-    expect(brief.workList.units[0].report).toBeUndefined();
+    expect(brief.workList.units[0]!.action).toBe("done");
+    expect(brief.workList.units[0]!.report).toBeUndefined();
     // The recovery command a driver can actually run.
     expect(brief.settleCommand).toContain("--settle");
     expect(brief.settleCommand).toContain("--expect-step work");
@@ -709,14 +711,14 @@ steps:
 
   test("a non-required fully-terminal gate omits the re-block note but still emits settle", async () => {
     const p = plan(LOOP_WF); // gate criteria, not `required`
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
       engines: p.execution.engines,
     });
     if (!engine.ok) throw new Error("compute failed");
-    const solo = engine.list.units[0];
+    const solo = engine.list.units[0]!;
     seedRun({
       plan: p,
       currentStepId: "work",
@@ -746,22 +748,22 @@ steps:
       steps: [{ id: "work", criteria: ["the work is thorough"], status: "pending" }],
     });
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("pending");
-    expect(brief.workList.units[0].report).toBeDefined();
+    expect(brief.workList.units[0]!.action).toBe("pending");
+    expect(brief.workList.units[0]!.report).toBeDefined();
     expect(brief.settleCommand).toBeUndefined();
     expect(brief.message).toContain("Execute them");
   });
 
   test("a live engine lease suppresses the settle command even on a fully-terminal list", async () => {
     const p = plan(REQUIRED_GATE_WF);
-    const engine = computeStepWorkList(p.steps[0], {
+    const engine = computeStepWorkList(p.steps[0]!, {
       runId: RUN_ID,
       params: {},
       stepOutputs: {},
       engines: p.execution.engines,
     });
     if (!engine.ok) throw new Error("compute failed");
-    const solo = engine.list.units[0];
+    const solo = engine.list.units[0]!;
     seedRun({
       plan: p,
       currentStepId: "work",
@@ -798,7 +800,7 @@ steps:
   test("warns that .gitignore-matched outputs are disposable when a unit is worktree-isolated", async () => {
     seedRun({ plan: plan(WORKTREE_WF), steps: [{ id: "build" }] });
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("pending");
+    expect(brief.workList.units[0]!.action).toBe("pending");
     const warned = brief.warnings.some((w) => w.includes("isolated git worktree") && w.includes("DISPOSABLE"));
     expect(warned).toBe(true);
   });

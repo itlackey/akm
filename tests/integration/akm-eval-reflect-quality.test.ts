@@ -556,9 +556,9 @@ describe("runReflectQualityCase", () => {
 
     const result = await runReflectQualityCase(makeCase(), makeCtx(stash));
     const evidence = result.evidence.sampleByClass as Record<string, Array<{ ref: string }>>;
-    expect(evidence.schemaShape.length).toBe(1);
-    expect(evidence.schemaShape[0].ref).toBe("memories/bad-1");
-    expect(evidence.contentPolicy.length).toBe(1);
-    expect(evidence.contentPolicy[0].ref).toBe("memories/bad-2");
+    expect(evidence.schemaShape!.length).toBe(1);
+    expect(evidence.schemaShape![0]!.ref).toBe("memories/bad-1");
+    expect(evidence.contentPolicy!.length).toBe(1);
+    expect(evidence.contentPolicy![0]!.ref).toBe("memories/bad-2");
   });
 });

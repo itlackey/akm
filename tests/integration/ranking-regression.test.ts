@@ -217,28 +217,28 @@ describe("Exact/near-exact name matching", () => {
   test('"mem0-search" (exact) -> scripts/mem0-search is #1', async () => {
     const hits = await search("mem0-search");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(hits[0].name).toBe("mem0-search");
+    expect(hits[0]!.name).toBe("mem0-search");
   });
 
   test('"security-review" (exact) -> commands/security-review is #1', async () => {
     const hits = await search("security-review");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(hits[0].name).toBe("security-review");
-    expect(hits[0].type).toBe("command");
+    expect(hits[0]!.name).toBe("security-review");
+    expect(hits[0]!.type).toBe("command");
   });
 
   test('"k8s-deploy" (exact) -> skills/k8s-deploy is #1', async () => {
     const hits = await search("k8s-deploy");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(hits[0].name).toBe("k8s-deploy");
-    expect(hits[0].type).toBe("skill");
+    expect(hits[0]!.name).toBe("k8s-deploy");
+    expect(hits[0]!.type).toBe("skill");
   });
 
   test('"code-reviewer" (exact) -> agents/code-reviewer is #1', async () => {
     const hits = await search("code-reviewer");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(hits[0].name).toBe("code-reviewer");
-    expect(hits[0].type).toBe("agent");
+    expect(hits[0]!.name).toBe("code-reviewer");
+    expect(hits[0]!.type).toBe("agent");
   });
 });
 
@@ -293,7 +293,7 @@ describe("Score preservation (not RRF-flattened)", () => {
   test("top result score > 0.5 (not capped at 0.0164)", async () => {
     const hits = await search("docker homelab");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    expect(scoreOf(hits[0])).toBeGreaterThan(0.5);
+    expect(scoreOf(hits[0]!)).toBeGreaterThan(0.5);
   });
 
   test("top result for exact name query has strong differentiation", async () => {
@@ -304,7 +304,7 @@ describe("Score preservation (not RRF-flattened)", () => {
     // a uniquely-matching exact-name query must reach the ceiling (1.0).
     const hits = await search("mem0 search");
     expect(hits.length).toBeGreaterThanOrEqual(1);
-    const topScore = scoreOf(hits[0]);
+    const topScore = scoreOf(hits[0]!);
     expect(topScore).toBe(1);
 
     // If there are additional results, the top should be at least as high.
@@ -312,15 +312,15 @@ describe("Score preservation (not RRF-flattened)", () => {
     // "scores are monotonically decreasing" case below; here we just
     // confirm the top hit reaches the maximum.
     if (hits.length >= 2) {
-      expect(topScore).toBeGreaterThanOrEqual(scoreOf(hits[1]));
+      expect(topScore).toBeGreaterThanOrEqual(scoreOf(hits[1]!));
     }
   });
 
   test("scores are monotonically decreasing", async () => {
     const hits = await search("docker");
     for (let i = 1; i < hits.length; i++) {
-      const prev = hits[i - 1].score ?? 0;
-      const curr = hits[i].score ?? 0;
+      const prev = hits[i - 1]!.score ?? 0;
+      const curr = hits[i]!.score ?? 0;
       expect(prev).toBeGreaterThanOrEqual(curr);
     }
   });
@@ -329,8 +329,8 @@ describe("Score preservation (not RRF-flattened)", () => {
     const hits = await search("docker");
     expect(hits.length).toBeGreaterThanOrEqual(3);
 
-    const topScore = scoreOf(hits[0]);
-    const lastScore = scoreOf(hits[hits.length - 1]);
+    const topScore = scoreOf(hits[0]!);
+    const lastScore = scoreOf(hits[hits.length - 1]!);
     const range = topScore - lastScore;
 
     // Score range should be meaningful, not compressed to ~0.001 like RRF.
@@ -465,7 +465,7 @@ describe("Provider merge (score not destroyed)", () => {
     const sharedHits = merged.filter((h) => h.name === "shared-skill");
     expect(sharedHits.length).toBe(1);
     // And it should have the local score
-    expect(sharedHits[0].score).toBe(2.0);
+    expect(sharedHits[0]!.score).toBe(2.0);
   });
 
   test("merge preserves sort order by score descending", () => {
@@ -480,8 +480,8 @@ describe("Provider merge (score not destroyed)", () => {
     const merged = mergeStashHits(localHits, additionalHits, 20);
 
     for (let i = 1; i < merged.length; i++) {
-      const prev = merged[i - 1].score ?? 0;
-      const curr = merged[i].score ?? 0;
+      const prev = merged[i - 1]!.score ?? 0;
+      const curr = merged[i]!.score ?? 0;
       expect(prev).toBeGreaterThanOrEqual(curr);
     }
   });

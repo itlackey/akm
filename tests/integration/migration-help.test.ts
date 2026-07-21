@@ -27,7 +27,7 @@ describe("migration help", () => {
     const changelog = fs.readFileSync(path.join(PROJECT_ROOT, "CHANGELOG.md"), "utf8");
     const latest = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
       .map((m) => m[1])
-      .find((v) => v.toLowerCase() !== "unreleased");
+      .find((v) => v!.toLowerCase() !== "unreleased");
     expect(latest).toBeTruthy();
     expect(result).toContain(`## [${latest}]`);
   });

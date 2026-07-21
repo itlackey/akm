@@ -423,7 +423,7 @@ describe("aggregatePlannerActions", () => {
     ]);
     expect(a.topReasons.map((r) => `${r.count}:${r.message[0]}`)).toEqual(["3:D", "2:R", "1:C"]);
     // Modes appear in the histogram for triage.
-    expect(a.topReasons[0].modes).toEqual(["distill"]);
+    expect(a.topReasons[0]!.modes).toEqual(["distill"]);
   });
 
   test("caps top-reasons at 10 with stable sort", () => {
@@ -451,7 +451,7 @@ describe("aggregatePlannerActions", () => {
       refuse("distill", "lessons/5", DISTILL_REFUSE_MESSAGE, "run-C"),
     ]);
     expect(a.samplesByReason).toHaveLength(1);
-    expect(a.samplesByReason[0].samples).toEqual([
+    expect(a.samplesByReason[0]!.samples).toEqual([
       { runId: "run-A", ref: "lessons/1", mode: "distill" },
       { runId: "run-A", ref: "lessons/2", mode: "distill" },
       { runId: "run-B", ref: "lessons/3", mode: "distill" },
@@ -499,7 +499,7 @@ describe("collectPlannerActions", () => {
     // Most recent 2 only.
     expect(runIdsRead.length).toBe(2);
     expect(actions.length).toBe(2);
-    expect(runIdsRead[1].startsWith("2026-05-05")).toBe(true);
+    expect(runIdsRead[1]!.startsWith("2026-05-05")).toBe(true);
   });
 
   test("returns empty when no improve runs exist", () => {
@@ -662,6 +662,6 @@ describe("runPlannerWasteCase", () => {
       samples: unknown[];
     }>;
     expect(samples).toHaveLength(1);
-    expect(samples[0].samples).toHaveLength(3);
+    expect(samples[0]!.samples).toHaveLength(3);
   });
 });

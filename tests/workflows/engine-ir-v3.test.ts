@@ -466,7 +466,7 @@ describe("workflow engine v3 contracts", () => {
     if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
 
     expect(root.invocation?.model).toBe("fallback/exact");
-    const work = computeStepWorkList(frozen.plan.steps[0], {
+    const work = computeStepWorkList(frozen.plan.steps[0]!, {
       runId: "run-sdk-fallback",
       params: {},
       stepOutputs: {},

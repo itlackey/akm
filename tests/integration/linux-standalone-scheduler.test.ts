@@ -29,7 +29,7 @@ interface RunResult {
 }
 
 function run(argv: string[], env: NodeJS.ProcessEnv): RunResult {
-  const result = spawnSync(argv[0], argv.slice(1), {
+  const result = spawnSync(argv[0]!, argv.slice(1), {
     env,
     encoding: "utf8",
     timeout: 120_000,
@@ -52,7 +52,7 @@ function generatedCronCommand(crontab: string, id: string): string {
   const body = lines[begin + 1] ?? "";
   const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
   if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1];
+  return match[1]!;
 }
 
 test.skipIf(!ENABLED)(
@@ -150,7 +150,7 @@ test.skipIf(!ENABLED)(
         }
       ).rows[0];
       expect(row).toMatchObject({ status: "completed", detail: { exitCode: 0 } });
-      expect(fs.readFileSync(row.log, "utf8")).toContain(candidateVersion as string);
+      expect(fs.readFileSync(row!.log, "utf8")).toContain(candidateVersion as string);
       expect(fs.readFileSync(taskPath)).toEqual(originalTask);
     } finally {
       if (taskAdded) run([binary, "tasks", "remove", id], env);

@@ -291,16 +291,16 @@ describe("env indexer safety", () => {
       const envEntry = entries[0];
 
       // 1. The entry is classified as env
-      expect(envEntry.entry.type).toBe("env");
-      expect(envEntry.entry.name).toBe("prod");
+      expect(envEntry!.entry.type).toBe("env");
+      expect(envEntry!.entry.name).toBe("prod");
 
       // 2. Keys are exposed via searchHints
-      expect(envEntry.entry.searchHints).toContain("SECRET_TOKEN");
-      expect(envEntry.entry.searchHints).toContain("DB_PASSWORD");
+      expect(envEntry!.entry.searchHints).toContain("SECRET_TOKEN");
+      expect(envEntry!.entry.searchHints).toContain("DB_PASSWORD");
 
       // 3. CRITICAL: comment text is never surfaced — comments carry
       // commented-out credentials and free-text secrets
-      expect(envEntry.entry.description ?? "").not.toContain("Production secrets");
+      expect(envEntry!.entry.description ?? "").not.toContain("Production secrets");
 
       // 4. CRITICAL: neither values NOR comment text are anywhere in the
       // persisted record
@@ -315,13 +315,13 @@ describe("env indexer safety", () => {
       type Row = { search_text: string | null; entry_json: string };
       const rows = db.prepare("SELECT search_text, entry_json FROM entries WHERE entry_type = ?").all("env") as Row[];
       expect(rows.length).toBe(1);
-      const searchText = rows[0].search_text ?? "";
+      const searchText = rows[0]!.search_text ?? "";
       expect(searchText).not.toContain(SECRET_VALUE);
       expect(searchText).not.toContain("zqxoldcredleak");
       expect(searchText).not.toContain("zqxcommentleak");
-      expect(rows[0].entry_json).not.toContain(SECRET_VALUE);
-      expect(rows[0].entry_json).not.toContain("zqxoldcredleak");
-      expect(rows[0].entry_json).not.toContain("zqxcommentleak");
+      expect(rows[0]!.entry_json).not.toContain(SECRET_VALUE);
+      expect(rows[0]!.entry_json).not.toContain("zqxoldcredleak");
+      expect(rows[0]!.entry_json).not.toContain("zqxcommentleak");
 
       // 6. CRITICAL: neither values nor comment text can be retrieved via FTS5
       type FtsRow = { c: number };
@@ -370,7 +370,7 @@ describe("env indexer safety", () => {
     try {
       const entries = getAllEntries(db);
       expect(entries.length).toBe(1);
-      expect(entries[0].entry.type).toBe("env");
+      expect(entries[0]!.entry.type).toBe("env");
     } finally {
       closeDatabase(db);
     }

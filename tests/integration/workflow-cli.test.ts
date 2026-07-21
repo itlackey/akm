@@ -83,7 +83,7 @@ function parseLastJsonLine(stderr: string): unknown {
   const lines = stderr.split("\n");
   let startIdx = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].startsWith("{")) {
+    if (lines[i]!.startsWith("{")) {
       startIdx = i;
       break;
     }

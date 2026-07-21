@@ -38,9 +38,9 @@ function collectOutputCommandNames(): { name: string; locations: string[] }[] {
     // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic RegExp exec loop
     while ((m = RE.exec(src))) {
       const name = m[1];
-      const list = found.get(name) ?? [];
+      const list = found.get(name!) ?? [];
       list.push(path.relative(SRC_ROOT, file));
-      found.set(name, list);
+      found.set(name!, list);
     }
   }
   return [...found.entries()]

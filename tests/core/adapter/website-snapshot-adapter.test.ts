@@ -101,8 +101,8 @@ describe("website-snapshot adapter — recognition golden (gated re-type)", () =
 describe("website-snapshot adapter — placement golden (read-only)", () => {
   test("website is read-only: placeNew is null/undefined (Mode B routes to the destination adapter)", () => {
     const byType = loadGolden("placement").byType as Record<string, { placeNew: null; readOnly: boolean }>;
-    expect(byType.website.placeNew).toBeNull();
-    expect(byType.website.readOnly).toBe(true);
+    expect(byType.website!.placeNew).toBeNull();
+    expect(byType.website!.readOnly).toBe(true);
     expect(websiteSnapshotAdapter.placeNew).toBeUndefined();
   });
 });

@@ -85,8 +85,8 @@ describe("resolveSourceEntries", () => {
     saveConfig({ semanticSearchMode: "off" });
     const sources = resolveSourceEntries();
     expect(sources.length).toBeGreaterThanOrEqual(1);
-    expect(sources[0].path).toBe(stashDir);
-    expect(sources[0].registryId).toBeUndefined();
+    expect(sources[0]!.path).toBe(stashDir);
+    expect(sources[0]!.registryId).toBeUndefined();
   });
 
   test("includes valid stash paths", () => {
@@ -95,7 +95,7 @@ describe("resolveSourceEntries", () => {
       saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } });
       const sources = resolveSourceEntries();
       expect(sources.length).toBe(2);
-      expect(sources[1].path).toBe(extraDir);
+      expect(sources[1]!.path).toBe(extraDir);
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
     }
@@ -192,12 +192,12 @@ describe("resolveSourceEntries", () => {
       });
       mergeLockEntriesSync([{ id: "test-pkg", source: "npm", ref: "npm:test-pkg@1.0.0", localRoot: installedDir }]);
       const sources = resolveSourceEntries();
-      expect(sources[0].path).toBe(stashDir);
-      expect(sources[0].registryId).toBeUndefined();
-      expect(sources[1].path).toBe(extraDir);
-      expect(sources[1].registryId).toBe("extra");
-      expect(sources[2].path).toBe(installedDir);
-      expect(sources[2].registryId).toBe("test-pkg");
+      expect(sources[0]!.path).toBe(stashDir);
+      expect(sources[0]!.registryId).toBeUndefined();
+      expect(sources[1]!.path).toBe(extraDir);
+      expect(sources[1]!.registryId).toBe("extra");
+      expect(sources[2]!.path).toBe(installedDir);
+      expect(sources[2]!.registryId).toBe("test-pkg");
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
       fs.rmSync(installedDir, { recursive: true, force: true });
@@ -209,7 +209,7 @@ describe("resolveSourceEntries", () => {
     try {
       saveConfig({ semanticSearchMode: "off" });
       const sources = resolveSourceEntries(overrideDir);
-      expect(sources[0].path).toBe(overrideDir);
+      expect(sources[0]!.path).toBe(overrideDir);
     } finally {
       fs.rmSync(overrideDir, { recursive: true, force: true });
     }

@@ -103,10 +103,10 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
       expect(expected, `no golden entry for ${ctx.relPath}`).toBeDefined();
       const doc = akmAdapter.recognize(component(), ctx);
       expect(doc, `recognize returned null for ${ctx.relPath}`).not.toBeNull();
-      expect(doc?.type, `type mismatch for ${ctx.relPath}`).toBe(expected.type);
+      expect(doc?.type, `type mismatch for ${ctx.relPath}`).toBe(expected!.type);
       // Winner's renderer is carried on documentJson for WI-C (not a new field).
       expect((doc?.documentJson as { renderer?: string })?.renderer, `renderer mismatch for ${ctx.relPath}`).toBe(
-        expected.renderer,
+        expected!.renderer,
       );
       expect(doc?.adapterId).toBe("akm");
       expect(doc?.bundle).toBe(BUNDLE_ID);

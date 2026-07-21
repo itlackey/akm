@@ -161,7 +161,7 @@ function seedRun(opts: {
 
 /** The content-derived unit ids the engine (and brief) would compute for a step. */
 function unitIds(p: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): string[] {
-  const computed = computeStepWorkList(p.steps[stepIndex], {
+  const computed = computeStepWorkList(p.steps[stepIndex]!, {
     runId: RUN_ID,
     params,
     stepOutputs: {},
@@ -236,7 +236,7 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
     const p = plan(TWO_STEP_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review", criteria: ["every file was reviewed"] }, { id: "summarize" }] });
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
 
     // First unit: step stays active, one still outstanding.
     const r1 = await reportWorkflowUnit({
@@ -265,9 +265,9 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
     expect(r2.runStatus).toBe("active"); // step 2 (summarize) now pending
 
     const afterStep1 = await getWorkflowStatus(RUN_ID);
-    expect(afterStep1.workflow.steps[0].status).toBe("completed");
+    expect(afterStep1.workflow.steps[0]!.status).toBe("completed");
     // Promoted + schema-validated collect artifact.
-    expect(afterStep1.workflow.steps[0].evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "great" }]);
+    expect(afterStep1.workflow.steps[0]!.evidence?.output).toEqual([{ verdict: "ok" }, { verdict: "great" }]);
 
     // The gate was judged and journaled as a unit row (llm runner, l1).
     await withWorkflowRunsRepo((repo) => {
@@ -279,16 +279,16 @@ describe("workflow report — full happy path (2-step fan-out to completion)", (
       ).toBe(true);
       const gate = rows.filter((u) => u.node_id === "review.gate");
       expect(gate).toHaveLength(1);
-      expect(gate[0].unit_id).toBe("review.gate:l1");
-      expect(gate[0].runner).toBe("llm");
-      expect(gate[0].engine).toBe("test-llm");
-      expect(gate[0].model).toBe("test-model");
-      expect(gate[0].input_hash).toMatch(/^[0-9a-f]{64}$/);
-      expect(JSON.parse(gate[0].result_json ?? "null")).toEqual({ complete: true, missing: [] });
+      expect(gate[0]!.unit_id).toBe("review.gate:l1");
+      expect(gate[0]!.runner).toBe("llm");
+      expect(gate[0]!.engine).toBe("test-llm");
+      expect(gate[0]!.model).toBe("test-model");
+      expect(gate[0]!.input_hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(JSON.parse(gate[0]!.result_json ?? "null")).toEqual({ complete: true, missing: [] });
     });
 
     // Step 2 (solo, free text, no gate): reporting its unit completes the run.
-    const summarizeUnit = unitIds(p, 1, params)[0];
+    const summarizeUnit = unitIds(p, 1, params)[0]!;
     const r3 = await reportWorkflowUnit({
       target: RUN_ID,
       unitId: summarizeUnit,
@@ -344,7 +344,7 @@ steps:
     if (!agent || agent.kind !== "agent") throw new Error("expected frozen agent engine");
     agent.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG", "CLAUDE_CONFIG"];
     seedRun({ plan: p, steps: [{ id: "work" }] });
-    const unitId = unitIds(p, 0, {})[0];
+    const unitId = unitIds(p, 0, {})[0]!;
 
     try {
       await withEnv(
@@ -372,8 +372,8 @@ steps:
         expect(JSON.stringify(rows)).not.toContain(sentinel);
       }
       expect(JSON.stringify(rows)).toContain("[REDACTED]");
-      expect(rows[0].failure_reason).toBe("reported_failure");
-      expect(rows[0].session_id).toBe("session-[REDACTED]");
+      expect(rows[0]!.failure_reason).toBe("reported_failure");
+      expect(rows[0]!.session_id).toBe("session-[REDACTED]");
     } finally {
       stash.cleanup();
     }
@@ -386,7 +386,7 @@ describe("workflow report — gate rejection with loops remaining", () => {
   test("rejects, leaves the step active, and the next brief emits loop 2 with recovered feedback", async () => {
     const p = plan(LOOP_WF);
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["the work is thorough"] }] });
-    const unit = unitIds(p, 0, {})[0];
+    const unit = unitIds(p, 0, {})[0]!;
 
     const rejectJudge: SummaryJudge = async () =>
       '{"complete": false, "missing": ["the work is thorough"], "feedback": "Add the analysis section."}';
@@ -405,13 +405,13 @@ describe("workflow report — gate rejection with loops remaining", () => {
 
     // Step stays pending; a gate rejection was journaled.
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
 
     // The next brief emits loop 2 with the feedback recovered from the journal.
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.step?.gate.currentLoop).toBe(2);
     expect(brief.gateFeedback?.feedback).toContain("Add the analysis section.");
-    expect(brief.workList.units[0].resolved.ok).toBe(true);
+    expect(brief.workList.units[0]!.resolved.ok).toBe(true);
   });
 });
 
@@ -435,7 +435,7 @@ describe("workflow report — on_error policy", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
 
     await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null });
     const r = await reportWorkflowUnit({
@@ -448,14 +448,14 @@ describe("workflow report — on_error policy", () => {
     expect(r.stepOutcome?.kind).toBe("failed");
     expect(r.runStatus).toBe("failed");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 
   test("on_error: continue — a failed unit is tolerated and the step completes", async () => {
     const p = plan(ONERROR_WF("continue"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
 
     await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null });
     const r = await reportWorkflowUnit({
@@ -468,7 +468,7 @@ describe("workflow report — on_error policy", () => {
     expect(r.stepOutcome?.kind).toBe("advanced");
     expect(r.runStatus).toBe("completed");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.workflow.steps[0]!.status).toBe("completed");
   });
 });
 
@@ -479,7 +479,7 @@ describe("workflow report — re-report semantics", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const first = await reportWorkflowUnit({
       target: RUN_ID,
@@ -506,7 +506,7 @@ describe("workflow report — re-report semantics", () => {
   test("re-reporting a completed unit whose journaled input hash differs is a replay-divergence error", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
     // Seed ua already completed with a WRONG input hash (as if tampered).
     seedRun({
       plan: p,
@@ -529,7 +529,7 @@ describe("workflow report — running claim + stale surfacing", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
     const release = acquireMaintenanceBarrier();
     let settled = false;
     const pending = reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" }).finally(() => {
@@ -549,7 +549,7 @@ describe("workflow report — running claim + stale surfacing", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const r = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running", note: "starting" });
     expect(r.status).toBe("running");
@@ -564,7 +564,7 @@ describe("workflow report — running claim + stale surfacing", () => {
     });
     // Step is untouched — still pending.
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
   });
 
   test("after report --status running, the next brief renders the unit as `claimed` with a --session-id command", async () => {
@@ -576,7 +576,7 @@ describe("workflow report — running claim + stale surfacing", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const claim = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" });
     const holder = claim.claim?.holder as string;
@@ -596,7 +596,7 @@ describe("workflow report — running claim + stale surfacing", () => {
   test("a stale claimed unit surfaces in brief with a warning", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
     const old = new Date(Date.now() - 10 * 60_000).toISOString();
     seedRun({
       plan: p,
@@ -619,7 +619,7 @@ describe("workflow report — refusals", () => {
   test("refuses while a live engine lease is held", async () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
     seedRun({
       plan: p,
       params,
@@ -650,7 +650,7 @@ describe("workflow report — refusals", () => {
     const p = plan(TWO_STEP_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review", criteria: ["every file was reviewed"] }, { id: "summarize" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
     await expect(
       reportWorkflowUnit({
         target: RUN_ID,
@@ -683,7 +683,7 @@ steps:
     // throw and leave the run permanently stuck.
     const p = plan(BUDGET_MAX_UNITS_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
-    const [ua, ub, uc] = unitIds(p, 0, params);
+    const [ua, ub, uc] = unitIds(p, 0, params) as [string, string, string];
     // Two units already dispatched (journaled) → the ceiling is reached.
     seedRun({
       plan: p,
@@ -707,7 +707,7 @@ steps:
     // The crossing unit was NOT journaled (the engine never dispatched it).
     expect(r.recorded).toBe("not-recorded");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
     await withWorkflowRunsRepo((repo) => {
       expect(repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.unit_id === uc)).toHaveLength(0);
     });
@@ -719,7 +719,7 @@ steps:
     const p = plan(BUDGET_MAX_UNITS_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua, ub, uc] = unitIds(p, 0, params);
+    const [ua, ub, uc] = unitIds(p, 0, params) as [string, string, string];
 
     const r1 = await reportWorkflowUnit({
       target: RUN_ID,
@@ -747,7 +747,7 @@ steps:
     expect(r3.stepOutcome?.kind).toBe("failed");
     expect(r3.runStatus).toBe("failed");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 
   test("a single unit whose own tokens cross max_tokens FAILS the step (engine addTokens parity)", async () => {
@@ -766,7 +766,7 @@ steps:
 `;
     const p = plan(BUDGET_TOKENS_WF);
     seedRun({ plan: p, steps: [{ id: "work" }] });
-    const unit = unitIds(p, 0, {})[0];
+    const unit = unitIds(p, 0, {})[0]!;
     const r = await reportWorkflowUnit({
       target: RUN_ID,
       unitId: unit,
@@ -786,7 +786,7 @@ steps:
       expect(row?.tokens).toBe(150);
     });
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 
   test("a typed-artifact schema mismatch is a hard step failure on the report path (even with max_loops)", async () => {
@@ -810,7 +810,7 @@ steps:
 `;
     const p = plan(SCHEMA_LOOP_WF);
     seedRun({ plan: p, steps: [{ id: "discover", criteria: ["files were found"] }] });
-    const unit = unitIds(p, 0, {})[0];
+    const unit = unitIds(p, 0, {})[0]!;
     const r = await reportWorkflowUnit({
       target: RUN_ID,
       unitId: unit,
@@ -877,7 +877,7 @@ steps:
     // `report --unit` can ever complete.
     const p = plan(EMPTY_DOWNSTREAM_WF);
     seedRun({ plan: p, steps: [{ id: "discover" }, { id: "review" }, { id: "summarize" }] });
-    const discoverUnit = unitIds(p, 0, {})[0];
+    const discoverUnit = unitIds(p, 0, {})[0]!;
 
     const r = await reportWorkflowUnit({
       target: RUN_ID,
@@ -891,8 +891,8 @@ steps:
     expect(r.stepOutcome?.kind).toBe("advanced");
     expect(r.runStatus).toBe("active");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[1].status).toBe("completed");
-    expect(status.workflow.steps[1].evidence?.output).toEqual([]);
+    expect(status.workflow.steps[1]!.status).toBe("completed");
+    expect(status.workflow.steps[1]!.evidence?.output).toEqual([]);
     // The next brief points at summarize with real work.
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.step?.stepId).toBe("summarize");
@@ -908,7 +908,7 @@ steps:
       plan: p,
       steps: [{ id: "discover", status: "completed", evidence: { output: [] } }, { id: "review" }, { id: "summarize" }],
     });
-    const summarizeUnit = unitIds(p, 2, {})[0];
+    const summarizeUnit = unitIds(p, 2, {})[0]!;
 
     const r = await reportWorkflowUnit({
       target: RUN_ID,
@@ -920,8 +920,8 @@ steps:
     expect(r.stepOutcome?.kind).toBe("advanced");
     expect(r.runStatus).toBe("completed");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[1].status).toBe("completed"); // review auto-completed
-    expect(status.workflow.steps[2].status).toBe("completed"); // summarize recorded
+    expect(status.workflow.steps[1]!.status).toBe("completed"); // review auto-completed
+    expect(status.workflow.steps[2]!.status).toBe("completed"); // summarize recorded
   });
 
   test("a step whose every unit is unresolvable FAILS the run (engine expression_error + on_error: fail)", async () => {
@@ -951,7 +951,7 @@ steps:
 
     const r = await reportWorkflowUnit({
       target: RUN_ID,
-      unitId: brief.workList.units[0].unitId,
+      unitId: brief.workList.units[0]!.unitId,
       status: "completed",
       resultRaw: "ignored",
       summaryJudge: null,
@@ -960,7 +960,7 @@ steps:
     expect(r.runStatus).toBe("failed");
     expect(r.recorded).toBe("not-recorded");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 });
 
@@ -971,7 +971,7 @@ describe("workflow report — concurrent reports for the same unit", () => {
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const results = await Promise.allSettled([
       reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null }),
@@ -990,7 +990,7 @@ describe("workflow report — concurrent reports for the same unit", () => {
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.unit_id === ua);
       expect(rows).toHaveLength(1);
-      expect(rows[0].status).toBe("completed");
+      expect(rows[0]!.status).toBe("completed");
     });
   });
 });
@@ -1002,7 +1002,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     // No --session-id ⇒ report mints a token and returns it.
     const first = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running" });
@@ -1023,7 +1023,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
     const p = plan(ONERROR_WF("continue"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const claim = await reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "running", sessionId: "driver-A" });
     expect(claim.claim?.holder).toBe("driver-A");
@@ -1061,7 +1061,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
       // A running row whose claim has EXPIRED (input_hash null ⇒ no hash guard).
       units: [
         {
-          unitId: unitIds(p, 0, params)[0],
+          unitId: unitIds(p, 0, params)[0]!,
           stepId: "review",
           nodeId: "review",
           status: "running",
@@ -1071,7 +1071,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
         },
       ],
     });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     // A fresh holder reclaims via heartbeat…
     const reclaim = await reportWorkflowUnit({
@@ -1103,7 +1103,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
       steps: [{ id: "review" }],
       units: [
         {
-          unitId: unitIds(p, 0, params)[0],
+          unitId: unitIds(p, 0, params)[0]!,
           stepId: "review",
           nodeId: "review",
           status: "running",
@@ -1111,7 +1111,7 @@ describe("workflow report — claim ownership (--status running compare-and-set)
         },
       ],
     });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
     await expect(
       reportWorkflowUnit({ target: RUN_ID, unitId: ua, status: "completed", resultRaw: "ok", summaryJudge: null }),
     ).rejects.toThrow(/[Rr]eplay divergence/);
@@ -1129,7 +1129,7 @@ describe("workflow report — a FAILED row is idempotence-protected (--rerun for
     const p = plan(ONERROR_WF("continue"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const failed = await reportWorkflowUnit({
       target: RUN_ID,
@@ -1168,7 +1168,7 @@ describe("workflow report — a FAILED row is idempotence-protected (--rerun for
     const p = plan(ONERROR_WF("continue"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     await reportWorkflowUnit({
       target: RUN_ID,
@@ -1218,7 +1218,7 @@ steps:
     // a --rerun of ua is the 3rd charged dispatch under max_units:2 → hard fail.
     const p = plan(BUDGET_WF);
     const params = { files: ["a.ts", "b.ts"] };
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
     seedRun({
       plan: p,
       params,
@@ -1261,7 +1261,7 @@ describe("workflow report — concurrent finalization is a single spine advance"
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"] };
     const ids = unitIds(p, 0, params);
     const done = ids.slice(0, 3);
-    const [ud, ue] = ids.slice(3);
+    const [ud, ue] = ids.slice(3) as [string, string];
     seedRun({
       plan: p,
       params,
@@ -1298,7 +1298,7 @@ describe("workflow report — concurrent finalization is a single spine advance"
 
     const status = await getWorkflowStatus(RUN_ID);
     // The step advanced EXACTLY once and the run moved to the next step.
-    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.workflow.steps[0]!.status).toBe("completed");
     expect(status.run.status).toBe("active");
     expect(status.run.currentStepId).toBe("summarize");
 
@@ -1306,8 +1306,8 @@ describe("workflow report — concurrent finalization is a single spine advance"
       // Exactly one gate-evaluation row, completed once (no duplicate journaling).
       const gates = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.node_id === "review.gate");
       expect(gates).toHaveLength(1);
-      expect(gates[0].unit_id).toBe("review.gate:l1");
-      expect(gates[0].status).toBe("completed");
+      expect(gates[0]!.unit_id).toBe("review.gate:l1");
+      expect(gates[0]!.status).toBe("completed");
       // Exactly five dispatch rows — no unit was double-journaled.
       const dispatch = repo.getUnitsForStep(RUN_ID, "review").filter((u) => u.phase === null);
       expect(dispatch).toHaveLength(5);
@@ -1321,7 +1321,7 @@ describe("workflow report — --expect-step spine guard (#14)", () => {
   test("a matching expect-step is accepted; a stale one is refused with a clear message", async () => {
     const p = plan(LOOP_WF);
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["the work is thorough"] }] });
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
 
     // Wrong step id (the spine moved / never was here) → refused, run untouched.
     await expect(
@@ -1354,7 +1354,7 @@ describe("workflow report — --expect-step spine guard (#14)", () => {
 describe("workflow report — failure-reason normalization (#16)", () => {
   test("a taxonomy reason is stored verbatim; an unknown one is namespaced under external:<slug>", async () => {
     const p = plan(LOOP_WF);
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
 
     // Known taxonomy reason → verbatim (participates in retry.on identically).
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
@@ -1372,7 +1372,7 @@ describe("workflow report — failure-reason normalization (#16)", () => {
 
   test("an arbitrary external reason is sanitized to external:<slug>", async () => {
     const p = plan(LOOP_WF);
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
     await reportWorkflowUnit({
       target: RUN_ID,
@@ -1391,7 +1391,7 @@ describe("workflow report — failure-reason normalization (#16)", () => {
 
   test("an absent reason defaults to reported_failure (not external:)", async () => {
     const p = plan(LOOP_WF);
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
     seedRun({ plan: p, steps: [{ id: "work", criteria: ["thorough"] }] });
     await reportWorkflowUnit({ target: RUN_ID, unitId: unit, status: "failed", summaryJudge: null });
     await withWorkflowRunsRepo(async (repo) => {
@@ -1439,7 +1439,7 @@ steps:
     const p = plan(TOKENS_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     const failed = await reportWorkflowUnit({
       target: RUN_ID,
@@ -1480,7 +1480,7 @@ steps:
     const p = plan(TOKENS_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua] = unitIds(p, 0, params);
+    const [ua] = unitIds(p, 0, params) as [string];
 
     await reportWorkflowUnit({
       target: RUN_ID,
@@ -1518,7 +1518,7 @@ describe("workflow report — a failed unit fails the step immediately under on_
     const p = plan(ONERROR_WF("fail"));
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
 
     // Report the FAILURE first — ua is never reported.
     const r = await reportWorkflowUnit({
@@ -1532,7 +1532,7 @@ describe("workflow report — a failed unit fails the step immediately under on_
     expect(r.runStatus).toBe("failed");
     void ua;
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 
   test("a RETRY-ELIGIBLE failure (retry.on match, budget left) does NOT fail-fast — the unit may still be re-run", async () => {
@@ -1555,7 +1555,7 @@ steps:
     const p = plan(RETRY_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [ua, ub] = unitIds(p, 0, params);
+    const [ua, ub] = unitIds(p, 0, params) as [string, string];
 
     const r = await reportWorkflowUnit({
       target: RUN_ID,
@@ -1570,7 +1570,7 @@ steps:
     expect(r.remainingUnits).toBe(1);
     void ua;
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
   });
 
   test("a failure whose reason is OUTSIDE retry.on fails-fast even when retry is declared", async () => {
@@ -1590,7 +1590,7 @@ steps:
     const p = plan(RETRY_WF);
     const params = { files: ["a.ts", "b.ts"] };
     seedRun({ plan: p, params, steps: [{ id: "review" }] });
-    const [, ub] = unitIds(p, 0, params);
+    const [, ub] = unitIds(p, 0, params) as [string, string];
 
     // `timeout` is not in retry.on: [llm_rate_limit] → terminal → fail-fast.
     const r = await reportWorkflowUnit({
@@ -1716,7 +1716,7 @@ describe("report --settle finalizes a fully-terminal step still needing completi
   /** The post-resume recovery state: run active, step pending again, but its
    *  only unit already completed — nothing left to `report --unit`. */
   function seedResumedFullyTerminal(p: WorkflowPlanGraph): string {
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
     seedRun({
       plan: p,
       currentStepId: "work",
@@ -1741,8 +1741,8 @@ describe("report --settle finalizes a fully-terminal step still needing completi
     // brief surfaces the settle command (not a per-unit report) — the recovery
     // path owner finding 3 says must be obvious.
     const brief = await buildWorkflowBrief(RUN_ID);
-    expect(brief.workList.units[0].action).toBe("done");
-    expect(brief.workList.units[0].report).toBeUndefined();
+    expect(brief.workList.units[0]!.action).toBe("done");
+    expect(brief.workList.units[0]!.report).toBeUndefined();
     expect(brief.settleCommand).toContain("--settle");
 
     // --settle runs the shared completion path; a required gate with no judge
@@ -1752,7 +1752,7 @@ describe("report --settle finalizes a fully-terminal step still needing completi
     expect(settled.runStatus).toBe("blocked");
     expect(settled.recorded).toBe("not-recorded");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("blocked");
+    expect(status.workflow.steps[0]!.status).toBe("blocked");
   });
 
   test("--settle completes the fully-terminal step under a passing judge", async () => {
@@ -1762,7 +1762,7 @@ describe("report --settle finalizes a fully-terminal step still needing completi
     expect(settled.stepOutcome?.kind).toBe("advanced");
     expect(settled.runStatus).toBe("completed");
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.workflow.steps[0]!.status).toBe("completed");
   });
 
   test("--settle still refuses a step whose unit is genuinely PENDING (nothing terminal yet)", async () => {
@@ -1791,7 +1791,7 @@ steps:
       required: true
 `;
     const p = plan(RETRY_WF);
-    const [unit] = unitIds(p, 0, {});
+    const [unit] = unitIds(p, 0, {}) as [string];
     seedRun({
       plan: p,
       currentStepId: "work",
@@ -1814,6 +1814,6 @@ steps:
     );
     const brief = await buildWorkflowBrief(RUN_ID);
     expect(brief.settleCommand).toBeUndefined();
-    expect(brief.workList.units[0].action).toBe("failed");
+    expect(brief.workList.units[0]!.action).toBe("failed");
   });
 });

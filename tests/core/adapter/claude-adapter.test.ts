@@ -100,8 +100,8 @@ describe("claude adapter — placement golden", () => {
 
   test("skill dir-name round-trip edge case", () => {
     const edge = loadGolden("placement").edgeCases as Record<string, { conceptId: string; assetPath: string }>;
-    const abs = claudeAdapter.placeNew?.(component(), edge.skillDirNameEqualsSkillName.conceptId);
-    expect(relFromRoot(abs as string)).toBe(edge.skillDirNameEqualsSkillName.assetPath);
+    const abs = claudeAdapter.placeNew?.(component(), edge.skillDirNameEqualsSkillName!.conceptId);
+    expect(relFromRoot(abs as string)).toBe(edge.skillDirNameEqualsSkillName!.assetPath);
   });
 });
 

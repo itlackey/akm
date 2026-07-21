@@ -141,19 +141,19 @@ describe("legacy-layout.ts — shape/existence (gate 2 mechanization)", () => {
     expect(keys.sort()).toEqual([...LEGACY_TYPE_KEYS].sort());
     for (const key of keys) {
       const spec = FROZEN_ASSET_SPECS_INTERNAL[key];
-      expect(typeof spec.stashDir, `${key}.stashDir`).toBe("string");
-      expect(typeof spec.isRelevantFile, `${key}.isRelevantFile`).toBe("function");
-      expect(typeof spec.toCanonicalName, `${key}.toCanonicalName`).toBe("function");
-      expect(typeof spec.toAssetPath, `${key}.toAssetPath`).toBe("function");
+      expect(typeof spec!.stashDir, `${key}.stashDir`).toBe("string");
+      expect(typeof spec!.isRelevantFile, `${key}.isRelevantFile`).toBe("function");
+      expect(typeof spec!.toCanonicalName, `${key}.toCanonicalName`).toBe("function");
+      expect(typeof spec!.toAssetPath, `${key}.toAssetPath`).toBe("function");
       // D1-6b: rendererName/actionBuilder are DROPPED — the migrator never renders.
-      expect(Object.hasOwn(spec, "rendererName"), `${key}.rendererName should be absent`).toBe(false);
-      expect(Object.hasOwn(spec, "actionBuilder"), `${key}.actionBuilder should be absent`).toBe(false);
+      expect(Object.hasOwn(spec!, "rendererName"), `${key}.rendererName should be absent`).toBe(false);
+      expect(Object.hasOwn(spec!, "actionBuilder"), `${key}.actionBuilder should be absent`).toBe(false);
     }
   });
 
   test("TYPE_DIRS mirrors ASSET_SPECS_INTERNAL's stashDir per type", () => {
     for (const key of LEGACY_TYPE_KEYS) {
-      expect(FROZEN_TYPE_DIRS[key]).toBe(FROZEN_ASSET_SPECS_INTERNAL[key].stashDir);
+      expect(FROZEN_TYPE_DIRS[key]).toBe(FROZEN_ASSET_SPECS_INTERNAL[key]!.stashDir);
     }
   });
 
@@ -221,12 +221,12 @@ describe("legacy-layout.ts — faithfulness: toCanonicalName/toAssetPath/isRelev
       const sample = SAMPLE_BY_TYPE[type];
       const liveSpec = ASSET_SPECS[type];
       const frozenSpec = FROZEN_ASSET_SPECS_INTERNAL[type];
-      expect(frozenSpec.stashDir).toBe(liveSpec.stashDir);
-      expect(frozenSpec.isRelevantFile(sample.fileName)).toBe(liveSpec.isRelevantFile(sample.fileName));
+      expect(frozenSpec!.stashDir).toBe(liveSpec!.stashDir);
+      expect(frozenSpec!.isRelevantFile(sample!.fileName)).toBe(liveSpec!.isRelevantFile(sample!.fileName));
 
       const typeRoot = "/synthetic-root";
-      const filePath = `${typeRoot}/${sample.relFile}`;
-      expect(frozenSpec.toCanonicalName(typeRoot, filePath)).toBe(liveSpec.toCanonicalName(typeRoot, filePath));
+      const filePath = `${typeRoot}/${sample!.relFile}`;
+      expect(frozenSpec!.toCanonicalName(typeRoot, filePath)).toBe(liveSpec!.toCanonicalName(typeRoot, filePath));
     });
   }
 
@@ -244,9 +244,9 @@ describe("legacy-layout.ts — faithfulness: toCanonicalName/toAssetPath/isRelev
     ] as const) {
       const liveSpec = ASSET_SPECS[type];
       const frozenSpec = FROZEN_ASSET_SPECS_INTERNAL[type];
-      const typeRoot = path.join(STASH_ROOT, liveSpec.stashDir);
-      expect(frozenSpec.toAssetPath(typeRoot, name), `type ${type} name ${name}`).toBe(
-        liveSpec.toAssetPath(typeRoot, name),
+      const typeRoot = path.join(STASH_ROOT, liveSpec!.stashDir);
+      expect(frozenSpec!.toAssetPath(typeRoot, name), `type ${type} name ${name}`).toBe(
+        liveSpec!.toAssetPath(typeRoot, name),
       );
     }
   });

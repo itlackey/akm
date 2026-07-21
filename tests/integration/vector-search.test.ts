@@ -139,9 +139,9 @@ describe("tryVecScores activation", () => {
       // Query with the same vector — should find the entry
       const results = searchVec(db, embedding, 5);
       expect(results.length).toBe(1);
-      expect(results[0].id).toBe(id);
+      expect(results[0]!.id).toBe(id);
       // Distance should be ~0 since query = stored embedding
-      expect(results[0].distance).toBeLessThan(0.01);
+      expect(results[0]!.distance).toBeLessThan(0.01);
     } finally {
       closeDatabase(db);
     }
@@ -396,9 +396,9 @@ describe("BM25 normalization edge cases", () => {
     const scores = [-5.0, -5.0, -5.0]; // all identical
     const bestBm25 = scores[0];
     const worstBm25 = scores[scores.length - 1];
-    const range = bestBm25 - worstBm25; // 0
+    const range = bestBm25! - worstBm25!; // 0
 
-    const normalized = scores.map((s) => (range !== 0 ? (s - worstBm25) / range : 1.0));
+    const normalized = scores.map((s) => (range !== 0 ? (s - worstBm25!) / range : 1.0));
 
     // All should be 1.0 when range is 0
     for (const n of normalized) {
@@ -460,9 +460,9 @@ describe("BM25 normalization edge cases", () => {
     const scores = [-7.3];
     const bestBm25 = scores[0];
     const worstBm25 = scores[0];
-    const range = bestBm25 - worstBm25; // 0
+    const range = bestBm25! - worstBm25!; // 0
 
-    const normalized = range !== 0 ? (scores[0] - worstBm25) / range : 1.0;
+    const normalized = range !== 0 ? (scores[0]! - worstBm25!) / range : 1.0;
     expect(normalized).toBe(1.0);
 
     const scaled = 0.3 + normalized * 0.7;
@@ -651,7 +651,7 @@ describe("Dimension mismatch produces zero similarity", () => {
       // since cosineSimilarity returns 0 for mismatched dims.
       // The JS fallback converts cosine=0 to L2 = sqrt(2*(1-0)) = sqrt(2).
       if (results.length > 0) {
-        expect(results[0].distance).toBeCloseTo(Math.sqrt(2), 1);
+        expect(results[0]!.distance).toBeCloseTo(Math.sqrt(2), 1);
       }
       // Either we get the result with max distance or empty (both acceptable)
       expect(results.length).toBeLessThanOrEqual(1);
@@ -688,7 +688,7 @@ describe("L2-to-cosine conversion round-trip", () => {
       const results = searchVec(db, [1, 0, 0, 0], 10);
       expect(results.length).toBe(1);
 
-      const distance = results[0].distance;
+      const distance = results[0]!.distance;
       // Convert back: cosine = 1 - distance^2 / 2
       const recoveredCosine = 1 - (distance * distance) / 2;
       expect(recoveredCosine).toBeCloseTo(0.6, 1);

@@ -187,7 +187,7 @@ function restoreJournalEntries(
   };
   return Object.entries(destinations).map(([name, destination]) => ({
     destination,
-    ...((backup.manifest.artifacts as Record<string, { present: boolean }>)[name].present
+    ...((backup.manifest.artifacts as Record<string, { present: boolean }>)[name]!.present
       ? { stage: `${destination}.restore-stage.${operationId}` }
       : {}),
     originalPresent: fs.existsSync(destination),

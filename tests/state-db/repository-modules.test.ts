@@ -54,7 +54,7 @@ describe("embeddings-repository blob codec (pure, no DB)", () => {
     const roundTripped = blobToEmbedding(embeddingToBlob(vec));
     expect(roundTripped).toHaveLength(vec.length);
     for (let i = 0; i < vec.length; i++) {
-      expect(roundTripped[i]).toBeCloseTo(vec[i], 3);
+      expect(roundTripped[i]).toBeCloseTo(vec[i]!, 3);
     }
   });
 });

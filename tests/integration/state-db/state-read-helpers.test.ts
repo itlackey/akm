@@ -190,7 +190,7 @@ describe("connection lifetime", () => {
     // No live cursor: arrays and their members survive the close.
     expect(runs.length).toBeGreaterThan(0);
     // since-only window, newest-first: run-d is the most recent real run.
-    expect(runs[0].id).toBe("run-d");
+    expect(runs[0]!.id).toBe("run-d");
     expect(intervals.length).toBe(1);
     expect(tables.length).toBe(4);
   });

@@ -70,7 +70,7 @@ function seedRun(plan: WorkflowPlanGraph, params: Record<string, unknown>): void
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflows/golden', 'dir:v1:golden', NULL, 'Golden', 'active', ?, ?, ?, ?)`,
-    ).run(RUN_ID, JSON.stringify(params), steps[0]?.stepId, now, now);
+    ).run(RUN_ID, JSON.stringify(params), steps[0]!.stepId, now, now);
     steps.forEach((step) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -355,14 +355,14 @@ describe("conformance — fan-out + schema + vote", () => {
         ["judge.unit:d4735e3a265e", "judge.unit", "judge.map", "completed"], // item 2
       ]);
       const status = await getWorkflowStatus(RUN_ID);
-      expect(status.workflow.steps[0].evidence?.vote).toEqual({
+      expect(status.workflow.steps[0]!.evidence?.vote).toEqual({
         winner: { verdict: "pass" },
         votes: 3,
         total: 3,
       });
       // The promoted step artifact of a vote step IS the winner — what
       // `${{ steps.judge.output }}` resolves to downstream.
-      expect(status.workflow.steps[0].evidence?.output).toEqual({ verdict: "pass" });
+      expect(status.workflow.steps[0]!.evidence?.output).toEqual({ verdict: "pass" });
     });
   }
 });
@@ -416,7 +416,7 @@ describe("conformance — routed workflow", () => {
         judge: null,
       },
     });
-    expect(plan.steps[1].root).toBeUndefined();
+    expect(plan.steps[1]!.root).toBeUndefined();
   });
 
   for (const backend of BACKENDS) {

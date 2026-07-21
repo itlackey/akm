@@ -161,7 +161,7 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
     };
     const wl = computeStepWorkList(step, { ...input, engines });
     if (!wl.ok) throw new Error(wl.error);
-    const u = wl.list.units[0];
+    const u = wl.list.units[0]!;
     if (!u.resolved.ok) throw new Error(u.resolved.error);
     return u.resolved.inputHash;
   }
@@ -222,7 +222,7 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
     // Deep equality across two independent computations is the purity proof.
     expect(a.list.units).toEqual(b.list.units);
 
-    const u = a.list.units[0];
+    const u = a.list.units[0]!;
     expect(u.unitId).toBe("s1:solo");
     expect(u.resolved.ok).toBe(true);
     if (u.resolved.ok) {
@@ -308,7 +308,7 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
     const result = computeStepWorkList(step, { runId: "r", params: {}, stepOutputs: {}, engines: FROZEN_ENGINES });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const u = result.list.units[0];
+    const u = result.list.units[0]!;
     expect(u.resolved.ok).toBe(true);
     if (u.resolved.ok) expect(u.resolved.prompt).toContain("Literal ${{ not.parsed }} here.");
   });
@@ -325,8 +325,8 @@ describe("computeStepWorkList — purity + content-derived identity", () => {
     expect(loop1.ok && loop2.ok).toBe(true);
     if (!loop1.ok || !loop2.ok) return;
 
-    const u1 = loop1.list.units[0];
-    const u2 = loop2.list.units[0];
+    const u1 = loop1.list.units[0]!;
+    const u2 = loop2.list.units[0]!;
     expect(u1.journalBaseId).toBe("s1:solo");
     expect(u2.journalBaseId).toBe("s1:solo~l2");
     expect(u1.resolved.ok && u2.resolved.ok).toBe(true);
@@ -579,7 +579,7 @@ function seedRun(steps: Array<{ id: string; criteria?: string[] }>, frozen: Work
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', '{}', ?, ?, ?)`,
-    ).run(RUN_ID, steps[0].id, now, now);
+    ).run(RUN_ID, steps[0]!.id, now, now);
     steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -658,11 +658,11 @@ describe("anti-drift — recomputing loop 2 from the journal reproduces the engi
     });
     expect(list.ok).toBe(true);
     if (!list.ok) return;
-    const u = list.list.units[0];
+    const u = list.list.units[0]!;
     expect(u.journalBaseId).toBe("work:solo~l2");
     expect(u.resolved.ok).toBe(true);
     if (u.resolved.ok) {
-      expect(u.resolved.prompt).toBe(workPrompts[1]);
+      expect(u.resolved.prompt).toBe(workPrompts[1]!);
       const journaled = rows.find((r) => r.unit_id === "work:solo~l2");
       expect(journaled?.input_hash).toBe(u.resolved.inputHash);
     }
@@ -892,7 +892,7 @@ describe("reviewer #7 — a tampered route selection fails loudly on every surfa
     await expect(
       reportWorkflowUnit({
         target: RUN_ID,
-        unitId: wl.list.units[0].unitId,
+        unitId: wl.list.units[0]!.unitId,
         status: "completed",
         resultRaw: "done",
         summaryJudge: null,

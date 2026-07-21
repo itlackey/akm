@@ -103,7 +103,7 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
 
     const stash = await generateMetadata(memRoot, "memory", [file]);
     expect(stash.entries).toHaveLength(1);
-    const item = makeItem(stash.entries[0]);
+    const item = makeItem(stash.entries[0]!);
     const ctx = makeCtx("projecta");
 
     expect(tagRanking).toBeDefined();
@@ -126,8 +126,8 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
     const stash = await generateMetadata(memRoot, "memory", [file]);
     expect(stash.entries).toHaveLength(1);
     // Merge produced three dir tokens on top of the explicit tag.
-    expect([...(stash.entries[0].tags ?? [])].sort()).toEqual(["alpha", "auth", "projecta", "team"]);
-    const item = makeItem(stash.entries[0]);
+    expect([...(stash.entries[0]!.tags ?? [])].sort()).toEqual(["alpha", "auth", "projecta", "team"]);
+    const item = makeItem(stash.entries[0]!);
 
     // All three dir tokens match: 3 × 0.15 = 0.45, capped at 0.3.
     expect(tagRanking?.adjust(item, makeCtx("team alpha projecta"))).toBeCloseTo(0.3);
@@ -193,7 +193,7 @@ describe("applyBeliefStateScoreCeiling (SPEC-5 demoting-state ceilings)", () => 
     // below the 0.3 un-demoted keyword floor from normalizeFtsScores, so any
     // un-demoted keyword hit outranks a ceilinged one.
     for (let i = 1; i < clamped.length; i++) {
-      expect(clamped[i]).toBeLessThan(clamped[i - 1]);
+      expect(clamped[i]).toBeLessThan(clamped[i - 1]!);
     }
     for (const ceiling of clamped) {
       expect(ceiling).toBeLessThan(0.3);

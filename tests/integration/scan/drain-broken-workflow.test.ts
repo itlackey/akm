@@ -98,7 +98,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
     // The broken one produced a workflow-skip warning naming the file.
     expect(drained.warnings).toHaveLength(1);
     const warning = drained.warnings[0];
-    expect(warning.startsWith("Skipped workflow ")).toBe(true);
+    expect(warning!.startsWith("Skipped workflow ")).toBe(true);
     expect(warning).toContain(badPath);
     // Its concrete parse error (duplicate step id) is carried in the detail.
     expect(warning).toMatch(/already used|Step ID/);
@@ -110,7 +110,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
 
     // The valid workflow's parsed document is cached for the persist-time
     // workflow_documents write (same side channel the live contributor used).
-    const cached = takeWorkflowDocument(drained.entries[0]);
+    const cached = takeWorkflowDocument(drained.entries[0]!);
     expect(cached).toBeDefined();
     expect(cached?.title).toBe("Ship Release");
   });

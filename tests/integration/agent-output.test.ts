@@ -82,7 +82,7 @@ describe("--shape agent field projection", () => {
 
     expect(json.hits.length).toBeGreaterThan(0);
     const hit = json.hits[0];
-    const keys = Object.keys(hit);
+    const keys = Object.keys(hit!);
 
     // Must have these agent-essential fields (when present)
     expect(keys).toContain("name");
@@ -194,7 +194,7 @@ describe("--shape agent output mode", () => {
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
     expect(json.hits.length).toBeGreaterThan(0);
     const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
-    for (const key of Object.keys(json.hits[0])) {
+    for (const key of Object.keys(json.hits[0]!)) {
       expect(allowedKeys.has(key)).toBe(true);
     }
   });

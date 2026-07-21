@@ -277,9 +277,9 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
     expect(result.outcome).toBe("queued");
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].payload.frontmatter?.description).toContain("ripgrep");
-    expect(proposals[0].payload.frontmatter?.when_to_use).toContain("multi-thousand-file");
-    expect(proposals[0].payload.content).toContain("Use `rg`");
+    expect(proposals[0]!.payload.frontmatter?.description).toContain("ripgrep");
+    expect(proposals[0]!.payload.frontmatter?.when_to_use).toContain("multi-thousand-file");
+    expect(proposals[0]!.payload.content).toContain("Use `rg`");
   });
 
   test("structured payload missing when_to_use falls through to markdown path (validation_failed)", async () => {
@@ -330,8 +330,8 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
     expect(result.outcome).toBe("queued");
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].payload.frontmatter?.description).toContain("indexer");
-    expect(proposals[0].payload.content).toContain("## Steps");
-    expect(proposals[0].payload.content).toContain("akm index --rebuild");
+    expect(proposals[0]!.payload.frontmatter?.description).toContain("indexer");
+    expect(proposals[0]!.payload.content).toContain("## Steps");
+    expect(proposals[0]!.payload.content).toContain("akm index --rebuild");
   });
 });

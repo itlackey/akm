@@ -75,9 +75,9 @@ describe("readLockfile", () => {
     writeRawLockfile(JSON.stringify(entries));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("test-entry");
-    expect(result[0].source).toBe("npm");
-    expect(result[0].ref).toBe("@scope/pkg");
+    expect(result[0]!.id).toBe("test-entry");
+    expect(result[0]!.source).toBe("npm");
+    expect(result[0]!.ref).toBe("@scope/pkg");
   });
 
   test("filters out invalid entries from the array", () => {
@@ -94,7 +94,7 @@ describe("readLockfile", () => {
     writeRawLockfile(JSON.stringify(raw));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("test-entry");
+    expect(result[0]!.id).toBe("test-entry");
   });
 
   test("preserves optional fields on valid entries", () => {
@@ -106,9 +106,9 @@ describe("readLockfile", () => {
     writeRawLockfile(JSON.stringify([entry]));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].resolvedVersion).toBe("1.2.3");
-    expect(result[0].resolvedRevision).toBe("abc123");
-    expect(result[0].integrity).toBe("sha512-xyz");
+    expect(result[0]!.resolvedVersion).toBe("1.2.3");
+    expect(result[0]!.resolvedRevision).toBe("abc123");
+    expect(result[0]!.integrity).toBe("sha512-xyz");
   });
 
   test("preserves the §10.2 bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
@@ -121,10 +121,10 @@ describe("readLockfile", () => {
     writeRawLockfile(JSON.stringify([entry]));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].localRoot).toBe("/cache/kit/content");
-    expect(result[0].manifestDigest).toBe("sha256-manifest");
-    expect(result[0].adapterIds).toEqual(["akm", "okf"]);
-    expect(result[0].installedAt).toBe("2026-07-20T00:00:00Z");
+    expect(result[0]!.localRoot).toBe("/cache/kit/content");
+    expect(result[0]!.manifestDigest).toBe("sha256-manifest");
+    expect(result[0]!.adapterIds).toEqual(["akm", "okf"]);
+    expect(result[0]!.installedAt).toBe("2026-07-20T00:00:00Z");
   });
 
   test("reads a pre-cutover per-source entry unchanged (shape-tolerant read)", () => {
@@ -134,7 +134,7 @@ describe("readLockfile", () => {
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ id: "old", source: "git", ref: "owner/repo", resolvedRevision: "deadbeef" });
-    expect(result[0].localRoot).toBeUndefined();
+    expect(result[0]!.localRoot).toBeUndefined();
   });
 
   test("accepts all valid source types", () => {
@@ -173,7 +173,7 @@ describe("writeLockfile", () => {
     await writeLockfile([validEntry({ id: "second" })]);
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("second");
+    expect(result[0]!.id).toBe("second");
   });
 
   test("does not leave temp file on success", async () => {
@@ -217,7 +217,7 @@ describe("upsertLockEntry", () => {
     await upsertLockEntry(validEntry({ id: "new-entry" }));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("new-entry");
+    expect(result[0]!.id).toBe("new-entry");
   });
 
   test("adds entry when lockfile does not exist", async () => {
@@ -230,7 +230,7 @@ describe("upsertLockEntry", () => {
     await upsertLockEntry(validEntry({ id: "pkg", ref: "new-ref" }));
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].ref).toBe("new-ref");
+    expect(result[0]!.ref).toBe("new-ref");
   });
 
   test("preserves other entries when upserting", async () => {
@@ -260,7 +260,7 @@ describe("removeLockEntry", () => {
     await removeLockEntry("remove-me");
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("keep-me");
+    expect(result[0]!.id).toBe("keep-me");
   });
 
   test("no-op when id does not exist", async () => {
@@ -268,7 +268,7 @@ describe("removeLockEntry", () => {
     await removeLockEntry("nonexistent");
     const result = readLockfile();
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("existing");
+    expect(result[0]!.id).toBe("existing");
   });
 
   test("works when lockfile does not exist", async () => {

@@ -59,7 +59,7 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
-    const files = groups[0].files;
+    const files = groups[0]!.files;
     expect(files).toHaveLength(1);
     expect(files[0]).toContain("run.sh");
   });
@@ -72,7 +72,7 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
-    expect(groups[0].files).toHaveLength(1);
+    expect(groups[0]!.files).toHaveLength(1);
   });
 
   test("only includes SKILL.md for skill type", () => {
@@ -96,8 +96,8 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "command");
     expect(groups).toHaveLength(1);
-    expect(groups[0].files).toHaveLength(1);
-    expect(groups[0].files[0]).toContain("release.md");
+    expect(groups[0]!.files).toHaveLength(1);
+    expect(groups[0]!.files[0]).toContain("release.md");
   });
 
   test("walks nested directories", () => {
@@ -106,7 +106,7 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
-    expect(groups[0].files[0]).toContain("deep.sh");
+    expect(groups[0]!.files[0]).toContain("deep.sh");
   });
 
   test("includes files from root level", () => {
@@ -115,7 +115,7 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
-    expect(groups[0].dirPath).toBe(root);
+    expect(groups[0]!.dirPath).toBe(root);
   });
 
   test("handles knowledge type (.md files)", () => {
@@ -126,7 +126,7 @@ describe("walkStash", () => {
 
     const groups = walkStash(root, "knowledge");
     expect(groups).toHaveLength(1);
-    expect(groups[0].files).toHaveLength(2);
+    expect(groups[0]!.files).toHaveLength(2);
   });
 });
 
@@ -139,14 +139,14 @@ describe("walkStashFlat", () => {
     expect(results).toHaveLength(1);
 
     const ctx = results[0];
-    expect(typeof ctx.absPath).toBe("string");
-    expect(typeof ctx.relPath).toBe("string");
-    expect(typeof ctx.ext).toBe("string");
-    expect(typeof ctx.fileName).toBe("string");
-    expect(typeof ctx.stashRoot).toBe("string");
-    expect(typeof ctx.content).toBe("function");
-    expect(typeof ctx.frontmatter).toBe("function");
-    expect(typeof ctx.stat).toBe("function");
+    expect(typeof ctx!.absPath).toBe("string");
+    expect(typeof ctx!.relPath).toBe("string");
+    expect(typeof ctx!.ext).toBe("string");
+    expect(typeof ctx!.fileName).toBe("string");
+    expect(typeof ctx!.stashRoot).toBe("string");
+    expect(typeof ctx!.content).toBe("function");
+    expect(typeof ctx!.frontmatter).toBe("function");
+    expect(typeof ctx!.stat).toBe("function");
   });
 
   test("walks across all asset type directories", () => {
@@ -182,8 +182,8 @@ describe("walkStashFlat", () => {
 
     const results = walkStashFlat(root);
     expect(results).toHaveLength(1);
-    expect(results[0].fileName).toBe("file.txt");
-    expect(results[0].absPath).toContain("visible");
+    expect(results[0]!.fileName).toBe("file.txt");
+    expect(results[0]!.absPath).toContain("visible");
   });
 
   test("preserves stashRoot on all FileContext results", () => {

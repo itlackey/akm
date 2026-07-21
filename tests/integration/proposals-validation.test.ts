@@ -213,7 +213,7 @@ describe("purgeOrphanProposals", () => {
     expect(result.rejected).toBe(1);
     expect(result.checked).toBe(1);
     expect(result.byType.memory).toBe(1);
-    expect(result.orphans[0].ref).toBe(durableRef(stash, "memory", "orphaned"));
+    expect(result.orphans[0]!.ref).toBe(durableRef(stash, "memory", "orphaned"));
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     // The orphan must now be archived as rejected
     const stillPending = listProposals(stash, { status: "pending" });

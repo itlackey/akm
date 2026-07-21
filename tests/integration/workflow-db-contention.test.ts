@@ -125,7 +125,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
     const dispatchRows = rows.filter((r) => r.phase !== "gate");
     expect(dispatchRows).toHaveLength(40);
     expect(dispatchRows.every((r) => r.status === "completed")).toBe(true);
-    expect(finalStatus.workflow.steps[0].evidence?.output).toHaveLength(40);
+    expect(finalStatus.workflow.steps[0]!.evidence?.output).toHaveLength(40);
   }, 30_000);
 });
 
@@ -162,12 +162,12 @@ describe("writer queue resilience (fault-injected write failure)", () => {
     // throwing write (a mid-fan-out journal failure — disk error / constraint),
     // then two more real writes.
     const results = await Promise.allSettled([
-      insert(ua),
+      insert(ua!),
       enqueueUnitWrite(async () => {
         throw new Error("simulated journal write failure");
       }),
-      insert(ub),
-      insert(uc),
+      insert(ub!),
+      insert(uc!),
     ]);
 
     // The failing write rejected its own caller…
@@ -179,7 +179,7 @@ describe("writer queue resilience (fault-injected write failure)", () => {
 
     // …and all three real writes landed durably.
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId));
-    expect(rows.map((r) => r.unit_id).sort()).toEqual([ua, ub, uc].sort());
+    expect(rows.map((r) => r.unit_id).sort()).toEqual([ua!, ub!, uc!].sort());
     expect(rows.every((r) => r.status === "running")).toBe(true);
   });
 });

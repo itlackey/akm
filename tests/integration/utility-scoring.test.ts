@@ -626,7 +626,7 @@ describe("Production path end-to-end", () => {
         .prepare(
           "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
         )
-        .run(realId, "skills/real-skill");
+        .run(realId!, "skills/real-skill");
       const staleId = 999999; // not in entries
       stateDb
         .prepare(
@@ -640,7 +640,7 @@ describe("Production path end-to-end", () => {
       // utility_scores should have the live entry but NOT the stale one.
       const scores = db.prepare("SELECT entry_id FROM utility_scores").all() as Array<{ entry_id: number }>;
       const ids = scores.map((s) => s.entry_id);
-      expect(ids).toContain(realId);
+      expect(ids).toContain(realId!);
       expect(ids).not.toContain(staleId);
     } finally {
       closeDatabase(db);

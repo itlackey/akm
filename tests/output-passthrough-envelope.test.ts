@@ -46,7 +46,7 @@ describe("passthrough envelope stamping (#484)", () => {
     // with the envelope stamp.
     const envs = shaped.envs as Array<Record<string, unknown>>;
     expect(envs[0]).not.toHaveProperty("path");
-    expect(envs[0].name).toBe("v1");
+    expect(envs[0]!.name).toBe("v1");
   });
 
   it("adds schemaVersion + shape to env-create (passthrough)", () => {

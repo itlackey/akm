@@ -92,7 +92,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
 
       const results = searchFts(db, "kubernetes", 10);
       expect(results.length).toBe(1);
-      expect(results[0].entry.name).toBe("kubernetes");
+      expect(results[0]!.entry.name).toBe("kubernetes");
     } finally {
       closeDatabase(db);
     }
@@ -109,7 +109,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       // "kubernet" has no exact FTS match; the prefix fallback expands it to "kubernet*".
       const results = searchFts(db, "kubernet", 10);
       expect(results.length).toBe(1);
-      expect(results[0].entry.name).toBe("kubernetes");
+      expect(results[0]!.entry.name).toBe("kubernetes");
     } finally {
       closeDatabase(db);
     }
@@ -239,7 +239,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
       // The first result should be "deploy" (exact match has best BM25)
-      expect(results[0].entry.name).toBe("deploy");
+      expect(results[0]!.entry.name).toBe("deploy");
     } finally {
       closeDatabase(db);
     }
@@ -261,8 +261,8 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       // "kube" with type filter "skill" should only return the skill entry
       const results = searchFts(db, "kube", 10, "skill");
       expect(results.length).toBe(1);
-      expect(results[0].entry.name).toBe("kubernetes-skill");
-      expect(results[0].entry.type).toBe("skill");
+      expect(results[0]!.entry.name).toBe("kubernetes-skill");
+      expect(results[0]!.entry.type).toBe("skill");
     } finally {
       closeDatabase(db);
     }

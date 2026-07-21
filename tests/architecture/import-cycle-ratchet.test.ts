@@ -67,7 +67,7 @@ describe("import-cycle ratchet (shrink-only participant baseline)", () => {
 
   test("the dynamic-import baseline never grows past its armed size", () => {
     const files = Object.keys(DYNAMIC_IMPORT_BASELINE);
-    const total = files.reduce((s, f) => s + DYNAMIC_IMPORT_BASELINE[f], 0);
+    const total = files.reduce((s, f) => s + DYNAMIC_IMPORT_BASELINE[f]!, 0);
     expect(files.length).toBeLessThanOrEqual(33);
     expect(total).toBeLessThanOrEqual(102);
   });

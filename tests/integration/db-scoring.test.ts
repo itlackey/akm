@@ -177,7 +177,7 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
       const results = searchFts(db, "code-review", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
       // The code-review entry should be the top result
-      expect(results[0].entry.name).toBe("code-review");
+      expect(results[0]!.entry.name).toBe("code-review");
     } finally {
       closeDatabase(db);
     }

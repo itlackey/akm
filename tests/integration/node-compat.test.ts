@@ -75,7 +75,7 @@ function generatedCronCommand(crontab: string, id: string): string {
   const body = lines[begin + 1] ?? "";
   const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
   if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1];
+  return match[1]!;
 }
 
 function parseJson(text: string): unknown {

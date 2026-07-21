@@ -56,8 +56,8 @@ describe("addStash", () => {
     // Verify persisted
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
-    expect(getSources(config)[0].type).toBe("filesystem");
-    expect(getSources(config)[0].path).toBe(path.resolve(stashPath));
+    expect(getSources(config)[0]!.type).toBe("filesystem");
+    expect(getSources(config)[0]!.path).toBe(path.resolve(stashPath));
   });
 
   test("adds a filesystem path with a name", () => {
@@ -106,8 +106,8 @@ describe("addStash", () => {
 
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
-    expect(getSources(config)[0].type).toBe("website");
-    expect(getSources(config)[0].url).toBe(url);
+    expect(getSources(config)[0]!.type).toBe("website");
+    expect(getSources(config)[0]!.url).toBe(url);
   });
 
   test("adds a URL source with name and options", () => {
@@ -172,7 +172,7 @@ describe("addStash", () => {
     const result = addStash({ target: fsPath, name: "ret-test" });
 
     expect(result.sources).toHaveLength(1);
-    expect(result.sources[0].name).toBe("ret-test");
+    expect(result.sources[0]!.name).toBe("ret-test");
   });
 
   test("can add multiple sources of different types", () => {
@@ -183,9 +183,9 @@ describe("addStash", () => {
 
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(3);
-    expect(getSources(config)[0].type).toBe("filesystem");
-    expect(getSources(config)[1].type).toBe("website");
-    expect(getSources(config)[2].type).toBe("git");
+    expect(getSources(config)[0]!.type).toBe("filesystem");
+    expect(getSources(config)[1]!.type).toBe("website");
+    expect(getSources(config)[2]!.type).toBe("git");
   });
 
   test("preserves existing sources when adding", () => {
@@ -200,8 +200,8 @@ describe("addStash", () => {
 
     const updated = getSources(loadConfig());
     expect(updated).toHaveLength(2);
-    expect(updated[0].url).toBe("https://existing.example.com");
-    expect(updated[1].type).toBe("filesystem");
+    expect(updated[0]!.url).toBe("https://existing.example.com");
+    expect(updated[1]!.type).toBe("filesystem");
   });
 });
 
@@ -257,7 +257,7 @@ describe("removeStash", () => {
 
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
-    expect(getSources(config)[0].type).toBe("website");
+    expect(getSources(config)[0]!.type).toBe("website");
   });
 
   test("prefers URL match over name match", () => {
@@ -274,7 +274,7 @@ describe("removeStash", () => {
 
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
-    expect(getSources(config)[0].name).toBe("other-source");
+    expect(getSources(config)[0]!.name).toBe("other-source");
   });
 
   test("prefers path match over name match", () => {
@@ -304,7 +304,7 @@ describe("removeStash", () => {
 
     const result = removeStash("rm-ret-test");
     expect(result.sources).toHaveLength(1);
-    expect(result.sources[0].name).toBe("keep");
+    expect(result.sources[0]!.name).toBe("keep");
   });
 
   test("removes filesystem source by relative path that resolves correctly", () => {
@@ -334,7 +334,7 @@ describe("listStashes", () => {
 
     const result = listStashes();
     expect(result.sources).toHaveLength(1);
-    expect(result.sources[0].type).toBe("filesystem");
+    expect(result.sources[0]!.type).toBe("filesystem");
   });
 
   test("lists URL stash sources", () => {
@@ -342,8 +342,8 @@ describe("listStashes", () => {
 
     const result = listStashes();
     expect(result.sources).toHaveLength(1);
-    expect(result.sources[0].type).toBe("website");
-    expect(result.sources[0].url).toBe("https://example.com");
+    expect(result.sources[0]!.type).toBe("website");
+    expect(result.sources[0]!.url).toBe("https://example.com");
   });
 
   test("lists mixed source types", () => {
@@ -360,7 +360,7 @@ describe("listStashes", () => {
     const result = listStashes();
     // The primary stash dir (from AKM_STASH_DIR) should always be first
     expect(result.localSources.length).toBeGreaterThanOrEqual(1);
-    expect(result.localSources[0].path).toBe(path.resolve(testStashDir));
+    expect(result.localSources[0]!.path).toBe(path.resolve(testStashDir));
   });
 });
 

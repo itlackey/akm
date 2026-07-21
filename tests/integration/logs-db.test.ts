@@ -110,10 +110,10 @@ describe("insertTaskLogLines / queryTaskLogs", () => {
         "hi",
         "boom",
       ]);
-      expect(byTask[0].run_id).toBe(runId);
-      expect(byTask[1].stream).toBe("stdout");
-      expect(byTask[2].stream).toBe("stderr");
-      expect(byTask[2].level).toBe("error");
+      expect(byTask[0]!.run_id).toBe(runId);
+      expect(byTask[1]!.stream).toBe("stdout");
+      expect(byTask[2]!.stream).toBe("stderr");
+      expect(byTask[2]!.level).toBe("error");
 
       expect(queryTaskLogs(db, { runId })).toHaveLength(3);
       expect(queryTaskLogs(db, { runId, stream: "stderr" }).map((row) => row.line)).toEqual(["boom"]);
@@ -169,7 +169,7 @@ describe("purgeOldTaskLogs", () => {
       expect(purgeOldTaskLogs(db, 90)).toBe(1);
       const remaining = queryTaskLogs(db);
       expect(remaining).toHaveLength(1);
-      expect(remaining[0].line).toBe("fresh");
+      expect(remaining[0]!.line).toBe("fresh");
       // Second pass is a no-op.
       expect(purgeOldTaskLogs(db, 90)).toBe(0);
     } finally {

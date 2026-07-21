@@ -146,7 +146,7 @@ function contentBaseId(unitId: string): string {
 
 /** The base unit ids the first step of a golden fans out to (for item-keyed fixtures). */
 function stepUnitIds(plan: WorkflowPlanGraph, stepIndex: number, params: Record<string, unknown>): WorkflowBriefUnit[] {
-  const computed = computeStepWorkList(plan.steps[stepIndex], {
+  const computed = computeStepWorkList(plan.steps[stepIndex]!, {
     runId: RUN_ID,
     params,
     stepOutputs: {},
@@ -236,7 +236,7 @@ async function canonicalGraph(): Promise<GraphLine[]> {
   // surfaces leave them NULL — they are not part of the cross-surface unit graph.
   for (const base of [...groups.keys()].sort()) {
     const rows = groups.get(base) ?? [];
-    const rep = rows.find((r) => r.status === "completed") ?? rows[rows.length - 1];
+    const rep = rows.find((r) => r.status === "completed") ?? rows[rows.length - 1]!;
     lines.push(
       `unit ${base} node=${rep.node_id} parent=${rep.parent_unit_id ?? "-"} hash=${rep.input_hash ?? "-"} ` +
         `status=${rep.status} result=${rep.result_json ?? "-"} fail=${rep.failure_reason ?? "-"} ` +
@@ -340,7 +340,7 @@ async function seedCrashedLoop1(
   plan: WorkflowPlanGraph,
   feedback: { feedback: string; missing: string[] },
 ): Promise<void> {
-  const computed = computeStepWorkList(plan.steps[0], {
+  const computed = computeStepWorkList(plan.steps[0]!, {
     runId: RUN_ID,
     params: {},
     stepOutputs: {},
@@ -348,7 +348,7 @@ async function seedCrashedLoop1(
     gateLoop: 1,
   });
   if (!computed.ok) throw new Error(computed.error);
-  const unit = computed.list.units[0];
+  const unit = computed.list.units[0]!;
   if (!unit.resolved.ok) throw new Error(unit.resolved.error);
   const inputHash = unit.resolved.inputHash;
   const unitId = unit.unitId;
@@ -1025,7 +1025,7 @@ steps:
     // Seed the fully-terminal recovery pre-state: run active, step pending again,
     // its solo unit already completed with the engine's content-derived hash.
     const seedCompletedUnit = async (): Promise<void> => {
-      const computed = computeStepWorkList(plan.steps[0], {
+      const computed = computeStepWorkList(plan.steps[0]!, {
         runId: RUN_ID,
         params: {},
         stepOutputs: {},
@@ -1033,7 +1033,7 @@ steps:
         engines: plan.execution?.engines,
       });
       if (!computed.ok) throw new Error(computed.error);
-      const unit = computed.list.units[0];
+      const unit = computed.list.units[0]!;
       if (!unit.resolved.ok) throw new Error(unit.resolved.error);
       await withWorkflowRunsRepo((repo) => {
         const now = new Date().toISOString();
@@ -1111,14 +1111,15 @@ steps:
     const plan = compile(yaml);
     const params = { files: ["a.ts", "b.ts"] };
     const steps: SeedStep[] = [{ id: "review" }];
-    const computed = computeStepWorkList(plan.steps[0], {
+    const computed = computeStepWorkList(plan.steps[0]!, {
       runId: RUN_ID,
       params,
       stepOutputs: {},
       engines: plan.execution?.engines,
     });
     if (!computed.ok) throw new Error(computed.error);
-    const [ua, ub] = computed.list.units;
+    const ua = computed.list.units[0]!;
+    const ub = computed.list.units[1]!;
     if (!ua.resolved.ok || !ub.resolved.ok) throw new Error("fixture: units did not resolve");
 
     // The crashed pre-state: unit A's base attempt FAILED (timeout) but its ~r1

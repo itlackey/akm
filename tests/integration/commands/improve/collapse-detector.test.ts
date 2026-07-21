@@ -269,8 +269,8 @@ describe("collapse simulation (synthetic merge passes)", () => {
     // The trend metrics moved the right way across the simulation.
     const finalRows = queryRecentCycleMetrics(stateDb, baseline0.canary_set_id, 10);
     const last = finalRows[finalRows.length - 1];
-    expect(last.mean_recall).toBeLessThan(baselineRecall);
-    expect(last.distinct_content_ratio).toBeLessThan(baseline1.distinct_content_ratio);
+    expect(last!.mean_recall).toBeLessThan(baselineRecall);
+    expect(last!.distinct_content_ratio).toBeLessThan(baseline1.distinct_content_ratio);
   });
 
   test("churn: paraphrase-only cycles with accepted volume fire churn and nothing else", async () => {
@@ -414,7 +414,7 @@ describe("runCollapseDetector orchestrator", () => {
     expect(result?.run_id).toBe("run-orchestrated");
     const rows = queryRecentCycleMetrics(stateDb, result?.canary_set_id ?? "", 10);
     expect(rows).toHaveLength(1);
-    expect(rows[0].accepted_actions).toBe(2);
+    expect(rows[0]!.accepted_actions).toBe(2);
   });
 
   test("enabled:false is a complete no-op (no canaries minted, no rows)", async () => {

@@ -105,13 +105,13 @@ describe("WS-1/WS-2 weight contract", () => {
 describe("computeSalience — encoding sub-score", () => {
   test("skill type gets the highest encoding weight", () => {
     const v = computeSalience({ ref: "skills/foo", type: "skill", retrievalFreq: 0, now: NOW });
-    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.skill);
+    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.skill!);
     expect(v.encoding).toBeGreaterThanOrEqual(0.9);
   });
 
   test("memory type gets the lowest encoding weight", () => {
     const v = computeSalience({ ref: "memories/foo", type: "memory", retrievalFreq: 0, now: NOW });
-    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory!);
     expect(v.encoding).toBeLessThan(DEFAULT_TYPE_ENCODING_WEIGHTS.skill ?? 1);
   });
 
@@ -532,7 +532,7 @@ describe("#644 encoding_salience provenance (content vs type-stub)", () => {
 
   test("computeSalience tags encodingSource 'type-stub' when encodingSalience is absent", () => {
     const v = computeSalience({ ref: "agents/x", type: "agent", retrievalFreq: 0 });
-    expect(v.encoding).toBeCloseTo(DEFAULT_TYPE_ENCODING_WEIGHTS.agent, 6);
+    expect(v.encoding).toBeCloseTo(DEFAULT_TYPE_ENCODING_WEIGHTS.agent!, 6);
     expect(v.encodingSource).toBe("type-stub");
   });
 
@@ -674,7 +674,7 @@ describe("#644 encoding_salience provenance (content vs type-stub)", () => {
         `INSERT INTO asset_salience
            (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
          VALUES (?, ?, 0, 0, 0, 0, ?, NULL)`,
-      ).run("agents/legacy-stub", DEFAULT_TYPE_ENCODING_WEIGHTS.agent, NOW);
+      ).run("agents/legacy-stub", DEFAULT_TYPE_ENCODING_WEIGHTS.agent!, NOW);
 
       const realRow = getAssetSalience(db, "memories/legacy-real");
       const stubRow = getAssetSalience(db, "agents/legacy-stub");
@@ -876,7 +876,7 @@ describe("computeSalience — encodingSalience override (#608)", () => {
       retrievalFreq: 0,
       now: NOW,
     });
-    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory);
+    expect(v.encoding).toBe(DEFAULT_TYPE_ENCODING_WEIGHTS.memory!);
   });
 
   test("encodingSalience override propagates into rankScore (changes ranking)", () => {

@@ -78,7 +78,7 @@ describe("migrateConfigSourcesToBundles", () => {
     // root; the original id is preserved. The materialized root belongs in the lock.
     expect(migrated.bundles.repo).toEqual({ git: "owner/repo", registryId: "github:owner/repo" });
     // §10.2:453 — an installed bundle's config entry carries NO resolved cache path.
-    expect(migrated.bundles.repo.path).toBeUndefined();
+    expect(migrated.bundles.repo!.path).toBeUndefined();
   });
 
   test("emits §10.2 lock entries for installed git/npm bundles (resolved root out of config)", () => {
@@ -128,7 +128,7 @@ describe("migrateConfigSourcesToBundles", () => {
   test("oldConfigToSearchSources resolves derivation paths and preserves priority order", () => {
     const sources = oldConfigToSearchSources(oldShapeConfig());
     expect(sources.map((s) => s.registryId)).toEqual([undefined, "team", "catalog", "github:owner/repo"]);
-    expect(sources[0].path).toBe(path.resolve("/home/u/akm"));
-    expect(sources[0].writable).toBe(true);
+    expect(sources[0]!.path).toBe(path.resolve("/home/u/akm"));
+    expect(sources[0]!.writable).toBe(true);
   });
 });

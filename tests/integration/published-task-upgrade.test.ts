@@ -57,7 +57,7 @@ interface TaskHistoryRow {
 }
 
 function run(argv: string[], env: NodeJS.ProcessEnv, timeout = 120_000): RunResult {
-  const result = spawnSync(argv[0], argv.slice(1), {
+  const result = spawnSync(argv[0]!, argv.slice(1), {
     cwd: REPO_ROOT,
     env,
     encoding: "utf8",
@@ -93,13 +93,13 @@ function cronBody(crontab: string, id: string): string {
   const end = lines.indexOf(`# akm:task ${id} END`);
   expect(begin).toBeGreaterThanOrEqual(0);
   expect(end).toBe(begin + 2);
-  return lines[begin + 1];
+  return lines[begin + 1]!;
 }
 
 function commandFromCronBody(body: string, id: string): string {
   const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
   if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1];
+  return match[1]!;
 }
 
 function generatedCronCommand(crontab: string, id: string): string {
@@ -118,8 +118,8 @@ function readLatestHistory(currentCli: string, id: string, env: NodeJS.ProcessEn
   expectSuccess(history, `read ${id} task history`);
   const parsed = JSON.parse(history.stdout) as { rows: TaskHistoryRow[] };
   expect(parsed.rows).toHaveLength(1);
-  expect(parsed.rows[0].id).toBe(id);
-  return parsed.rows[0];
+  expect(parsed.rows[0]!.id).toBe(id);
+  return parsed.rows[0]!;
 }
 
 function executableDir(name: string): string {
@@ -277,7 +277,7 @@ test.skipIf(!ENABLED)(
         ["upgrade-global-improve", "--command", "akm --no-quiet --verbose=false improve --profile frequent"],
       ];
       for (const [id, ...args] of oldAdds) {
-        const add = run([process.execPath, oldCli, "tasks", "add", id, "--schedule", "@daily", ...args], oldEnv);
+        const add = run([process.execPath, oldCli, "tasks", "add", id!, "--schedule", "@daily", ...args], oldEnv);
         expectSuccess(add, `published 0.8.14 tasks add ${id}`);
       }
 
@@ -325,7 +325,7 @@ test.skipIf(!ENABLED)(
       expectSuccess(oldHistoryResult, "published 0.8.14 task history before migration");
       const oldHistory = (JSON.parse(oldHistoryResult.stdout) as { rows: TaskHistoryRow[] }).rows[0];
       expect(oldHistory).toMatchObject({ id: "upgrade-command", status: "completed", detail: { exitCode: 0 } });
-      const oldHistoryLog = fs.readFileSync(oldHistory.log, "utf8");
+      const oldHistoryLog = fs.readFileSync(oldHistory!.log, "utf8");
       expect(oldHistoryLog).toContain("0.8.14");
 
       const oldDataDir = path.join(dataHome, "akm");
@@ -413,10 +413,10 @@ test.skipIf(!ENABLED)(
 
       const migratedOldHistory = readLatestHistory(currentCli, "upgrade-command", currentEnv);
       expect(migratedOldHistory).toMatchObject({
-        id: oldHistory.id,
-        status: oldHistory.status,
-        startedAt: oldHistory.startedAt,
-        finishedAt: oldHistory.finishedAt,
+        id: oldHistory!.id,
+        status: oldHistory!.status,
+        startedAt: oldHistory!.startedAt,
+        finishedAt: oldHistory!.finishedAt,
         detail: { exitCode: 0 },
         // Published 0.8.14 persisted command runs as prompt rows. The migration
         // preserves that durable row but cannot infer the lost target kind.

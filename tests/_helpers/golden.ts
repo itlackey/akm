@@ -261,6 +261,6 @@ export function fileTreeManifest(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   walkFileTree(dir, dir, out);
   const sorted: Record<string, string> = {};
-  for (const key of Object.keys(out).sort()) sorted[key] = out[key];
+  for (const key of Object.keys(out).sort()) sorted[key] = out[key]!;
   return sorted;
 }

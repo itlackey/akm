@@ -175,9 +175,9 @@ describe("PROVIDER_DEFAULTS", () => {
       endpoint: "https://api.anthropic.com/v1",
       model: "claude-sonnet-4-5",
     });
-    expect(PROVIDER_DEFAULTS.openai.endpoint).toBe("https://api.openai.com/v1");
-    expect(PROVIDER_DEFAULTS.gemini.model).toBe("gemini-1.5-flash");
-    expect(PROVIDER_DEFAULTS.groq.model).toBe("llama-3.3-70b-versatile");
+    expect(PROVIDER_DEFAULTS.openai!.endpoint).toBe("https://api.openai.com/v1");
+    expect(PROVIDER_DEFAULTS.gemini!.model).toBe("gemini-1.5-flash");
+    expect(PROVIDER_DEFAULTS.groq!.model).toBe("llama-3.3-70b-versatile");
   });
 
   test("an unknown provider has no entry (former switch default → undefined)", () => {

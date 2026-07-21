@@ -156,32 +156,32 @@ describe("placement parity: toAssetPath round-trips onto the real all-types fixt
     ];
     for (const [type, name, expectedRelPath] of roundTrips) {
       const spec = ASSET_SPECS[type];
-      const typeRoot = path.join(STASH_ROOT, spec.stashDir);
-      const assetPath = spec.toAssetPath(typeRoot, name);
+      const typeRoot = path.join(STASH_ROOT, spec!.stashDir);
+      const assetPath = spec!.toAssetPath(typeRoot, name);
       expect(relFromStash(assetPath), `type ${type}`).toBe(expectedRelPath);
     }
   });
 
   test("workflow toAssetPath probes candidates in .md/.yaml/.yml priority order and finds the real .yaml-only fixture", () => {
     const spec = ASSET_SPECS.workflow;
-    const typeRoot = path.join(STASH_ROOT, spec.stashDir);
+    const typeRoot = path.join(STASH_ROOT, spec!.stashDir);
     // all-types-workflow-program.yaml has no .md sibling with the same stem —
     // the probe must skip the (non-existent) .md candidate and hit .yaml.
-    const assetPath = spec.toAssetPath(typeRoot, "all-types-workflow-program");
+    const assetPath = spec!.toAssetPath(typeRoot, "all-types-workflow-program");
     expect(relFromStash(assetPath)).toBe("workflows/all-types-workflow-program.yaml");
   });
 
   test("workflow toAssetPath falls back to the default .md path when no candidate exists", () => {
     const spec = ASSET_SPECS.workflow;
-    const typeRoot = path.join(STASH_ROOT, spec.stashDir);
-    const assetPath = spec.toAssetPath(typeRoot, "totally-nonexistent-workflow");
+    const typeRoot = path.join(STASH_ROOT, spec!.stashDir);
+    const assetPath = spec!.toAssetPath(typeRoot, "totally-nonexistent-workflow");
     expect(relFromStash(assetPath)).toBe("workflows/totally-nonexistent-workflow.md");
   });
 
   test('env toAssetPath maps the "default" name to the bare .env file', () => {
     const spec = ASSET_SPECS.env;
-    const typeRoot = path.join(STASH_ROOT, spec.stashDir);
-    const assetPath = spec.toAssetPath(typeRoot, "default");
+    const typeRoot = path.join(STASH_ROOT, spec!.stashDir);
+    const assetPath = spec!.toAssetPath(typeRoot, "default");
     expect(relFromStash(assetPath)).toBe("env/.env");
   });
 });
@@ -238,65 +238,65 @@ describe("golden fixture: recognition + placement parity (WI-0b.3a/b)", () => {
     };
     for (const [type, name] of Object.entries(namesByType)) {
       const spec = ASSET_SPECS[type];
-      const typeRoot = path.join(STASH_ROOT, spec.stashDir);
+      const typeRoot = path.join(STASH_ROOT, spec!.stashDir);
       byType[type] = {
-        stashDir: spec.stashDir,
+        stashDir: spec!.stashDir,
         name,
-        assetPath: relFromStash(spec.toAssetPath(typeRoot, name)),
+        assetPath: relFromStash(spec!.toAssetPath(typeRoot, name)),
       };
     }
 
     const workflowSpec = ASSET_SPECS.workflow;
-    const workflowTypeRoot = path.join(STASH_ROOT, workflowSpec.stashDir);
+    const workflowTypeRoot = path.join(STASH_ROOT, workflowSpec!.stashDir);
     const envSpec = ASSET_SPECS.env;
-    const envTypeRoot = path.join(STASH_ROOT, envSpec.stashDir);
+    const envTypeRoot = path.join(STASH_ROOT, envSpec!.stashDir);
     const taskSpec = ASSET_SPECS.task;
-    const taskTypeRoot = path.join(STASH_ROOT, taskSpec.stashDir);
+    const taskTypeRoot = path.join(STASH_ROOT, taskSpec!.stashDir);
     const commandSpec = ASSET_SPECS.command;
-    const commandTypeRoot = path.join(STASH_ROOT, commandSpec.stashDir);
+    const commandTypeRoot = path.join(STASH_ROOT, commandSpec!.stashDir);
     const secretSpec = ASSET_SPECS.secret;
-    const secretTypeRoot = path.join(STASH_ROOT, secretSpec.stashDir);
+    const secretTypeRoot = path.join(STASH_ROOT, secretSpec!.stashDir);
 
     const edgeCases = {
       envDefaultAlias: {
         type: "env",
         name: "default",
-        assetPath: relFromStash(envSpec.toAssetPath(envTypeRoot, "default")),
+        assetPath: relFromStash(envSpec!.toAssetPath(envTypeRoot, "default")),
       },
       envAlreadySuffixedNameIsIdempotent: {
         type: "env",
         name: "all-types-env.env",
-        assetPath: relFromStash(envSpec.toAssetPath(envTypeRoot, "all-types-env.env")),
+        assetPath: relFromStash(envSpec!.toAssetPath(envTypeRoot, "all-types-env.env")),
       },
       workflowExplicitExtensionSkipsProbe: {
         type: "workflow",
         name: "totally-nonexistent.yaml",
-        assetPath: relFromStash(workflowSpec.toAssetPath(workflowTypeRoot, "totally-nonexistent.yaml")),
+        assetPath: relFromStash(workflowSpec!.toAssetPath(workflowTypeRoot, "totally-nonexistent.yaml")),
       },
       workflowProbeFallbackToMdWhenNoCandidateExists: {
         type: "workflow",
         name: "totally-nonexistent-workflow",
-        assetPath: relFromStash(workflowSpec.toAssetPath(workflowTypeRoot, "totally-nonexistent-workflow")),
+        assetPath: relFromStash(workflowSpec!.toAssetPath(workflowTypeRoot, "totally-nonexistent-workflow")),
       },
       workflowProbeFindsYamlOnlyCandidateBeforeDefaultingToMd: {
         type: "workflow",
         name: "all-types-workflow-program",
-        assetPath: relFromStash(workflowSpec.toAssetPath(workflowTypeRoot, "all-types-workflow-program")),
+        assetPath: relFromStash(workflowSpec!.toAssetPath(workflowTypeRoot, "all-types-workflow-program")),
       },
       taskAlreadySuffixedNameIsIdempotent: {
         type: "task",
         name: "all-types-task.yml",
-        assetPath: relFromStash(taskSpec.toAssetPath(taskTypeRoot, "all-types-task.yml")),
+        assetPath: relFromStash(taskSpec!.toAssetPath(taskTypeRoot, "all-types-task.yml")),
       },
       markdownSpecAlreadySuffixedNameIsIdempotent: {
         type: "command",
         name: "all-types-command.md",
-        assetPath: relFromStash(commandSpec.toAssetPath(commandTypeRoot, "all-types-command.md")),
+        assetPath: relFromStash(commandSpec!.toAssetPath(commandTypeRoot, "all-types-command.md")),
       },
       secretNestedNameIsIdentityJoin: {
         type: "secret",
         name: "team/deploy.key",
-        assetPath: relFromStash(secretSpec.toAssetPath(secretTypeRoot, "team/deploy.key")),
+        assetPath: relFromStash(secretSpec!.toAssetPath(secretTypeRoot, "team/deploy.key")),
       },
     };
 

@@ -58,7 +58,7 @@ function seedRun(opts: { params?: Record<string, unknown>; steps: Array<{ id: st
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', ?, ?, ?, ?)`,
-    ).run(RUN_ID, JSON.stringify(opts.params ?? {}), opts.steps[0].id, now, now);
+    ).run(RUN_ID, JSON.stringify(opts.params ?? {}), opts.steps[0]!.id, now, now);
     opts.steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -130,7 +130,7 @@ steps:
 describe("executeStepPlan — fan-out", () => {
   test("caps SDK fan-out by the frozen fallback LLM engine concurrency", async () => {
     seedRun({ params: { files: ["a", "b", "c", "d"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let inFlight = 0;
     let peak = 0;
 
@@ -161,7 +161,7 @@ describe("executeStepPlan — fan-out", () => {
       return { ok: true, text: `reviewed ${req.unitId}` };
     };
 
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -198,7 +198,7 @@ describe("executeStepPlan — fan-out", () => {
     const items = ["src/a$&b.ts", "Makefile uses $$(CC)", "${{ params.secret }}"];
     seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -230,7 +230,7 @@ describe("executeStepPlan — fan-out", () => {
       instructions: Find files.`,
     );
     const dispatcher = async (): Promise<UnitDispatchResult> => ({ ok: true, text: "done" });
-    const stepPlan = plan(EVIDENCE_WF).steps.find((s) => s.stepId === "review");
+    const stepPlan = plan(EVIDENCE_WF).steps.find((s) => s.stepId === "review")!;
     if (!stepPlan) throw new Error("missing review step");
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -253,7 +253,7 @@ describe("executeStepPlan — fan-out", () => {
     unit:
       instructions: Prior.`,
     );
-    const stepPlan = plan(TOSTRING_WF).steps.find((s) => s.stepId === "review");
+    const stepPlan = plan(TOSTRING_WF).steps.find((s) => s.stepId === "review")!;
     if (!stepPlan) throw new Error("missing review step");
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -268,7 +268,7 @@ describe("executeStepPlan — fan-out", () => {
 
   test("a non-array fan-out source fails the step with a clear error", async () => {
     seedRun({ params: { files: "not-a-list" }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -288,7 +288,7 @@ describe("executeStepPlan — fan-out", () => {
         ? { ok: true, text: "fine" }
         : { ok: false, text: "", failureReason: "timeout", error: "timed out" };
 
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -301,7 +301,7 @@ describe("executeStepPlan — fan-out", () => {
     await withWorkflowRunsRepo((repo) => {
       const failed = repo.getUnitsForStep(RUN_ID, "review").filter((r) => r.status === "failed");
       expect(failed).toHaveLength(1);
-      expect(failed[0].failure_reason).toBe("timeout");
+      expect(failed[0]!.failure_reason).toBe("timeout");
     });
   });
 });
@@ -309,7 +309,7 @@ describe("executeStepPlan — fan-out", () => {
 describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
   test("a single-item fan-out dispatches exactly one unit and the collect artifact is a one-element array", async () => {
     seedRun({ params: { files: ["only"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -337,7 +337,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     const items = [1, true, "str", { b: 2, a: 1 }, [3, 4]];
     seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -363,7 +363,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
 
   test("a null item resolves `${{ item }}` to null → an expression_error unit that fails the step under the default policy", async () => {
     seedRun({ params: { files: [null] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -379,7 +379,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     // unit never dispatches, and fail-fast fails the step.
     expect(dispatches).toBe(0);
     expect(result.ok).toBe(false);
-    expect(result.units[0].failureReason).toBe("expression_error");
+    expect(result.units[0]!.failureReason).toBe("expression_error");
   });
 });
 
@@ -413,7 +413,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
       });
     });
 
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -436,7 +436,7 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     // place, then re-run: the reuse path must rehydrate absence (undefined),
     // not throw on the malformed JSON.
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const first = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -473,9 +473,9 @@ describe("executeStepPlan — persistence edge cases (corrupt / missing journal 
     // swallowed into absence rather than crashing the step.
     expect(dispatches).toBe(0);
     expect(second.ok).toBe(true);
-    expect(second.units[0].ok).toBe(true);
-    expect(second.units[0].text).toBeUndefined();
-    expect(second.units[0].result).toBeUndefined();
+    expect(second.units[0]!.ok).toBe(true);
+    expect(second.units[0]!.text).toBeUndefined();
+    expect(second.units[0]!.result).toBeUndefined();
   });
 });
 
@@ -495,7 +495,7 @@ steps:
 describe("executeStepPlan — structured output", () => {
   test("valid JSON on first attempt is parsed and stored", async () => {
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
-    const stepPlan = plan(SCHEMA_WF).steps[0];
+    const stepPlan = plan(SCHEMA_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -504,7 +504,7 @@ describe("executeStepPlan — structured output", () => {
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
     });
     expect(result.ok).toBe(true);
-    expect(result.units[0].result).toEqual({ fact: "bun is fast" });
+    expect(result.units[0]!.result).toEqual({ fact: "bun is fast" });
   });
 
   test("schema violation retries once with corrective feedback, then succeeds", async () => {
@@ -516,7 +516,7 @@ describe("executeStepPlan — structured output", () => {
       call++;
       return call === 1 ? { ok: true, text: '{"wrong": true}' } : { ok: true, text: '{"fact": "fixed"}' };
     };
-    const stepPlan = plan(SCHEMA_WF).steps[0];
+    const stepPlan = plan(SCHEMA_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -527,12 +527,12 @@ describe("executeStepPlan — structured output", () => {
     expect(result.ok).toBe(true);
     expect(feedbacks[0]).toBeUndefined();
     expect(feedbacks[1]).toContain("fact");
-    expect(result.units[0].result).toEqual({ fact: "fixed" });
+    expect(result.units[0]!.result).toEqual({ fact: "fixed" });
   });
 
   test("persistent schema violation records a validation failure", async () => {
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
-    const stepPlan = plan(SCHEMA_WF).steps[0];
+    const stepPlan = plan(SCHEMA_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -541,7 +541,7 @@ describe("executeStepPlan — structured output", () => {
       dispatcher: async () => ({ ok: true, text: '{"nope": 1}' }),
     });
     expect(result.ok).toBe(false);
-    expect(result.units[0].failureReason).toBe("validation_error");
+    expect(result.units[0]!.failureReason).toBe("validation_error");
   });
 });
 
@@ -578,7 +578,7 @@ steps:
 describe("executeStepPlan — empty free-text output is 'no output' (PR #714 comment B)", () => {
   test("a successful empty text output journals absence (result_json NULL) and promotes a null artifact", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });
-    const result = await executeStepPlan(plan(EMPTY_WF).steps[0], {
+    const result = await executeStepPlan(plan(EMPTY_WF).steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -588,21 +588,21 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
 
     expect(result.ok).toBe(true);
     // Empty == absent: no `text` on the outcome, and the promoted solo artifact is null.
-    expect(result.units[0].ok).toBe(true);
-    expect(result.units[0].text).toBeUndefined();
+    expect(result.units[0]!.ok).toBe(true);
+    expect(result.units[0]!.text).toBeUndefined();
     expect((result.evidence as { output: unknown }).output).toBeNull();
     // The journal stores NULL, not '""', so durable-reuse / report rehydrate the same absence.
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "build");
       expect(rows).toHaveLength(1);
-      expect(rows[0].status).toBe("completed");
-      expect(rows[0].result_json).toBeNull();
+      expect(rows[0]!.status).toBe("completed");
+      expect(rows[0]!.result_json).toBeNull();
     });
   });
 
   test("a SCHEMA unit returning an empty string fails (parse_error), never a silent null pass", async () => {
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
-    const result = await executeStepPlan(plan(SCHEMA_WF).steps[0], {
+    const result = await executeStepPlan(plan(SCHEMA_WF).steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -612,8 +612,8 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
 
     // Empty is not parseable JSON — it can never satisfy a declared schema as null.
     expect(result.ok).toBe(false);
-    expect(result.units[0].ok).toBe(false);
-    expect(result.units[0].failureReason).toBe("parse_error");
+    expect(result.units[0]!.ok).toBe(false);
+    expect(result.units[0]!.failureReason).toBe("parse_error");
   });
 
   test("a downstream ${{ steps.build.output }} of an empty-output step fails deterministically (resolved to null)", async () => {
@@ -625,7 +625,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     });
     const wf = plan(EMPTY_DOWNSTREAM_WF);
 
-    const build = await executeStepPlan(wf.steps[0], {
+    const build = await executeStepPlan(wf.steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -636,7 +636,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     expect((build.evidence as { output: unknown }).output).toBeNull();
 
     let dispatched = 0;
-    const consume = await executeStepPlan(wf.steps[1], {
+    const consume = await executeStepPlan(wf.steps[1]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -654,8 +654,8 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     // shared pure function, so this resolution error is reproduced identically.
     expect(consume.ok).toBe(false);
     expect(dispatched).toBe(0);
-    expect(consume.units[0].failureReason).toBe("expression_error");
-    expect(consume.units[0].error).toContain("resolved to null");
+    expect(consume.units[0]!.failureReason).toBe("expression_error");
+    expect(consume.units[0]!.error).toContain("resolved to null");
   });
 });
 
@@ -685,7 +685,7 @@ describe("executeStepPlan — vote reducer", () => {
       call++;
       return { ok: true, text: call === 2 ? '{"verdict": "fail"}' : '{"verdict": "pass"}' };
     };
-    const stepPlan = plan(VOTE_WF).steps[0];
+    const stepPlan = plan(VOTE_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -721,7 +721,7 @@ steps:
         ? { ok: true, text: "fine" }
         : { ok: false, text: "", failureReason: "timeout", error: "timed out" };
 
-    const stepPlan = plan(CONTINUE_WF).steps[0];
+    const stepPlan = plan(CONTINUE_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -736,7 +736,7 @@ steps:
     await withWorkflowRunsRepo((repo) => {
       const failed = repo.getUnitsForStep(RUN_ID, "review").filter((r) => r.status === "failed");
       expect(failed).toHaveLength(1);
-      expect(failed[0].failure_reason).toBe("timeout");
+      expect(failed[0]!.failure_reason).toBe("timeout");
     });
   });
 
@@ -759,7 +759,7 @@ steps:
         ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
         : { ok: true, text: "finally" };
     };
-    const stepPlan = plan(RETRY_WF).steps[0];
+    const stepPlan = plan(RETRY_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -772,7 +772,7 @@ steps:
     // The reduced outcome carries the CONTENT-derived base id — the `~r<n>` suffix
     // is journal-row bookkeeping only, kept off the durable step evidence so an
     // engine-driven and a report-driven run agree on evidence.units[].unitId (R4).
-    expect(result.units[0].unitId).toBe("fetch:solo");
+    expect(result.units[0]!.unitId).toBe("fetch:solo");
     // Every attempt still keeps its own journal ROW under the suffixed id —
     // nothing is clobbered, and attempt granularity is observable there.
     await withWorkflowRunsRepo((repo) => {
@@ -791,7 +791,7 @@ steps:
       call++;
       return { ok: false, text: "", failureReason: "non_zero_exit", error: "exit 1" };
     };
-    const stepPlan = plan(RETRY_WF).steps[0];
+    const stepPlan = plan(RETRY_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -801,7 +801,7 @@ steps:
     });
     expect(call).toBe(1);
     expect(result.ok).toBe(false);
-    expect(result.units[0].failureReason).toBe("non_zero_exit");
+    expect(result.units[0]!.failureReason).toBe("non_zero_exit");
   });
 
   test("a retried unit that already completed is reused on resume, not re-dispatched", async () => {
@@ -813,7 +813,7 @@ steps:
         ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
         : { ok: true, text: "finally" };
     };
-    const stepPlan = plan(RETRY_WF).steps[0];
+    const stepPlan = plan(RETRY_WF).steps[0]!;
     const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {}, evidence: {} };
     const first = await executeStepPlan(stepPlan, { ...ctx, dispatcher: flaky });
     expect(first.ok).toBe(true);
@@ -827,8 +827,8 @@ steps:
     });
     expect(second.ok).toBe(true);
     // Base id in the reduced outcome even though it was reused from the `~r1` row.
-    expect(second.units[0].unitId).toBe("fetch:solo");
-    expect(second.units[0].text).toBe("finally");
+    expect(second.units[0]!.unitId).toBe("fetch:solo");
+    expect(second.units[0]!.text).toBe("finally");
   });
 });
 
@@ -838,7 +838,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
     // session id (e.g. codex `session_configured`), but it used to evaporate
     // inside dispatchUnit — never reaching workflow_run_units.session_id.
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
-    const stepPlan = plan(SCHEMA_WF).steps[0];
+    const stepPlan = plan(SCHEMA_WF).steps[0]!;
     const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {}, evidence: {} };
 
     const first = await executeStepPlan(stepPlan, {
@@ -846,12 +846,12 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
       dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}', sessionId: "codex-abc-123" }),
     });
     expect(first.ok).toBe(true);
-    expect(first.units[0].sessionId).toBe("codex-abc-123");
+    expect(first.units[0]!.sessionId).toBe("codex-abc-123");
 
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "extract");
       expect(rows).toHaveLength(1);
-      expect(rows[0].session_id).toBe("codex-abc-123");
+      expect(rows[0]!.session_id).toBe("codex-abc-123");
     });
 
     // Durable-row reuse rehydrates the journaled session id without re-dispatch.
@@ -862,12 +862,12 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
       },
     });
     expect(second.ok).toBe(true);
-    expect(second.units[0].sessionId).toBe("codex-abc-123");
+    expect(second.units[0]!.sessionId).toBe("codex-abc-123");
   });
 
   test("a failed unit still journals the session id revealed before the failure", async () => {
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -884,14 +884,14 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
     expect(result.ok).toBe(false);
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "review");
-      expect(rows[0].status).toBe("failed");
-      expect(rows[0].session_id).toBe("sess-before-crash");
+      expect(rows[0]!.status).toBe("failed");
+      expect(rows[0]!.session_id).toBe("sess-before-crash");
     });
   });
 
   test("units whose dispatch reveals no sessionId journal NULL", async () => {
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -900,7 +900,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
       dispatcher: async () => ({ ok: true, text: "done" }),
     });
     await withWorkflowRunsRepo((repo) => {
-      expect(repo.getUnitsForStep(RUN_ID, "review")[0].session_id).toBeNull();
+      expect(repo.getUnitsForStep(RUN_ID, "review")[0]!.session_id).toBeNull();
     });
   });
 });
@@ -908,7 +908,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
 describe("executeStepPlan — durable-row reuse (peer review)", () => {
   test("re-executing a step reuses completed units with the same input hash instead of re-dispatching", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const ctx = {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -953,7 +953,7 @@ describe("executeStepPlan — durable-row reuse (peer review)", () => {
 
   test("a changed item is a NEW unit identity and dispatches live", async () => {
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const dispatcher = async () => {
       dispatches++;
@@ -1001,7 +1001,7 @@ steps:
 
   test("identity survives item-list reordering: a reshuffled producer output reuses every journaled result", async () => {
     seedRun({ steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(REORDER_WF).steps.find((s) => s.stepId === "review");
+    const stepPlan = plan(REORDER_WF).steps.find((s) => s.stepId === "review")!;
     if (!stepPlan) throw new Error("missing review step");
     const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {} };
 
@@ -1041,7 +1041,7 @@ steps:
     // Duplicates collide on content-derived identity — an authoring error
     // (the module doc documents it as such), caught deterministically.
     seedRun({ params: { files: ["a", "b", "a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -1079,7 +1079,7 @@ steps:
 
   test("replay divergence: a journaled COMPLETED row with matching id but different input_hash fails the step hard — even under on_error: continue", async () => {
     seedRun({ params: { files: ["a"] }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(DIVERGENCE_WF).steps[0];
+    const stepPlan = plan(DIVERGENCE_WF).steps[0]!;
     let dispatches = 0;
     const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
       dispatches++;
@@ -1118,7 +1118,7 @@ steps:
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "review");
       expect(rows).toHaveLength(1);
-      expect(rows[0].status).toBe("completed");
+      expect(rows[0]!.status).toBe("completed");
     });
   });
 
@@ -1151,7 +1151,7 @@ steps:
       });
     });
 
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -1165,8 +1165,8 @@ steps:
     });
     expect(result.ok).toBe(true);
     expect(dispatches).toBe(1);
-    expect(result.units[0].unitId).toBe("review.unit:ac8d8342bbb2");
-    expect(result.units[0].text).toBe("fresh");
+    expect(result.units[0]!.unitId).toBe("review.unit:ac8d8342bbb2");
+    expect(result.units[0]!.text).toBe("fresh");
     await withWorkflowRunsRepo((repo) => {
       const byId = new Map(repo.getUnitsForStep(RUN_ID, "review").map((r) => [r.unit_id, r.status]));
       expect(byId.get("review.unit[0]")).toBe("completed"); // the old row is left alone
@@ -1184,7 +1184,7 @@ describe("executeStepPlan — lifetime unit cap counts actual dispatches only (p
     const { LIFETIME_UNIT_CAP } = await import("../../../src/workflows/exec/scheduler");
     const files = Array.from({ length: 20 }, (_, i) => `f${i}.ts`);
     seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: { files }, evidence: {} };
 
     // First pass: 19 units complete, one fails → 20 journaled attempt rows.
@@ -1218,7 +1218,7 @@ describe("executeStepPlan — lifetime unit cap counts actual dispatches only (p
     const { LIFETIME_UNIT_CAP } = await import("../../../src/workflows/exec/scheduler");
     const files = ["a", "b", "c", "d", "e"];
     seedRun({ params: { files }, steps: [{ id: "review", title: "Review files" }] });
-    const stepPlan = plan(FAN_OUT_WF).steps[0];
+    const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -1398,7 +1398,7 @@ steps:
     expect(status.run.status).toBe("completed");
     expect(status.workflow.steps.every((s) => s.status === "completed")).toBe(true);
     // Evidence carries the unit outcomes for downstream steps/consumers.
-    expect(status.workflow.steps[0].evidence?.units).toBeDefined();
+    expect(status.workflow.steps[0]!.evidence?.units).toBeDefined();
   });
 
   test("a failing step marks the run failed and stops the loop", async () => {
@@ -1419,7 +1419,7 @@ steps:
     });
 
     expect(result.executed).toHaveLength(1);
-    expect(result.executed[0].ok).toBe(false);
+    expect(result.executed[0]!.ok).toBe(false);
     expect(result.done).toBeUndefined();
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("failed");
@@ -1463,7 +1463,7 @@ steps:
       ],
     });
     const outOfOrder = plan(TWO_STEP_WF);
-    outOfOrder.steps[0] = { ...outOfOrder.steps[0], dependsOn: ["second"] };
+    outOfOrder.steps[0] = { ...outOfOrder.steps[0]!, dependsOn: ["second"] };
     let dispatches = 0;
     await expect(
       runWorkflowSteps({
@@ -1508,8 +1508,8 @@ steps:
       dispatcher: async () => ({ ok: true, text: "should be blocked by the cap" }),
       loadPlan: usePlan(TWO_STEP_WF),
     });
-    expect(result.executed[0].ok).toBe(false);
-    expect(result.executed[0].summary).toContain("lifetime unit cap");
+    expect(result.executed[0]!.ok).toBe(false);
+    expect(result.executed[0]!.summary).toContain("lifetime unit cap");
     expect(result.run.status).toBe("failed");
   });
 
@@ -1961,7 +1961,7 @@ steps:
 
   test("an HTTP 429 journals llm_rate_limit and `retry: { on: [llm_rate_limit] }` re-dispatches", async () => {
     seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
-    const stepPlan = plan(LLM_RETRY_WF).steps[0];
+    const stepPlan = plan(LLM_RETRY_WF).steps[0]!;
 
     const cfgDir = makeSandboxDir("akm-llm-cfg");
     let calls = 0;
@@ -1987,7 +1987,7 @@ steps:
             expect(calls).toBe(2); // 429, then success — the retry actually fired
             // Reduced outcome carries the content-derived base id; the retry
             // attempt's `~r1` suffix stays on the journal row (R4 evidence parity).
-            expect(result.units[0].unitId).toBe("fetch:solo");
+            expect(result.units[0]!.unitId).toBe("fetch:solo");
           },
           () => {
             calls++;
@@ -2250,7 +2250,7 @@ steps:
   test("redacts an echoed env-asset value before workflow evidence and unit journals", async () => {
     const sentinel = "WORKFLOW-ECHO-SENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+    const stepPlan = plan(ENV_SOLO_WF).steps[0]!;
 
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -2271,7 +2271,7 @@ steps:
   test("redacts sensitive values from every durable outcome metadata field", async () => {
     const sentinel = "WORKFLOW-METADATA-SENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+    const stepPlan = plan(ENV_SOLO_WF).steps[0]!;
 
     const result = await executeStepPlan(stepPlan, {
       runId: RUN_ID,
@@ -2291,10 +2291,10 @@ steps:
 
     expect(JSON.stringify(result)).not.toContain(sentinel);
     expect(JSON.stringify(rows)).not.toContain(sentinel);
-    expect(result.units[0].failureReason).toBe("reported_failure");
-    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
-    expect(rows[0].failure_reason).toBe("reported_failure");
-    expect(rows[0].session_id).toBe("session-[REDACTED]");
+    expect(result.units[0]!.failureReason).toBe("reported_failure");
+    expect(result.units[0]!.sessionId).toBe("session-[REDACTED]");
+    expect(rows[0]!.failure_reason).toBe("reported_failure");
+    expect(rows[0]!.session_id).toBe("session-[REDACTED]");
   });
 
   test("redacts a credential-bearing URL from an allowlisted engine passthrough", async () => {
@@ -2305,7 +2305,7 @@ steps:
       "https://example.test/#/oauth/callback?authorization_code=WORKFLOW%2BAUTHORIZATION%2BSENTINEL";
     seedRun({ steps: [{ id: "build", title: "Build" }] });
     const frozen = plan(ENV_SOLO_WF);
-    const stepPlan = frozen.steps[0];
+    const stepPlan = frozen.steps[0]!;
     const engine = frozen.execution?.engines["test-agent"];
     if (!engine || engine.kind !== "agent") throw new Error("expected frozen agent engine");
     engine.envPassthrough = ["LLM_BASE_URL", "OPENCODE_CONFIG"];
@@ -2337,15 +2337,15 @@ steps:
       expect(JSON.stringify(rows)).not.toContain(secret);
     }
     expect(JSON.stringify(rows)).toContain("[REDACTED]");
-    expect(result.units[0].failureReason).toBe("reported_failure");
-    expect(result.units[0].sessionId).toBe("session-[REDACTED]");
-    expect(rows[0].failure_reason).toBe("reported_failure");
-    expect(rows[0].session_id).toBe("session-[REDACTED]");
+    expect(result.units[0]!.failureReason).toBe("reported_failure");
+    expect(result.units[0]!.sessionId).toBe("session-[REDACTED]");
+    expect(rows[0]!.failure_reason).toBe("reported_failure");
+    expect(rows[0]!.session_id).toBe("session-[REDACTED]");
   });
 
   test("a fully-journaled step resumes to completion with a DELETED env asset — the env resolver is never invoked", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ENV_SOLO_WF).steps[0];
+    const stepPlan = plan(ENV_SOLO_WF).steps[0]!;
     await seedCompleted(stepPlan, {});
 
     let resolveEnvCalls = 0;
@@ -2373,7 +2373,7 @@ steps:
 
   test("a fully-journaled isolated step resumes in a NON-git cwd with git absent — worktree preflight is never invoked", async () => {
     seedRun({ steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ISO_SOLO_WF).steps[0];
+    const stepPlan = plan(ISO_SOLO_WF).steps[0]!;
     await seedCompleted(stepPlan, {});
 
     let preflightCalls = 0;
@@ -2403,7 +2403,7 @@ steps:
 
   test("a PARTIALLY-journaled step still fails cleanly when the env asset is unavailable for the units that must dispatch", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ENV_FANOUT_WF).steps[0];
+    const stepPlan = plan(ENV_FANOUT_WF).steps[0]!;
     // Only ONE of the two units is journaled — the other must dispatch, so env
     // resolution is required and its failure fails the whole step.
     await seedCompleted(stepPlan, { files: ["a", "b"] }, 1);
@@ -2433,7 +2433,7 @@ steps:
 
   test("a PARTIALLY-journaled isolated step still fails cleanly on a non-git cwd for the units that must dispatch", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "build", title: "Build" }] });
-    const stepPlan = plan(ISO_FANOUT_WF).steps[0];
+    const stepPlan = plan(ISO_FANOUT_WF).steps[0]!;
     await seedCompleted(stepPlan, { files: ["a", "b"] }, 1);
 
     let preflightCalls = 0;

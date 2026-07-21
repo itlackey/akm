@@ -211,8 +211,8 @@ describe("assembleInfo", () => {
     const info = assembleInfo();
 
     expect(info.registries).toHaveLength(1);
-    expect(info.registries[0].url).toBe("https://example.com/registry");
-    expect(info.registries[0].name).toBe("test-registry");
+    expect(info.registries[0]!.url).toBe("https://example.com/registry");
+    expect(info.registries[0]!.name).toBe("test-registry");
     // Ensure apiKey is not present anywhere in the serialized output
     const serialized = JSON.stringify(info);
     expect(serialized).not.toContain("super-secret-key-12345");

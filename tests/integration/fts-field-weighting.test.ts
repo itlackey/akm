@@ -87,7 +87,7 @@ describe("FTS5 field weighting", () => {
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The name match should rank first (lower bm25 score = better in FTS5)
-      expect(results[0].entry.name).toBe("deploy");
+      expect(results[0]!.entry.name).toBe("deploy");
     } finally {
       closeDatabase(db);
     }
@@ -119,7 +119,7 @@ describe("FTS5 field weighting", () => {
 
       const results = searchFts(db, "kubernetes", 10);
       expect(results.length).toBe(2);
-      expect(results[0].entry.name).toBe("kubernetes");
+      expect(results[0]!.entry.name).toBe("kubernetes");
     } finally {
       closeDatabase(db);
     }
@@ -151,7 +151,7 @@ describe("FTS5 field weighting", () => {
 
       const results = searchFts(db, "terraform", 10);
       expect(results.length).toBe(2);
-      expect(results[0].entry.name).toBe("infra-tool");
+      expect(results[0]!.entry.name).toBe("infra-tool");
     } finally {
       closeDatabase(db);
     }
@@ -184,7 +184,7 @@ describe("FTS5 field weighting", () => {
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The multi-field match should rank first
-      expect(results[0].entry.name).toBe("deploy");
+      expect(results[0]!.entry.name).toBe("deploy");
     } finally {
       closeDatabase(db);
     }
@@ -385,7 +385,7 @@ describe("SPEC-8 bodyOpening indexing", () => {
 
       const results = searchFts(db, "quokka", 10);
       expect(results.length).toBe(1);
-      expect(results[0].entry.name).toBe("project-orienter");
+      expect(results[0]!.entry.name).toBe("project-orienter");
 
       // Column-level pin: the token landed in `content`, and only there.
       const row = db.prepare("SELECT content, hints FROM entries_fts WHERE entry_id = ?").get(id) as
@@ -422,7 +422,7 @@ describe("SPEC-8 bodyOpening indexing", () => {
       expect(results.length).toBe(2);
       // …but the name match wins: content carries the lowest bm25 weight
       // (name 10.0 vs content 1.0), so orientation prose never outranks names.
-      expect(results[0].entry.name).toBe("quokka-runbook");
+      expect(results[0]!.entry.name).toBe("quokka-runbook");
     } finally {
       closeDatabase(db);
     }

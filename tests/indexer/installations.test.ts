@@ -49,22 +49,22 @@ describe("slugForPath", () => {
 describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () => {
   test("akm workspace stash → akm adapter", () => {
     const [inst] = deriveInstallations([{ path: AKM_ROOT, writable: true }]);
-    expect(inst.components[0].adapter).toBe("akm");
+    expect(inst!.components[0]!.adapter).toBe("akm");
   });
 
   test("okf reference bundle → okf adapter", () => {
     const [inst] = deriveInstallations([{ path: OKF_ROOT }]);
-    expect(inst.components[0].adapter).toBe("okf");
+    expect(inst!.components[0]!.adapter).toBe("okf");
   });
 
   test("llm-wiki bundle → llm-wiki adapter (more-specific probe wins over okf)", () => {
     const [inst] = deriveInstallations([{ path: LLM_WIKI_ROOT }]);
-    expect(inst.components[0].adapter).toBe("llm-wiki");
+    expect(inst!.components[0]!.adapter).toBe("llm-wiki");
   });
 
   test("a root no probe claims falls back to akm", () => {
     const [inst] = deriveInstallations([{ path: "/nonexistent/empty/root" }]);
-    expect(inst.components[0].adapter).toBe("akm");
+    expect(inst!.components[0]!.adapter).toBe("akm");
   });
 });
 
@@ -75,8 +75,8 @@ describe("deriveInstallations — id / trust / component shape", () => {
       { path: OKF_ROOT, registryId: "team-catalog" },
     ];
     const [primary, installed] = deriveInstallations(sources);
-    expect(primary.id).toBe("all-types");
-    expect(installed.id).toBe("team-catalog");
+    expect(primary!.id).toBe("all-types");
+    expect(installed!.id).toBe("team-catalog");
   });
 
   test("trusted mirrors writable; component carries root/writable and id == bundle id", () => {
@@ -84,11 +84,11 @@ describe("deriveInstallations — id / trust / component shape", () => {
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT, registryId: "ro", writable: false },
     ]);
-    expect(writable.trusted).toBe(true);
-    expect(writable.components).toHaveLength(1);
-    expect(writable.components[0]).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
-    expect(readonly.trusted).toBe(false);
-    expect(readonly.components[0].writable).toBe(false);
+    expect(writable!.trusted).toBe(true);
+    expect(writable!.components).toHaveLength(1);
+    expect(writable!.components[0]).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
+    expect(readonly!.trusted).toBe(false);
+    expect(readonly!.components[0]!.writable).toBe(false);
   });
 
   test("source order is preserved as installation priority", () => {

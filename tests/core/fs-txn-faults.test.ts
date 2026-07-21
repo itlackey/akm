@@ -244,7 +244,7 @@ describe("fs-txn fault injection (WI-6.7, plan Chunk-6 gate)", () => {
 
     // The fault genuinely left the batch mid-flight: the faulted file (and
     // any earlier ones) already carry new content on disk.
-    expect(readOrNull(root, BATCH[faultIndex]?.rel as string)).toBe(BATCH[faultIndex]?.after);
+    expect(readOrNull(root, BATCH[faultIndex]?.rel as string)).toBe(BATCH[faultIndex]!.after);
 
     // Recovery (journal still before the commit phase) rolls the WHOLE
     // batch back: updates byte-identical to their originals, create gone.
@@ -272,9 +272,9 @@ describe("fs-txn fault injection (WI-6.7, plan Chunk-6 gate)", () => {
 
     const recovered = await recoverTxnsForRoot(root);
     expect(recovered).toHaveLength(1);
-    expect(readOrNull(root, "lessons/batch-a.md")).toBe(BATCH[0]?.after);
-    expect(readOrNull(root, "lessons/batch-b.md")).toBe(BATCH[1]?.after);
-    expect(readOrNull(root, "lessons/batch-new.md")).toBe(BATCH[2]?.after);
+    expect(readOrNull(root, "lessons/batch-a.md")).toBe(BATCH[0]!.after);
+    expect(readOrNull(root, "lessons/batch-b.md")).toBe(BATCH[1]!.after);
+    expect(readOrNull(root, "lessons/batch-new.md")).toBe(BATCH[2]!.after);
     expect(fs.existsSync(txnNamespaceDir(root))).toBe(false);
   });
 
@@ -315,9 +315,9 @@ describe("fs-txn fault injection (WI-6.7, plan Chunk-6 gate)", () => {
     await recoverTxnsForRoot(root);
 
     applyBatch("fault-batch-retry", root, BATCH);
-    expect(readOrNull(root, "lessons/batch-a.md")).toBe(BATCH[0]?.after);
-    expect(readOrNull(root, "lessons/batch-b.md")).toBe(BATCH[1]?.after);
-    expect(readOrNull(root, "lessons/batch-new.md")).toBe(BATCH[2]?.after);
+    expect(readOrNull(root, "lessons/batch-a.md")).toBe(BATCH[0]!.after);
+    expect(readOrNull(root, "lessons/batch-b.md")).toBe(BATCH[1]!.after);
+    expect(readOrNull(root, "lessons/batch-new.md")).toBe(BATCH[2]!.after);
     expect(fs.existsSync(txnNamespaceDir(root))).toBe(false);
   });
 });

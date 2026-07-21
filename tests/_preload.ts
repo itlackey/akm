@@ -279,7 +279,7 @@ function healSandboxEnv(): void {
   // can't bleed in. (Verified: no test persists shared-sandbox config across
   // tests.) Guarded by safeRm/safeMkdir → can only touch the /tmp sandbox.
   if (process.env.XDG_CONFIG_HOME === SANDBOX_ENV.XDG_CONFIG_HOME) {
-    const akmDir = path.join(SANDBOX_ENV.XDG_CONFIG_HOME, "akm");
+    const akmDir = path.join(SANDBOX_ENV.XDG_CONFIG_HOME!, "akm");
     const cfg = path.join(akmDir, "config.json");
     if (fs.existsSync(cfg)) safeRm(cfg);
     safeMkdir(akmDir);

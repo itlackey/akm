@@ -81,9 +81,9 @@ describe("secret indexer safety", () => {
       const secretEntry = entries[0];
 
       // 1. Classified as a secret, discoverable by name.
-      expect(secretEntry.entry.type).toBe("secret");
-      expect(secretEntry.entry.name).toBe("deploy-key");
-      expect(secretEntry.entry.tags ?? []).toContain("secret");
+      expect(secretEntry!.entry.type).toBe("secret");
+      expect(secretEntry!.entry.name).toBe("deploy-key");
+      expect(secretEntry!.entry.tags ?? []).toContain("secret");
 
       // 2. CRITICAL: the value is nowhere in the persisted record.
       expect(JSON.stringify(secretEntry)).not.toContain(SECRET_VALUE);
@@ -94,8 +94,8 @@ describe("secret indexer safety", () => {
         .prepare("SELECT search_text, entry_json FROM entries WHERE entry_type = ?")
         .all("secret") as Row[];
       expect(rows.length).toBe(1);
-      expect(rows[0].search_text ?? "").not.toContain(SECRET_VALUE);
-      expect(rows[0].entry_json).not.toContain(SECRET_VALUE);
+      expect(rows[0]!.search_text ?? "").not.toContain(SECRET_VALUE);
+      expect(rows[0]!.entry_json).not.toContain(SECRET_VALUE);
 
       // 4. CRITICAL: the value cannot be retrieved via FTS5 search.
       type FtsRow = { c: number };

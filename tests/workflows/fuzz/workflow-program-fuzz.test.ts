@@ -214,23 +214,23 @@ function invalidProgram(rng: Rng): Corruption {
   switch (kind) {
     case "bad_id": {
       const i = rng.int(steps.length);
-      steps[i].id = rng.pick(["1leading", "has space", "dot.ted", "bad!", "a.b"]);
+      steps[i]!.id = rng.pick(["1leading", "has space", "dot.ted", "bad!", "a.b"]);
       return { yaml, expect: "invalid id" };
     }
     case "dup_id": {
       if (steps.length < 2) {
         steps.push({ id: ids[0], unit: { instructions: "dup" } });
       } else {
-        steps[1].id = steps[0].id;
+        steps[1]!.id = steps[0]!.id;
       }
       return { yaml, expect: "Duplicate step id" };
     }
     case "self_route": {
       const i = rng.int(steps.length);
-      const self = steps[i].id as string;
-      delete steps[i].unit;
-      delete steps[i].map;
-      steps[i].route = {
+      const self = steps[i]!.id as string;
+      delete steps[i]!.unit;
+      delete steps[i]!.map;
+      steps[i]!.route = {
         input: `\${{ params.${(yaml.params && Object.keys(yaml.params)[0]) || "x"} }}`,
         when: { m: self },
       };
@@ -240,17 +240,17 @@ function invalidProgram(rng: Rng): Corruption {
       // Make the LAST step route back to the first — always a backward edge.
       const last = steps.length - 1;
       if (last === 0) {
-        steps.push({ id: "tail", route: { input: `\${{ params.x }}`, when: { m: steps[0].id as string } } });
+        steps.push({ id: "tail", route: { input: `\${{ params.x }}`, when: { m: steps[0]!.id as string } } });
       } else {
-        delete steps[last].unit;
-        delete steps[last].map;
-        steps[last].route = { input: `\${{ params.x }}`, when: { m: steps[0].id as string } };
+        delete steps[last]!.unit;
+        delete steps[last]!.map;
+        steps[last]!.route = { input: `\${{ params.x }}`, when: { m: steps[0]!.id as string } };
       }
       return { yaml, expect: "backward" };
     }
     case "unknown_key": {
       const i = rng.int(steps.length);
-      steps[i].bogus_key = 42;
+      steps[i]!.bogus_key = 42;
       return { yaml, expect: "Unknown" };
     }
     default: {

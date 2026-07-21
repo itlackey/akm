@@ -270,7 +270,7 @@ describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () =>
     expect(output.format).toBe("text");
     expect(output.detail).toBe("full");
     // Existing values preserved; defaults only fill what was missing.
-    expect((written.bundles as Record<string, { path: string }>).akm.path).toBe("/home/tester/akm");
+    expect((written.bundles as Record<string, { path: string }>).akm!.path).toBe("/home/tester/akm");
     expect(written.defaults).toEqual({ engine: "claude" });
   });
 });
@@ -295,7 +295,7 @@ describe("runSetupWithDefaults — idempotency", () => {
 
     // No pre-existing value was overwritten by a default.
     const written = JSON.parse(first) as Record<string, unknown>;
-    expect((written.bundles as Record<string, { path: string }>).akm.path).toBe("/home/tester/akm");
+    expect((written.bundles as Record<string, { path: string }>).akm!.path).toBe("/home/tester/akm");
     expect(written.output).toEqual({ format: "json", detail: "full" });
     expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);

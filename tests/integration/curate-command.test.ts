@@ -176,8 +176,8 @@ describe("curate command", () => {
         .prepare("SELECT event_type, query, metadata FROM usage_events WHERE event_type = 'curate'")
         .all() as Array<{ event_type: string; query: string; metadata: string }>;
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows[0].query).toBe("release");
-      const meta = JSON.parse(rows[0].metadata);
+      expect(rows[0]!.query).toBe("release");
+      const meta = JSON.parse(rows[0]!.metadata);
       expect(meta.itemCount).toBeGreaterThan(0);
       expect(Array.isArray(meta.itemRefs)).toBe(true);
     } finally {

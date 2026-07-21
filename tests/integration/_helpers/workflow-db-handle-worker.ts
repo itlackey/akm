@@ -6,7 +6,10 @@ import fs from "node:fs";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 
-const [mode, readyPath, releasePath] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const mode = args[0];
+const readyPath = args[1]!;
+const releasePath = args[2]!;
 
 function waitForRelease(): void {
   fs.writeFileSync(readyPath, "ready");

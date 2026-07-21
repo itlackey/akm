@@ -67,10 +67,10 @@ describe("command parameter extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.length).toBe(2);
-    expect(entry.parameters?.[0].name).toBe("$1");
-    expect(entry.parameters?.[1].name).toBe("$2");
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.length).toBe(2);
+    expect(entry!.parameters![0]!.name).toBe("$1");
+    expect(entry!.parameters![1]!.name).toBe("$2");
   });
 
   test("commands with $ARGUMENTS have parameters auto-extracted", async () => {
@@ -84,8 +84,8 @@ describe("command parameter extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.some((p) => p.name === "ARGUMENTS")).toBe(true);
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.some((p) => p.name === "ARGUMENTS")).toBe(true);
   });
 
   test("commands with {{named}} placeholders have parameters auto-extracted", async () => {
@@ -99,9 +99,9 @@ describe("command parameter extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.some((p) => p.name === "image_name")).toBe(true);
-    expect(entry.parameters?.some((p) => p.name === "platform")).toBe(true);
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.some((p) => p.name === "image_name")).toBe(true);
+    expect(entry!.parameters?.some((p) => p.name === "platform")).toBe(true);
   });
 });
 
@@ -126,12 +126,12 @@ describe("script @param extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.length).toBe(2);
-    expect(entry.parameters?.[0].name).toBe("name");
-    expect(entry.parameters?.[0].description).toBe("The deployment name");
-    expect(entry.parameters?.[1].name).toBe("environment");
-    expect(entry.parameters?.[1].description).toBe("Target environment (staging or production)");
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.length).toBe(2);
+    expect(entry!.parameters![0]!.name).toBe("name");
+    expect(entry!.parameters![0]!.description).toBe("The deployment name");
+    expect(entry!.parameters![1]!.name).toBe("environment");
+    expect(entry!.parameters![1]!.description).toBe("Target environment (staging or production)");
   });
 
   test("scripts with typed @param have type extracted", async () => {
@@ -152,14 +152,14 @@ describe("script @param extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.length).toBe(2);
-    expect(entry.parameters?.[0].name).toBe("filename");
-    expect(entry.parameters?.[0].type).toBe("string");
-    expect(entry.parameters?.[0].description).toBe("The image file path");
-    expect(entry.parameters?.[1].name).toBe("width");
-    expect(entry.parameters?.[1].type).toBe("number");
-    expect(entry.parameters?.[1].description).toBe("Target width in pixels");
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.length).toBe(2);
+    expect(entry!.parameters![0]!.name).toBe("filename");
+    expect(entry!.parameters![0]!.type).toBe("string");
+    expect(entry!.parameters![0]!.description).toBe("The image file path");
+    expect(entry!.parameters![1]!.name).toBe("width");
+    expect(entry!.parameters![1]!.type).toBe("number");
+    expect(entry!.parameters![1]!.description).toBe("Target width in pixels");
   });
 
   test("bash scripts with # @param have parameters extracted", async () => {
@@ -179,12 +179,12 @@ describe("script @param extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.length).toBe(2);
-    expect(entry.parameters?.[0].name).toBe("source");
-    expect(entry.parameters?.[0].description).toBe("The source database name");
-    expect(entry.parameters?.[1].name).toBe("destination");
-    expect(entry.parameters?.[1].description).toBe("The backup destination path");
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.length).toBe(2);
+    expect(entry!.parameters![0]!.name).toBe("source");
+    expect(entry!.parameters![0]!.description).toBe("The source database name");
+    expect(entry!.parameters![1]!.name).toBe("destination");
+    expect(entry!.parameters![1]!.description).toBe("The backup destination path");
   });
 });
 
@@ -210,11 +210,11 @@ describe("frontmatter params extraction", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.some((p) => p.name === "region" && p.description === "AWS region to deploy to")).toBe(
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.some((p) => p.name === "region" && p.description === "AWS region to deploy to")).toBe(
       true,
     );
-    expect(entry.parameters?.some((p) => p.name === "instance_type" && p.description === "EC2 instance type")).toBe(
+    expect(entry!.parameters?.some((p) => p.name === "instance_type" && p.description === "EC2 instance type")).toBe(
       true,
     );
   });
@@ -255,7 +255,7 @@ describe("no parameters", () => {
     const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "guide.md")]);
 
     expect(result.entries.length).toBe(1);
-    expect(result.entries[0].parameters).toBeUndefined();
+    expect(result.entries[0]!.parameters).toBeUndefined();
   });
 });
 
@@ -273,9 +273,9 @@ describe("parameter ordering", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
+    expect(entry!.parameters).toBeDefined();
     // $ARGUMENTS comes first (matches existing extractParameters logic), then $1, $2, $3
-    const names = entry.parameters?.map((p) => p.name);
+    const names = entry!.parameters?.map((p) => p.name);
     expect(names).toEqual(["ARGUMENTS", "$1", "$2", "$3"]);
   });
 });
@@ -302,11 +302,11 @@ describe("parameter descriptions", () => {
 
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0];
-    expect(entry.parameters).toBeDefined();
-    expect(entry.parameters?.length).toBe(3);
-    expect(entry.parameters?.[0]).toEqual({ name: "inputFile", description: "Path to the input CSV file" });
-    expect(entry.parameters?.[1]).toEqual({ name: "outputFormat", description: "Output format (json, xml, yaml)" });
-    expect(entry.parameters?.[2]).toEqual({ name: "verbose", description: "Enable verbose logging" });
+    expect(entry!.parameters).toBeDefined();
+    expect(entry!.parameters?.length).toBe(3);
+    expect(entry!.parameters?.[0]).toEqual({ name: "inputFile", description: "Path to the input CSV file" });
+    expect(entry!.parameters?.[1]).toEqual({ name: "outputFormat", description: "Output format (json, xml, yaml)" });
+    expect(entry!.parameters?.[2]).toEqual({ name: "verbose", description: "Enable verbose logging" });
   });
 });
 
@@ -329,13 +329,13 @@ describe("validateStashEntry with parameters", () => {
     expect(entry).not.toBeNull();
     expect(entry?.parameters).toBeDefined();
     expect(entry?.parameters?.length).toBe(2);
-    expect(entry?.parameters?.[0].name).toBe("image");
-    expect(entry?.parameters?.[0].type).toBe("string");
-    expect(entry?.parameters?.[0].description).toBe("Docker image");
-    expect(entry?.parameters?.[0].required).toBe(true);
-    expect(entry?.parameters?.[0].default).toBe("latest");
-    expect(entry?.parameters?.[1].name).toBe("count");
-    expect(entry?.parameters?.[1].type).toBe("number");
+    expect(entry!.parameters![0]!.name).toBe("image");
+    expect(entry!.parameters![0]!.type).toBe("string");
+    expect(entry!.parameters![0]!.description).toBe("Docker image");
+    expect(entry!.parameters![0]!.required).toBe(true);
+    expect(entry!.parameters![0]!.default).toBe("latest");
+    expect(entry!.parameters![1]!.name).toBe("count");
+    expect(entry!.parameters![1]!.type).toBe("number");
   });
 
   test("validateStashEntry filters invalid parameter objects", async () => {
@@ -356,7 +356,7 @@ describe("validateStashEntry with parameters", () => {
     expect(entry).not.toBeNull();
     expect(entry?.parameters).toBeDefined();
     expect(entry?.parameters?.length).toBe(1);
-    expect(entry?.parameters?.[0].name).toBe("valid");
+    expect(entry!.parameters![0]!.name).toBe("valid");
   });
 });
 
@@ -378,7 +378,7 @@ describe("indexing pipeline with parameters", () => {
     expect(entries.length).toBe(1);
 
     // The search text stored in the DB should include parameter names
-    const searchText = entries[0].searchText;
+    const searchText = entries[0]!.searchText;
     expect(searchText).toContain("registry_url");
     closeDatabase(db);
   });
@@ -405,9 +405,9 @@ describe("knowledge articles skip command parameter extraction", () => {
     const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "template-guide.md")]);
 
     expect(result.entries.length).toBe(1);
-    expect(result.entries[0].type).toBe("knowledge");
+    expect(result.entries[0]!.type).toBe("knowledge");
     // Knowledge articles should NOT have command parameters extracted
-    expect(result.entries[0].parameters).toBeUndefined();
+    expect(result.entries[0]!.parameters).toBeUndefined();
   });
 
   test("knowledge article with frontmatter params should still have parameters", async () => {
@@ -429,11 +429,11 @@ describe("knowledge articles skip command parameter extraction", () => {
     const result = recognizeStashEntries(stashDir, [path.join(stashDir, "knowledge", "config-ref.md")]);
 
     expect(result.entries.length).toBe(1);
-    expect(result.entries[0].type).toBe("knowledge");
+    expect(result.entries[0]!.type).toBe("knowledge");
     // Frontmatter params: should still be extracted for all types
-    expect(result.entries[0].parameters).toBeDefined();
-    expect(result.entries[0].parameters?.length).toBe(1);
-    expect(result.entries[0].parameters?.[0].name).toBe("api_key");
+    expect(result.entries[0]!.parameters).toBeDefined();
+    expect(result.entries[0]!.parameters?.length).toBe(1);
+    expect(result.entries[0]!.parameters![0]!.name).toBe("api_key");
     // But {{api_key}} from the body should NOT be extracted (not a command)
   });
 });
@@ -450,14 +450,14 @@ describe("positional parameter boundary matching", () => {
     const params = extractCommandParameters("Deploy $1 to $2");
     expect(params).toBeDefined();
     expect(params?.length).toBe(2);
-    expect(params?.[0].name).toBe("$1");
-    expect(params?.[1].name).toBe("$2");
+    expect(params![0]!.name).toBe("$1");
+    expect(params![1]!.name).toBe("$2");
   });
 
   test("$1 at end of string is matched", () => {
     const params = extractCommandParameters("Deploy $1");
     expect(params).toBeDefined();
     expect(params?.length).toBe(1);
-    expect(params?.[0].name).toBe("$1");
+    expect(params![0]!.name).toBe("$1");
   });
 });

@@ -101,11 +101,11 @@ describe("registry add/remove/list via config", () => {
     const config = loadConfig();
     const registries = config.registries ?? [];
     expect(registries.length).toBe(2);
-    expect(registries[0].name).toBe("akm-registry");
-    expect(registries[0].url).toContain("akm-registry");
-    expect(registries[1].name).toBe("skills.sh");
-    expect(registries[1].provider).toBe("skills-sh");
-    expect(registries[1].enabled).toBe(false);
+    expect(registries[0]!.name).toBe("akm-registry");
+    expect(registries[0]!.url).toContain("akm-registry");
+    expect(registries[1]!.name).toBe("skills.sh");
+    expect(registries[1]!.provider).toBe("skills-sh");
+    expect(registries[1]!.enabled).toBe(false);
   });
 
   test("add appends a registry entry", () => {
@@ -117,8 +117,8 @@ describe("registry add/remove/list via config", () => {
 
     const updated = loadConfig();
     expect(updated.registries?.length).toBe(3);
-    expect(updated.registries?.[2].url).toBe("https://example.com/index.json");
-    expect(updated.registries?.[2].name).toBe("custom");
+    expect(updated.registries![2]!.url).toBe("https://example.com/index.json");
+    expect(updated.registries![2]!.name).toBe("custom");
   });
 
   test("add deduplicates by URL", () => {
@@ -160,7 +160,7 @@ describe("registry add/remove/list via config", () => {
 
     const final = loadConfig();
     expect(final.registries?.length).toBe(1);
-    expect(final.registries?.[0].name).toBe("b");
+    expect(final.registries![0]!.name).toBe("b");
   });
 
   test("remove by name", () => {
@@ -177,7 +177,7 @@ describe("registry add/remove/list via config", () => {
 
     const final = loadConfig();
     expect(final.registries?.length).toBe(1);
-    expect(final.registries?.[0].name).toBe("beta");
+    expect(final.registries![0]!.name).toBe("beta");
   });
 });
 
@@ -247,7 +247,7 @@ describe("resolveRegistries", () => {
     process.env.AKM_REGISTRY_URL = "https://override.com/index.json";
     const resolved = resolveRegistries([{ url: "https://config.com/index.json" }]);
     expect(resolved.length).toBe(1);
-    expect(resolved[0].url).toBe("https://override.com/index.json");
+    expect(resolved[0]!.url).toBe("https://override.com/index.json");
   });
 
   test("returns empty array when passed empty array", () => {
@@ -260,7 +260,7 @@ describe("resolveRegistries", () => {
     const resolved = resolveRegistries(undefined);
     // Will read from loadConfig which returns DEFAULT_CONFIG registries
     expect(resolved.length).toBeGreaterThan(0);
-    expect(resolved[0].name).toBe("akm-registry");
+    expect(resolved[0]!.name).toBe("akm-registry");
   });
 });
 
@@ -289,8 +289,8 @@ describe("registry search with config entries", () => {
         registries: [{ url: srv.url, name: "test-reg" }],
       });
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:test-stash");
-      expect(result.hits[0].registryName).toBe("test-reg");
+      expect(result.hits[0]!.id).toBe("npm:test-stash");
+      expect(result.hits[0]!.registryName).toBe("test-reg");
     } finally {
       srv.close();
     }
@@ -358,7 +358,7 @@ describe("registry search with config entries", () => {
     ];
     const resolved = resolveRegistries(entries);
     expect(resolved.length).toBe(1);
-    expect(resolved[0].name).toBe("enabled");
+    expect(resolved[0]!.name).toBe("enabled");
   });
 });
 

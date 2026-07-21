@@ -149,13 +149,13 @@ describe("recordImproveRunResult", () => {
 
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
-      expect(rows[0].id).toBe(runId);
-      expect(rows[0].ok).toBe(1);
-      expect(rows[0].dry_run).toBe(0);
-      expect(rows[0].scope_mode).toBe("all");
-      expect(rows[0].profile).toBeNull();
-      expect(rows[0].strategy).toBe("default");
-      expect(rows[0].result.ok).toBe(true);
+      expect(rows[0]!.id).toBe(runId);
+      expect(rows[0]!.ok).toBe(1);
+      expect(rows[0]!.dry_run).toBe(0);
+      expect(rows[0]!.scope_mode).toBe("all");
+      expect(rows[0]!.profile).toBeNull();
+      expect(rows[0]!.strategy).toBe("default");
+      expect(rows[0]!.result.ok).toBe(true);
 
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
       const runsDir = path.join(stash, ".akm", "runs");
@@ -175,8 +175,8 @@ describe("recordImproveRunResult", () => {
       recordImproveRunResult(stash, runId, { ...baseResult, strategy: "quick" });
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
-      expect(rows[0].profile).toBeNull();
-      expect(rows[0].strategy).toBe("quick");
+      expect(rows[0]!.profile).toBeNull();
+      expect(rows[0]!.strategy).toBe("quick");
     } finally {
       dataSb.cleanup();
     }
@@ -212,11 +212,13 @@ describe("recordImproveRunResult", () => {
       recordImproveRunResult(stash, runId, baseResult, startedAt);
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
-      expect(rows[0].started_at).toBe(startedAt);
+      expect(rows[0]!.started_at).toBe(startedAt);
       // completed_at is set to now() at write time — must be >= started_at
-      expect(rows[0].completed_at).not.toBeNull();
+      expect(rows[0]!.completed_at).not.toBeNull();
       // biome-ignore lint/style/noNonNullAssertion: asserted not-null on the line above
-      expect(new Date(rows[0].completed_at!).getTime()).toBeGreaterThanOrEqual(new Date(rows[0].started_at).getTime());
+      expect(new Date(rows[0]!.completed_at!).getTime()).toBeGreaterThanOrEqual(
+        new Date(rows[0]!.started_at).getTime(),
+      );
     } finally {
       dataSb.cleanup();
     }
@@ -235,11 +237,11 @@ describe("recordImproveRunResult", () => {
       const rows = readImproveRuns(xdgData);
       expect(rows.length).toBe(1);
       // started_at should be close to `past`, not to now()
-      const storedStart = new Date(rows[0].started_at).getTime();
+      const storedStart = new Date(rows[0]!.started_at).getTime();
       expect(Math.abs(storedStart - past.getTime())).toBeLessThan(1000);
       // completed_at must be after started_at
       // biome-ignore lint/style/noNonNullAssertion: completed_at is always set on successful writes
-      expect(new Date(rows[0].completed_at!).getTime()).toBeGreaterThan(storedStart);
+      expect(new Date(rows[0]!.completed_at!).getTime()).toBeGreaterThan(storedStart);
     } finally {
       dataSb.cleanup();
     }

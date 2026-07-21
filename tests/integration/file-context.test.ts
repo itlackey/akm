@@ -744,7 +744,7 @@ describe("walkStashFlat", () => {
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("scripts/deploy.sh");
+    expect(results[0]!.relPath).toBe("scripts/deploy.sh");
   });
 
   test("skips node_modules directories", () => {
@@ -754,7 +754,7 @@ describe("walkStashFlat", () => {
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("scripts/deploy.sh");
+    expect(results[0]!.relPath).toBe("scripts/deploy.sh");
   });
 
   test("skips .stash.json files", () => {
@@ -765,7 +765,7 @@ describe("walkStashFlat", () => {
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("scripts/deploy.sh");
+    expect(results[0]!.relPath).toBe("scripts/deploy.sh");
   });
 
   test("each returned item is a valid FileContext with correct fields", () => {

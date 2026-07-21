@@ -140,13 +140,13 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
       const opProp = v.properties.op as { enum?: string[] };
       return opProp.enum?.includes("merge");
     });
-    expect(mergeVariant?.required.every((k) => k in sample.operations[0])).toBe(true);
+    expect(mergeVariant?.required.every((k) => k in sample.operations[0]!)).toBe(true);
 
     const deleteVariant = s.properties.operations.items.oneOf.find((v) => {
       const opProp = v.properties.op as { enum?: string[] };
       return opProp.enum?.includes("delete");
     });
-    expect(deleteVariant?.required.every((k) => k in sample.operations[1])).toBe(true);
+    expect(deleteVariant?.required.every((k) => k in sample.operations[1]!)).toBe(true);
   });
 
   test("a payload missing the required `primary` field for a merge op fails the required-key check", () => {
@@ -156,6 +156,6 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — typed-shape acceptance", () => {
       const opProp = v.properties.op as { enum?: string[] };
       return opProp.enum?.includes("merge");
     });
-    expect(mergeVariant?.required.every((k) => k in broken.operations[0])).toBe(false);
+    expect(mergeVariant?.required.every((k) => k in broken.operations[0]!)).toBe(false);
   });
 });

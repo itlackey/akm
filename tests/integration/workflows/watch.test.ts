@@ -225,7 +225,7 @@ describe("workflow watch — --stream", () => {
       emit: (line) => lines.push(line),
       readEventsFn: ({ sinceOffset }) => {
         const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
-        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1]!.id : (sinceOffset ?? 0) };
       },
       getRunStatus: async () => {
         statusCalls++;
@@ -274,7 +274,7 @@ describe("workflow watch — exits on every terminal status (completed/failed/bl
         emit: (line) => lines.push(line),
         readEventsFn: ({ sinceOffset }) => {
           const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
-          return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+          return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1]!.id : (sinceOffset ?? 0) };
         },
         getRunStatus: async () => {
           statusCalls++;
@@ -317,7 +317,7 @@ describe("workflow watch — exits on every terminal status (completed/failed/bl
       readEventsFn: ({ sinceOffset }) => {
         cursorsRead.push(sinceOffset ?? 0);
         const batch = events.filter((e) => e.id > (sinceOffset ?? 0));
-        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1].id : (sinceOffset ?? 0) };
+        return { events: batch, nextOffset: batch.length > 0 ? batch[batch.length - 1]!.id : (sinceOffset ?? 0) };
       },
       getRunStatus: async () => {
         statusCalls++;

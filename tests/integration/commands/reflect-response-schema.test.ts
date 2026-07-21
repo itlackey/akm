@@ -169,8 +169,8 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
 
     expect(result.ok).toBe(true);
     expect(capturedCalls.length).toBe(1);
-    expect(capturedCalls[0].responseSchema).toBe(REFLECT_JSON_SCHEMA as Record<string, unknown>);
-    expect(capturedCalls[0].enableThinking).toBe(false);
+    expect(capturedCalls[0]!.responseSchema).toBe(REFLECT_JSON_SCHEMA as Record<string, unknown>);
+    expect(capturedCalls[0]!.enableThinking).toBe(false);
   });
 
   test("when `chat` test seam is provided, chatCompletion is NOT called (responseSchema is ignored)", async () => {
@@ -202,7 +202,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
       iteration: 0,
     });
     expect(capturedCalls.length).toBe(1);
-    expect(capturedCalls[0].responseSchema).toBeUndefined();
+    expect(capturedCalls[0]!.responseSchema).toBeUndefined();
   });
 
   for (const timeoutMs of [1, null] as const) {
@@ -245,7 +245,7 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm
     // quality-judge LLM calls may or may not pass a schema — we pin only the
     // reflect call here.
     expect(capturedCalls.length).toBeGreaterThanOrEqual(1);
-    expect(capturedCalls[0].responseSchema).toBe(REFLECT_JSON_SCHEMA as Record<string, unknown>);
+    expect(capturedCalls[0]!.responseSchema).toBe(REFLECT_JSON_SCHEMA as Record<string, unknown>);
   });
 });
 

@@ -96,7 +96,7 @@ function seedRun(steps: Array<{ id: string; title: string }>, params: Record<str
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', ?, ?, ?, ?)`,
-    ).run(RUN_ID, JSON.stringify(params), steps[0].id, now, now);
+    ).run(RUN_ID, JSON.stringify(params), steps[0]!.id, now, now);
     steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -175,7 +175,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
 
     const workflow = plan(SOLO_ISOLATED_WF);
     expect(workflow.irVersion).toBe(3);
-    const result = await executeStepPlan(workflow.steps[0], {
+    const result = await executeStepPlan(workflow.steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -197,8 +197,8 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     await withWorkflowRunsRepo((repoDb) => {
       const rows = repoDb.getUnitsForStep(RUN_ID, "work");
       expect(rows).toHaveLength(1);
-      expect(rows[0].worktree_path).toBe(cwd);
-      expect(rows[0].status).toBe("completed");
+      expect(rows[0]!.worktree_path).toBe(cwd);
+      expect(rows[0]!.status).toBe("completed");
     });
 
     // The unit left the worktree clean → it was auto-removed.
@@ -218,7 +218,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
 
     const workflow = plan(SOLO_ISOLATED_WF);
     expect(workflow.irVersion).toBe(3);
-    const result = await executeStepPlan(workflow.steps[0], {
+    const result = await executeStepPlan(workflow.steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},
@@ -234,7 +234,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     expect(fs.existsSync(path.join(cwd, "uncollected-work.txt"))).toBe(true);
     // …and locatable from the journal.
     await withWorkflowRunsRepo((repoDb) => {
-      expect(repoDb.getUnitsForStep(RUN_ID, "work")[0].worktree_path).toBe(cwd);
+      expect(repoDb.getUnitsForStep(RUN_ID, "work")[0]!.worktree_path).toBe(cwd);
     });
   });
 
@@ -250,7 +250,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
 
     const workflow = plan(FAN_OUT_ISOLATED_WF);
     expect(workflow.irVersion).toBe(3);
-    const result = await executeStepPlan(workflow.steps[0], {
+    const result = await executeStepPlan(workflow.steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: { files: ["a.ts", "b.ts"] },
@@ -276,7 +276,7 @@ describe.skipIf(!GIT)("executeStepPlan — isolation: worktree", () => {
     let dispatched = 0;
     const workflow = plan(SOLO_ISOLATED_WF);
     expect(workflow.irVersion).toBe(3);
-    const result = await executeStepPlan(workflow.steps[0], {
+    const result = await executeStepPlan(workflow.steps[0]!, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
       params: {},

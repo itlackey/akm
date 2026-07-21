@@ -51,7 +51,7 @@ test("parseMarkdownToc skips frontmatter block", () => {
   const doc = "---\ntitle: Test\n---\n# Heading\n";
   const toc = parseMarkdownToc(doc);
   expect(toc.headings.length).toBe(1);
-  expect(toc.headings[0].text).toBe("Heading");
+  expect(toc.headings[0]!.text).toBe("Heading");
 });
 
 test("parseMarkdownToc handles document without frontmatter", () => {
@@ -71,8 +71,8 @@ test("parseMarkdownToc handles empty content", () => {
 test("parseMarkdownToc strips trailing hash markers", () => {
   const doc = "# Heading ##\n## Another ###\n";
   const toc = parseMarkdownToc(doc);
-  expect(toc.headings[0].text).toBe("Heading");
-  expect(toc.headings[1].text).toBe("Another");
+  expect(toc.headings[0]!.text).toBe("Heading");
+  expect(toc.headings[1]!.text).toBe("Another");
 });
 
 test("extractSection returns content from heading to next same-or-higher level", () => {

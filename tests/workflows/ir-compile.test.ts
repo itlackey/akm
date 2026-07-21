@@ -186,7 +186,11 @@ describe("compileWorkflowProgram — YAML program golden", () => {
     expect(plan.params).toEqual(["changed_files"]);
     expect(plan.steps).toHaveLength(5);
 
-    const [discover, review, triage, ship, rework] = plan.steps;
+    const discover = plan.steps[0]!;
+    const review = plan.steps[1]!;
+    const triage = plan.steps[2]!;
+    const ship = plan.steps[3]!;
+    const rework = plan.steps[4]!;
 
     // Step 1: selectors remain on the parsed source until engine freezing.
     expect(discover).toEqual({
@@ -266,7 +270,7 @@ steps:
     unit:
       instructions: Do the thing.
 `);
-    const root = plan.steps[0].root;
+    const root = plan.steps[0]!.root;
     if (root?.kind !== "unit") throw new Error("expected unit root");
     expect(root.onError).toBe("fail");
     expect(root).not.toHaveProperty("invocation");
@@ -282,7 +286,7 @@ steps:
     unit:
       instructions: Do the thing.
 `);
-    const root = plan.steps[0].root;
+    const root = plan.steps[0]!.root;
     if (root?.kind !== "unit") throw new Error("expected unit root");
     expect(root).not.toHaveProperty("timeoutMs");
   });
@@ -340,8 +344,8 @@ steps:
       instructions: hi
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("steps.b.output.x");
-    expect(errors[0].message).toContain("does not come before this step");
+    expect(errors[0]!.message).toContain("steps.b.output.x");
+    expect(errors[0]!.message).toContain("does not come before this step");
   });
 
   test("steps.<id> naming its own step is rejected", () => {
@@ -353,7 +357,7 @@ steps:
       instructions: "Use \${{ steps.a.output }}"
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("does not come before this step");
+    expect(errors[0]!.message).toContain("does not come before this step");
   });
 
   test("steps.<id> naming an unknown step is rejected with a distinct message", () => {
@@ -365,7 +369,7 @@ steps:
       instructions: "Use \${{ steps.ghost.output }}"
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain(`"ghost" is not a step in this workflow`);
+    expect(errors[0]!.message).toContain(`"ghost" is not a step in this workflow`);
   });
 
   // Codex round-3 (later finding): param presence is a RUN-SCOPE concern, not a
@@ -446,8 +450,8 @@ steps:
       instructions: "Handle \${{ item }} at \${{ item_index }}"
 `);
     expect(errors).toHaveLength(2);
-    expect(errors[0].message).toContain("only valid inside a map unit");
-    expect(errors[1].message).toContain("only valid inside a map unit");
+    expect(errors[0]!.message).toContain("only valid inside a map unit");
+    expect(errors[1]!.message).toContain("only valid inside a map unit");
   });
 
   test("item / item_index are valid inside a map unit's instructions", () => {
@@ -462,7 +466,7 @@ steps:
       unit:
         instructions: "Review \${{ item }} (#\${{ item_index }})."
 `);
-    expect(plan.steps[0].root?.kind).toBe("map");
+    expect(plan.steps[0]!.root?.kind).toBe("map");
   });
 
   test("map.over referencing an earlier step's output is valid", () => {
@@ -478,7 +482,7 @@ steps:
       unit:
         instructions: "Review \${{ item }}."
 `);
-    const root = plan.steps[1].root;
+    const root = plan.steps[1]!.root;
     if (root?.kind !== "map") throw new Error("expected map root");
     expect(root.over).toBe("${{ steps.discover.output.files }}");
   });
@@ -516,8 +520,8 @@ steps:
     const result = compileWorkflowProgram(program);
     if (result.ok) throw new Error("expected compile errors");
     expect(result.errors).toHaveLength(2);
-    expect(result.errors[0].message).toContain("Unknown root");
-    expect(result.errors[1].message).toContain("Unterminated");
+    expect(result.errors[0]!.message).toContain("Unknown root");
+    expect(result.errors[1]!.message).toContain("Unterminated");
     expect(result.errors.every((e) => e.line === 3)).toBe(true);
   });
 });
@@ -540,8 +544,8 @@ steps:
         instructions: "Do \${{ item }}."
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("map.over");
-    expect(errors[0].message).toContain("single whole-value");
+    expect(errors[0]!.message).toContain("map.over");
+    expect(errors[0]!.message).toContain("single whole-value");
   });
 
   test("map.over as a bare name (no expression) is rejected — P1 ambient lookup is gone", () => {
@@ -555,7 +559,7 @@ steps:
         instructions: "Do \${{ item }}."
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("single whole-value");
+    expect(errors[0]!.message).toContain("single whole-value");
   });
 
   test("map.over must not use item (there is no item before the list resolves)", () => {
@@ -569,7 +573,7 @@ steps:
         instructions: "Do \${{ item }}."
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("only valid inside a map unit");
+    expect(errors[0]!.message).toContain("only valid inside a map unit");
   });
 
   test("route.input with surrounding literal text is rejected", () => {
@@ -588,8 +592,8 @@ steps:
       instructions: Done.
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("route.input");
-    expect(errors[0].message).toContain("single whole-value");
+    expect(errors[0]!.message).toContain("route.input");
+    expect(errors[0]!.message).toContain("single whole-value");
   });
 
   test("route.input referencing a later step is rejected", () => {
@@ -605,7 +609,7 @@ steps:
       instructions: Done.
 `);
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("does not come before this step");
+    expect(errors[0]!.message).toContain("does not come before this step");
   });
 });
 

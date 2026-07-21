@@ -57,7 +57,7 @@ function seedRun(opts: {
          (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
           params_json, current_step_id, created_at, updated_at)
        VALUES (?, 'workflows/demo', 'dir:v1:demo', NULL, 'Demo', 'active', ?, ?, ?, ?)`,
-    ).run(RUN_ID, JSON.stringify(opts.params ?? {}), opts.steps[0].id, now, now);
+    ).run(RUN_ID, JSON.stringify(opts.params ?? {}), opts.steps[0]!.id, now, now);
     opts.steps.forEach((step, i) => {
       db.prepare(
         `INSERT INTO workflow_run_steps
@@ -133,10 +133,10 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
       summaryJudge: null,
     });
     expect(result.done).toBe(true);
-    expect(result.executed[0].ok).toBe(true);
+    expect(result.executed[0]!.ok).toBe(true);
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toEqual({ files: ["a.ts", "b.ts"] });
+    expect(status.workflow.steps[0]!.status).toBe("completed");
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual({ files: ["a.ts", "b.ts"] });
   });
 
   test("a schema-violating artifact fails the step with the validation errors in the summary", async () => {
@@ -164,12 +164,12 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
     });
     expect(dispatches).toBe(1);
     expect(result.done).toBeUndefined();
-    expect(result.executed[0].ok).toBe(false);
-    expect(result.executed[0].summary).toContain('Step "discover" artifact failed validation');
-    expect(result.executed[0].summary).toContain("expected type object, got string");
+    expect(result.executed[0]!.ok).toBe(false);
+    expect(result.executed[0]!.summary).toContain('Step "discover" artifact failed validation');
+    expect(result.executed[0]!.summary).toContain("expected type object, got string");
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("failed");
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 
   test("a fan-out collect artifact is validated as a whole (array schema)", async () => {
@@ -197,8 +197,8 @@ steps:
       summaryJudge: null,
     });
     // Two items < minItems: 3 → the collect artifact fails its schema.
-    expect(result.executed[0].ok).toBe(false);
-    expect(result.executed[0].summary).toContain("output schema");
+    expect(result.executed[0]!.ok).toBe(false);
+    expect(result.executed[0]!.summary).toContain("output schema");
   });
 });
 
@@ -244,7 +244,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(judged[0]).not.toContain("via workflow orchestration");
     // The persisted step summary is the judged artifact summary.
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].summary).toContain('{"fact":"bun is fast"}');
+    expect(status.workflow.steps[0]!.summary).toContain('{"fact":"bun is fast"}');
   });
 
   test("the artifact JSON handed to the judge is clipped at 4000 chars", async () => {
@@ -283,7 +283,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(result.done).toBe(true);
     expect(judgeCalls).toBe(0);
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].summary).toContain("via workflow orchestration");
+    expect(status.workflow.steps[0]!.summary).toContain("via workflow orchestration");
     // No judge ran → no gate unit rows journaled.
     await withWorkflowRunsRepo((repo) => {
       expect(repo.getUnitsForStep(RUN_ID, "extract").filter((r) => r.node_id === "extract.gate")).toHaveLength(0);
@@ -302,10 +302,10 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     await withWorkflowRunsRepo((repo) => {
       const gateRows = repo.getUnitsForStep(RUN_ID, "extract").filter((r) => r.node_id === "extract.gate");
       expect(gateRows).toHaveLength(1);
-      expect(gateRows[0].unit_id).toBe("extract.gate:l1");
-      expect(gateRows[0].runner).toBe("llm");
-      expect(gateRows[0].status).toBe("completed");
-      expect(JSON.parse(gateRows[0].result_json ?? "null")).toEqual({ complete: true, missing: [] });
+      expect(gateRows[0]!.unit_id).toBe("extract.gate:l1");
+      expect(gateRows[0]!.runner).toBe("llm");
+      expect(gateRows[0]!.status).toBe("completed");
+      expect(JSON.parse(gateRows[0]!.result_json ?? "null")).toEqual({ complete: true, missing: [] });
     });
   });
 
@@ -481,7 +481,7 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
     // spine is authoritative, even against the engine.
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("active");
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
     // wrap-up never ran.
     await withWorkflowRunsRepo((repo) => {
       expect(repo.getUnitsForStep(RUN_ID, "wrap-up")).toHaveLength(0);
@@ -628,7 +628,7 @@ async function journalRow(row: {
 
 /** The loop-1 solo unit's content-derived input hash (what the engine journals). */
 function loop1Hash(p: WorkflowPlanGraph): string {
-  const c = computeStepWorkList(p.steps[0], {
+  const c = computeStepWorkList(p.steps[0]!, {
     runId: RUN_ID,
     params: {},
     stepOutputs: {},
@@ -636,14 +636,14 @@ function loop1Hash(p: WorkflowPlanGraph): string {
     engines: p.execution?.engines,
   });
   if (!c.ok) throw new Error(c.error);
-  const r = c.list.units[0].resolved;
+  const r = c.list.units[0]!.resolved;
   if (!r.ok) throw new Error(r.error);
   return r.inputHash;
 }
 
 /** The loop-2 solo unit id + hash brief/report would compute for the recovered feedback. */
 function loop2Unit(p: WorkflowPlanGraph, gateFeedback: GateFeedback): { unitId: string; inputHash: string } {
-  const c = computeStepWorkList(p.steps[0], {
+  const c = computeStepWorkList(p.steps[0]!, {
     runId: RUN_ID,
     params: {},
     stepOutputs: {},
@@ -652,7 +652,7 @@ function loop2Unit(p: WorkflowPlanGraph, gateFeedback: GateFeedback): { unitId: 
     engines: p.execution?.engines,
   });
   if (!c.ok) throw new Error(c.error);
-  const u = c.list.units[0];
+  const u = c.list.units[0]!;
   if (!u.resolved.ok) throw new Error(u.resolved.error);
   return { unitId: u.journalBaseId, inputHash: u.resolved.inputHash };
 }
@@ -748,7 +748,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
 
     // The spine advanced past the gate through wrap-up and the run completed.
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("completed");
+    expect(status.workflow.steps[0]!.status).toBe("completed");
     expect(status.run.status).toBe("completed");
   });
 
@@ -822,7 +822,7 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
     // The run stays active, the step pending — the gate spine is authoritative.
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("active");
-    expect(status.workflow.steps[0].status).toBe("pending");
+    expect(status.workflow.steps[0]!.status).toBe("pending");
     // Every journaled row is byte-identical — resume touched nothing.
     await withWorkflowRunsRepo((repo) => {
       const after = repo.getUnitsForStep(RUN_ID, "work");
@@ -931,11 +931,11 @@ describe("typed artifacts + gate max_loops — schema mismatches are retryable b
 
     // Both attempts recorded: the schema-failed first, the clean second.
     expect(result.executed.map((s) => s.ok)).toEqual([false, true]);
-    expect(result.executed[0].summary).toContain("artifact failed validation");
+    expect(result.executed[0]!.summary).toContain("artifact failed validation");
 
     const status = await getWorkflowStatus(RUN_ID);
-    expect(status.workflow.steps[0].status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toEqual({ files: ["a.ts"] });
+    expect(status.workflow.steps[0]!.status).toBe("completed");
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual({ files: ["a.ts"] });
 
     await withWorkflowRunsRepo((repo) => {
       const byId = new Map(repo.getUnitsForStep(RUN_ID, "work").map((r) => [r.unit_id, r]));
@@ -977,11 +977,11 @@ describe("typed artifacts + gate max_loops — schema mismatches are retryable b
     expect(judgeCalls).toBe(0); // the artifact never got past the schema to a judge
     expect(result.done).toBeUndefined();
     expect(result.executed.map((s) => s.ok)).toEqual([false, false]);
-    expect(result.executed[1].summary).toContain('Step "work" artifact failed validation');
+    expect(result.executed[1]!.summary).toContain('Step "work" artifact failed validation');
     // The FINAL loop's mismatch is terminal: step failed, run failed.
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("failed");
-    expect(status.workflow.steps[0].status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
   });
 });
 

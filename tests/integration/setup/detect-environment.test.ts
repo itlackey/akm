@@ -138,7 +138,7 @@ describe("detectStashDir", () => {
     expect(paths).toContain(path.join(fakeHome, ".akm"));
     // ranked ascending
     for (let i = 1; i < result.length; i++) {
-      expect(result[i]?.rank).toBeGreaterThanOrEqual(result[i - 1]?.rank);
+      expect(result[i]?.rank).toBeGreaterThanOrEqual(result[i - 1]!.rank);
     }
   });
 });

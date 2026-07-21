@@ -96,9 +96,9 @@ describe("canary set CRUD", () => {
     ]);
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(2);
-    expect(active[0].anchor_ref).toBe("memories/alpha");
-    expect(active[0].source).toBe("auto");
-    expect(active[1].source).toBe("manual");
+    expect(active[0]!.anchor_ref).toBe("memories/alpha");
+    expect(active[0]!.source).toBe("auto");
+    expect(active[1]!.source).toBe("manual");
     expect(active.every((c) => c.canary_set_id === "set-a")).toBe(true);
   });
 
@@ -109,7 +109,7 @@ describe("canary set CRUD", () => {
     insertCanaries(db, "set-new", [{ anchorRef: "memories/new", query: "new" }], "2026-06-01T00:00:00.000Z");
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(1);
-    expect(active[0].canary_set_id).toBe("set-new");
+    expect(active[0]!.canary_set_id).toBe("set-new");
   });
 
   test("re-mint deactivates the old set but retains its rows", () => {
@@ -120,7 +120,7 @@ describe("canary set CRUD", () => {
 
     const active = getActiveCanaries(db);
     expect(active).toHaveLength(1);
-    expect(active[0].canary_set_id).toBe("set-b");
+    expect(active[0]!.canary_set_id).toBe("set-b");
     // Old rows retained for history interpretation.
     const total = db.prepare("SELECT COUNT(*) AS n FROM canary_queries").get() as { n: number };
     expect(total.n).toBe(2);

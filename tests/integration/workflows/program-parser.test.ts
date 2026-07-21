@@ -142,7 +142,7 @@ describe("parseWorkflowProgram — happy paths", () => {
 
     expect(program.steps.map((s) => s.id)).toEqual(["discover", "review", "triage", "ship", "rework", "manual-triage"]);
 
-    const discover = program.steps[0];
+    const discover = program.steps[0]!;
     expect(discover.title).toBe("Discover targets");
     expect(discover.unit?.instructions).toContain("${{ params.changed_files }}");
     expect(discover.unit?.output?.required).toEqual(["files"]);
@@ -150,7 +150,7 @@ describe("parseWorkflowProgram — happy paths", () => {
     expect(discover.map).toBeUndefined();
     expect(discover.route).toBeUndefined();
 
-    const review = program.steps[1];
+    const review = program.steps[1]!;
     expect(review.map?.over).toBe("${{ steps.discover.output.files }}");
     expect(review.map?.concurrency).toBe(8);
     expect(review.map?.reducer).toBe("collect");
@@ -164,7 +164,7 @@ describe("parseWorkflowProgram — happy paths", () => {
     expect(review.output).toMatchObject({ type: "object" });
     expect(review.gate).toEqual({ criteria: ["every changed file has a verdict"], maxLoops: 2 });
 
-    const triage = program.steps[2];
+    const triage = program.steps[2]!;
     expect(triage.route?.input).toBe("${{ steps.review.output.verdict }}");
     expect(triage.route?.branches).toEqual([
       { match: "pass", stepId: "ship" },
@@ -176,9 +176,9 @@ describe("parseWorkflowProgram — happy paths", () => {
   test("a linear-only YAML (unit + instructions) parses", () => {
     const program = parseOk(LINEAR);
     expect(program.steps).toHaveLength(2);
-    expect(program.steps[0].unit?.instructions.trim()).toBe("Do the first thing.");
-    expect(program.steps[0].gate).toBeUndefined();
-    expect(program.steps[0].map).toBeUndefined();
+    expect(program.steps[0]!.unit?.instructions.trim()).toBe("Do the first thing.");
+    expect(program.steps[0]!.gate).toBeUndefined();
+    expect(program.steps[0]!.map).toBeUndefined();
     expect(program.defaults).toBeUndefined();
   });
 
@@ -230,9 +230,9 @@ describe("parseWorkflowProgram — happy paths", () => {
 
   test("step source refs carry best-effort line anchors", () => {
     const program = parseOk(LINEAR);
-    expect(program.steps[0].source.path).toBe("workflows/test.yaml");
-    expect(program.steps[0].source.start).toBe(4);
-    expect(program.steps[1].source.start).toBe(7);
+    expect(program.steps[0]!.source.path).toBe("workflows/test.yaml");
+    expect(program.steps[0]!.source.start).toBe(4);
+    expect(program.steps[1]!.source.start).toBe(7);
   });
 });
 
@@ -561,7 +561,7 @@ describe("parseWorkflowProgram — step validation", () => {
     );
     if (result.ok) throw new Error("expected failure");
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].line).toBe(7);
+    expect(result.errors[0]!.line).toBe(7);
   });
 });
 
@@ -683,7 +683,7 @@ describe("parseWorkflowProgram — ${{ }} syntactic pass", () => {
         ["  - id: a", `    unit: { instructions: "review \${{ params.target }} and \${{ item }}" }`].join("\n"),
       ),
     );
-    expect(program.steps[0].unit?.instructions).toContain("${{ params.target }}");
+    expect(program.steps[0]!.unit?.instructions).toContain("${{ params.target }}");
   });
 });
 
@@ -696,7 +696,7 @@ describe("parseWorkflowProgram — hostile input", () => {
         ),
       ),
     );
-    expect(program.steps[1].unit?.instructions).toBe("shared body");
+    expect(program.steps[1]!.unit?.instructions).toBe("shared body");
   });
 
   test("YAML syntax errors are reported, not thrown", () => {
@@ -771,19 +771,19 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   };
 
   test("enum vocabularies match the exported constants", () => {
-    expect(schema.definitions.onError.enum).toEqual([...PROGRAM_ON_ERROR]);
-    expect(schema.definitions.reducer.enum).toEqual([...PROGRAM_REDUCERS]);
-    expect(schema.definitions.isolation.enum).toEqual([...PROGRAM_ISOLATION_KINDS]);
-    expect(schema.definitions.failureReason.enum).toEqual([...PROGRAM_RETRY_REASONS]);
+    expect(schema.definitions.onError!.enum).toEqual([...PROGRAM_ON_ERROR]);
+    expect(schema.definitions.reducer!.enum).toEqual([...PROGRAM_REDUCERS]);
+    expect(schema.definitions.isolation!.enum).toEqual([...PROGRAM_ISOLATION_KINDS]);
+    expect(schema.definitions.failureReason!.enum).toEqual([...PROGRAM_RETRY_REASONS]);
   });
 
   test("id and param-name patterns match", () => {
-    expect(schema.definitions.identifier.pattern).toBe(PROGRAM_STEP_ID_PATTERN.source);
-    expect(schema.properties.params.propertyNames?.pattern).toBe(PROGRAM_PARAM_NAME_PATTERN.source);
+    expect(schema.definitions.identifier!.pattern).toBe(PROGRAM_STEP_ID_PATTERN.source);
+    expect(schema.properties.params!.propertyNames?.pattern).toBe(PROGRAM_PARAM_NAME_PATTERN.source);
   });
 
   test("budget block keys match the parser's vocabulary", () => {
-    expect(Object.keys(schema.definitions.budget.properties ?? {}).sort()).toEqual(["max_tokens", "max_units"]);
+    expect(Object.keys(schema.definitions.budget!.properties ?? {}).sort()).toEqual(["max_tokens", "max_units"]);
     expect("budget" in schema.properties).toBe(true);
   });
 

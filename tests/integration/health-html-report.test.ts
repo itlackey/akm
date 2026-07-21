@@ -325,14 +325,14 @@ describe("buildHealthHtmlReplacements", () => {
       },
     });
     const replacements = buildHealthHtmlReplacements(healthResult(), buildOpts());
-    const byStage = JSON.parse(replacements["%%LLM_BY_STAGE_JSON%%"]) as Record<
+    const byStage = JSON.parse(replacements["%%LLM_BY_STAGE_JSON%%"]!) as Record<
       string,
       { promptTokens: number; completionTokens: number; reasoningTokens: number }
     >;
     expect(byStage.reflect).toBeDefined();
-    expect(byStage.reflect.promptTokens).toBe(100);
-    expect(byStage.reflect.completionTokens).toBe(40);
-    expect(byStage.reflect.reasoningTokens).toBe(10);
+    expect(byStage.reflect!.promptTokens).toBe(100);
+    expect(byStage.reflect!.completionTokens).toBe(40);
+    expect(byStage.reflect!.reasoningTokens).toBe(10);
     // The template wires the by-stage chart panel.
     const html = renderHtml(resolveTemplatePath("health"), replacements);
     expect(html).toContain('id="chartLlmStages"');
@@ -360,11 +360,11 @@ describe("buildHealthHtmlReplacements", () => {
     // Failed-run item (P1) and drain-proposals item (P2) both present, once each.
     expect(actions).toContain("failed run");
     expect(actions).toContain("Drain 1 pending proposal");
-    expect((actions.match(/Drain 1 pending proposal/g) ?? []).length).toBe(1);
+    expect((actions!.match(/Drain 1 pending proposal/g) ?? []).length).toBe(1);
     // Priority badges present and P1 sorts before P2 in the output.
     expect(actions).toContain('class="prio p1"');
     expect(actions).toContain('class="prio p2"');
-    expect(actions.indexOf("p1")).toBeLessThan(actions.indexOf("p2"));
+    expect(actions!.indexOf("p1")).toBeLessThan(actions!.indexOf("p2"));
   });
 
   test("the rendered template includes the filter bar, Task column, and dataZoom", () => {

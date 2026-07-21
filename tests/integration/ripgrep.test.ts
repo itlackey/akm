@@ -182,5 +182,5 @@ test("search pipeline returns ranked results when index exists", async () => {
 
   expect(result.hits.length).toBeGreaterThan(0);
   // Docker-related result should be ranked first
-  expect(result.hits[0].name).toContain("docker");
+  expect(result.hits[0]!.name).toContain("docker");
 });

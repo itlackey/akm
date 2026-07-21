@@ -171,8 +171,8 @@ describe("processImproveLoopRef — reflect half", () => {
     const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["reflect-skipped", "distill-skipped"]);
-    expect(tally.actions[0].result).toEqual({ ok: true, reason: "type-filter" });
-    expect(tally.actions[1].result).toEqual({ ok: true, reason: "type-filter" });
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "type-filter" });
+    expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "type-filter" });
   });
 
   test(".derived memory refs skip reflect with the B6 synthetic action", async () => {
@@ -184,8 +184,8 @@ describe("processImproveLoopRef — reflect half", () => {
     // B6 reflect skip, then the weak-signal distill skip (memory ref, no
     // feedback signal, non-ref scope) — both synthetic, no seam invoked.
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped", "distill-skipped"]);
-    expect(tally.actions[0].result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
-    expect(tally.actions[1].result).toEqual({ ok: true, reason: "memory requires recent feedback signal" });
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
+    expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "memory requires recent feedback signal" });
   });
 });
 
@@ -233,7 +233,7 @@ describe("processImproveLoopRef — distill half", () => {
     const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
-    expect(tally.actions[0].result).toEqual({ ok: true, reason: "pending proposal exists" });
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "pending proposal exists" });
   });
 
   test("a fresh proposal rejection opens the D-2 (#370) grace window", async () => {
@@ -249,7 +249,7 @@ describe("processImproveLoopRef — distill half", () => {
     const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
-    expect(tally.actions[0].result).toEqual({ ok: true, reason: "distill reject grace window" });
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "distill reject grace window" });
   });
 
   test("requirePlannedRefs guard skips distill-only refs", async () => {
@@ -259,7 +259,7 @@ describe("processImproveLoopRef — distill half", () => {
     const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
-    expect(tally.actions[0].result).toEqual({ ok: true, reason: "require_planned_refs" });
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "require_planned_refs" });
   });
 
   test("B7: a UsageError from distill is recorded as a validation_failed distill action", async () => {
@@ -272,7 +272,7 @@ describe("processImproveLoopRef — distill half", () => {
     const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
-    expect(tally.actions[0].result).toMatchObject({ ok: false, outcome: "validation_failed" });
+    expect(tally.actions[0]!.result).toMatchObject({ ok: false, outcome: "validation_failed" });
   });
 
   test("a non-Usage error from distill is recorded as a generic error action", async () => {
@@ -282,7 +282,7 @@ describe("processImproveLoopRef — distill half", () => {
     const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["error"]);
-    expect(tally.actions[0].result).toEqual({ ok: false, error: "engine crashed" });
+    expect(tally.actions[0]!.result).toEqual({ ok: false, error: "engine crashed" });
   });
 });
 

@@ -501,7 +501,7 @@ describe("Issue #14: Deterministic sort on tied scores", () => {
     }
 
     // Also verify all 3 entries are present
-    expect(results[0].length).toBe(3);
+    expect(results[0]!.length).toBe(3);
   });
 });
 
@@ -621,7 +621,7 @@ describe("Cross-stash deduplication at index time", () => {
     // Indexer should skip the duplicate — only one entry in the DB
     expect(githubHits.length).toBe(1);
     // The surviving hit should be from the primary stash (higher priority)
-    expect(githubHits[0].path).toContain(primaryStash);
+    expect(githubHits[0]!.path).toContain(primaryStash);
   });
 
   test("different stash directory structures are not deduped when entry names differ", async () => {
@@ -676,6 +676,6 @@ describe("Cross-stash deduplication at index time", () => {
 
     // Identity uses type + entry.name, so the higher-priority stash wins.
     expect(helperHits.length).toBe(1);
-    expect(helperHits[0].description).toBe("Build helper for CI");
+    expect(helperHits[0]!.description).toBe("Build helper for CI");
   });
 });

@@ -211,7 +211,7 @@ describe("#561 session indexing — round-trip", () => {
     try {
       const entries = getAllEntries(db).filter((e) => e.entry.type === "session");
       expect(entries.length).toBe(1);
-      expect(entries[0].entry.name).toContain("ca894f15");
+      expect(entries[0]!.entry.name).toContain("ca894f15");
     } finally {
       db.close();
     }

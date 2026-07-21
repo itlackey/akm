@@ -210,7 +210,7 @@ describe("Entry CRUD", () => {
       // Verify the entry reflects the update
       const entries = getAllEntries(db);
       expect(entries).toHaveLength(1);
-      expect(entries[0].entry.description).toBe("updated description");
+      expect(entries[0]!.entry.description).toBe("updated description");
     } finally {
       closeDatabase(db);
     }
@@ -249,7 +249,7 @@ describe("Entry CRUD", () => {
 
       const betaEntries = getEntriesByDir(db, "/project/beta");
       expect(betaEntries).toHaveLength(1);
-      expect(betaEntries[0].entryKey).toBe("tool-c");
+      expect(betaEntries[0]!.entryKey).toBe("tool-c");
     } finally {
       closeDatabase(db);
     }
@@ -284,7 +284,7 @@ describe("Entry CRUD", () => {
 
       const skills = getAllEntries(db, "skill");
       expect(skills).toHaveLength(1);
-      expect(skills[0].entry.type).toBe("skill");
+      expect(skills[0]!.entry.type).toBe("skill");
     } finally {
       closeDatabase(db);
     }
@@ -302,7 +302,7 @@ describe("Entry CRUD", () => {
       expect(getEntryCount(db)).toBe(1);
 
       const remaining = getAllEntries(db);
-      expect(remaining[0].entryKey).toBe("keep-1");
+      expect(remaining[0]!.entryKey).toBe("keep-1");
     } finally {
       closeDatabase(db);
     }
@@ -343,8 +343,8 @@ describe("FTS search", () => {
 
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
-      expect(results[0].entry.name).toBe("deploy-tool");
-      expect(results[1].entry.name).toBe("infra-tool");
+      expect(results[0]!.entry.name).toBe("deploy-tool");
+      expect(results[1]!.entry.name).toBe("infra-tool");
     } finally {
       closeDatabase(db);
     }
@@ -367,7 +367,7 @@ describe("FTS search", () => {
 
       const scriptResults = searchFts(db, "build", 10, "script");
       expect(scriptResults).toHaveLength(1);
-      expect(scriptResults[0].entry.type).toBe("script");
+      expect(scriptResults[0]!.entry.type).toBe("script");
 
       const allResults = searchFts(db, "build", 10);
       expect(allResults).toHaveLength(2);
@@ -387,7 +387,7 @@ describe("FTS search", () => {
 
       // Should not throw a SQL error despite special characters
       const results = searchFts(db, "hello! world@123", 10);
-      expect(results[0].entry.name).toBe("hello-tool");
+      expect(results[0]!.entry.name).toBe("hello-tool");
       // "hello" and "world" and "123" are valid tokens after sanitization
       expect(results.length).toBeGreaterThanOrEqual(1);
     } finally {
@@ -478,7 +478,7 @@ describe("FTS search", () => {
 
       const results = searchFts(db, "deploy production", 10);
       expect(results).toHaveLength(1);
-      expect(results[0].entry.name).toBe("deploy-prod");
+      expect(results[0]!.entry.name).toBe("deploy-prod");
     } finally {
       closeDatabase(db);
     }
@@ -495,7 +495,7 @@ describe("FTS search", () => {
 
       const alphaResults = searchFts(db, "alpha", 10);
       expect(alphaResults).toHaveLength(1);
-      expect(alphaResults[0].entry.name).toBe("alpha");
+      expect(alphaResults[0]!.entry.name).toBe("alpha");
 
       const allResults = searchFts(db, "functionality", 10);
       expect(allResults).toHaveLength(3);
@@ -578,8 +578,8 @@ describe("Vector / Embedding integration", () => {
       const results = searchVec(db, [0.9, 0.1, 0, 0], 10);
       expect(results.length).toBe(2);
       // tool-1 should be the closest (smallest distance)
-      expect(results[0].id).toBe(id1);
-      expect(results[0].distance).toBeLessThan(results[1].distance);
+      expect(results[0]!.id).toBe(id1);
+      expect(results[0]!.distance).toBeLessThan(results[1]!.distance);
     } finally {
       closeDatabase(db);
     }
@@ -594,17 +594,17 @@ describe("Vector / Embedding integration", () => {
       upsertEmbedding(db, id, [1, 0, 0, 0]);
       let results = searchVec(db, [1, 0, 0, 0], 10);
       expect(results.length).toBe(1);
-      expect(results[0].distance).toBeCloseTo(0, 2);
+      expect(results[0]!.distance).toBeCloseTo(0, 2);
 
       // Overwrite with a completely different direction
       upsertEmbedding(db, id, [0, 0, 0, 1]);
       results = searchVec(db, [0, 0, 0, 1], 10);
       expect(results.length).toBe(1);
-      expect(results[0].distance).toBeCloseTo(0, 2);
+      expect(results[0]!.distance).toBeCloseTo(0, 2);
 
       // Original direction should now be far
       results = searchVec(db, [1, 0, 0, 0], 10);
-      expect(results[0].distance).toBeGreaterThan(1);
+      expect(results[0]!.distance).toBeGreaterThan(1);
     } finally {
       closeDatabase(db);
     }
@@ -647,7 +647,7 @@ describe("Vector / Embedding integration", () => {
       // After delete, only the kept entry should remain
       results = searchVec(db, [0.5, 0.5, 0, 0], 10);
       expect(results.length).toBe(1);
-      expect(results[0].id).toBe(id2);
+      expect(results[0]!.id).toBe(id2);
     } finally {
       closeDatabase(db);
     }
@@ -691,7 +691,7 @@ describe("Vector / Embedding integration", () => {
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
       const results = searchVec(db, [1, 0, 0, 0], 10);
       expect(results.length).toBe(1);
-      expect(results[0].id).toBe(id);
+      expect(results[0]!.id).toBe(id);
     } finally {
       closeDatabase(db);
     }

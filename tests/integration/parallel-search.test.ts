@@ -171,9 +171,9 @@ describe("Parallel search: result parity", () => {
     expect(localHits1.length).toBe(localHits2.length);
 
     for (let i = 0; i < localHits1.length; i++) {
-      expect(localHits1[i].name).toBe(localHits2[i].name);
-      expect(localHits1[i].score).toBe(localHits2[i].score);
-      expect(localHits1[i].ref).toBe(localHits2[i].ref);
+      expect(localHits1[i]!.name).toBe(localHits2[i]!.name);
+      expect(localHits1[i]!.score).toBe(localHits2[i]!.score);
+      expect(localHits1[i]!.ref).toBe(localHits2[i]!.ref);
     }
   });
 });
@@ -311,7 +311,7 @@ describe("Parallel search: FTS result ordering", () => {
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     // Results should be sorted by score descending
     for (let i = 1; i < localHits.length; i++) {
-      expect(localHits[i - 1].score ?? 0).toBeGreaterThanOrEqual(localHits[i].score ?? 0);
+      expect(localHits[i - 1]!.score ?? 0).toBeGreaterThanOrEqual(localHits[i]!.score ?? 0);
     }
   });
 });

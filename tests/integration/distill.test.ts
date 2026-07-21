@@ -510,7 +510,7 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
     // Event MUST be emitted: the LLM was actually invoked.
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
-    expect(events[0].metadata?.outcome).toBe("llm_failed");
+    expect(events[0]!.metadata?.outcome).toBe("llm_failed");
   });
 });
 
@@ -562,7 +562,7 @@ When searching multi-thousand-file repos, prefer ripgrep to GNU grep — it is f
     expect(result.outcome).toBe("queued");
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    const fm = proposals[0].payload.frontmatter ?? {};
+    const fm = proposals[0]!.payload.frontmatter ?? {};
     expect(typeof fm.when_to_use).toBe("string");
     expect((fm.when_to_use as string).toLowerCase()).toContain("when ");
     // Crucially NOT the circular fallback string.
@@ -595,7 +595,7 @@ Body content explaining why ripgrep wins on large monorepos.`;
     expect(result.descriptionSwapped).toBe(1);
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    const fm = proposals[0].payload.frontmatter ?? {};
+    const fm = proposals[0]!.payload.frontmatter ?? {};
     // After the swap: description should be the declarative sentence,
     // when_to_use should be the conditional one.
     expect((fm.description as string).toLowerCase()).not.toMatch(/^(when|if)\b/);
@@ -629,17 +629,17 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].source).toBe("distill");
-    expect(proposals[0].sourceRun).toBe("run-xyz");
-    expect(proposals[0].ref).toBe(durableRef(stash, "lesson", "skill-deploy-lesson"));
-    expect(proposals[0].payload.content).toContain("description: Prefer ripgrep over grep");
-    expect(proposals[0].payload.frontmatter?.when_to_use).toBeDefined();
-    expect(parseFrontmatter(proposals[0].payload.content).data.xrefs).toEqual(["skills/deploy"]);
+    expect(proposals[0]!.source).toBe("distill");
+    expect(proposals[0]!.sourceRun).toBe("run-xyz");
+    expect(proposals[0]!.ref).toBe(durableRef(stash, "lesson", "skill-deploy-lesson"));
+    expect(proposals[0]!.payload.content).toContain("description: Prefer ripgrep over grep");
+    expect(proposals[0]!.payload.frontmatter?.when_to_use).toBeDefined();
+    expect(parseFrontmatter(proposals[0]!.payload.content).data.xrefs).toEqual(["skills/deploy"]);
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
-    expect(events[0].metadata?.outcome).toBe("queued");
-    expect(events[0].metadata?.proposalId).toBe(result.proposalId);
+    expect(events[0]!.metadata?.outcome).toBe("queued");
+    expect(events[0]!.metadata?.proposalId).toBe(result.proposalId);
   });
 
   test("injects only the generated lesson type convention into the prompt", async () => {
@@ -687,7 +687,7 @@ describe("akmDistill — queued proposal", () => {
     // (b) the persisted proposal record carries the lane.
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].eligibilitySource).toBe("high-salience");
+    expect(proposals[0]!.eligibilitySource).toBe("high-salience");
   });
 
   test("attribution: omitted eligibilitySource leaves distill_invoked + proposal unstamped", async () => {
@@ -703,7 +703,7 @@ describe("akmDistill — queued proposal", () => {
     const { events } = readEvents({ type: "distill_invoked" });
     const queued = events.find((e) => e.metadata?.outcome === "queued");
     expect(queued?.metadata?.eligibilitySource).toBeUndefined();
-    expect(listProposals(stash)[0].eligibilitySource).toBeUndefined();
+    expect(listProposals(stash)[0]!.eligibilitySource).toBeUndefined();
   });
 
   test("LLM-fenced response is unwrapped before linting", async () => {
@@ -783,15 +783,15 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe(durableRef(stash, "knowledge", "deploy-fact"));
-    expect(proposals[0].payload.content).toContain("xrefs:");
-    expect(proposals[0].payload.content).toContain("memories/deploy-fact");
-    expect(proposals[0].payload.content).toContain("Always connect the VPN");
+    expect(proposals[0]!.ref).toBe(durableRef(stash, "knowledge", "deploy-fact"));
+    expect(proposals[0]!.payload.content).toContain("xrefs:");
+    expect(proposals[0]!.payload.content).toContain("memories/deploy-fact");
+    expect(proposals[0]!.payload.content).toContain("Always connect the VPN");
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events).toHaveLength(1);
-    expect(events[0].metadata?.proposalKind).toBe("knowledge");
-    expect(events[0].metadata?.proposalRef).toBe("knowledge/deploy-fact");
+    expect(events[0]!.metadata?.proposalKind).toBe("knowledge");
+    expect(events[0]!.metadata?.proposalRef).toBe("knowledge/deploy-fact");
   });
 
   test("explicit knowledge mode uses knowledge validation instead of lesson lint", async () => {
@@ -821,8 +821,8 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe(durableRef(stash, "knowledge", "deploy"));
-    expect(proposals[0].payload.content).toContain("# Deploy Guidance");
+    expect(proposals[0]!.ref).toBe(durableRef(stash, "knowledge", "deploy"));
+    expect(proposals[0]!.payload.content).toContain("# Deploy Guidance");
   });
 
   test("explicit knowledge mode rejects bodyless output without lesson-specific errors", async () => {
@@ -1009,14 +1009,14 @@ describe("akmDistill — queued proposal", () => {
 
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
-    expect(proposals[0].payload.content).toContain("when_to_use:");
-    expect(proposals[0].payload.content).not.toContain("sources:");
+    expect(proposals[0]!.ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
+    expect(proposals[0]!.payload.content).toContain("when_to_use:");
+    expect(proposals[0]!.payload.content).not.toContain("sources:");
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events).toHaveLength(1);
-    expect(events[0].metadata?.proposalKind).toBe("lesson");
-    expect(events[0].metadata?.proposalRef).toBe("lessons/memory-deploy-fact-lesson");
+    expect(events[0]!.metadata?.proposalKind).toBe("lesson");
+    expect(events[0]!.metadata?.proposalRef).toBe("lessons/memory-deploy-fact-lesson");
   });
 
   test("scored promotion can still pass without curated quality when the fixture is strongly reinforced", () => {
@@ -1097,7 +1097,7 @@ describe("akmDistill — queued proposal", () => {
     expect(result.outcome).toBe("queued");
     expect(result.proposalKind).toBe("lesson");
     expect(listProposals(stash)).toHaveLength(1);
-    expect(listProposals(stash)[0].ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
+    expect(listProposals(stash)[0]!.ref).toBe(durableRef(stash, "lesson", "memory-deploy-fact-lesson"));
   });
 });
 
@@ -1204,7 +1204,7 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     });
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.length).toBe(1);
-    expect(events[0].metadata?.filteredFeedbackCount).toBe(2);
+    expect(events[0]!.metadata?.filteredFeedbackCount).toBe(2);
   });
 });
 

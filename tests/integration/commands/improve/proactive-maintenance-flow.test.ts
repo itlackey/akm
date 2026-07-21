@@ -151,7 +151,7 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
     // Aggregated observability event (exactly one per run, not per ref).
     const { events } = readEvents({ type: "proactive_selected" });
     expect(events.length).toBe(1);
-    expect((events[0].metadata as { count?: number }).count).toBeGreaterThanOrEqual(1);
+    expect((events[0]!.metadata as { count?: number }).count).toBeGreaterThanOrEqual(1);
   });
 
   test("maxPerRun bounds how many due assets are folded in", async () => {

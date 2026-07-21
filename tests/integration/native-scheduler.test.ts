@@ -33,7 +33,7 @@ function run(
   env: NodeJS.ProcessEnv = process.env,
   options: { windowsVerbatimArguments?: boolean } = {},
 ): RunResult {
-  const result = spawnSync(argv[0], argv.slice(1), {
+  const result = spawnSync(argv[0]!, argv.slice(1), {
     env,
     encoding: "utf8",
     timeout: 120_000,
@@ -306,7 +306,7 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
       const doctor = runPackedCli(["tasks", "doctor"]);
       expectSuccess(doctor, "packed Node tasks doctor");
       const doctorJson = JSON.parse(doctor.stdout) as { akm: { argv: string[]; via: string } };
-      expect(fs.realpathSync(doctorJson.akm.argv[0])).toBe(fs.realpathSync(nodeBinary));
+      expect(fs.realpathSync(doctorJson.akm.argv[0]!)).toBe(fs.realpathSync(nodeBinary));
       expect(doctorJson.akm.argv[1]).toEndWith("cli-node.mjs");
       expect(doctorJson.akm).toMatchObject({ via: "execPath" });
 
