@@ -154,8 +154,7 @@ export function resolveStashDir(_options?: { readOnly?: boolean }, env: NodeJS.P
   }
 
   throw new ConfigError(
-    `No stash directory found. Run "akm init" to create one at ${defaultDir}, ` +
-      `or set stashDir in ${getConfigPath()}.`,
+    `No stash directory found. Run "akm init" to create one at ${defaultDir}.`,
     "STASH_DIR_NOT_FOUND",
   );
 }
@@ -183,8 +182,15 @@ function isValidDirectory(dir: string): boolean {
 }
 
 /**
- * Read stashDir directly from config.json without pulling in the full config
- * module, to avoid circular dependencies.
+ * Read the primary stash path directly from config.json without pulling in the
+ * full config module, to avoid circular dependencies.
+ *
+ * Reads ONLY the 0.9.0 `bundles`/`defaultBundle` shape. A config still carrying
+ * the retired `stashDir`/`sources`/`installed` keys (with no usable bundles
+ * path) is an unmigrated config: this refuses it with the same `akm migrate
+ * apply` hint the schema hard-reject uses (config-schema.ts), rather than
+ * silently honouring the retired key — so every `resolveStashDir` caller gets
+ * the coherent migrate posture instead of split-brain success.
  */
 function readStashDirFromConfig(): string | undefined {
   try {
@@ -192,10 +198,6 @@ function readStashDirFromConfig(): string | undefined {
     const text = readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file");
     const raw = JSON.parse(text);
     if (typeof raw !== "object" || raw === null) return undefined;
-    // Pre-cutover shape: the top-level `stashDir` field.
-    if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
-      return raw.stashDir.trim();
-    }
     // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
@@ -213,8 +215,21 @@ function readStashDirFromConfig(): string | undefined {
     ) {
       return bundles[defaultBundle].path.trim();
     }
-  } catch {
-    // Config doesn't exist or is invalid — fall through
+    // Retired pre-cutover shape with no usable bundles path: refuse with the
+    // migrate hint (matches the schema's hard-reject, config-schema.ts) instead
+    // of silently resolving the old key.
+    for (const key of ["stashDir", "sources", "installed"]) {
+      if (key in raw && raw[key] !== undefined) {
+        throw new ConfigError(
+          `${key} is the retired pre-cutover source shape; run \`akm migrate apply\` to convert it to bundles`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+    }
+  } catch (err) {
+    // A retired-shape refusal must reach the caller; genuine missing/invalid
+    // config (read or JSON-parse failure) falls through to the platform default.
+    if (err instanceof ConfigError) throw err;
   }
   return undefined;
 }

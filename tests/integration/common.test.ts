@@ -66,13 +66,32 @@ describe("resolveStashDir", () => {
     }
   });
 
-  test("reads stashDir from config.json when env var is not set", () => {
+  test("refuses an unmigrated stashDir-only config with the migrate hint", () => {
+    // 0.9.0 cutover: a retired top-level `stashDir` (no bundles) is no longer
+    // silently honoured — resolveStashDir refuses it with the same `akm migrate
+    // apply` hint the schema hard-reject uses, instead of split-brain success.
     delete process.env.AKM_STASH_DIR;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-stash-"));
     try {
       const configDir = path.join(testConfigHome, "akm");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ stashDir: tmpDir }));
+      expect(() => resolveStashDir()).toThrow(/migrate apply/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads the primary stash from the migrated bundles/defaultBundle shape", () => {
+    delete process.env.AKM_STASH_DIR;
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-bundle-"));
+    try {
+      const configDir = path.join(testConfigHome, "akm");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, "config.json"),
+        JSON.stringify({ defaultBundle: "main", bundles: { main: { path: tmpDir } } }),
+      );
       const result = resolveStashDir();
       expect(result).toBe(path.resolve(tmpDir));
     } finally {
