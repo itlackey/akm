@@ -64,6 +64,26 @@ by the `llm-wiki` adapter, not a per-file type stamped by the classifier.
 structure (directory listing, update history), never concept items. This holds for
 the `akm`, `okf`, and `llm-wiki` adapters alike.
 
+## Adapter-owned filtering (AKM sensitive/infra abstention)
+
+Each adapter decides which walked files it claims and which it abstains on — the
+core walk applies only universal hygiene (`.git`, dot-directories, `node_modules`,
+…). The `akm` adapter's `recognize` abstains (returns `null`) on its own stash's
+non-content files, using **path/stat checks only** so the bytes of sensitive files
+are never read to make the decision:
+
+- an `env/…` `.env` file that has a sibling `.sensitive` marker;
+- anything under the frozen legacy `vaults/` directory (the `vault` type was
+  removed in 0.9.0);
+- a `secrets/` `.sensitive`/`.lock` marker, or a secret with a sibling
+  `<name>.sensitive` marker;
+- a `wikis/<name>/` root-level infrastructure file (`schema.md`/`index.md`/`log.md`).
+
+This policy previously lived in the indexer's `shouldIndexStashFile` pre-filter; it
+now lives in the adapter (`akmStashAbstains` in
+`src/core/adapter/adapters/akm-adapter.ts`), so each adapter owns its own bundle's
+filtering (owner ruling 2026-07-21).
+
 ## The akm adapter's recognition signals
 
 Inside the `akm` adapter, recognition picks a winner by **specificity descending**,

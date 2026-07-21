@@ -351,6 +351,17 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Changed
 
+- **Indexing dispatches each bundle's detected adapter.** The indexer's per-
+  directory scan now resolves the component's adapter (`adapterForId`) and runs
+  THAT adapter's `recognize`, instead of always using the `akm` adapter. A
+  component whose adapter id is unknown is skipped with a warning. Adapter-owned
+  filtering moves the AKM-stash sensitive/infra exclusions (env/secret
+  `.sensitive`-marker skips, the legacy `vaults/` skip, wiki infra files) out of
+  the core scan and into the `akm` adapter's own recognition, so each adapter
+  owns its bundle's filtering. **Reindex note:** any non-`akm` bundle that was
+  previously probed as one adapter id but still recognized by `akm` will
+  re-index under its own adapter on the next `akm index` — the index is a
+  regenerable cache, so no migration is required.
 - **Improve target identity is now end-to-end and source-qualified.** Explicit
   targets govern reads, generated proposals, triage promotion, consolidation,
   retrieval signals, cooldowns, and replay state. Duplicate bare refs in other

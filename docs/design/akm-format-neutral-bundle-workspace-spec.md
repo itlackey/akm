@@ -9,7 +9,7 @@
 
 This specification supersedes the prior directions that treated OKF as an AKM asset type, made OKF the hidden universal AKM file schema, introduced a semantic-view registry, or preserved the current asset system behind a permanent legacy adapter.
 
-**Amendment record.** *(v0.2, 2026-07-13)* The maintainer reconciliation (DEV-1..DEV-7, `akm-plan-vs-spec-deviation-analysis.md` §4) and the review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) applied in place: the ref grammar is `[<bundle>//]<concept-id>[#fragment]` (§7.8, §11); the normalized field is the open **`type`** (§14.1), which MAY drive presentation/ranking/filtering and MUST NOT drive execution, identity, or storage; adapter capabilities are optional methods on one interface (§12); nested component roots have a subtraction rule (§9.3); index persistence is a diff, not truncate-and-rewrite (§14.2). *(v0.3, 2026-07-14 — final scope decisions, deviation §4.3a–3c)* This document remains the **target architecture**; release staging is explicit where target and 0.9.0 diverge: the persisted Binding record, export digests, rebind-on-update, and the bind CLI are **Tier B, deferred indefinitely** (staging note at §18); the **entire memory lifecycle (§25) is deferred** behind the claim extractor + benchmark (staging note at §25); and the v0.2 trust-clamp additions (trusted labeling in the read path, action clamping, catch-all sensitive-content refusal) are **withdrawn** — new trust/approval machinery is rejected as false-confidence machinery; only protections that exist in code today survive the port (env/secret redaction, the origin-scoped dangerous-key rule). No section of this document is superseded by a banner elsewhere; this text is current.
+**Amendment record.** *(v0.2, 2026-07-13)* The maintainer reconciliation (DEV-1..DEV-7, `akm-plan-vs-spec-deviation-analysis.md` §4) and the review pass (`akm-target-design-review-2026-07.md`, `akm-0.9.0-plan-review-2026-07.md`) applied in place: the ref grammar is `[<bundle>//]<concept-id>[#fragment]` (§7.8, §11); the normalized field is the open **`type`** (§14.1), which MAY drive presentation/ranking/filtering and MUST NOT drive execution, identity, or storage; adapter capabilities are optional methods on one interface (§12); nested component roots have a subtraction rule (§9.3); index persistence is a diff, not truncate-and-rewrite (§14.2). *(v0.3, 2026-07-14 — final scope decisions, deviation §4.3a–3c)* This document remains the **target architecture**; release staging is explicit where target and 0.9.0 diverge: the persisted Binding record, export digests, rebind-on-update, and the bind CLI are **Tier B, deferred indefinitely** (staging note at §18); the **entire memory lifecycle (§25) is deferred** behind the claim extractor + benchmark (staging note at §25); and the v0.2 trust-clamp additions (trusted labeling in the read path, action clamping, catch-all sensitive-content refusal) are **withdrawn** — new trust/approval machinery is rejected as false-confidence machinery; only protections that exist in code today survive the port (env/secret redaction, the origin-scoped dangerous-key rule). No section of this document is superseded by a banner elsewhere; this text is current. *(v0.4, 2026-07-21 — owner ruling)* The **`akm.bundle.yaml` package manifest is removed entirely** (it was never implemented and should never have been approved), and **sub-mount / multi-component registration is replaced by adapter-owned file processing**: a bundle maps to exactly **one component = one adapter**, and that component's adapter processes the files and subdirectories of its bundle as it sees fit — the core provides the walk and the persistence, the adapter's `recognize` claims or abstains per file. Consequences applied in place: §9.2 multi-component packages and §9.3 nested-root subtraction no longer apply to a single-adapter bundle; manifest-declared `exports:` are removed (exports with independent standing, if any, are unaffected); §14.2's scan flow is the core walk × `adapter.recognize` with per-directory incremental diff persist. Adapter dispatch is live in the indexer (unknown adapter id ⇒ component skipped with a warning).
 
 ---
 
@@ -315,7 +315,7 @@ Runtime handlers or harnesses MUST:
 
 ### 9.1 Single-component bundles
 
-A single native root does not require an AKM manifest. Workspace configuration MAY mount it directly:
+Every bundle is single-component (§9.2, v0.4). Workspace configuration mounts a root directly:
 
 ```yaml
 bundles:
@@ -330,62 +330,19 @@ bundles:
 defaultBundle: personal
 ```
 
-### 9.2 Multi-component packages
+### 9.2 One bundle = one component = one adapter
 
-A package MAY include an optional `akm.bundle.yaml` outside its native component roots:
+*(Amended v0.4, 2026-07-21 — owner ruling: the `akm.bundle.yaml` manifest and multi-component packaging are removed.)*
 
-```yaml
-schemaVersion: 1
-name: release-automation
-description: Reusable release knowledge, workflows, tasks, and environment contracts.
+A bundle maps to exactly **one component**, owned by exactly **one adapter**. There is no `akm.bundle.yaml` package manifest and no manifest-declared `exports:`. A package that bundles heterogeneous content (knowledge, workflows, tasks, environment, skills) is served by the **single adapter** selected for its root: that adapter's `recognize` processes the files and subdirectories of the bundle however it sees fit — the core provides the walk and the persistence, and the adapter claims or abstains per file. Heterogeneous tool subtrees are the adapter's concern, not a reason to split the bundle into multiple components.
 
-components:
-  knowledge:
-    adapter: okf
-    root: knowledge
+### 9.3 Component identity and conceptId collisions
 
-  workflows:
-    adapter: akm-workflow
-    root: workflows
+*(Amended v0.4, 2026-07-21 — nested-root subtraction removed: a single-adapter bundle has one component, so there are no other component roots to subtract and no cross-component ref collisions.)*
 
-  tasks:
-    adapter: akm-task
-    root: tasks
+Because a bundle has one component, every physical file in the walked tree is owned by that one component; refs are bundle-relative and unique. The persisted ref column is UNIQUE.
 
-  environment:
-    adapter: dotenv
-    root: env
-
-  skills:
-    adapter: agent-skills
-    root: skills
-
-exports:
-  release:
-    kind: workflow
-    component: workflows
-    item: release
-
-  nightly-release:
-    kind: task
-    component: tasks
-    item: nightly-release
-
-  release-env:
-    kind: environment
-    component: environment
-    item: release
-```
-
-The manifest defines package composition and export declarations only. It MUST NOT redefine the native schemas inside component roots.
-
-### 9.3 Component overlap and nested-root subtraction
-
-Component roots MUST NOT overlap except by strict nesting. When roots are nested, the parent component's file set is its tree **minus every other configured component root** (computed once at mount registration; §9.4 persists the result). A configured overlap that is not strict nesting is a configuration validation error.
-
-A physical file MUST be owned by exactly one component. Because refs are bundle-relative, a cross-component ref collision cannot be resolved by dedup: the core MUST treat an attempt by two components to emit the same ref as a component-scoped indexing error (last-known-good rows preserved, §14.3), never as a silent upsert. The persisted ref column is UNIQUE.
-
-Within one component, two files reducing to the same conceptId (for example `release.md` and `release.yaml` under a workflow root) are a `duplicate-concept-id` validation diagnostic naming both paths. The adapter MUST declare a deterministic extension priority to pick the indexed winner, and the loser's path MUST be recorded so that deleting the winner later resets, rather than inherits, the ref's durable state history.
+Within the component, two files reducing to the same conceptId (for example `release.md` and `release.yaml` under a workflow root) are a `duplicate-concept-id` validation diagnostic naming both paths. The adapter MUST declare a deterministic extension priority to pick the indexed winner, and the loser's path MUST be recorded so that deleting the winner later resets, rather than inherits, the ref's durable state history.
 
 ### 9.4 Adapter detection
 
@@ -406,7 +363,10 @@ bundles:
   team-catalog:
     git: https://github.com/acme/team-catalog.git
     revision: main
-    manifest: akm.bundle.yaml
+    components:
+      main:
+        root: .
+        adapter: okf
 
   project-claude:
     path: .
@@ -446,8 +406,7 @@ Resolved lock state SHOULD include:
 - resolved version or revision;
 - integrity hash when available;
 - local materialized root;
-- manifest digest;
-- component adapter IDs and versions;
+- component adapter ID and version;
 - installation timestamp.
 
 Desired configuration MUST NOT duplicate resolved cache paths and revisions that belong exclusively in lock state.
@@ -543,8 +502,8 @@ interface BundleAdapter {
 
   // OPTIONAL — full-component scan for adapters whose layout is not per-file
   // (website snapshots, multi-file wiki semantics). When absent, the core scans:
-  //   scanComponent(c, adapter) = core walk (git-aware, symlink-safe, skip-dirs,
-  //   nested-root subtraction per §9.3) × adapter.recognize per file.
+  //   the core walk (git-aware, symlink-safe, skip-dirs) × adapter.recognize per
+  //   file, drained and diff-persisted per directory (§14.2).
   // An adapter that overrides index() MUST either keep recognize() coherent with it
   // (conformance: index() output equals the fold of recognize() over the walk) or
   // declare component-level incrementality (§14.2).
@@ -753,12 +712,15 @@ The folding rules that map richer native metadata (examples, usage, intent, xref
 
 ### 14.2 Scan flow and diff persistence
 
+*(Amended v0.4, 2026-07-21 — the implemented engine: the core walk × the dispatched `adapter.recognize`, drained and diff-persisted per directory. The retired `scanComponent` wrapper and its nested-root subtraction are gone with multi-component bundles.)*
+
 ```text
 materialize bundle revision
--> select persisted components and adapters
--> scanComponent (core walk × adapter.recognize, or adapter.index override)
--> DRAIN the full document stream (any scan error aborts before the first write)
--> one write transaction: DIFF persist against the component's existing rows
+-> select the persisted component and its adapter (adapterForId(component.adapter);
+   unknown id ⇒ skip the component with a warning)
+-> for each walked directory: core walk (universal hygiene) × adapter.recognize
+   (or adapter.index override) → DRAIN the directory's document stream
+-> one write transaction: DIFF persist against the directory's existing rows
 -> build FTS/vector/native-link projections incrementally
 ```
 
@@ -1809,7 +1771,7 @@ No improve or mutation support is required in this slice.
 
 ### Phase 5 — Bundle lifecycle and bindings
 
-- Add package manifests and multi-component installation.
+- ~~Add package manifests and multi-component installation.~~ *(removed v0.4, 2026-07-21 — one bundle = one component = one adapter; no `akm.bundle.yaml`.)*
 - Add exports and bindings.
 - Move LLM Wiki to an adapter and generic commands.
 - Add workflow, task, environment, Claude, OpenCode, and Agent Skills adapters incrementally.

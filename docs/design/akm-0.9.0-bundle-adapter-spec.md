@@ -9,6 +9,8 @@
 3. **Final scope (2026-07-14 refinements, deviation §4.3a–3c — supersede the earlier "DEV-3/4/5 restore full"):** the third `consolidate` verb is IN SCOPE as vocabulary (DEV-5); **bindings ship at Tier A only** (consolidation of existing install≠activation enforcement into one activation-policy point; the persisted `Binding` record, digests, rebind, and bind CLI are Tier B, deferred indefinitely); **the memory lifecycle is deferred entirely** (0.9.0 = consolidate decomposition with behavior preserved); **no new trust/approval machinery ships**. Retained simplifications: renderer/action as a **data table** typed over `KNOWN_TYPES`, and adapter facets expressed as **optional methods** on one interface (History §8.3), not a rigid `extends` hierarchy.
 4. **LLM Wiki adapter restored (DEV-7).** The `wiki` *asset type* dies; the **LLM Wiki adapter** is a first-class built-in owning `schema.md`/`index.md`/`log.md`/raw/pages/citations/xrefs/ingest.
 
+**Amendment (v0.4, 2026-07-21 — owner ruling).** Two §1.2 resolution steps are removed and one dispatch behavior is confirmed shipped: (a) the `akm.bundle.yaml` **manifest** step is removed entirely (it was never implemented and should never have been approved); (b) **sub-mount registration** is replaced by **adapter-owned file processing** — one bundle = one component = one adapter, and that adapter's `recognize` claims/abstains on its bundle's files and subdirectories as it sees fit (the core provides the walk and persistence). The consequent multi-component machinery (nested-root subtraction §9.3, cross-component collisions, manifest `exports:`) no longer applies to 0.9.0. (c) Adapter **dispatch is live**: the indexer's per-directory drain resolves `adapterForId(component.adapter)` and skips a component whose adapter id is unknown with a warning (§4).
+
 ---
 
 ## 0. OKF: preferred interchange + reference adapter (hybrid, format-neutral kernel)
@@ -78,13 +80,13 @@ export interface BundleComponent {
 
 ### 1.2 How a directory becomes a bundle
 
-1. **Optional manifest** `akm.bundle.yaml` (`schemaVersion: 1`) — declares heterogeneous component roots + adapters + optional `exports:` (normative §9.2). Optional; the only new file format. Always wins when present.
-2. **Workspace config `bundles` map** (normative §10.1).
-3. **Deterministic install-time probe** (no manifest/config): `looksLikeRoot` probes run in a fixed, most-specific-first order — `okf` (root `index.md`; `okf_version` strengthens the match but is NOT required — even the OKF reference bundles omit it) → `llm-wiki` (`schema.md` + `pages/`) → `claude` (the root IS `.claude`) → `opencode` → `agent-skills` (root `SKILL.md`) → fallback **`okf`**. First match wins; probes MUST be pure (stat/read only); the result is persisted per normative §9.4 and never re-guessed. `generic-files` is **never auto-selected** — explicit configuration only.
-4. **Sub-mount proposal** — the no-manifest scan also probes well-known tool subtrees (`.claude/`, `.opencode/`, `workflows/`, `tasks/`, `env/`, `secrets/`) and registers them as additional components (deterministic, recorded in lock state), so the okf default does not swallow tool dirs and mis-type their contents.
-5. **Single-component default** — nothing else matched ⇒ one component `{ id:"main", root:".", adapter:"okf" }`.
+*(Amended v0.4, 2026-07-21 — owner ruling: the `akm.bundle.yaml` manifest step and the sub-mount proposal step are removed; a bundle maps to exactly one component/adapter.)*
 
-Component roots MUST NOT overlap except by strict nesting, with the parent's file set computed as its tree **minus** every other configured component root (normative §9.3). Cross-component ref collisions are indexing errors, never silent upserts; intra-component conceptId collisions are `duplicate-concept-id` diagnostics with a deterministic extension-priority winner.
+1. **Workspace config `bundles` map** (normative §10.1).
+2. **Deterministic install-time probe** (no config): `looksLikeRoot` probes run in a fixed, most-specific-first order — `okf` (root `index.md`; `okf_version` strengthens the match but is NOT required — even the OKF reference bundles omit it) → `llm-wiki` (`schema.md` + `pages/`) → `claude` (the root IS `.claude`) → `opencode` → `agent-skills` (root `SKILL.md`) → fallback **`okf`**. First match wins; probes MUST be pure (stat/read only); the result is persisted per normative §9.4 and never re-guessed. `generic-files` is **never auto-selected** — explicit configuration only.
+3. **Single-component default** — nothing else matched ⇒ one component `{ id:"main", root:".", adapter:"okf" }`.
+
+**One bundle = one component = one adapter** (owner ruling 2026-07-21). The component's adapter processes the files and subdirectories of its bundle as it sees fit: the core provides the walk (universal hygiene only — `.git`/dot-dirs/etc.) and the persistence, and the adapter's `recognize` decides which walked files it claims and which it abstains on, regardless of the core's default behavior. There is no `akm.bundle.yaml` manifest and no sub-mount registration — heterogeneous tool subtrees are handled by the one adapter's own `recognize`, not by splitting the bundle into multiple components. Intra-component conceptId collisions (two files reducing to the same conceptId) are `duplicate-concept-id` diagnostics with a deterministic extension-priority winner.
 
 ### 1.3 Ref grammar — OKF concept ID + optional `bundle//` prefix
 
@@ -115,7 +117,7 @@ knowledge/http-caching               # default-bundle implied (bundle omitted)
 { "defaultBundle": "personal",
   "bundles": {
     "personal": { "path": "~/knowledge", "components": { "main": { "root": ".", "adapter": "okf", "writable": true } } },
-    "team-catalog": { "git": "https://github.com/acme/team-catalog.git", "manifest": "akm.bundle.yaml" }
+    "team-catalog": { "git": "https://github.com/acme/team-catalog.git", "components": { "main": { "root": ".", "adapter": "okf" } } }
   },
   // "bindings": { ... }  — Tier-B target shape; NOT emitted or read in 0.9.0 (normative §18 staging note)
 }
