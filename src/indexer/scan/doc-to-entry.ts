@@ -7,8 +7,8 @@
  * `indexDocumentFromEntry` (`adapters/akm-adapter.ts`). akm 0.9.0 Chunk 5,
  * milestone F4a (M2 groundwork).
  *
- * The engine swap drains an `IndexDocument` stream (`scanComponent` × the akm
- * adapter's `recognize`) in place of the per-dir flat-walk matcher-pass
+ * The engine swap drains an `IndexDocument` stream (`drainDirDocuments` × the
+ * dispatched adapter's `recognize`) in place of the per-dir flat-walk matcher-pass
  * `IndexDocument` stream, then persists it. But the durable `entries.entry_json`
  * column stays a faithful `IndexDocument` — every reader (`rowToIndexedEntry` →
  * `DbIndexedEntry.entry`) consumes it as one, and the byte-for-byte goldens pin

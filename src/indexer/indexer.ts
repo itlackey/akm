@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
+import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
 import { isHttpUrl, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
@@ -85,13 +85,7 @@ import {
   getDirIndexState,
   inferZeroRowReason,
 } from "./passes/dir-staleness";
-import {
-  type IndexDocument,
-  isEnrichmentComplete,
-  isWorkflowSkipWarning,
-  type StashFile,
-  shouldIndexStashFile,
-} from "./passes/metadata";
+import { type IndexDocument, isEnrichmentComplete, isWorkflowSkipWarning, type StashFile } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildSearchText } from "./search/search-fields";
 import type { SearchSource } from "./search/search-source";
@@ -740,10 +734,10 @@ type DirNeedingLlm = {
 /**
  * Map each source root → its durable `BundleComponent` (`deriveInstallations`,
  * batch-unique bundle ids, source order preserved). The per-dir document drain
- * (F4a M-core-2) hands this component to `akmAdapter.recognize`. The component
- * id only surfaces on `IndexDocument.ref`, which the persist layer re-derives
- * independently — so a source missing from the map (never happens: the map is
- * built from the same sources) is harmless.
+ * dispatches `adapterForId(component.adapter).recognize` for this component. The
+ * component id only surfaces on `IndexDocument.ref`, which the persist layer
+ * re-derives independently — so a source missing from the map (never happens: the
+ * map is built from the same sources) is harmless.
  */
 function buildComponentBySource(sources: SearchSource[]): Map<string, BundleComponent> {
   const map = new Map<string, BundleComponent>();
@@ -760,9 +754,10 @@ function buildComponentBySource(sources: SearchSource[]): Map<string, BundleComp
  * outside any transaction, producing the per-directory scan records that
  * {@link persistDirRecords} later writes.
  *
- * The per-dir document drain (`drainDirDocuments` × `akmAdapter.recognize`, F4a
- * M-core-2) is synchronous, but the walk still runs outside `db.transaction()`
- * so the persist pass can be a single synchronous transaction.
+ * The per-dir document drain (`drainDirDocuments` × the component's dispatched
+ * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
+ * outside `db.transaction()` so the persist pass can be a single synchronous
+ * transaction.
  */
 async function scanSourceDirs(
   db: Database,
@@ -880,8 +875,8 @@ async function scanSourceDirs(
     );
 
     // Group by parent dir, keeping the FileContexts so the drain can hand each
-    // to `akmAdapter.recognize` (F4a M-core-2). The freshness gate still keys on
-    // the plain path list derived from these.
+    // to the component's dispatched `adapter.recognize` (F4a M-core-2). The
+    // freshness gate still keys on the plain path list derived from these.
     const dirGroups = new Map<string, FileContext[]>();
     for (const ctx of fileContexts) {
       const dir = ctx.parentDirAbs;
@@ -897,9 +892,21 @@ async function scanSourceDirs(
       writable: false,
     };
 
+    // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
+    // An unknown adapter id has no `adapterForId` match → skip the whole
+    // component with a warning (one bundle = one component = one adapter).
+    const adapter = adapterForId(component.adapter);
+    if (!adapter) {
+      warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
+      continue;
+    }
+
     for (const [dirPath, ctxs] of dirGroups) {
-      const indexableCtxs = ctxs.filter((ctx) => shouldIndexStashFile(currentStashDir, ctx.absPath));
-      const indexableFiles = indexableCtxs.map((ctx) => ctx.absPath);
+      // Adapter-owned filtering (owner ruling 2026-07-21): the drain no longer
+      // pre-filters with AKM-stash policy — each adapter's `recognize` claims or
+      // abstains on its own bundle's walked files. The core walk keeps only the
+      // universal hygiene `walkStashFlat` already applies (.git/dot-dirs/etc.).
+      const indexableFiles = ctxs.map((ctx) => ctx.absPath);
 
       if (markSeenOrSkipDuplicate(dirPath, currentStashDir, indexableFiles)) continue;
 
@@ -933,13 +940,10 @@ async function scanSourceDirs(
         continue;
       }
 
-      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via
-      // `akmAdapter.recognize` (broken workflows dropped-with-warning at the
-      // drain layer) and reconstruct the durable `IndexDocument`s. Legacy
-      // per-directory sidecar overrides are still merged (item-4 decommission is
-      // deferred — §12.3 gate fixtures feed curated metadata exclusively via the
-      // legacy sidecar).
-      const drained = drainDirDocuments(akmAdapter, component, indexableCtxs);
+      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
+      // component's dispatched `adapter.recognize` (broken workflows dropped-with-
+      // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
+      const drained = drainDirDocuments(adapter, component, ctxs);
       if (drained.warnings.length) warnings.push(...drained.warnings);
       const generated: StashFile = drained.warnings.length
         ? { entries: drained.entries, warnings: drained.warnings }
@@ -1081,7 +1085,6 @@ function persistDirRecords(
             warn(`Skipping entry with no resolvable path in ${dirPath}`);
             continue;
           }
-          if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
           // Skip if a higher-priority stash root already indexed this asset
           const identityKey = `${entry.type}\0${entry.name}`;
@@ -1138,7 +1141,7 @@ function persistDirRecords(
       }
 
       // Prune the departed rows: everything under this dir NOT re-upserted above
-      // (files deleted, deduped away, or filtered by shouldIndexStashFile). With
+      // (files deleted, deduped away, or abstained on by the adapter). With
       // an empty kept-set this deletes every row for the dir — the exact net
       // effect of the old unconditional `deleteEntriesByDir`, minus the id churn.
       deleteEntriesByDirExceptKeys(db, dirPath, keptEntryKeys);
@@ -1213,7 +1216,7 @@ async function indexEntries(
   // the writer can persist `item_ref = <bundle>//<conceptId>` and the component/
   // adapter provenance alongside the legacy columns. `deriveInstallations`
   // preserves source order, so a positional zip yields the SAME bundle id the
-  // Step-3 `scanComponent` swap will emit for that root (forward-exact).
+  // dispatched `adapter.recognize` emits as `IndexDocument.ref` for that root.
   const installations = deriveInstallations(allSourceEntries);
   const bundleByRoot = new Map<string, { bundleId: string; componentId: string; adapterId: string }>();
   allSourceEntries.forEach((source, i) => {

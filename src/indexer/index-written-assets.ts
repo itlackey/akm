@@ -80,9 +80,10 @@ export async function indexWrittenAssets(
       if (!fs.existsSync(dbPath)) return true;
 
       // The full walk never descends into dot-directories (they hold state like
-      // `.meta/` and the legacy metadata sidecar), and `shouldIndexStashFile` relies on the walker
-      // for that — mirror it here so this fast path indexes exactly what a full
-      // run would.
+      // `.meta/` and the legacy metadata sidecar) — mirror that dot-segment skip
+      // here so this fast path indexes exactly what a full run would. Sensitive/
+      // infra abstention is the adapter's job now (see the `akmAdapter` note
+      // below), not a path pre-filter.
       const files = filePaths.filter((f) => {
         const rel = path.relative(stashDir, f);
         return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
@@ -107,6 +108,11 @@ export async function indexWrittenAssets(
           continue;
         }
         const ctx = buildFileContext(stashDir, file);
+        // Hardcoded `akmAdapter` on purpose (owner ruling 2026-07-21): this
+        // write-path fast path only ever runs for assets a first-class akm
+        // mutation command (`remember`/`wiki`/`workflow`/`setup`/`mv`) just wrote
+        // into the PRIMARY akm workspace, so the akm adapter is always the right
+        // recognizer here — no per-component dispatch needed.
         const drained = drainDirDocuments(akmAdapter, component, [ctx]);
         const entry = drained.entries[0];
         // Workflows also carry a workflow_documents side-table upsert — handled

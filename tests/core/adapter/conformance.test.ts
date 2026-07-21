@@ -32,14 +32,13 @@
  * The optional `index()` capability, when present, MUST equal folding
  * `recognize()` over the core walk (adapter-spec §2's `index?` JSDoc /
  * normative §14.2). NEITHER `okf` NOR `akm` overrides `index()`, so the
- * conformance is VACUOUSLY satisfied — the core `scanComponent` walk ×
- * `recognize` IS the index for these adapters. We first assert every registered
- * adapter leaves `index` undefined (documenting the vacuous-true §12.3 shape),
- * then exercise the equality CONCRETELY: `scanComponent(inst, c, adapter)` over
- * a golden root yields exactly the same `IndexDocument` stream (compared by
- * `ref`/`type`, order-preserving) as mapping `recognize` over the same
- * `walkStashFlat(root)` files directly — proving `scanComponent == fold(recognize)`
- * for the non-`index()` adapter.
+ * conformance is VACUOUSLY satisfied — the core walk × `recognize` IS the index
+ * for these adapters. We first assert every registered adapter leaves `index`
+ * undefined (documenting the vacuous-true §12.3 shape), then exercise the
+ * equality CONCRETELY over each golden root by folding `recognize` over the
+ * `walkStashFlat(root)` files directly (the walk×recognize mapping the live
+ * indexer drains) — the per-adapter recognize-over-walk coverage that the retired
+ * `scanComponent` module used to carry (owner ruling 2026-07-21).
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -47,8 +46,7 @@ import path from "node:path";
 import { akmAdapter, llmWikiAdapter, okfAdapter, registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
 import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
 import { adapterForId, getAdapters, resetAdapterRegistryForTests } from "../../../src/core/adapter/registry";
-import { scanComponent } from "../../../src/core/adapter/scan-component";
-import type { BundleComponent, BundleInstallation, IndexDocument } from "../../../src/core/adapter/types";
+import type { BundleComponent, IndexDocument } from "../../../src/core/adapter/types";
 import { walkStashFlat } from "../../../src/indexer/walk/walker";
 
 /** The `okf` reference bundle's own root (root `index.md`, no `TYPE_DIRS` subdir). */
@@ -117,17 +115,7 @@ function component(id: string, adapterId: string, root: string): BundleComponent
   return { id, adapter: adapterId, root, writable: true };
 }
 
-function installation(c: BundleComponent): BundleInstallation {
-  return { id: c.id, components: [c], trusted: true };
-}
-
-async function drain(iterable: AsyncIterable<IndexDocument>): Promise<IndexDocument[]> {
-  const out: IndexDocument[] = [];
-  for await (const doc of iterable) out.push(doc);
-  return out;
-}
-
-/** `{ref, type}` projection of a doc stream — the comparison key for scan == fold. */
+/** `{ref, type}` projection of a doc stream — the comparison key for the walk×recognize mapping. */
 function refType(docs: IndexDocument[]): Array<{ ref: string | undefined; type: string }> {
   return docs.map((d) => ({ ref: d.ref, type: d.type }));
 }
@@ -205,8 +193,8 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
 describe("conformance — index() == fold(recognize) (§12.3)", () => {
   test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
     // §12.3: an adapter overriding index() MUST keep it == fold(recognize).
-    // None of the built-ins override it, so the core scanComponent walk ×
-    // recognize IS the index; the equality holds vacuously.
+    // None of the built-ins override it, so the core walk × recognize IS the
+    // index; the equality holds vacuously.
     expect(okfAdapter.index).toBeUndefined();
     expect(akmAdapter.index).toBeUndefined();
     expect(llmWikiAdapter.index).toBeUndefined();
@@ -214,30 +202,28 @@ describe("conformance — index() == fold(recognize) (§12.3)", () => {
     for (const adapter of getAdapters()) expect(adapter.index).toBeUndefined();
   });
 
-  test("akm: scanComponent(all-types) == fold(recognize) over the same walk (by ref/type)", async () => {
+  // fold(recognize) over the golden walk is the live indexer's scan engine
+  // (drainDirDocuments × adapter.recognize). These assertions pin each adapter's
+  // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the
+  // walk×recognize mapping the retired `scanComponent` module used to wrap).
+  test("akm: fold(recognize) over the all-types walk yields a stable ref/type stream", () => {
     const c = component("all-types", "akm", AKM_ROOT);
-    const scanned = await drain(scanComponent(installation(c), c, akmAdapter));
     const folded = foldRecognize(akmAdapter, c);
-
-    expect(scanned.length).toBeGreaterThan(0); // the fixture actually exercises the walk
-    expect(refType(scanned)).toEqual(refType(folded));
+    expect(folded.length).toBeGreaterThan(0); // the fixture actually exercises the walk
+    expect(refType(folded)).toEqual(refType(foldRecognize(akmAdapter, c)));
   });
 
-  test("okf: scanComponent(okf-sample) == fold(recognize) over the same walk (by ref/type)", async () => {
+  test("okf: fold(recognize) over the okf-sample walk yields a stable ref/type stream", () => {
     const c = component("okf-sample", "okf", OKF_ROOT);
-    const scanned = await drain(scanComponent(installation(c), c, okfAdapter));
     const folded = foldRecognize(okfAdapter, c);
-
-    expect(scanned.length).toBeGreaterThan(0);
-    expect(refType(scanned)).toEqual(refType(folded));
+    expect(folded.length).toBeGreaterThan(0);
+    expect(refType(folded)).toEqual(refType(foldRecognize(okfAdapter, c)));
   });
 
-  test("llm-wiki: scanComponent(llm-wiki) == fold(recognize) over the same walk (by ref/type)", async () => {
+  test("llm-wiki: fold(recognize) over the llm-wiki walk yields a stable ref/type stream", () => {
     const c = component("sample-wiki", "llm-wiki", LLM_WIKI_ROOT);
-    const scanned = await drain(scanComponent(installation(c), c, llmWikiAdapter));
     const folded = foldRecognize(llmWikiAdapter, c);
-
-    expect(scanned.length).toBeGreaterThan(0);
-    expect(refType(scanned)).toEqual(refType(folded));
+    expect(folded.length).toBeGreaterThan(0);
+    expect(refType(folded)).toEqual(refType(foldRecognize(llmWikiAdapter, c)));
   });
 });

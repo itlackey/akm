@@ -35,11 +35,11 @@ import path from "node:path";
 import { registerBuiltinAdapters } from "../../src/core/adapter/adapters";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { resetAdapterRegistryForTests } from "../../src/core/adapter/registry";
-import { scanComponent } from "../../src/core/adapter/scan-component";
-import type { BundleComponent, BundleInstallation, IndexDocument } from "../../src/core/adapter/types";
+import type { BundleComponent, IndexDocument } from "../../src/core/adapter/types";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
+import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -48,13 +48,20 @@ const STASHES: Array<{ name: string; root: string }> = [
   { name: "search-filter", root: path.resolve(__dirname, "../fixtures/stashes/search-filter") },
 ];
 
-/** The `recognize` document stream — the engine's own source of truth. */
-async function newStream(root: string): Promise<IndexDocument[]> {
+/**
+ * The `recognize` document stream — the engine's own source of truth: fold the
+ * `akm` adapter's `recognize` over the same `walkStashFlat(root)` files the live
+ * indexer drains (the walk×recognize mapping that replaced the retired
+ * `scanComponent` module, owner ruling 2026-07-21).
+ */
+function newStream(root: string): IndexDocument[] {
   const bundle = "parity";
   const component: BundleComponent = { id: bundle, adapter: "akm", root, writable: true };
-  const inst: BundleInstallation = { id: bundle, components: [component], trusted: true };
   const docs: IndexDocument[] = [];
-  for await (const doc of scanComponent(inst, component, akmAdapter)) docs.push(doc);
+  for (const file of walkStashFlat(root)) {
+    const doc = akmAdapter.recognize(component, file);
+    if (doc !== null) docs.push(doc);
+  }
   return docs;
 }
 
@@ -81,7 +88,7 @@ for (const { name, root } of STASHES) {
     beforeAll(async () => {
       resetAdapterRegistryForTests();
       registerBuiltinAdapters();
-      docs = await newStream(root);
+      docs = newStream(root);
 
       // Build the live index over the fixture in a sandboxed XDG home so the
       // real `akmIndex` engine (recognize → diff-persist) writes to a temp DB.

@@ -124,6 +124,55 @@ function isReservedFileName(name: string): boolean {
   return RESERVED_FILES.has(name.toLowerCase());
 }
 
+/** Wiki-directory infrastructure files excluded at a `wikis/<name>/` root (ported from the retired `shouldIndexStashFile`). */
+const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
+
+/**
+ * AKM-stash indexing policy, moved here from the indexer's `shouldIndexStashFile`
+ * pre-filter (owner ruling 2026-07-21 — adapter-owned filtering). Each adapter
+ * abstains on its own bundle's files; the core walk keeps only universal hygiene.
+ *
+ * PATH/STAT-based ONLY — never reads `file.content()`, so the bytes-never-read
+ * invariant for sensitive env/secret files holds by construction. Returns `true`
+ * when the `akm` adapter must ABSTAIN (recognize → null):
+ *   - an `env/…` `.env` file with a sibling `.sensitive` marker;
+ *   - anything under the frozen legacy `vaults/` dir (the `vault` type is gone);
+ *   - a `secrets/` `.sensitive`/`.lock` marker, or a secret with a sibling
+ *     `<name>.sensitive` marker;
+ *   - a `wikis/<name>/` root-level infra file (schema.md/index.md/log.md).
+ */
+function akmStashAbstains(root: string, absPath: string): boolean {
+  const relPath = path.relative(root, absPath);
+  if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) return false;
+
+  const segments = relPath.split(/[\\/]+/).filter(Boolean);
+  if (segments.length === 0) return false;
+
+  // Skip env `.env` files that have a sibling `.sensitive` marker file.
+  if (segments[0] === "env" && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
+    if (fs.existsSync(absPath.replace(/\.env$/, ".sensitive"))) return true;
+  }
+
+  // The legacy `vaults/` directory (frozen copy left by the 0.8 migration) is
+  // never indexed — the `vault` asset type was removed in 0.9.0.
+  if (segments[0] === "vaults") return true;
+
+  // Skip secret files that are themselves a `.sensitive` marker, or that have a
+  // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
+  // only (their bytes are never read for classification here).
+  if (segments[0] === "secrets") {
+    if (absPath.endsWith(".sensitive") || absPath.endsWith(".lock")) return true;
+    if (fs.existsSync(`${absPath}.sensitive`)) return true;
+  }
+
+  // Inside a `wikis/<name>/` directory, the root-level infrastructure files
+  // schema.md / index.md / log.md are excluded.
+  const wikisIdx = segments.indexOf("wikis");
+  if (wikisIdx < 0 || wikisIdx + 1 >= segments.length) return false;
+  const wikiRelativeSegments = segments.slice(wikisIdx + 2);
+  return wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]!);
+}
+
 /** Reverse the placement map (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
 function stashDirToType(stashDir: string): string | undefined {
   for (const type of placementTypes()) {
@@ -210,6 +259,10 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
   if (isReservedFileName(file.fileName)) return null;
+  // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
+  // to live in the indexer's `shouldIndexStashFile` pre-filter. Path/stat-based —
+  // `file.content()` is never read to reach this abstention.
+  if (akmStashAbstains(c.root, file.absPath)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
 

@@ -8,7 +8,8 @@
  * Background: 0.8.0 introduced the `env` asset type and a `vaults/` → `env/`
  * copy migration (run by `akm-migrate-storage`). 0.9.0 removed the `vault`
  * asset type entirely, and the indexer now unconditionally SKIPS `vaults/`
- * (see `shouldIndexStashFile` in `metadata.ts`). A user who upgrades straight
+ * (the `akm` adapter's `recognize` abstains on it — see `akmStashAbstains` in
+ * `core/adapter/adapters/akm-adapter.ts`). A user who upgrades straight
  * to 0.9.0 without ever running the storage migration therefore has the `.env`
  * data in their `vaults/` directory silently dropped from the index — it was
  * never copied to `env/`, and `vaults/` is no longer scanned.

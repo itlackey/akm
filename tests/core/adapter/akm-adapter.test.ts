@@ -386,3 +386,99 @@ describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {
     expect(akmAdapter.looksLikeRoot?.(root)).toBe(true);
   });
 });
+
+// ── adapter-owned filtering (moved from `shouldIndexStashFile`) ───────────────
+//
+// Owner ruling 2026-07-21: the AKM-stash indexing policy that used to live in the
+// indexer's `shouldIndexStashFile` pre-filter now lives in the `akm` adapter's
+// `recognize` as path/stat-based abstention. Re-pinned at its new home.
+
+/** Build a temp AKM stash root and write `<relPath> = content`, creating parent dirs. */
+function makeStashWith(files: Record<string, string>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-filter-"));
+  tmpDirs.push(root);
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+  return root;
+}
+
+/** A FileContext whose `content()`/`frontmatter()` THROW — proves an abstention decision never reads bytes. */
+function bytesForbiddenContext(root: string, relPath: string): FileContext {
+  const base = buildFileContext(root, path.join(root, relPath));
+  return {
+    ...base,
+    content: () => {
+      throw new Error(`content() must not be read for ${relPath} — bytes-never-read invariant`);
+    },
+    frontmatter: () => {
+      throw new Error(`frontmatter() must not be read for ${relPath} — bytes-never-read invariant`);
+    },
+  };
+}
+
+describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files", () => {
+  test("env `.env` with a sibling `.sensitive` marker is abstained (recognize → null)", () => {
+    const root = makeStashWith({
+      "env/ci.env": "API_KEY=secret-token\n",
+      "env/ci.sensitive": "",
+    });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")))).toBeNull();
+  });
+
+  test("env `.env` WITHOUT a sibling marker is still recognized (type env)", () => {
+    const root = makeStashWith({ "env/ci.env": "API_KEY=token\n" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    const doc = akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")));
+    expect(doc?.type).toBe("env");
+  });
+
+  test("anything under the legacy `vaults/` dir is abstained", () => {
+    const root = makeStashWith({ "vaults/prod/api.env": "K=V\n" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "vaults/prod/api.env")))).toBeNull();
+  });
+
+  test("a `secrets/` `.sensitive` / `.lock` marker file is abstained", () => {
+    const root = makeStashWith({ "secrets/key.sensitive": "", "secrets/key.lock": "" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.sensitive")))).toBeNull();
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.lock")))).toBeNull();
+  });
+
+  test("a secret with a sibling `<name>.sensitive` marker is abstained; a bare secret is recognized", () => {
+    const root = makeStashWith({
+      "secrets/deploy-key": "cred-value\n",
+      "secrets/deploy-key.sensitive": "",
+      "secrets/plain-token": "cred-value\n",
+    });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key")))).toBeNull();
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/plain-token")))?.type).toBe(
+      "secret",
+    );
+  });
+
+  test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
+    const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "wikis/team/schema.md")))).toBeNull();
+  });
+
+  test("bytes-never-read: the sensitive/vaults abstention never calls content() or frontmatter()", () => {
+    const root = makeStashWith({
+      "env/ci.env": "API_KEY=secret\n",
+      "env/ci.sensitive": "",
+      "secrets/key.sensitive": "",
+      "vaults/prod/api.env": "K=V\n",
+    });
+    const c = component({ root, id: "s", adapter: "akm" });
+    // Each of these abstains via path/stat only — a content()/frontmatter() read would THROW.
+    expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "env/ci.env"))).toBeNull();
+    expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "secrets/key.sensitive"))).toBeNull();
+    expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "vaults/prod/api.env"))).toBeNull();
+  });
+});

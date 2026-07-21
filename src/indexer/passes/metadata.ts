@@ -500,47 +500,10 @@ export function applyWikiFrontmatter(entry: IndexDocument, fmData: Record<string
   }
 }
 
-const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
-
-/**
- * Apply wiki-directory index exclusions while leaving all other stash files
- * untouched: inside a `wikis/<name>/` directory, the root-level infrastructure
- * files `schema.md`, `index.md`, `log.md` are excluded.
- */
-export function shouldIndexStashFile(stashRoot: string, file: string): boolean {
-  const relPath = path.relative(stashRoot, file);
-  if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) return true;
-
-  const segments = relPath.split(/[\\/]+/).filter(Boolean);
-  if (segments.length === 0) return true;
-
-  // Skip env .env files that have a sibling .sensitive marker file.
-  if (segments[0] === "env" && (file.endsWith(".env") || path.basename(file) === ".env")) {
-    const markerPath = file.replace(/\.env$/, ".sensitive");
-    if (fs.existsSync(markerPath)) return false;
-  }
-
-  // The legacy `vaults/` directory (frozen copy left by the 0.8 migration) is
-  // never indexed — the `vault` asset type was removed in 0.9.0.
-  if (segments[0] === "vaults") {
-    return false;
-  }
-
-  // Skip secret files that are themselves a `.sensitive` marker, or that have a
-  // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
-  // only (their bytes are never read — see the secret-file recognize guards).
-  if (segments[0] === "secrets") {
-    if (file.endsWith(".sensitive") || file.endsWith(".lock")) return false;
-    if (fs.existsSync(`${file}.sensitive`)) return false;
-  }
-
-  const wikisIdx = segments.indexOf("wikis");
-  if (wikisIdx < 0 || wikisIdx + 1 >= segments.length) return true;
-
-  const wikiRelativeSegments = segments.slice(wikisIdx + 2);
-  if (wikiRelativeSegments.length === 0) return true;
-  return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]!));
-}
+// AKM-stash indexing policy (env/vaults/secrets sensitive-marker + wiki-infra
+// exclusions) moved to the `akm` adapter's `recognize` as path/stat-based
+// abstention (owner ruling 2026-07-21 — adapter-owned filtering). See
+// `akmStashAbstains` in `src/core/adapter/adapters/akm-adapter.ts`.
 
 /**
  * Extract `@param` JSDoc tags from a script file's leading comment block.

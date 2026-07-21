@@ -53,8 +53,8 @@
  * deliberately dependency-free type) — not re-minted here.
  *
  * No concrete adapter is implemented here — this is the additive contract
- * only (Chunk 2 mints the first real adapters; WI-1.3 adds the core-owned
- * `scanComponent` walk in a sibling module).
+ * only (Chunk 2 mints the first real adapters; the live indexer's per-dir
+ * `drainDirDocuments` × `adapter.recognize` is the core scan engine).
  */
 
 // D1-3: type-only import of FileContext from the indexer layer. Erased at
@@ -79,9 +79,9 @@ export interface BundleAdapter {
 
   // OPTIONAL — full-component scan for non-per-file layouts (website
   // snapshots, llm-wiki multi-file semantics). When absent, the CORE scans:
-  //   scanComponent(c, adapter) = core walk (git-aware, symlink-safe,
-  //   skip-dirs, nested-root subtraction §1.2) x adapter.recognize per
-  //   file.
+  //   the live indexer's per-dir walk (git-aware, symlink-safe, skip-dirs;
+  //   `walkStashFlat`) × adapter.recognize per file, drained by
+  //   `drainDirDocuments`.
   // The core walk is ONE implementation carrying the security policy;
   // adapters never reimplement it. An adapter overriding index() MUST keep
   // recognize() coherent (conformance: index() == fold of recognize() over
