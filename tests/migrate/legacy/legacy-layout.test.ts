@@ -404,7 +404,19 @@ describe("legacy-layout.ts — faithfulness: isDerivedMemory/resolveParentRef ma
   for (const { name, frontmatter } of CASES) {
     test(`name=${JSON.stringify(name)} frontmatter=${JSON.stringify(frontmatter)}`, () => {
       expect(frozenIsDerivedMemory(name, frontmatter)).toBe(isDerivedMemory(name, frontmatter));
-      expect(frozenResolveParentRef(name, frontmatter)).toBe(resolveParentRef(name, frontmatter));
+      // DELIBERATE POST-FLIP DIVERGENCE (Group-C item 2, 2026-07-21): the live
+      // reader's normalized OUTPUT moved to the 0.9.0 `memories/<name>`
+      // conceptId; the frozen copy keeps the pre-0.9.0 `memory:<name>`
+      // spelling the migrator-era content actually carries. Parent-name
+      // EXTRACTION must stay identical; only the output grammar differs.
+      const frozen = frozenResolveParentRef(name, frontmatter);
+      const live = resolveParentRef(name, frontmatter);
+      if (frozen === undefined || live === undefined) {
+        expect(live).toBe(frozen as undefined);
+      } else {
+        expect(frozen.startsWith("memory:")).toBe(true);
+        expect(live).toBe(`memories/${frozen.slice("memory:".length)}`);
+      }
     });
   }
 });

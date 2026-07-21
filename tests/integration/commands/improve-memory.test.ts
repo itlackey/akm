@@ -118,13 +118,13 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.pruneCandidates).toEqual([
       {
         ref: "memory:deploy-copy.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         reason: "duplicate-derived",
         survivorRef: "memory:deploy.derived",
       },
       {
         ref: "memory:deploy-old.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         reason: "superseded-derived",
         survivorRef: "memory:deploy.derived",
       },
@@ -133,7 +133,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([]);
     expect(result.memoryCleanup?.consolidationCandidates).toEqual([
       {
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         signal: "check vpn before deploy",
         refs: ["memory:deploy.derived", "memory:deploy-verbose.derived"],
         suggestedSurvivorRef: "memory:deploy.derived",
@@ -223,7 +223,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([]);
     expect(result.memoryCleanup?.archived?.[0]).toMatchObject({
       ref: "memory:deploy-duplicate.derived",
-      parentRef: "memory:deploy",
+      parentRef: "memories/deploy",
       reason: "duplicate-derived",
       beliefState: "archived",
       previousBeliefState: "active",
@@ -284,7 +284,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.contradictionCandidates).toEqual([
       {
         ref: "memory:deploy-old.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         reason: "contradicted-derived",
         contradictedByRef: "memory:deploy.derived",
         contradictedByRefs: ["memory:deploy.derived"],
@@ -294,7 +294,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([
       {
         ref: "memory:deploy-old.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "active",
         toState: "contradicted",
         reason: "contradicted-derived",
@@ -387,7 +387,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.contradictionCandidates).toEqual([
       {
         ref: "memory:deploy-legacy.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         reason: "contradicted-derived",
         contradictedByRef: "memory:deploy.derived",
         contradictedByRefs: ["memory:deploy.derived"],
@@ -397,7 +397,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([
       {
         ref: "memory:deploy-legacy.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "active",
         toState: "contradicted",
         reason: "contradicted-derived",
@@ -512,7 +512,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([
       {
         ref: "memory:deploy-legacy.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "contradicted",
         toState: "active",
         reason: "belief-refresh",
@@ -569,7 +569,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.contradictionCandidates).toEqual([
       {
         ref: "memory:deploy-old.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         reason: "contradicted-derived",
         contradictedByRef: "memory:deploy-a.derived",
         contradictedByRefs: ["memory:deploy-a.derived", "memory:deploy-b.derived"],
@@ -579,7 +579,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([
       {
         ref: "memory:deploy-a.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "active",
         toState: "active",
         reason: "belief-refresh",
@@ -589,7 +589,7 @@ describe("akm improve memory cleanup", () => {
       },
       {
         ref: "memory:deploy-b.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "active",
         toState: "active",
         reason: "belief-refresh",
@@ -599,7 +599,7 @@ describe("akm improve memory cleanup", () => {
       },
       {
         ref: "memory:deploy-old.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "active",
         toState: "contradicted",
         reason: "contradicted-derived",

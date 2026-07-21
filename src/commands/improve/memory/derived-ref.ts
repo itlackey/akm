@@ -30,32 +30,53 @@
  * consumer's prior behaviour exactly, so the consumer side is a pure move.
  */
 
-import { parseRefInput } from "../../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parseRefInput } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 
 /**
- * Normalise an arbitrary `source:`/edge string to a canonical `memory:<name>`
- * ref, or `undefined` when it is empty, unparseable, or not a memory ref. Trims
- * whitespace and drops any origin/bundle prefix. The durable `derived_from`
- * channel keeps the legacy `memory:<name>` spelling (WI-8.5c), so this accepts
- * BOTH the new-grammar `[bundle//]memories/<name>` conceptId (via
- * {@link parseRefInput}) and a legacy `[origin//]memory:<name>` `source:` value.
+ * Parse an arbitrary `source:`/edge string to the BARE memory name (no type
+ * prefix), or `undefined` when it is empty, unparseable, or not a memory ref.
+ * Trims whitespace and drops any origin/bundle prefix.
+ *
+ * READ tolerance is intentionally dual-grammar: the value may carry the legacy
+ * `[origin//]memory:<name>` spelling (un-migrated stash content in the wild) OR
+ * the 0.9.0 `[bundle//]memories/<name>` conceptId. Callers format the bare name
+ * into whichever CHANNEL grammar they compare against:
+ *   - the `derived_from` channel → `memories/<name>` conceptId (see
+ *     {@link parseMemoryRef} / {@link resolveParentRef});
+ *   - the belief-edge / identity channel → `memory:<name>` (memory-improve's
+ *     `refArray`, compared against a derived memory's own `memory:<name>` ref,
+ *     a separate legacy remnant Group-C item 2 does NOT touch).
  */
-export function parseMemoryRef(value: string | undefined): string | undefined {
+export function parseMemoryName(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   try {
     const parsed = parseRefInput(trimmed);
-    if (parsed.type !== "memory") return undefined;
-    return `${parsed.type}:${parsed.name}`;
+    return parsed.type === "memory" ? parsed.name : undefined;
   } catch {
     // Legacy `[origin//]memory:<name>` — strip the origin, keep memory refs only.
     const boundary = trimmed.indexOf("//");
     const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
     const MEMORY_PREFIX = "memory:";
-    return body.startsWith(MEMORY_PREFIX) ? `memory:${body.slice(MEMORY_PREFIX.length)}` : undefined;
+    return body.startsWith(MEMORY_PREFIX) ? body.slice(MEMORY_PREFIX.length) : undefined;
   }
+}
+
+/**
+ * Normalise an arbitrary `source:` derived_from backref to the canonical 0.9.0
+ * `memories/<name>` conceptId, or `undefined` when it is not a memory ref
+ * (Group-C item 2 flip). Tolerant of BOTH grammars on input (see
+ * {@link parseMemoryName}), but the NORMALISED OUTPUT is always the conceptId —
+ * so every consumer that compares against the `derived_from` channel (the
+ * parentRef filter, inference dedup, eligibility) speaks one grammar. The
+ * content-migration folds the on-disk legacy spelling forward; this reader keeps
+ * tolerating it until the 0.10.0 grammar removal.
+ */
+export function parseMemoryRef(value: string | undefined): string | undefined {
+  const name = parseMemoryName(value);
+  return name === undefined ? undefined : conceptIdFromTypeName("memory", name);
 }
 
 /**
@@ -68,21 +89,22 @@ export function isDerivedMemory(name: string, frontmatter: Record<string, unknow
 }
 
 /**
- * Resolve the parent (source) memory ref for a derived memory, or `undefined`
- * when none can be determined. Precedence:
+ * Resolve the parent (source) memory ref for a derived memory as the canonical
+ * `memories/<name>` conceptId (Group-C item 2 flip), or `undefined` when none
+ * can be determined. Precedence:
  *   1. `frontmatter.source` (normalised through {@link parseMemoryRef});
- *   2. `frontmatter.derivedFrom` (a bare memory name);
- *   3. the `.derived` name suffix, stripped.
+ *   2. `frontmatter.derivedFrom` (a bare memory name → `memories/<name>`);
+ *   3. the `.derived` name suffix, stripped → `memories/<name>`.
  */
 export function resolveParentRef(name: string, frontmatter: Record<string, unknown>): string | undefined {
   const fromSource = parseMemoryRef(asNonEmptyString(frontmatter.source));
   if (fromSource) return fromSource;
 
   const derivedFrom = asNonEmptyString(frontmatter.derivedFrom);
-  if (derivedFrom) return `memory:${derivedFrom}`;
+  if (derivedFrom) return conceptIdFromTypeName("memory", derivedFrom);
 
   if (name.endsWith(DERIVED_SUFFIX)) {
-    return `memory:${name.slice(0, -DERIVED_SUFFIX.length)}`;
+    return conceptIdFromTypeName("memory", name.slice(0, -DERIVED_SUFFIX.length));
   }
 
   return undefined;

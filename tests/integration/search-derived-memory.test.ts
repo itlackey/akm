@@ -105,7 +105,7 @@ function buildFixture(): void {
   const derivedPath = path.join(memoryDir, "claude-prefs.derived.md");
   fs.writeFileSync(
     derivedPath,
-    "---\ntype: memory\ninferred: true\nsource: memory:claude-prefs\nderivedFrom: claude-prefs\n---\nDistilled style: three spaces, no semicolons, prefer .ts.\n",
+    "---\ntype: memory\ninferred: true\nsource: memories/claude-prefs\nderivedFrom: claude-prefs\n---\nDistilled style: three spaces, no semicolons, prefer .ts.\n",
   );
 
   // A second parent that has NO derived child — default-safety baseline.
@@ -138,8 +138,10 @@ function buildFixture(): void {
           description: "Distilled Claude style preferences: three-space indent, no semicolons, prefer TypeScript.",
           tags: ["claude", "style", "typescript"],
           searchHints: ["claude style", "three spaces"],
-          // The key field that drives derived_from indexing:
-          derivedFrom: "memory:claude-prefs",
+          // The key field that drives derived_from indexing — the 0.9.0
+          // `memories/<name>` conceptId (Group-C item 2), matching the
+          // `getDerivedForParent` lookup key the enricher now builds.
+          derivedFrom: "memories/claude-prefs",
         },
         filePath: derivedPath,
         dirPath: memoryDir,

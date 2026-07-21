@@ -69,12 +69,12 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     // it untouched also avoids `<parent>.derived.derived` chains.
     if (hit.name.toLowerCase().endsWith(".derived")) return;
 
-    // Parent ref shape: `memory:<name>`. Re-build from the entry's name
-    // so we don't depend on whatever wiki/registry prefix `hit.ref` carries.
-    // INTERNAL lookup key into `getDerivedForParent` (derived_from stores the
-    // legacy spelling until the Chunk-8 re-key) — deliberately stays the legacy
-    // `type:name` spelling, built inline.
-    const parentRef = `memory:${hit.name}`;
+    // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
+    // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
+    // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
+    // column now stores this same conceptId grammar (Group-C item 2 flip — the
+    // metadata producer + this consumer move together).
+    const parentRef = `memories/${hit.name}`;
     const derived = getDerivedForParent(ctx.db, parentRef);
     if (!derived) return;
 

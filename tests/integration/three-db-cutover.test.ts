@@ -476,6 +476,16 @@ function seedContentStash(): void {
   );
 
   fs.writeFileSync(path.join(stash, "index.md"), "# Bundle listing\n\n- memories/note\n");
+
+  // Group-C item 2: a derived memory carrying the LAST deliberately-legacy ref
+  // channel — a `source: memory:<parent>` backref (the interpolated name keeps
+  // this legacy seed out of the ref-literal ratchet's counted scope). The
+  // content migration rewrites it forward to `source: memories/<parent>`.
+  const derivedParent = "note";
+  fs.writeFileSync(
+    path.join(memDir, `${derivedParent}.derived.md`),
+    `---\ninferred: true\nsource: memory:${derivedParent}\nderivedFrom: ${derivedParent}\n---\n\nDerived note body.\n`,
+  );
 }
 
 function readContentReport(): ContentMigrationReport {
@@ -522,6 +532,12 @@ describe("WI-8.5d (f) — content migration folds .stash.json + D-R6 renames mis
     expect(report.reservedRenames).toHaveLength(1);
     expect(report.reservedRenames[0]).toEqual({ from: misnamedIndex, to: renamedIndex });
 
+    // (3b) Group-C item 2: the derived memory's legacy `source: memory:<parent>`
+    // backref is rewritten forward to the 0.9.0 conceptId and counted.
+    expect(report.sourceBackrefsRewritten).toBe(1);
+    const derivedNotePath = path.join(stash, "memories", "note.derived.md");
+    expect(parseFrontmatter(fs.readFileSync(derivedNotePath, "utf8")).data.source).toBe("memories/note");
+
     // (4) A second migrate apply is a no-op — the folded/renamed state is unchanged.
     const noteAfterFirst = fs.readFileSync(notePath, "utf8");
     const second = await runCliCapture(["migrate", "apply"]);
@@ -530,8 +546,15 @@ describe("WI-8.5d (f) — content migration folds .stash.json + D-R6 renames mis
     expect(fs.existsSync(sidecarPath)).toBe(false);
     expect(fs.existsSync(renamedIndex)).toBe(true);
 
-    // (5) Re-running the step itself directly is idempotent: nothing left to do.
+    // (5) Re-running the step itself directly is idempotent: nothing left to do
+    // (the source backref is already `memories/note`, so no re-rewrite).
     const rerun = runContentMigration([stash]);
-    expect(rerun).toEqual({ sidecarsFolded: 0, entriesFolded: 0, entriesSkipped: 0, reservedRenames: [] });
+    expect(rerun).toEqual({
+      sidecarsFolded: 0,
+      entriesFolded: 0,
+      entriesSkipped: 0,
+      reservedRenames: [],
+      sourceBackrefsRewritten: 0,
+    });
   }, 30_000);
 });

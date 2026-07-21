@@ -200,11 +200,11 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     const secondPath = path.join(memoriesDir, "deploy-b.derived.md");
     fs.writeFileSync(
       firstPath,
-      "---\ndescription: Deploy through VPN\ninferred: true\nsource: memory:deploy\n---\n\nUse the VPN.\n",
+      "---\ndescription: Deploy through VPN\ninferred: true\nsource: memories/deploy\n---\n\nUse the VPN.\n",
     );
     fs.writeFileSync(
       secondPath,
-      "---\ndescription: Deploy without VPN\ninferred: true\nsource: memory:deploy\n---\n\nDo not use the VPN.\n",
+      "---\ndescription: Deploy without VPN\ninferred: true\nsource: memories/deploy\n---\n\nDo not use the VPN.\n",
     );
     const before = snapshotSandboxRoots(stashDir);
     const ensureIndexFn = mock(async () => {

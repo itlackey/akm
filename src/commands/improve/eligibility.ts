@@ -282,7 +282,12 @@ export function memoryCleanupParentRef(
   if (scope.mode !== "ref" || !scope.value) return undefined;
   const parsed = parseRefInput(scope.value);
   if (parsed.type !== "memory") return undefined;
-  if (!parsed.name.endsWith(".derived")) return scope.value;
+  // Non-derived parent scope: emit the canonical `memories/<name>` conceptId so
+  // it matches `resolveParentRef`'s output in analyzeMemoryCleanup's parentRef
+  // filter (Group-C item 2 — the reader and every comparison site flipped
+  // together; emitting the raw scope value would re-open the mismatch the
+  // chunk-8 history warns about).
+  if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
 
   const sources = resolveSourceEntries(stashDir);
   for (const source of sources) {
@@ -290,18 +295,16 @@ export function memoryCleanupParentRef(
     if (!fs.existsSync(candidate)) continue;
     const raw = fs.readFileSync(candidate, "utf8");
     const fm = parseFrontmatter(raw).data;
-    // The `source:` backref channel keeps the legacy `memory:<name>` spelling
-    // (WI-8.5c) — read it through the legacy-tolerant parseMemoryRef, never
-    // the strict new-grammar parser.
-    // parseMemoryRef returns the legacy-normalized `memory:<name>` — the
-    // derived_from channel's deliberate internal spelling (WI-8.5c), which is
-    // exactly what analyzeMemoryCleanup's parentRef filter compares against
-    // (resolveParentRef emits the same). Do NOT convert to conceptId here.
+    // The `source:` backref (the `derived_from` channel) is read through the
+    // legacy-tolerant parseMemoryRef, whose NORMALISED output is now the 0.9.0
+    // `memories/<name>` conceptId (Group-C item 2). That is exactly what
+    // analyzeMemoryCleanup's parentRef filter compares against — resolveParentRef
+    // emits the same conceptId — so the two sites stay in lockstep.
     const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
     if (parent) return parent;
   }
 
-  return `memory:${parsed.name.slice(0, -".derived".length)}`;
+  return conceptIdFromTypeName("memory", parsed.name.slice(0, -".derived".length));
 }
 
 export function isLessonCandidate(ref: string): boolean {

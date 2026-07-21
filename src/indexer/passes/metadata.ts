@@ -289,6 +289,39 @@ function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
   return normalizeNonEmptyStringList(value);
 }
 
+/**
+ * Normalise one derived-memory parent backref to the 0.9.0 `memories/<name>`
+ * conceptId for the `derived_from` column (Group-C item 2 flip), tolerant of
+ * BOTH the flipped `[bundle//]memories/<name>` producer output and the legacy
+ * `[origin//]memory:<name>` spelling still on disk pre content-migration.
+ * Returns `undefined` for a non-memory / bare value so the caller can fall back
+ * to the bare `derivedFrom` key. Kept inline (a two-branch pure string op) so
+ * the indexer stays self-contained and does not import the commands-layer
+ * reader — the two normalisers agree on output by construction.
+ */
+function normalizeMemoryBackref(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const boundary = trimmed.indexOf("//");
+  const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+  const MEMORY_PREFIX = "memory:";
+  if (body.startsWith(MEMORY_PREFIX)) return `memories/${body.slice(MEMORY_PREFIX.length)}`;
+  if (body.startsWith("memories/")) return body;
+  return undefined;
+}
+
+/**
+ * Resolve a derived memory's parent conceptId from its `source:` backref (new or
+ * legacy grammar) or, failing that, its bare `derivedFrom: <name>` frontmatter
+ * key (promoted to `memories/<name>`). `undefined` when neither yields a parent.
+ */
+function derivedFromConceptId(source: string | undefined, derivedFrom: string | undefined): string | undefined {
+  const fromSource = normalizeMemoryBackref(source);
+  if (fromSource) return fromSource;
+  if (derivedFrom) return normalizeMemoryBackref(derivedFrom) ?? `memories/${derivedFrom}`;
+  return undefined;
+}
+
 export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const description = asNonEmptyString(fmData.description);
   if (description) {
@@ -371,26 +404,19 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   if (evidenceSources) entry.evidenceSources = evidenceSources;
 
   // Phase 5A / Advantage D5: capture parent ref for derived memories.
-  // Memory-inference writes `source: "memory:<parent>"` and `inferred: true`
-  // (and a derived child name suffix `.derived`). We mirror that source ref
-  // into `entry.derivedFrom` so the indexer can populate the dedicated
-  // `derived_from` column. Non-derived entries leave this field unset.
+  // Memory-inference writes `source: "memories/<parent>"` and `inferred: true`
+  // (and a derived child name suffix `.derived`). We mirror that source ref into
+  // `entry.derivedFrom` so the indexer can populate the dedicated `derived_from`
+  // column. Group-C item 2: the column is stored in the 0.9.0 `memories/<name>`
+  // conceptId grammar — moving in lockstep with the `getDerivedForParent` lookup
+  // key (search-hit-enrichers) so producer + consumer speak one grammar.
+  // Non-derived entries leave this field unset.
   if (entry.type === "memory") {
     const isDerivedByName = entry.name.toLowerCase().endsWith(".derived");
     const isDerivedByFm = fmData.inferred === true;
     if (isDerivedByName || isDerivedByFm) {
-      const sourceStr = asNonEmptyString(fmData.source);
-      if (sourceStr?.includes(":")) {
-        entry.derivedFrom = sourceStr;
-      } else {
-        // Fallback: some legacy renderings store only `derivedFrom: <name>`
-        // (a bare parent name). Promote it to a `memory:` ref so the lookup
-        // column stays consistent.
-        const derivedFromName = asNonEmptyString(fmData.derivedFrom);
-        if (derivedFromName) {
-          entry.derivedFrom = derivedFromName.includes(":") ? derivedFromName : `memory:${derivedFromName}`;
-        }
-      }
+      const parent = derivedFromConceptId(asNonEmptyString(fmData.source), asNonEmptyString(fmData.derivedFrom));
+      if (parent) entry.derivedFrom = parent;
     }
   }
 

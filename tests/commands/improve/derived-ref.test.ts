@@ -32,26 +32,31 @@ describe("isDerivedMemory", () => {
 });
 
 describe("resolveParentRef — precedence source → derivedFrom → suffix", () => {
-  test("(i) source: normalises whitespace and origin (producer widening)", () => {
-    // Plain memory source.
-    expect(resolveParentRef("child.derived", { source: "memory:parent" })).toBe("memory:parent");
+  // Group-C item 2: the NORMALISED output is the 0.9.0 `memories/<name>`
+  // conceptId, while READ tolerance stays dual-grammar — a legacy
+  // `source: memory:<name>` on un-migrated disk still resolves.
+  test("(i) source: normalises whitespace and origin, output is the conceptId", () => {
+    // Legacy `memory:<name>` input → flipped `memories/<name>` output.
+    expect(resolveParentRef("child.derived", { source: "memory:parent" })).toBe("memories/parent");
     // Leading/trailing whitespace — the old producer's raw startsWith() dropped this.
-    expect(resolveParentRef("child.derived", { source: "  memory:parent  " })).toBe("memory:parent");
-    // Origin prefix — normalised away to the canonical memory ref.
-    expect(resolveParentRef("child.derived", { source: "team//memory:parent" })).toBe("memory:parent");
+    expect(resolveParentRef("child.derived", { source: "  memory:parent  " })).toBe("memories/parent");
+    // Origin prefix — normalised away to the canonical conceptId.
+    expect(resolveParentRef("child.derived", { source: "team//memory:parent" })).toBe("memories/parent");
+    // New-grammar `memories/<name>` input is tolerated too (post-migration disk).
+    expect(resolveParentRef("child.derived", { source: "memories/parent" })).toBe("memories/parent");
     // Non-memory source is ignored, falling through to the next rule.
-    expect(resolveParentRef("child.derived", { source: "knowledge:doc.md" })).toBe("memory:child");
+    expect(resolveParentRef("child.derived", { source: "knowledge:doc.md" })).toBe("memories/child");
   });
 
   test("(ii) derivedFrom: resolves the parent even without a suffix (producer widening)", () => {
     // No .derived suffix, no source — the old producer copy returned undefined
     // here and the family never reached contradiction detection.
-    expect(resolveParentRef("child", { derivedFrom: "parent" })).toBe("memory:parent");
+    expect(resolveParentRef("child", { derivedFrom: "parent" })).toBe("memories/parent");
   });
 
   test("(iii) .derived suffix strip, including nested names", () => {
-    expect(resolveParentRef("auth-tips.derived", {})).toBe("memory:auth-tips");
-    expect(resolveParentRef("nested/foo.derived", {})).toBe("memory:nested/foo");
+    expect(resolveParentRef("auth-tips.derived", {})).toBe("memories/auth-tips");
+    expect(resolveParentRef("nested/foo.derived", {})).toBe("memories/nested/foo");
   });
 
   test("returns undefined when nothing resolves a parent", () => {
@@ -61,16 +66,19 @@ describe("resolveParentRef — precedence source → derivedFrom → suffix", ()
 
   test("derivedFrom wins over the suffix — the alignment that fixes producer/consumer disagreement", () => {
     // The consumer already prioritised derivedFrom over the suffix; the old
-    // producer copy (suffix-only) would have resolved memory:foo here. Sharing
-    // one impl makes both resolve memory:bar.
-    expect(resolveParentRef("foo.derived", { derivedFrom: "bar" })).toBe("memory:bar");
+    // producer copy (suffix-only) would have resolved the `foo` parent here.
+    // Sharing one impl makes both resolve `memories/bar`.
+    expect(resolveParentRef("foo.derived", { derivedFrom: "bar" })).toBe("memories/bar");
   });
 });
 
 describe("parseMemoryRef", () => {
-  test("normalises a memory ref and rejects non-memory / empty inputs", () => {
-    expect(parseMemoryRef("memory:x")).toBe("memory:x");
-    expect(parseMemoryRef("  team//memory:x ")).toBe("memory:x");
+  test("normalises to the memories/ conceptId, tolerant of both grammars, rejects non-memory/empty", () => {
+    // Legacy input → flipped conceptId output (Group-C item 2).
+    expect(parseMemoryRef("memory:x")).toBe("memories/x");
+    expect(parseMemoryRef("  team//memory:x ")).toBe("memories/x");
+    // New-grammar input is accepted and returned canonicalised.
+    expect(parseMemoryRef("memories/x")).toBe("memories/x");
     expect(parseMemoryRef("knowledge:x")).toBeUndefined();
     expect(parseMemoryRef(undefined)).toBeUndefined();
     expect(parseMemoryRef("")).toBeUndefined();

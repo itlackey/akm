@@ -57,6 +57,23 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
 - Consolidate LLM-prompt refs: FLIPPED at close (chunking.ts → `memories/`), removed from survivors.
 - Workflow run-key family: FLIPPED at close (see §11.4 above), removed from survivors.
 
+> **Update 2026-07-21 (Group-C item 2, task #47) — `derived_from` channel FLIPPED, survivors 50 → 48.**
+> The `derived_from` channel (the WI-8.5c survivor above) was flipped to the 0.9.0 `memories/<name>`
+> grammar end-to-end, so it is no longer a survivor:
+> - PRODUCER: `renderDerivedMemory` (memory-inference.ts) now writes `source: memories/<name>`, and
+>   the index `derived_from` COLUMN producer (`metadata.ts`) normalises to the same conceptId.
+> - READER: `parseMemoryRef`/`resolveParentRef` (derived-ref.ts) stay tolerant of BOTH spellings on
+>   input (un-migrated disk) but their NORMALISED output is now `memories/<name>`.
+> - CONSUMERS (flipped in lockstep so the parentRef comparison never mismatches): `memoryCleanupParentRef`
+>   (eligibility.ts) + `collectDerivedMemories`' parentRef filter/`canonicalName` (memory-improve.ts) +
+>   the `getDerivedForParent` lookup key (search-hit-enrichers.ts) + the contradiction-detect grouping.
+> - CONTENT MIGRATION: `content-migration.ts` gained a third journaled fold that rewrites on-disk
+>   `source: memory:<name>` → `source: memories/<name>` (idempotent, reported as `sourceBackrefsRewritten`).
+>   The index column needs NO migration — it is regenerable, so the producer flip + a reindex re-key it.
+> - RATCHET: ceiling lowered 50 → 48 (the two `source: memory:deploy` fixtures in
+>   improve-dry-run-side-effects.test.ts were the only derived_from tokens in the counted scope; the
+>   memory-specific suites are skip-listed). Deferral #3 below is thereby CLOSED.
+
 ## Open deferrals (tracked)
 
 1. **#37 — CLOSED (2026-07-21)**: full old-config-shape retirement landed. Schema hard-rejects
@@ -76,6 +93,9 @@ graph rows ✅ (file-path-keyed by #624-P1, no ref key).
    contribute only frontmatter-recognized entries with generated metadata. The module survives in
    `src/migrate/legacy/` for the cutover's fold step only.
 3. `derived_from`/`source:` legacy channel (above) — candidate for a 0.9.x content migration.
+   **CLOSED (2026-07-21, Group-C item 2 / task #47)**: flipped to `memories/<name>` producer +
+   consumer + reader-wide; the coupled content-migration fold rewrites disk content forward. See the
+   dated update in "Ratchet survivors" above. Survivors 50 → 48.
 
 ## Process notes (for future chunk runs)
 

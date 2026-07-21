@@ -137,7 +137,7 @@ describe("Phase 1A: belief-state transitions for asserted/deprecated", () => {
     expect(result.memoryCleanup?.beliefStateTransitions).toEqual([
       {
         ref: "memory:deploy.derived",
-        parentRef: "memory:deploy",
+        parentRef: "memories/deploy",
         fromState: "asserted",
         // Critically: preserved as 'asserted', not downgraded to 'active'.
         toState: "asserted",

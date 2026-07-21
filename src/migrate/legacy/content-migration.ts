@@ -6,7 +6,7 @@
  * @removeIn 0.10.0
  *
  * The one-time content migration (akm 0.9.0 Chunk 8, WI-8.5d; ref-grammar
- * decision D-R6; plan §3.4). Two filesystem folds that retire the last two
+ * decision D-R6; plan §3.4). Three filesystem folds that retire the last
  * pre-0.9 on-disk shapes, run as an ADDITIVE journaled step of the
  * `cutover-applied` phase AFTER the state txn commits — best-effort (log, never
  * abort a committed cutover) and idempotent (a second apply is a no-op).
@@ -27,6 +27,18 @@
  *     `log-content.md`, appending `-2`/`-3`/… on collision) so the akm adapter's
  *     new reserved-file exclusion never silently drops it. A structural
  *     `index.md`/`log.md` (no asset frontmatter) is left in place.
+ *  3. **`derived_from` backref grammar (Group-C item 2).** A derived memory's
+ *     `source: memory:<name>` frontmatter backref — the last deliberately-legacy
+ *     ref channel (WI-8.5c survivor) — is rewritten forward to the 0.9.0
+ *     `source: memories/<name>` conceptId, matching the flipped producer output.
+ *     Idempotent: a value already in `memories/<name>` (or any non-`memory:`
+ *     `source`) is left untouched. The index `derived_from` COLUMN needs no fold
+ *     — it is regenerable, so the producer flip + a reindex re-key it.
+ *
+ * PRE-RELEASE EXTENSION NOTE: 0.9.0 is UNRELEASED, so no user has run the cutover
+ * yet. Fold #3 was ADDED to this step (not a second migration) after folds #1/#2
+ * shipped in-branch — the module's READ behavior (the frozen sidecar reader) is
+ * unchanged; only the rewrite/fold set grew. Post-release this file is frozen.
  *
  * This module is migrator-only and imports the frozen sidecar reader
  * ({@link readLegacyStashOverrides}) plus core leaves; it is never on a live
@@ -59,6 +71,12 @@ export interface ContentMigrationReport {
   entriesSkipped: number;
   /** D-R6 reserved-file renames performed. */
   reservedRenames: ReservedRename[];
+  /**
+   * Group-C item 2: derived-memory `source: memory:<name>` frontmatter backrefs
+   * rewritten forward to the 0.9.0 `source: memories/<name>` conceptId. A value
+   * already in `memories/<name>` (or any non-`memory:` `source`) is not counted.
+   */
+  sourceBackrefsRewritten: number;
 }
 
 /** OKF reserved structural filenames (case-insensitive, any depth). */
@@ -99,7 +117,7 @@ const CURATED_FIELD_MAP: ReadonlyArray<readonly [keyof IndexDocument, string]> =
 ];
 
 function emptyReport(): ContentMigrationReport {
-  return { sidecarsFolded: 0, entriesFolded: 0, entriesSkipped: 0, reservedRenames: [] };
+  return { sidecarsFolded: 0, entriesFolded: 0, entriesSkipped: 0, reservedRenames: [], sourceBackrefsRewritten: 0 };
 }
 
 function safeIsDir(p: string): boolean {
@@ -149,8 +167,53 @@ export function runContentMigration(stashRoots: readonly string[]): ContentMigra
     const dirs = collectDirs(resolved);
     for (const dir of dirs) foldSidecarInDir(dir, report);
     for (const dir of dirs) renameReservedConceptsInDir(dir, report);
+    for (const dir of dirs) rewriteSourceBackrefsInDir(dir, report);
   }
   return report;
+}
+
+/**
+ * Group-C item 2: rewrite each markdown file's legacy `source: memory:<name>`
+ * derived-memory backref forward to the 0.9.0 `source: memories/<name>`
+ * conceptId. Idempotent — a `source` already in `memories/<name>` (or any value
+ * that is not a `memory:` backref) is skipped, so a second apply rewrites
+ * nothing. Best-effort per file (log + continue on error).
+ */
+function rewriteSourceBackrefsInDir(dir: string, report: ContentMigrationReport): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== ".md") continue;
+    const filePath = path.join(dir, entry.name);
+    try {
+      const source = asNonEmptyString(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data.source);
+      const rewritten = legacyMemoryBackrefToConceptId(source);
+      if (rewritten === undefined) continue; // already conceptId / not a memory backref → no-op
+      mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, source: rewritten }));
+      report.sourceBackrefsRewritten++;
+    } catch (error) {
+      warn(`[akm] content-migration: could not rewrite source backref in ${filePath}: ${errMsg(error)}`);
+    }
+  }
+}
+
+/**
+ * Return the `memories/<name>` conceptId for a legacy `memory:<name>` backref,
+ * or `undefined` when `value` is absent, already a `memories/<name>` conceptId,
+ * or not a `memory:` backref at all. Only the bare legacy spelling the producer
+ * ever wrote is rewritten (origin-prefixed values were never produced on
+ * `source:` and are left untouched — the tolerant reader still normalises them).
+ */
+function legacyMemoryBackrefToConceptId(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const MEMORY_PREFIX = "memory:";
+  if (!trimmed.startsWith(MEMORY_PREFIX)) return undefined;
+  return `memories/${trimmed.slice(MEMORY_PREFIX.length)}`;
 }
 
 /** Fold + delete one directory's `.stash.json`, if present. */

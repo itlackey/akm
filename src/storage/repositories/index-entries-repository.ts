@@ -140,7 +140,8 @@ function getUpsertStmts(db: Database): UpsertStmts {
 
 /**
  * Phase 5A / Advantage D5: look up the derived-memory child row whose
- * `derived_from` column matches `parentRef` (e.g. `"memory:claude-prefs"`).
+ * `derived_from` column matches `parentRef` (the 0.9.0 conceptId, e.g.
+ * `"memories/claude-prefs"` — Group-C item 2 flip).
  *
  * Returns the most-recently-updated derived child when multiple exist (one
  * parent should yield exactly one `.derived` child in practice, but the

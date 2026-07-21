@@ -50,23 +50,32 @@ const SKIP_CONFIG = path.join(import.meta.dir, "codemod-ref-literals.skip.json")
 // the workflow run-key family flipped when `canonicalWorkflowRunRef` became the
 // single mint site (`workflows/<name>` written by runs.ts, pre-existing rows
 // re-keyed by the cutover), and the consolidate LLM-prompt refs flipped when
-// chunking.ts moved to `memories/<name>`. The residual 50 are the SANCTIONED
-// survivors dispositioned in docs/design/execution/chunk-8/ledger.md
-// ("Ratchet survivors (50)"):
+// chunking.ts moved to `memories/<name>`.
+//
+// Group-C item 2 (task #47) then drove 50 → 48: the `derived_from` channel — the
+// LAST deliberately-legacy ref channel — was flipped to the 0.9.0 grammar
+// producer + consumer + reader-wide, retiring the two `source: memory:deploy`
+// derived-memory backref fixtures in improve-dry-run-side-effects.test.ts (the
+// only derived_from tokens in the COUNTED scope; the memory-specific suites are
+// skip-listed). The residual 48 are the SANCTIONED survivors dispositioned in
+// docs/design/execution/chunk-8/ledger.md ("Ratchet survivors"):
 //   • index `entry_key` seeds/queries — SRC builds `${stashDir}:${type}:${name}`
 //     (index.db-internal, regenerable, NOT durable state; item_ref is the
 //     separate durable column): utility-scoring, scoped-utility, graph-update,
 //     graph-cli-envelope, indexer-rejection, index-db-version-preserve,
 //     llm-enrichment-cache.
-//   • the `derived_from` channel (`memory:<name>` index column + `source:`
-//     frontmatter backref) — deliberate WI-8.5c decision, producer+consumer-
-//     consistent legacy channel with a tolerant reader (parseMemoryRef);
-//     flipping it is a 0.9.x content-migration follow-up.
 //   • error-message / prose refs the SRC formats as `type:name`, plus
 //     false positives that are not refs at all: `$env:` PowerShell
 //     (tasks-schtasks-backend), `session:<harness>:<id>` provenance
 //     (asset-serialize), `…-agent:ok` process output (published-task-upgrade).
-const CEILING = 50;
+//
+// RETIRED at Group-C item 2: the `derived_from` channel (formerly `memory:<name>`
+// index column + `source:` frontmatter backref, a WI-8.5c survivor) now speaks
+// the 0.9.0 `memories/<name>` grammar end-to-end. Its tolerant reader
+// (parseMemoryRef) still ACCEPTS the legacy spelling on un-migrated disk but
+// normalises its OUTPUT to the conceptId; the content-migration folds disk
+// content forward.
+const CEILING = 48;
 
 const TYPES = [
   "skill",

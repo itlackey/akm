@@ -40,7 +40,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { warn } from "../../core/warn";
@@ -142,7 +142,11 @@ interface MemoryRecord {
   filePath: string;
   /** Source root the file lives under (the writable stash dir). */
   stashRoot: string;
-  /** Parent ref name (`memory:<name>`) — used for the `source:` backref on children. */
+  /**
+   * Parent identity ref (`memory:<name>`) — internal candidate/progress key. The
+   * child's `source:` backref is derived from `name` as a `memories/<name>`
+   * conceptId (Group-C item 2), NOT from this legacy identity ref.
+   */
   ref: string;
   /** Existing frontmatter (parsed). */
   data: Record<string, unknown>;
@@ -563,7 +567,11 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
   const fm: Record<string, unknown> = {
     [FM_INFERRED]: true,
     [FM_CAPTURE_MODE]: "background",
-    [FM_SOURCE]: parent.ref,
+    // Group-C item 2: the `source:` backref (the `derived_from` channel) is now
+    // written in the 0.9.0 `memories/<name>` conceptId grammar, not the legacy
+    // `memory:<name>`. `parent.ref` stays the legacy identity ref used internally
+    // for candidate/progress bookkeeping; only the on-disk backref is flipped.
+    [FM_SOURCE]: conceptIdFromTypeName("memory", parent.name),
     description: derived.description,
     tags: derived.tags,
     searchHints: derived.searchHints,

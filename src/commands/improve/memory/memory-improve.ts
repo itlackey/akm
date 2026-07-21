@@ -6,9 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
+import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
-import { isDerivedMemory, parseMemoryRef, resolveParentRef } from "./derived-ref";
+import { isDerivedMemory, parseMemoryName, resolveParentRef } from "./derived-ref";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
@@ -754,7 +755,12 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
       tags,
       searchHints,
       body,
-      canonicalName: name === `${parentRef.slice("memory:".length)}${DERIVED_SUFFIX}`,
+      // parentRef is the 0.9.0 `memories/<name>` conceptId (Group-C item 2), so
+      // the canonical-child test compares the minted conceptId of the suffix-
+      // stripped name against it rather than slicing a fixed `memory:` prefix.
+      canonicalName:
+        name.endsWith(DERIVED_SUFFIX) &&
+        parentRef === conceptIdFromTypeName("memory", name.slice(0, -DERIVED_SUFFIX.length)),
       signalScore: computeSignalScore(title, description, tags, searchHints, body),
       fingerprint: buildFingerprint(title, description, tags, searchHints, body),
       ...(signalKey ? { signalKey } : {}),
@@ -812,17 +818,25 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
   return "active";
 }
 
+// Belief-edge refs (contradictedBy / supersededBy / currentBeliefRefs) are the
+// IDENTITY channel: they are compared against a derived memory's own
+// `memory:<name>` ref (resolveFamilyContradictions' familyRefSet,
+// firstExistingRef's byRef map), so they stay in `memory:<name>` grammar. This
+// is deliberately NOT the `memories/<name>` derived_from conceptId — Group-C
+// item 2 flipped only that channel. We parse the tolerant bare name and format
+// it back into identity grammar so both grammars on disk resolve to the ref
+// record.ref carries.
 function refArray(value: unknown): string[] {
   if (typeof value === "string") {
-    const parsed = parseMemoryRef(value);
-    return parsed ? [parsed] : [];
+    const name = parseMemoryName(value);
+    return name === undefined ? [] : [`memory:${name}`];
   }
   if (!Array.isArray(value)) return [];
   const refs = new Set<string>();
   for (const item of value) {
     if (typeof item !== "string") continue;
-    const parsed = parseMemoryRef(item);
-    if (parsed) refs.add(parsed);
+    const name = parseMemoryName(item);
+    if (name !== undefined) refs.add(`memory:${name}`);
   }
   return [...refs].sort();
 }
