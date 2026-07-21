@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
 import path from "node:path";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
@@ -795,7 +796,20 @@ export async function runImprovePostLoopStage(args: {
           }
         })
         .slice(0, 10)
-        .map((r) => ({ ref: r.ref, body: "" }));
+        .map((r) => {
+          // The URL scan needs the document body; filePath is pre-resolved on
+          // eligible refs at planning time (#591). Best-effort — an unreadable
+          // or unresolved file contributes no URLs, same as before.
+          let body = "";
+          if (r.filePath) {
+            try {
+              body = fs.readFileSync(r.filePath, "utf8");
+            } catch {
+              // best-effort
+            }
+          }
+          return { ref: r.ref, body };
+        });
       if (knowledgeEntries.length > 0) {
         info(`[improve] checking URLs in ${knowledgeEntries.length} knowledge refs`);
         deadUrls = await checkDeadUrls(primaryStashDir, knowledgeEntries);
