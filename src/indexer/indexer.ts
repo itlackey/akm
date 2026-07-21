@@ -722,6 +722,12 @@ type DirRecord = {
    * `content_hash`. Absent on skipped dirs (nothing drained).
    */
   hashByFile?: Map<string, string>;
+  /**
+   * `doc.conceptId` keyed by recognized-file absolute path — the OWNING
+   * adapter's identity, preferred by the persist layer over akm's
+   * `stashDirFor` re-derivation (D-R3 identity fidelity for non-akm adapters).
+   */
+  conceptIdByFile?: Map<string, string>;
 };
 
 type DirNeedingLlm = {
@@ -834,6 +840,7 @@ async function scanSourceDirs(
     stateFiles: string[],
     stash: StashFile | null,
     hashByFile: Map<string, string>,
+    conceptIdByFile: Map<string, string>,
   ): void => {
     const previousState = getDirIndexState(db, dirPath, stateFiles, builtAtMs);
     if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
@@ -862,6 +869,7 @@ async function scanSourceDirs(
       reason,
       persistedRowCount: previousState.persistedRowCount,
       hashByFile,
+      conceptIdByFile,
     });
     reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
   };
@@ -958,7 +966,7 @@ async function scanSourceDirs(
         generatedCount += generated.entries.length;
       }
 
-      recordFreshnessDecision(dirPath, currentStashDir, staleFiles, stash, drained.hashByFile);
+      recordFreshnessDecision(dirPath, currentStashDir, staleFiles, stash, drained.hashByFile, drained.conceptIdByFile);
     }
   }
 
@@ -1054,7 +1062,7 @@ function persistDirRecords(
       db.exec("DELETE FROM entries");
     }
 
-    for (const { dirPath, currentStashDir, files, stash, skip, reason, hashByFile } of dirRecords) {
+    for (const { dirPath, currentStashDir, files, stash, skip, reason, hashByFile, conceptIdByFile } of dirRecords) {
       if (skip) {
         if (reason?.kind === "unchanged") {
           const fingerprint = computeDirFingerprint(dirPath, files);
@@ -1109,7 +1117,9 @@ function persistDirRecords(
           // provenance when the source root has no bundle mapping (e.g. write-back
           // paths) — healed on next index.
           const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
-          const provenance = bundle ? deriveEntryProvenance(bundle, entry.type, entry.name) : undefined;
+          const provenance = bundle
+            ? deriveEntryProvenance(bundle, entry.type, entry.name, conceptIdByFile?.get(entryPath))
+            : undefined;
 
           const entryId = upsertEntry(
             db,

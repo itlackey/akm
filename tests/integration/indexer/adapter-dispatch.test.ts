@@ -40,18 +40,25 @@ interface Row {
   entryType: string;
   adapterId: string | null;
   conceptId: string;
+  itemRef: string | null;
 }
 
 function readEntries(): Row[] {
   const db = openIndexDatabase();
   try {
     return (
-      db.prepare("SELECT entry_type, adapter_id, concept_id FROM entries").all() as Array<{
+      db.prepare("SELECT entry_type, adapter_id, concept_id, item_ref FROM entries").all() as Array<{
         entry_type: string;
         adapter_id: string | null;
         concept_id: string;
+        item_ref: string | null;
       }>
-    ).map((r) => ({ entryType: r.entry_type, adapterId: r.adapter_id, conceptId: r.concept_id }));
+    ).map((r) => ({
+      entryType: r.entry_type,
+      adapterId: r.adapter_id,
+      conceptId: r.concept_id,
+      itemRef: r.item_ref,
+    }));
   } finally {
     closeDatabase(db);
   }
@@ -105,6 +112,18 @@ describe("indexer dispatch — a detected llm-wiki component is recognized by th
 
   test("every persisted row carries the llm-wiki adapter provenance", () => {
     for (const r of rows) expect(r.adapterId).toBe("llm-wiki");
+  });
+
+  test("item_ref carries the llm-wiki adapter's OWN conceptId verbatim (identity fidelity)", () => {
+    // The persist layer must prefer doc.conceptId over akm's stashDirFor
+    // re-derivation: llm-wiki conceptIds are root-relative paths (`pages/...`,
+    // `raw/...`), which the akm scheme would collapse to a bare name.
+    const pathQualified = rows.filter((r) => r.conceptId.includes("/"));
+    expect(pathQualified.length).toBeGreaterThan(0);
+    for (const r of pathQualified) {
+      expect(r.itemRef).not.toBeNull();
+      expect(r.itemRef).toEndWith(`//${r.conceptId}`);
+    }
   });
 
   test("the reserved root files (schema/index/log) and README are abstained (not concepts)", () => {

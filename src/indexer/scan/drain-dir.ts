@@ -57,6 +57,13 @@ export interface DrainedDir {
   warnings: string[];
   /** `doc.hash` keyed by the recognized file's absolute path (content_hash source, item 2). */
   hashByFile: Map<string, string>;
+  /**
+   * `doc.conceptId` keyed by the recognized file's absolute path. The persist
+   * layer prefers this over re-deriving via akm's `stashDirFor` scheme so a
+   * non-akm adapter's identity (`pages/foo`, snapshot paths, …) survives into
+   * `item_ref` verbatim (D-R3: identity comes from the owning adapter).
+   */
+  conceptIdByFile: Map<string, string>;
 }
 
 /**
@@ -76,6 +83,7 @@ export function drainDirDocuments(
   const entries: IndexDocument[] = [];
   const warnings: string[] = [];
   const hashByFile = new Map<string, string>();
+  const conceptIdByFile = new Map<string, string>();
 
   for (const file of fileContexts) {
     const doc = adapter.recognize(component, file);
@@ -91,10 +99,11 @@ export function drainDirDocuments(
     }
 
     if (doc.hash !== undefined) hashByFile.set(file.absPath, doc.hash);
+    if (doc.conceptId !== undefined) conceptIdByFile.set(file.absPath, doc.conceptId);
     entries.push(entry);
   }
 
-  return { entries, warnings, hashByFile };
+  return { entries, warnings, hashByFile, conceptIdByFile };
 }
 
 /**

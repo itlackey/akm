@@ -205,9 +205,16 @@ export function deriveEntryProvenance(
   bundle: { bundleId: string; componentId: string; adapterId: string },
   type: string,
   name: string,
+  /**
+   * The OWNING adapter's `doc.conceptId`, when the caller has it. Preferred
+   * verbatim over the akm `stashDirFor` re-derivation so a non-akm adapter's
+   * identity (`pages/foo`, snapshot paths, ...) survives into `item_ref`
+   * (D-R3: identity comes from the resolved entry, not a re-derivation).
+   */
+  adapterConceptId?: string,
 ): EntryProvenance {
   const typeStashDir = stashDirFor(type);
-  const conceptId = typeStashDir !== undefined ? `${typeStashDir}/${name}` : name;
+  const conceptId = adapterConceptId ?? (typeStashDir !== undefined ? `${typeStashDir}/${name}` : name);
   return {
     itemRef: `${bundle.bundleId}//${conceptId}`,
     bundleId: bundle.bundleId,
