@@ -25,10 +25,13 @@
  * ## Legacy filesystem import
  *
  * Before 0.9.0 proposals lived as per-uuid JSON directories under
- * `<stashDir>/.akm/proposals/`. The first proposal operation against a stash
- * imports any legacy `proposal.json` files into the table — see
- * `./legacy-import.ts` (`importLegacyProposalFiles`), funnelled through
- * {@link withProposalsDb}.
+ * `<stashDir>/.akm/proposals/`. That import used to run on EVERY proposal
+ * operation here (through {@link withProposalsDb}, disk-probing the legacy tree
+ * forever). It has been FOLDED OUT of the live path into the one-time migrator:
+ * `akm migrate apply` runs it once as an additive step (see
+ * `src/migrate/legacy/proposal-fs-import.ts`). Idempotency is now INSERT OR
+ * IGNORE on the proposal UUID plus migrate-apply's own journal — no live-path
+ * probe, no `proposal_fs_imports` ledger.
  *
  * # Why the queue bypasses `writeAssetToSource`
  *
@@ -93,7 +96,6 @@ import {
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
 import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
-import { importLegacyProposalFiles } from "./legacy-import";
 import {
   AUTOMATED_PROPOSAL_SOURCES,
   type EligibilitySource,
@@ -329,20 +331,17 @@ function newId(ctx?: ProposalsContext): string {
 }
 
 /**
- * Open the state database (honouring the `ctx.dbPath` test seam), run the
- * legacy filesystem import for `stashDir` if it has not happened yet, hand the
+ * Open the state database (honouring the `ctx.dbPath` test seam), hand the
  * connection to `fn`, and close it in a `finally`. Every public function in
- * this module funnels its store access through here so the legacy import is
- * guaranteed to have run before any read or write.
+ * this module funnels its store access through here.
+ *
+ * The pre-0.9 filesystem-proposal import no longer runs here — it was a per-op
+ * disk probe of `<stashDir>/.akm/proposals/` and now runs once inside
+ * `akm migrate apply` (`src/migrate/legacy/proposal-fs-import.ts`). `stashDir`
+ * is still threaded through the public API for the store's per-stash partition.
  */
-function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
-  return withStateDb(
-    (db) => {
-      importLegacyProposalFiles(db, stashDir);
-      return fn(db);
-    },
-    { path: ctx?.dbPath },
-  );
+function withProposalsDb<T>(_stashDir: string, ctx: ProposalsContext | undefined, fn: (db: Database) => T): T {
+  return withStateDb(fn, { path: ctx?.dbPath });
 }
 
 /**

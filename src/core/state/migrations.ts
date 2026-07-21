@@ -361,12 +361,19 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // One-shot ledger for the legacy filesystem→SQLite proposal import (#578).
   //
-  // Before 0.9.0 the proposal queue lived as per-uuid JSON directories under
-  // `<stashDir>/.akm/proposals/` and the `proposals` table (created in 001) was
-  // dead weight. 0.9.0 makes the table canonical; the first proposal operation
-  // against a stash imports any legacy `proposal.json` files it finds (INSERT
-  // OR IGNORE, so re-runs never duplicate) and records the stash here so later
-  // invocations skip the directory walk entirely.
+  // VESTIGIAL as of the Chunk-8 fold: the legacy `proposal.json` import moved
+  // OUT of the live per-operation path and INTO the one-time migrator
+  // (`src/migrate/legacy/proposal-fs-import.ts`, wired through `akm migrate apply`),
+  // whose idempotency is INSERT OR IGNORE on the proposal UUID plus migrate-apply's
+  // own journal — it no longer reads or writes this ledger. The CREATE TABLE
+  // stays because the migration registry is APPEND-ONLY and checksum-sealed:
+  // removing a released fragment would make the schema_migrations ledger of an
+  // already-migrated rc database stop being an exact ordered prefix, and the
+  // runner would refuse to open it. The empty table is harmless.
+  //
+  // Original purpose (pre-fold): the first proposal operation against a stash
+  // imported any legacy `proposal.json` files (INSERT OR IGNORE) and recorded
+  // the stash here so later invocations skipped the directory walk.
   //
   // Indexed (query) columns:
   //   stash_dir    TEXT PK  — absolute stash root the import ran against.

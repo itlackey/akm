@@ -3,10 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `proposals` table (and its `proposal_fs_imports`
- * companion ledger). Extracted verbatim from core/state-db.ts — queries and
- * row-mapping unchanged, only relocated behind the repository boundary.
- * Re-exported by core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `proposals` table. Extracted verbatim from
+ * core/state-db.ts — queries and row-mapping unchanged, only relocated behind
+ * the repository boundary. Re-exported by core/state-db.ts so existing importers
+ * resolve.
+ *
+ * The pre-0.9 `proposal_fs_imports` ledger's read/write helpers used to live here
+ * too; they were dropped when the legacy filesystem-proposal import folded out of
+ * the live path into the one-time migrator (`src/migrate/legacy/proposal-fs-import.ts`),
+ * whose idempotency is now INSERT OR IGNORE on the proposal UUID
+ * ({@link insertProposalIfAbsent}) plus migrate-apply's own journal. Migration 005
+ * still creates the (now vestigial) table — the append-only ledger contract
+ * forbids removing a released migration.
  *
  * @module proposals-repository
  */
@@ -130,11 +138,11 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
 export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<ProposalRow, "id"> & { id: string } {
   // Fields that have no dedicated column live in metadata_json.
   const metaObj: Record<string, unknown> = {};
-  // Legacy filesystem proposal.json objects (pre-envelope, imported by
-  // legacy-import.ts) reach this mapper without `changes` at runtime despite
-  // the type — or, if hand-edited, with a malformed value. Synthesize the
-  // same sentinel entry the read path uses rather than letting one corrupt
-  // legacy file abort a whole import batch.
+  // Legacy filesystem proposal.json objects (pre-envelope, imported by the
+  // migrator's proposal-fs-import.ts) reach this mapper without `changes` at
+  // runtime despite the type — or, if hand-edited, with a malformed value.
+  // Synthesize the same sentinel entry the read path uses rather than letting
+  // one corrupt legacy file abort a whole import batch.
   const safeChanges = Array.isArray(proposal.changes)
     ? proposal.changes.filter((c): c is FileChange => typeof c === "object" && c !== null)
     : undefined;
@@ -273,30 +281,12 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
 }
 
 /**
- * Whether the legacy filesystem proposal import has already run for `stashDir`.
- * See migration 005 (`proposal_fs_imports`).
- */
-export function hasImportedFsProposals(db: Database, stashDir: string): boolean {
-  // Drivers disagree on the no-row sentinel (bun:sqlite → null,
-  // better-sqlite3 → undefined) — Boolean() covers both.
-  return Boolean(db.prepare("SELECT 1 FROM proposal_fs_imports WHERE stash_dir = ?").get(stashDir));
-}
-
-/**
- * Record that the legacy filesystem proposal import completed for `stashDir`
- * so subsequent invocations skip the directory walk. INSERT OR REPLACE keeps
- * the call idempotent.
- */
-export function recordFsProposalsImport(db: Database, stashDir: string, importedCount: number): void {
-  db.prepare(
-    "INSERT OR REPLACE INTO proposal_fs_imports (stash_dir, imported_at, imported_count) VALUES (?, ?, ?)",
-  ).run(stashDir, new Date().toISOString(), importedCount);
-}
-
-/**
  * Insert a proposal row ONLY when the id is not already present (used by the
- * legacy filesystem import so re-runs never clobber rows that have since been
- * mutated through the canonical store). Returns true when a row was inserted.
+ * one-time legacy filesystem import in the migrator —
+ * `src/migrate/legacy/proposal-fs-import.ts` — so a re-run never clobbers rows
+ * that have since been mutated through the canonical store, and re-walking the
+ * still-on-disk legacy files is idempotent). Returns true when a row was
+ * inserted.
  */
 export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDir: string): boolean {
   const v = proposalToRowValues(proposal, stashDir);

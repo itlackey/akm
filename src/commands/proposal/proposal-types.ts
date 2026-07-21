@@ -10,12 +10,13 @@
  * `ProposalValidationFinding`, `ProposalValidationReport`) used to live in
  * `./repository.ts` and `./validators/proposals.ts` / `./validators/proposal-validators.ts`
  * respectively. Both the storage repository (`storage/repositories/proposals-repository.ts`),
- * the legacy filesystem importer (`./legacy-import.ts`), and the validators
+ * the migrator's legacy filesystem importer
+ * (`../../migrate/legacy/proposal-fs-import.ts`), and the validators
  * (`./validators/*.ts`) only need the *type*, not the txn engine or the
  * validator-combining logic — importing those heavier modules just for a
  * type created an import cycle (WI-9.8 KILL 1, plan §10.7 D.3: repository.ts
  * ↔ validators/proposals.ts / proposal-validators.ts / proposal-quality-validators.ts
- * ↔ storage/repositories/proposals-repository.ts ↔ legacy-import.ts).
+ * ↔ storage/repositories/proposals-repository.ts).
  *
  * This module has NO imports back into `./repository.ts` or `./validators/*`
  * — every symbol here is moved verbatim, and the old homes re-export it so

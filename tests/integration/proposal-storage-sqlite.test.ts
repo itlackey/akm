@@ -6,8 +6,12 @@
  *   • rows physically land in state.db, and no `.akm/proposals/` tree appears;
  *   • the full lifecycle (create → list → show → diff → accept / reject →
  *     revert) round-trips through the table;
- *   • one-shot, idempotent backfill of legacy pre-0.9.0 filesystem proposals
- *     (including inlining `backup.<ext>` files as `backupContent`);
+ *   • the migrator's one-time legacy filesystem-proposal import
+ *     (`src/migrate/legacy/proposal-fs-import.ts`) round-trips through the
+ *     lifecycle — accept/revert on an imported row, inlined `backup.<ext>`
+ *     content, and INSERT-OR-IGNORE idempotency. (The end-to-end `migrate apply`
+ *     wiring of that import lives in tests/integration/three-db-cutover.test.ts,
+ *     scenario (g); the live per-op auto-import it replaced is gone.)
  *   • concurrent create + list safety under WAL (a second open connection
  *     reads while the command-path connection writes);
  *   • UUID-prefix resolution + stash_dir partitioning against the table.
@@ -33,6 +37,7 @@ import {
 } from "../../src/commands/proposal/repository";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -288,7 +293,14 @@ function commonPrefix(a: string, b: string): string {
   return a.slice(0, i);
 }
 
-// ── legacy filesystem backfill ───────────────────────────────────────────────
+// ── migrator legacy-import output round-trips the lifecycle ───────────────────
+//
+// The pre-0.9 filesystem-proposal import folded out of the live per-op path
+// (was `withProposalsDb` → `importLegacyProposalFiles`) into the one-time
+// migrator (`src/migrate/legacy/proposal-fs-import.ts`). These tests seed via
+// that importer directly — the SAME code `akm migrate apply` runs — then drive
+// the imported rows through the proposal lifecycle. The end-to-end migrate-apply
+// wiring is tests/integration/three-db-cutover.test.ts scenario (g).
 
 function writeLegacyProposal(
   stashDir: string,
@@ -319,20 +331,35 @@ function legacyRecord(id: string, ref: string, status: string, extra: Record<str
   };
 }
 
-describe("legacy filesystem proposals are imported on first store access", () => {
-  test("pending + archived legacy proposals appear in listProposals; backups are inlined", () => {
+/**
+ * Migrate the state.db (so the `proposals` table exists), then run the migrator's
+ * one-time import over `stash`. Returns the imported count.
+ */
+function runLegacyImport(stash: string): number {
+  openStateDatabase(getStateDbPath()).close();
+  return importLegacyProposalsIntoState(getStateDbPath(), [stash]);
+}
+
+describe("migrator legacy-import output round-trips the proposal lifecycle", () => {
+  test("pending + archived proposals import; backups are inlined; corrupt skipped", () => {
     const stash = makeStashDir();
     const pendingId = "11111111-1111-4111-8111-111111111111";
     const acceptedId = "22222222-2222-4222-8222-222222222222";
-    writeLegacyProposal(stash, legacyRecord(pendingId, "lesson:legacy-pending", "pending"));
+    writeLegacyProposal(stash, legacyRecord(pendingId, "lessons/legacy-pending", "pending"));
     writeLegacyProposal(
       stash,
-      legacyRecord(acceptedId, "lesson:legacy-accepted", "accepted", {
+      legacyRecord(acceptedId, "lessons/legacy-accepted", "accepted", {
         backup: "backup.md",
         review: { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" },
       }),
       { archive: true, backupBody: "LEGACY BACKUP BODY\n" },
     );
+    // A corrupt entry must be skipped without blocking the rest.
+    const corruptDir = path.join(stash, ".akm", "proposals", "88888888-8888-4888-8888-888888888888");
+    fs.mkdirSync(corruptDir, { recursive: true });
+    fs.writeFileSync(path.join(corruptDir, "proposal.json"), "{ not json", "utf8");
+
+    expect(runLegacyImport(stash)).toBe(2);
 
     const pending = listProposals(stash);
     expect(pending.map((p) => p.id)).toEqual([pendingId]);
@@ -356,6 +383,7 @@ describe("legacy filesystem proposals are imported on first store access", () =>
       archive: true,
       backupBody: "---\ndescription: Prior\nwhen_to_use: Prior\n---\n\nPRIOR BODY.\n",
     });
+    expect(runLegacyImport(stash)).toBe(1);
 
     const result = await akmProposalRevert({ stashDir: stash, id, config });
     expect(result.ok).toBe(true);
@@ -363,48 +391,16 @@ describe("legacy filesystem proposals are imported on first store access", () =>
     expect(getProposal(stash, id).status).toBe("reverted");
   });
 
-  test("import is one-shot: files added after the first import are not picked up", () => {
-    const stash = makeStashDir();
-    writeLegacyProposal(stash, legacyRecord("44444444-4444-4444-8444-444444444444", "lesson:first", "pending"));
-
-    expect(listProposals(stash)).toHaveLength(1);
-
-    // Simulate an old binary dropping another file AFTER the import ran.
-    writeLegacyProposal(stash, legacyRecord("55555555-5555-4555-8555-555555555555", "lesson:late", "pending"));
-    expect(listProposals(stash)).toHaveLength(1);
-
-    const db = openStateDatabase(getStateDbPath());
-    try {
-      const marker = db.prepare("SELECT imported_count FROM proposal_fs_imports WHERE stash_dir = ?").get(stash) as {
-        imported_count: number;
-      } | null;
-      expect(marker?.imported_count).toBe(1);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("import never duplicates and never clobbers rows mutated through the canonical store", () => {
+  test("re-running the import never duplicates rows (INSERT OR IGNORE on UUID)", () => {
     const stash = makeStashDir();
     const id = "66666666-6666-4666-8666-666666666666";
-    writeLegacyProposal(stash, legacyRecord(id, "lesson:stable", "pending"));
+    writeLegacyProposal(stash, legacyRecord(id, "lessons/stable", "pending"));
 
-    // Repeated store access — the row count must stay 1.
-    expect(listProposals(stash)).toHaveLength(1);
+    expect(runLegacyImport(stash)).toBe(1);
+    // Second pass over the still-on-disk files re-imports nothing.
+    expect(importLegacyProposalsIntoState(getStateDbPath(), [stash])).toBe(0);
     expect(listProposals(stash)).toHaveLength(1);
     expect(countRows(stash)).toBe(1);
-  });
-
-  test("a corrupt legacy proposal.json is skipped; the rest import", () => {
-    const stash = makeStashDir();
-    const goodId = "77777777-7777-4777-8777-777777777777";
-    writeLegacyProposal(stash, legacyRecord(goodId, "lesson:good", "pending"));
-    const corruptDir = path.join(stash, ".akm", "proposals", "88888888-8888-4888-8888-888888888888");
-    fs.mkdirSync(corruptDir, { recursive: true });
-    fs.writeFileSync(path.join(corruptDir, "proposal.json"), "{ not json", "utf8");
-
-    const imported = listProposals(stash);
-    expect(imported.map((p) => p.id)).toEqual([goodId]);
   });
 
   test("legacy pending proposals accept through the normal flow after import", async () => {
@@ -412,6 +408,7 @@ describe("legacy filesystem proposals are imported on first store access", () =>
     const config = makeConfig(stash);
     const id = "99999999-9999-4999-8999-999999999999";
     writeLegacyProposal(stash, legacyRecord(id, "lessons/legacy-accept", "pending"));
+    expect(runLegacyImport(stash)).toBe(1);
 
     const result = await akmProposalAccept({ stashDir: stash, id, config });
     expect(result.ok).toBe(true);

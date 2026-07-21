@@ -28,6 +28,7 @@ import type { StashFile } from "../../src/indexer/passes/metadata";
 import { type ContentMigrationReport, runContentMigration } from "../../src/migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json";
+import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
@@ -555,6 +556,111 @@ describe("WI-8.5d (f) — content migration folds .stash.json + D-R6 renames mis
       entriesSkipped: 0,
       reservedRenames: [],
       sourceBackrefsRewritten: 0,
+      // runContentMigration itself never imports proposals — that sibling step
+      // lives in config-migrate.ts and needs the migrated state.db handle.
+      legacyProposalsImported: 0,
     });
+  }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (g) Pre-0.9 filesystem-proposal import — folded out of the live per-op path
+//     (was `withProposalsDb` → `importLegacyProposalFiles`) INTO this one-time
+//     migrator step (`src/migrate/legacy/proposal-fs-import.ts`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Write one pre-0.9.0 `<stash>/.akm/proposals[/archive]/<id>/proposal.json`. */
+function writeLegacyProposal(
+  stashDir: string,
+  proposal: Record<string, unknown>,
+  options: { archive?: boolean; backupBody?: string } = {},
+): void {
+  const root = options.archive
+    ? path.join(stashDir, ".akm", "proposals", "archive")
+    : path.join(stashDir, ".akm", "proposals");
+  const dir = path.join(root, String(proposal.id));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "proposal.json"), `${JSON.stringify(proposal, null, 2)}\n`, "utf8");
+  if (options.backupBody !== undefined) fs.writeFileSync(path.join(dir, "backup.md"), options.backupBody, "utf8");
+}
+
+function legacyProposalRecord(id: string, ref: string, status: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    ref,
+    status,
+    source: "reflect",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+    payload: { content: "Prefer rg over grep for code search.\n" },
+    ...extra,
+  };
+}
+
+/** Rows for one stash from the migrated state.db (readonly). */
+function readProposalRows(stashDir: string): Array<{ id: string; status: string; metadata_json: string }> {
+  const db = new Database(getStateDbPathInDataDir(), { readonly: true });
+  try {
+    return db
+      .prepare("SELECT id, status, metadata_json FROM proposals WHERE stash_dir = ? ORDER BY id")
+      .all(stashDir) as Array<{ id: string; status: string; metadata_json: string }>;
+  } finally {
+    db.close();
+  }
+}
+
+describe("(g) migrate apply imports pre-0.9 filesystem proposals into state.db", () => {
+  test("pending + archived proposals land (backup inlined), corrupt skipped, second apply idempotent", async () => {
+    openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+
+    const stash = CONTENT_STASH();
+    fs.mkdirSync(path.join(stash, "lessons"), { recursive: true });
+    const pendingId = "11111111-1111-4111-8111-111111111111";
+    const acceptedId = "22222222-2222-4222-8222-222222222222";
+    const corruptId = "33333333-3333-4333-8333-333333333333";
+    writeLegacyProposal(stash, legacyProposalRecord(pendingId, "lessons/legacy-pending", "pending"));
+    writeLegacyProposal(
+      stash,
+      legacyProposalRecord(acceptedId, "lessons/legacy-accepted", "accepted", {
+        backup: "backup.md",
+        review: { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" },
+      }),
+      { archive: true, backupBody: "LEGACY BACKUP BODY\n" },
+    );
+    // A corrupt legacy entry must be skipped without blocking the rest.
+    const corruptDir = path.join(stash, ".akm", "proposals", corruptId);
+    fs.mkdirSync(corruptDir, { recursive: true });
+    fs.writeFileSync(path.join(corruptDir, "proposal.json"), "{ not json", "utf8");
+
+    const prepared = writeConfigs();
+    const applied = await runCliCapture(["migrate", "apply", "--config", prepared]);
+    expect(applied.code, applied.stderr).toBe(0);
+
+    // (1) Both well-formed proposals imported; the corrupt one skipped.
+    const rows = readProposalRows(stash);
+    expect(rows.map((r) => r.id)).toEqual([pendingId, acceptedId]);
+    const acceptedRow = rows.find((r) => r.id === acceptedId);
+    expect(acceptedRow?.status).toBe("accepted");
+    // (2) The legacy `backup.md` was inlined as `backupContent`.
+    const acceptedMeta = JSON.parse(acceptedRow?.metadata_json ?? "{}") as { backupContent?: string };
+    expect(acceptedMeta.backupContent).toBe("LEGACY BACKUP BODY\n");
+
+    // (3) The import count rides the content-migration report.
+    expect(readContentReport().legacyProposalsImported).toBe(2);
+
+    // (4) The legacy files are left in place on disk (inert, operator-removable).
+    expect(fs.existsSync(path.join(stash, ".akm", "proposals", pendingId, "proposal.json"))).toBe(true);
+
+    // (5) A second migrate apply is a no-op on an already-current install (it
+    // short-circuits before the content step), so the rows stay exactly as
+    // imported — no duplication.
+    const second = await runCliCapture(["migrate", "apply"]);
+    expect(second.code, second.stderr).toBe(0);
+    expect(readProposalRows(stash).map((r) => r.id)).toEqual([pendingId, acceptedId]);
+
+    // (6) Re-running the import step itself over the still-on-disk legacy files
+    // re-imports nothing (INSERT OR IGNORE on the UUID) — idempotent.
+    expect(importLegacyProposalsIntoState(getStateDbPathInDataDir(), [stash])).toBe(0);
+    expect(readProposalRows(stash).map((r) => r.id)).toEqual([pendingId, acceptedId]);
   }, 30_000);
 });

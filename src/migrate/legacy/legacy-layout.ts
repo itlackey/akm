@@ -84,9 +84,9 @@
  * ## Deliberately NOT copied (out of WI-1.4 scope — chunk-1 anchors.md §D.1)
  *
  * `WORKFLOW_MIGRATIONS` (Chunk 8's frozen copy) and the pre-0.9 proposal
- * legacy-import fold (`proposal/legacy-import.ts`, Chunk 5's fold) share
- * this `migrate/legacy/` directory but are NOT this work item's deliverable
- * — do not add them here.
+ * legacy-import fold (now `proposal-fs-import.ts`, the Chunk-5 fold completed
+ * in Chunk 8) share this `migrate/legacy/` directory but were NOT this work
+ * item's deliverable — they were added by their own owning chunks, not WI-1.4.
  *
  * ## Identifier names are intentionally UNCHANGED from their live sources
  *

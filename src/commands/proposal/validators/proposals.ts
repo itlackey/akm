@@ -5,10 +5,11 @@
 /**
  * Proposal validation and content repair.
  *
- * The proposal repository, domain service, and legacy filesystem import moved
- * to `../repository.ts` and `../legacy-import.ts` (#578 storage consolidation).
- * This module keeps only the two proposal *validators* — {@link validateProposal}
- * and {@link repairProposalContent}.
+ * The proposal repository and domain service moved to `../repository.ts` (#578
+ * storage consolidation); the legacy filesystem import now lives in the migrator
+ * (`../../../migrate/legacy/proposal-fs-import.ts`). This module keeps only the
+ * two proposal *validators* — {@link validateProposal} and
+ * {@link repairProposalContent}.
  */
 
 import { repairTruncatedDescription } from "../../../core/text-truncation";

@@ -52,6 +52,7 @@ import { mergeLockEntriesSync } from "../integrations/lockfile";
 import { migrateConfigSourcesToBundles, migratedLockEntries } from "../migrate/legacy/config-source-migration";
 import { type ContentMigrationReport, runContentMigration } from "../migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
+import { importLegacyProposalsIntoState } from "../migrate/legacy/proposal-fs-import";
 import {
   buildCutoverRefMap,
   type CutoverStashRoot,
@@ -618,8 +619,21 @@ function runContentMigrationStep(journal: ApplyJournal, target: AkmConfig): void
   try {
     const roots = cutoverStashRootsFromConfig(target).map((r) => r.path);
     const report = runContentMigration(roots);
+    // Fold the one-time pre-0.9 filesystem-proposal import into this same
+    // additive step (it used to run on every proposal operation via
+    // `withProposalsDb`). state.db has been merged + collapsed to single-file
+    // DELETE mode by this point, so we open it raw and INSERT OR IGNORE each
+    // legacy `proposal.json` on its UUID — idempotent, no ledger needed.
+    //
+    // rc-window edge: a user who already ran `akm migrate apply` on an EARLIER
+    // rc binary (before this fold existed) AND never ran a proposal command
+    // afterward would have their pre-0.9 fs proposals un-imported — the old
+    // live-path import that once covered that gap is gone. Re-running this
+    // idempotent `migrate apply` recovers them (the legacy files are left in
+    // place on import, so they are still there to re-walk). Acceptable for an rc.
+    report.legacyProposalsImported = importLegacyProposalsIntoState(getStateDbPathInDataDir(), roots);
     persistContentMigrationReport(report);
-    if (report.sidecarsFolded > 0 || report.reservedRenames.length > 0) {
+    if (report.sidecarsFolded > 0 || report.reservedRenames.length > 0 || report.legacyProposalsImported > 0) {
       console.log(
         JSON.stringify({
           event: "content-migration",
