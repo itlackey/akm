@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
+import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
 import {
   buildFileContext,
   buildRenderContext,
@@ -466,20 +466,17 @@ describe("recognizeMatch", () => {
   });
 });
 
-// ── 2b. task-yaml metadata contributor ──────────────────────────────────────
+// ── 2b. task-yaml metadata fold ──────────────────────────────────────────────
 //
-// Regression test for the applyTaskMetadata() defect: it called
-// applyFrontmatterDescriptionAndTags(), which parses `---`-fenced frontmatter
-// via parseFrontmatter(). Real task assets (src/tasks/schema.ts TaskDocument)
-// are PLAIN YAML documents with no `---` fences, so that parse silently
-// returned `{}` and the schedule/workflow/prompt searchHints never populated
-// -- only the static "task"/"scheduled" tags were ever emitted. This test
-// must FAIL (searchHints missing schedule:/workflow:/prompt: entries) if the
-// contributor regresses back to the frontmatter parser.
-describe("task-yaml metadata contributor", () => {
-  const TASK_MATCH = { type: "task", specificity: 10, renderer: "task-yaml" };
-
-  test("populates schedule/workflow/prompt searchHints and task/scheduled tags from plain YAML", async () => {
+// Regression test for the task-yaml defect: the extraction must parse the
+// PLAIN YAML task document (src/tasks/schema.ts TaskDocument — no `---` fences)
+// with the generic YAML parser, not the frontmatter parser (which would
+// silently return `{}`, leaving schedule/workflow/prompt searchHints empty and
+// emitting only the static "task"/"scheduled" tags). This test must FAIL
+// (searchHints missing schedule:/workflow:/prompt: entries) if the fold
+// regresses back to the frontmatter parser.
+describe("task-yaml metadata fold", () => {
+  test("populates schedule/workflow/prompt searchHints and task/scheduled tags from plain YAML", () => {
     const root = tmpDir();
     const filePath = path.join(root, "tasks", "nightly-report.yml");
     writeFile(
@@ -490,9 +487,8 @@ describe("task-yaml metadata contributor", () => {
     );
 
     const ctx = buildFileContext(root, filePath);
-    const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
     const entry: IndexDocument = { name: "nightly-report", type: "task" };
-    await applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx });
+    applyFoldedMetadata(entry, foldRecognizedMetadata("task-yaml", ctx));
 
     expect(entry.tags).toContain("task");
     expect(entry.tags).toContain("scheduled");
@@ -502,18 +498,16 @@ describe("task-yaml metadata contributor", () => {
     expect(entry.searchHints).toContain("prompt:agent:my-agent");
   });
 
-  test("still applies task/scheduled tags without throwing when the YAML is unparseable", async () => {
+  test("still applies task/scheduled tags without throwing when the YAML is unparseable", () => {
     const root = tmpDir();
     const filePath = path.join(root, "tasks", "broken.yml");
     writeFile(filePath, "schedule: [unterminated\n");
 
     const ctx = buildFileContext(root, filePath);
-    const renderCtx = buildRenderContext(ctx, TASK_MATCH, [root]);
     const entry: IndexDocument = { name: "broken", type: "task" };
 
-    await expect(
-      applyMetadataContributors(entry, { rendererName: "task-yaml", renderContext: renderCtx }),
-    ).resolves.toBeUndefined();
+    // The fold swallows the YAML parse error rather than throwing.
+    expect(() => applyFoldedMetadata(entry, foldRecognizedMetadata("task-yaml", ctx))).not.toThrow();
 
     expect(entry.tags).toContain("task");
     expect(entry.tags).toContain("scheduled");

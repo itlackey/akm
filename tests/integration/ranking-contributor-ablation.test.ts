@@ -6,7 +6,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { generateMetadata, type IndexDocument } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import type { RankedEntryInput } from "../../src/indexer/search/ranking";
 import {
   applyBeliefStateScoreCeiling,
@@ -95,13 +96,13 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
   }
 
   test("scoped memory with explicit tags earns the exact-tag boost for its directory token", async () => {
-    const memRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rank-spec2-"));
-    createdTmpDirs.push(memRoot);
-    const file = path.join(memRoot, "projectA", "auth-tip.md");
+    const stashRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rank-spec2-"));
+    createdTmpDirs.push(stashRoot);
+    const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, ["---", "tags:", "  - auth", "---", "Scoped memory body."].join("\n"));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(stashRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     const item = makeItem(stash.entries[0]!);
     const ctx = makeCtx("projecta");
@@ -117,13 +118,13 @@ describe("tag-ranking boost for path-derived scope tokens (SPEC-2)", () => {
     // Pre-existing contributor behavior (+0.15/token, Math.min 0.3 cap), but
     // the SPEC-2 merge is what makes a multi-dir-token entry with explicit
     // tags reachable at all — pin the interaction end-to-end.
-    const memRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rank-spec2-"));
-    createdTmpDirs.push(memRoot);
-    const file = path.join(memRoot, "team-alpha", "projectA", "note.md");
+    const stashRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rank-spec2-"));
+    createdTmpDirs.push(stashRoot);
+    const file = path.join(stashRoot, "memories", "team-alpha", "projectA", "note.md");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, ["---", "tags:", "  - auth", "---", "Scoped memory body."].join("\n"));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(stashRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     // Merge produced three dir tokens on top of the explicit tag.
     expect([...(stash.entries[0]!.tags ?? [])].sort()).toEqual(["alpha", "auth", "projecta", "team"]);

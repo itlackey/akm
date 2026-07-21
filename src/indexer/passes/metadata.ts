@@ -4,22 +4,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { recognizeMatch } from "../../core/adapter/recognize-match";
 // akm 0.9.0 Chunk 5 (type-merge): the durable indexed-entry shape is the merged
 // `IndexDocument` (spec §3 = the pre-merge entry shape + provenance). Its body
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
 import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
-import { deriveCanonicalAssetName, isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
 import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
-import { buildFileContext, buildRenderContext, getRenderer } from "../walk/file-context";
-import { applyMetadataContributors } from "./metadata-contributors";
+import { buildFileContext } from "../walk/file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -531,7 +528,7 @@ export function shouldIndexStashFile(stashRoot: string, file: string): boolean {
 
   // Skip secret files that are themselves a `.sensitive` marker, or that have a
   // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
-  // only (their bytes are never read — see buildEntryFromFile guards).
+  // only (their bytes are never read — see the secret-file recognize guards).
   if (segments[0] === "secrets") {
     if (file.endsWith(".sensitive") || file.endsWith(".lock")) return false;
     if (fs.existsSync(`${file}.sensitive`)) return false;
@@ -1033,34 +1030,15 @@ export function extractBodyOpening(body: string): string | undefined {
 // ── Metadata Generation ─────────────────────────────────────────────────────
 
 /**
- * Shared pipeline (steps 2-6) for building a single IndexDocument from a file.
- *
- * `generateMetadata` seeds the initial `entry` with type + canonical name and
- * delegates the rest here. (Its former flat-walk sibling — the matcher-pass
- * metadata source deleted in the F4 engine swap — used the same helper; the live
- * index now recognizes files through the `akm` adapter instead.)
- *
- * @param file        Absolute path to the file being processed.
- * @param assetType   Resolved asset type string (already validated by caller).
- * @param canonicalName Resolved canonical name (already computed by caller).
- * @param dirPath     Directory containing the file (used for tag fallback).
- * @param pkgMeta     Pre-loaded package.json metadata for this directory (may be null/undefined).
- * @param stashRoot   Stash root used for renderer search hints context.
- * @param ctx         FileContext for the file (may be pre-built by the caller).
- * @param match       Pre-resolved MatchResult when available.
- * @returns The populated entry, or `{ skip: true, warning: string }` when the
- *          renderer throws and the file should be dropped.
- */
-/**
  * Priorities 1-2 of the metadata pipeline — package.json (P1), `.md`
  * frontmatter (P2), and script `@param`/comment metadata (P2b) — everything
  * that runs BEFORE the renderer-contributor step (P3). Extracted (Chunk 5 M-b)
  * so the `akm` adapter's synchronous `recognize` shares this exact assembly
- * with the async {@link buildEntryFromFile}; the two paths differ ONLY in how
- * they obtain the P3 renderer metadata (live: async in-place contributors;
- * adapter: the synchronous `foldRecognizedMetadata`), guaranteeing P1/P2/P4
- * parity by construction. Behavior-preserving: this is a verbatim lift of the
- * former inline P1/P2/P2b block. Mutates `entry` in place.
+ * with the live index-drain path; the two differ ONLY in how they obtain the
+ * P3 renderer metadata (the adapter uses the synchronous
+ * `foldRecognizedMetadata`), guaranteeing P1/P2/P4 parity by construction.
+ * Behavior-preserving: this is a verbatim lift of the former inline P1/P2/P2b
+ * block. Mutates `entry` in place.
  */
 export function applyPreContributorFields(
   entry: IndexDocument,
@@ -1168,92 +1146,6 @@ export function applyPostContributorFields(
   // Heuristic search hints are too noisy to be useful for search quality
 
   entry.filename = path.basename(file);
-}
-
-async function buildEntryFromFile(
-  file: string,
-  assetType: string,
-  canonicalName: string,
-  dirPath: string,
-  pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
-  stashRoot: string,
-  ctx: ReturnType<typeof buildFileContext>,
-  match: import("../walk/file-context").MatchResult | null,
-): Promise<IndexDocument | { skip: true; warning: string }> {
-  const entry: IndexDocument = {
-    name: canonicalName,
-    type: assetType,
-    quality: "generated",
-    confidence: 0.55,
-    source: "filename",
-  };
-
-  // Priorities 1-2 (shared with the akm adapter's recognize).
-  applyPreContributorFields(entry, file, ctx, pkgMeta);
-
-  // Priority 3: Renderer metadata extraction (LIVE path — async in-place
-  // contributors, preserving the throw→skip drop of a broken workflow/program).
-  // When no pre-resolved match is available (generateMetadata path), classify
-  // now via the akm adapter's recognition so the renderer can extract
-  // type-specific metadata.
-  const resolvedMatch = match ?? recognizeMatch(ctx);
-  if (resolvedMatch) {
-    const renderer = await getRenderer(resolvedMatch.renderer);
-    if (renderer) {
-      const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
-      try {
-        await applyMetadataContributors(entry, {
-          rendererName: renderer.name,
-          renderContext: renderCtx,
-        });
-      } catch (error) {
-        return {
-          skip: true,
-          warning: buildMetadataSkipWarning(file, assetType, error),
-        };
-      }
-    }
-  }
-
-  // Priority 4 (shared with the akm adapter's recognize).
-  applyPostContributorFields(entry, file, canonicalName, dirPath);
-  return entry;
-}
-
-export async function generateMetadata(
-  dirPath: string,
-  assetType: string,
-  files: string[],
-  typeRoot = dirPath,
-): Promise<StashFile> {
-  const entries: IndexDocument[] = [];
-  const warnings: string[] = [];
-  const pkgMeta = extractPackageMetadata(dirPath);
-
-  for (const file of files) {
-    const ext = path.extname(file).toLowerCase();
-    const baseName = path.basename(file, ext);
-    const fileName = path.basename(file);
-
-    // Skip non-relevant files
-    if (!isRelevantAssetFile(assetType, fileName)) continue;
-
-    const canonicalName = deriveCanonicalAssetName(assetType, typeRoot, file) ?? baseName;
-
-    // Build file context with typeRoot as the stash root so renderer context
-    // and search hints are scoped to the type directory.
-    const fileCtx = buildFileContext(typeRoot, file);
-
-    // Step 1: type is explicit; delegate steps 2-6 to the shared pipeline.
-    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, typeRoot, fileCtx, null);
-    if ("skip" in result) {
-      warnings.push(result.warning);
-      continue;
-    }
-    entries.push(result);
-  }
-
-  return warnings.length > 0 ? { entries, warnings } : { entries };
 }
 
 // The pre-0.9.0 flat-walk matcher-pass metadata source was DELETED in Chunk 5

@@ -31,10 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { BundleComponent } from "../../../src/core/adapter/types";
-import { deriveCanonicalAssetNameFromStashRoot } from "../../../src/core/asset/asset-placement";
-import type { IndexDocument } from "../../../src/indexer/passes/metadata";
-import { applyMetadataContributors } from "../../../src/indexer/passes/metadata-contributors";
-import { buildFileContext, buildRenderContext, type FileContext } from "../../../src/indexer/walk/file-context";
+import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../src/indexer/walk/walker";
 
 const ALL_TYPES_ROOT = path.resolve(__dirname, "../../fixtures/stashes/all-types");
@@ -204,43 +201,79 @@ describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement
 // ── 3b. recognize folds the 11 metadata contributors (§2) ────────────────────
 
 describe("akm adapter — recognize folds the index-time metadata contributors (§2)", () => {
-  /** The contributor-produced fields the fold mirrors onto the IndexDocument (first-class + documentJson extras). */
-  const FIELDS = ["tags", "searchHints", "description", "confidence", "source", "toc", "parameters"] as const;
-
-  /** The reference: today's contributors applied to a MINIMAL (name+type) seed, exactly what the fold isolates. */
-  async function referenceMetadata(ctx: FileContext): Promise<Record<string, unknown>> {
-    const match = recognizeMatch(ctx);
-    if (!match) return {};
-    const rc = buildRenderContext(ctx, match, [ALL_TYPES_ROOT]);
-    const name = deriveCanonicalAssetNameFromStashRoot(match.type, ALL_TYPES_ROOT, ctx.absPath) ?? ctx.relPath;
-    const entry: IndexDocument = { name, type: match.type };
-    await applyMetadataContributors(entry, { rendererName: match.renderer, renderContext: rc });
-    const rec = entry as unknown as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const f of FIELDS) if (rec[f] !== undefined) out[f] = rec[f];
-    return out;
+  // Direct pins of the index-time metadata fold (searchHints / toc / parameters)
+  // that `recognize` carries onto the IndexDocument. These values were the parity
+  // ORACLE's output — the retired `applyMetadataContributors` run on a minimal
+  // (name+type) seed, which the fold reproduces by construction — captured here
+  // as literals now that the oracle is gone. Absence is pinned too (an empty
+  // ExpectedFold asserts recognize adds NO fold surface for that file). The
+  // memory fold's `observed_at` hint is mtime-derived, so it is pinned by shape.
+  interface ExpectedFold {
+    searchHints?: string[];
+    toc?: Array<{ level: number; text: string; line: number }>;
+    parameters?: Array<{ name: string; description?: string }>;
   }
+  const EXPECTED_FOLDS: Record<string, ExpectedFold> = {
+    "agents/all-types-agent.md": {},
+    "commands/all-types-command.md": {},
+    "env/all-types-env.env": { searchHints: ["FIXTURE_GREETING", "FIXTURE_LOG_LEVEL"] },
+    "facts/all-types-fact.md": { searchHints: ["category:meta"] },
+    "knowledge/all-types-knowledge.md": {
+      toc: [
+        { level: 1, text: "All Types Knowledge", line: 5 },
+        { level: 2, text: "Background", line: 11 },
+      ],
+    },
+    "lessons/all-types-lesson.md": {
+      searchHints: ["when_to_use:When you need a trivial, deterministic lesson asset for tests"],
+    },
+    "scripts/all-types-script.sh": {},
+    "secrets/all-types-secret": {},
+    "sessions/all-types-harness/all-types-session.md": {
+      searchHints: ["log_path:sessions/all-types-harness/all-types-session.log"],
+    },
+    "skills/all-types-skill/SKILL.md": {},
+    "tasks/all-types-task.yml": {
+      searchHints: ["schedule:@daily", "prompt:Say hello from the all-types fixture task."],
+    },
+    "workflows/all-types-workflow-program.yaml": {
+      searchHints: ["all-types-workflow-program", "announce", "Print a single fixture line and stop."],
+    },
+    "workflows/all-types-workflow.md": {
+      searchHints: ["All Types Fixture", "Announce", "announce", "Print a single fixture line and stop."],
+    },
+  };
+  // mtime-derived observed_at hint — pinned by shape below, not in EXPECTED_FOLDS.
+  const MEMORY_REL = "memories/all-types-memory.md";
 
-  // Chunk 5 M-b: recognize now carries the FULL metadata surface (P1/P2/P4 +
-  // the contributor fold), so `foldedFromDoc(doc)` is no longer the isolated
-  // minimal-seed fold — it includes filename/frontmatter description + tags.
-  // The contributor-EXCLUSIVE fields (searchHints/toc/parameters) are still
-  // folded verbatim, which is what this test now pins; the full-surface parity
+  // Chunk 5 M-b: recognize carries the FULL metadata surface (P1/P2/P4 + the
+  // contributor fold). The contributor-EXCLUSIVE fields (searchHints/toc/
+  // parameters) are what this test pins verbatim; the full-surface parity
   // between recognize and the persisted index is proven by
   // tests/integration/shadow-scan-parity.
-  test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", async () => {
+  test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", () => {
     let asserted = 0;
     for (const ctx of allTypesContexts()) {
-      const reference = await referenceMetadata(ctx);
       const doc = akmAdapter.recognize(component(), ctx);
       expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
       if (!doc) continue;
       const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
-      if (reference.searchHints !== undefined)
-        expect(doc.searchHints, `searchHints for ${ctx.relPath}`).toEqual(reference.searchHints as string[]);
-      if (reference.toc !== undefined) expect(extras.toc, `toc for ${ctx.relPath}`).toEqual(reference.toc);
-      if (reference.parameters !== undefined)
-        expect(extras.parameters, `parameters for ${ctx.relPath}`).toEqual(reference.parameters);
+
+      if (ctx.relPath === MEMORY_REL) {
+        expect(doc.searchHints, "memory searchHints").toHaveLength(1);
+        expect(doc.searchHints?.[0]).toMatch(/^observed_at:\d{4}-\d{2}-\d{2}$/);
+        expect(extras.toc, "memory toc").toBeUndefined();
+        expect(extras.parameters, "memory parameters").toBeUndefined();
+        asserted += 1;
+        continue;
+      }
+
+      const expected = EXPECTED_FOLDS[ctx.relPath];
+      expect(expected, `no expected fold pinned for ${ctx.relPath}`).toBeDefined();
+      if (!expected) continue;
+      expect(doc.searchHints, `searchHints for ${ctx.relPath}`).toEqual(expected.searchHints);
+      expect(extras.toc, `toc for ${ctx.relPath}`).toEqual(expected.toc);
+      expect(extras.parameters, `parameters for ${ctx.relPath}`).toEqual(expected.parameters);
       asserted += 1;
     }
     expect(asserted).toBe(14);

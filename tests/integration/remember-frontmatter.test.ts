@@ -15,10 +15,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { applyMetadataContributors } from "../../src/indexer/passes/metadata-contributors";
-import { buildFileContext, buildRenderContext } from "../../src/indexer/walk/file-context";
+import { buildFileContext } from "../../src/indexer/walk/file-context";
 import { runCliCapture } from "../_helpers/cli";
 import { withEnv } from "../_helpers/sandbox";
 
@@ -337,12 +337,9 @@ describe("remember --auto", () => {
   });
 });
 
-// ── memory metadata contributors ─────────────────────────────────────────────
+// ── memory metadata fold ─────────────────────────────────────────────────────
 
-/** A static MatchResult for memory-md (avoids calling runMatchers and null assertions). */
-const MEMORY_MATCH = { type: "memory", specificity: 10, renderer: "memory-md" };
-
-describe("memory metadata contributors", () => {
+describe("memory metadata fold", () => {
   const createdTmpDirs: string[] = [];
 
   afterEach(() => {
@@ -361,10 +358,13 @@ describe("memory metadata contributors", () => {
     return { filePath, stashRoot };
   }
 
+  // The live index-time equivalent of the retired memory-md contributor: the
+  // `akm` adapter's synchronous fold on a minimal (name+type) seed, applied with
+  // the same precedence recognize uses. Kept async so the throw-free "no crash"
+  // pin below can still assert `.resolves`.
   async function applyMemoryMetadata(entry: IndexDocument, stashRoot: string, filePath: string): Promise<void> {
     const ctx = buildFileContext(stashRoot, filePath);
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    await applyMetadataContributors(entry, { rendererName: "memory-md", renderContext: renderCtx });
+    applyFoldedMetadata(entry, foldRecognizedMetadata("memory-md", ctx));
   }
 
   test("populates tags from frontmatter", async () => {

@@ -11,7 +11,6 @@ import {
   extractPackageMetadata,
   extractTagsFromPath,
   fileNameToDescription,
-  generateMetadata,
   type IndexDocument,
   isEnrichmentComplete,
   type StashFile,
@@ -245,14 +244,14 @@ test("extractTagsFromPath extracts tokens from path segments", () => {
   expect(tags).toContain("generator");
 });
 
-// ── generateMetadata ────────────────────────────────────────────────────────
+// ── recognize (index-time metadata assembly) ────────────────────────────────
 
-test("generateMetadata creates entries from script files with filename heuristics", async () => {
+test("recognize creates entries from script files with filename heuristics", async () => {
   const dir = tmpDir();
-  const tool1 = path.join(dir, "summarize-diff.ts");
+  const tool1 = path.join(dir, "scripts", "summarize-diff.ts");
   writeFile(tool1, `console.log("summarize")\n`);
 
-  const stash = await generateMetadata(dir, "script", [tool1]);
+  const stash = recognizeStashEntries(dir, [tool1]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0]!.name).toBe("summarize-diff.ts");
   expect(stash.entries[0]!.type).toBe("script");
@@ -264,49 +263,40 @@ test("generateMetadata creates entries from script files with filename heuristic
   expect(stash.entries[0]!.filename).toBe("summarize-diff.ts");
 });
 
-test("generateMetadata extracts description from code comments", async () => {
+test("recognize extracts description from code comments", async () => {
   const dir = tmpDir();
-  const tool1 = path.join(dir, "deploy.sh");
+  const tool1 = path.join(dir, "scripts", "deploy.sh");
   writeFile(tool1, `#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n`);
 
-  const stash = await generateMetadata(dir, "script", [tool1]);
+  const stash = recognizeStashEntries(dir, [tool1]);
   expect(stash.entries[0]!.description).toBe("Deploy services to production");
   expect(stash.entries[0]!.source).toBe("comments");
 });
 
-test("generateMetadata extracts metadata from package.json", async () => {
+test("recognize extracts metadata from package.json", async () => {
   const dir = tmpDir();
-  const tool1 = path.join(dir, "run.ts");
+  const tool1 = path.join(dir, "scripts", "run.ts");
   writeFile(tool1, `console.log("run")\n`);
   writeFile(
-    path.join(dir, "package.json"),
+    path.join(dir, "scripts", "package.json"),
     JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
   );
 
-  const stash = await generateMetadata(dir, "script", [tool1]);
+  const stash = recognizeStashEntries(dir, [tool1]);
   expect(stash.entries[0]!.description).toBe("Git diff summarizer");
   expect(stash.entries[0]!.source).toBe("package");
   expect(stash.entries[0]!.confidence).toBe(0.8);
   expect(stash.entries[0]!.tags).toEqual(["git", "diff"]);
 });
 
-test("generateMetadata skips non-script extensions for script type", async () => {
+test("recognize handles multi-script directories", async () => {
   const dir = tmpDir();
-  const mdFile = path.join(dir, "README.md");
-  writeFile(mdFile, "# Readme\n");
-
-  const stash = await generateMetadata(dir, "script", [mdFile]);
-  expect(stash.entries).toHaveLength(0);
-});
-
-test("generateMetadata handles multi-script directories", async () => {
-  const dir = tmpDir();
-  const tool1 = path.join(dir, "docker-build.ts");
-  const tool2 = path.join(dir, "docker-compose.ts");
+  const tool1 = path.join(dir, "scripts", "docker-build.ts");
+  const tool2 = path.join(dir, "scripts", "docker-compose.ts");
   writeFile(tool1, `/**\n * Build docker images\n */\n`);
   writeFile(tool2, `/**\n * Generate docker compose stacks\n */\n`);
 
-  const stash = await generateMetadata(dir, "script", [tool1, tool2]);
+  const stash = recognizeStashEntries(dir, [tool1, tool2]);
   expect(stash.entries).toHaveLength(2);
   expect(stash.entries[0]!.name).toBe("docker-build.ts");
   expect(stash.entries[0]!.description).toBe("Build docker images");
@@ -402,14 +392,14 @@ test("loadStashFile parses searchHints field", () => {
   expect(result!.entries[0]!.searchHints).toEqual(["summarize git commits", "explain what changed"]);
 });
 
-// ── generateMetadata populates searchHints ──────────────────────────────────────
+// ── recognize populates searchHints ─────────────────────────────────────────
 
-test("generateMetadata does not generate heuristic searchHints (LLM-only)", async () => {
+test("recognize does not generate heuristic searchHints (LLM-only)", async () => {
   const dir = tmpDir();
-  const tool = path.join(dir, "summarize-diff.ts");
+  const tool = path.join(dir, "scripts", "summarize-diff.ts");
   writeFile(tool, `/**\n * Summarize git diff changes\n */\n`);
 
-  const stash = await generateMetadata(dir, "script", [tool]);
+  const stash = recognizeStashEntries(dir, [tool]);
   // Search hints are only generated when LLM is configured, not heuristically
   expect(stash.entries[0]!.searchHints).toBeUndefined();
 });
@@ -457,9 +447,9 @@ test("extractCommentMetadata parses curated header tags from scripts", () => {
   });
 });
 
-test("generateMetadata applies curated frontmatter fields for markdown assets", async () => {
+test("recognize applies curated frontmatter fields for markdown assets", async () => {
   const dir = tmpDir();
-  const file = path.join(dir, "deploy.md");
+  const file = path.join(dir, "commands", "deploy.md");
   writeFile(
     file,
     [
@@ -492,7 +482,7 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
     ].join("\n"),
   );
 
-  const stash = await generateMetadata(dir, "command", [file]);
+  const stash = recognizeStashEntries(dir, [file]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0]).toMatchObject({
     description: "Deploy a service safely",
@@ -514,12 +504,12 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
   expect(stash.entries[0]!.aliases).toEqual(expect.arrayContaining(["release service", "deploy production"]));
 });
 
-test("generateMetadata preserves curated aliases from comment metadata", async () => {
+test("recognize preserves curated aliases from comment metadata", async () => {
   const dir = tmpDir();
-  const file = path.join(dir, "deploy-service.sh");
+  const file = path.join(dir, "scripts", "deploy-service.sh");
   writeFile(file, ["#!/usr/bin/env bash", "# @aliases release workflow, ship service", "echo deploy"].join("\n"));
 
-  const stash = await generateMetadata(dir, "script", [file]);
+  const stash = recognizeStashEntries(dir, [file]);
   expect(stash.entries[0]!.aliases).toEqual(
     expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
   );
@@ -743,8 +733,8 @@ test("loadStashFile preserves category on entries (SPEC-6 whitelist round-trip)"
   expect(entryCategory(result?.entries[0])).toBe("meta");
 });
 
-test("generateMetadata populates entry.category from fact frontmatter (SPEC-6 end-to-end)", async () => {
-  const factsRoot = tmpDir();
+test("recognize populates entry.category from fact frontmatter (SPEC-6 end-to-end)", async () => {
+  const factsRoot = path.join(tmpDir(), "facts");
   const file = path.join(factsRoot, "conventions", "organization.md");
   writeFile(
     file,
@@ -753,7 +743,7 @@ test("generateMetadata populates entry.category from fact frontmatter (SPEC-6 en
     ),
   );
 
-  const stash = await generateMetadata(factsRoot, "fact", [file]);
+  const stash = recognizeStashEntries(factsRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0]!.name).toBe("conventions/organization");
   expect(entryCategory(stash.entries[0])).toBe("convention");
@@ -784,8 +774,8 @@ test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin
 // The stash-organization conventions require the directory (scope/domain)
 // tokens of a nested asset to reach the tags column even when the author set
 // explicit tags. Tokens are derived from the canonical ref subpath
-// (canonicalName), so the stash-walk (generateMetadata) and flat-walk
-// (generateMetadataFlat) paths behave identically. Filename tokens are
+// (canonicalName) during recognize, independent of where the stash root is
+// anchored. Filename tokens are
 // deliberately NOT merged when explicit tags exist (they already live in the
 // FTS name column and aliases). See
 // docs/design/stash-conventions-code-spec.md SPEC-2.
@@ -832,12 +822,12 @@ test("extractDirTagsFromName returns no tokens for a name at the type root (SPEC
   expect(extractDirTagsFromName("auth-tip")).toEqual([]);
 });
 
-test("generateMetadata merges directory tokens into explicit tags for nested assets (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+test("recognize merges directory tokens into explicit tags for nested assets (SPEC-2)", async () => {
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "projectA", "auth-tip.md");
   writeFile(file, memoryDocWithTags(["auth"]));
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0]!.name).toBe("projectA/auth-tip");
   // Explicit tag kept AND the directory scope token added; filename tokens
@@ -845,41 +835,41 @@ test("generateMetadata merges directory tokens into explicit tags for nested ass
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
 });
 
-test("generateMetadata adds no directory tokens for an explicit-tags asset at the type root (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+test("recognize adds no directory tokens for an explicit-tags asset at the type root (SPEC-2)", async () => {
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "root-note.md");
   writeFile(file, memoryDocWithTags(["auth"]));
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   // No directory segments at the type root: explicit tags stay exact — no
   // filename tokens ("root", "note") sneak in.
   expect(stash.entries[0]!.tags).toEqual(["auth"]);
 });
 
-test("generateMetadata keeps the empty-tags path-derived fallback unchanged for nested assets (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+test("recognize keeps the empty-tags path-derived fallback unchanged for nested assets (SPEC-2)", async () => {
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "projectA", "auth-tip.md");
   writeFile(file, "Plain memory body prose with no frontmatter.\n");
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   // Byte-compat with today's extractTagsFromPath fallback: directory AND
   // filename tokens, deduped.
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta", "tip"]);
 });
 
-test("generateMetadata keeps the empty-tags fallback unchanged at the type root (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+test("recognize keeps the empty-tags fallback unchanged at the type root (SPEC-2)", async () => {
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "auth-tip.md");
   writeFile(file, "Plain memory body prose with no frontmatter.\n");
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "tip"]);
 });
 
-test("generateMetadataFlat merges directory tokens from the canonical ref subpath into explicit tags (SPEC-2)", async () => {
+test("recognize merges directory tokens from the canonical ref subpath into explicit tags (SPEC-2)", async () => {
   const stashRoot = tmpDir();
   const file = path.join(stashRoot, "memories", "projectA", "auth-tip.md");
   writeFile(file, memoryDocWithTags(["auth"]));
@@ -893,49 +883,49 @@ test("generateMetadataFlat merges directory tokens from the canonical ref subpat
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
 });
 
-test("flat-walk and stash-walk derive identical tags for a nested asset without explicit tags (SPEC-2)", async () => {
-  // Today the flat walk passes path.dirname(file) as the tag root, so even the
-  // empty-tags fallback loses directory segments there. Deriving tokens from
-  // canonicalName makes both walks agree — and both must carry the scope token.
+test("recognize derives the scope token for a nested asset without explicit tags (SPEC-2)", async () => {
+  // Tags are derived from canonicalName (the ref subpath), so a nested
+  // no-frontmatter memory carries its directory scope token alongside the
+  // filename tokens — independent of where the stash root is anchored.
   const stashRoot = tmpDir();
   const memRoot = path.join(stashRoot, "memories");
   const file = path.join(memRoot, "projectA", "auth-tip.md");
   writeFile(file, "Plain memory body prose with no frontmatter.\n");
 
-  const flat = recognizeStashEntries(stashRoot, [file]);
-  const walked = await generateMetadata(memRoot, "memory", [file]);
-  expect(flat.entries).toHaveLength(1);
-  expect(walked.entries).toHaveLength(1);
-  expect(sortedTags(flat.entries[0])).toContain("projecta");
-  expect(sortedTags(flat.entries[0])).toEqual(sortedTags(walked.entries[0]));
+  // Anchoring at the true stash root and at the type dir yields the same entry.
+  const fromRoot = recognizeStashEntries(stashRoot, [file]);
+  const fromTypeDir = recognizeStashEntries(memRoot, [file]);
+  expect(fromRoot.entries).toHaveLength(1);
+  expect(sortedTags(fromRoot.entries[0])).toEqual(["auth", "projecta", "tip"]);
+  expect(sortedTags(fromRoot.entries[0])).toEqual(sortedTags(fromTypeDir.entries[0]));
 });
 
 test("author-restated scope token is deduped by normalizeTerms after the merge (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "projectA", "pin.md");
   writeFile(file, memoryDocWithTags(["projectA", "auth"]));
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   const tags = stash.entries[0]!.tags ?? [];
   expect(tags.filter((t) => t === "projecta")).toHaveLength(1);
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta"]);
 });
 
-test("generateMetadata merges directory tokens into package.json-keyword tags for nested non-md assets (SPEC-2)", async () => {
+test("recognize merges directory tokens into package.json-keyword tags for nested non-md assets (SPEC-2)", async () => {
   // The other explicit-tags channel: non-md assets get tags from package.json
   // keywords (Priority 1). A NESTED script must gain its directory token on
   // top of the keywords, while the root-level case stays exact (pinned by the
   // "extracts metadata from package.json" test above).
   const dir = tmpDir();
-  const tool = path.join(dir, "tools", "run.ts");
+  const tool = path.join(dir, "scripts", "tools", "run.ts");
   writeFile(tool, `console.log("run")\n`);
   writeFile(
-    path.join(dir, "package.json"),
+    path.join(dir, "scripts", "tools", "package.json"),
     JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
   );
 
-  const stash = await generateMetadata(dir, "script", [tool]);
+  const stash = recognizeStashEntries(dir, [tool]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0]!.name).toBe("tools/run.ts");
   expect(sortedTags(stash.entries[0])).toEqual(["diff", "git", "tools"]);
@@ -943,7 +933,7 @@ test("generateMetadata merges directory tokens into package.json-keyword tags fo
 
 test("loadStashFile keeps literal tags for nested-name entries — no dir-token merge (SPEC-2)", () => {
   // .stash.json-declared entries are hand-curated manifests: the SPEC-2 merge
-  // applies only to file-derived entries via buildEntryFromFile. A nested ref
+  // applies only to file-derived entries via recognize. A nested ref
   // subpath in a declared entry's name must NOT grow directory tokens.
   const dir = tmpDir();
   const stash: StashFile = {
@@ -966,11 +956,11 @@ test("loadStashFile keeps literal tags for nested-name entries — no dir-token 
 });
 
 test("multi-token directory segments tokenize like extractTagsFromPath in the merge (SPEC-2)", async () => {
-  const memRoot = tmpDir();
+  const memRoot = path.join(tmpDir(), "memories");
   const file = path.join(memRoot, "client-x", "billing-tip.md");
   writeFile(file, memoryDocWithTags(["billing"]));
 
-  const stash = await generateMetadata(memRoot, "memory", [file]);
+  const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
   // "client-x" splits to ["client", "x"]; single-char "x" is dropped, and the
   // raw segment must not survive as a "client x" phrase tag.
@@ -979,7 +969,7 @@ test("multi-token directory segments tokenize like extractTagsFromPath in the me
 
 // ── SPEC-8: config-gated indexing of the self-situating body opening ─────────
 //
-// With `index.indexBodyOpening: true` in the user config, buildEntryFromFile's
+// With `index.indexBodyOpening: true` in the user config, recognize's
 // md branch extracts the first non-heading, non-fence, non-empty paragraph of
 // the body (capped at 280 chars) into a new IndexDocument field `bodyOpening`,
 // and buildSearchFields folds it into the lowest-weight `content` FTS field.
@@ -1026,11 +1016,11 @@ function memoryDocWithBody(bodyLines: string[]): string {
 
 test("flag on: first body paragraph lands in entry.bodyOpening (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "auth-notes.md");
     writeFile(file, memoryDocWithBody([OPENING_PARA, "", "Second paragraph pangolin prose must not be captured."]));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     // Short paragraph (< 280 chars): captured whole, byte-exact — and ONLY the
     // first paragraph (the pangolin paragraph stays out).
@@ -1040,11 +1030,11 @@ test("flag on: first body paragraph lands in entry.bodyOpening (SPEC-8)", async 
 
 test("flag on: bodyOpening folds into the content search field, not hints (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "auth-notes.md");
     writeFile(file, memoryDocWithBody([OPENING_PARA]));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const fields = buildSearchFields(stash.entries[0]!);
     // Lowest-weight catch-all column carries the (lowercased) opening…
     expect(fields.content).toContain("situates the auth-refresh work");
@@ -1061,7 +1051,7 @@ test("flag on: bodyOpening folds into the content search field, not hints (SPEC-
 
 test("flag on: a paragraph spanning multiple lines is captured up to the paragraph break (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "wrapped.md");
     writeFile(
       file,
@@ -1073,7 +1063,7 @@ test("flag on: a paragraph spanning multiple lines is captured up to the paragra
       ]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const opening = entryBodyOpening(stash.entries[0]);
     expect(opening).toBeDefined();
     // Whitespace-normalized comparison: the join character between the two
@@ -1087,7 +1077,7 @@ test("flag on: a paragraph spanning multiple lines is captured up to the paragra
 
 test("flag on: heading-first bodies skip headings and capture the first prose paragraph (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "heading-first.md");
     writeFile(
       file,
@@ -1102,14 +1092,14 @@ test("flag on: heading-first bodies skip headings and capture the first prose pa
       ]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(entryBodyOpening(stash.entries[0])).toBe("The orientation paragraph situates this memory under projectA.");
   });
 });
 
 test("flag on: fenced-first bodies skip the fence and capture the first prose paragraph (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "fence-first.md");
     writeFile(
       file,
@@ -1122,7 +1112,7 @@ test("flag on: fenced-first bodies skip the fence and capture the first prose pa
       ]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const opening = entryBodyOpening(stash.entries[0]);
     expect(opening).toBe("Fence-follower paragraph provides the orientation prose.");
     expect(opening).not.toContain("fence interior");
@@ -1134,11 +1124,11 @@ test("flag on: bodyOpening is capped at 280 chars (SPEC-8)", async () => {
     // 70 distinct 7-char words joined by spaces = 559 chars, well over the cap.
     const words = Array.from({ length: 70 }, (_, i) => `token${String(i).padStart(2, "0")}`);
     const longPara = words.join(" ");
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "long-opening.md");
     writeFile(file, memoryDocWithBody([longPara]));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const opening = entryBodyOpening(stash.entries[0]);
     expect(opening).toBeDefined();
     const text = opening ?? "";
@@ -1154,11 +1144,11 @@ test("flag on: bodyOpening is capped at 280 chars (SPEC-8)", async () => {
 
 test("flag on: frontmatter-only files yield no bodyOpening (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "fm-only.md");
     writeFile(file, ["---", "description: Facts only", "tags:", "  - auth", "---", ""].join("\n"));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
   });
@@ -1166,11 +1156,11 @@ test("flag on: frontmatter-only files yield no bodyOpening (SPEC-8)", async () =
 
 test("flag on: a body with only headings and fences yields no bodyOpening (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "no-prose.md");
     writeFile(file, memoryDocWithBody(["# Title", "", "## Section", "", "```ts", "const x = 1;", "```"]));
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
   });
@@ -1178,7 +1168,7 @@ test("flag on: a body with only headings and fences yields no bodyOpening (SPEC-
 
 test("flag on: session-kind memories are excluded via the outer akm_memory_kind marker (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "session-outer.md");
     writeFile(
       file,
@@ -1193,7 +1183,7 @@ test("flag on: session-kind memories are excluded via the outer akm_memory_kind 
       ].join("\n"),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     // Still indexed as a memory — only the body-opening capture is skipped.
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
@@ -1207,7 +1197,7 @@ test("flag on: session-kind memories are excluded via the inner nested akm_memor
     // frontmatter; the hook's `akm_memory_kind` block survives at the top of
     // the body (the nested pattern base-linter's parseInnerFrontmatterBlock
     // recognises). Neither the marker block nor the transcript may be captured.
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "session-inner.md");
     writeFile(
       file,
@@ -1226,7 +1216,7 @@ test("flag on: session-kind memories are excluded via the inner nested akm_memor
       ].join("\n"),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     expect(entryBodyOpening(stash.entries[0])).toBeUndefined();
     expect(buildSearchText(stash.entries[0]!)).not.toContain("transcript prose");
@@ -1282,14 +1272,14 @@ test("flag on: flat-walk memories gain bodyOpening through the shared pipeline (
 
 test("default (flag absent): no bodyOpening and body prose reaches no search field (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(undefined, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "plain-note.md");
     writeFile(
       file,
       memoryDocWithBody(["The zebrafish opening paragraph situates this memory in the payments platform."]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const entry = stash.entries[0];
     expect(entryBodyOpening(entry)).toBeUndefined();
     // Byte-identical-to-today pin: the sentinel body token appears in NO FTS
@@ -1304,14 +1294,14 @@ test("default (flag absent): no bodyOpening and body prose reaches no search fie
 
 test("index.indexBodyOpening: false behaves exactly like the default (SPEC-8)", async () => {
   await withIndexBodyOpeningConfig(false, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "plain-note.md");
     writeFile(
       file,
       memoryDocWithBody(["The zebrafish opening paragraph situates this memory in the payments platform."]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     const entry = stash.entries[0];
     expect(entryBodyOpening(entry)).toBeUndefined();
     expect(buildSearchText(entry!)).not.toContain("zebrafish");
@@ -1403,14 +1393,14 @@ test("extractBodyOpening keeps prose above a dash row (setext-H2 reading deliber
 
 test("flag on: a decorative-callout opening is captured end-to-end (SPEC-8 review fix)", async () => {
   await withIndexBodyOpeningConfig(true, async () => {
-    const memRoot = tmpDir();
+    const memRoot = path.join(tmpDir(), "memories");
     const file = path.join(memRoot, "callout.md");
     writeFile(
       file,
       memoryDocWithBody(["---", "This orientation paragraph situates the work.", "---", "", "Details follow here."]),
     );
 
-    const stash = await generateMetadata(memRoot, "memory", [file]);
+    const stash = recognizeStashEntries(memRoot, [file]);
     expect(stash.entries).toHaveLength(1);
     // The callout is NOT mistaken for nested frontmatter (no session marker,
     // not frontmatter-shaped), so the orientation prose is the capture.

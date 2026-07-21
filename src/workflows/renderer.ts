@@ -20,8 +20,6 @@
 
 import { displayRef } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
-import type { IndexDocument } from "../indexer/passes/metadata";
-import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type { ShowResponse } from "../sources/types";
 import { parseWorkflow } from "./parser";
@@ -33,7 +31,6 @@ import {
   WORKFLOW_PROGRAM_RENDERER_NAME,
 } from "./program/project";
 import type { WorkflowProgram } from "./program/schema";
-import { cacheWorkflowDocument } from "./runtime/document-cache";
 import type { WorkflowDocument } from "./schema";
 
 export { WORKFLOW_PROGRAM_RENDERER_NAME };
@@ -134,59 +131,3 @@ export const workflowProgramRenderer: AssetRenderer = {
     };
   },
 };
-
-registerMetadataContributor({
-  name: "workflow-document-metadata",
-  appliesTo: ({ rendererName }) => rendererName === "workflow-md",
-  contribute(entry: IndexDocument, { renderContext }: { renderContext: RenderContext }) {
-    const doc = loadDocument(renderContext);
-    const hints = new Set<string>(entry.searchHints ?? []);
-    hints.add(doc.title);
-    for (const step of doc.steps) {
-      hints.add(step.title);
-      hints.add(step.id);
-      hints.add(step.instructions.text);
-      for (const criterion of step.completionCriteria ?? []) {
-        hints.add(criterion.text);
-      }
-    }
-    entry.searchHints = Array.from(hints).filter(Boolean);
-    if (doc.parameters?.length) {
-      entry.parameters = doc.parameters.map((p) => ({
-        name: p.name,
-        ...(p.description ? { description: p.description } : {}),
-      }));
-    }
-    cacheWorkflowDocument(entry, doc);
-  },
-});
-
-registerMetadataContributor({
-  name: "workflow-program-metadata",
-  appliesTo: ({ rendererName }) => rendererName === WORKFLOW_PROGRAM_RENDERER_NAME,
-  contribute(entry: IndexDocument, { renderContext }: { renderContext: RenderContext }) {
-    // Parse failures throw, which the metadata pass turns into a
-    // skip-with-warning — broken programs never land in the index, mirroring
-    // markdown workflows. No workflow_documents cache row is written: YAML
-    // programs are re-parsed from disk by the runtime loader.
-    const program = loadProgram(renderContext);
-    const hints = new Set<string>(entry.searchHints ?? []);
-    hints.add(program.name);
-    for (const step of program.steps) {
-      hints.add(step.id);
-      if (step.title) hints.add(step.title);
-      hints.add(programStepInstructions(step));
-      for (const criterion of step.gate?.criteria ?? []) {
-        hints.add(criterion);
-      }
-    }
-    entry.searchHints = Array.from(hints).filter(Boolean);
-    if (!entry.description && program.description) {
-      entry.description = program.description;
-    }
-    const parameters = projectProgramParameters(program);
-    if (parameters?.length) {
-      entry.parameters = parameters;
-    }
-  },
-});
