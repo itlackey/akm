@@ -50,15 +50,14 @@ exactly four source provider types:
 - `npm` — installed into the cache
 
 All four kinds expose the same minimal `SourceProvider` interface
-(`src/sources/source-provider.ts`):
+(`src/sources/provider.ts`):
 
 ```ts
 interface SourceProvider {
   readonly name: string;
-  readonly kind: string;            // "filesystem" | "git" | "website" | "npm"
-  init(ctx: ProviderContext): Promise<void>;
-  path(): string;                   // directory the indexer walks
-  sync?(): Promise<void>;           // refresh from upstream (no-op for filesystem)
+  readonly kind: string;                        // "filesystem" | "git" | "website" | "npm"
+  path(): string;                               // directory the indexer walks
+  sync?(options?: { force?: boolean }): Promise<void>; // refresh from upstream (no-op for filesystem)
 }
 ```
 
@@ -243,7 +242,10 @@ source.
 ## Workflow Runtime State
 
 Workflow definitions live in `workflows/`, but workflow run state is separate
-runtime state stored in `workflow.db`.
+durable runtime state. The 0.9.0 cutover folded the former `workflow.db` into
+`state.db`: the `workflow_runs` / `workflow_run_steps` / `workflow_run_units`
+tables now live in `state.db` alongside events, tasks, and proposals, so akm
+keeps three databases (`state.db`, `index.db`, `logs.db`), not four.
 
 - workflow discovery and search use the shared asset index
 - workflow run records survive index rebuilds
@@ -392,7 +394,7 @@ async execution context; unrelated work and child processes remain excluded.
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
-| `src/sources/source-provider.ts` | minimal `SourceProvider` interface |
+| `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/source-resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |

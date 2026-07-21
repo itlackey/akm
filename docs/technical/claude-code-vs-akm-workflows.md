@@ -210,9 +210,10 @@ single source consumed by the renderer, indexer, and run engine.
 
 ### B.3 Persistence: durable SQLite run state
 
-Run state lives in **`workflow.db`** (`src/workflows/db.ts`), a SQLite database
-whose rows are explicitly **non-regenerable** ("losing them is data loss"),
-unlike the regenerable `index.db`. Two tables:
+Run state lives in **`state.db`** (`src/storage/repositories/workflow-runs-repository.ts`;
+the former `workflow.db` was folded into `state.db` in the 0.9.0 cutover), whose
+rows are explicitly **non-regenerable** ("losing them is data loss"), unlike the
+regenerable `index.db`. Two tables:
 
 - `workflow_runs` — `id`, `workflow_ref`, `workflow_title`, `status`
   (`active|completed|blocked|failed`), `params_json`, `current_step_id`,
@@ -239,7 +240,7 @@ state machine driven by an external agent through a CLI command loop
 (`src/workflows/runtime/runs.ts`, `src/commands/workflow-cli.ts`):
 
 ```
-akm workflow start   → snapshot steps into workflow.db, set currentStepId
+akm workflow start   → snapshot steps into state.db, set currentStepId
 akm workflow next    → return the current step's instructions (auto-starts if none)
    … the AGENT reads the instructions and does the work in its own environment …
 akm workflow complete → validate summary, advance currentStepId
@@ -341,7 +342,7 @@ new file so `start` can resolve it immediately.
 | **Unit of work** | `agent()` — a fresh LLM subagent context | A step — an instruction handed to the driving agent |
 | **Concurrency** | Massively parallel (≤16 concurrent, ≤1000 total, `pipeline`/`parallel`) | Strictly sequential — one `current_step_id` |
 | **Control flow** | Full JS: loops, conditionals, fan-out, budget-scaled | Fixed linear step sequence |
-| **State store** | Transcript dir (`journal.jsonl`, `agent-*.jsonl`) | SQLite `workflow.db` (durable, non-regenerable) |
+| **State store** | Transcript dir (`journal.jsonl`, `agent-*.jsonl`) | SQLite `state.db` (durable, non-regenerable) |
 | **Scope / lifetime** | One session, one turn-shaped fan-out | Cross-session, per-project `scope_key`, resumable indefinitely |
 | **Progress model** | Push: live `/workflows` tree + `task-notification` | Pull: poll `workflow next`/`status`, JSON envelopes |
 | **Resume** | Prefix-cache replay keyed on `runId` (needs determinism) | Re-read durable rows; `resume` reopens blocked/failed |
@@ -358,8 +359,8 @@ new file so `start` can resolve it immediately.
 Despite living on different layers, they converge on several ideas:
 
 1. **Task decomposition into named units** — phases/agents vs. steps.
-2. **Durable run identity and resume** — `runId` prefix-cache vs. `workflow.db`
-   rows. Both are built to survive interruption and pick up where they left off.
+2. **Durable run identity and resume** — `runId` prefix-cache vs. `state.db`
+   workflow-run rows. Both are built to survive interruption and pick up where they left off.
 3. **Per-unit status + evidence** — journal return values vs. step
    `status`/`notes`/`evidence`/`summary`.
 4. **A "keep going" nudge** — Claude Code's `task-notification`/resume vs. akm's

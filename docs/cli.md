@@ -548,8 +548,8 @@ repos or directories. akm resolves that context from the nearest `.akm/config.js
 ancestor when present, otherwise the nearest git root, otherwise the stash root
 when the cwd is inside it, otherwise the cwd itself. In practice this means:
 
-- `workflow next workflow:<name>` resumes the active run for the current project/worktree/directory only.
-- `workflow status workflow:<name>` resolves the most-recently-updated run in the current scope only.
+- `workflow next workflows/<name>` resumes the active run for the current project/worktree/directory only.
+- `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only.
 - `workflow list` shows runs for the current scope only.
 - Direct run-id commands like `workflow status <run-id>` still work even if the run was started from another directory.
 
@@ -1209,7 +1209,7 @@ akm feedback skills/code-review --positive --reason "Worked perfectly for PR rev
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
 | `--reason` | Optional text reason to attach to the feedback event (required for negative feedback by default) |
-| `--applied-to <ref>` | Credit a `lesson:<name>` that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
+| `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). Silently ignored on non-lesson targets. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
@@ -1599,7 +1599,7 @@ known process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...):
 a first-party stash warns and proceeds; a third-party-sourced stash is refused.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
-> as a [secret](#secret) and use `akm secret run secret:<name> <VAR> -- …`, or
+> as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
 > use `akm env run <ref> --only <KEY> -- …`.
 
 > Values injected via `env run` live in the child process environment for its
@@ -1984,12 +1984,11 @@ akm improve workflows/release-checklist --task "reduce duplication"
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, stash, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--target` | Override the write target used later by `accept` |
-| `--auto-accept[=<value>]` | Confidence threshold (0-100) for auto-accepting proposals. Default ON at 90 when the flag is absent. Bare `--auto-accept` = 90. `--auto-accept=<N>` sets the threshold to integer N (0-100). `--auto-accept=safe` is a permanent alias for 90. `--auto-accept=false` disables auto-accept and restores the interactive prompt on the HTTP consolidation path. |
+| `--auto-accept[=<value>]` | **Deprecated (0.9.0) and ignored.** The confidence gate was removed; proposals always queue for review — adjudicate them with `akm proposal` or the drain engine. The flag still parses (with a warning) so existing scheduled tasks keep working; it is removed in 0.10. |
 | `--limit <n>` | Maximum number of assets to process |
 | `--timeout-ms <ms>` | Wall-clock budget for the run |
 | `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
-| `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 1; set 0 to include all assets regardless of retrieval history) |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Emit the full JSON result on stdout for a live run. Without this flag, live-run results are recorded in `$XDG_DATA_HOME/akm/state.db` table `improve_runs` and stdout stays empty. Dry-runs always emit their result on stdout and never write an `improve_runs` row. |
 
@@ -2004,11 +2003,12 @@ archive with the reason `expired: no action within retention window` and a
 expiration entirely. The total expired count surfaces in the improve result as
 `proposalsExpired`.
 
-When auto-accept is enabled, the threshold from `--auto-accept` is compared
-against each proposal's `confidence` score (set by reflect/propose). Proposals
-with `confidence × 100 >= threshold` are promoted into the stash automatically.
-Reflect emits `confidence` as part of its JSON response schema; agents and
-custom runners should populate it (0..1) so auto-accept has signal to act on.
+`improve` never promotes proposals on its own — the confidence gate was removed
+in 0.9.0. Every generated proposal lands in the queue with a `pending` status
+and is adjudicated later with `akm proposal accept` / `akm proposal reject` or
+the drain engine. Reflect still emits a `confidence` score (0..1) in its JSON
+response schema; it is recorded on the proposal for triage and ranking, but no
+threshold auto-accepts anything.
 
 Selection behavior defaults to recent feedback signals first, with a
 zero-feedback retrieval fallback for high-traffic refs. Use
@@ -2073,11 +2073,11 @@ akm proposal list --ref skills/deploy
 | `--type` | Reserved type filter |
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
-reflect/propose runs. The `--auto-accept` flag on `improve` uses this score to
-auto-promote high-confidence proposals — see the `improve` section above. After
-promotion, accepted proposals that overwrote an existing asset also carry a
-`backup` field pointing to the captured prior content, which
-`akm proposal revert` uses.
+reflect/propose runs. It is recorded for triage and ranking only — there is no
+auto-promotion (the confidence gate was removed in 0.9.0); proposals are
+adjudicated with `akm proposal accept` / `reject`. Once accepted, a proposal
+that overwrote an existing asset also carries a `backup` field pointing to the
+captured prior content, which `akm proposal revert` uses.
 
 #### proposal show
 
@@ -2181,7 +2181,7 @@ shell commands. It manages on-disk task definitions under
 akm tasks list                              # List all tasks in the stash
 akm tasks show <id>                         # Show one parsed task
 akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
-  --command "akm improve --strategy default --auto-accept=90"
+  --command "akm improve --strategy default"
 akm tasks add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
 akm tasks run <id>                          # Execute now (what the scheduler calls)
 akm tasks enable <id> / disable <id>        # Toggle scheduler entry

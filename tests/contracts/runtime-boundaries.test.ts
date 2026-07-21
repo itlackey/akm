@@ -32,7 +32,8 @@ describe("current orchestration documentation contract", () => {
 
   test("workflow run state remains separate from the asset index", () => {
     const section = extractSection(architecture, "## Workflow Runtime State");
-    expect(section).toContain("workflow.db");
+    // 0.9.0 folded the former workflow.db into state.db (three DBs, not four).
+    expect(section).toContain("state.db");
     expect(section).toMatch(/survive index rebuilds/i);
     expect(section).toMatch(/not derived from the FTS index/i);
   });

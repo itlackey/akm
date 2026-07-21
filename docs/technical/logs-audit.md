@@ -14,10 +14,9 @@ keep / move / drop decision per source.
 
 | Database | Owner module | Contents |
 |---|---|---|
-| `<dataDir>/state.db` | `src/core/state-db.ts` | Durable records: events, proposals, task_history, improve_runs, extract_sessions_seen |
+| `<dataDir>/state.db` | `src/core/state-db.ts` | Durable records: events, proposals, task_history, improve_runs, extract_sessions_seen, and workflow run state (`workflow_runs` / `workflow_run_steps` / `workflow_run_units`, folded in from the former `workflow.db` in 0.9.0) |
 | `<dataDir>/logs.db` | `src/core/logs-db.ts` (new in #579) | High-volume task/run log lines: `task_logs {ts, task_id, run_id, stream, level, line}` |
 | `<dataDir>/index.db` | `src/indexer/db/db.ts` | Regenerable search index + usage events |
-| `<dataDir>/workflow.db` | `src/workflows/db.ts` | Workflow run state |
 
 logs.db is deliberately separate from state.db: log lines are high-volume,
 append-only, and freely purgeable, whereas state.db rows are durable records.

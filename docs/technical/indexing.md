@@ -98,7 +98,8 @@ skipped unless the caller explicitly requests re-enrichment.
 | `index_meta` | schema/version/runtime metadata |
 | `workflow_documents` | validated `WorkflowDocument` JSON for indexed workflows |
 
-Workflow runtime state lives separately in `workflow.db`, not this index.
+Workflow runtime state lives separately in `state.db` (the former `workflow.db`
+was folded into `state.db` in the 0.9.0 cutover), not this index.
 
 ## Schema Versioning
 
@@ -106,8 +107,8 @@ Workflow runtime state lives separately in `workflow.db`, not this index.
 The schema is gated by a single `DB_VERSION` constant (currently 9). When
 the stored version differs, `ensureSchema()` (in `src/indexer/db.ts`)
 drops + recreates every table in `index.db` (preserving `usage_events`
-via a typed backup); the next `akm index` repopulates. `workflow.db`
-(durable run state) is never touched by this path.
+via a typed backup); the next `akm index` repopulates. Durable workflow run
+state in `state.db` is never touched by this path.
 
 The `workflow_documents` table (introduced in v0.6.0 with `DB_VERSION = 9`)
 caches the validated `WorkflowDocument` JSON output of `parseWorkflow()` for

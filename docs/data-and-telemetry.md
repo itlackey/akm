@@ -1,20 +1,23 @@
 # AKM Data & Telemetry
 
-AKM stores data locally on your machine. **It has no remote telemetry.** No data is sent to Anthropic, the AKM project, or any third party. This document describes exactly what AKM reads and writes on your machine.
+AKM stores your data locally on your machine and has **no telemetry**: it does not send usage data, analytics, or crash reports to Anthropic or to the AKM project, and it has no servers of its own that receive your data. It does, however, make network requests to the endpoints **you** configure — your LLM/embedding provider, the registries and source hosts you install from, and GitHub for upgrades — and those endpoints necessarily receive whatever those requests contain. This document describes exactly what AKM reads, writes, and sends.
 
-## No Remote Data Collection
+## No Telemetry
 
 AKM does not:
-- Send usage data, events, or crash reports to any server
-- Contact any AKM-operated endpoint at runtime (only your own configured LLM/embedding endpoints)
+- Send usage data, events, or crash reports to Anthropic or the AKM project
+- Contact any AKM-operated analytics or telemetry endpoint at runtime
 - Include any analytics SDK or beacon
-- Collect email, name, or any personally-identifying information
+- Collect your email, name, or any personally-identifying information for the project's benefit
 
-The only network requests AKM makes are:
-1. Fetching registry metadata and stash packages from sources you explicitly configure (GitHub, npm, websites)
-2. Calls to your configured LLM/embedding endpoint (if you enabled those features)
-3. `akm upgrade` — fetches the latest release from GitHub releases
-4. `akm setup` — a single DNS lookup for `github.com` to decide whether to skip network-dependent steps (Ollama detection, remote embedding probes) when offline. No HTTP request is made by this probe; if it succeeds, akm proceeds with the network-dependent steps you already configured.
+AKM adds no network destinations of its own. The requests it *does* make all go to endpoints you chose or invoked, and those third parties receive whatever the request contains:
+
+1. **Your configured LLM/embedding provider** (e.g. Anthropic, OpenAI, a local Ollama, or any OpenAI-compatible endpoint) receives the prompts and asset content sent for reflect/propose/distill/embedding when you enable those features. If you point AKM at Anthropic, Anthropic receives those requests.
+2. **Registry metadata and stash packages** from sources you explicitly configure (GitHub, npm, git remotes, websites) — those hosts receive the fetch/clone/crawl requests, and website sources receive requests for the pages you crawl.
+3. **`akm upgrade`** — fetches the latest release from GitHub releases (GitHub sees the request).
+4. **`akm setup`** — a single DNS lookup for `github.com` to decide whether to skip network-dependent steps (Ollama detection, remote embedding probes) when offline. No HTTP request is made by this probe; if it succeeds, akm proceeds with the network-dependent steps you already configured.
+
+In every case the receiving endpoint is one you configured or invoked; the data leaving your machine is the data you directed AKM to send there.
 
 ---
 
@@ -35,8 +38,7 @@ Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 | Path | Contents | Safe to delete? |
 |---|---|---|
 | `index.db` | Search index for all your stash assets (FTS5 + metadata) | Yes — rebuilds via `akm index --full` |
-| `workflow.db` | Workflow run state and history | Caution — deletes run history |
-| `state.db` | Events, proposals, task history, improve run results | **No** — deletes event log, proposal queue, improve history |
+| `state.db` | Events, proposals, task history, improve run results, and workflow run state/history (the former `workflow.db` was folded in during the 0.9.0 cutover) | **No** — deletes event log, proposal queue, improve history, and workflow run history |
 | `akm.lock` | Inter-process write lock | Yes — recreated automatically |
 | `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
 

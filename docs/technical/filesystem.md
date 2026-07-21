@@ -43,8 +43,7 @@ akm uses four XDG-compliant directories. Durable databases live in `$DATA`
 | Purpose | Path |
 | --- | --- |
 | index DB | `$XDG_DATA_HOME/akm/index.db` (`~/.local/share/akm/index.db`) |
-| workflow DB | `$XDG_DATA_HOME/akm/workflow.db` (`~/.local/share/akm/workflow.db`) |
-| state DB (events, proposals, task history) | `$XDG_DATA_HOME/akm/state.db` (`~/.local/share/akm/state.db`) |
+| state DB (events, proposals, task history, workflow run state) | `$XDG_DATA_HOME/akm/state.db` (`~/.local/share/akm/state.db`) |
 | lock file | `$XDG_DATA_HOME/akm/akm.lock` (`~/.local/share/akm/akm.lock`) |
 | config backups | `$XDG_DATA_HOME/akm/config-backups/` |
 | semantic status | `$XDG_CACHE_HOME/akm/semantic-status.json` |

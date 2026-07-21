@@ -183,9 +183,13 @@ Registry index cache: `registry_url` PK, `fetched_at`, `etag`, `last_modified`, 
 
 ---
 
-### `$DATA/workflow.db` — Workflow Run State
+### Workflow Run State — tables in `$DATA/state.db`
 
-WAL mode, foreign keys ON. No automatic cleanup — runs persist indefinitely.
+The 0.9.0 cutover folded the former `$DATA/workflow.db` into `state.db`; the
+`workflow_runs` / `workflow_run_steps` / `workflow_run_units` tables documented
+here now live in `state.db` (see the `state.db` section below) and are deleted
+along with the physical `workflow.db` by `akm migrate apply`. WAL mode, foreign
+keys ON. No automatic cleanup — runs persist indefinitely.
 
 #### Table: `workflow_runs`
 
@@ -577,8 +581,8 @@ akm search  (ranking phase)
 | # | Path | Format | Purpose |
 |---|---|---|---|
 | 1 | `$DATA/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, usage events, LLM cache, registry index cache |
-| 2 | `$DATA/workflow.db` | SQLite 3 (WAL) | Workflow run state and per-step status |
-| 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event log, proposals, task history (migration-safe) |
+| 2 | `$DATA/workflow.db` | — | **Removed in 0.9.0** — folded into `$DATA/state.db`. Deleted by `akm migrate apply`. |
+| 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event log, proposals, task history, and workflow run state (migration-safe) |
 | 4 | `$STATE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history (legacy location, removed in v0.8.0; import into state.db via migration script) |
 | 5 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 6 | `$CONFIG/config.json` | JSONC | User configuration |
