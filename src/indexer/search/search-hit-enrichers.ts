@@ -98,46 +98,12 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
   },
 };
 
-/**
- * Registry of additional enrichers — populated by
- * {@link registerSearchHitEnricher} and consumed in addition to
- * {@link defaultSearchHitEnrichers} when `enrichSearchHit` is invoked
- * without an explicit enricher list.
- *
- * Kept module-local so callers must use `registerSearchHitEnricher` rather
- * than mutating the array directly.
- */
-const additionalEnrichers: SearchHitEnricher[] = [];
-
 export const defaultSearchHitEnrichers: SearchHitEnricher[] = [rendererSearchHitEnricher, derivedMemoryEnricher];
-
-/**
- * Register an additional enricher to be applied alongside the defaults.
- *
- * Idempotent on `name`: subsequent calls with the same name replace the
- * previously-registered enricher (so tests can re-register cleanly without
- * stacking duplicates).
- */
-export function registerSearchHitEnricher(enricher: SearchHitEnricher): void {
-  const existingIndex = additionalEnrichers.findIndex((e) => e.name === enricher.name);
-  if (existingIndex >= 0) {
-    additionalEnrichers[existingIndex] = enricher;
-  } else {
-    additionalEnrichers.push(enricher);
-  }
-}
-
-/**
- * Test-only: clear the registered-enrichers list. Not part of the public API.
- */
-export function _resetRegisteredSearchHitEnrichers(): void {
-  additionalEnrichers.length = 0;
-}
 
 export async function enrichSearchHit(
   hit: SourceSearchHit,
   ctx: SearchHitContext,
-  enrichers: SearchHitEnricher[] = [...defaultSearchHitEnrichers, ...additionalEnrichers],
+  enrichers: SearchHitEnricher[] = defaultSearchHitEnrichers,
 ): Promise<void> {
   for (const enricher of enrichers) {
     if (!enricher.appliesTo(ctx)) continue;
