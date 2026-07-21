@@ -25,6 +25,7 @@
  * this module never opens a database.
  */
 
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { ImproveEligibleRef } from "../../core/improve-types";
 import { computeSalience } from "./salience";
 
@@ -44,7 +45,8 @@ export interface ProactiveSelectorParams {
   /**
    * Candidate population to consider. Every entry should already be confined to
    * the improve-eligible, writable, validated set (the planner passes the
-   * no-feedback / non-signal pool). Each ref must parse as `type:name`.
+   * no-feedback / non-signal pool). Each ref is the canonical
+   * `[bundle//]<stash-subdir>/<name>` conceptId (D-R2/D-R3).
    */
   candidates: ImproveEligibleRef[];
   /**
@@ -97,10 +99,17 @@ export interface ProactiveSelectionResult {
   scored: ProactiveScoredRef[];
 }
 
-/** Parse the bare asset type out of a `type:name` ref. Returns "" when unparseable. */
+/**
+ * Derive the asset type from a candidate's canonical conceptId ref
+ * (`[bundle//]<stash-subdir>/<name>`, ref-grammar decision D-R2/D-R3) via the
+ * permanent reverse table. Returns "" when the leading segment is not a known
+ * stash subdir. The candidate refs are the SHORT conceptId derived fresh from
+ * the index each run (`eligibility.ts`), never a durable `type:name` row, so no
+ * legacy colon arm is needed here.
+ */
 function refType(ref: string): string {
-  const i = ref.indexOf(":");
-  return i > 0 ? ref.slice(0, i) : "";
+  const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
+  return typeNameFromConceptId(body)?.type ?? "";
 }
 
 /**

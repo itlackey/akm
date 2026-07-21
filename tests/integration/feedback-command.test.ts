@@ -107,6 +107,36 @@ describe("akm feedback", () => {
     }
   });
 
+  test("--applied-to credits a canonical lessons/<name> ref into lessonStrength[]", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deploy-note.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    writeFile(
+      path.join(stashDir, "lessons", "deploy-lesson.md"),
+      "---\ndescription: a deploy lesson\nwhen_to_use: when deploying\n---\nCheck the VPN first.\n",
+    );
+    await buildIndex();
+
+    // Feedback on the memory, crediting the lesson via its canonical conceptId.
+    const result = await runCli([
+      "feedback",
+      "memories/deploy-note",
+      "--positive",
+      "--applied-to",
+      "lessons/deploy-lesson",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+
+    // appendLessonStrength must have LOCATED the lesson in the index (the D-R3
+    // lookup uses the new grammar) and appended the feedback ref.
+    const { parseFrontmatter } = await import("../../src/core/asset/frontmatter");
+    const raw = fs.readFileSync(path.join(stashDir, "lessons", "deploy-lesson.md"), "utf8");
+    const strength = parseFrontmatter(raw).data.lessonStrength;
+    expect(Array.isArray(strength) ? strength : []).toContain("memories/deploy-note");
+  });
+
   test("accepts markdown command refs without requiring the .md suffix", async () => {
     writeFile(
       path.join(stashDir, "commands", "complete-github-issue.md"),

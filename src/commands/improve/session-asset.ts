@@ -27,6 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { normalizeHarnessId } from "../../integrations/harnesses";
 import type { SessionData, SessionEvent } from "../../integrations/session-logs/types";
 
@@ -271,7 +272,7 @@ export interface WriteSessionAssetResult {
   written: boolean;
   /** Absolute path of the written asset (when `written`). */
   filePath?: string;
-  /** Canonical asset ref (`session:<harness>/<id>`) when written. */
+  /** Canonical asset ref (`sessions/<harness>/<id>`) when written. */
   ref?: string;
   /** The `log_path` recorded in frontmatter (for state-db correlation). */
   logPath?: string;
@@ -304,7 +305,10 @@ export async function writeSessionAsset(
   return {
     written: true,
     filePath,
-    ref: `session:${normalizeHarnessId(harness)}/${sessionId}`,
+    // Canonical 0.9.0 conceptId (`sessions/<harness>/<id>`, D-R3) — the same
+    // spelling the xrefs / usage-event readers now expect. Historical
+    // `session:<harness>/<id>` rows persist un-migrated and are tolerated.
+    ref: conceptIdFromTypeName("session", `${normalizeHarnessId(harness)}/${sessionId}`),
     logPath: data.ref.filePath,
   };
 }

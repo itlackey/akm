@@ -461,7 +461,7 @@ describe("akmExtract — candidate → proposal routing", () => {
 
     const proposal = listProposals(stash, { status: "pending" }).find((p) => p.source === "extract");
     expect(fs.existsSync(path.join(stash, "sessions", "claude", "ses_live.md"))).toBe(true);
-    expect(parseFrontmatter(proposal?.payload.content ?? "").data.xrefs).toEqual(["session:claude/ses_live"]);
+    expect(parseFrontmatter(proposal?.payload.content ?? "").data.xrefs).toEqual(["sessions/claude/ses_live"]);
   });
 
   test("places scope-born candidates under the canonical project slug", async () => {

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
-import { displayRef, parseRefInput } from "../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parseRefInput } from "../core/asset/resolve-ref";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -74,7 +74,10 @@ function validateFeedbackTags(raw: string[]): string[] {
  * `inferenceProcessed`.
  */
 function appendLessonStrength(type: string, name: string, feedbackRef: string): { strength: number } | null {
-  const ref = `${type}:${name}`;
+  // Canonical 0.9.0 conceptId (`lessons/<name>`, D-R3) — `findEntryIdByRef`
+  // keys on the stored `item_ref` and parses its argument as the new grammar,
+  // so a `type:name` lookup here would never match.
+  const ref = conceptIdFromTypeName(type, name);
   let filePath: string | undefined;
   const db = openExistingDatabase();
   try {
@@ -379,7 +382,7 @@ export const feedbackCommand = defineJsonCommand({
     }
 
     // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
-    // target is a `lesson:<name>` ref and the signal is positive, append
+    // target is a `lessons/<name>` ref and the signal is positive, append
     // the feedback ref to the target lesson's `lessonStrength[]`
     // frontmatter array (dedup, idempotent). Non-lesson targets are
     // ignored. Failures here are warnings — feedback recording is the

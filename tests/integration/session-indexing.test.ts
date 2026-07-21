@@ -186,7 +186,7 @@ describe("#561 session indexing — round-trip", () => {
 
     expect(result.ok).toBe(true);
     const session = result.sessions.find((s) => s.sessionId === SESSION_ID);
-    expect(session?.sessionAssetRef).toBe(`session:claude/${SESSION_ID}`);
+    expect(session?.sessionAssetRef).toBe(`sessions/claude/${SESSION_ID}`);
     expect(session?.sessionLogPath).toBe("/home/u/.claude/projects/-p/ca894f15.jsonl");
 
     // The asset file exists on disk.

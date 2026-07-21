@@ -31,26 +31,26 @@ function ref(r: string, filePath = `/stash/${r}.md`): ImproveEligibleRef {
 
 describe("selectProactiveMaintenanceRefs — due gating", () => {
   test("never-reflected assets are always due", () => {
-    const candidates = [ref("skill:never")];
+    const candidates = [ref("skills/never")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map(),
       lastDistillTs: new Map(),
-      retrievalCounts: new Map([["skill:never", 10]]),
+      retrievalCounts: new Map([["skills/never", 10]]),
       now: NOW,
     });
     expect(res.dueTotal).toBe(1);
     expect(res.neverReflected).toBe(1);
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:never"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/never"]);
   });
 
   test("assets reflected within dueDays are NOT due (rotation cooldown)", () => {
-    const candidates = [ref("skill:fresh")];
+    const candidates = [ref("skills/fresh")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
-      lastReflectTs: new Map([["skill:fresh", isoDaysAgo(5)]]), // 5 < 30
+      lastReflectTs: new Map([["skills/fresh", isoDaysAgo(5)]]), // 5 < 30
       lastDistillTs: new Map(),
-      retrievalCounts: new Map([["skill:fresh", 50]]),
+      retrievalCounts: new Map([["skills/fresh", 50]]),
       now: NOW,
     });
     expect(res.dueTotal).toBe(0);
@@ -58,38 +58,38 @@ describe("selectProactiveMaintenanceRefs — due gating", () => {
   });
 
   test("assets reflected longer ago than dueDays ARE due", () => {
-    const candidates = [ref("skill:stale")];
+    const candidates = [ref("skills/stale")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
-      lastReflectTs: new Map([["skill:stale", isoDaysAgo(45)]]), // 45 > 30
+      lastReflectTs: new Map([["skills/stale", isoDaysAgo(45)]]), // 45 > 30
       lastDistillTs: new Map(),
-      retrievalCounts: new Map([["skill:stale", 3]]),
+      retrievalCounts: new Map([["skills/stale", 3]]),
       now: NOW,
     });
     expect(res.dueTotal).toBe(1);
     expect(res.neverReflected).toBe(0);
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:stale"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/stale"]);
   });
 
   test("a recent DISTILL also resets the maintenance clock", () => {
-    const candidates = [ref("memory:m1")];
+    const candidates = [ref("memories/m1")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
-      lastReflectTs: new Map([["memory:m1", isoDaysAgo(90)]]), // reflect stale
-      lastDistillTs: new Map([["memory:m1", isoDaysAgo(2)]]), // but distilled recently
-      retrievalCounts: new Map([["memory:m1", 5]]),
+      lastReflectTs: new Map([["memories/m1", isoDaysAgo(90)]]), // reflect stale
+      lastDistillTs: new Map([["memories/m1", isoDaysAgo(2)]]), // but distilled recently
+      retrievalCounts: new Map([["memories/m1", 5]]),
       now: NOW,
     });
     expect(res.dueTotal).toBe(0);
   });
 
   test("custom dueDays widens/narrows the gate", () => {
-    const candidates = [ref("skill:s")];
+    const candidates = [ref("skills/s")];
     const args = {
       candidates,
-      lastReflectTs: new Map([["skill:s", isoDaysAgo(10)]]),
+      lastReflectTs: new Map([["skills/s", isoDaysAgo(10)]]),
       lastDistillTs: new Map(),
-      retrievalCounts: new Map([["skill:s", 5]]),
+      retrievalCounts: new Map([["skills/s", 5]]),
       now: NOW,
     };
     expect(selectProactiveMaintenanceRefs({ ...args, dueDays: 30 }).dueTotal).toBe(0);
@@ -99,55 +99,55 @@ describe("selectProactiveMaintenanceRefs — due gating", () => {
 
 describe("selectProactiveMaintenanceRefs — priority ordering", () => {
   test("higher importance type outranks lower for equal freq/size", () => {
-    const candidates = [ref("memory:lo"), ref("skill:hi")];
+    const candidates = [ref("memories/lo"), ref("skills/hi")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map(), // both never reflected => due
       lastDistillTs: new Map(),
       retrievalCounts: new Map([
-        ["memory:lo", 10],
-        ["skill:hi", 10],
+        ["memories/lo", 10],
+        ["skills/hi", 10],
       ]),
       sizeBytesOf: () => 1000,
       now: NOW,
     });
     // skill encoding weight (0.9) > memory encoding weight (0.5) in salience.ts => skill ranks first
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:hi", "memory:lo"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/hi", "memories/lo"]);
   });
 
   test("higher retrieval frequency ranks higher for same type", () => {
-    const candidates = [ref("skill:cold"), ref("skill:hot")];
+    const candidates = [ref("skills/cold"), ref("skills/hot")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map(),
       lastDistillTs: new Map(),
       retrievalCounts: new Map([
-        ["skill:cold", 1],
-        ["skill:hot", 100],
+        ["skills/cold", 1],
+        ["skills/hot", 100],
       ]),
       sizeBytesOf: () => 1000,
       now: NOW,
     });
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:hot", "skill:cold"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/hot", "skills/cold"]);
   });
 
   test("type-encoding weights from salience.ts govern ordering (skill > memory for equal freq/size)", () => {
     // After WS-1: priority = computeSalience().rankScore which uses DEFAULT_TYPE_ENCODING_WEIGHTS.
     // skill=0.9 > memory=0.5 — same relative ordering as the old DEFAULT_IMPORTANCE_WEIGHTS.
-    const candidates = [ref("memory:m"), ref("skill:s")];
+    const candidates = [ref("memories/m"), ref("skills/s")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map(),
       lastDistillTs: new Map(),
       retrievalCounts: new Map([
-        ["memory:m", 10],
-        ["skill:s", 10],
+        ["memories/m", 10],
+        ["skills/s", 10],
       ]),
       sizeBytesOf: () => 1000,
       now: NOW,
     });
     expect(DEFAULT_TYPE_ENCODING_WEIGHTS.skill).toBeGreaterThan(DEFAULT_TYPE_ENCODING_WEIGHTS.memory!);
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:s", "memory:m"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/s", "memories/m"]);
   });
 
   test("defaults are exported with the documented values", () => {
@@ -158,7 +158,7 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
 
 describe("selectProactiveMaintenanceRefs — top-N bound", () => {
   test("selection is bounded to maxPerRun even when more are due", () => {
-    const candidates = Array.from({ length: 50 }, (_, i) => ref(`skill:s${i}`));
+    const candidates = Array.from({ length: 50 }, (_, i) => ref(`skills/s${i}`));
     const retrievalCounts = new Map(candidates.map((c, i) => [c.ref, i + 1]));
     const res = selectProactiveMaintenanceRefs({
       candidates,
@@ -172,12 +172,12 @@ describe("selectProactiveMaintenanceRefs — top-N bound", () => {
     expect(res.dueTotal).toBe(50);
     expect(res.selected.length).toBe(25);
     // The 25 highest-frequency refs (s49..s25) should win.
-    expect(res.selected[0]!.ref).toBe("skill:s49");
-    expect(res.selected.some((s) => s.ref === "skill:s0")).toBe(false);
+    expect(res.selected[0]!.ref).toBe("skills/s49");
+    expect(res.selected.some((s) => s.ref === "skills/s0")).toBe(false);
   });
 
   test("maxPerRun of 0 selects nothing but still reports dueTotal", () => {
-    const candidates = [ref("skill:a"), ref("skill:b")];
+    const candidates = [ref("skills/a"), ref("skills/b")];
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map(),
@@ -193,24 +193,24 @@ describe("selectProactiveMaintenanceRefs — top-N bound", () => {
 
 describe("selectProactiveMaintenanceRefs — rotation", () => {
   test("a ref reflected on the previous run is skipped until it ages past dueDays", () => {
-    const candidates = [ref("skill:rotA"), ref("skill:rotB")];
+    const candidates = [ref("skills/rotA"), ref("skills/rotB")];
     // rotA was just reflected (last run); rotB has gone stale.
     const res = selectProactiveMaintenanceRefs({
       candidates,
       lastReflectTs: new Map([
-        ["skill:rotA", isoDaysAgo(1)],
-        ["skill:rotB", isoDaysAgo(60)],
+        ["skills/rotA", isoDaysAgo(1)],
+        ["skills/rotB", isoDaysAgo(60)],
       ]),
       lastDistillTs: new Map(),
       retrievalCounts: new Map([
-        ["skill:rotA", 100],
-        ["skill:rotB", 1],
+        ["skills/rotA", 100],
+        ["skills/rotB", 1],
       ]),
       sizeBytesOf: () => 1000,
       now: NOW,
     });
     // Even though rotA is far hotter, it is NOT due (cooldown) — only rotB rotates in.
-    expect(res.selected.map((s) => s.ref)).toEqual(["skill:rotB"]);
+    expect(res.selected.map((s) => s.ref)).toEqual(["skills/rotB"]);
   });
 });
 
@@ -223,12 +223,12 @@ describe("selectProactiveMaintenanceRefs — rotation", () => {
 //
 // Two invariants are exercised:
 //
-//   1. SAME-TYPE ordering: two DUE `memory:` candidates with different retrievalCounts
+//   1. SAME-TYPE ordering: two DUE `memories/` candidates with different retrievalCounts
 //      and lastUseMs are ordered exactly as their computed rankScores dictate.
 //      The heavily-retrieved, recently-used ref outranks the never-used one.
 //
-//   2. CROSS-TYPE ordering: a hot `memory:` ref (high retrieval + fresh lastUseMs) can
-//      outrank a cold `skill:` ref (zero retrieval, never used), even though skill has
+//   2. CROSS-TYPE ordering: a hot `memories/` ref (high retrieval + fresh lastUseMs) can
+//      outrank a cold `skills/` ref (zero retrieval, never used), even though skill has
 //      a higher DEFAULT_TYPE_ENCODING_WEIGHTS value. Under the OLD product-table formula
 //      (importance × log(1+freq) × decay / log10(size)), the type weight multiplier
 //      (1.5 for skill, 0.7 for memory) would have prevented this inversion. The new
@@ -239,21 +239,21 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
   const SIZE_BYTES = 1000;
 
   test(
-    "same-type (memory:): heavily-retrieved+recently-used ref outranks never-used ref, " +
+    "same-type (memories/): heavily-retrieved+recently-used ref outranks never-used ref, " +
       "and the order equals the computeSalience rankScore order",
     () => {
-      // Craft two DUE memory: candidates with deliberately different usage profiles.
-      const hot = ref("memory:hot");
-      const cold = ref("memory:cold");
+      // Craft two DUE memories/ candidates with deliberately different usage profiles.
+      const hot = ref("memories/hot");
+      const cold = ref("memories/cold");
       const candidates = [cold, hot]; // intentionally supply cold first to detect ordering
 
       const retrievalCounts = new Map([
-        ["memory:hot", 200], // heavy usage
-        ["memory:cold", 0], //  never retrieved
+        ["memories/hot", 200], // heavy usage
+        ["memories/cold", 0], //  never retrieved
       ]);
       const lastUseMs = new Map([
-        ["memory:hot", NOW - 1 * DAY], // used yesterday
-        // memory:cold absent => treated as never retrieved (0)
+        ["memories/hot", NOW - 1 * DAY], // used yesterday
+        // memories/cold absent => treated as never retrieved (0)
       ]);
 
       const res = selectProactiveMaintenanceRefs({
@@ -267,11 +267,11 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
       });
 
       // Both must be selected (both DUE, maxPerRun default = 25).
-      expect(res.selected.map((s) => s.ref)).toEqual(["memory:hot", "memory:cold"]);
+      expect(res.selected.map((s) => s.ref)).toEqual(["memories/hot", "memories/cold"]);
 
       // Cross-check: the selector order must match the computeSalience rankScore order.
       const hotScore = computeSalience({
-        ref: "memory:hot",
+        ref: "memories/hot",
         type: "memory",
         retrievalFreq: 200,
         lastUseMs: NOW - 1 * DAY,
@@ -279,7 +279,7 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
         now: NOW,
       }).rankScore;
       const coldScore = computeSalience({
-        ref: "memory:cold",
+        ref: "memories/cold",
         type: "memory",
         retrievalFreq: 0,
         lastUseMs: undefined,
@@ -291,15 +291,15 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
       expect(hotScore).toBeGreaterThan(coldScore);
 
       // The selector's scored array must carry the same priority values.
-      const hotEntry = res.scored.find((s) => s.ref.ref === "memory:hot");
-      const coldEntry = res.scored.find((s) => s.ref.ref === "memory:cold");
+      const hotEntry = res.scored.find((s) => s.ref.ref === "memories/hot");
+      const coldEntry = res.scored.find((s) => s.ref.ref === "memories/cold");
       expect(hotEntry?.priority).toBeCloseTo(hotScore, 10);
       expect(coldEntry?.priority).toBeCloseTo(coldScore, 10);
     },
   );
 
   test(
-    "cross-type: hot memory: (high retrieval + fresh) outranks cold skill: (zero retrieval), " +
+    "cross-type: hot memories/ (high retrieval + fresh) outranks cold skills/ (zero retrieval), " +
       "which the old DEFAULT_IMPORTANCE_WEIGHTS product-table formula would have forbidden",
     () => {
       // Under the old formula: priority = importanceWeight × log(1+freq) × recencyDecay / log10(size)
@@ -310,21 +310,21 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
       // when both refs have non-zero retrieval. We therefore also assert that the computed
       // rankScores satisfy the inversion condition independently of the old formula.
 
-      // memory:hot — high retrieval, recently used (1 day ago).
-      const hotMem = ref("memory:hot-x");
-      // skill:cold — zero retrieval, never used. Has highest encoding weight (0.9),
+      // memories/hot — high retrieval, recently used (1 day ago).
+      const hotMem = ref("memories/hot-x");
+      // skills/cold — zero retrieval, never used. Has highest encoding weight (0.9),
       // but zero retrieval means retrieval sub-score = 0.
-      const coldSkill = ref("skill:cold-x");
+      const coldSkill = ref("skills/cold-x");
 
       const candidates = [coldSkill, hotMem]; // supply cold-skill first
 
       const retrievalCounts = new Map([
-        ["memory:hot-x", 200],
-        ["skill:cold-x", 0],
+        ["memories/hot-x", 200],
+        ["skills/cold-x", 0],
       ]);
       const lastUseMs = new Map([
-        ["memory:hot-x", NOW - 1 * DAY],
-        // skill:cold-x absent => treated as never retrieved
+        ["memories/hot-x", NOW - 1 * DAY],
+        // skills/cold-x absent => treated as never retrieved
       ]);
 
       const res = selectProactiveMaintenanceRefs({
@@ -339,15 +339,15 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
 
       // Both must appear in selected (both DUE).
       const selectedRefs = res.selected.map((s) => s.ref);
-      expect(selectedRefs).toContain("memory:hot-x");
-      expect(selectedRefs).toContain("skill:cold-x");
+      expect(selectedRefs).toContain("memories/hot-x");
+      expect(selectedRefs).toContain("skills/cold-x");
 
-      // memory:hot-x must rank BEFORE skill:cold-x despite skill having higher encoding weight.
-      expect(selectedRefs.indexOf("memory:hot-x")).toBeLessThan(selectedRefs.indexOf("skill:cold-x"));
+      // memories/hot-x must rank BEFORE skills/cold-x despite skill having higher encoding weight.
+      expect(selectedRefs.indexOf("memories/hot-x")).toBeLessThan(selectedRefs.indexOf("skills/cold-x"));
 
       // Cross-check via direct computeSalience invocations (the seam):
       const hotMemScore = computeSalience({
-        ref: "memory:hot-x",
+        ref: "memories/hot-x",
         type: "memory",
         retrievalFreq: 200,
         lastUseMs: NOW - 1 * DAY,
@@ -355,7 +355,7 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
         now: NOW,
       }).rankScore;
       const coldSkillScore = computeSalience({
-        ref: "skill:cold-x",
+        ref: "skills/cold-x",
         type: "skill",
         retrievalFreq: 0,
         lastUseMs: undefined,
@@ -368,8 +368,8 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
       expect(hotMemScore).toBeGreaterThan(coldSkillScore);
 
       // The selector's priority must match computeSalience exactly (the seam is tight).
-      const hotEntry = res.scored.find((s) => s.ref.ref === "memory:hot-x");
-      const coldEntry = res.scored.find((s) => s.ref.ref === "skill:cold-x");
+      const hotEntry = res.scored.find((s) => s.ref.ref === "memories/hot-x");
+      const coldEntry = res.scored.find((s) => s.ref.ref === "skills/cold-x");
       expect(hotEntry?.priority).toBeCloseTo(hotMemScore, 10);
       expect(coldEntry?.priority).toBeCloseTo(coldSkillScore, 10);
     },

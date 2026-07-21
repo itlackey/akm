@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { assetPathForName } from "../../core/asset/asset-placement";
-import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -176,7 +176,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     await writeAsset(target.source, target.config, ref, yaml);
     await sched.install(task);
     installSucceeded = true;
-    commitBoundary(target, `Update task:${id}`);
+    commitBoundary(target, `Update tasks/${id}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -227,7 +227,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${id}`);
+        commitBoundary(target, `Restore tasks/${id}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -242,7 +242,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
   return {
     id,
-    ref: `task:${id}`,
+    ref: conceptIdFromTypeName("task", id),
     path: assetPath,
     stashDir,
     schedule: task.schedule,
@@ -329,7 +329,7 @@ export async function akmTasksList(): Promise<TasksListResult> {
     }
     tasks.push({
       id: task.id,
-      ref: `task:${task.id}`,
+      ref: conceptIdFromTypeName("task", task.id),
       path: filePath,
       schedule: task.schedule,
       enabled: task.enabled,
@@ -370,7 +370,7 @@ export async function akmTasksShow(id: string): Promise<{
   const spec = parseSchedule(task.schedule, backendNameForPlatform());
   return {
     id: task.id,
-    ref: `task:${task.id}`,
+    ref: conceptIdFromTypeName("task", task.id),
     path: filePath,
     schedule: task.schedule,
     cron: translateToCron(spec),
@@ -409,7 +409,7 @@ export async function akmTasksRemove(
     await sched.uninstall(normalised);
     deleteAttempted = true;
     await deleteAsset(target.source, target.config, ref);
-    commitBoundary(target, `Remove task:${normalised}`);
+    commitBoundary(target, `Remove tasks/${normalised}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -430,7 +430,7 @@ export async function akmTasksRemove(
     }
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${normalised}`);
+        commitBoundary(target, `Restore tasks/${normalised}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -483,7 +483,7 @@ export async function akmTasksSetEnabled(
     // both the current schedule and the new enabled state, and is idempotent.
     await sched.install(task);
     installSucceeded = true;
-    commitBoundary(target, `Update task:${normalised}`);
+    commitBoundary(target, `Update tasks/${normalised}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -505,7 +505,7 @@ export async function akmTasksSetEnabled(
     }
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${normalised}`);
+        commitBoundary(target, `Restore tasks/${normalised}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
