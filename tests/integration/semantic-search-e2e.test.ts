@@ -41,53 +41,68 @@ function createTmpDir(prefix: string): string {
 
 /**
  * Create a stash directory populated with semantically distinct test assets.
- * Each asset has a .stash.json with curated metadata and a content file.
+ *
+ * #39: the `.stash.json` sidecar readers were retired, so every asset now carries
+ * its curated metadata (description / tags / searchHints / quality) in its native
+ * frontmatter home instead of a sidecar. The doc assets live as `knowledge/<name>.md`
+ * and the skill folds into its `SKILL.md`. The two seeds that used to ride on a
+ * bare script / command (`deploy`, `db-migrate`) re-home onto `knowledge/<name>.md`
+ * exactly like the chunk-10 sidecar sweep did (script and knowledge carry no type
+ * boost, so scoring mechanics are unchanged); their names are preserved so the
+ * ranking assertions still hold. Five indexable assets total — `vaults/` is never
+ * indexed.
  */
 function createTestStash(): string {
   const stashDir = createTmpDir("akm-semantic-e2e-stash-");
+  const knowledgeDir = path.join(stashDir, "knowledge");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
 
-  // 1. Deploy script — about deploying applications to production
-  const deployDir = path.join(stashDir, "scripts", "deploy");
-  fs.mkdirSync(deployDir, { recursive: true });
+  // 1. Deploy — deploying applications to production (re-homed from a script seed).
   fs.writeFileSync(
-    path.join(deployDir, "deploy.sh"),
-    `#!/bin/bash
-# Deploy application to production environment
-# Handles blue-green deployment with health checks
+    path.join(knowledgeDir, "deploy.md"),
+    `---
+description: Deploy application to production with blue-green strategy and health checks
+tags:
+  - deploy
+  - production
+  - kubernetes
+  - k8s
+  - rollout
+searchHints:
+  - use when deploying to production
+  - blue-green deployment strategy
+quality: curated
+---
+# Deploy
 
-set -euo pipefail
+Deploy an application to the production environment using a blue-green deployment
+strategy with health checks.
 
-echo "Starting production deployment..."
-kubectl apply -f k8s/deployment.yaml
-kubectl rollout status deployment/app --timeout=300s
-echo "Deployment complete. Running health checks..."
-curl -sf http://app.internal/health || exit 1
-echo "Application deployed successfully to production."
+- Apply the Kubernetes deployment and wait for the rollout to reach a healthy state.
+- Run health checks against the running service before shifting production traffic.
+- Roll back automatically when the production health check fails.
+
+Use this when deploying to production: it ships the new version safely and verifies
+the application is healthy before completing the deployment.
 `,
   );
-  fs.writeFileSync(
-    path.join(deployDir, ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy",
-          type: "script",
-          filename: "deploy.sh",
-          description: "Deploy application to production with blue-green strategy and health checks",
-          tags: ["deploy", "production", "kubernetes", "k8s", "rollout"],
-          searchHints: ["use when deploying to production", "blue-green deployment strategy"],
-          quality: "curated",
-        },
-      ],
-    }),
-  );
 
-  // 2. Docker knowledge — about container best practices
-  const dockerDir = path.join(stashDir, "knowledge", "docker-guide");
-  fs.mkdirSync(dockerDir, { recursive: true });
+  // 2. Docker knowledge — container best practices.
   fs.writeFileSync(
-    path.join(dockerDir, "docker-guide.md"),
-    `# Docker Container Best Practices
+    path.join(knowledgeDir, "docker-guide.md"),
+    `---
+description: Docker container best practices covering image building, security, networking, and resource management
+tags:
+  - docker
+  - container
+  - devops
+  - best-practices
+searchHints:
+  - container best practices
+  - docker security guidelines
+quality: curated
+---
+# Docker Container Best Practices
 
 ## Image Building
 - Use multi-stage builds to reduce image size
@@ -110,30 +125,23 @@ echo "Application deployed successfully to production."
 - Monitor container resource usage
 `,
   );
-  fs.writeFileSync(
-    path.join(dockerDir, ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "docker-guide",
-          type: "knowledge",
-          filename: "docker-guide.md",
-          description:
-            "Docker container best practices covering image building, security, networking, and resource management",
-          tags: ["docker", "container", "devops", "best-practices"],
-          searchHints: ["container best practices", "docker security guidelines"],
-          quality: "curated",
-        },
-      ],
-    }),
-  );
 
-  // 3. Testing knowledge — about unit testing patterns
-  const testingDir = path.join(stashDir, "knowledge", "testing-patterns");
-  fs.mkdirSync(testingDir, { recursive: true });
+  // 3. Testing knowledge — unit testing patterns.
   fs.writeFileSync(
-    path.join(testingDir, "testing-patterns.md"),
-    `# Unit Testing Patterns and Best Practices
+    path.join(knowledgeDir, "testing-patterns.md"),
+    `---
+description: Unit testing patterns including AAA, mocking strategies, coverage guidelines, and integration testing
+tags:
+  - testing
+  - unit-test
+  - tdd
+  - quality
+searchHints:
+  - how to write unit tests
+  - testing best practices
+quality: curated
+---
+# Unit Testing Patterns and Best Practices
 
 ## Test Structure
 - Arrange, Act, Assert (AAA) pattern
@@ -156,30 +164,25 @@ echo "Application deployed successfully to production."
 - Verify error handling across service boundaries
 `,
   );
-  fs.writeFileSync(
-    path.join(testingDir, ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "testing-patterns",
-          type: "knowledge",
-          filename: "testing-patterns.md",
-          description:
-            "Unit testing patterns including AAA, mocking strategies, coverage guidelines, and integration testing",
-          tags: ["testing", "unit-test", "tdd", "quality"],
-          searchHints: ["how to write unit tests", "testing best practices"],
-          quality: "curated",
-        },
-      ],
-    }),
-  );
 
-  // 4. Git workflow skill — about version control
+  // 4. Git workflow skill — version control (folded into SKILL.md).
   const gitDir = path.join(stashDir, "skills", "git-workflow");
   fs.mkdirSync(gitDir, { recursive: true });
   fs.writeFileSync(
-    path.join(gitDir, "git-workflow.md"),
-    `# Git Workflow Skill
+    path.join(gitDir, "SKILL.md"),
+    `---
+description: Git version control workflow covering branching strategy, commit conventions, and merge practices
+tags:
+  - git
+  - version-control
+  - branching
+  - workflow
+searchHints:
+  - how to manage git branches
+  - commit message conventions
+quality: curated
+---
+# Git Workflow Skill
 
 ## Branching Strategy
 Use a trunk-based development model:
@@ -188,10 +191,7 @@ Use a trunk-based development model:
 - Use pull requests for code review
 
 ## Commit Messages
-Follow conventional commits:
-- feat: for new features
-- fix: for bug fixes
-- refactor: for code restructuring
+Follow conventional commits (feat, fix, refactor) for a readable history.
 
 ## Merge Strategy
 - Prefer rebase for linear history
@@ -199,55 +199,30 @@ Follow conventional commits:
 - Never force push to shared branches
 `,
   );
-  fs.writeFileSync(
-    path.join(gitDir, ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "git-workflow",
-          type: "skill",
-          filename: "git-workflow.md",
-          description:
-            "Git version control workflow covering branching strategy, commit conventions, and merge practices",
-          tags: ["git", "version-control", "branching", "workflow"],
-          searchHints: ["how to manage git branches", "commit message conventions"],
-          quality: "curated",
-        },
-      ],
-    }),
-  );
 
-  // 5. Database migration command — about schema changes
-  const migrateDir = path.join(stashDir, "commands", "db-migrate");
-  fs.mkdirSync(migrateDir, { recursive: true });
+  // 5. Database migration knowledge — schema changes (re-homed from a command seed).
   fs.writeFileSync(
-    path.join(migrateDir, "db-migrate.sh"),
-    `#!/bin/bash
-# Run database migrations safely with rollback support
-set -euo pipefail
+    path.join(knowledgeDir, "db-migrate.md"),
+    `---
+description: Run database schema migrations with rollback support using Prisma
+tags:
+  - database
+  - migration
+  - schema
+  - prisma
+searchHints:
+  - migrate database schema
+  - run prisma migrations
+quality: curated
+---
+# Database Migration
 
-echo "Running database schema migration..."
-npx prisma migrate deploy
-echo "Migration complete. Verifying schema..."
-npx prisma db pull --force
-echo "Database migration finished successfully."
+Run database schema migrations safely with rollback support using Prisma.
+
+- Apply pending schema migrations with \`prisma migrate deploy\`.
+- Verify the resulting schema by pulling it back from the database.
+- Keep migrations reversible so a failed change can be rolled back.
 `,
-  );
-  fs.writeFileSync(
-    path.join(migrateDir, ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "db-migrate",
-          type: "command",
-          filename: "db-migrate.sh",
-          description: "Run database schema migrations with rollback support using Prisma",
-          tags: ["database", "migration", "schema", "prisma"],
-          searchHints: ["migrate database schema", "run prisma migrations"],
-          quality: "curated",
-        },
-      ],
-    }),
   );
 
   // 6. Legacy vaults/ directory — the `vault` asset type was removed in 0.9.0

@@ -110,7 +110,9 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   }
 
   // Validate the schedule for the active backend before writing anything.
-  const backend = backendNameForPlatform();
+  // WI-9.10e: the injected backend (tests) carries its own name, so derive it
+  // from `deps.backend` when present — retiring the `_setBackendsForTests` seam.
+  const backend = deps.backend?.name ?? backendNameForPlatform();
   parseSchedule(input.schedule, backend);
 
   const target = resolveTaskWriteTarget();
@@ -857,25 +859,46 @@ function collectStaleTaskIds(): string[] {
   return stale;
 }
 
-const STALE_GENERATED_COMMANDS: Record<string, { command: string; replacement: string }> = {
+// Old-spelling match keys for the default-task commands whose retired
+// `--auto-accept safe` flag is dropped in the `replacement`. Each id lists BOTH
+// deprecated spellings that can survive in a v2 task file: the original
+// `--profile X --auto-accept safe` and the intermediate `--strategy X
+// --auto-accept safe` (what the 0.8→0.9 migration writes — parser normalization
+// only rewrites `--profile`→`--strategy` for legacy v1 files, so a stored v2
+// file keeps whichever spelling it was minted with). Without the `--strategy`
+// variant, migrated default tasks match no key and warn on every run until 0.10
+// (chunk-6 ledger residue).
+const STALE_GENERATED_COMMANDS: Record<string, { commands: readonly string[]; replacement: string }> = {
   "akm-improve-frequent": {
-    command: "akm improve --profile frequent --auto-accept safe",
+    commands: [
+      "akm improve --profile frequent --auto-accept safe",
+      "akm improve --strategy frequent --auto-accept safe",
+    ],
     replacement: "akm improve --strategy frequent",
   },
   "akm-improve-consolidate": {
-    command: "akm improve --profile consolidate --auto-accept safe",
+    commands: [
+      "akm improve --profile consolidate --auto-accept safe",
+      "akm improve --strategy consolidate --auto-accept safe",
+    ],
     replacement: "akm improve --strategy consolidate",
   },
   "akm-improve-nightly": {
-    command: "akm improve --profile thorough --auto-accept safe",
+    commands: [
+      "akm improve --profile thorough --auto-accept safe",
+      "akm improve --strategy thorough --auto-accept safe",
+    ],
     replacement: "akm improve --strategy thorough",
   },
   "akm-improve-catchup": {
-    command: "akm improve --profile catchup --auto-accept safe",
+    commands: ["akm improve --profile catchup --auto-accept safe", "akm improve --strategy catchup --auto-accept safe"],
     replacement: "akm improve --strategy catchup",
   },
   "akm-graph-refresh-weekly": {
-    command: "akm improve --profile graph-refresh --auto-accept safe",
+    commands: [
+      "akm improve --profile graph-refresh --auto-accept safe",
+      "akm improve --strategy graph-refresh --auto-accept safe",
+    ],
     replacement: "akm improve --strategy graph-refresh",
   },
 };
@@ -889,7 +912,7 @@ function collectStaleGeneratedCommands(): Array<{ id: string; replacement: strin
     if (!fs.existsSync(filePath)) continue;
     try {
       const task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
-      if (task.target.kind === "command" && task.target.cmd.join(" ") === expected.command) {
+      if (task.target.kind === "command" && expected.commands.includes(task.target.cmd.join(" "))) {
         stale.push({ id, replacement: expected.replacement });
       }
     } catch {

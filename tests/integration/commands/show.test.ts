@@ -51,7 +51,7 @@ afterEach(() => {
 describe("akmShow stash .meta convention", () => {
   test("direct-reads .meta/index.md from the working stash for `meta`", async () => {
     saveConfig({ semanticSearchMode: "off" });
-    writeFile(path.join(stashDir, ".meta", "index.md"), "# Stash orientation\nStart at skill:foo.");
+    writeFile(path.join(stashDir, ".meta", "index.md"), "# Stash orientation\nStart at skills/foo.");
 
     const result = await akmShow({ ref: "meta" });
     expect(result.type).toBe("meta");
