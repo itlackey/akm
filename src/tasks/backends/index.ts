@@ -33,22 +33,13 @@ export interface SelectBackendOptions {
   schtasks?: SchtasksBackendOptions;
 }
 
-// ── Test seam ────────────────────────────────────────────────────────────────
-// Swap-and-restore overrides. Inert in production; only tests call the setter
-// (via tests/_helpers/seams.ts). See docs/design/di-seams-plan.md.
-interface BackendsOverridesForTests {
-  selectBackend?: typeof selectBackend;
-  backendNameForPlatform?: typeof backendNameForPlatform;
-}
-let backendsOverrides: BackendsOverridesForTests | undefined;
-
-/** TEST-ONLY. Swap backend selection; pass undefined to restore the real implementations. */
-export function _setBackendsForTests(fakes?: BackendsOverridesForTests): void {
-  backendsOverrides = fakes;
-}
-
+// WI-9.10e: the former `_setBackendsForTests` module-mutation seam was retired.
+// Tests inject a fake `TaskBackend` directly via the `deps.backend` parameter
+// the `akm tasks` mutation entries already accept (the backend carries its own
+// `name`), so no module-level override binding is needed. `selectBackend`'s
+// `options.platform` covers the platform-steering the seam's second override
+// used to provide.
 export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
-  if (backendsOverrides?.selectBackend) return backendsOverrides.selectBackend(options);
   const platform = options.platform ?? process.platform;
   switch (platform) {
     case "win32":
@@ -61,7 +52,6 @@ export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
 }
 
 export function backendNameForPlatform(platform: NodeJS.Platform = process.platform): ScheduleBackend {
-  if (backendsOverrides?.backendNameForPlatform) return backendsOverrides.backendNameForPlatform(platform);
   if (platform === "win32") return "schtasks";
   if (platform === "darwin") return "launchd";
   return "cron";

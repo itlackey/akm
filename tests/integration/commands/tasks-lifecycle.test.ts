@@ -6,11 +6,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksAdd, akmTasksRemove, akmTasksSetEnabled, akmTasksSync } from "../../../src/commands/tasks/tasks";
-import { _setBackendsForTests, type TaskBackend } from "../../../src/tasks/backends";
+import type { TaskBackend } from "../../../src/tasks/backends";
 import type { ScheduleBackend } from "../../../src/tasks/schedule";
 import type { TaskDocument } from "../../../src/tasks/schema";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
-import { overrideSeam } from "../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 let backendName: ScheduleBackend;
@@ -64,10 +63,6 @@ beforeEach(() => {
   failInstall = undefined;
   setEnabledError = undefined;
   uninstallError = undefined;
-  overrideSeam(_setBackendsForTests, {
-    selectBackend: () => backend,
-    backendNameForPlatform: () => backendName,
-  });
 });
 
 afterEach(() => {
@@ -124,12 +119,15 @@ describe("task lifecycle failure handling", () => {
     failInstall = (task) => task.schedule === "0 3 * * *";
 
     await expect(
-      akmTasksAdd({
-        id: "nightly",
-        schedule: "0 3 * * *",
-        command: "echo replacement",
-        force: true,
-      }),
+      akmTasksAdd(
+        {
+          id: "nightly",
+          schedule: "0 3 * * *",
+          command: "echo replacement",
+          force: true,
+        },
+        { backend },
+      ),
     ).rejects.toThrow("install failed for nightly");
 
     expect(fs.readFileSync(taskPath, "utf8")).toBe(priorYaml);
@@ -498,7 +496,7 @@ describe("task lifecycle failure handling", () => {
     installed.set("keep", undefined);
     uninstallError = new Error("backend uninstall failed");
 
-    await expect(akmTasksRemove("keep")).rejects.toThrow("backend uninstall failed");
+    await expect(akmTasksRemove("keep", { backend })).rejects.toThrow("backend uninstall failed");
 
     expect(uninstallCalls).toEqual(["keep"]);
     expect(fs.readFileSync(taskPath, "utf8")).toBe(yaml);

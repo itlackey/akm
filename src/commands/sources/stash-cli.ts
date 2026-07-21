@@ -33,7 +33,7 @@ import { getParsedInvocation } from "../../cli/invocation";
 import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { isHttpUrl } from "../../core/common";
+import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -131,8 +131,13 @@ export const indexCommand = defineCommand({
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
       let latestMessage = "";
+      // Resolve the stash dir once at the `akm index` command boundary and
+      // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
+      // no longer reads the ambient `resolveStashDir()`.
+      const stashDir = resolveStashDir();
       try {
         const result = await akmIndex({
+          stashDir,
           full: args.full,
           clean: args.clean,
           dryRun: args["dry-run"],

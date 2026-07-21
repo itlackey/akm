@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
 import type { BundleComponent } from "../core/adapter/types";
-import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
+import { isHttpUrl, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { recoverTxnsForRoot } from "../core/fs-txn";
@@ -162,7 +162,13 @@ export interface IndexProgressEvent {
 }
 
 interface IndexOptions {
-  stashDir?: string;
+  /**
+   * The stash directory to index. Resolved once at each command boundary
+   * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
+   * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
+   * setup, ensure-index, tests) already passes it.
+   */
+  stashDir: string;
   full?: boolean;
   /**
    * When true, re-enrich all entries regardless of quality (including already
@@ -507,12 +513,12 @@ export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
   akmIndexOverride = fake;
 }
 
-export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
+export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
   if (akmIndexOverride) return akmIndexOverride(options);
   return akmIndexReal(options);
 }
 
-async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
+async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   const requestedAt = Date.now();
   let acquiredAt = requestedAt;
   return withIndexWriterLease(
@@ -530,7 +536,7 @@ async function akmIndexReal(options?: IndexOptions): Promise<IndexResponse> {
       },
     },
     async () => {
-      const stashDir = options?.stashDir || resolveStashDir();
+      const stashDir = options.stashDir;
       const onProgress = options?.onProgress ?? (() => {});
       const signal = options?.signal;
       const reEnrich = options?.reEnrich === true;

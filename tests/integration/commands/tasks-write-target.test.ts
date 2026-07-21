@@ -2,14 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import * as tasksModule from "../../../src/commands/tasks/tasks";
 import { saveConfig } from "../../../src/core/config/config";
-import { _setBackendsForTests, type TaskBackend } from "../../../src/tasks/backends";
+import type { TaskBackend } from "../../../src/tasks/backends";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
-import { overrideSeam } from "../../_helpers/seams";
 
 const backendState = {
   installCalls: [] as string[],
@@ -36,13 +35,6 @@ const fakeBackend: TaskBackend = {
   list: async () => [],
 };
 
-beforeEach(() => {
-  overrideSeam(_setBackendsForTests, {
-    selectBackend: () => fakeBackend,
-    backendNameForPlatform: () => "cron",
-  });
-});
-
 afterEach(() => {
   resetBackendState();
 });
@@ -59,11 +51,14 @@ describe("task asset mutations honor write-target resolution", () => {
         bundles: { target: { path: target.dir, writable: true } },
       });
 
-      const result = await tasksModule.akmTasksAdd({
-        id: "nightly",
-        schedule: "0 2 * * *",
-        command: "echo nightly",
-      });
+      const result = await tasksModule.akmTasksAdd(
+        {
+          id: "nightly",
+          schedule: "0 2 * * *",
+          command: "echo nightly",
+        },
+        { backend: fakeBackend },
+      );
 
       expect(result.stashDir).toBe(target.dir);
       expect(fs.existsSync(path.join(target.dir, "tasks", "nightly.yml"))).toBe(true);
@@ -88,11 +83,14 @@ describe("task asset mutations honor write-target resolution", () => {
       backendState.failInstallFor.add("broken");
 
       await expect(
-        tasksModule.akmTasksAdd({
-          id: "broken",
-          schedule: "0 2 * * *",
-          command: "echo broken",
-        }),
+        tasksModule.akmTasksAdd(
+          {
+            id: "broken",
+            schedule: "0 2 * * *",
+            command: "echo broken",
+          },
+          { backend: fakeBackend },
+        ),
       ).rejects.toThrow(/install failed/);
 
       expect(fs.existsSync(path.join(target.dir, "tasks", "broken.yml"))).toBe(false);
@@ -113,17 +111,20 @@ describe("task asset mutations honor write-target resolution", () => {
         bundles: { target: { path: target.dir, writable: true } },
       });
 
-      await tasksModule.akmTasksAdd({
-        id: "toggle-me",
-        schedule: "0 2 * * *",
-        command: "echo toggle",
-      });
+      await tasksModule.akmTasksAdd(
+        {
+          id: "toggle-me",
+          schedule: "0 2 * * *",
+          command: "echo toggle",
+        },
+        { backend: fakeBackend },
+      );
 
-      await tasksModule.akmTasksSetEnabled("toggle-me", false);
+      await tasksModule.akmTasksSetEnabled("toggle-me", false, { backend: fakeBackend });
       const taskPath = path.join(target.dir, "tasks", "toggle-me.yml");
       expect(fs.readFileSync(taskPath, "utf8")).toContain("enabled: false");
 
-      await tasksModule.akmTasksRemove("toggle-me");
+      await tasksModule.akmTasksRemove("toggle-me", { backend: fakeBackend });
       expect(fs.existsSync(taskPath)).toBe(false);
       expect(backendState.uninstallCalls).toEqual(["toggle-me"]);
     } finally {

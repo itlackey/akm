@@ -33,7 +33,6 @@ import path from "node:path";
 import { shouldSkipUnactivatedTask } from "../core/activation-policy";
 import { assertNever } from "../core/assert";
 import { parseRefInput } from "../core/asset/resolve-ref";
-import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, rethrowIfTestIsolationError } from "../core/errors";
 import {
@@ -98,8 +97,12 @@ export interface TaskRunResult {
 }
 
 export interface RunTaskOptions {
-  /** Override stash dir resolution (tests). */
-  stashDir?: string;
+  /**
+   * The stash directory the task asset resolves against. Resolved once at the
+   * `akm tasks run` command boundary (WI-9.10 CLI-wide sweep) and threaded in —
+   * this runner no longer reads the ambient stash-dir resolver.
+   */
+  stashDir: string;
   /** Override the agent runner (tests). Defaults to {@link runAgent}. */
   runAgentImpl?: RunnerSeams["runAgent"];
   /**
@@ -119,7 +122,7 @@ export interface RunTaskOptions {
   scheduled?: boolean;
 }
 
-export async function runTask(id: string, options: RunTaskOptions = {}): Promise<TaskRunResult> {
+export async function runTask(id: string, options: RunTaskOptions): Promise<TaskRunResult> {
   const runAgentImpl = options.runAgentImpl;
   const startWorkflowRunImpl = options.startWorkflowRunImpl ?? startWorkflowRun;
   const now = options.now ?? (() => new Date());
@@ -146,7 +149,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   let failureReason: TaskAttemptFailureReason = "task_load_failed";
 
   try {
-    const stashDir = options.stashDir ?? resolveStashDir();
+    const stashDir = options.stashDir;
     const filePath = await resolveAssetPath(stashDir, "task", id);
     const yaml = fs.readFileSync(filePath, "utf8");
 
