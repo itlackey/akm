@@ -506,29 +506,21 @@ async function searchDatabase(
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
-  // Source filter: when the caller narrowed `sources` via `--source <name>`,
-  // drop hits whose filePath does not live under any of the requested
-  // sources. The FTS/vector index spans every configured source, so without
-  // this filter a narrowed --source request would still leak results from
-  // other sources that happened to match the query text.
-  const sourceFiltered = restrictToSources
-    ? deduped.filter((item) => findSourceForPath(item.filePath, sources) !== undefined)
-    : deduped;
-
-  // Scope filter: drop hits whose stored scope does not satisfy every supplied
-  // key. Applied AFTER ranking — filtering narrows the result set without
-  // touching the single FTS5+boosts scoring pipeline.
-  const scopeFiltered = filters
-    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
-    : sourceFiltered;
-
-  // Proposed-quality filter (v1 spec §4.2): exclude entries with
-  // `quality: "proposed"` unless the caller passed `--include-proposed`.
-  // Applied AFTER ranking for the same reason as scope filtering.
-  const qualityFiltered = includeProposed
-    ? scopeFiltered
-    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
-  const beliefFiltered = qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, beliefFilter));
+  // Source → scope → proposed-quality → derived-twin belief inheritance →
+  // belief: the post-candidate filter chain shared with enumerateEntries (see
+  // applyEntryFilters). Applied AFTER ranking so filtering narrows the result
+  // set without touching the single FTS5+boosts scoring pipeline. The twin
+  // inheritance inside the chain re-runs here as an idempotent no-op — it
+  // already ran on the full candidate pool before ranking (:460) to feed the
+  // belief-state ranker.
+  const beliefFiltered = applyEntryFilters(deduped, {
+    db,
+    sources,
+    restrictToSources,
+    filters,
+    includeProposed,
+    beliefFilter,
+  });
 
   const rankMs = Date.now() - tRank0;
 
@@ -623,29 +615,21 @@ async function enumerateEntries(opts: {
     seenFilePaths.add(ie.filePath);
     return true;
   });
-  // Source filter: when the caller narrowed `sources` via `--source <name>`,
-  // drop entries whose filePath does not live under any of the requested
-  // sources. The FTS index spans every configured source, so without this
-  // filter a narrowed --source request would still leak results.
-  const sourceFiltered = opts.restrictToSources
-    ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
-    : uniqueEntries;
-  // Scope filter: drop entries whose stored scope does not satisfy every
-  // supplied scope key. Filtering happens BEFORE the limit slice so a
-  // restrictive filter still returns up to `limit` results.
-  const scopeFiltered = filters
-    ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
-    : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude entries with
-  // `quality: "proposed"` unless the caller explicitly opts in.
-  const qualityFiltered = opts.includeProposed
-    ? scopeFiltered
-    : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-  // 03-R3: derived twins inherit their base's demoting belief state here too,
-  // so the belief FILTER (and the reported hit state) stays consistent on the
-  // enumerate/browse path — not only on the FTS-scored path.
-  inheritDerivedTwinBeliefStates(db, qualityFiltered);
-  const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
+  // Source → scope → proposed-quality → derived-twin belief inheritance →
+  // belief: the post-candidate filter chain shared with searchDatabase's
+  // scored path (see applyEntryFilters). Filtering happens BEFORE the limit
+  // slice so a restrictive filter still returns up to `limit` results. On this
+  // path the twin inheritance is the ONLY place it runs (there is no ranking
+  // pass), keeping the belief filter and reported hit state consistent with
+  // the scored path.
+  const beliefFiltered = applyEntryFilters(uniqueEntries, {
+    db,
+    sources,
+    restrictToSources: opts.restrictToSources,
+    filters,
+    includeProposed: opts.includeProposed,
+    beliefFilter,
+  });
   const selected = beliefFiltered.slice(0, opts.limit);
   const hits = await Promise.all(
     selected.map((ie) =>
@@ -665,6 +649,66 @@ async function enumerateEntries(opts: {
     ),
   );
   return { hits };
+}
+
+/**
+ * Post-candidate filter chain shared by BOTH search paths — the scored path
+ * (`searchDatabase`) and the browse path (`enumerateEntries`). Applies, in this
+ * exact order: source-narrowing → scope → proposed-quality → derived-twin
+ * belief inheritance → belief filter. Extracting the chain removes the two
+ * paths' formerly-duplicated filter sequences so the predicates, their order,
+ * and the twin-inheritance placement can never drift apart (plan §4.3).
+ *
+ * What this does NOT unify — and deliberately leaves divergent — is CANDIDATE-
+ * POOL construction, which is inherent search-vs-browse semantics: the scored
+ * path's pool is `searchFts`/vector matches for the query's own tokens (FTS
+ * indexes description/tags/searchHints/aliases, not raw body prose), while the
+ * enumerate path's pool is `getAllEntries` for the type, independent of query
+ * text. A derived twin sharing no indexed token with the query is therefore an
+ * enumerate-path candidate but never a scored-path candidate — see
+ * tests/fixtures/goldens/filter-behavior/scored-vs-enumerate.json, which pins
+ * that (retained) divergence.
+ *
+ * `inheritDerivedTwinBeliefStates` is idempotent, so running it here is safe on
+ * the scored path, which must ALSO call it before ranking (the belief-state
+ * ranker demotes inherited states): by the time this chain runs, those twins
+ * already carry a state and the call here is a no-op for them. The enumerate
+ * path never ranks, so this is the only place it inherits.
+ */
+function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
+  items: T[],
+  opts: {
+    db: Database;
+    sources: SearchSource[];
+    restrictToSources: boolean;
+    filters?: StashEntryScope;
+    includeProposed: boolean;
+    beliefFilter: BeliefFilterMode;
+  },
+): T[] {
+  const { filters } = opts;
+  // Source filter: when the caller narrowed `sources` via `--source <name>`,
+  // drop entries whose filePath does not live under any requested source. The
+  // FTS/enumerate index spans every configured source, so without this filter a
+  // narrowed --source request would still leak results from other sources.
+  const sourceFiltered = opts.restrictToSources
+    ? items.filter((item) => findSourceForPath(item.filePath, opts.sources) !== undefined)
+    : items;
+  // Scope filter: drop entries whose stored scope does not satisfy every
+  // supplied key.
+  const scopeFiltered = filters
+    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
+    : sourceFiltered;
+  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
+  // entries unless the caller opts in.
+  const qualityFiltered = opts.includeProposed
+    ? scopeFiltered
+    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+  // 03-R3: derived twins inherit their base's demoting belief state BEFORE the
+  // belief filter, so the filter (and the reported hit state) stays consistent
+  // across both paths.
+  inheritDerivedTwinBeliefStates(opts.db, qualityFiltered);
+  return qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, opts.beliefFilter));
 }
 
 /**

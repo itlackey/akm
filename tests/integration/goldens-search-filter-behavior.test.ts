@@ -8,14 +8,18 @@
  * `docs/design/execution/chunk-0b/anchors.md` Section D — "Filter-behavior +
  * rank-metric surfaces").
  *
- * `src/indexer/search/db-search.ts` has two independently-duplicated filter
- * chains that are not yet unified (plan §4.3, Chunk-5-owned):
+ * `src/indexer/search/db-search.ts` HAD two independently-duplicated filter
+ * chains; Chunk 5 unified them into the shared `applyEntryFilters` helper
+ * (plan §4.3), which BOTH paths now call:
  *   - the SCORED path (`searchDatabase`, fn@:282) — reached by any query with
  *     searchable FTS tokens;
  *   - the ENUMERATE path (`enumerateEntries`, fn@:574) — reached by an empty/
  *     unsearchable query or a `<type>:` ref-prefix query.
  * Both apply the same source/scope/quality/belief filter chain in the same
- * order.
+ * order — now literally the same function body, not two copies. The
+ * candidate-POOL difference (FTS/vector match vs enumerate-all) is inherent
+ * search-vs-browse semantics and was deliberately NOT unified (see the
+ * `applyEntryFilters` doc-comment).
  *
  * CORRECTED FINDING (verified empirically against HEAD `cd25a769`, see the
  * ledger for detail): `docs/design/execution/chunk-0b/anchors.md` Section D.1
@@ -45,8 +49,10 @@
  * combinations against a small purpose-built fixture
  * (`tests/fixtures/stashes/search-filter/`, see its MANIFEST.json) so BOTH
  * the parity case and the real divergence case are pinned in a reviewed
- * diff, not a silent behavior change, before Chunk 5 unifies the two filter
- * chains.
+ * diff, not a silent behavior change. Chunk 5's filter-chain unification (the
+ * shared `applyEntryFilters`) LANDED and reproduced this golden byte-for-byte
+ * — the candidate-pool divergence it deliberately leaves in place stays
+ * visible here (it is search-vs-browse semantics, not duplicated filter code).
  *
  * Both search paths are driven exclusively through the PUBLIC `akmSearch`
  * entry point (`searchDatabase`/`enumerateEntries` are module-private and
@@ -402,7 +408,7 @@ describe("golden fixture: filter-behavior/scored-vs-enumerate.json (WI-0b.5a)", 
           "'gridlock' on both paths, since it shares the 'gridlock' tag with its base) is therefore a PARITY case: " +
           "identical membership on both paths under every belief mode in this golden (see the 'beliefCurrent'/" +
           "'beliefHistorical' combos).",
-        "FROZEN two-path asymmetry (the REAL mechanism, replacing anchors.md D.1's framing): the divergence is " +
+        "RETAINED two-path asymmetry (the REAL mechanism, replacing anchors.md D.1's framing): the divergence is " +
           "candidate-POOL membership, not filter code. searchDatabase's candidate pool is built from searchFts/" +
           "vector matches for the query's own tokens; enumerateEntries's candidate pool is getAllEntries for the " +
           "type, independent of query text. memory:silent-twin-base.derived shares NO indexed token with 'gridlock' " +
@@ -410,8 +416,10 @@ describe("golden fixture: filter-behavior/scored-vs-enumerate.json (WI-0b.5a)", 
           "candidate for this query under ANY belief filter (visible in every combo's 'scored' half below as a " +
           "total absence) while it is ALWAYS an enumerate-path candidate and reliably inherits silent-twin-base's " +
           "'contradicted' state (present under belief=all/historical, absent under belief=current in the " +
-          "'enumerate' half). Chunk 5's unification of the two filter chains must treat this diff as a reviewed " +
-          "behavior change, not reproduce it silently.",
+          "'enumerate' half). Chunk 5's filter-chain unification (the shared applyEntryFilters helper both paths " +
+          "now call) deliberately LEFT this candidate-pool divergence in place — it is inherent search-vs-browse " +
+          "semantics, not duplicated filter code; the shared helper unifies only the source/scope/quality/belief " +
+          "chain, so this golden is byte-identical across the unification.",
         "The 'scopeUserBobHistoricalIncludeProposed' combo is a deliberate CONTRAST case: scope+quality filtering " +
           "(entryMatchesScope/isProposedQuality) is literally the same function call on both paths, and the sole " +
           "matching entry (knowledge:contradicted-knowledge) is not a memory, so it is never eligible for " +
@@ -420,9 +428,12 @@ describe("golden fixture: filter-behavior/scored-vs-enumerate.json (WI-0b.5a)", 
         "Each hit is projected to {ref, type, name, score, quality?, beliefState?} -- the fields that distinguish " +
           "filter outcomes. Scored-path scores vary with FTS5 BM25 + ranking boosts; enumerate-path scores are " +
           "always the fixed browse score 1 (enumerateEntries never scores, db-search.ts:644).",
-        "FROZEN behavior-parity oracle (D0b-1/D0b-3, same designation-reuse rationale as this registry's WI-0b.3/" +
-          "WI-0b.4 entries): Chunk 5's filter-path unification must reproduce this byte-for-byte or land an " +
-          "explicit re-baseline in the same reviewed change.",
+        "BEHAVIOR-PARITY oracle (D0b-1/D0b-3, same designation-reuse rationale as this registry's WI-0b.3/" +
+          "WI-0b.4 entries): Chunk 5's filter-path unification (the shared applyEntryFilters helper) reproduced " +
+          "this golden byte-for-byte — the extraction preserved the predicate set, order, and derived-twin " +
+          "inheritance placement, so not a single hit shifted. The only re-baseline in that reviewed change is " +
+          "this prose (future-tense 'must reproduce' framing rewritten to past tense); the combos data is " +
+          "unchanged.",
       ],
       combos,
     });
