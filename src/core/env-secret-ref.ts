@@ -22,6 +22,13 @@ import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
+import {
+  commitWriteTargetBoundary,
+  formatRefForMessage,
+  type ResolvedWriteTarget,
+  recordWriteTargetPath,
+  resolveWriteTarget,
+} from "./write-source";
 
 export type { IndexSearchSource };
 
@@ -142,4 +149,115 @@ export function resolveSecretPath(
     throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
   }
   return { name: parsed.name, absPath, source };
+}
+
+// ── Write-target resolution (env/secret mutations) ───────────────────────────
+//
+// READS (`env run`/`show`/`list`/`path`, `secret run`/`path`/`list`) keep the
+// origin-aware, all-sources `findEnvSource` resolution above. WRITES route
+// through the canonical `resolveWriteTarget` selection every other write command
+// (remember/import/tasks/knowledge) shares: explicit `--target` wins, else
+// `defaultWriteTarget`, else the working stash, and the chosen source must be
+// writable (a non-writable `--target`/`defaultWriteTarget` fails fast with the
+// shared typed ConfigError). Env/secret VALUES are still never read or surfaced
+// here — these helpers only resolve the write target and the absolute path.
+
+/**
+ * Spell an env/secret ref for a resolved write target. `target.selector` is the
+ * config source name for a `--target`/`defaultWriteTarget` destination and
+ * undefined for the working-stash fallback; `displayRef` suppresses the
+ * `local`/`stash`/default sentinels, so the primary stash still spells the bare
+ * `env/name` while a named bundle spells `bundle//env/name`.
+ */
+export function writeTargetDisplaySource(target: ResolvedWriteTarget): IndexSearchSource {
+  return { path: target.source.path, ...(target.selector ? { registryId: target.selector } : {}) };
+}
+
+export interface EnvWriteResolution {
+  name: string;
+  absPath: string;
+  target: ResolvedWriteTarget;
+  parsedRef: AssetRef;
+}
+
+/**
+ * Resolve the destination for an env mutation. Mirrors {@link resolveEnvPath}
+ * but selects the source via {@link resolveWriteTarget} (writability-checked)
+ * instead of the read-side {@link findEnvSource}. `create` enforces a flat ref
+ * name and applies `--path` as the subdirectory (matching `env create`).
+ */
+export function resolveEnvWriteTarget(
+  ref: string,
+  writeTarget: string | undefined,
+  create?: { subPath?: string },
+): EnvWriteResolution {
+  const parsed = parseEnvRef(ref);
+  if (parsed.type !== "env") {
+    throw new UsageError(`Expected an env ref (env:<name>); got "${ref}".`);
+  }
+  if (create) {
+    assertFlatAssetName(parsed.name);
+    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
+  }
+  const target = resolveWriteTarget(loadConfig(), writeTarget);
+  const envRoot = path.join(target.source.path, "env");
+  const absPath = assetPathForName("env", envRoot, parsed.name);
+  if (!isWithin(absPath, envRoot)) {
+    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
+  }
+  return { name: parsed.name, absPath, target, parsedRef: parsed };
+}
+
+export interface SecretWriteResolution {
+  name: string;
+  absPath: string;
+  target: ResolvedWriteTarget;
+}
+
+/**
+ * Resolve the destination for a secret mutation. Mirrors
+ * {@link resolveSecretPath} but selects the source via
+ * {@link resolveWriteTarget} (writability-checked) instead of the read-side
+ * {@link findEnvSource}.
+ */
+export function resolveSecretWriteTarget(
+  ref: string,
+  writeTarget: string | undefined,
+  create?: { subPath?: string },
+): SecretWriteResolution {
+  const parsed = parseSecretRef(ref);
+  if (parsed.type !== "secret") {
+    throw new UsageError(`Expected a secret ref (secret:<name>); got "${ref}".`);
+  }
+  if (create) {
+    assertFlatAssetName(parsed.name);
+    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
+  }
+  const target = resolveWriteTarget(loadConfig(), writeTarget);
+  const typeRoot = path.join(target.source.path, "secrets");
+  const absPath = assetPathForName("secret", typeRoot, parsed.name);
+  if (!isWithin(absPath, typeRoot)) {
+    throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
+  }
+  return { name: parsed.name, absPath, target };
+}
+
+/**
+ * Land an env/secret mutation on its write target's git boundary. Mirrors the
+ * tasks/knowledge write path: record each mutated path, then fire the single
+ * batch-at-boundary commit. Both steps are no-ops for filesystem targets (the
+ * primary stash included) and for `env/` paths a stash `.gitignore` excludes, so
+ * callers invoke it unconditionally after every create/ingest/set/remove.
+ */
+export function commitEnvSecretWrite(
+  target: ResolvedWriteTarget,
+  ref: { type: "env" | "secret"; name: string },
+  op: "Update" | "Remove",
+  paths: string[],
+): void {
+  for (const filePath of paths) recordWriteTargetPath(target.source, filePath);
+  commitWriteTargetBoundary(
+    target,
+    `${op} ${formatRefForMessage({ type: ref.type, name: ref.name, ...(target.selector ? { origin: target.selector } : {}) })}`,
+  );
 }

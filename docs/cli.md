@@ -1549,6 +1549,7 @@ akm env create prod --from-file ./.env        # ingest an existing .env
 akm env create prod --path staging            # creates env/staging/prod.env
 echo "https://db" | akm env set env/prod DATABASE_URL   # set one key (value via stdin)
 akm env set env/prod API_TOKEN --from-env CI_TOKEN      # set from an env var (not argv)
+akm env set env/prod API_TOKEN --from-env CI_TOKEN --target team   # write to the `team` source
 akm env unset env/prod DEBUG OLD_FLAG          # remove one or more keys
 $EDITOR "$(akm env path env/prod --quiet)"    # edit the file directly
 akm env run env/prod -- npm test              # run a command with the whole file injected
@@ -1563,6 +1564,16 @@ back exactly, and the whole edit is re-verified so no other key is disturbed.
 Set-values are read from stdin (default), `--from-env <VAR>`, or `--from-file
 <path>` — never from argv — and are never echoed. `env unset <ref> <KEY...>`
 removes keys; `env remove <ref>` removes the whole file.
+
+Env mutations (`create`, `set`, `unset`, `remove`) pick their write destination
+the same way every other write command does: an explicit `--target <source>`
+wins, else `defaultWriteTarget`, else the working stash. The chosen source must
+be writable — a non-writable `--target`/`defaultWriteTarget` fails with a
+`ConfigError` before anything is written — and on a git-backed writable target
+the mutation lands in a single boundary commit (filesystem targets are
+committed by `akm sync`; `env/` stays out of git when your stash `.gitignore`
+excludes it). Reads (`list`, `path`, `run`, `export`) still span all configured
+sources and are unchanged.
 
 Subcommands:
 
@@ -1727,6 +1738,13 @@ trailing newline is stripped (so `echo "$TOKEN" | akm secret set …` stores the
 token without the shell-added newline); use `--from-file` for byte-exact storage
 of multi-line material. Writes are atomic (mode 0600) under an exclusive
 `<secret>.lock`. Maximum size is 5 MB.
+
+`secret set` and `secret remove` select their write destination like every other
+write command: an explicit `--target <source>` wins, else `defaultWriteTarget`,
+else the working stash. The chosen source must be writable (a non-writable target
+fails with a `ConfigError`), and on a git-backed writable target the mutation
+lands in a single boundary commit. Reads (`list`, `path`, `run`) still span all
+configured sources.
 
 #### secret path
 

@@ -115,11 +115,20 @@ akm env run env/prod -- $SHELL            # interactive session with the env loa
 # Store a single credential as a secret:
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+
+# Write into a specific source instead of the working stash:
+akm secret set secrets/deploy-token --target team --from-file ./token
 ```
 
 `.env` and secret files are stored at mode 0600 under `env/` in your stash.
 Values **never cross argv** (no `/proc/cmdline` exposure) and never appear in
 akm's structured output — only key names are shown.
+
+Env/secret **mutations** (`create`, `set`, `unset`, `remove`) choose their write
+destination like every other write command: `--target <source>` wins, else
+`defaultWriteTarget`, else the working stash; the target must be writable, and a
+git-backed writable target commits the change at the operation boundary. Reads
+(`list`, `show`, `path`, `run`) still span all configured sources.
 
 **Example: store API endpoint config**
 

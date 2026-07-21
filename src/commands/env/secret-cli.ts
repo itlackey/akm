@@ -25,7 +25,13 @@ import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
-import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
+import {
+  commitEnvSecretWrite,
+  makeSecretRef,
+  resolveSecretPath,
+  resolveSecretWriteTarget,
+  writeTargetDisplaySource,
+} from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -97,10 +103,18 @@ const secretSetCommand = defineJsonCommand({
     },
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
     const { setSecret } = await import("./secret.js");
-    const { name, absPath, source } = resolveSecretPath(args.ref, { subPath: getStringArg(args, "path") });
+    const { name, absPath, target } = resolveSecretWriteTarget(args.ref, args.target, {
+      subPath: getStringArg(args, "path"),
+    });
+    const displaySource = writeTargetDisplaySource(target);
 
     const fromEnv = args["from-env"];
     const fromFile = args["from-file"];
@@ -136,7 +150,8 @@ const secretSetCommand = defineJsonCommand({
     }
 
     setSecret(absPath, value);
-    output("secret-set", { ref: makeSecretRef(name, source) });
+    commitEnvSecretWrite(target, { type: "secret", name }, "Update", [absPath]);
+    output("secret-set", { ref: makeSecretRef(name, displaySource) });
   },
 });
 
@@ -250,9 +265,15 @@ const secretRemoveCommand = defineJsonCommand({
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
-    const { name, absPath, source } = resolveSecretPath(args.ref);
+    const { name, absPath, target } = resolveSecretWriteTarget(args.ref, args.target);
+    const displaySource = writeTargetDisplaySource(target);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -263,10 +284,11 @@ const secretRemoveCommand = defineJsonCommand({
     }
     const { removeSecret } = await import("./secret.js");
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
+      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, displaySource)}`);
     }
     const removed = removeSecret(absPath);
-    output("secret-remove", { ref: makeSecretRef(name, source), removed });
+    commitEnvSecretWrite(target, { type: "secret", name }, "Remove", [absPath, `${absPath}.sensitive`]);
+    output("secret-remove", { ref: makeSecretRef(name, displaySource), removed });
   },
 });
 
