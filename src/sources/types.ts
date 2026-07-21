@@ -193,14 +193,12 @@ export interface AddResponse {
         path: string;
         name?: string;
         stashRoot: string;
-        wiki?: string;
       }
     | {
         type: "website";
         url: string;
         name?: string;
         stashRoot: string;
-        wiki?: string;
       };
   config: {
     sourceCount: number;
@@ -229,7 +227,6 @@ export type SourceKind = "filesystem" | "git" | "npm" | "website" | "managed" | 
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
-  wiki?: string;
   path?: string;
   ref?: string;
   provider?: string;

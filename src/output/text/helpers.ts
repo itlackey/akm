@@ -49,15 +49,6 @@ export {
   formatToggleComponentPlain,
   formatUpdatePlain,
   formatUpgradePlain,
-  formatWikiCreatePlain,
-  formatWikiIngestPlain,
-  formatWikiLintPlain,
-  formatWikiListPlain,
-  formatWikiPagesPlain,
-  formatWikiRegisterPlain,
-  formatWikiRemovePlain,
-  formatWikiShowPlain,
-  formatWikiStashPlain,
 } from "./command-format";
 export {
   formatDistillPlain,

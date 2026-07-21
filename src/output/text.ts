@@ -46,7 +46,6 @@ import { searchFormatters } from "./text/search";
 import { showFormatters } from "./text/show";
 import { updateFormatters } from "./text/update";
 import { upgradeFormatters } from "./text/upgrade";
-import { wikiFormatters } from "./text/wiki";
 import { workflowFormatters } from "./text/workflow";
 
 // Re-export helpers so existing imports from `text.ts` keep working.
@@ -84,15 +83,6 @@ export {
   formatToggleComponentPlain,
   formatUpdatePlain,
   formatUpgradePlain,
-  formatWikiCreatePlain,
-  formatWikiIngestPlain,
-  formatWikiLintPlain,
-  formatWikiListPlain,
-  formatWikiPagesPlain,
-  formatWikiRegisterPlain,
-  formatWikiRemovePlain,
-  formatWikiShowPlain,
-  formatWikiStashPlain,
   formatWorkflowCreatePlain,
   formatWorkflowListPlain,
   formatWorkflowNextPlain,
@@ -117,7 +107,6 @@ const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...showFormatters,
   ...searchFormatters,
   ...curateFormatters,
-  ...wikiFormatters,
   ...workflowFormatters,
   ...listFormatters,
   ...addFormatters,

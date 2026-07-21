@@ -204,12 +204,6 @@ export function formatEnvUnsetPlain(r: Record<string, unknown>): string {
   return parts.join("\n") || `No keys changed in env ${ref}`;
 }
 
-export function formatWikiRegisterPlain(r: Record<string, unknown>): string {
-  const name = String(r.name ?? r.wiki ?? "?");
-  const ref = String(r.ref ?? r.path ?? r.url ?? "?");
-  return `Registered wiki ${name} → ${ref}`;
-}
-
 export function formatEventsPlain(r: Record<string, unknown>): string {
   const events = Array.isArray(r.events) ? (r.events as Array<Record<string, unknown>>) : [];
   const headerParts: string[] = [];
@@ -394,95 +388,6 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   return lines.join("\n").trimEnd();
 }
 
-export function formatWikiListPlain(r: Record<string, unknown>): string {
-  const wikis = Array.isArray(r.wikis) ? (r.wikis as Array<Record<string, unknown>>) : [];
-  if (wikis.length === 0)
-    return "No wikis. Create one with `akm wiki create <name>` or register one with `akm wiki register <name> <path-or-repo>`.";
-  const lines = ["NAME\tPAGES\tRAWS\tLAST-MODIFIED"];
-  for (const w of wikis) {
-    const name = typeof w.name === "string" ? w.name : "?";
-    const pages = typeof w.pages === "number" ? w.pages : 0;
-    const raws = typeof w.raws === "number" ? w.raws : 0;
-    const modified = typeof w.lastModified === "string" ? w.lastModified : "-";
-    lines.push(`${name}\t${pages}\t${raws}\t${modified}`);
-  }
-  return lines.join("\n");
-}
-
-export function formatWikiShowPlain(r: Record<string, unknown>): string {
-  const lines: string[] = [];
-  if (r.name) lines.push(`# wiki: ${String(r.name)}`);
-  if (r.path) lines.push(`path: ${String(r.path)}`);
-  if (r.description) lines.push(`description: ${String(r.description)}`);
-  if (typeof r.pages === "number") lines.push(`pages: ${r.pages}`);
-  if (typeof r.raws === "number") lines.push(`raws: ${r.raws}`);
-  if (r.lastModified) lines.push(`lastModified: ${String(r.lastModified)}`);
-  const recentLog = Array.isArray(r.recentLog) ? (r.recentLog as string[]) : [];
-  if (recentLog.length > 0) {
-    lines.push("", "recent log:");
-    for (const entry of recentLog) {
-      lines.push(entry);
-      lines.push("");
-    }
-  }
-  return lines.join("\n").trimEnd();
-}
-
-export function formatWikiCreatePlain(r: Record<string, unknown>): string {
-  const created = Array.isArray(r.created) ? (r.created as string[]) : [];
-  const skipped = Array.isArray(r.skipped) ? (r.skipped as string[]) : [];
-  const lines = [`Created wiki ${String(r.ref ?? r.name)} at ${String(r.path ?? "?")}`];
-  if (created.length > 0) lines.push(`  created: ${created.length} file(s)`);
-  if (skipped.length > 0) lines.push(`  skipped: ${skipped.length} existing file(s)`);
-  return lines.join("\n");
-}
-
-export function formatWikiRemovePlain(r: Record<string, unknown>): string {
-  const preserved = r.preservedRaw === true;
-  const removed = Array.isArray(r.removed) ? (r.removed as string[]).length : 0;
-  const base = `Removed wiki ${String(r.name ?? "?")} (${removed} path(s))`;
-  return preserved ? `${base}; raw/ preserved at ${String(r.rawPath ?? "raw/")}` : base;
-}
-
-export function formatWikiPagesPlain(r: Record<string, unknown>): string {
-  const pages = Array.isArray(r.pages) ? (r.pages as Array<Record<string, unknown>>) : [];
-  if (pages.length === 0) return `No pages in wiki:${String(r.wiki ?? "?")}.`;
-  const lines: string[] = [];
-  for (const p of pages) {
-    const ref = String(p.ref ?? "?");
-    const kind = typeof p.pageKind === "string" ? ` [${p.pageKind}]` : "";
-    const desc = typeof p.description === "string" && p.description ? ` — ${p.description}` : "";
-    lines.push(`${ref}${kind}${desc}`);
-  }
-  return lines.join("\n");
-}
-
-export function formatWikiStashPlain(r: Record<string, unknown>): string {
-  const slug = String(r.slug ?? "?");
-  const pathValue = String(r.path ?? "?");
-  return `Stashed ${slug} → ${pathValue}`;
-}
-
-export function formatWikiLintPlain(r: Record<string, unknown>): string {
-  const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
-  const pagesScanned = typeof r.pagesScanned === "number" ? r.pagesScanned : 0;
-  const rawsScanned = typeof r.rawsScanned === "number" ? r.rawsScanned : 0;
-  const header = `${findings.length} finding(s) in wiki:${String(r.wiki ?? "?")} (${pagesScanned} page(s), ${rawsScanned} raw(s))`;
-  if (findings.length === 0) return `${header} — clean.`;
-  const lines = [header];
-  for (const f of findings) {
-    const kind = String(f.kind ?? "?");
-    const message = String(f.message ?? "");
-    lines.push(`- [${kind}] ${message}`);
-  }
-  return lines.join("\n");
-}
-
-export function formatWikiIngestPlain(r: Record<string, unknown>): string {
-  if (typeof r.workflow === "string") return r.workflow;
-  return JSON.stringify(r, null, 2);
-}
-
 export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const query = typeof r.query === "string" ? r.query : "";
   const summary = typeof r.summary === "string" ? r.summary : "";
@@ -592,7 +497,6 @@ export function formatListPlain(r: Record<string, unknown>): string {
     const ver = typeof src.version === "string" ? ` v${src.version}` : "";
     const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
     const flags: string[] = [];
-    if (typeof src.wiki === "string") flags.push(`wiki:${src.wiki}`);
     if (src.updatable === true) flags.push("updatable");
     if (src.writable === true) flags.push("writable");
     const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";

@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Agent Task Loop
 
@@ -35,9 +35,6 @@ akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter 
 akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
-akm wiki list                                 # List available wikis
-akm wiki ingest <name>                        # Dispatch an agent to run the ingest workflow (uses defaults.engine or --engine)
-akm wiki stash <name> ./paper.md --target my-stash # Route wiki stash write to a named source
 akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
 akm proposal reject skills/my-skill --reason "..."  # Reject by ref
@@ -64,7 +61,6 @@ akm registry search "<query>"                 # Search all registries
 | memory | Recalled context (read the content for background information) |
 | env | A `.env` file of related CONFIGURATION (many vars; sensitive or not — all protected); key names only. Inject with `akm env run <ref> -- <cmd>` (the agent-safe path — values stay on disk). |
 | secret | A single sensitive value for AUTHENTICATION (token, key, cert); name only. Use `akm secret path` / `akm secret run`. |
-| wiki | A page in a multi-wiki knowledge base. For any wiki task, start with `akm wiki list`. To ingest sources, run `akm wiki ingest <name>` — it dispatches the configured agent engine to execute the ingest workflow against the wiki's `raw/` directory. Run `akm wiki -h` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.

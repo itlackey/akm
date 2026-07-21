@@ -18,7 +18,6 @@ consistency and reducing repeated context-setting.
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
 | `facts/` | Facts | Durable stash-level context; the house conventions in `facts/conventions/` are auto-surfaced to authoring agents |
-| `wikis/` | Wikis | Agent-maintained knowledge bases (see `akm wiki`) |
 | `scripts/` | Scripts | Executable helpers agents and humans can run |
 | `env/`, `secrets/` | Env & Secrets | Configuration groups and single credentials; values are never content-indexed |
 
