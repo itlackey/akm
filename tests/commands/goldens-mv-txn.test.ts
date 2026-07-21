@@ -201,7 +201,7 @@ describe("goldens: mv move with citers + .derived twin (WI-04, R3)", () => {
       const roCiterRaw = fs.readFileSync(roCiterPath, "utf8");
       writeSandboxConfig({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", name: "shared", path: roDir.dir, writable: false }],
+        bundles: { shared: { path: roDir.dir, writable: false } },
       });
 
       const { code, stdout } = await runCliCapture(["mv", fromRef, MV_MOVE_TARGET_REL]);
@@ -484,7 +484,7 @@ describe("golden fixture: serialize mv move-transaction outcomes (WI-04, R3)", (
         );
         writeSandboxConfig({
           semanticSearchMode: "off",
-          sources: [{ type: "filesystem", name: "shared", path: roDir.dir, writable: false }],
+          bundles: { shared: { path: roDir.dir, writable: false } },
         });
 
         const { code, stdout } = await runCliCapture(["mv", fromRef, MV_MOVE_TARGET_REL]);

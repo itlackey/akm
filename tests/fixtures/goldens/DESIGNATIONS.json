@@ -102,12 +102,12 @@
     },
     {
       "path": "tests/fixtures/goldens/cli/a-config-list.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
       "consumers": [
         "tests/commands/goldens-cli-output.test.ts"
       ],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `config list` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
-      "sha256": "713cc65ed17f2d1aee30c64c227a35307af768fbb96d767c9583a67d27a582dc"
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `config list` JSON envelope key-set. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals. | Re-baselined by the chunk-8 follow-up #37 (old-config-shape retirement, 2026-07-21): `config list` no longer emits the retired `sources` key (the forced empty-array display died with the schema field). Key-set re-captured; surface-owner rule applies.",
+      "reBaselineChunk": "8"
     },
     {
       "path": "tests/fixtures/goldens/cli/a-curate.json",
