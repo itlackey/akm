@@ -40,13 +40,19 @@ if [ "$total" -eq 0 ]; then
 fi
 [ "$N" -gt "$total" ] && N="$total"
 
+# Shard logs live in an announced directory (not anonymous mktemp files) so a
+# hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Honors
+# $TMPDIR; kept on failure for diagnosis, removed on success.
+logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
+echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
+
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
   slice=()
   for i in "${!files[@]}"; do
     [ $((i % N)) -eq "$k" ] && slice+=("${files[$i]}")
   done
-  t="$(mktemp)"
+  t="${logdir}/shard-$((k + 1)).log"
   tmps+=("$t")
   # 120s per-test (vs 30s serial): under N-way process contention a heavy test
   # can legitimately run 3-4x its solo duration; the timeout exists to catch

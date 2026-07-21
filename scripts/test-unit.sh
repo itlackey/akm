@@ -48,13 +48,19 @@ if [ "$total" -eq 0 ]; then
 fi
 [ "$N" -gt "$total" ] && N="$total"
 
+# Shard logs live in an announced directory (not anonymous mktemp files) so a
+# hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Honors
+# $TMPDIR; kept on failure for diagnosis, removed on success.
+logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-unit-shards.XXXXXX")"
+echo "── unit: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
+
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
   slice=()
   for i in "${!files[@]}"; do
     [ $((i % N)) -eq "$k" ] && slice+=("${files[$i]}")
   done
-  t="$(mktemp)"
+  t="${logdir}/shard-$((k + 1)).log"
   tmps+=("$t")
   # 120s per-test (matches the integration runner): under N-way process
   # contention the heaviest property/goldens suites legitimately run 3-4x
@@ -83,14 +89,15 @@ for t in "${tmps[@]}"; do
   # undiagnosable).
   if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
     grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
-    echo "── shard log tail (last 80 lines) ──"
+    echo "── shard log tail (last 80 lines): ${t} ──"
     tail -80 "$t"
   fi
-  rm -f "$t"
 done
 
 echo "── unit: ${pass} pass / ${fail} fail across ${N} process-shards (${filecount}/${total} files)"
 if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$total" ]; then
+  echo "── unit: shard logs kept for diagnosis: ${logdir}"
   exit 1
 fi
+rm -rf "$logdir"
 exit 0
