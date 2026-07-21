@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { createHash } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -42,6 +43,14 @@ const WEBSITE_PAGE_BYTE_CAP = 5 * 1024 * 1024;
 const WEBSITE_CRAWL_WALL_CLOCK_MS = 10 * 60 * 1000;
 const WEBSITE_MAX_REDIRECTS = 8;
 
+/**
+ * Body-read deadline for a single page (30s). The per-request fetch timeout
+ * (15s) bounds only the connection/header phase; without this a server that
+ * dribbles body bytes below the size cap could stall the crawl until the whole
+ * wall-clock cap elapses.
+ */
+const WEBSITE_PAGE_BODY_TIMEOUT_MS = 30_000;
+
 interface WebsitePage {
   url: string;
   title: string;
@@ -63,8 +72,17 @@ export interface FetchSnapshotOptions {
   allowPrivateHosts?: boolean;
 }
 
+/** Resolve a hostname to its A/AAAA address strings. Injectable for tests. */
+export type HostnameResolver = (hostname: string) => Promise<string[]>;
+
 interface WebsiteValidationOptions {
   allowPrivateHosts?: boolean;
+  /**
+   * Override the DNS resolver used by the resolve-then-validate SSRF guard.
+   * Defaults to a real `node:dns` lookup; tests inject a stub so no real DNS
+   * ever runs.
+   */
+  resolveHostname?: HostnameResolver;
 }
 
 export function shouldAllowPrivateWebsiteHostsForTests(): boolean {
@@ -299,7 +317,9 @@ async function fetchWebsitePage(
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   let body: string;
   try {
-    body = await readBodyWithByteCap(response, WEBSITE_PAGE_BYTE_CAP);
+    body = await readBodyWithByteCap(response, WEBSITE_PAGE_BYTE_CAP, {
+      bodyTimeoutMs: WEBSITE_PAGE_BODY_TIMEOUT_MS,
+    });
   } catch (err) {
     if (err instanceof ResponseTooLargeError) return null;
     throw err;
@@ -335,6 +355,11 @@ async function fetchWebsiteResponse(
   options?: WebsiteValidationOptions,
 ): Promise<Response> {
   assertWebsiteRequestUrl(pageUrl, Error, options);
+  // Resolve-then-validate BEFORE connecting: the hostname checks above only
+  // catch IP-literal / well-known-name hosts, so a public-looking DNS name that
+  // resolves into a private range would otherwise slip through. This runs on
+  // every hop because the redirect path re-enters this function recursively.
+  await assertResolvedHostAllowed(new URL(pageUrl).hostname, options);
   const response = await fetchWithRetry(
     pageUrl,
     {
@@ -653,6 +678,55 @@ function assertWebsiteRequestUrl(
   }
   if (isForbiddenWebsiteHostname(hostname, options)) {
     throw new ErrorType(`Refusing to fetch non-public website host: ${parsedUrl.hostname}`);
+  }
+}
+
+async function defaultResolveHostname(hostname: string): Promise<string[]> {
+  const records = await dnsLookup(hostname, { all: true });
+  return records.map((record) => record.address);
+}
+
+/**
+ * Resolve-then-validate SSRF guard against DNS rebinding / private-range
+ * bypasses. {@link assertWebsiteRequestUrl} only rejects IP-literal and
+ * well-known-name hosts; a hostname like `private-host.example.com` that
+ * resolves to `10.0.0.1` passes those checks and then fetch connects to the
+ * private address. Here we resolve EVERY A/AAAA record and validate each
+ * against the same forbidden-range rules, failing CLOSED on an empty answer or
+ * resolver error.
+ *
+ * TOCTOU residual (documented, not fully closable here): Bun's `fetch` exposes
+ * no custom `lookup`/agent hook, so we cannot pin the socket to the exact IP we
+ * validated — a hostile resolver could return a public IP to this lookup and a
+ * private IP microseconds later at connect time (classic rebinding). This still
+ * removes the TRIVIAL `hostname A 10.0.0.1` bypass, which is the strongest
+ * guarantee available without a pinned-connection fetch API. Re-run on every
+ * redirect hop (the crawler recurses through `fetchWebsiteResponse`).
+ */
+export async function assertResolvedHostAllowed(hostname: string, options?: WebsiteValidationOptions): Promise<void> {
+  if (options?.allowPrivateHosts === true) return;
+  const bare = stripIpv6Brackets(hostname.toLowerCase());
+  // IP-literal hosts are already fully validated by assertWebsiteRequestUrl's
+  // range checks; resolving them is a no-op (and dnsLookup would just echo it).
+  if (isIP(bare) !== 0) return;
+
+  const resolve = options?.resolveHostname ?? defaultResolveHostname;
+  let addresses: string[];
+  try {
+    addresses = await resolve(bare);
+  } catch {
+    throw new Error(`Refusing to fetch ${hostname}: DNS resolution failed`);
+  }
+  if (addresses.length === 0) {
+    throw new Error(`Refusing to fetch ${hostname}: hostname resolved to no addresses`);
+  }
+  for (const address of addresses) {
+    const version = isIP(address);
+    const forbidden =
+      version === 4 ? isForbiddenIpv4(address) : version === 6 ? isForbiddenIpv6(stripIpv6Brackets(address)) : true;
+    if (forbidden) {
+      throw new Error(`Refusing to fetch ${hostname}: resolves to non-public or unparseable address ${address}`);
+    }
   }
 }
 

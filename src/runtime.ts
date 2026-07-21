@@ -24,12 +24,13 @@
 
 import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, statfsSync } from "node:fs";
+import { createWriteStream, statfsSync, type WriteStream } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { ResponseTooLargeError, readChunkWithDeadline } from "./core/common";
 
 /** True when running under the Bun runtime. Computed once at module load. */
 const isBun = !!process.versions?.bun;
@@ -208,6 +209,88 @@ export async function writeResponseToFile(filePath: string, res: Response): Prom
   }
   const buf = Buffer.from(await res.arrayBuffer());
   await pipeline(Readable.from(buf), createWriteStream(filePath));
+}
+
+/**
+ * Defensive ceiling on a streamed-to-disk download (1 GiB). `writeResponseToFile`
+ * imposes no size or duration bound — a compromised or misconfigured endpoint
+ * could stream until the disk fills or dribble bytes forever. Archive-download
+ * paths use {@link writeResponseToFileCapped} with these bounds instead.
+ */
+export const MAX_STREAMED_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
+
+/** Default overall wall-clock budget for streaming a download body (5 min). */
+export const STREAMED_DOWNLOAD_BODY_TIMEOUT_MS = 5 * 60_000;
+
+function writeStreamChunk(out: WriteStream, chunk: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    out.write(chunk, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+function endWriteStream(out: WriteStream): Promise<void> {
+  return new Promise((resolve, reject) => {
+    out.once("error", reject);
+    out.end(() => resolve());
+  });
+}
+
+/**
+ * Stream a `Response` body to `filePath` enforcing an explicit max-bytes cap
+ * and an overall body-read deadline — the bounds `writeResponseToFile` lacks.
+ *
+ * Refuses before reading when `Content-Length` exceeds the cap; otherwise
+ * streams chunk-by-chunk, aborting with {@link ResponseTooLargeError} the
+ * instant BYTES WRITTEN exceed the cap, or {@link BodyReadTimeoutError} when the
+ * body-read deadline passes. Uses the same runtime-agnostic reader loop on Bun
+ * and Node (correctness over the native `Bun.write` fast path, which offers no
+ * per-byte hook). On any failure the partial file is discarded and the stream
+ * cancelled.
+ */
+export async function writeResponseToFileCapped(
+  filePath: string,
+  res: Response,
+  options?: { maxBytes?: number; bodyTimeoutMs?: number; signal?: AbortSignal },
+): Promise<void> {
+  const maxBytes = options?.maxBytes ?? MAX_STREAMED_DOWNLOAD_BYTES;
+  const bodyTimeoutMs = options?.bodyTimeoutMs ?? STREAMED_DOWNLOAD_BODY_TIMEOUT_MS;
+  const url = res.url || filePath;
+
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel?.().catch(() => undefined);
+    throw new ResponseTooLargeError(url, maxBytes, declared);
+  }
+
+  const body = res.body;
+  if (!body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > maxBytes) throw new ResponseTooLargeError(url, maxBytes, buf.byteLength);
+    await pipeline(Readable.from(buf), createWriteStream(filePath));
+    return;
+  }
+
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  const out = createWriteStream(filePath);
+  const deadlineAt = Date.now() + bodyTimeoutMs;
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await readChunkWithDeadline(reader, deadlineAt, options?.signal, url, bodyTimeoutMs);
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) throw new ResponseTooLargeError(url, maxBytes, total);
+      await writeStreamChunk(out, value);
+    }
+    await endWriteStream(out);
+  } catch (err) {
+    out.destroy();
+    await reader.cancel().catch(() => undefined);
+    throw err;
+  } finally {
+    reader.releaseLock?.();
+  }
 }
 
 // ── Hashing ─────────────────────────────────────────────────────────────────

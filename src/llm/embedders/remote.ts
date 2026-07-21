@@ -46,12 +46,20 @@ export class RemoteEmbedder implements Embedder {
       body.options = ollamaOpts;
     }
 
-    const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
+    // `signal` MUST go through fetchWithTimeout's dedicated 4th parameter, not
+    // the RequestInit: fetchWithTimeout replaces `opts.signal` with its own
+    // controller (`{ ...opts, signal: controller.signal }`), so a signal passed
+    // inside `opts` is silently dropped and caller cancellation never fires.
+    const response = await fetchWithTimeout(
+      normalizeEmbeddingEndpoint(this.endpoint),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+      30_000,
       signal,
-    });
+    );
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => "");
@@ -89,12 +97,18 @@ export class RemoteEmbedder implements Embedder {
         body.options = ollamaOpts;
       }
 
-      const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.endpoint), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
+      // See embed(): `signal` goes through the 4th parameter, not the
+      // RequestInit, or fetchWithTimeout drops it.
+      const response = await fetchWithTimeout(
+        normalizeEmbeddingEndpoint(this.endpoint),
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        },
+        30_000,
         signal,
-      });
+      );
 
       if (!response.ok) {
         const respBody = await response.text().catch(() => "");

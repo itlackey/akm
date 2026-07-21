@@ -293,6 +293,25 @@ function normalizeFsPathForComparison(value: string): string {
 /**
  * Fetch with an AbortController timeout.
  * Defaults to 30 seconds if no timeout is specified.
+ *
+ * SCOPE — connection + response-header phase only. `timeoutMs` bounds the time
+ * until `fetch` RESOLVES (i.e. until the status line + headers arrive); the
+ * timer is cleared once the `Response` is returned. It does NOT bound the time
+ * spent streaming the response BODY: a server can dribble body bytes forever
+ * under any per-byte limit. Callers that read the body MUST bound it
+ * themselves — pass `{ bodyTimeoutMs, signal }` to {@link readBodyWithByteCap}
+ * (in-memory reads) or use a capped streaming writer for downloads. That is the
+ * sanctioned "body-deadline mechanism"; a bounded header timeout here plus a
+ * bounded body read there gives a bounded TOTAL window.
+ *
+ * External `signal`: a caller-supplied `AbortSignal` aborts the in-flight
+ * request with the caller's own `reason`. The bridged listener is removed in
+ * `finally`, so once this function returns the caller's signal no longer
+ * governs the returned `Response`'s body stream — pass the SAME `signal` to the
+ * body-read helper so cancellation continues to apply to the body phase with
+ * the caller's reason. (A timeout and an external abort can never overwrite
+ * each other: whichever fires first aborts the controller, and a second
+ * `controller.abort()` is a no-op that preserves the first reason.)
  */
 export async function fetchWithTimeout(
   url: string,
@@ -405,6 +424,90 @@ export class ResponseTooLargeError extends Error {
 }
 
 /**
+ * Thrown by {@link readBodyWithByteCap} / {@link readChunkWithDeadline} (and the
+ * capped disk writer) when streaming a response body exceeds the caller's
+ * overall body-read deadline. Distinct from a connection/header timeout
+ * (`fetchWithTimeout`) — this is the body-phase bound.
+ */
+export class BodyReadTimeoutError extends Error {
+  readonly url: string;
+  readonly timeoutMs: number;
+  constructor(url: string, timeoutMs: number) {
+    super(`Response body read exceeded ${timeoutMs}ms: ${url}`);
+    this.name = "BodyReadTimeoutError";
+    this.url = url;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Body-phase limits paired with {@link fetchWithTimeout} (which bounds only the
+ * connection/header phase). Callers reading an untrusted body pass these so a
+ * server dribbling bytes forever, or a caller cancellation, is bounded.
+ */
+export interface BodyReadLimits {
+  /** Overall wall-clock budget (ms) for streaming the whole body. */
+  bodyTimeoutMs?: number;
+  /** Caller signal; aborting it rejects the in-progress read with its reason. */
+  signal?: AbortSignal;
+}
+
+function bodyAbortError(signal: AbortSignal | undefined, url: string): Error {
+  const reason = signal?.reason;
+  return reason instanceof Error ? reason : new Error(`Response body read aborted: ${url}`);
+}
+
+/**
+ * Read one chunk from `reader`, rejecting if the overall body deadline passes
+ * or `signal` aborts first. `deadlineAt` is an absolute epoch-ms instant (null
+ * = no deadline). Only races the pending `read()` so a stalled body cannot
+ * block forever; the CALLER cancels the reader on rejection. Throws
+ * {@link BodyReadTimeoutError} on deadline, or the signal's reason (or an
+ * AbortError) on external abort.
+ */
+export async function readChunkWithDeadline<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  deadlineAt: number | null,
+  signal: AbortSignal | undefined,
+  url: string,
+  timeoutMs: number,
+): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>> {
+  type ReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>;
+  if (signal?.aborted) throw bodyAbortError(signal, url);
+  const remaining = deadlineAt === null ? null : deadlineAt - Date.now();
+  if (remaining !== null && remaining <= 0) throw new BodyReadTimeoutError(url, timeoutMs);
+  if (remaining === null && !signal) return reader.read();
+  return new Promise<ReadResult>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(bodyAbortError(signal, url));
+    };
+    if (remaining !== null) {
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new BodyReadTimeoutError(url, timeoutMs));
+      }, remaining);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (err) => {
+        cleanup();
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
  * Read a Response body as a UTF-8 string with a byte-count cap.
  *
  * Streams the body so we abort as soon as the cap is exceeded, without
@@ -412,9 +515,16 @@ export class ResponseTooLargeError extends Error {
  * `Content-Length` larger than the cap, we refuse before reading any
  * bytes. `response.body` is consumed and cancelled on cap breach.
  *
- * `maxBytes` defaults to {@link DEFAULT_RESPONSE_BYTE_CAP} (10 MB).
+ * `maxBytes` defaults to {@link DEFAULT_RESPONSE_BYTE_CAP} (10 MB). `limits`
+ * bounds the body PHASE (duration + caller abort) that `fetchWithTimeout` does
+ * not cover; pass the same `signal` you gave `fetchWithTimeout` so caller
+ * cancellation keeps applying while the body streams.
  */
-export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT_RESPONSE_BYTE_CAP): Promise<string> {
+export async function readBodyWithByteCap(
+  response: Response,
+  maxBytes = DEFAULT_RESPONSE_BYTE_CAP,
+  limits?: BodyReadLimits,
+): Promise<string> {
   const url = response.url || "(unknown URL)";
   const contentLengthHeader = response.headers.get("content-length");
   if (contentLengthHeader) {
@@ -439,18 +549,22 @@ export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  const bodyTimeoutMs = limits?.bodyTimeoutMs;
+  const deadlineAt = bodyTimeoutMs != null ? Date.now() + bodyTimeoutMs : null;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunkWithDeadline(reader, deadlineAt, limits?.signal, url, bodyTimeoutMs ?? 0);
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new ResponseTooLargeError(url, maxBytes, total);
-      }
+      if (total > maxBytes) throw new ResponseTooLargeError(url, maxBytes, total);
       chunks.push(value);
     }
+  } catch (err) {
+    // Cancel the underlying stream on ANY failure (cap breach, body-read
+    // timeout, or caller abort) so the socket is released, not just on cap.
+    await reader.cancel().catch(() => undefined);
+    throw err;
   } finally {
     reader.releaseLock?.();
   }
@@ -474,8 +588,9 @@ export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT
 export async function jsonWithByteCap<T = unknown>(
   response: Response,
   maxBytes = DEFAULT_RESPONSE_BYTE_CAP,
+  limits?: BodyReadLimits,
 ): Promise<T> {
-  const text = await readBodyWithByteCap(response, maxBytes);
+  const text = await readBodyWithByteCap(response, maxBytes, limits);
   return JSON.parse(text) as T;
 }
 

@@ -9,7 +9,7 @@ import { getAdapters } from "../../core/adapter/registry";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { fetchWithRetry } from "../../core/common";
 import type { SourceSpec } from "../../core/config/config";
-import { writeResponseToFile } from "../../runtime";
+import { writeResponseToFileCapped } from "../../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(stashDirNames());
@@ -120,8 +120,10 @@ export async function downloadArchive(url: string, destination: string): Promise
   if (!response.ok) {
     throw new Error(`Failed to download archive (${response.status}) from ${url}`);
   }
-  // Stream response to disk instead of buffering the entire archive in memory.
-  await writeResponseToFile(destination, response);
+  // Stream to disk with an explicit byte cap + body-read deadline: the fetch
+  // timeout above bounds only the connection/header phase, so an unbounded or
+  // dribbling body could otherwise fill the disk or hang the install forever.
+  await writeResponseToFileCapped(destination, response);
 }
 
 /** SHA-256 of a file, returned as `sha256:<hex>`. */

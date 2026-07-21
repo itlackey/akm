@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  BodyReadTimeoutError,
   hasErrnoCode,
   isWithin,
   jsonWithByteCap,
@@ -11,6 +12,7 @@ import {
   resolveStashDir,
   toPosix,
 } from "../../src/core/common";
+import { writeResponseToFileCapped } from "../../src/runtime";
 import { type Cleanup, sandboxHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 // ── resolveStashDir ──────────────────────────────────────────────────────────
@@ -287,5 +289,125 @@ describe("jsonWithByteCap", () => {
   test("propagates JSON.parse errors for malformed input", async () => {
     const response = new Response("{not json");
     await expect(jsonWithByteCap(response, 1024)).rejects.toThrow();
+  });
+});
+
+// ── readBodyWithByteCap body-phase deadline / caller abort ───────────────────
+
+describe("readBodyWithByteCap body-phase limits", () => {
+  // A server that sends headers + a partial body chunk, then holds the body
+  // stream open forever — the mid-body stall fetchWithTimeout does NOT bound.
+  function startStallingBodyServer(): { url: string; stop: () => void } {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial-body-then-stall"));
+            // Intentionally never close/enqueue again → body stalls mid-stream.
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/plain" } });
+      },
+    });
+    return { url: `http://127.0.0.1:${server.port}/`, stop: () => server.stop(true) };
+  }
+
+  test("aborts with BodyReadTimeoutError when the body stalls past bodyTimeoutMs", async () => {
+    const server = startStallingBodyServer();
+    try {
+      const response = await fetch(server.url);
+      await expect(readBodyWithByteCap(response, 1024 * 1024, { bodyTimeoutMs: 60 })).rejects.toBeInstanceOf(
+        BodyReadTimeoutError,
+      );
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("propagates the caller's abort reason when the signal fires mid-body", async () => {
+    const server = startStallingBodyServer();
+    try {
+      const response = await fetch(server.url);
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled");
+      const timer = setTimeout(() => controller.abort(reason), 20);
+      try {
+        await expect(readBodyWithByteCap(response, 1024 * 1024, { signal: controller.signal })).rejects.toBe(reason);
+      } finally {
+        clearTimeout(timer);
+      }
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("rejects immediately when the signal is already aborted", async () => {
+    const response = new Response("hello world");
+    const controller = new AbortController();
+    const reason = new Error("pre-aborted");
+    controller.abort(reason);
+    await expect(readBodyWithByteCap(response, 1024, { signal: controller.signal })).rejects.toBe(reason);
+  });
+
+  test("reads a fast body normally even with a generous deadline set", async () => {
+    const text = await readBodyWithByteCap(new Response("quick body"), 1024, { bodyTimeoutMs: 10_000 });
+    expect(text).toBe("quick body");
+  });
+});
+
+// ── writeResponseToFileCapped (archive download cap) ─────────────────────────
+
+describe("writeResponseToFileCapped", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-capped-writer-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("writes a within-cap body to disk verbatim", async () => {
+    const dest = path.join(dir, "ok.bin");
+    await writeResponseToFileCapped(dest, new Response("archive-bytes"), { maxBytes: 1024 });
+    expect(fs.readFileSync(dest, "utf8")).toBe("archive-bytes");
+  });
+
+  test("refuses before reading when Content-Length exceeds the cap", async () => {
+    const dest = path.join(dir, "declared.bin");
+    const body = "x".repeat(1000);
+    const response = new Response(body, { headers: { "content-length": "1000" } });
+    await expect(writeResponseToFileCapped(dest, response, { maxBytes: 100 })).rejects.toBeInstanceOf(
+      ResponseTooLargeError,
+    );
+    expect(fs.existsSync(dest)).toBe(false);
+  });
+
+  test("aborts mid-stream when the streamed body exceeds the cap", async () => {
+    const dest = path.join(dir, "streamed.bin");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 5; i++) controller.enqueue(new TextEncoder().encode("y".repeat(1000)));
+        controller.close();
+      },
+    });
+    await expect(writeResponseToFileCapped(dest, new Response(stream), { maxBytes: 2500 })).rejects.toBeInstanceOf(
+      ResponseTooLargeError,
+    );
+  });
+
+  test("enforces the body-read deadline on a stalling download", async () => {
+    const dest = path.join(dir, "stall.bin");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first-chunk"));
+        // Never close → stalls.
+      },
+    });
+    await expect(
+      writeResponseToFileCapped(dest, new Response(stream), { maxBytes: 1024 * 1024, bodyTimeoutMs: 60 }),
+    ).rejects.toBeInstanceOf(BodyReadTimeoutError);
   });
 });
