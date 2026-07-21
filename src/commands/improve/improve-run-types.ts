@@ -205,8 +205,6 @@ export interface ImprovePreparationResult {
    * "reflect", "distill") maps to its own rolling window of last-N errors.
    */
   recentErrors: Record<string, string[]>;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
   /**
    * Consolidation result (#551). Consolidation now runs in the preparation
    * stage BEFORE the session-extract pass, so it only ever judges memories
@@ -226,14 +224,10 @@ export interface ImprovePreparationResult {
 export interface ImproveLoopResult {
   reflectsWithErrorContext: number;
   memoryRefsForInference: Set<string>;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
 }
 
 export interface ImprovePostLoopResult {
   allWarnings: string[];
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
   deadUrls?: DeadUrl[];
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
@@ -271,8 +265,6 @@ export interface ConsolidationPassResult {
   consolidation: ConsolidateResult;
   /** True iff consolidation actually processed memories this run (drives graph reindex). */
   consolidationRan: boolean;
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
 }
 
 /**

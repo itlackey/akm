@@ -205,8 +205,6 @@ export interface LoopRefTally {
   reflectsWithErrorContext: number;
   /** Errors to fold into the per-originator rolling windows (O-5 / #378). */
   recentErrorPushes: { originator: string; message: string }[];
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
   /** Memory refs distilled-but-not-promoted this ref — queued for inference. */
   memoryRefsForInference: string[];
 }
@@ -222,8 +220,6 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
     actions: [],
     reflectsWithErrorContext: 0,
     recentErrorPushes: [],
-    gateAutoAcceptedCount: 0,
-    gateAutoAcceptFailedCount: 0,
     memoryRefsForInference: [],
   };
   try {
@@ -705,8 +701,6 @@ export async function runImproveLoopStage(args: ImproveLoopState): Promise<Impro
   let completedCount = 0;
   let reflectsWithErrorContext = 0;
   const memoryRefsForInference = new Set<string>();
-  let gateAutoAcceptedCount = 0;
-  let gateAutoAcceptFailedCount = 0;
 
   for (const planned of loopRefs) {
     if (Date.now() - startMs >= budgetMs) {
@@ -718,14 +712,12 @@ export async function runImproveLoopStage(args: ImproveLoopState): Promise<Impro
     actions.push(...tally.actions);
     for (const push of tally.recentErrorPushes) pushRecentError(recentErrors, push.originator, push.message);
     reflectsWithErrorContext += tally.reflectsWithErrorContext;
-    gateAutoAcceptedCount += tally.gateAutoAcceptedCount;
-    gateAutoAcceptFailedCount += tally.gateAutoAcceptFailedCount;
     for (const ref of tally.memoryRefsForInference) memoryRefsForInference.add(ref);
     completedCount++;
     info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
   }
 
-  return { reflectsWithErrorContext, memoryRefsForInference, gateAutoAcceptedCount, gateAutoAcceptFailedCount };
+  return { reflectsWithErrorContext, memoryRefsForInference };
 }
 
 export async function runImprovePostLoopStage(args: {
@@ -845,10 +837,6 @@ export async function runImprovePostLoopStage(args: {
     graphExtractionDurationMs: maintenanceResult.graphExtractionDurationMs,
     orphansPurged: maintenanceResult.orphansPurged,
     proposalsExpired: maintenanceResult.proposalsExpired,
-    // Live result-envelope fields (improve-result allow-list). Always 0 since
-    // the 0.9.0 confidence-gate deletion; kept so the output shape is stable.
-    gateAutoAcceptedCount: 0,
-    gateAutoAcceptFailedCount: 0,
   };
 }
 

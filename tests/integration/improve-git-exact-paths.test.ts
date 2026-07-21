@@ -83,8 +83,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
         schemaRepairs: [],
         coverageGaps: [],
         recentErrors: {},
-        gateAutoAcceptedCount: 1,
-        gateAutoAcceptFailedCount: 0,
         consolidation: {
           schemaVersion: 1,
           ok: true,
@@ -105,13 +103,9 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
     runImproveLoopStageFn: (async () => ({
       reflectsWithErrorContext: 0,
       memoryRefsForInference: new Set(),
-      gateAutoAcceptedCount: 0,
-      gateAutoAcceptFailedCount: 0,
     })) as never,
     runImprovePostLoopStageFn: (async () => ({
       allWarnings: [],
-      gateAutoAcceptedCount: 0,
-      gateAutoAcceptFailedCount: 0,
       memoryInferenceDurationMs: 0,
       graphExtractionDurationMs: 0,
     })) as never,

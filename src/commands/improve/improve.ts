@@ -938,7 +938,6 @@ async function runPostLoopStageOrSkip(args: {
   eventsCtx: EventsContext;
   improveProfile: import("../../core/config/config").ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
-  loopGateCountThisCycle: number;
   runImprovePostLoopStageImpl: typeof runImprovePostLoopStage;
 }): Promise<ImprovePostLoopResult> {
   const {
@@ -952,15 +951,12 @@ async function runPostLoopStageOrSkip(args: {
     eventsCtx,
     improveProfile,
     resolvedPlan,
-    loopGateCountThisCycle,
     runImprovePostLoopStageImpl,
   } = args;
   // Do not start new post-loop work after the shared wall-clock budget. The
   // result still finalizes normally, so scheduled budget exhaustion exits 0.
   const emptyPostLoopResult: ImprovePostLoopResult = {
     allWarnings: [],
-    gateAutoAcceptedCount: 0,
-    gateAutoAcceptFailedCount: 0,
     memoryInferenceDurationMs: 0,
     graphExtractionDurationMs: 0,
   };
@@ -983,11 +979,11 @@ async function runPostLoopStageOrSkip(args: {
     improveProfile,
     resolvedPlan,
     consolidationRan: preparation.consolidationRan,
-    // R5: floor violations from this run's consolidate pass + the accepted
-    // volume so far (always 0 since the 0.9.0 confidence-gate deletion) for
-    // churn detection.
+    // R5: floor violations from this run's consolidate pass, plus the accepted
+    // volume — hardcoded 0 since the 0.9.0 confidence-gate deletion — for churn
+    // detection.
     consolidationMergeFloorViolations: preparation.consolidation.mergeFloorViolations ?? 0,
-    acceptedActions: preparation.gateAutoAcceptedCount + loopGateCountThisCycle,
+    acceptedActions: 0,
   });
 }
 
@@ -1060,13 +1056,7 @@ async function runImproveStageSequence(args: {
   let graphExtraction: ImprovePostLoopResult["graphExtraction"];
   let cycleMetrics: ImprovePostLoopResult["cycleMetrics"];
   // Summed counters/durations.
-  let prepGateCount = 0;
-  let prepGateFailedCount = 0;
   let reflectsWithErrorContext = 0;
-  let loopGateCount = 0;
-  let loopGateFailedCount = 0;
-  let postLoopGateCount = 0;
-  let postLoopGateFailedCount = 0;
   let memoryInferenceDurationMs = 0;
   let graphExtractionDurationMs = 0;
   let orphansPurged: number | undefined;
@@ -1096,8 +1086,6 @@ async function runImproveStageSequence(args: {
         budgetSignal: budgetAbortController.signal,
       });
     preparation = await runPreparation();
-    prepGateCount += preparation.gateAutoAcceptedCount;
-    prepGateFailedCount += preparation.gateAutoAcceptFailedCount;
 
     const rejectedProposalsByRef = preloadRejectedProposals();
 
@@ -1126,10 +1114,7 @@ async function runImproveStageSequence(args: {
       });
     };
     const loopResult = await runLoop();
-    const loopGateCountThisCycle = loopResult.gateAutoAcceptedCount;
     reflectsWithErrorContext += loopResult.reflectsWithErrorContext;
-    loopGateCount += loopResult.gateAutoAcceptedCount;
-    loopGateFailedCount += loopResult.gateAutoAcceptFailedCount;
     memoryRefsForInference = loopResult.memoryRefsForInference;
 
     // #551: consolidation now runs in the preparation stage (before extract);
@@ -1147,7 +1132,6 @@ async function runImproveStageSequence(args: {
       eventsCtx,
       improveProfile,
       resolvedPlan,
-      loopGateCountThisCycle,
       runImprovePostLoopStageImpl,
     });
     // Result objects (single pass — no cycle accumulation).
@@ -1155,8 +1139,6 @@ async function runImproveStageSequence(args: {
     graphExtraction = postLoopResult.graphExtraction;
     if (postLoopResult.cycleMetrics) cycleMetrics = postLoopResult.cycleMetrics;
     // Summed counters/durations.
-    postLoopGateCount += postLoopResult.gateAutoAcceptedCount;
-    postLoopGateFailedCount += postLoopResult.gateAutoAcceptFailedCount;
     memoryInferenceDurationMs += postLoopResult.memoryInferenceDurationMs;
     graphExtractionDurationMs += postLoopResult.graphExtractionDurationMs;
     if (postLoopResult.orphansPurged !== undefined) {
@@ -1185,13 +1167,7 @@ async function runImproveStageSequence(args: {
     memoryInference,
     graphExtraction,
     cycleMetrics,
-    prepGateCount,
-    prepGateFailedCount,
     reflectsWithErrorContext,
-    loopGateCount,
-    loopGateFailedCount,
-    postLoopGateCount,
-    postLoopGateFailedCount,
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
     orphansPurged,
@@ -1225,13 +1201,7 @@ function finalizeImproveResult(args: {
     memoryInference,
     graphExtraction,
     cycleMetrics,
-    prepGateCount,
-    prepGateFailedCount,
     reflectsWithErrorContext,
-    loopGateCount,
-    loopGateFailedCount,
-    postLoopGateCount,
-    postLoopGateFailedCount,
     memoryInferenceDurationMs,
     graphExtractionDurationMs,
     orphansPurged,
@@ -1312,14 +1282,6 @@ function finalizeImproveResult(args: {
     reflectCooldownActions: finalActions.filter((a) => a.mode === "reflect-cooldown").length,
     reflectSkippedActions: finalActions.filter((a) => a.mode === "reflect-skipped").length,
     reflectGuardRejectedActions: finalActions.filter((a) => a.mode === "reflect-guard-rejected").length,
-    ...(() => {
-      const t = prepGateCount + loopGateCount + postLoopGateCount;
-      return t > 0 ? { gateAutoAcceptedCount: t } : {};
-    })(),
-    ...(() => {
-      const f = prepGateFailedCount + loopGateFailedCount + postLoopGateFailedCount;
-      return f > 0 ? { gateAutoAcceptFailedCount: f } : {};
-    })(),
     ...(triageDrain
       ? {
           triage: {

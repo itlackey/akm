@@ -451,17 +451,14 @@ export async function runConsolidationPass(args: {
   const consolidationRan =
     !consolidateDisabledByProfile && !poolBelowMinSize && !consolidationOnCooldown && consolidation.processed > 0;
 
-  // Gate counters are live result-envelope fields; always 0 since the 0.9.0
-  // confidence-gate deletion.
-  return { consolidation, consolidationRan, gateAutoAcceptedCount: 0, gateAutoAcceptFailedCount: 0 };
+  return { consolidation, consolidationRan };
 }
 
 /**
  * Phase 0.4 — session-extract pass. Reads native session files through the
  * SessionLogHarness registry, and asks a bounded LLM for candidate proposals.
  * Failures are non-fatal (collected into `warnings`). Returns the extract
- * results + the gate counters (live result-envelope fields, seeded from the
- * consolidation pass; always 0 since the 0.9.0 confidence-gate deletion).
+ * results + any warnings collected along the way.
  */
 async function runSessionExtractPass(args: {
   options: AkmImproveOptions;
@@ -470,12 +467,8 @@ async function runSessionExtractPass(args: {
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   budgetSignal?: AbortSignal;
-  seedGateAccepted: number;
-  seedGateFailed: number;
 }): Promise<{
   extractResults?: AkmExtractResult[];
-  gateAutoAcceptedCount: number;
-  gateAutoAcceptFailedCount: number;
   warnings: string[];
 }> {
   const { options, primaryStashDir, improveProfile, resolvedPlan, eventsCtx, budgetSignal } = args;
@@ -608,13 +601,8 @@ async function runSessionExtractPass(args: {
     }
   }
 
-  // Gate counters are live result-envelope fields; always 0 since the 0.9.0
-  // confidence-gate deletion (pending extract proposals now wait for the
-  // proposal queue / drain engine instead of an in-run backlog gate).
   return {
     extractResults,
-    gateAutoAcceptedCount: args.seedGateAccepted,
-    gateAutoAcceptFailedCount: args.seedGateFailed,
     warnings,
   };
 }
@@ -801,12 +789,8 @@ export async function runImprovePreparationStage(args: {
     resolvedPlan,
     eventsCtx,
     budgetSignal,
-    seedGateAccepted: consolidationPass.gateAutoAcceptedCount,
-    seedGateFailed: consolidationPass.gateAutoAcceptFailedCount,
   });
   const extractResults = extractPass.extractResults;
-  const gateAutoAcceptedCount = extractPass.gateAutoAcceptedCount;
-  const gateAutoAcceptFailedCount = extractPass.gateAutoAcceptFailedCount;
   if (extractPass.warnings.length > 0) cleanupWarnings.push(...extractPass.warnings);
 
   // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
@@ -919,8 +903,6 @@ export async function runImprovePreparationStage(args: {
     coverageGaps: filtered.coverageGaps,
     recentErrors,
     utilityMap: scored.utilityMap,
-    gateAutoAcceptedCount,
-    gateAutoAcceptFailedCount,
     consolidation: consolidationPass.consolidation,
     consolidationRan: consolidationPass.consolidationRan,
     ...(gathered.proactiveMaintenanceSummary ? { proactiveMaintenance: gathered.proactiveMaintenanceSummary } : {}),
