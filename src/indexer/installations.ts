@@ -5,12 +5,14 @@
 /**
  * `deriveInstallations` — akm 0.9.0 Chunk 5, milestone M-a.
  *
- * Bridges the transitional `SearchSource[]` model (the live indexer's source
- * list, `search-source.ts`) onto the durable `BundleInstallation[]` /
- * `BundleComponent[]` model (spec §1.1) that the `scanComponent` scan loop
- * consumes (spec line 254). ADDITIVE: nothing in the live indexer calls this
- * yet — M-b wires it into a shadow scan path for the parity proof, M-c makes it
- * the live indexer's installation source.
+ * Bridges the `SearchSource[]` model (the live indexer's source list,
+ * `search-source.ts`) onto the durable `BundleInstallation[]` /
+ * `BundleComponent[]` model (spec §1.1). LIVE: called from the indexer
+ * (provenance derivation), the proposal repository, and written-asset
+ * indexing. The originally-planned full "Step-3" `scanComponent`-driven scan
+ * swap was superseded by the narrower Chunk-5 F4a drain-dir engine swap; the
+ * shadow-parity scaffolding module (`scan/scan-installations.ts`) was deleted
+ * as dead in the 0.9.0 close-out.
  *
  * Per source → one installation:
  *   - `id`       = `source.registryId` ?? a deterministic slug of `source.path`

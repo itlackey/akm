@@ -32,6 +32,11 @@ earlier `0.9.0-rc.1` / `0.9.0-beta.*` development entries below.
   expected orphans are quarantined, integrity failures fail closed, and the
   whole cutover resumes idempotently after a crash. Normal commands refuse an
   un-migrated or divergent durable schema rather than migrating as a side effect.
+  The retired `stashDir` / `sources` / `installed` keys are **hard-rejected** by
+  the 0.9.0 config schema whenever present (the error names `akm migrate apply`);
+  registry-installed bundles keep only their desired locator (`git`/`npm` +
+  `registryId`) in config, with resolved cache state living exclusively in the
+  lockfile.
 - **`index.md` / `log.md` are reserved structural files.** Per the Open
   Knowledge Format, `index.md` (directory listing) and `log.md` (update history)
   are never indexed as concepts and are never valid write / `mv` targets at any

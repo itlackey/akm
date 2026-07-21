@@ -37,45 +37,10 @@ N="${TEST_SHARDS:-$cores}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
-# ── Slow-test skip (0.9.0 refactor, temporary) ───────────────────────────────
-# The heaviest unit files (goldens/property suites, each 3-17s in-suite) are
-# skipped in the LOCAL per-iteration gate so `check:fast` stays fast during the
-# 0.9.0 bundle-adapter refactor. They are NEVER skipped in CI (CI=true) — the
-# regression net stays complete there — and AKM_RUN_SLOW_TESTS=1 forces them in
-# for chunk-boundary full runs; any single file can still be run directly with
-# `bun test <file>`. REMOVE this block (restore full-suite defaults) when the
-# refactor closes — tracked in docs/design/execution/.
-SLOW_TESTS=(
-  "goldens-proposal-txn.test.ts"
-  "goldens-signal-delta-gate.test.ts"
-  "rekey-merge-property.test.ts"
-  "cutover-rekey-property-gate.test.ts"
-  "goldens-cli-output.test.ts"
-  "engine-ir-v3.test.ts"
-  "goldens-mv-txn.test.ts"
-  "goldens-cli-health-tasks.test.ts"
-  "goldens-consolidate-ops.test.ts"
-)
-skip_slow=0
-if [ "${AKM_RUN_SLOW_TESTS:-0}" != "1" ] && [ "${CI:-}" != "true" ]; then
-  skip_slow=1
-  echo "── unit: skipping ${#SLOW_TESTS[@]} slow file(s) locally (CI/AKM_RUN_SLOW_TESTS=1 run them)"
-fi
-
-# Deterministic file list; sort so every machine shards identically.
-mapfile -t all_files < <(find tests -name '*.test.ts' -not -path 'tests/integration/*' | sort)
-files=()
-for f in "${all_files[@]}"; do
-  if [ "$skip_slow" -eq 1 ]; then
-    base="$(basename "$f")"
-    skip=0
-    for pat in "${SLOW_TESTS[@]}"; do
-      [ "$base" = "$pat" ] && skip=1 && break
-    done
-    [ "$skip" -eq 1 ] && continue
-  fi
-  files+=("$f")
-done
+# Deterministic file list; sort so every machine shards identically. (The
+# 0.9.0-refactor-era local slow-file skip-list was removed at refactor close
+# per its own charter; the full suite always runs, local and CI alike.)
+mapfile -t files < <(find tests -name '*.test.ts' -not -path 'tests/integration/*' | sort)
 total="${#files[@]}"
 if [ "$total" -eq 0 ]; then
   echo "── unit: no test files found under tests/ (excluding integration)" >&2
