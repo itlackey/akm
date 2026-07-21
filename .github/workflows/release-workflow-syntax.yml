@@ -4,12 +4,12 @@ on:
   push:
     paths:
       - ".github/workflows/**"
-      - "tests/workflow-release.test.ts"
+      - "tests/integration/workflow-release.test.ts"
       - "tests/release-check.sh"
   pull_request:
     paths:
       - ".github/workflows/**"
-      - "tests/workflow-release.test.ts"
+      - "tests/integration/workflow-release.test.ts"
       - "tests/release-check.sh"
 
 permissions:

@@ -37,6 +37,12 @@ jobs:
           bun install --frozen-lockfile
           npm install -g npm@latest
 
+      # Publish gate: the full check battery (lint + tsc + unit + integration)
+      # must be green on the exact tagged commit — a release must never publish
+      # code that CI has not validated at this ref.
+      - name: Check
+        run: bun run check
+
       - name: Verify version
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"

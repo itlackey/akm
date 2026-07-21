@@ -93,7 +93,7 @@ validate_workflow_syntax() {
 }
 
 run_step "Workflow Syntax" validate_workflow_syntax
-run_step "Workflow Release Contract" bun test tests/workflow-release.test.ts
+run_step "Workflow Release Contract" bun test tests/integration/workflow-release.test.ts
 run_step "Lint" bunx biome check --write src/ tests/
 run_step "Type Check" bunx tsc --noEmit
 run_step "Build Package" bun run build
@@ -103,7 +103,7 @@ run_step \
 run_step "Pack Package Candidate" pack_package_candidate
 run_step \
   "Install and Setup Regression Suite" \
-  bun test tests/setup.test.ts ./tests/integration/setup-run.test.ts tests/install-script.test.ts tests/setup-wizard.test.ts
+  bun test tests/setup/ ./tests/integration/setup-run.test.ts tests/integration/install-script.test.ts tests/setup-wizard.test.ts tests/setup-scheduled-tasks.test.ts
 run_step \
   "Published 0.8 Task Upgrade" \
   env AKM_PUBLISHED_UPGRADE_TESTS=1 AKM_PUBLISHED_UPGRADE_TARBALL="$PACKAGE_CANDIDATE" AKM_CANDIDATE_VERSION="$(node -p "require('./package.json').version")" bun test tests/integration/published-task-upgrade.test.ts
