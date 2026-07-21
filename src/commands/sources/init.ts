@@ -15,8 +15,7 @@ import path from "node:path";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { mutateConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
-import { ensureRg } from "../../core/ripgrep/install";
+import { assertSafeStashDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
 import { primaryBundlePath, withPrimaryBundle } from "./bundle-config-ops";
 import { copyStashSkeleton, ensureStashGitignore, scaffoldStashMeta } from "./stash-skeleton";
 
@@ -78,11 +77,6 @@ export interface InitResponse {
    * NOT passed — so the CLI can tell the user their default is unchanged.
    */
   previousStashDir?: string;
-  ripgrep?: {
-    rgPath: string;
-    installed: boolean;
-    version: string;
-  };
 }
 
 // ── Test seam ────────────────────────────────────────────────────────────────
@@ -182,19 +176,7 @@ async function akmInitReal(options?: {
     defaultStashUpdated = result.written;
   }
 
-  // Ensure ripgrep is available (install to cache/bin if needed)
-  let ripgrep: InitResponse["ripgrep"];
-  if (!isUnderTestRunner()) {
-    try {
-      const binDir = getBinDir();
-      const rgResult = ensureRg(binDir);
-      ripgrep = rgResult;
-    } catch {
-      // Non-fatal: ripgrep is optional, search works without it
-    }
-  }
-
-  return { stashDir, created, configPath, defaultStashUpdated, previousStashDir, ripgrep };
+  return { stashDir, created, configPath, defaultStashUpdated, previousStashDir };
 }
 
 /** Initialise `dir` as a git repository if it is not already one. */

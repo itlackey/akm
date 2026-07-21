@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import * as p from "../cli/clack";
-import { akmInit, type InitResponse } from "../commands/sources/init";
+import { akmInit } from "../commands/sources/init";
 import type {
   AkmConfig,
   BundleConfigEntry,
@@ -138,7 +138,6 @@ export interface SetupSummary {
   stashCreated: boolean;
   written: boolean;
   fields: string[];
-  ripgrep?: InitResponse["ripgrep"];
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -785,7 +784,6 @@ export async function runSetupWithDefaults(opts: {
     stashCreated: initResult?.created ?? false,
     written: true,
     fields: Object.keys(finalConfig).filter((k) => finalConfig[k as keyof AkmConfig] !== undefined),
-    ripgrep: initResult?.ripgrep,
   };
 }
 
@@ -1067,7 +1065,6 @@ export async function runSetupFromConfig(opts: {
     stashCreated: initResult?.created ?? false,
     written: true,
     fields: Object.keys(incoming).filter((k) => (incoming as Record<string, unknown>)[k] !== undefined),
-    ripgrep: initResult?.ripgrep,
   };
 }
 

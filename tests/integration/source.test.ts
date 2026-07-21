@@ -6,7 +6,7 @@ import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { akmInit } from "../../src/commands/sources/init";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { getBinDir, getConfigPath } from "../../src/core/paths";
+import { getConfigPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { mergeLockEntriesSync } from "../../src/integrations/lockfile";
 import type { SearchHit, SourceSearchHit } from "../../src/sources/types";
@@ -33,23 +33,6 @@ afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-/** Place a dummy rg binary in stashDir/bin so ensureRg skips download */
-function _stubRg(stashDir: string): void {
-  const binDir = path.join(stashDir, "bin");
-  fs.mkdirSync(binDir, { recursive: true });
-  const rgPath = path.join(binDir, "rg");
-  fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
-  fs.chmodSync(rgPath, 0o755);
-}
-
-function stubCachedRg(): void {
-  const binDir = getBinDir();
-  fs.mkdirSync(binDir, { recursive: true });
-  const rgPath = path.join(binDir, "rg");
-  fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
-  fs.chmodSync(rgPath, 0o755);
-}
 
 describe("source commands and resolution", () => {
   // XDG_* / AKM_STASH_DIR snapshot+restore is provided by tests/_preload.ts.
@@ -472,7 +455,6 @@ Creates a user.
     delete process.env.AKM_STASH_DIR;
 
     try {
-      stubCachedRg();
       const result = await akmInit();
       expect(result.created).toBe(false);
       expect(result.stashDir).toBe(stashPath);
@@ -510,7 +492,6 @@ Creates a user.
     delete process.env.AKM_STASH_DIR;
 
     try {
-      stubCachedRg();
       const result = await akmInit();
       expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true);
     } finally {
@@ -613,7 +594,6 @@ Creates a user.
     delete process.env.AKM_STASH_DIR;
 
     try {
-      stubCachedRg();
       const result = await akmInit();
       expect(result.configPath).toBe(getConfigPath());
       expect(result.configPath.startsWith(result.stashDir)).toBe(false);
