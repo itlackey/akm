@@ -12,9 +12,9 @@ import { chmodSync, statSync } from "node:fs";
 //      modules, so this keeps runtime-compatible paths intact.
 //   3. Copy schema artifacts (`schemas/**`) so published packages expose
 //      contract artifacts in `dist/schemas` for source-less deploys.
-//   4. Bundle scripts/migrate-storage.ts + scripts/migrations/*.ts into
-//      dist/scripts/ so globally-installed users (npm / prebuilt binary)
-//      can run them without `../src/...` import paths breaking (#469).
+//   4. Bundle scripts/migrate-storage.ts into dist/scripts/ so
+//      globally-installed users (npm / prebuilt binary) can run it without
+//      `../src/...` import paths breaking (#469).
 import { mkdir } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
@@ -63,11 +63,7 @@ for (const src of runtimeFiles) {
   chmodSync(dest, 0o755);
 }
 
-const migrationEntrypoints = [
-  "scripts/migrate-storage.ts",
-  "scripts/migrations/import-fs-improve-runs-to-db.ts",
-  "scripts/migrations/v16-to-v17.ts",
-];
+const migrationEntrypoints = ["scripts/migrate-storage.ts"];
 
 for (const entry of migrationEntrypoints) {
   try {
