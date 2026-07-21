@@ -45,15 +45,19 @@
  *
  * ── Adapter selection (spec §1.2 ordered probe) ──
  *
- * The adapter is chosen by the ordered `looksLikeRoot` probe over the
- * registered adapters (`getAdapters()`), first match wins. `registerBuiltinAdapters`
- * registers them most-specific-first (`llm-wiki` → `okf` → `akm`), so the probe
- * order is that registration order. When NO adapter's probe fires (an empty or
- * not-yet-materialized root), the fallback is **`akm`** — the AKM workspace's
- * own adapter is the config-default for a workspace stash (spec §12.6 "akm … is
- * the config-default for the AKM workspace root and is NOT part of the §1.2
- * auto-probe order"). `getAdapters()` MUST be populated (call
- * `registerBuiltinAdapters()` first) or every source falls back to `akm`.
+ * The adapter is chosen by the ordered `looksLikeRoot` probe over the built-in
+ * adapters (`getAdapters()`), first match wins. The registry is now a STATIC
+ * FROZEN map (normative §12.6) populated at module load, so this probe runs in
+ * production with the full 11-family set — no registration call is required
+ * first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
+ * first, so a `.claude`/dotenv/wiki root is claimed by its tight probe before
+ * the loose `akm` stash-shape probe.
+ *
+ * When NO adapter's probe fires (an empty or not-yet-materialized root), the
+ * fallback is **`akm`** (see {@link FALLBACK_ADAPTER_ID}) — a RECORDED DEVIATION
+ * from spec §1.2(3), which specifies an `okf` fallback. See that constant's
+ * comment for the rationale (workspace-root discipline in the pre-config-adapter
+ * transitional model).
  */
 
 import crypto from "node:crypto";
@@ -66,7 +70,28 @@ import { isBundleSlug } from "../core/asset/asset-ref";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
 
-/** The workspace-stash fallback adapter id (spec §12.6). */
+/**
+ * The no-probe-match fallback adapter id.
+ *
+ * RECORDED DEVIATION from spec §1.2(3) (which specifies an `okf` fallback),
+ * kept as the status-quo-preserving choice pending 0.9.1:
+ *
+ *  - Behavior discipline (spec line 267): the AKM workspace root's own indexing
+ *    MUST stay classified `akm`. In this transitional model there is no
+ *    config-driven adapter plumbing yet (§1.4) — `deriveInstallations` derives
+ *    the adapter SOLELY from this probe, so the workspace-root classification
+ *    depends on either `akm.looksLikeRoot` firing (type dirs / `.stash` present)
+ *    OR this fallback. A genuinely empty / not-yet-materialized workspace root
+ *    (no type dirs) fires no probe; an `okf` fallback would misclassify it as
+ *    `okf`, violating that discipline. `akm` keeps it correct.
+ *  - Status quo: before the registry was wired, `getAdapters()` was empty in
+ *    production so EVERY source fell back here — this preserves that exact
+ *    fallback value while the probe now genuinely classifies the non-akm shapes.
+ *
+ * 0.9.1 should flip this to `okf` once the config-default adapter for the
+ * workspace root is plumbed from config (§1.4 / spec line 267), which frees this
+ * fallback to be the spec §1.2(3) `okf`.
+ */
 const FALLBACK_ADAPTER_ID = "akm";
 
 /**

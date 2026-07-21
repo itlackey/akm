@@ -5,7 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
+import { getAdapters } from "../../core/adapter/registry";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { fetchWithRetry } from "../../core/common";
 import type { SourceSpec } from "../../core/config/config";
@@ -27,31 +27,42 @@ export function isExpired(mtimeMs: number, ttlMs: number): boolean {
 }
 
 /**
+ * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
+ * `root` — the spec §1.2 ordered probe reduced to "is this the root of a bundle
+ * of some format family?". A probe that throws (unreadable dir, race) does not
+ * claim the root.
+ */
+function looksLikeAnyBundleRoot(root: string): boolean {
+  for (const adapter of getAdapters()) {
+    try {
+      if (adapter.looksLikeRoot?.(root) === true) return true;
+    } catch {
+      // a throwing probe does not claim the root — try the next adapter
+    }
+  }
+  return false;
+}
+
+/**
  * Find the directory inside `extractedDir` that should be treated as the
- * stash root. Looks for a `.stash` marker, then well-known type dirs, then
- * BFS for the shallowest such candidate.
+ * bundle/stash root. Probes the top-level dir via the ordered §1.2 registry
+ * probe; if nothing claims it, BFS for the shallowest nested candidate.
  */
 export function detectStashRoot(extractedDir: string): string {
   const root = path.resolve(extractedDir);
 
-  // WI-3.1: adapter-backed root probe. The `akm` adapter's `looksLikeRoot`
-  // reproduces this function's top-level detection VERBATIM — a `.stash` marker
-  // directory OR any immediate stash subdir — so it fires here exactly when the
-  // `.stash` + `hasStashDirs` checks below would, returning the same `root`.
-  // Wired additively: the two local checks stay live as the fallback (a later WI
-  // can delete them safely) and the shallowest-BFS fallback is untouched.
-  // Behavior-identical because looksLikeRoot's dir set is the adapter's
-  // directoryList() == the placement stash-subdir names.
-  if (akmAdapter.looksLikeRoot?.(root)) {
-    return root;
-  }
-
-  const rootDotStash = path.join(root, ".stash");
-  if (isDirectory(rootDotStash)) {
-    return root;
-  }
-
-  if (hasStashDirs(root)) {
+  // WI-3.1 → wired to the static registry: the top-level root check now routes
+  // through the ordered §1.2 `looksLikeRoot` probe over ALL built-in adapters
+  // (`registry.getAdapters()`), not the single hardcoded `akm` probe. This is
+  // BEHAVIOR-IDENTICAL for akm roots — `akm.looksLikeRoot` reproduces the former
+  // `.stash`-marker + immediate-stash-subdir (`hasStashDirs`) checks VERBATIM
+  // (akm-adapter.looksLikeRoot) and `akm` is in the probe set — so those two
+  // local checks are now subsumed and were removed. It additionally recognizes
+  // NON-akm bundle roots (okf root index / llm-wiki / `.claude` / …) at the top
+  // level, which the single-adapter probe missed but the old final `return root`
+  // fallback also happened to yield. The shallowest-BFS nested-layout discovery
+  // is unchanged.
+  if (looksLikeAnyBundleRoot(root)) {
     return root;
   }
 
@@ -150,12 +161,6 @@ export function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
-}
-
-function hasStashDirs(dirPath: string): boolean {
-  if (!isDirectory(dirPath)) return false;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  return entries.some((entry) => entry.isDirectory() && REGISTRY_STASH_DIR_NAMES.has(entry.name));
 }
 
 function countStashDirs(dirPath: string): number {

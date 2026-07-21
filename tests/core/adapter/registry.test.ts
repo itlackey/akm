@@ -3,93 +3,84 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-A gate — the format-family adapter registry
- * (`src/core/adapter/registry.ts`) + the built-in barrel
+ * WI-A gate (re-pinned for the registry-wiring WI) — the format-family adapter
+ * registry (`src/core/adapter/registry.ts`) + the built-in barrel
  * (`src/core/adapter/adapters/index.ts`).
  *
- * The registry is keyed by `adapter.id` ONLY (no per-`type` mapping — adapters
- * are format families, §0.2). Every test resets the module-level singleton
- * first so the files can run in one bun process without leaking.
+ * The registry is now a STATIC, FROZEN map (normative §12.6): `getAdapters()` /
+ * `adapterForId()` are populated at MODULE LOAD from the frozen
+ * `BUILTIN_ADAPTERS` list — NO registration call is required, so production
+ * cannot leave the registry empty. The registry is keyed by `adapter.id` ONLY
+ * (adapters are format families, §0.2 — no per-`type` mapping). These tests
+ * DELIBERATELY perform no setup: they prove the registry is live at import.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
-import { okfAdapter, registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
-import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
-import {
-  adapterForId,
-  getAdapters,
-  registerAdapter,
-  resetAdapterRegistryForTests,
-} from "../../../src/core/adapter/registry";
+import { describe, expect, test } from "bun:test";
+import { BUILTIN_ADAPTERS, okfAdapter, registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
+import { adapterForId, getAdapters, resetAdapterRegistryForTests } from "../../../src/core/adapter/registry";
 
-function stub(id: string): BundleAdapter {
-  return {
-    id,
-    version: "0.0.0",
-    extensions: [".md"],
-    recognize: () => null,
-    validate: async () => [],
-  };
-}
+/** The frozen §1.2 probe order (array order == probe precedence). */
+const PROBE_ORDER = [
+  "website-snapshot",
+  "agent-skills",
+  "claude",
+  "opencode",
+  "dotenv",
+  "akm-workflow",
+  "akm-task",
+  "llm-wiki",
+  "okf",
+  "akm",
+  "generic-files",
+];
 
-beforeEach(() => {
-  resetAdapterRegistryForTests();
-});
-
-describe("adapter registry", () => {
-  test("register / getAdapters / adapterForId", () => {
-    const a = stub("alpha");
-    registerAdapter(a);
-    expect(getAdapters()).toEqual([a]);
-    expect(adapterForId("alpha")).toBe(a);
+describe("adapter registry — static frozen map (normative §12.6)", () => {
+  test("getAdapters() is populated at module load — no registration call required", () => {
+    // No resetAdapterRegistryForTests()/registerBuiltinAdapters() ran in this
+    // file; the registry is live purely from importing it. This is the exact
+    // production guarantee that was previously broken (empty registry ⇒ every
+    // source fell back to `akm`).
+    expect(getAdapters().length).toBe(11);
+    expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 
-  test("adapterForId returns undefined for an unregistered id", () => {
+  test("BUILTIN_ADAPTERS is the frozen §1.2 probe order and matches getAdapters()", () => {
+    expect(Object.isFrozen(BUILTIN_ADAPTERS)).toBe(true);
+    expect(BUILTIN_ADAPTERS.map((a) => a.id)).toEqual(PROBE_ORDER);
+    expect(getAdapters().map((a) => a.id)).toEqual(BUILTIN_ADAPTERS.map((a) => a.id));
+  });
+
+  test("adapterForId resolves each built-in id; the okf handle is the registered instance", () => {
+    for (const id of PROBE_ORDER) {
+      expect(adapterForId(id)?.id).toBe(id);
+    }
+    expect(adapterForId("okf")).toBe(okfAdapter);
+  });
+
+  test("adapterForId returns undefined for an unknown id (spec §4 — caller skips + warns)", () => {
     expect(adapterForId("nope")).toBeUndefined();
   });
 
-  test("getAdapters preserves registration order across multiple adapters", () => {
-    const a = stub("alpha");
-    const b = stub("beta");
-    registerAdapter(a);
-    registerAdapter(b);
-    expect(getAdapters().map((x) => x.id)).toEqual(["alpha", "beta"]);
-  });
-
-  test("re-registering the same id replaces in place (no duplicates)", () => {
-    const first = stub("dup");
-    const second = stub("dup");
-    registerAdapter(first);
-    registerAdapter(second);
-    expect(getAdapters()).toHaveLength(1);
-    expect(adapterForId("dup")).toBe(second);
-  });
-
-  test("getAdapters returns a snapshot — mutating it does not affect the registry", () => {
-    registerAdapter(stub("alpha"));
+  test("getAdapters returns a fresh snapshot — mutating it does not affect the registry", () => {
     const snapshot = getAdapters();
-    snapshot.push(stub("injected"));
-    expect(getAdapters().map((x) => x.id)).toEqual(["alpha"]);
-  });
-
-  test("resetAdapterRegistryForTests clears everything", () => {
-    registerAdapter(stub("alpha"));
-    resetAdapterRegistryForTests();
-    expect(getAdapters()).toEqual([]);
-    expect(adapterForId("alpha")).toBeUndefined();
+    snapshot.length = 0;
+    snapshot.push(okfAdapter);
+    expect(getAdapters().length).toBe(11);
+    expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 });
 
-describe("registerBuiltinAdapters", () => {
-  test("registers the okf adapter onto the registry", () => {
-    registerBuiltinAdapters();
+describe("deprecated test shims are no-ops compatible with the static map", () => {
+  test("resetAdapterRegistryForTests() does NOT empty the registry (static, always populated)", () => {
+    resetAdapterRegistryForTests();
+    expect(getAdapters().length).toBe(11);
     expect(adapterForId("okf")).toBe(okfAdapter);
-    expect(getAdapters().map((x) => x.id)).toContain("okf");
   });
 
-  test("is idempotent (re-registering okf does not duplicate)", () => {
+  test("registerBuiltinAdapters() is an idempotent no-op — never duplicates", () => {
     registerBuiltinAdapters();
     registerBuiltinAdapters();
-    expect(getAdapters().filter((x) => x.id === "okf")).toHaveLength(1);
+    expect(getAdapters().length).toBe(11);
+    expect(getAdapters().filter((a) => a.id === "okf")).toHaveLength(1);
   });
 });

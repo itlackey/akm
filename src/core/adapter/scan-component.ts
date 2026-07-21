@@ -23,6 +23,25 @@
  * as alternatives into one and silently double-scan an `index()`-overriding
  * adapter's component.
  *
+ * ── PRODUCTION STATUS (adapter-registry wiring WI) ──
+ *
+ * REMAINS UNWIRED at this HEAD — zero production callers (conformance +
+ * scan-component tests only). The registry probe that SELECTS an adapter is now
+ * live in production (`installations.ts#detectAdapterId`,
+ * `provider-utils.ts#detectStashRoot`), but the SCAN ENGINE still uses the
+ * legacy per-dir drain against the hardcoded `akmAdapter.recognize`
+ * (`indexer.ts#buildComponentBySource`), so the derived adapter id is currently
+ * PROVENANCE-ONLY (persisted to `entries.adapter_id`) and never resolved back to
+ * an adapter object to drive recognition. Repointing the indexer scan onto
+ * `scanComponent(inst, c, adapterForId(c.adapter))` is the larger "Step-3"
+ * scan-engine swap (it must also cover §1.2(4) sub-mount registration and §1.2(1)
+ * manifest components, and multi-component nested roots) and is deliberately OUT
+ * of this WI's scope. When that site is built it MUST, per spec §4 / §12.6,
+ * SKIP a component whose `adapter` id has no `adapterForId` match and emit a
+ * warning (an unknown adapter id ⇒ component skipped with a warning) rather than
+ * silently falling through — `adapterForId` already returns `undefined` for an
+ * unknown id to make that check a one-liner.
+ *
  * ── Walk reuse (a core->indexer VALUE import, on top of D1-3's type-only one) ──
  *
  * The git-aware/symlink-safe/skip-dirs walk is NOT reimplemented here. It is

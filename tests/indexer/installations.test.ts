@@ -13,21 +13,19 @@
  *   - `llm-wiki`         → llm-wiki (schema.md + pages/)
  */
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { registerBuiltinAdapters } from "../../src/core/adapter/adapters";
-import { resetAdapterRegistryForTests } from "../../src/core/adapter/registry";
 import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
+
+// NO registry setup: the registry is a static frozen map (normative §12.6)
+// populated at module load, so `deriveInstallations`'s ordered `looksLikeRoot`
+// probe runs in production with the full built-in set WITHOUT any registration
+// call. These tests assert exactly that production path.
 
 const AKM_ROOT = path.resolve(__dirname, "../fixtures/stashes/all-types");
 const OKF_ROOT = path.resolve(__dirname, "../fixtures/bundles/okf-sample");
 const LLM_WIKI_ROOT = path.resolve(__dirname, "../fixtures/bundles/llm-wiki");
-
-beforeAll(() => {
-  resetAdapterRegistryForTests();
-  registerBuiltinAdapters();
-});
 
 describe("slugForPath", () => {
   test("sanitizes the basename to the ref bundle-slug charset", () => {
@@ -62,9 +60,25 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
     expect(inst!.components[0]!.adapter).toBe("llm-wiki");
   });
 
-  test("a root no probe claims falls back to akm", () => {
+  test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
+    // FALLBACK_ADAPTER_ID is `akm`, not the spec §1.2(3) `okf`, as the
+    // status-quo-preserving / workspace-root-discipline choice in this
+    // pre-config-adapter transitional model (see installations.ts). Pins that
+    // decision so a future 0.9.1 flip to `okf` is a deliberate, visible change.
     const [inst] = deriveInstallations([{ path: "/nonexistent/empty/root" }]);
     expect(inst!.components[0]!.adapter).toBe("akm");
+  });
+
+  test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
+    // The pre-wiring bug: an empty registry made EVERY source fall back to
+    // `akm`. Now distinct bundle shapes resolve to distinct adapters through
+    // the same `deriveInstallations` call sites production uses.
+    const adapters = deriveInstallations([
+      { path: AKM_ROOT, writable: true },
+      { path: OKF_ROOT },
+      { path: LLM_WIKI_ROOT },
+    ]).map((i) => i.components[0]!.adapter);
+    expect(adapters).toEqual(["akm", "okf", "llm-wiki"]);
   });
 });
 
