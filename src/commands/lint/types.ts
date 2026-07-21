@@ -42,20 +42,3 @@ export interface LintContext {
    */
   lintSkip?: string[];
 }
-
-export interface AssetLinter {
-  /** Asset type(s) this linter handles. Matched against the stash subdirectory name. */
-  readonly types: readonly string[];
-  /** Run checks against the context. Mutates files when ctx.fix === true. Returns issues found. */
-  lint(ctx: LintContext): LintIssue[];
-  /**
-   * Optional directory-level check called once per direct subdirectory of the
-   * asset type's root folder, before the per-file loop runs for that subdir.
-   * Useful for linters that need to verify directory structure (e.g. skills
-   * requiring a SKILL.md entry point).
-   *
-   * @param subdirPath  Absolute path to the subdirectory being checked.
-   * @param stashRoot   Absolute path to the stash root (for computing relPath).
-   */
-  lintDirectory?(subdirPath: string, stashRoot: string): LintIssue[];
-}

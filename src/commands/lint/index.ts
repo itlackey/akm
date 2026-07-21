@@ -5,14 +5,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import {
+  factDiagnostics,
+  matchWorkflowPlaceholder,
+  memoryOrphanStubApplies,
+  nameOrTypeDiagnostics,
+  ORPHANED_STUB_DETAIL,
+  taskDiagnostics,
+  workflowStructureDiagnostics,
+} from "../../core/adapter/adapters/akm-lint";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { runBaseChecks } from "./base-linter";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
-import { getLinterForType } from "./registry";
-import type { LintIssue } from "./types";
+import type { LintContext, LintIssue } from "./types";
 
 // ── Public API types (re-exported for consumers) ──────────────────────────────
 
@@ -95,6 +104,118 @@ function isFileDeletion(issue: LintIssue): boolean {
   return issue.fixed === true && (issue.issue === "orphaned-stub" || issue.issue === "placeholder-stub");
 }
 
+// ── Per-file lint dispatch (was registry.ts + the 9 per-type linter classes) ──
+//
+// akm 0.9.0 chunk-3 (plan §12): the 9 `BaseLinter` subclasses + `LINTER_MAP`/
+// `getLinterForType` are gone. The format-generic checks are the shared
+// `runBaseChecks` (`./base-linter`); the per-`type` RULES are the `akm`
+// adapter's `validate` surface (`core/adapter/adapters/akm-lint.ts`), imported
+// here so both the read-only adapter and this fix-capable CLI sweep share ONE
+// definition of each finding. The adapter never writes; the delete-fix for the
+// two stub types is applied HERE (a core/CLI concern), reproducing the old
+// MemoryLinter/WorkflowLinter `--fix` behavior byte-for-byte.
+
+/**
+ * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
+ * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). Exported for
+ * the lint-parity golden (`tests/integration/goldens-lint-output.test.ts`).
+ */
+export function lintSkillDirectory(subdirPath: string, stashRoot: string): LintIssue[] {
+  if (fs.existsSync(path.join(subdirPath, "SKILL.md"))) return [];
+  const relDir = path.relative(stashRoot, subdirPath);
+  return [{ file: relDir, issue: "missing-skill-md", detail: `no SKILL.md in ${relDir}/`, fixed: false }];
+}
+
+/** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */
+function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
+  if (!memoryOrphanStubApplies(ctx.data, ctx.body)) return;
+  const derivedPath = `${ctx.filePath.replace(/\.md$/, "")}.derived.md`;
+  if (fs.existsSync(derivedPath)) return;
+  if (ctx.fix) {
+    try {
+      fs.unlinkSync(ctx.filePath);
+      issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: "deleted orphaned stub", fixed: true });
+    } catch (e) {
+      issues.push({
+        file: ctx.relPath,
+        issue: "orphaned-stub",
+        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
+        fixed: "failed",
+      });
+    }
+    return;
+  }
+  issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false });
+}
+
+/** WorkflowLinter's `placeholder-stub` (WITH `--fix` delete) + `invalid-workflow-structure` (workflow-linter.ts:22-79). */
+function appendWorkflowIssues(ctx: LintContext, issues: LintIssue[]): void {
+  const placeholder = matchWorkflowPlaceholder(ctx.body);
+  if (placeholder) {
+    if (ctx.fix) {
+      try {
+        fs.unlinkSync(ctx.filePath);
+        issues.push({
+          file: ctx.relPath,
+          issue: "placeholder-stub",
+          detail: `deleted: found "${placeholder}"`,
+          fixed: true,
+        });
+      } catch (e) {
+        issues.push({
+          file: ctx.relPath,
+          issue: "placeholder-stub",
+          detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
+          fixed: "failed",
+        });
+      }
+      return; // WorkflowLinter returns before the structure check once a stub is fixed.
+    }
+    issues.push({
+      file: ctx.relPath,
+      issue: "placeholder-stub",
+      detail: `placeholder text: "${placeholder}"`,
+      fixed: false,
+    });
+  }
+  // NB: the CLI passes the ABSOLUTE filePath to parseWorkflow (matching the old
+  // WorkflowLinter), whereas the adapter passes the change relPath.
+  issues.push(...(workflowStructureDiagnostics(ctx.relPath, ctx.raw, ctx.filePath) as LintIssue[]));
+}
+
+/**
+ * Lint ONE asset file: the shared base checks, then the winning stash subdir's
+ * per-`type` extra rules. Replaces `getLinterForType(subdir).lint(ctx)`.
+ * `--fix` mutations (frontmatter rewrites inside `runBaseChecks`; stub deletes
+ * here) are applied when `ctx.fix` is set.
+ */
+export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
+  const issues = runBaseChecks(ctx);
+  switch (subdir) {
+    case "agents":
+      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
+      break;
+    case "commands":
+      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
+      break;
+    case "facts":
+      issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
+      break;
+    case "tasks":
+      issues.push(...(taskDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
+      break;
+    case "memories":
+      appendMemoryStubIssue(ctx, issues);
+      break;
+    case "workflows":
+      appendWorkflowIssues(ctx, issues);
+      break;
+    // knowledge / lessons / skills: base checks only (skill directory-level
+    // `missing-skill-md` runs separately, per-subdir, in the sweep loop).
+  }
+  return issues;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
@@ -118,22 +239,20 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
     const dirPath = path.join(stashRoot, subdir);
     // Tasks are .yml files; everything else is .md
     const files = subdir === "tasks" ? collectYamlFiles(dirPath) : collectMarkdownFiles(dirPath);
-    const linter = getLinterForType(subdir);
 
-    // If the linter supports directory-level checks, run them for each direct
-    // subdirectory once before the per-file loop.
-    if (typeof linter.lintDirectory === "function" && fs.existsSync(dirPath)) {
+    // Directory-level check: skills require a SKILL.md entry point (was
+    // SkillLinter.lintDirectory). Run once per direct subdirectory before the
+    // per-file loop.
+    if (subdir === "skills" && fs.existsSync(dirPath)) {
       for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          const subdirIssues = linter.lintDirectory(path.join(dirPath, entry.name), stashRoot);
-          for (const issue of subdirIssues) {
-            // Tristate-safe: only `true` counts as fixed; `false` and "failed"
-            // are both flagged.
-            if (issue.fixed === true) {
-              fixed.push(issue);
-            } else {
-              flagged.push(issue);
-            }
+        if (!entry.isDirectory()) continue;
+        for (const issue of lintSkillDirectory(path.join(dirPath, entry.name), stashRoot)) {
+          // Tristate-safe: only `true` counts as fixed; `false` and "failed"
+          // are both flagged.
+          if (issue.fixed === true) {
+            fixed.push(issue);
+          } else {
+            flagged.push(issue);
           }
         }
       }
@@ -169,7 +288,10 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
         ({ data, content: body, frontmatter } = parseFrontmatter(raw));
       }
 
-      const issues = linter.lint({ filePath, relPath, raw, data, body, frontmatter, fix, stashRoot, extraStashRoots });
+      const issues = lintAssetFile(
+        { filePath, relPath, raw, data, body, frontmatter, fix, stashRoot, extraStashRoots },
+        subdir,
+      );
 
       let fileDeleted = false;
       for (const issue of issues) {

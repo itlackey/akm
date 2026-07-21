@@ -40,8 +40,8 @@ import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { BUNDLE_REF_RE } from "../../core/asset/asset-ref";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
-import { findFenceRegions, findSafeInsertionPoint } from "./markdown-insertion";
-import type { AssetLinter, LintContext, LintIssue } from "./types";
+import { findFenceRegions } from "./markdown-insertion";
+import type { LintContext, LintIssue } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -537,250 +537,184 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
   return data;
 }
 
-// ── BaseLinter ────────────────────────────────────────────────────────────────
+// ── Base checks ─────────────────────────────────────────────────────────────
 
 /**
- * Abstract base class providing the two cross-type checks shared by all asset
- * linters: `unquoted-colon` and `missing-updated`.
+ * The cross-type checks every asset linter runs first: `unquoted-colon`,
+ * `missing-updated`, `stale-path`, and `missing-ref`.
  *
- * Subclasses call `runBaseChecks(ctx)` and append any type-specific issues.
- * File mutations triggered by base checks are flushed to disk inside this
- * method; subclasses must re-read `ctx.raw` if they need the post-fix content
- * (in practice the base class updates `ctx.raw` in place when `fix` is true).
+ * akm 0.9.0 chunk-3 (plan §12): this was the `BaseLinter.runBaseChecks`
+ * protected method every per-type linter class inherited. Those classes are
+ * gone — the format-generic checks live here as ONE shared function (this), and
+ * the per-`type` extra rules moved to the `akm` adapter's `validate`
+ * (`core/adapter/adapters/akm-lint.ts`). The live `akmLint` command
+ * (`commands/lint/index.ts`) calls this directly, then appends the adapter's
+ * per-type findings.
+ *
+ * File mutations triggered by the fixable base checks (`unquoted-colon`,
+ * `missing-updated`) are flushed to disk here when `ctx.fix` is set, and
+ * `ctx.raw` is updated in place so a caller can re-parse the post-fix content.
  */
-export abstract class BaseLinter implements AssetLinter {
-  abstract readonly types: readonly string[];
-  abstract lint(ctx: LintContext): LintIssue[];
+export function runBaseChecks(ctx: LintContext): LintIssue[] {
+  const issues: LintIssue[] = [];
+  let currentRaw = ctx.raw;
+  let modified = false;
 
-  /**
-   * Check for missing `name` or `type` fields in frontmatter.
-   *
-   * Returns a detail string if fields are absent/empty, `null` if all present.
-   */
-  protected checkMissingNameOrType(data: Record<string, unknown>, frontmatterText: string | null): string | null {
-    if (!frontmatterText) return null;
-    const missingFields: string[] = [];
-    if (!("name" in data) || !data.name) missingFields.push("name");
-    if (!("type" in data) || !data.type) missingFields.push("type");
-    if (missingFields.length === 0) return null;
-    return `missing fields: ${missingFields.join(", ")}`;
-  }
+  // M8: Parse lint_skip from frontmatter for per-file rule suppression.
+  // Accept both an array (`lint_skip: [missing-ref, stale-path]`) and a
+  // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
+  // and trimmed so loosely-typed YAML still gates correctly.
+  const rawLintSkip = ctx.data?.lint_skip;
+  const lintSkip: string[] = (Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : [])
+    .map((v) => String(v).trim())
+    .filter(Boolean);
+  const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
 
-  /**
-   * Validate that the `type` field value is one of an allowed set.
-   *
-   * Returns a detail string if the value is present but invalid, `null` if valid or absent.
-   */
-  protected checkInvalidTypeValue(data: Record<string, unknown>, allowedTypes: readonly string[]): string | null {
-    if (!("type" in data) || !data.type) return null; // absent — covered by checkMissingNameOrType
-    const value = String(data.type);
-    if (allowedTypes.includes(value)) return null;
-    return `type field has invalid value '${value}'; expected one of: ${allowedTypes.join(", ")}`;
-  }
-
-  /**
-   * Derive a URL-safe slug from a file path.
-   */
-  protected suggestSlug(filePath: string): string {
-    return path
-      .basename(filePath, ".md")
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
-
-  /**
-   * Insert one or more lines into a markdown body at a safe location.
-   *
-   * "Safe" means: not inside a markdown table, HTML table, fenced code block,
-   * or indented code block. If `proposedLineNumber` falls inside one of those
-   * regions, the helper pushes the insertion to immediately after the region.
-   * This is a regression guard against the class of bug where an auto-fix
-   * splits a table fence by injecting a callout between the separator row
-   * and the first data row (broke `knowledge/akm-cli-reference.md` in 0.8.0).
-   *
-   * Subclasses that perform line-based body insertion MUST route through this
-   * helper instead of calling `splice` directly. Insertion fixers must NOT
-   * touch frontmatter — use `fixMissingUpdated` / `fixUnquotedColon` style
-   * regex edits for that case (those already operate inside the `---…---`
-   * fence and don't intersect with body line numbers).
-   *
-   * @param raw                 Full file contents (frontmatter + body).
-   * @param newLines            Lines to insert (without trailing newlines).
-   * @param proposedLineNumber  0-based line index within `raw` where the
-   *                            caller wants the new content to appear.
-   * @returns The mutated file contents with `newLines` spliced at the
-   *          adjusted safe position.
-   */
-  protected insertLinesSafely(raw: string, newLines: string[], proposedLineNumber: number): string {
-    const lines = raw.split(/\r?\n/);
-    const safeIdx = findSafeInsertionPoint(lines, proposedLineNumber);
-    lines.splice(safeIdx, 0, ...newLines);
-    return lines.join("\n");
-  }
-
-  protected runBaseChecks(ctx: LintContext): LintIssue[] {
-    const issues: LintIssue[] = [];
-    let currentRaw = ctx.raw;
-    let modified = false;
-
-    // M8: Parse lint_skip from frontmatter for per-file rule suppression.
-    // Accept both an array (`lint_skip: [missing-ref, stale-path]`) and a
-    // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
-    // and trimmed so loosely-typed YAML still gates correctly.
-    const rawLintSkip = ctx.data?.lint_skip;
-    const lintSkip: string[] = (Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : [])
-      .map((v) => String(v).trim())
-      .filter(Boolean);
-    const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
-
-    // ── 1. unquoted-colon ──────────────────────────────────────────────────
-    if (shouldRun("unquoted-colon")) {
-      const unquotedColonDetail = checkUnquotedColon(ctx.frontmatter);
-      if (unquotedColonDetail) {
-        if (ctx.fix) {
-          currentRaw = fixUnquotedColon(currentRaw);
-          modified = true;
-          issues.push({
-            file: ctx.relPath,
-            issue: "unquoted-colon",
-            detail: unquotedColonDetail,
-            fixed: true,
-          });
-        } else {
-          issues.push({
-            file: ctx.relPath,
-            issue: "unquoted-colon",
-            detail: unquotedColonDetail,
-            fixed: false,
-          });
-        }
-      }
-    } // end shouldRun("unquoted-colon")
-
-    // ── 2. missing-updated ─────────────────────────────────────────────────
-    if (shouldRun("missing-updated") && checkMissingUpdated(ctx.data, ctx.frontmatter)) {
+  // ── 1. unquoted-colon ──────────────────────────────────────────────────
+  if (shouldRun("unquoted-colon")) {
+    const unquotedColonDetail = checkUnquotedColon(ctx.frontmatter);
+    if (unquotedColonDetail) {
       if (ctx.fix) {
-        let mtime: Date;
-        try {
-          mtime = fs.statSync(ctx.filePath).mtime;
-        } catch {
-          mtime = new Date();
-        }
-        currentRaw = fixMissingUpdated(currentRaw, mtime);
+        currentRaw = fixUnquotedColon(currentRaw);
         modified = true;
         issues.push({
           file: ctx.relPath,
-          issue: "missing-updated",
-          detail: `stamped updated: ${formatDate(mtime)}`,
+          issue: "unquoted-colon",
+          detail: unquotedColonDetail,
           fixed: true,
         });
       } else {
         issues.push({
           file: ctx.relPath,
-          issue: "missing-updated",
-          detail: "no updated field in frontmatter",
+          issue: "unquoted-colon",
+          detail: unquotedColonDetail,
           fixed: false,
         });
       }
     }
+  } // end shouldRun("unquoted-colon")
 
-    if (modified) {
-      fs.writeFileSync(ctx.filePath, currentRaw, "utf8");
-      // Propagate the mutated raw back so subclasses can re-parse if needed
-      ctx.raw = currentRaw;
-    }
-
-    // ── 3. stale-path ──────────────────────────────────────────────────────
-    // M3: checkStalePath returns all stale matches; push one issue per path.
-    // M4: Also scan ctx.frontmatter for stale paths (absolute paths in frontmatter).
-    if (shouldRun("stale-path")) {
-      const staleInBody = checkStalePath(ctx.body);
-      const staleInFrontmatter = ctx.frontmatter ? checkStalePath(ctx.frontmatter) : [];
-      for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
-        // M4: Suggest portable replacement when path is under stashRoot.
-        const portableHint = candidate.startsWith(ctx.stashRoot)
-          ? ` (portable form: $AKM_STASH_DIR${candidate.slice(ctx.stashRoot.length)})`
-          : "";
-        issues.push({
-          file: ctx.relPath,
-          issue: "stale-path",
-          detail: `nonexistent path: ${candidate}${portableHint}`,
-          fixed: false,
-        });
+  // ── 2. missing-updated ─────────────────────────────────────────────────
+  if (shouldRun("missing-updated") && checkMissingUpdated(ctx.data, ctx.frontmatter)) {
+    if (ctx.fix) {
+      let mtime: Date;
+      try {
+        mtime = fs.statSync(ctx.filePath).mtime;
+      } catch {
+        mtime = new Date();
       }
+      currentRaw = fixMissingUpdated(currentRaw, mtime);
+      modified = true;
+      issues.push({
+        file: ctx.relPath,
+        issue: "missing-updated",
+        detail: `stamped updated: ${formatDate(mtime)}`,
+        fixed: true,
+      });
+    } else {
+      issues.push({
+        file: ctx.relPath,
+        issue: "missing-updated",
+        detail: "no updated field in frontmatter",
+        fixed: false,
+      });
+    }
+  }
+
+  if (modified) {
+    fs.writeFileSync(ctx.filePath, currentRaw, "utf8");
+    // Propagate the mutated raw back so subclasses can re-parse if needed
+    ctx.raw = currentRaw;
+  }
+
+  // ── 3. stale-path ──────────────────────────────────────────────────────
+  // M3: checkStalePath returns all stale matches; push one issue per path.
+  // M4: Also scan ctx.frontmatter for stale paths (absolute paths in frontmatter).
+  if (shouldRun("stale-path")) {
+    const staleInBody = checkStalePath(ctx.body);
+    const staleInFrontmatter = ctx.frontmatter ? checkStalePath(ctx.frontmatter) : [];
+    for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
+      // M4: Suggest portable replacement when path is under stashRoot.
+      const portableHint = candidate.startsWith(ctx.stashRoot)
+        ? ` (portable form: $AKM_STASH_DIR${candidate.slice(ctx.stashRoot.length)})`
+        : "";
+      issues.push({
+        file: ctx.relPath,
+        issue: "stale-path",
+        detail: `nonexistent path: ${candidate}${portableHint}`,
+        fixed: false,
+      });
+    }
+  }
+
+  // ── 4. missing-ref ─────────────────────────────────────────────────────
+  // Carve-out for assets that declare an explicit `refs:` array in
+  // frontmatter (e.g. session-checkpoint memories captured by the
+  // claude-code hook). The frontmatter array is the *authoritative*
+  // ref list — any ref-shaped tokens in the body are treated as
+  // literal strings (heredocs, grep patterns, JSON values, regex
+  // patterns embedded in tool transcripts). Without this carve-out
+  // every session capture produces a fresh batch of `missing-ref`
+  // flags on every literal `<type>:<slug>` token in a transcript.
+  //
+  // The producer guarantees that entries in `refs:` already resolve
+  // (it validates against the live stash before writing), so we
+  // still run `checkMissingRefs` against the array itself to catch
+  // refs that were valid at capture time but later removed from the
+  // stash.
+  if (shouldRun("missing-ref")) {
+    const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
+    // An explicit `refs:` array is a REF LIST (each value is a whole ref —
+    // short conceptIds included); a bare body is PROSE (anchored refs only).
+    const missingRefs =
+      explicitRefs !== null
+        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots)
+        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
+    for (const { ref, resolvedRelPath } of missingRefs) {
+      issues.push({
+        file: ctx.relPath,
+        issue: "missing-ref",
+        detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
+        fixed: false,
+      });
     }
 
-    // ── 4. missing-ref ─────────────────────────────────────────────────────
-    // Carve-out for assets that declare an explicit `refs:` array in
-    // frontmatter (e.g. session-checkpoint memories captured by the
-    // claude-code hook). The frontmatter array is the *authoritative*
-    // ref list — any ref-shaped tokens in the body are treated as
-    // literal strings (heredocs, grep patterns, JSON values, regex
-    // patterns embedded in tool transcripts). Without this carve-out
-    // every session capture produces a fresh batch of `missing-ref`
-    // flags on every literal `<type>:<slug>` token in a transcript.
+    // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
+    // Runs regardless of the `refs:` body-scan carve-out above — that
+    // carve-out governs only the BODY scan (`refs: []` declares "no
+    // outbound refs in the body", not "skip my correction links").
+    // Non-ref-shaped values (URLs, `raw/<slug>`, `<placeholder>`
+    // templates, shell vars) fall out via checkMissingRefs' guards.
     //
-    // The producer guarantees that entries in `refs:` already resolve
-    // (it validates against the live stash before writing), so we
-    // still run `checkMissingRefs` against the array itself to catch
-    // refs that were valid at capture time but later removed from the
-    // stash.
-    if (shouldRun("missing-ref")) {
-      const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
-      // An explicit `refs:` array is a REF LIST (each value is a whole ref —
-      // short conceptIds included); a bare body is PROSE (anchored refs only).
-      const missingRefs =
-        explicitRefs !== null
-          ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots)
-          : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
-      for (const { ref, resolvedRelPath } of missingRefs) {
-        issues.push({
-          file: ctx.relPath,
-          issue: "missing-ref",
-          detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
-          fixed: false,
-        });
-      }
-
-      // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
-      // Runs regardless of the `refs:` body-scan carve-out above — that
-      // carve-out governs only the BODY scan (`refs: []` declares "no
-      // outbound refs in the body", not "skip my correction links").
-      // Non-ref-shaped values (URLs, `raw/<slug>`, `<placeholder>`
-      // templates, shell vars) fall out via checkMissingRefs' guards.
-      //
-      // Gate: runs when the file has a frontmatter block OR when an
-      // authoritative `refs:` list was extracted. On the task/YAML path
-      // (lint/index.ts) ctx.frontmatter is always null and the whole file
-      // IS the body (`body === raw`); the top-level YAML keys land in
-      // ctx.data. Without `refs:` the body scan above already catches ref
-      // values under these keys, so running the pass would double-report —
-      // skip it. With `refs:` present the body scan is suppressed
-      // (refSource is the refs list), so this pass is the ONLY thing that
-      // validates the xref keys — it must run or dangling task xrefs go
-      // unreported. The two cases are mutually exclusive, so no ref is
-      // ever double-reported. Md files without a frontmatter block and
-      // without `refs:` land in the skip branch with empty ctx.data, so
-      // nothing is lost for them either.
-      if (ctx.frontmatter !== null || explicitRefs !== null) {
-        for (const key of XREF_FRONTMATTER_KEYS) {
-          const values = readRefStringOrArray(ctx.data?.[key]);
-          if (values === null) continue;
-          const missingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots);
-          for (const { ref, resolvedRelPath } of missingXrefs) {
-            issues.push({
-              file: ctx.relPath,
-              issue: "missing-ref",
-              detail: `missing ref: ${ref} (frontmatter ${key}; resolved to ${resolvedRelPath})`,
-              fixed: false,
-            });
-          }
+    // Gate: runs when the file has a frontmatter block OR when an
+    // authoritative `refs:` list was extracted. On the task/YAML path
+    // (lint/index.ts) ctx.frontmatter is always null and the whole file
+    // IS the body (`body === raw`); the top-level YAML keys land in
+    // ctx.data. Without `refs:` the body scan above already catches ref
+    // values under these keys, so running the pass would double-report —
+    // skip it. With `refs:` present the body scan is suppressed
+    // (refSource is the refs list), so this pass is the ONLY thing that
+    // validates the xref keys — it must run or dangling task xrefs go
+    // unreported. The two cases are mutually exclusive, so no ref is
+    // ever double-reported. Md files without a frontmatter block and
+    // without `refs:` land in the skip branch with empty ctx.data, so
+    // nothing is lost for them either.
+    if (ctx.frontmatter !== null || explicitRefs !== null) {
+      for (const key of XREF_FRONTMATTER_KEYS) {
+        const values = readRefStringOrArray(ctx.data?.[key]);
+        if (values === null) continue;
+        const missingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots);
+        for (const { ref, resolvedRelPath } of missingXrefs) {
+          issues.push({
+            file: ctx.relPath,
+            issue: "missing-ref",
+            detail: `missing ref: ${ref} (frontmatter ${key}; resolved to ${resolvedRelPath})`,
+            fixed: false,
+          });
         }
       }
     }
-
-    return issues;
   }
+
+  return issues;
 }
