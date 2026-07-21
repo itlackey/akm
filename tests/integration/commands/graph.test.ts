@@ -15,6 +15,7 @@ import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { deleteStoredGraph, replaceStoredGraph } from "../../../src/indexer/db/graph-db";
 import { GRAPH_FILE_SCHEMA_VERSION } from "../../../src/indexer/graph/graph-extraction";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -48,6 +49,7 @@ function seedGraphLookupIndex(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = openIndexDatabase(dbPath);
   try {
+    const localBundle = { bundleId: "local", componentId: "local", adapterId: "akm" };
     upsertEntry(
       db,
       `${stashDir}:knowledge:k1`,
@@ -56,6 +58,7 @@ function seedGraphLookupIndex(): void {
       stashDir,
       { name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" },
       buildSearchText({ name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" }),
+      deriveEntryProvenance(localBundle, "knowledge", "k1"),
     );
     upsertEntry(
       db,
@@ -65,6 +68,7 @@ function seedGraphLookupIndex(): void {
       stashDir,
       { name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" },
       buildSearchText({ name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" }),
+      deriveEntryProvenance(localBundle, "memory", "m1"),
     );
     rebuildFts(db);
     setMeta(db, "stashDir", stashDir);
@@ -341,9 +345,9 @@ describe("akm graph", () => {
     const first = result.related[0];
     expect(first).toBeDefined();
     expect(typeof first?.path).toBe("string");
-    // Canonical ref is `type:name`, with the stash-dir prefix stripped from
-    // entries.entry_key. The legacy `path` field must remain populated for
-    // back-compat consumers.
+    // Canonical ref is the conceptId resolved from the durable identity
+    // (entries.concept_id / the item_ref tail), NOT stripped from entry_key. The
+    // legacy `path` field must remain populated for back-compat consumers.
     expect(first?.ref).toBe("memories/m1");
     expect(first?.ref?.includes(stashDir)).toBe(false);
     expect(first?.ref?.startsWith(":")).toBe(false);

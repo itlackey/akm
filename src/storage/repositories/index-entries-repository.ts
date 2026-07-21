@@ -102,20 +102,12 @@ interface UpsertStmts {
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
 
-function getUpsertStmts(db: Database): UpsertStmts {
-  const existing = upsertStmtsByDb.get(db);
-  if (existing) return existing;
-  const stmts: UpsertStmts = {
-    // RETURNING id handles ON CONFLICT DO UPDATE correctly — no second
-    // SELECT round-trip needed (last_insert_rowid() is unreliable for
-    // ON CONFLICT). Use `.get()` so a single row comes back.
-    upsert: db.prepare(`
-      INSERT INTO entries (
-        entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from,
-        item_ref, bundle_id, component_id, concept_id, adapter_id, type, content_hash
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(entry_key) DO UPDATE SET
+// The ON CONFLICT DO UPDATE column assignments — factored out so the two
+// conflict targets below stay byte-identical. `entry_key` is deliberately NOT
+// updated (it is an identity column; renames go through `rekeyEntryInPlace`).
+// `content_hash` COALESCEs so a NULL passed by the LLM-enhance re-upsert cannot
+// wipe a previously-persisted hash.
+const UPSERT_SET_CLAUSE = `SET
         dir_path = excluded.dir_path,
         file_path = excluded.file_path,
         stash_dir = excluded.stash_dir,
@@ -129,7 +121,65 @@ function getUpsertStmts(db: Database): UpsertStmts {
         concept_id = excluded.concept_id,
         adapter_id = excluded.adapter_id,
         type = excluded.type,
-        content_hash = COALESCE(excluded.content_hash, content_hash)
+        content_hash = COALESCE(excluded.content_hash, content_hash)`;
+
+/**
+ * Whether `entries.item_ref` currently carries its UNIQUE index (the v19
+ * `idx_entries_item_ref`, built by `ensureUniqueItemRefIndex`). On a
+ * partially-migrated DB with a duplicate non-NULL item_ref, that build falls
+ * back to a NON-unique index — and `ON CONFLICT(item_ref)` is only a legal
+ * conflict target when a UNIQUE index/constraint backs the column (otherwise
+ * the upsert throws AT PREPARE TIME). This gate lets {@link getUpsertStmts}
+ * degrade to the always-present `entry_key` target until a rebuild restores
+ * uniqueness. Best-effort: any probe failure treats item_ref as non-unique.
+ */
+function itemRefHasUniqueIndex(db: Database): boolean {
+  try {
+    const indexes = db.prepare("PRAGMA index_list(entries)").all() as Array<{ name: string; unique: number | bigint }>;
+    return indexes.some((idx) => idx.name === "idx_entries_item_ref" && Number(idx.unique) === 1);
+  } catch {
+    return false;
+  }
+}
+
+function getUpsertStmts(db: Database): UpsertStmts {
+  const existing = upsertStmtsByDb.get(db);
+  if (existing) return existing;
+  // Conflict target (spec §3.3): the UNIQUE `item_ref` is THE intended clean
+  // dedupe key, so it is the PRIMARY target — a row carrying its durable
+  // identity dedupes on `item_ref`. `entry_key` is retained as a SECOND,
+  // NULL-safe fallback target because a legacy write path can still upsert an
+  // EXISTING row with a NULL `item_ref` (SQLite treats NULLs as distinct in a
+  // UNIQUE index, so an item_ref-only target would miss the row, fall through
+  // to a plain INSERT, and ABORT on the `entry_key NOT NULL UNIQUE` constraint).
+  // Concretely, the out-of-scope LLM metadata-enhance re-upsert (indexer.ts
+  // `enhanceDirsWithLlm`) re-writes already-indexed rows without provenance →
+  // NULL item_ref; the `entry_key` arm keeps that re-upsert an UPDATE, not a
+  // crash. Both arms run the IDENTICAL assignment block, so the outcome is the
+  // same regardless of which constraint matches. The `entry_key` fallback is
+  // deletable once every write path sets `item_ref`.
+  //
+  // When item_ref lacks its UNIQUE index (the ensureUniqueItemRefIndex fallback
+  // on a partially-migrated DB), `ON CONFLICT(item_ref)` is not a legal target
+  // and would fail at prepare time — so we degrade to the entry_key-only upsert
+  // (behaviour-identical to the pre-repoint key) until the next rebuild restores
+  // uniqueness; without this the very rebuild meant to heal the duplicate could
+  // not run.
+  const conflictClause = itemRefHasUniqueIndex(db)
+    ? `ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
+      ON CONFLICT(entry_key) DO UPDATE ${UPSERT_SET_CLAUSE}`
+    : `ON CONFLICT(entry_key) DO UPDATE ${UPSERT_SET_CLAUSE}`;
+  const stmts: UpsertStmts = {
+    // RETURNING id handles ON CONFLICT DO UPDATE correctly — no second
+    // SELECT round-trip needed (last_insert_rowid() is unreliable for
+    // ON CONFLICT). Use `.get()` so a single row comes back.
+    upsert: db.prepare(`
+      INSERT INTO entries (
+        entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type, derived_from,
+        item_ref, bundle_id, component_id, concept_id, adapter_id, type, content_hash
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ${conflictClause}
       RETURNING id
     `),
     markDirty: db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)"),

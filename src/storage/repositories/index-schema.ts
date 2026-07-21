@@ -59,6 +59,21 @@ import { isVecAvailable, purgeEmbeddings } from "./index-vec-repository";
 // STANDARD REBUILD NOTE: after this bump, any index.db opened at v19 is rebuilt
 // from the stash on the next `akm index`; usage_events/legacy_state are read
 // exclusively from state.db thereafter.
+//
+// Reader/writer repoint progress (spec §3.3 "single clean shape"): the `entries`
+// upsert (index-entries-repository `getUpsertStmts`) uses the UNIQUE `item_ref`
+// as its PRIMARY conflict target, and the graph-boost related-ref reader
+// (`listRelatedPathsForFile`) resolves the user-facing ref from
+// `concept_id`/`item_ref` instead of stripping `entry_key`. The legacy
+// `entry_key`/`dir_path`/`stash_dir`/`entry_type`/`entry_json` columns are NOT
+// yet removable: they retain live consumers outside this module — `entry_key`
+// (mv-cli re-key, usage-event legacy resolution, index-entry-mapper, the LLM
+// cache), `entry_json` (the row payload every reader decodes), `entry_type`
+// (FTS + workflow loader), `stash_dir`/`dir_path` (scan/delete/utility scoping).
+// The upsert therefore keeps `entry_key` as a NULL-item_ref-safe SECOND conflict
+// target (the LLM metadata-enhance re-upsert still writes existing rows with a
+// NULL item_ref) and degrades to it entirely when the item_ref index is the
+// non-unique fallback. Both are deletable once every remaining reader repoints.
 export const DB_VERSION = 20;
 export const EMBEDDING_DIM = 384;
 // #624-P1: graph_files re-keyed to (stash_root, file_path, body_hash). Bumped 3→4

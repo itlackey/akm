@@ -250,9 +250,10 @@ describe("output baseline", () => {
     );
 
     expect(output).toContain("related: 1");
-    // Schema v2: listRelatedPathsForFile populates `ref` via entries.entry_key,
-    // and formatRelatedLabel prefers it over basename. Output is now canonical
-    // ref form (`memories/incident`) instead of `incident.md`.
+    // listRelatedPathsForFile populates `ref` from the canonical durable identity
+    // (entries.concept_id / the item_ref tail), and formatRelatedLabel prefers it
+    // over basename. Output is the conceptId ref form (`memories/incident`)
+    // instead of `incident.md`.
     expect(output).toContain("  - memory: memories/incident");
     expect(output).toContain("    shared: Guide");
     expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));

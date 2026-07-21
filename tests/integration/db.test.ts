@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import type { Database } from "../../src/storage/database";
 import {
@@ -211,6 +212,73 @@ describe("Entry CRUD", () => {
       const entries = getAllEntries(db);
       expect(entries).toHaveLength(1);
       expect(entries[0]!.entry.description).toBe("updated description");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("upsertEntry dedupes on the UNIQUE item_ref (the clean conflict key)", () => {
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      const type = "script";
+      const name = "my-tool";
+      const entryKey = `/s:${type}:${name}`; // legacy stashDir:type:name shape
+      const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
+      const entry = makeEntry({ name, type, description: "original" });
+      upsertEntry(db, entryKey, "/s/dir", "/s/dir/my-tool.ts", "/s", entry, "my-tool original", prov);
+      // Re-upsert the SAME item_ref (same identity) with an updated payload.
+      const entry2 = makeEntry({ name, type, description: "updated" });
+      upsertEntry(db, entryKey, "/s/dir", "/s/dir/my-tool.ts", "/s", entry2, "my-tool updated", prov);
+      expect(getEntryCount(db)).toBe(1);
+      const rows = db.prepare("SELECT item_ref, entry_json FROM entries").all() as Array<{
+        item_ref: string | null;
+        entry_json: string;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.item_ref).toBe("team-kb//scripts/my-tool");
+      expect(JSON.parse(rows[0]?.entry_json ?? "{}").description).toBe("updated");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("a NULL-item_ref re-upsert of an existing row UPDATES in place via the entry_key fallback (never crashes)", () => {
+    // Mirrors the out-of-scope LLM metadata-enhance re-upsert: an already-indexed
+    // row (non-NULL item_ref) is re-written WITHOUT provenance → NULL item_ref.
+    // Under an item_ref-ONLY conflict target this would miss the row and ABORT on
+    // the `entry_key NOT NULL UNIQUE` constraint; the retained entry_key fallback
+    // keeps it a safe in-place UPDATE.
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      const type = "script";
+      const name = "my-tool";
+      const entryKey = `/s:${type}:${name}`; // legacy stashDir:type:name shape
+      const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
+      const first = makeEntry({ name, type, description: "first pass" });
+      upsertEntry(db, entryKey, "/s/dir", "/s/dir/my-tool.ts", "/s", first, "first", prov);
+      expect(getEntryCount(db)).toBe(1);
+
+      // Re-upsert the SAME entry_key WITHOUT provenance (item_ref = NULL).
+      const enhanced = makeEntry({ name, type, description: "enhanced" });
+      expect(() => upsertEntry(db, entryKey, "/s/dir", "/s/dir/my-tool.ts", "/s", enhanced, "enhanced")).not.toThrow();
+      // One row, updated in place — not duplicated.
+      expect(getEntryCount(db)).toBe(1);
+      const entries = getAllEntries(db);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]!.entry.description).toBe("enhanced");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("distinct NULL-item_ref rows coexist (NULLs are distinct under the UNIQUE index)", () => {
+    // The unmapped-bundle write path leaves item_ref NULL; two such rows with
+    // different entry_keys must NOT collapse into one under the item_ref UNIQUE.
+    const db = openIndexDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "tool-a");
+      insertTestEntry(db, "tool-b");
+      expect(getEntryCount(db)).toBe(2);
     } finally {
       closeDatabase(db);
     }
