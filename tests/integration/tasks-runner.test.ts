@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs, type TaskLogRow } from "../../src/core/logs-db";
 import { createMigrationBackup } from "../../src/core/migration-backup";
+import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import type { AgentRunResult } from "../../src/integrations/agent";
 import { resolveAkmInvocation } from "../../src/tasks/resolve-akm-bin";
 import { exitCodeForStatus, readTaskHistory, runTask } from "../../src/tasks/runner";
@@ -88,6 +89,47 @@ function readRunLogRows(taskId: string): TaskLogRow[] {
   } finally {
     db.close();
   }
+}
+
+function emptyReadableStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
+
+interface FakeTimer {
+  cb: () => void;
+  ms: number;
+  fired: boolean;
+  unref?: () => void;
+}
+
+/** Collect timers so a test can fire the kill ladder deterministically. */
+function collectTimers() {
+  const timers: FakeTimer[] = [];
+  const setTimeoutFn = ((cb: () => void, ms?: number): FakeTimer => {
+    const handle: FakeTimer = { cb, ms: ms ?? 0, fired: false, unref() {} };
+    timers.push(handle);
+    return handle;
+  }) as unknown as typeof setTimeout;
+  const clearTimeoutFn = (() => {}) as unknown as typeof clearTimeout;
+  return { timers, setTimeoutFn, clearTimeoutFn };
+}
+
+/** Yield the event loop until a timer for `ms` is registered, then fire it. */
+async function fireWhenRegistered(timers: FakeTimer[], ms: number): Promise<void> {
+  for (let i = 0; i < 1000; i++) {
+    const timer = timers.find((t) => t.ms === ms && !t.fired);
+    if (timer) {
+      timer.fired = true;
+      timer.cb();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  throw new Error(`timer for ${ms}ms never registered`);
 }
 
 describe("runTask — workflow target", () => {
@@ -249,6 +291,50 @@ describe("runTask — 0.8 command target", () => {
 
     expect(result.status).toBe("completed");
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${fallbackDir}`);
+  });
+
+  test("a command that ignores SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
+    writeTask(
+      "stubborn",
+      ['schedule: "@daily"', "command: hang-forever", "timeoutMs: 100", "enabled: true", ""].join("\n"),
+    );
+
+    const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
+    const signals: string[] = [];
+    // A child that swallows SIGTERM: only SIGKILL resolves its exit. Proves the
+    // runner now escalates (old inline path signalled SIGTERM once and hung).
+    const spawnFn: SpawnFn = () => {
+      let resolveExit: (code: number) => void = () => {};
+      const exited = new Promise<number>((resolve) => {
+        resolveExit = resolve;
+      });
+      const proc: SpawnedSubprocess = {
+        exitCode: null,
+        exited,
+        stdout: emptyReadableStream(),
+        stderr: emptyReadableStream(),
+        stdin: null,
+        kill(signal?: number | string) {
+          const name = String(signal);
+          signals.push(name);
+          if (name === "SIGTERM") return; // ignored — force the SIGKILL rung
+          resolveExit(143);
+        },
+      };
+      return proc;
+    };
+
+    const promise = runTask("stubborn", { stashDir, logDir, spawnFn, setTimeoutFn, clearTimeoutFn });
+    await fireWhenRegistered(timers, 100); // deadline → SIGTERM (ignored)
+    await fireWhenRegistered(timers, 5000); // grace → SIGKILL → child exits 143
+    const result = await promise;
+
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(result.status).toBe("failed");
+    expect(result.detail?.exitCode).toBe(143);
+    const log = fs.readFileSync(result.log, "utf8");
+    expect(log).toContain("timed_out=true timeout_ms=100");
+    expect(log).toContain("exit_code=143");
   });
 
   test("does not fall back to PATH when a bare self-invocation cannot be resolved", async () => {
