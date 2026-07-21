@@ -69,7 +69,8 @@ describe("parseAssetRef error codes (#15)", () => {
   test("MISSING_REQUIRED_ARGUMENT has a hint in errors.ts", () => {
     const err = new UsageError("test", "MISSING_REQUIRED_ARGUMENT");
     expect(err.hint()).toBeDefined();
-    expect(err.hint()).toMatch(/type:name/);
+    // 0.9.0 grammar (D-R3): the hint teaches [bundle//]conceptId, never type:name.
+    expect(err.hint()).toMatch(/\[bundle\/\/\]conceptId/);
   });
 });
 
