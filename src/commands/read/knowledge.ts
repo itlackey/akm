@@ -292,7 +292,7 @@ function unresolvedRefsError(flag: "--xref" | "--supersedes", unresolved: Parsed
   return new UsageError(
     `${flag} ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.map((u) => u.ref).join(", ")}`,
     "INVALID_FLAG_VALUE",
-    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form type:name.`,
+    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form [bundle//]conceptId (e.g. knowledge/guide.md).`,
   );
 }
 

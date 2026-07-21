@@ -97,7 +97,7 @@ async function runImprove(config: AkmConfig, newCount: number): Promise<void> {
 }
 
 function belowMinNewSessionsEvents() {
-  return readEvents({ type: "improve_skipped", ref: "memory:_extract" }).events.filter(
+  return readEvents({ type: "improve_skipped", ref: "memories/_extract" }).events.filter(
     (e) => e.metadata?.reason === "below_min_new_sessions",
   );
 }

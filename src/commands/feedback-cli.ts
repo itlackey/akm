@@ -182,7 +182,7 @@ export const feedbackCommand = defineJsonCommand({
     // Optional in citty so run() is invoked even when omitted; we re-validate
     // and throw a structured UsageError below so exit code is 2 (USAGE) rather
     // than citty's default 0 (help banner).
-    ref: { type: "positional", description: "Asset ref (type:name)", required: false },
+    ref: { type: "positional", description: "Asset ref ([bundle//]conceptId, e.g. lessons/deploy)", required: false },
     positive: { type: "boolean", description: "Record positive feedback (boosts ranking immediately)", default: false },
     negative: {
       type: "boolean",
@@ -209,7 +209,7 @@ export const feedbackCommand = defineJsonCommand({
     "applied-to": {
       type: "string",
       description:
-        "Credit a lesson that helped resolve this task. Accepts a `lesson:<name>` ref. " +
+        "Credit a lesson that helped resolve this task. Accepts a `lessons/<name>` ref. " +
         "When combined with --positive, appends this feedback ref to the target lesson's " +
         "`lessonStrength[]` frontmatter array (dedup, idempotent). Ignored on non-lesson targets.",
     },
@@ -220,7 +220,7 @@ export const feedbackCommand = defineJsonCommand({
       throw new UsageError(
         "Asset ref is required. Usage: akm feedback <ref> --positive|--negative",
         "MISSING_REQUIRED_ARGUMENT",
-        "Pass a ref like `skill:deploy` and either --positive or --negative.",
+        "Pass a ref like `skills/deploy` and either --positive or --negative.",
       );
     }
     const parsedRef = parseRefInput(ref);

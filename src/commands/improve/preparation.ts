@@ -362,7 +362,7 @@ export async function runConsolidationPass(args: {
     appendEvent(
       {
         eventType: "improve_skipped",
-        ref: "memory:_consolidation",
+        ref: "memories/_consolidation",
         metadata: {
           reason: "pool_below_min_size",
           poolSize: eligiblePoolSize,
@@ -419,7 +419,7 @@ export async function runConsolidationPass(args: {
       appendEvent(
         {
           eventType: "consolidate_completed",
-          ref: "memory:_consolidation",
+          ref: "memories/_consolidation",
           metadata: {
             processed: consolidation.processed,
             merged: consolidation.merged,
@@ -436,7 +436,7 @@ export async function runConsolidationPass(args: {
     appendEvent(
       {
         eventType: "improve_skipped",
-        ref: "memory:_consolidation",
+        ref: "memories/_consolidation",
         metadata: {
           reason: "consolidation_no_memory_updates",
           lastEventTs: lastConsolidationTs ?? null,
@@ -559,7 +559,7 @@ async function runSessionExtractPass(args: {
         appendEvent(
           {
             eventType: "improve_skipped",
-            ref: "memory:_extract",
+            ref: "memories/_extract",
             metadata: {
               reason: "below_min_new_sessions",
               newSessions: newCandidateCount,

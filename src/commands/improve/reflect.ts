@@ -84,7 +84,7 @@ export interface AkmReflectOptions {
    * falls back to `default`.
    */
   improveProfile?: ImproveProfileConfig;
-  /** Optional asset ref (`type:name`) to focus on. */
+  /** Optional asset ref (`[bundle//]conceptId`, e.g. `lessons/my-lesson`) to focus on. */
   ref?: string;
   /** Optional task hint passed through to the reflection prompt. */
   task?: string;
@@ -506,11 +506,27 @@ function isStructuredCooldownSignal(stdout: string): boolean {
  * structured-output integration); for now this tighter parser applies to all
  * modes and is the primary R-6 deliverable.
  */
+/**
+ * Best-effort asset type for a maybe-ref string, in the 0.9.0 `[bundle//]conceptId`
+ * grammar (`""` when it does not parse). Replaces the pre-0.9.0 `ref.split(":")[0]`
+ * type-extraction, which yielded the whole conceptId (`lessons/my-lesson`) instead
+ * of the type once refs stopped carrying a `type:` prefix (ref-grammar decision
+ * D-R3). Lenient by design — the callers degrade gracefully on an empty type.
+ */
+function lenientRefType(ref: string | undefined): string {
+  if (!ref) return "";
+  try {
+    return parseRefInput(ref).type;
+  } catch {
+    return "";
+  }
+}
+
 function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined, sdkRunner = false) {
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
-  const targetType = ref.split(":")[0];
+  const targetType = lenientRefType(ref);
   if (!looksLikeAssetContent(trimmed, sdkRunner, targetType)) return undefined;
   return { ref, content: trimmed };
 }
@@ -768,7 +784,7 @@ export function sanitizeReflectPayload(
   //   - a present-but-otherwise-invalid description exists (too short, a heading
   //     fragment) — overwriting authored content is out of scope; the prompt
   //     instruction handles improving it instead.
-  const refType = targetRef.includes(":") ? (targetRef.split(":")[0] ?? "") : "";
+  const refType = lenientRefType(targetRef);
   const mergedDesc = mergedFm.description;
   const descIsMissing = typeof mergedDesc !== "string" || mergedDesc.trim().length === 0;
   const sourceHadFrontmatter = sourceFmText !== null && Object.keys(sourceFm).length > 0;
@@ -833,7 +849,7 @@ export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
   required: ["ref", "content"],
   additionalProperties: false,
   properties: {
-    ref: { type: "string", description: "Asset ref in type:name format (e.g. lesson:my-lesson)." },
+    ref: { type: "string", description: "Asset ref as a subdir-qualified conceptId (e.g. lessons/my-lesson)." },
     content: { type: "string", description: "Full markdown content for the asset." },
     frontmatter: {
       type: "object",

@@ -1139,7 +1139,13 @@ export async function runMemoryInferenceMaintenancePass(
         { engine: resolvedPlan?.processes.memoryInference.runner?.engine, process: "memoryInference" },
       );
       durationMs = Date.now() - inferenceStart;
-      action = { ref: "memory:_inference", mode: "memory-inference", result: memoryInference };
+      // Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
+      // `<domain>/_<marker>` label on the event row, never parsed as an asset
+      // ref. The domain is the asset stash-subdir for asset-scoped sentinels
+      // (`memories/…`) and the subsystem name for maintenance/artifact sentinels
+      // (`graph/…`, `events/…`, `proposals/…`, `health/…`, …). Readers match the
+      // event by `eventType`, never by this string.
+      action = { ref: "memories/_inference", mode: "memory-inference", result: memoryInference };
       info(
         `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
       );
@@ -1279,7 +1285,10 @@ export async function runGraphExtractionMaintenancePass(
         { engine: resolvedPlan?.processes.graphExtraction.runner?.engine, process: "graphExtraction" },
       );
       durationMs = Date.now() - extractionStart;
-      action = { ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction };
+      // Synthetic sentinel ref (D-R3): `graph` has no asset stash-subdir, so the
+      // colon-free `graph/_artifact` names the subsystem, per the sentinel
+      // convention documented at the memory-inference writer above.
+      action = { ref: "graph/_artifact", mode: "graph-extraction", result: graphExtraction };
       info(
         `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
       );
@@ -1317,7 +1326,7 @@ function runOrphanProposalPurgePass(ctx: MaintenanceCtx): { orphansPurged: numbe
     appendEvent(
       {
         eventType: "proposal_orphan_purge",
-        ref: "proposals:_orphan-purge",
+        ref: "proposals/_orphan-purge",
         metadata: {
           checked: purgeResult.checked,
           rejected: purgeResult.rejected,
@@ -1357,7 +1366,7 @@ function runProposalExpirationPass(ctx: MaintenanceCtx): { proposalsExpired: num
     appendEvent(
       {
         eventType: "proposal_expiration_pass",
-        ref: "proposals:_expiration",
+        ref: "proposals/_expiration",
         metadata: {
           checked: expireResult.checked,
           expired: expireResult.expired,
@@ -1405,7 +1414,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
           appendEvent(
             {
               eventType: "events_purged",
-              ref: "events:_purge",
+              ref: "events/_purge",
               metadata: { purgedCount, retentionDays },
             },
             eventsCtx,
@@ -1424,7 +1433,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
           appendEvent(
             {
               eventType: "improve_runs_purged",
-              ref: "improve_runs:_purge",
+              ref: "improve_runs/_purge",
               metadata: { purgedCount: improveRunsPurged, retentionDays },
             },
             eventsCtx,
@@ -1444,7 +1453,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
                 // Dedicated type (mirrors improve_runs_purged) so consumers
                 // never have to disambiguate purge targets via the ref string.
                 eventType: "improve_cycle_metrics_purged",
-                ref: "improve_cycle_metrics:_purge",
+                ref: "improve_cycle_metrics/_purge",
                 metadata: { purgedCount: cycleMetricsPurged, retentionDays: cycleRetention },
               },
               eventsCtx,
@@ -1474,7 +1483,7 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
       appendEvent(
         {
           eventType: "task_logs_purged",
-          ref: "task_logs:_purge",
+          ref: "task_logs/_purge",
           metadata: { purgedCount: taskLogsPurged, retentionDays },
         },
         eventsCtx,

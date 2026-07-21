@@ -99,7 +99,7 @@ describe("runMemoryInferenceMaintenancePass", () => {
     expect(out.warnings).toEqual([]);
   });
 
-  test("success returns the result, the memory:_inference action, and the pass duration", async () => {
+  test("success returns the result, the memories/_inference action, and the pass duration", async () => {
     const stash = freshStash();
     const result = inferenceResult({ writtenFacts: 3, splitParents: 1 });
     let receivedDb: unknown;
@@ -113,7 +113,7 @@ describe("runMemoryInferenceMaintenancePass", () => {
     const out = await runMemoryInferenceMaintenancePass(ctx, { current: fakeDb }, new Set(["memories/a"]));
 
     expect(out.memoryInference).toBe(result);
-    expect(out.action).toEqual({ ref: "memory:_inference", mode: "memory-inference", result });
+    expect(out.action).toEqual({ ref: "memories/_inference", mode: "memory-inference", result });
     expect(out.durationMs).toBeGreaterThanOrEqual(0);
     expect(out.warnings).toEqual([]);
     // The pass hands the CURRENT cell handle to the inference call (#584).
@@ -194,7 +194,7 @@ describe("runGraphExtractionMaintenancePass", () => {
     expect(dbAtInvoke).toBe(freshHandle);
     expect(out.graphExtraction).toBeDefined();
     expect(out.action).toEqual({
-      ref: "graph:_artifact",
+      ref: "graph/_artifact",
       mode: "graph-extraction",
       result: out.graphExtraction as GraphExtractionResult,
     });

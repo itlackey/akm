@@ -66,7 +66,7 @@ async function runImprove(config: AkmConfig): Promise<void> {
 }
 
 function poolBelowMinSizeEvents() {
-  return readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events.filter(
+  return readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
     (e) => e.metadata?.reason === "pool_below_min_size",
   );
 }
@@ -106,7 +106,7 @@ describe("#553 consolidate minPoolSize guard", () => {
       // event fired either — the pool guard short-circuited before both.
       const completed = readEvents({ type: "consolidate_completed" }).events;
       expect(completed.length).toBe(0);
-      const mtimeSkips = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events.filter(
+      const mtimeSkips = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
         (e) => e.metadata?.reason === "consolidation_no_memory_updates",
       );
       expect(mtimeSkips.length).toBe(0);

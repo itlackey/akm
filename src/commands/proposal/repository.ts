@@ -362,15 +362,20 @@ function withProposalsDb<T>(stashDir: string, ctx: ProposalsContext | undefined,
  * `local`/`stash` primary-stash sentinels resolve to the write-target bundle.
  */
 /**
- * The conceptId (`<stash-subdir>/<name>`) a stored OR queried proposal ref maps
- * to, in EITHER grammar (`undefined` when unparseable). WI-8.5a stores
- * `proposals.ref` as the item_ref, so a user/display query ref (`lesson:x` or
- * `lessons/x`) can no longer exact-match the stored `bundle//lessons/x`. Matching
- * on the shared conceptId is the durable dual-read for the user-facing filter
- * paths (`proposal list --ref`, `resolveProposalId`). The internal fingerprint/
- * backoff paths keep exact `ref`-column matching (they compare the already-final
- * `normalizedRef`), so old legacy rejected rows aging out is the documented
- * dedup-window reset, not a lookup regression.
+ * The conceptId (`<stash-subdir>/<name>`) a STORED proposal ref maps to
+ * (`undefined` when unparseable). TOLERANT by design: a single malformed durable
+ * row must never crash a listing, so a parse failure here degrades to "no match"
+ * rather than throwing. WI-8.5a stores `proposals.ref` as the item_ref, so a
+ * user query ref (`lessons/x` / `bundle//lessons/x`) can no longer exact-match
+ * the stored `bundle//lessons/x`; matching on the shared conceptId is the durable
+ * read for the user-facing filter paths (`proposal list --ref`,
+ * `resolveProposalId`). The internal fingerprint/backoff paths keep exact
+ * `ref`-column matching (they compare the already-final `normalizedRef`), so old
+ * legacy rejected rows aging out is the documented dedup-window reset, not a
+ * lookup regression.
+ *
+ * USER-SUPPLIED filter refs go through {@link filterConceptId} instead — an
+ * unparseable filter is a loud usage error, never a silent empty result.
  */
 function proposalConceptId(ref: string): string | undefined {
   try {
@@ -378,6 +383,27 @@ function proposalConceptId(ref: string): string | undefined {
     return conceptIdFromTypeName(p.type, p.name);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * The conceptId a USER-SUPPLIED `--ref` / `idOrRef` filter maps to. Unlike the
+ * tolerant {@link proposalConceptId} (which reads STORED rows), an unparseable
+ * filter throws a typed {@link UsageError} rather than resolving to `undefined`
+ * and silently matching nothing — an invalid filter should fail loudly, naming
+ * the 0.9.0 grammar (D-R3: the legacy `type:name` grammar is gone). Delegates the
+ * grammar to `parseRefInput`, so a legacy `skill:x` input surfaces the same loud
+ * error as any other unparseable filter.
+ */
+function filterConceptId(ref: string): string {
+  try {
+    const p = parseRefInput(ref);
+    return conceptIdFromTypeName(p.type, p.name);
+  } catch {
+    throw new UsageError(
+      `Invalid asset-ref filter "${ref}". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
+      "INVALID_FLAG_VALUE",
+    );
   }
 }
 
@@ -697,7 +723,7 @@ export function listProposals(
     // WI-8.5a: the `ref` filter matches by conceptId (grammar-independent) so a
     // display/legacy query ref finds the item_ref-spelled row. Applied in JS, not
     // as a SQL `ref = ?`, since the stored spelling no longer equals the query ref.
-    const wantConceptId = options.ref !== undefined ? proposalConceptId(options.ref) : undefined;
+    const wantConceptId = options.ref !== undefined ? filterConceptId(options.ref) : undefined;
     return listStateProposals(db, {
       stashDir,
       ...(status !== undefined ? { status } : {}),
@@ -751,7 +777,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
     // archived. WI-8.5a: match by conceptId (a UUID carries neither `:` nor `/`,
     // so both grammars — legacy `skill:x` and new `skills/x` / `bundle//skills/x`
     // — route here and match the item_ref-spelled stored row).
-    const wantConceptId = idOrRef.includes(":") || idOrRef.includes("/") ? proposalConceptId(idOrRef) : undefined;
+    const wantConceptId = idOrRef.includes(":") || idOrRef.includes("/") ? filterConceptId(idOrRef) : undefined;
     if (wantConceptId !== undefined) {
       const byRecency = (proposals: Proposal[]): Proposal | undefined =>
         proposals.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];

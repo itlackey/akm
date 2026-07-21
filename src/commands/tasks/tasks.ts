@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { assetPathForName } from "../../core/asset/asset-placement";
-import type { AssetRef } from "../../core/asset/resolve-ref";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -963,15 +963,32 @@ export function setEnabledInYaml(yaml: string, enabled: boolean): string {
 // `akm tasks run` completes.
 export { ConfigError, exitCodeForStatus, NotFoundError, parseTaskDocument, UsageError };
 
-// Helper: ensure the asset-spec resolver agrees with our id rules. If the
-// user passes a ref, we accept the bare name part too.
+// Accept a bare task id or the canonical 0.9.0 `[bundle//]tasks/<id>` ref
+// (ref-grammar decision D-R3). The pre-0.9.0 `task:<id>` colon grammar is
+// retired and rejected loudly — it appears NOWHERE after the flip.
 export function parseTaskRef(input: string): { id: string } {
-  if (input.includes(":")) {
-    const [typePart, ...rest] = input.split(":");
-    if (typePart !== "task" || rest.length === 0) {
-      throw new UsageError(`Expected a task id or task:<id> ref, got "${input}".`, "INVALID_FLAG_VALUE");
+  const trimmed = input.trim();
+  // Canonical conceptId form: `[bundle//]tasks/<id>`. A `/` unambiguously marks
+  // it — a bare task id can never contain `/` (`validateTaskId` forbids it) — so
+  // route it through the shared parser, which strips any bundle prefix and maps
+  // the `tasks/` stash-subdir back to the `task` type in one place.
+  if (trimmed.includes("/")) {
+    try {
+      const parsed = parseRefInput(trimmed);
+      if (parsed.type === "task") return { id: normaliseTaskId(parsed.name) };
+    } catch {
+      // fall through to the shared error below
     }
-    return { id: normaliseTaskId(rest.join(":")) };
+    throw new UsageError(`Expected a task id or tasks/<id> ref, got "${input}".`, "INVALID_FLAG_VALUE");
   }
-  return { id: normaliseTaskId(input) };
+  // Legacy `task:<id>` grammar is gone in 0.9.0 (D-R3) — reject it with a typed
+  // error that names the new form so muscle-memory callers get a clear fix.
+  if (trimmed.includes(":")) {
+    const legacyName = trimmed.slice(trimmed.indexOf(":") + 1);
+    throw new UsageError(
+      `The \`task:<id>\` ref grammar was removed in 0.9.0 — use the bare id or \`tasks/${legacyName || "<id>"}\`.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return { id: normaliseTaskId(trimmed) };
 }

@@ -289,7 +289,7 @@ export const historyCommand = defineJsonCommand({
       "Results from all active sources are merged and sorted chronologically.",
   },
   args: {
-    ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
+    ref: { type: "string", description: "Asset ref ([bundle//]conceptId). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
     generator: {
       type: "string",

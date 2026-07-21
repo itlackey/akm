@@ -165,13 +165,13 @@ export const showCommand = defineJsonCommand({
   meta: {
     name: "show",
     description:
-      "Show a stash asset by ref (e.g. akm show knowledge:guide.md toc, akm show knowledge:guide.md section 'Auth')",
+      "Show a stash asset by ref (e.g. akm show knowledge/guide.md toc, akm show knowledge/guide.md section 'Auth')",
   },
   args: {
     ref: {
       type: "positional",
       description:
-        'Asset ref ([origin//]type:name) optionally followed by a view mode. View modes: `toc` (table of contents), `section "Heading"` (extract one section), `lines <start> <end>` (line range), `frontmatter` (YAML metadata only), `full` (raw file). Example: `akm show knowledge:guide.md section "Auth"`.',
+        'Asset ref ([bundle//]conceptId) optionally followed by a view mode. View modes: `toc` (table of contents), `section "Heading"` (extract one section), `lines <start> <end>` (line range), `frontmatter` (YAML metadata only), `full` (raw file). Example: `akm show knowledge/guide.md section "Auth"`.',
       required: true,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
@@ -188,7 +188,7 @@ export const showCommand = defineJsonCommand({
     // not a typed asset ref — skip ref validation and let akmShowUnified
     // direct-read it. (the ref parser would reject the non-type `meta`.)
     if (!parseMetaRef(args.ref)) parseRefInput(args.ref);
-    // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
+    // The knowledge-view positional syntax (`akm show knowledge/foo section "Auth"`)
     // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
     // by `normalizeShowArgv` before citty parses argv. We read those values
     // directly via `getParsedInvocation()` so the flags don't surface as

@@ -444,7 +444,7 @@ describe("consolidate pool-delta eligibility", () => {
     appendEvent(
       {
         eventType: "consolidate_completed",
-        ref: "memory:_consolidation",
+        ref: "memories/_consolidation",
         metadata: { processed: 1 },
       },
       { now: () => farFutureMs },
@@ -460,7 +460,7 @@ describe("consolidate pool-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
   });
 
@@ -471,7 +471,7 @@ describe("consolidate pool-delta eligibility", () => {
     appendEvent(
       {
         eventType: "consolidate_completed",
-        ref: "memory:_consolidation",
+        ref: "memories/_consolidation",
         metadata: { processed: 1 },
       },
       { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
@@ -489,7 +489,7 @@ describe("consolidate pool-delta eligibility", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
   });
 });
@@ -512,7 +512,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
     // nothing on disk is newer.
     const farFutureMs = new Date("2099-01-01T00:00:00.000Z").getTime();
     appendEvent(
-      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { eventType: "consolidate_completed", ref: "memories/_consolidation", metadata: { processed: 1 } },
       { now: () => farFutureMs },
     );
 
@@ -532,7 +532,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
     const consolidationIdx = all.findIndex(
       (e) =>
         e.eventType === "improve_skipped" &&
-        e.ref === "memory:_consolidation" &&
+        e.ref === "memories/_consolidation" &&
         e.metadata?.reason === "consolidation_no_memory_updates",
     );
     const improveInvokedIdx = all.findIndex((e) => e.eventType === "improve_invoked");
@@ -552,7 +552,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
     const stash = makeTempDir("akm-551-promoted-skip-");
     // Last consolidate well in the past.
     appendEvent(
-      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { eventType: "consolidate_completed", ref: "memories/_consolidation", metadata: { processed: 1 } },
       { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
     );
     // Freshly-promoted memory: file mtime is naturally newer than 2020. WITHOUT
@@ -578,7 +578,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(true);
   });
 
@@ -588,7 +588,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
   test("settled prior-run memory (no same-cohort promotion) → consolidation NOT skipped", async () => {
     const stash = makeTempDir("akm-551-settled-runs-");
     appendEvent(
-      { eventType: "consolidate_completed", ref: "memory:_consolidation", metadata: { processed: 1 } },
+      { eventType: "consolidate_completed", ref: "memories/_consolidation", metadata: { processed: 1 } },
       { now: () => new Date("2020-01-01T00:00:00.000Z").getTime() },
     );
     // Two memories edited after the last consolidate, with NO `promoted` event
@@ -607,7 +607,7 @@ describe("#551 consolidation reorder + adjacent-run promotion gate", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    const skipped = readEvents({ type: "improve_skipped", ref: "memory:_consolidation" }).events;
+    const skipped = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events;
     expect(skipped.some((e) => e.metadata?.reason === "consolidation_no_memory_updates")).toBe(false);
   });
 });

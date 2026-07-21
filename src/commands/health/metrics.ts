@@ -28,12 +28,16 @@ const HEALTH_PROBE_EVENT = "health_probe";
 export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: number | null; error?: string } {
   const before = readEvents({}, { dbPath: stateDbPath }).nextOffset;
   const started = Date.now();
+  // Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
+  // `<subsystem>/_<marker>` label. `health` has no asset stash-subdir, so
+  // `health/_probe` names the subsystem. Written and read back in lockstep here;
+  // the round-trip matches on `eventType` + this exact ref, so both must agree.
   appendEvent(
-    { eventType: HEALTH_PROBE_EVENT, ref: "health:probe", metadata: { source: "akm health" } },
+    { eventType: HEALTH_PROBE_EVENT, ref: "health/_probe", metadata: { source: "akm health" } },
     { dbPath: stateDbPath },
   );
   const after = readEvents(
-    { sinceOffset: before, type: HEALTH_PROBE_EVENT, ref: "health:probe" },
+    { sinceOffset: before, type: HEALTH_PROBE_EVENT, ref: "health/_probe" },
     { dbPath: stateDbPath },
   );
   const durationMs = Date.now() - started;

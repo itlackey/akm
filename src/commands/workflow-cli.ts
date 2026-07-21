@@ -359,6 +359,11 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
   // ref contract in lockstep with the rest of the workflow command family — an
   // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
   // starts, rather than being mistaken for a relative path that does not exist.
+  // DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): the two
+  // legacy `workflow:` sniffs survive ONLY as pre-Chunk-8 durable-row tolerance,
+  // classifying an old-spelled ref as a ref (not a path) so it routes through the
+  // resolver rather than being mistaken for a relative path. Input-side only;
+  // remove the legacy arms at the 0.10.0 grammar removal.
   const looksLikeWorkflowRef =
     target.startsWith("workflow:") ||
     target.includes("//workflow:") ||

@@ -9,7 +9,7 @@ import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontma
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
-import { isDerivedMemory, parseMemoryName, resolveParentRef } from "./derived-ref";
+import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
@@ -830,14 +830,14 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
 function refArray(value: unknown): string[] {
   if (typeof value === "string") {
     const name = parseMemoryName(value);
-    return name === undefined ? [] : [`memory:${name}`];
+    return name === undefined ? [] : [memoryIdentityRef(name)];
   }
   if (!Array.isArray(value)) return [];
   const refs = new Set<string>();
   for (const item of value) {
     if (typeof item !== "string") continue;
     const name = parseMemoryName(item);
-    if (name !== undefined) refs.add(`memory:${name}`);
+    if (name !== undefined) refs.add(memoryIdentityRef(name));
   }
   return [...refs].sort();
 }

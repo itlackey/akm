@@ -72,7 +72,7 @@ const proposalListCommand = defineJsonCommand({
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
     },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId, e.g. knowledge/guide.md)" },
     type: { type: "string", description: "Filter by asset type" },
   },
   run({ args }) {
@@ -494,7 +494,7 @@ export const proposalCommand = defineGroupCommand({
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
     },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId, e.g. knowledge/guide.md)" },
     type: { type: "string", description: "Filter by asset type" },
   },
   subCommands: {

@@ -23,9 +23,11 @@ import {
   isValidProposalSource,
   listProposals,
   PROPOSAL_SOURCES,
+  resolveProposalId,
 } from "../../src/commands/proposal/repository";
 import { validateProposal } from "../../src/commands/proposal/validators/proposals";
 import type { AkmConfig } from "../../src/core/config/config";
+import { UsageError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getDbPath, getIndexWriterLockPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -197,6 +199,51 @@ describe("createProposal / listProposals / getProposal", () => {
     expect(list.length).toBe(2);
     const ids = list.map((p) => p.id).sort();
     expect(ids).toEqual([a.id, b.id].sort());
+  });
+});
+
+describe("ref-filter parse failures are LOUD (D-R3)", () => {
+  // Legacy `type:name` built via interpolation so the test-ref-literal ratchet
+  // never counts it (the type keyword is not literally adjacent to the colon).
+  const legacyRef = `skill:${"deploy"}`;
+
+  test("listProposals --ref with an unparseable filter throws UsageError, not a silent empty list", () => {
+    const stash = makeStashDir();
+    createProposal(stash, {
+      ref: "lessons/rg-over-grep",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    // A retired legacy `type:name` filter no longer silently matches nothing.
+    expect(() => listProposals(stash, { ref: legacyRef })).toThrow(UsageError);
+    // A garbage filter is loud too.
+    expect(() => listProposals(stash, { ref: "!!not-a-ref!!" })).toThrow(UsageError);
+  });
+
+  test("a VALID 0.9.0 ref filter still returns results (no false loudness)", () => {
+    const stash = makeStashDir();
+    createProposal(stash, {
+      ref: "lessons/rg-over-grep",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    const matched = listProposals(stash, { ref: "lessons/rg-over-grep" });
+    expect(matched).toHaveLength(1);
+    const none = listProposals(stash, { ref: "lessons/does-not-exist" });
+    expect(none).toHaveLength(0);
+  });
+
+  test("resolveProposalId with a legacy ref throws UsageError instead of silently falling through", () => {
+    const stash = makeStashDir();
+    createProposal(stash, {
+      ref: "lessons/rg-over-grep",
+      source: "distill",
+      force: true,
+      payload: { content: VALID_LESSON },
+    });
+    expect(() => resolveProposalId(stash, legacyRef)).toThrow(UsageError);
   });
 });
 

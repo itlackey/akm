@@ -257,6 +257,11 @@ export function validateWorkflowSource(target: string): {
   path: string;
   parse: ReturnType<typeof parseWorkflow>;
 } {
+  // DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): a
+  // legacy-`workflow:`-prefix sniff, kept ONLY as a guard so a caller that
+  // forgot to resolve a legacy ref to a path gets a clear error instead of a
+  // spurious not-found. Pre-Chunk-8 durable-row tolerance; retire at the 0.10.0
+  // grammar removal.
   if (target.startsWith("workflow:")) {
     throw new UsageError(
       `validateWorkflowSource expects a filesystem path; resolve refs to paths in the caller before invoking.`,

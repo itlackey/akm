@@ -80,6 +80,23 @@ export function parseMemoryRef(value: string | undefined): string | undefined {
 }
 
 /**
+ * Format a bare memory name into the belief-edge IDENTITY channel ref
+ * `memory:<name>` — the ONE implementation of that spelling.
+ *
+ * DOCUMENTED EXCEPTION (ref-grammar decision D-R3): the belief-edge / identity
+ * channel (`contradictedBy` / `supersededBy` / `currentBeliefRefs`, and a derived
+ * memory's own `record.ref`) deliberately stays in `memory:<name>` grammar — it
+ * is compared against a derived memory's own identity ref, a channel DECOUPLED
+ * from the `derived_from` record refs that Group-C item 2 flipped to
+ * `memories/<name>`. Both `memory-improve.ts` (`refArray`) and
+ * `memory-contradiction-detect.ts` (`toMemoryRef`) emit through here so the
+ * exception has exactly one home instead of three hand-rolled copies.
+ */
+export function memoryIdentityRef(name: string): string {
+  return `memory:${name}`;
+}
+
+/**
  * True when the named memory is a derived/inferred child — either it carries
  * `inferred: true` in its frontmatter or its name ends with the structural
  * `.derived` suffix.

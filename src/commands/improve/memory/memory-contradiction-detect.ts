@@ -44,7 +44,7 @@ import { getDefaultLlmConfig } from "../../../integrations/agent/engine-resoluti
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
 import { callStructured } from "../../../llm/structured-call";
-import { isDerivedMemory, resolveParentRef } from "./derived-ref";
+import { isDerivedMemory, memoryIdentityRef, resolveParentRef } from "./derived-ref";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -118,11 +118,16 @@ function* walkMarkdownFilesLocal(root: string): Generator<string> {
   }
 }
 
+// Build the derived memory's own belief-edge IDENTITY ref from its file path.
+// Emits through the shared {@link memoryIdentityRef} so this — the former THIRD
+// hand-rolled copy of the identity-channel spelling — no longer diverges from
+// memory-improve's `refArray` (ref-grammar decision D-R3 identity-channel
+// exception, documented at `memoryIdentityRef`).
 function toMemoryRef(memoriesDir: string, filePath: string): string | undefined {
   const rel = path.relative(memoriesDir, filePath);
   if (!rel || rel.startsWith("..")) return undefined;
   const name = rel.replace(/\\/g, "/").replace(/\.md$/i, "");
-  return `memory:${name}`;
+  return memoryIdentityRef(name);
 }
 
 // ── Edge writing ─────────────────────────────────────────────────────────────

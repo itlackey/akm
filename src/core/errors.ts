@@ -116,7 +116,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   MISSING_OR_AMBIGUOUS_TARGET: "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg` (not both).",
   TARGET_NOT_UPDATABLE: "Run `akm list` to view your sources, then retry with one of those values.",
   MISSING_REQUIRED_ARGUMENT:
-    "Refs use the form type:name, e.g. `akm show skill:deploy` or `akm show knowledge:guide.md`.",
+    "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`.",
 };
 
 /** Default hint for each NotFoundError code. */

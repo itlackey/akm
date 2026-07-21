@@ -159,7 +159,7 @@ export type EventType =
 
 export interface AppendEventInput {
   eventType: EventType;
-  /** Asset ref like `memory:alpha`. Optional for stash-wide events. */
+  /** Asset ref in the 0.9.0 `[bundle//]conceptId` grammar (e.g. `memories/alpha`), or a colon-free synthetic sentinel label (e.g. `health/_probe`). Optional for stash-wide events. */
   ref?: string;
   /** Free-form structured payload. Must be JSON-serialisable. */
   metadata?: Record<string, unknown>;

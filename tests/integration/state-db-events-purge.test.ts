@@ -30,8 +30,8 @@ describe("purgeOldEvents", () => {
 
       // Older than 90 days — should be purged at retention=90.
       const oldTs = new Date(now - 120 * day).toISOString();
-      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health:probe" });
-      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health:probe" });
+      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health/_probe" });
+      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health/_probe" });
       // Within retention window — must survive.
       const recentTs = new Date(now - 3 * day).toISOString();
       insertEvent(db, { eventType: "reflect_invoked", ts: recentTs, ref: "lessons/fresh" });
@@ -59,7 +59,7 @@ describe("purgeOldEvents", () => {
     const db = openStateDatabase();
     try {
       const oldTs = new Date(Date.now() - 365 * 86_400_000).toISOString();
-      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health:probe" });
+      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health/_probe" });
 
       const purged = purgeOldEvents(db, 0);
       expect(purged).toBe(0);
@@ -91,7 +91,7 @@ describe("purgeOldEvents", () => {
     const db = openStateDatabase();
     try {
       const oldTs = new Date(Date.now() - 365 * 86_400_000).toISOString();
-      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health:probe" });
+      insertEvent(db, { eventType: "health_probe", ts: oldTs, ref: "health/_probe" });
 
       expect(purgeOldEvents(db, Number.NaN)).toBe(0);
       expect(purgeOldEvents(db, Number.POSITIVE_INFINITY)).toBe(0);

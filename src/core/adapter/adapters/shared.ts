@@ -37,7 +37,7 @@
  * The `refs:`-frontmatter-array authoritative-list carve-out (session-
  * checkpoint memories; `base-linter.ts`'s `extractFrontmatterRefs`) is NOT
  * ported here — it is memory/session-specific and no OKF concept uses it. A
- * later memory/note adapter should extend `extractRefTokens`'s caller with
+ * later memory/note adapter should extend `extractProseRefTokens`'s caller with
  * that carve-out when it ports memory/session.
  *
  * The fence-strip (`stripFencedBlocksSimple` below) is a simplified,
@@ -52,7 +52,6 @@
 import { createHash } from "node:crypto";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
-import { KNOWN_TYPES } from "../../recognition-util";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
 // ── Small pure helpers, reused across the concrete adapters ──────────────────
@@ -122,49 +121,69 @@ function stripFencedBlocksSimple(body: string): string {
   return out.join("\n");
 }
 
-// Ref-token grammar — copied from `base-linter.ts`'s exported
-// `REF_BOUNDARY_PREFIX_CLASS_SRC`/`REF_SLUG_CHAR_CLASS_SRC` (values, not an
-// import — same cycle-avoidance rationale as the file header) plus a
-// type alternation built from `KNOWN_TYPES` (`core/recognition-util.ts`,
-// D1-5's guaranteed-import-free pure sink) rather than the placement type set,
-// which would pull a heavier module transitively into `core/adapter/`'s graph.
-// `KNOWN_TYPES` covers all built-in types (15, incl. `instruction`); a custom
-// runtime-registered extension type would not be recognized here — an accepted,
-// flagged simplification.
-const REF_BOUNDARY_PREFIX_CLASS_SRC = "[\\s`\"'(,\\[]";
-const REF_SLUG_CHAR_CLASS_SRC = "[^\\s\"'`)\\]>,\\n]";
+// Ref-token grammar — copied from `base-linter.ts`'s `BUNDLE_REF_RE`
+// (`core/asset/asset-ref.ts`, spec §11.1 / ref-grammar decision D-R3) as a VALUE,
+// not an import (same cycle-avoidance rationale as the file header — the source
+// string is duplicated so no new `core/adapter` -> `core/asset` edge is added for
+// this scan). Recognizes the 0.9.0 FULLY-QUALIFIED `<bundle>//<concept-id>
+// [#fragment]` prose body-ref anchored form ONLY. Per D-R3, a bare short
+// conceptId in prose is NOT a ref, so it is never flagged here (it is a ref only
+// in the ref-LIST channels — {@link refTokenFromListValue}). The pre-0.9.0
+// `<type>:<slug>` colon grammar is gone from every recognition surface.
+const BUNDLE_BODY_REF_RE_SRC = "(?:^|[\\s`\"'(,[])([^\\s:.#/`\"'()[\\],<>]+\\/\\/[^\\s\"'`)\\]>,\\n]+)";
 
-function buildRefTypeAlternation(): string {
-  const types = [...KNOWN_TYPES].sort((a, b) => b.length - a.length);
-  return types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+/**
+ * A conceptId that is a lint false positive rather than a real ref — mirrors the
+ * `isNonRefName` guards `base-linter.ts` applies deep in its existence check:
+ * template placeholders (`skills/<name>`) and degenerate/incomplete tokens.
+ */
+function isNonRefConceptId(conceptId: string): boolean {
+  const id = conceptId.split("#", 1)[0]!; // drop the export #fragment selector
+  if (!id || id.length <= 1 || id === "**") return true;
+  if (id.includes("<")) return true; // template placeholder, e.g. `skills/<name>`
+  return false;
 }
 
-/** Extract candidate `<type>:<slug>` ref tokens from `text`, applying the same false-positive guards as `base-linter.ts#checkMissingRefs`. */
-function extractRefTokens(text: string): string[] {
-  const re = new RegExp(
-    `(?:^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((${buildRefTypeAlternation()}):${REF_SLUG_CHAR_CLASS_SRC}+)`,
-    "gm",
-  );
+/**
+ * Extract the fully-qualified `bundle//conceptId` refs from PROSE — the flipped
+ * `base-linter.ts#checkMissingRefs` semantics (`BUNDLE_REF_RE`, qualified-only;
+ * bare short conceptIds are NOT refs, D-R3). Fenced code is stripped first so
+ * example refs inside ``` are not flagged; shell-substitution (`$(`/`${`) and
+ * ACP (`::`) false positives are dropped.
+ */
+function extractProseRefTokens(text: string): string[] {
+  const re = new RegExp(BUNDLE_BODY_REF_RE_SRC, "gm");
   const scanBody = stripFencedBlocksSimple(text);
   const refs: string[] = [];
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const fullRef = match[1]!;
-    if (fullRef.includes("$(") || fullRef.includes("${")) continue; // shell variables
-    if (fullRef.includes("::")) continue; // ACP type notation
-    let ref = fullRef;
-    if (ref.startsWith("local//")) ref = ref.slice("local//".length);
-    else if (fullRef.includes("//")) continue; // remote-origin prefix
-    const colonIdx = ref.indexOf(":");
-    if (colonIdx === -1) continue;
-    const refName = ref.slice(colonIdx + 1);
-    if (!refName || refName.startsWith("/") || refName.startsWith("~") || refName.startsWith("http")) continue;
-    if (refName.length <= 1 || refName === "**") continue; // placeholder/incomplete
-    if (refName.startsWith("<") || refName.includes("<")) continue; // template placeholder
-    refs.push(ref);
+    const token = match[1]!;
+    if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
+    if (isNonRefConceptId(token.slice(token.indexOf("//") + 2))) continue;
+    refs.push(token);
   }
   return refs;
+}
+
+/**
+ * Recognize a single frontmatter ref-LIST value (`xrefs:`/`supersededBy:`/
+ * `contradictedBy:`) as a whole ref — the flipped `base-linter.ts#
+ * checkMissingRefsInList` semantics. Unlike prose, a bare short `conceptId` IS a
+ * ref here (the value's whole purpose is to name one asset). Returns the ref
+ * token, or `null` for a false positive or a legacy `origin//type:name` value
+ * (the colon-grammar is retired — D-R3).
+ */
+function refTokenFromListValue(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("$(") || trimmed.includes("${") || trimmed.includes("::")) return null;
+  const boundary = trimmed.indexOf("//");
+  // Qualified `bundle//conceptId`: a colon in the tail marks a legacy/remote
+  // `origin//type:name` — not the 0.9.0 grammar — so skip it. Un-prefixed values
+  // are a 0.9.0 short conceptId; a colon there is likewise the retired grammar.
+  const conceptId = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+  if (conceptId.includes(":") || isNonRefConceptId(conceptId)) return null;
+  return trimmed;
 }
 
 const XREF_FRONTMATTER_KEYS = ["xrefs", "supersededBy", "contradictedBy"] as const;
@@ -241,7 +260,7 @@ export async function runBaseValidateChecks(
     });
   }
 
-  for (const ref of extractRefTokens(body)) {
+  for (const ref of extractProseRefTokens(body)) {
     const { exists } = await ctx.resolveRef(ref);
     if (!exists) diagnostics.push({ file: relPath, issue: "missing-ref", detail: `missing ref: ${ref}`, fixed: false });
   }
@@ -250,16 +269,16 @@ export async function runBaseValidateChecks(
       const values = readRefStringOrArray(data[key]);
       if (values === null) continue;
       for (const value of values) {
-        for (const ref of extractRefTokens(value)) {
-          const { exists } = await ctx.resolveRef(ref);
-          if (!exists) {
-            diagnostics.push({
-              file: relPath,
-              issue: "missing-ref",
-              detail: `missing ref: ${ref} (frontmatter ${key})`,
-              fixed: false,
-            });
-          }
+        const ref = refTokenFromListValue(value);
+        if (ref === null) continue;
+        const { exists } = await ctx.resolveRef(ref);
+        if (!exists) {
+          diagnostics.push({
+            file: relPath,
+            issue: "missing-ref",
+            detail: `missing ref: ${ref} (frontmatter ${key})`,
+            fixed: false,
+          });
         }
       }
     }

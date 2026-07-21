@@ -1495,7 +1495,7 @@ async function planConsolidation(
   // Consolidate output merges memories (non-wiki) → stash authoring standards.
   // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
   // per chunk).
-  const standardsContext = resolveStandardsContext("memory:_consolidated", stashDir);
+  const standardsContext = resolveStandardsContext("memories/_consolidated", stashDir);
 
   const chunkOpsArrays = await judgeConsolidationChunks({
     chunks,

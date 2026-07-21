@@ -65,6 +65,14 @@ export function canonicalWorkflowRunRef(origin: string | undefined, canonicalNam
   return `${origin ? `${origin}//` : ""}workflows/${canonicalName}`;
 }
 
+/**
+ * DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): a tolerant
+ * dual-grammar reader. The legacy `[origin//]workflow:<name>` arm survives ONLY
+ * to keep parsing pre-Chunk-8 durable rows that still carry the old spelling on
+ * disk / in state; the canonical arm delegates to `parseRefInput`. Input-side
+ * tolerance only — every WRITE mints through `canonicalWorkflowRunRef`. Remove
+ * the legacy arm at the 0.10.0 grammar removal, once un-migrated rows are gone.
+ */
 export function parseWorkflowRefInput(ref: string): AssetRef {
   const trimmed = ref.trim();
   const boundary = trimmed.indexOf("//");

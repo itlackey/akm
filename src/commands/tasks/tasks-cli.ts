@@ -116,7 +116,7 @@ const tasksListCommand = defineJsonCommand({
 
 const tasksShowCommand = defineJsonCommand({
   meta: { name: "show", description: "Show a parsed task definition" },
-  args: { id: { type: "positional", description: "Task id or task:<id>", required: true } },
+  args: { id: { type: "positional", description: "Task id or tasks/<id>", required: true } },
   async run({ args }) {
     const { id } = parseTaskRef(args.id);
     const result = await akmTasksShow(id);
