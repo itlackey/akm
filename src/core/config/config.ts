@@ -15,6 +15,7 @@ import {
   writeConfigAtomic,
 } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
+import { bundlesToSourceEntries } from "./config-sources";
 import type {
   AkmConfig,
   ImproveProcessConfig,
@@ -222,8 +223,17 @@ export function parseAndValidateConfigText(text: string, sourcePath?: string): A
   return finalResult.data;
 }
 
+/**
+ * The configured stash sources as an ordered {@link SourceConfigEntry} list.
+ *
+ * 0.9.0 (spec §10.1): the retired `stashDir`/`sources[]`/`installed[]` trio is
+ * gone — every source is a `bundles.<slug>` entry. This derives the unified
+ * source list from `bundles` (defaultBundle first, then map order), so callers
+ * that iterated `sources[]` keep working over the new shape. Returns `[]` when
+ * no bundles are configured.
+ */
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
-  return config.sources ?? [];
+  return bundlesToSourceEntries(config) ?? [];
 }
 
 export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[] {
@@ -462,7 +472,14 @@ export function getIndexPassConfig(config: IndexConfig | undefined, passName: st
 }
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
-export { bundlesToSourceEntries, parseSourceSpec, resolveConfiguredSources } from "./config-sources";
+export {
+  bundleEntryToSourceEntry,
+  bundlesToSourceEntries,
+  installedSourceDescriptor,
+  parseSourceSpec,
+  primaryBundlePath,
+  resolveConfiguredSources,
+} from "./config-sources";
 
 /**
  * Merge a partial user-config override onto a base config. Used by

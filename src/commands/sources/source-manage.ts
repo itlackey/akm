@@ -4,10 +4,17 @@
 
 import path from "node:path";
 import { isRemoteUrl } from "../../core/common";
-import type { SourceConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig, mutateConfig } from "../../core/config/config";
+import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
+import {
+  bundleEntryToSourceEntry,
+  bundlesToSourceEntries,
+  getSources,
+  loadConfig,
+  mutateConfig,
+} from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -61,31 +68,50 @@ export function addStash(opts: {
     }
   }
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    let entry: SourceConfigEntry;
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    let key: string;
     if (isRemoteUrl(target)) {
-      if (sources.some((source) => source.url === target)) {
-        result = { sources, added: false, message: "Source URL already configured" };
+      if (bundleKeyForUrl(config, target)) {
+        result = { sources: getSources(config), added: false, message: "Source URL already configured" };
         return config;
       }
-      entry = { type: providerType as string, url: target };
-      if (name) entry.name = name;
-      if (writable) entry.writable = true;
-      if (providerOptions) entry.options = providerOptions;
+      key = nextBundleKey(bundles, name, target);
+      bundles[key] = urlBundleDescriptor(providerType as string, target, providerOptions, writable === true);
     } else {
       const resolvedPath = path.resolve(target);
-      if (sources.some((source) => source.path && path.resolve(source.path) === resolvedPath)) {
-        result = { sources, added: false, message: "Source path already configured" };
+      if (bundleKeyForPath(config, resolvedPath)) {
+        result = { sources: getSources(config), added: false, message: "Source path already configured" };
         return config;
       }
-      entry = { type: "filesystem", path: resolvedPath };
-      if (name) entry.name = name;
+      key = nextBundleKey(bundles, name, resolvedPath);
+      bundles[key] = { path: resolvedPath, ...(writable === true ? { writable: true } : {}) };
     }
-    sources.push(entry);
-    result = { sources, added: true, entry };
-    return { ...config, sources };
+    const next = { ...config, bundles };
+    const entry = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+    result = { sources: bundlesToSourceEntries(next) ?? [], added: true, entry };
+    return next;
   });
   return result as SourceAddResult;
+}
+
+/** Build the 0.9.0 bundle descriptor for a URL source (spec §10.1). */
+function urlBundleDescriptor(
+  providerType: string,
+  url: string,
+  options: Record<string, unknown> | undefined,
+  writable: boolean,
+): BundleConfigEntry {
+  if (providerType === "website") {
+    // Website provider options ride on the (passthrough) website descriptor and
+    // round-trip back to `entry.options` via bundleEntryToSourceEntry.
+    return { website: { url, ...(options ?? {}) } };
+  }
+  if (providerType === "npm") return { npm: url };
+  if (providerType === "git") return { git: url, ...(writable ? { writable: true } : {}) };
+  throw new ConfigError(
+    `unsupported source type "${providerType}"; expected filesystem, git, website, or npm`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
 /**
@@ -97,19 +123,20 @@ export function removeStash(target: string): SourceRemoveResult {
   const resolvedPath = !isUrlTarget ? path.resolve(target) : undefined;
   let result: SourceRemoveResult | undefined;
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    let idx = isUrlTarget ? sources.findIndex((source) => source.url === target) : -1;
-    if (idx === -1 && resolvedPath) {
-      idx = sources.findIndex((source) => source.path && path.resolve(source.path) === resolvedPath);
-    }
-    if (idx === -1) idx = sources.findIndex((source) => source.name === target);
-    if (idx === -1) {
-      result = { sources, removed: false, message: "No matching source found" };
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    // Match priority: URL > path > bundle key (name).
+    let key = isUrlTarget ? bundleKeyForUrl(config, target) : undefined;
+    if (!key && resolvedPath) key = bundleKeyForPath(config, resolvedPath);
+    if (!key && target in bundles) key = target;
+    if (!key) {
+      result = { sources: getSources(config), removed: false, message: "No matching source found" };
       return config;
     }
-    const removed = sources.splice(idx, 1)[0];
-    result = { sources, removed: true, entry: removed };
-    return { ...config, sources };
+    const removed = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+    delete bundles[key];
+    const next = { ...config, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
+    result = { sources: bundlesToSourceEntries(next) ?? [], removed: true, entry: removed };
+    return next;
   });
   return result as SourceRemoveResult;
 }

@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
 import { type Database, openDatabase } from "../storage/database";
@@ -206,18 +207,27 @@ function mapLedgerState(state: MigrationLedgerState): MigrationArtifactState {
 }
 
 /**
- * True when a raw config still carries the pre-cutover source shape
- * (`stashDir`/`sources`/`installed`) and has NOT yet grown the 0.9.0 `bundles`
- * map. Such a config is the version-current-but-OLD-SHAPE case that the
- * config-shape migration (WI-8.4) rewrites; {@link inspectConfig} classifies it
- * "old" (migration-eligible, backup-eligible) rather than "corrupt". A config
- * carrying BOTH `bundles` and an old source key is half-migrated and is left to
- * {@link validateConfigShape}, which rejects it → "corrupt". (Kept inline — a
- * trivial key probe — to avoid importing the migrator's derivation graph here.)
+ * True when a raw config carries a WELL-FORMED pre-cutover source shape
+ * (a non-empty `stashDir` string, or a `sources`/`installed` array) and has NOT
+ * yet grown the 0.9.0 `bundles` map. Such a config is the version-current-but-
+ * OLD-SHAPE case that the config-shape migration (WI-8.4) rewrites; the
+ * post-cutover strict schema hard-rejects those keys, so {@link inspectConfig}
+ * must probe them through the migrator-normalizing validator (NOT raw
+ * `validateConfigShape`) to keep classifying it "old" (migration-eligible)
+ * rather than "corrupt".
+ *
+ * Well-formedness matters: a MALFORMED old key (e.g. `sources: "not-an-array"`)
+ * is NOT a valid old shape, so it falls through to `validateConfigShape` and is
+ * correctly reported "corrupt". A config carrying BOTH `bundles` and an old key
+ * is half-migrated — also not this shape — and `validateConfigShape` rejects it.
  */
 function isPreCutoverSourceShape(raw: Record<string, unknown>): boolean {
   if (raw.bundles !== undefined) return false;
-  return ["stashDir", "sources", "installed"].some((k) => k in raw && raw[k] !== undefined);
+  return (
+    (typeof raw.stashDir === "string" && raw.stashDir.length > 0) ||
+    Array.isArray(raw.sources) ||
+    Array.isArray(raw.installed)
+  );
 }
 
 function inspectConfig(configPath: string): MigrationArtifactState {
@@ -228,19 +238,28 @@ function inspectConfig(configPath: string): MigrationArtifactState {
     if (comparison === undefined) return { status: "inconsistent", detail: "configVersion is missing or invalid" };
     if (comparison < 0) return { status: "old" };
     if (comparison > 0) return { status: "newer" };
+    // 0.9.0 config-shape cutover: a well-formed pre-cutover config (no `bundles`)
+    // is migration-eligible → "old". The strict schema hard-rejects the retired
+    // keys, so normalize old→bundles via the migrator FIRST, then validate the
+    // RESULT: a valid normalization is "old"; an old shape that stays invalid
+    // after normalization (or a malformed/half-migrated config) is "corrupt".
+    if (isPreCutoverSourceShape(raw)) {
+      const validatedMigrated = validateConfigShape(migrateConfigSourcesToBundles(raw));
+      if (validatedMigrated.ok) return { status: "old" };
+      return {
+        status: "corrupt",
+        detail: validatedMigrated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
+      };
+    }
     const validated = validateConfigShape(raw);
     if (!validated.ok) {
       // Malformed at 0.9.0 — including a half-migrated config carrying `bundles`
-      // alongside a retired source key (rejected by superRefine).
+      // alongside a retired source key, or a malformed old key (rejected by superRefine).
       return {
         status: "corrupt",
         detail: validated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
       };
     }
-    // 0.9.0 config-shape cutover: a VALID config still in the pre-cutover source
-    // shape (no `bundles`) is migration-eligible → "old" (drives the
-    // migrate-apply UX + backup eligibility), not "current".
-    if (isPreCutoverSourceShape(raw)) return { status: "old" };
     return { status: "current" };
   } catch (error) {
     return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };

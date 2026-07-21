@@ -57,7 +57,9 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  return redactConfigValue({ ...DEFAULT_CONFIG, ...config, sources: config.sources ?? [] }) as Record<string, unknown>;
+  // 0.9.0 (spec §10.1): sources live in `bundles` (spread from config); the
+  // retired top-level `sources[]` array is no longer surfaced.
+  return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
 function redactConfigValue(value: unknown): unknown {

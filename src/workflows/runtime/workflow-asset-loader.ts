@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
@@ -107,7 +108,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
     throw new NotFoundError(`Workflow not found for ref: workflows/${parsed.name}`);
   }
 
-  const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
+  const resolvedSourcePath = sourcePath ?? resolveStashDir() ?? assetPath;
   // Canonicalize the stored ref: `workflow:foo.yaml` and `workflow:foo`
   // resolve to the same file, so they MUST share one run identity. The raw
   // `parsed.name` (with any extension) is what drives file resolution above;

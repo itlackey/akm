@@ -4,12 +4,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isBundleSlug } from "../../core/asset/asset-ref";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
-import type { SourceConfigEntry, SourceSpec } from "../../core/config/config";
-import { getSources, loadConfig, mutateConfig } from "../../core/config/config";
+import type { AkmConfig, BundleConfigEntry, SourceConfigEntry, SourceSpec } from "../../core/config/config";
+import {
+  bundleEntryToSourceEntry,
+  getSources,
+  installedSourceDescriptor,
+  loadConfig,
+  mutateConfig,
+} from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
-import { upsertLockEntry } from "../../integrations/lockfile";
+import { deriveBundleId } from "../../indexer/installations";
+import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
 import type { InstalledBundle } from "../../registry/types";
 import { detectStashRoot } from "../../sources/providers/provider-utils";
@@ -20,6 +28,7 @@ import {
   validateWebsiteInputUrl,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import type { AddResponse } from "../../sources/types";
+import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
 
 export async function akmAdd(input: {
   ref: string;
@@ -54,8 +63,8 @@ export async function akmAdd(input: {
 }
 
 /**
- * Add a local directory as a filesystem stash source.
- * Creates a stashes[] entry instead of an installed[] entry.
+ * Add a local directory as a filesystem bundle (spec §10.1) — replaces the
+ * retired `sources[]` filesystem entry.
  */
 async function addLocalSource(
   ref: string,
@@ -65,29 +74,18 @@ async function addLocalSource(
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  // Derive the canonical name: explicit --name wins, then readable path.
-  const derivedName = explicitName ?? toReadableId(resolvedPath);
-  let persistedEntry: SourceConfigEntry | undefined;
+  let bundleKey = explicitName ?? toReadableId(resolvedPath);
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    const index = sources.findIndex(
-      (source) => source.type === "filesystem" && source.path && path.resolve(source.path) === resolvedPath,
-    );
-    if (index < 0) {
-      persistedEntry = {
-        type: "filesystem",
-        path: resolvedPath,
-        name: derivedName,
-      };
-      sources.push(persistedEntry);
-      return { ...config, sources };
+    const existing = bundleKeyForPath(config, resolvedPath);
+    if (existing) {
+      // Already configured — the bundle key is the stable identity; leave it.
+      bundleKey = existing;
+      return config;
     }
-    const existing = { ...sources[index] };
-    if (explicitName) existing.name = explicitName;
-    persistedEntry = existing;
-    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
-    sources[index] = existing;
-    return { ...config, sources };
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
+    bundles[bundleKey] = { path: resolvedPath };
+    return { ...config, bundles };
   });
 
   const index = await akmIndex({ stashDir });
@@ -100,12 +98,12 @@ async function addLocalSource(
     sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
-      name: persistedEntry?.name ?? toReadableId(resolvedPath),
+      name: bundleKey,
       stashRoot: resolvedPath,
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -125,26 +123,21 @@ async function addWebsiteSource(
 ): Promise<AddResponse> {
   const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
   const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
+  const maxPages = typeof options?.maxPages === "number" ? (options.maxPages as number) : undefined;
   let entry: SourceConfigEntry | undefined;
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    const index = sources.findIndex((source) => source.type === "website" && source.url === normalizedUrl);
-    if (index < 0) {
-      entry = {
-        type: "website",
-        url: normalizedUrl,
-        name: name ?? toWebsiteName(normalizedUrl),
-        ...(options && Object.keys(options).length > 0 ? { options } : {}),
-      };
-      sources.push(entry);
-      return { ...config, sources };
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    const existingKey = bundleKeyForUrl(config, normalizedUrl);
+    const key = existingKey ?? nextBundleKey(bundles, name ?? toWebsiteName(normalizedUrl), normalizedUrl);
+    const website = { url: normalizedUrl, ...(maxPages !== undefined ? { maxPages } : {}) };
+    const nextBundle: BundleConfigEntry = { ...(existingKey ? bundles[key] : {}), website };
+    if (JSON.stringify(bundles[key]) === JSON.stringify(nextBundle)) {
+      entry = bundleEntryToSourceEntry(key, bundles[key]) as SourceConfigEntry;
+      return config;
     }
-    const existing = { ...sources[index] };
-    if (options && Object.keys(options).length > 0) existing.options = { ...existing.options, ...options };
-    entry = existing;
-    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
-    sources[index] = existing;
-    return { ...config, sources };
+    bundles[key] = nextBundle;
+    entry = bundleEntryToSourceEntry(key, nextBundle) as SourceConfigEntry;
+    return { ...config, bundles };
   });
 
   const cachePaths = await ensureWebsiteMirror(entry as SourceConfigEntry, {
@@ -166,7 +159,7 @@ async function addWebsiteSource(
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -190,8 +183,7 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
 
   const synced = await syncFromRef(ref, { writable });
 
-  const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === synced.id);
-  const updatedConfig = upsertInstalledRegistryEntry({
+  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry({
     id: synced.id,
     source: synced.source,
     ref: synced.ref,
@@ -204,8 +196,12 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     writable: synced.writable,
   });
 
+  // The prior materialized root (if this is a re-install) — read BEFORE the lock
+  // upsert overwrites it, so a moved cache root can be cleaned afterwards.
+  const priorLocalRoot = readLockfile().find((e) => e.id === bundleId)?.localRoot;
+
   await upsertLockEntry({
-    id: synced.id,
+    id: bundleId,
     source: synced.source,
     ref: synced.ref,
     resolvedVersion: synced.resolvedVersion,
@@ -216,10 +212,10 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     installedAt: synced.syncedAt,
   });
 
-  // Clean up old cache directory on re-install
-  if (replaced && replaced.cacheDir !== synced.cacheDir) {
+  // Clean up the old materialized root on re-install (moved cache).
+  if (priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
-      fs.rmSync(replaced.cacheDir, { recursive: true, force: true });
+      fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup only.
     }
@@ -245,7 +241,7 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -257,30 +253,77 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
   };
 }
 
-/** Persist or replace an installed stash entry in the user config. */
-export function upsertInstalledRegistryEntry(entry: InstalledBundle) {
-  return mutateConfig((current) => {
-    const withoutExisting = (current.installed ?? []).filter((item) => item.id !== entry.id);
-    return { ...current, installed: [...withoutExisting, normalizeInstalledEntry(entry)] };
+/**
+ * Persist or replace a registry-installed source as a 0.9.0 `bundles` entry
+ * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
+ * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
+ * the resolved cache root belongs exclusively in the lock (written by callers
+ * via {@link upsertLockEntry} with the returned `bundleId`). Returns the config
+ * plus the derived bundle id so the caller keys its lock entry identically.
+ */
+export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: AkmConfig; bundleId: string } {
+  let bundleId = entry.id;
+  const config = mutateConfig((current) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
+    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot);
+    const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
+    bundles[bundleId] = {
+      ...descriptor,
+      ...(entry.writable === true ? { writable: true } : {}),
+      ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
+    };
+    return { ...current, bundles };
   }).config;
+  return { config, bundleId };
 }
 
-/** Remove an installed stash entry from the user config. */
-export function removeInstalledRegistryEntry(id: string) {
-  return mutateConfig((current) => {
-    const currentInstalled = current.installed ?? [];
-    const nextInstalled = currentInstalled.filter((item) => item.id !== id);
-    if (nextInstalled.length === currentInstalled.length) return current;
-    return { ...current, installed: nextInstalled.length > 0 ? nextInstalled : undefined };
+/**
+ * Remove a registry-installed source: delete its `bundles` entry and its lock
+ * entry (spec §10.2). Matches the bundle by preserved `registryId` or by a
+ * slug-legal install id used verbatim as the key. Idempotent.
+ */
+export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfig> {
+  let removedKey: string | undefined;
+  const config = mutateConfig((current) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
+    const key = findInstalledBundleKey(bundles, id);
+    if (!key) return current;
+    removedKey = key;
+    delete bundles[key];
+    return { ...current, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
   }).config;
+  if (removedKey) await removeLockEntry(removedKey);
+  return config;
 }
 
-function normalizeInstalledEntry(entry: InstalledBundle): InstalledBundle {
-  return {
-    ...entry,
-    stashRoot: path.resolve(entry.stashRoot),
-    cacheDir: path.resolve(entry.cacheDir),
-  };
+/**
+ * The bundle key that maps to a registry install id, or `undefined` when no
+ * bundle currently represents it. A non-slug-legal install id (e.g.
+ * `github:owner/repo`) is preserved verbatim on the bundle's `registryId`; a
+ * slug-legal id is used directly as the key.
+ */
+function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, installId: string): string | undefined {
+  for (const [key, bundle] of Object.entries(bundles)) {
+    if (bundle.registryId === installId) return key;
+  }
+  if (isBundleSlug(installId) && installId in bundles) return installId;
+  return undefined;
+}
+
+/**
+ * The stable bundle key for a registry install: reuse the existing bundle for
+ * this install id (so re-installs keep the same key), otherwise derive a
+ * batch-unique key via the shared {@link deriveBundleId} (D-R5), unique against
+ * the currently-configured bundle keys.
+ */
+function resolveInstalledBundleKey(
+  bundles: Record<string, BundleConfigEntry>,
+  installId: string,
+  stashRoot: string,
+): string {
+  const existing = findInstalledBundleKey(bundles, installId);
+  if (existing) return existing;
+  return deriveBundleId(installId, path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {

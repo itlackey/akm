@@ -18,7 +18,13 @@ import {
   resetConfigCache,
   sanitizeConfigForWrite,
 } from "../core/config/config";
-import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
+import {
+  backupExistingConfig,
+  parseConfigText,
+  readConfigText,
+  withConfigLock,
+  writeConfigAtomic,
+} from "../core/config/config-io";
 import { ConfigError } from "../core/errors";
 import { withMaintenanceStartBarrier } from "../core/maintenance-barrier";
 import {
@@ -42,7 +48,8 @@ import {
 } from "../core/migration-backup";
 import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
-import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
+import { mergeLockEntriesSync } from "../integrations/lockfile";
+import { migrateConfigSourcesToBundles, migratedLockEntries } from "../migrate/legacy/config-source-migration";
 import { type ContentMigrationReport, runContentMigration } from "../migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import {
@@ -506,18 +513,6 @@ function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
           primary: config.defaultBundle === id,
         });
       }
-      return roots;
-    }
-    if (typeof config.stashDir === "string" && config.stashDir.length > 0) {
-      roots.push({ path: path.resolve(expandTilde(config.stashDir)), primary: true });
-    }
-    for (const source of config.sources ?? []) {
-      const type = (source as { type?: string }).type;
-      const sourcePath = (source as { path?: string }).path;
-      const name = (source as { name?: string }).name;
-      if ((type === "filesystem" || type === undefined) && typeof sourcePath === "string" && sourcePath.length > 0) {
-        roots.push({ path: path.resolve(expandTilde(sourcePath)), registryId: name });
-      }
     }
   } catch {
     // Best-effort — see the doc comment.
@@ -933,6 +928,23 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
         crashInMutationGapForTests("cutover");
         advanceApplyJournal(journal, "cutover-applied");
         crashAfterForTests("cutover");
+
+        // WI-8.5 desired/resolved split (spec §10.2): re-key the resolved lock
+        // state for migrated git/npm `installed[]` bundles onto their new bundle
+        // id (localRoot = the materialized cache root; the desired locator lives
+        // in config.bundles). Derive from the still-on-disk pre-cutover config
+        // (about to be overwritten below). Best-effort + idempotent — a re-read
+        // new-shape config yields no entries, and a lock-write failure never
+        // aborts the committed cutover (resolveEntryContentDir falls back to the
+        // provider path).
+        try {
+          const preCutoverText = readConfigText(getConfigPath());
+          if (preCutoverText !== undefined) {
+            mergeLockEntriesSync(migratedLockEntries(parseConfigText(preCutoverText, getConfigPath())));
+          }
+        } catch {
+          // Advisory lock re-key only; the committed cutover is unaffected.
+        }
 
         backupExistingConfig(getConfigPath());
         writeConfigAtomic(getConfigPath(), sanitizeConfigForWrite(target));

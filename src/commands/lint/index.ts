@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { loadConfig } from "../../core/config/config";
+import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
 import { getLinterForType } from "./registry";
@@ -98,12 +98,12 @@ function isFileDeletion(issue: LintIssue): boolean {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
-  const stashRoot = options.dir ?? options.config?.stashDir ?? resolveStashDir();
-
   // Collect secondary stash roots from configured filesystem sources so that
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
+  // 0.9.0 (spec §10.1): the primary stash is the defaultBundle's path.
+  const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const extraStashRoots = resolveSourceEntries(stashRoot, cfg)
     .map((s) => s.path)
     .filter((p) => p !== stashRoot && fs.existsSync(p));

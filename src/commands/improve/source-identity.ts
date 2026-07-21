@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
+import { primaryBundlePath } from "../../core/config/config";
 
 // ── Durable improve-state keys (Chunk-8 WI-8.5c — collapsed to the item_ref) ──
 //
@@ -58,14 +59,12 @@ export function shouldReadLegacyBareImproveState(
   config: AkmConfig,
 ): boolean {
   if (!sourceName || !sourcePath) return false;
-  if (config.stashDir) return path.resolve(sourcePath) === path.resolve(config.stashDir);
-  if (sourceName !== "stash") return false;
-  if (!config.defaultWriteTarget) return true;
-  if (config.defaultWriteTarget !== "stash") return false;
-  const configuredStash = config.sources?.find((source) => source.name === "stash");
-  return (
-    configuredStash?.type === "filesystem" &&
-    typeof configuredStash.path === "string" &&
-    path.resolve(configuredStash.path) === path.resolve(sourcePath)
-  );
+  // 0.9.0 (spec §10.1 / Decision C): the historical local stash is the primary
+  // bundle (`defaultBundle`). A named source at any other root must never
+  // inherit the pre-source-qualified bare improve state. This defaultBundle-path
+  // equivalence preserves the pre-cutover behavior for a migrated workspace,
+  // whose `stashDir` became the defaultBundle's filesystem `path`.
+  const primaryPath = primaryBundlePath(config);
+  if (!primaryPath) return false;
+  return path.resolve(sourcePath) === path.resolve(primaryPath);
 }

@@ -21,6 +21,18 @@ import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry,
  * Returns `undefined` for an old-shape config (no `bundles`), so callers fall
  * back to the pre-cutover `stashDir`/`sources[]`/`installed[]` resolution.
  */
+/**
+ * The resolved primary stash path — the `defaultBundle`'s filesystem `path`
+ * (spec §10.1) — or `undefined` when no filesystem primary is configured.
+ */
+export function primaryBundlePath(config: AkmConfig): string | undefined {
+  const bundles = config.bundles;
+  const key = config.defaultBundle;
+  if (!bundles || !key) return undefined;
+  const entry = bundles[key];
+  return entry && typeof entry.path === "string" && entry.path.length > 0 ? entry.path : undefined;
+}
+
 export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] | undefined {
   const bundles = config.bundles;
   if (!bundles) return undefined;
@@ -36,10 +48,10 @@ export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] |
 }
 
 /** Map one `bundles.<key>` entry to a runtime {@link SourceConfigEntry}. */
-function bundleEntryToSourceEntry(
+export function bundleEntryToSourceEntry(
   key: string,
   bundle: BundleConfigEntry,
-  isPrimary: boolean,
+  isPrimary = false,
 ): SourceConfigEntry | undefined {
   const base = {
     name: key,
@@ -53,11 +65,14 @@ function bundleEntryToSourceEntry(
     return { type: "git", url: bundle.git, ...base };
   }
   if (bundle.website && typeof bundle.website.url === "string") {
-    const maxPages = bundle.website.maxPages;
+    // All non-`url` website-descriptor keys (maxPages/refresh/maxDepth + any
+    // passthrough provider options) round-trip back to the runtime entry's
+    // `options` bag, mirroring the pre-cutover `sources[].options` shape.
+    const { url, ...rest } = bundle.website;
     return {
       type: "website",
-      url: bundle.website.url,
-      ...(typeof maxPages === "number" ? { options: { maxPages } } : {}),
+      url,
+      ...(Object.keys(rest).length > 0 ? { options: rest } : {}),
       ...base,
     };
   }
@@ -66,6 +81,38 @@ function bundleEntryToSourceEntry(
     return { type: "npm", path: bundle.npm, ...base };
   }
   return undefined;
+}
+
+/**
+ * Desired 0.9.0 bundle descriptor for a registry-installed source (spec §10.1).
+ * Maps the install source kind onto the ONE source descriptor a bundle entry
+ * carries: git/github → `{ git: ref }`, npm → `{ npm: ref }`, everything else
+ * (local/filesystem) → `{ path: stashRoot }`.
+ *
+ * CRITICAL (spec §10.2:453): the materialized cache root NEVER appears in the
+ * descriptor for a git/npm bundle — the desired config carries only the source
+ * LOCATOR (the re-installable ref); the resolved root belongs exclusively in the
+ * lock's `localRoot`. Callers layer `registryId`/`writable` onto the result.
+ */
+export function installedSourceDescriptor(
+  source: string,
+  ref: string | undefined,
+  stashRoot: string,
+): BundleConfigEntry {
+  switch (source) {
+    case "git":
+    case "github":
+      if (ref) return { git: ref };
+      break;
+    case "npm":
+      if (ref) return { npm: ref };
+      break;
+    default:
+      break;
+  }
+  // local/filesystem installs reference a real on-disk path (no package-manager
+  // cache to re-materialize), so the resolved root IS the desired path.
+  return { path: stashRoot };
 }
 
 /**
@@ -113,58 +160,25 @@ export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefine
 }
 
 /**
- * Build the full ordered list of runtime {@link ConfiguredSource} values from
- * a loaded {@link AkmConfig}:
- *   1. The entry marked `primary: true` (or a synthetic entry from `stashDir`).
- *   2. Remaining `sources[]` entries in declared order.
- *   3. Legacy `installed[]` entries, mapped into runtime entries.
+ * Build the full ordered list of runtime {@link ConfiguredSource} values from a
+ * loaded {@link AkmConfig}, resolved from `bundles` + `defaultBundle` (spec
+ * §10.1): the `defaultBundle` (primary) first, then map insertion order. The
+ * retired `stashDir`/`sources[]`/`installed[]` trio is no longer read here — a
+ * pre-cutover config is normalized to bundles by the migrator before it loads.
  *
  * Entries with `enabled: false` are still emitted — callers decide whether to
  * honour the flag. Entries that fail {@link parseSourceSpec} drop silently.
+ * Returns `[]` when no bundles are configured.
  */
 export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] {
-  // NEW shape (spec §10.1): resolve from `bundles` + `defaultBundle`. The
-  // bundle list is already ordered defaultBundle-first, so mapping it in order
-  // preserves the primary-then-priority semantics the old shape produced below.
   const bundleEntries = bundlesToSourceEntries(config);
-  if (bundleEntries) {
-    const out: ConfiguredSource[] = [];
-    for (const persisted of bundleEntries) {
-      const runtime = toConfiguredSource(persisted, persisted.primary === true);
-      if (runtime) out.push(runtime);
-    }
-    return out;
+  if (!bundleEntries) return [];
+  const out: ConfiguredSource[] = [];
+  for (const persisted of bundleEntries) {
+    const runtime = toConfiguredSource(persisted, persisted.primary === true);
+    if (runtime) out.push(runtime);
   }
-
-  const entries: ConfiguredSource[] = [];
-  const sources = config.sources ?? [];
-
-  let primary = sources.find((entry) => entry.primary === true);
-  if (!primary && config.stashDir) {
-    primary = { type: "filesystem", path: config.stashDir, primary: true };
-  }
-  if (primary) {
-    const runtime = toConfiguredSource(primary, true);
-    if (runtime) entries.push(runtime);
-  }
-
-  for (const entry of sources) {
-    if (entry === primary) continue;
-    const runtime = toConfiguredSource(entry, false);
-    if (runtime) entries.push(runtime);
-  }
-
-  for (const installed of config.installed ?? []) {
-    entries.push({
-      name: installed.id,
-      type: "filesystem",
-      source: { type: "filesystem", path: installed.stashRoot },
-      enabled: true,
-      writable: installed.writable,
-    });
-  }
-
-  return entries;
+  return out;
 }
 
 function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): ConfiguredSource | undefined {

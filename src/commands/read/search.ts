@@ -13,7 +13,7 @@
  * Provider `search()` methods do not exist.
  */
 
-import { loadConfig } from "../../core/config/config";
+import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
@@ -103,25 +103,14 @@ export async function akmSearch(input: {
   const config = loadConfig();
 
   // Named-source filter: when --source is not a standard enum value, treat it
-  // as a named source from config.sources[].name. Validate early (before
+  // as a named source (a `bundles` key). Validated early (before
   // resolveSourceEntries, which can throw STASH_DIR_NOT_FOUND) so that a bad
   // --source name always produces INVALID_SOURCE_VALUE regardless of stash state.
   let namedSourceName: string | undefined;
   let source: SearchSource;
   if (parsedSource !== "stash" && parsedSource !== "registry" && parsedSource !== "both") {
     namedSourceName = parsedSource as string;
-    // Check that the named source exists in the config before touching the stash.
-    const configSources = config.sources ?? [];
-    const foundInConfig =
-      configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
-    if (!foundInConfig) {
-      const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
-      const hint =
-        validNames.length > 0
-          ? `Known source names: ${validNames.join(", ")}`
-          : "No named sources are configured. Run `akm list` to see installed stashes.";
-      throw new UsageError(`Unknown source name: "${namedSourceName}". ${hint}`, "INVALID_SOURCE_VALUE");
-    }
+    assertNamedSourceExists(config, namedSourceName);
     source = "stash";
   } else {
     source = parsedSource as SearchSource;
@@ -396,6 +385,26 @@ function logSearchEvent(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Validate a named `--source` against the bundle-derived source list (0.9.0
+ * spec §10.1: a named source is a `bundles` key, matched via its derived
+ * source entry's `name`, or an exact path). Throws INVALID_SOURCE_VALUE with
+ * the known names before any stash access can fail differently.
+ */
+function assertNamedSourceExists(config: AkmConfig, namedSourceName: string): void {
+  const configSources = getSources(config);
+  const foundInConfig =
+    configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
+  if (!foundInConfig) {
+    const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
+    const hint =
+      validNames.length > 0
+        ? `Known source names: ${validNames.join(", ")}`
+        : "No named sources are configured. Run `akm list` to see installed stashes.";
+    throw new UsageError(`Unknown source name: "${namedSourceName}". ${hint}`, "INVALID_SOURCE_VALUE");
+  }
+}
 
 function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {

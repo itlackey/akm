@@ -134,6 +134,19 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
   }
 }
 
+/**
+ * Synchronously upsert lock entries (merge by id) WITHOUT acquiring the async
+ * sentinel — for a caller already holding an exclusive lifecycle lock (e.g.
+ * migrate-apply's config lock + maintenance barrier) whose synchronous body
+ * cannot await the sentinel's retry loop. No-op for an empty list.
+ */
+export function mergeLockEntriesSync(entries: LockfileEntry[]): void {
+  if (entries.length === 0) return;
+  const existing = readLockfile();
+  const incoming = new Set(entries.map((e) => e.id));
+  writeLockfileUnlocked([...existing.filter((e) => !incoming.has(e.id)), ...entries]);
+}
+
 export async function removeLockEntry(id: string): Promise<void> {
   if (!fs.existsSync(getDataDir())) return;
   const release = await acquireLockSentinel();

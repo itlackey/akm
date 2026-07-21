@@ -17,6 +17,7 @@ import { mutateConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
 import { ensureRg } from "../../core/ripgrep/install";
+import { primaryBundlePath, withPrimaryBundle } from "./bundle-config-ops";
 import { copyStashSkeleton, ensureStashGitignore, scaffoldStashMeta } from "./stash-skeleton";
 
 /**
@@ -167,13 +168,16 @@ async function akmInitReal(options?: {
   let previousStashDir: string | undefined;
   if (options?.persistConfig !== false) {
     const result = mutateConfig((latest) => {
-      const shouldPersist = !dirExplicitlyProvided || !latest.stashDir || setDefault;
+      // 0.9.0 (spec §10.1): the primary stash is the `defaultBundle`'s filesystem
+      // `path`, not the retired top-level `stashDir`.
+      const currentPrimary = primaryBundlePath(latest);
+      const shouldPersist = !dirExplicitlyProvided || !currentPrimary || setDefault;
       if (!shouldPersist) {
-        previousStashDir = latest.stashDir;
+        previousStashDir = currentPrimary;
         return latest;
       }
-      if (latest.stashDir === stashDir) return latest;
-      return { ...latest, stashDir };
+      if (currentPrimary === stashDir) return latest;
+      return withPrimaryBundle(latest, stashDir);
     });
     defaultStashUpdated = result.written;
   }

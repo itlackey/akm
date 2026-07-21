@@ -35,7 +35,6 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import type { InstalledBundle } from "../../registry/types";
 import { isBundleSlug } from "../asset/asset-ref";
 import { validateExtraParams } from "../extra-params";
 import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "./config-types";
@@ -1286,28 +1285,18 @@ export const AkmConfigShape = {
   // custom profile's name for the default builder) — unknown keys are inert.
   // Precedence: profile modelAliases > this table > built-in aliases.
   modelAliases: GlobalModelAliasesSchema.optional(),
-  stashDir: nonEmptyString.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("auto"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
-  // The `installed[]` shape is OWNED by the registry (`InstalledBundle`):
-  // its `source` is the 4-value `InstallKind` produced by the registry ref
-  // parser, and installed entries never carry the extra passthrough keys. The
-  // schema still validates entries at runtime, but its OUTPUT type is pinned to
-  // the domain type so config consumers get the registry `InstalledBundle`
-  // (not a looser schema-local mirror) — the single-source-of-truth boundary.
-  installed: z.array(InstalledStashEntrySchema).optional() as unknown as z.ZodOptional<
-    z.ZodArray<z.ZodType<InstalledBundle>>
-  >,
   registries: z.array(RegistryConfigEntrySchema).optional(),
-  sources: z.array(SourceConfigEntrySchema).optional(),
-  // 0.9.0 config-shape cutover (spec §10.1 / D-R5). `bundles` supersedes the
-  // `stashDir`/`sources`/`installed` trio above; the migrator emits it and
-  // removes those. Both shapes remain individually loadable during the
-  // transition (an old-shape config still resolves sources), but a config that
-  // carries `bundles` alongside any of the retired source keys is HALF-MIGRATED
-  // and is rejected by the top-level superRefine (fails loudly). `defaultBundle`
-  // names the primary bundle (spec §11.1 short-ref resolution / D-R4).
+  // 0.9.0 config-shape cutover (spec §10.1 / D-R5). `bundles` + `defaultBundle`
+  // are the ONLY source shape — the retired `stashDir`/`sources[]`/`installed[]`
+  // trio is hard-rejected at load (see the top-level superRefine). The migrator
+  // ({@link migrateConfigSourcesToBundles}) converts a pre-cutover config to this
+  // shape before validation. `defaultBundle` names the primary bundle (spec
+  // §11.1 short-ref resolution / D-R4). `SourceConfigEntrySchema` /
+  // `InstalledStashEntrySchema` remain EXPORTED (the migrator + transitional
+  // readers consume them) but are no longer top-level config fields.
   bundles: BundlesConfigSchema.optional(),
   defaultBundle: nonEmptyString.optional(),
   output: OutputConfigSchema.optional(),
@@ -1344,21 +1333,19 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       message: "bindings is not supported in 0.9.0 (Tier B); it is neither emitted nor accepted",
     });
   }
-  // Half-migrated config: `bundles` (new shape) MUST NOT co-exist with the
-  // retired `stashDir`/`sources`/`installed` trio. The migrator emits `bundles`
-  // and removes those keys atomically, so a config carrying both is a failed /
-  // partial migration — fail loudly rather than resolving an ambiguous source
-  // set. (An old-shape config WITHOUT `bundles` still loads — the transitional
-  // runtime resolves it; `inspectConfig` classifies it "old" for migration.)
-  if (config.bundles !== undefined) {
-    for (const key of ["stashDir", "sources", "installed"]) {
-      if (key in raw && raw[key] !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `${key} is the pre-cutover source shape and cannot co-exist with bundles (half-migrated config); run \`akm migrate apply\``,
-        });
-      }
+  // 0.9.0 config-shape cutover (spec §10.1): the retired `stashDir`/`sources`/
+  // `installed` trio is HARD-REJECTED at load whenever present — `bundles` +
+  // `defaultBundle` fully supersede it. A pre-cutover config never loads through
+  // this validated path; the migrator ({@link migrateConfigSourcesToBundles})
+  // normalizes old→bundles BEFORE validation, and `inspectConfig` classifies an
+  // old-shape-alone config "old" (migration-eligible) via that same normalize.
+  for (const key of ["stashDir", "sources", "installed"]) {
+    if (key in raw && raw[key] !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is the retired pre-cutover source shape; run \`akm migrate apply\` to convert it to bundles`,
+      });
     }
   }
   // `defaultBundle`, when present, must name a configured bundle.
@@ -1480,26 +1467,25 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       }
     }
   }
-  // #464.a: defaultWriteTarget must name a configured source when sources
-  // are present. With no sources configured, error out instead of silently
-  // accepting (no implicit "first writable" fallback — see locked decision 3).
+  // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec
+  // §10.1): sources are `bundles` keys, so it must name a bundle. With no
+  // bundles configured, error out instead of silently accepting (no implicit
+  // "first writable" fallback — see locked decision 3).
   if (config.defaultWriteTarget !== undefined) {
-    const knownNames = (config.sources ?? [])
-      .map((s) => s.name)
-      .filter((n): n is string => typeof n === "string" && n.length > 0);
+    const knownNames = Object.keys(config.bundles ?? {});
     if (knownNames.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["defaultWriteTarget"],
         message:
-          `defaultWriteTarget "${config.defaultWriteTarget}" cannot be resolved: no sources configured. ` +
-          "Add at least one entry to `sources` with a matching `name` first.",
+          `defaultWriteTarget "${config.defaultWriteTarget}" cannot be resolved: no bundles configured. ` +
+          "Add at least one entry to `bundles` first.",
       });
     } else if (!knownNames.includes(config.defaultWriteTarget)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["defaultWriteTarget"],
-        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not match any configured source name: ${knownNames.map((n) => `"${n}"`).join(", ")}.`,
+        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not match any configured bundle: ${knownNames.map((n) => `"${n}"`).join(", ")}.`,
       });
     }
   }

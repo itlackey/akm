@@ -195,10 +195,6 @@
         "minLength": 1
       }
     },
-    "stashDir": {
-      "type": "string",
-      "minLength": 1
-    },
     "semanticSearchMode": {
       "type": "string",
       "enum": [
@@ -415,70 +411,6 @@
         "additionalProperties": true
       }
     },
-    "installed": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "filesystem",
-              "git",
-              "npm",
-              "github",
-              "website",
-              "local"
-            ]
-          },
-          "ref": {
-            "type": "string",
-            "minLength": 1
-          },
-          "artifactUrl": {
-            "type": "string",
-            "minLength": 1
-          },
-          "stashRoot": {
-            "type": "string",
-            "minLength": 1
-          },
-          "cacheDir": {
-            "type": "string",
-            "minLength": 1
-          },
-          "installedAt": {
-            "type": "string",
-            "minLength": 1
-          },
-          "writable": {
-            "type": "boolean"
-          },
-          "resolvedVersion": {
-            "type": "string",
-            "minLength": 1
-          },
-          "resolvedRevision": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "id",
-          "source",
-          "ref",
-          "artifactUrl",
-          "stashRoot",
-          "cacheDir",
-          "installedAt"
-        ],
-        "additionalProperties": true
-      }
-    },
     "registries": {
       "type": "array",
       "items": {
@@ -505,52 +437,6 @@
         },
         "required": [
           "url"
-        ],
-        "additionalProperties": true
-      }
-    },
-    "sources": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "minLength": 1
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1
-          },
-          "url": {
-            "type": "string",
-            "minLength": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "writable": {
-            "type": "boolean"
-          },
-          "primary": {
-            "type": "boolean"
-          },
-          "options": {
-            "type": "object",
-            "properties": {
-              "pushOnCommit": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": true
-          }
-        },
-        "required": [
-          "type"
         ],
         "additionalProperties": true
       }
@@ -1958,10 +1844,6 @@
             "minLength": 1
           }
         },
-        "stashDir": {
-          "type": "string",
-          "minLength": 1
-        },
         "semanticSearchMode": {
           "type": "string",
           "enum": [
@@ -2178,70 +2060,6 @@
             "additionalProperties": true
           }
         },
-        "installed": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "source": {
-                "type": "string",
-                "enum": [
-                  "filesystem",
-                  "git",
-                  "npm",
-                  "github",
-                  "website",
-                  "local"
-                ]
-              },
-              "ref": {
-                "type": "string",
-                "minLength": 1
-              },
-              "artifactUrl": {
-                "type": "string",
-                "minLength": 1
-              },
-              "stashRoot": {
-                "type": "string",
-                "minLength": 1
-              },
-              "cacheDir": {
-                "type": "string",
-                "minLength": 1
-              },
-              "installedAt": {
-                "type": "string",
-                "minLength": 1
-              },
-              "writable": {
-                "type": "boolean"
-              },
-              "resolvedVersion": {
-                "type": "string",
-                "minLength": 1
-              },
-              "resolvedRevision": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "id",
-              "source",
-              "ref",
-              "artifactUrl",
-              "stashRoot",
-              "cacheDir",
-              "installedAt"
-            ],
-            "additionalProperties": true
-          }
-        },
         "registries": {
           "type": "array",
           "items": {
@@ -2268,52 +2086,6 @@
             },
             "required": [
               "url"
-            ],
-            "additionalProperties": true
-          }
-        },
-        "sources": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "minLength": 1
-              },
-              "path": {
-                "type": "string",
-                "minLength": 1
-              },
-              "url": {
-                "type": "string",
-                "minLength": 1
-              },
-              "name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "writable": {
-                "type": "boolean"
-              },
-              "primary": {
-                "type": "boolean"
-              },
-              "options": {
-                "type": "object",
-                "properties": {
-                  "pushOnCommit": {
-                    "type": "boolean"
-                  }
-                },
-                "additionalProperties": true
-              }
-            },
-            "required": [
-              "type"
             ],
             "additionalProperties": true
           }

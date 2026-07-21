@@ -21,20 +21,26 @@
  * insertion order reproduces the runtime installation-priority order after the
  * migration.
  *
- * NOTE (Tier A scope): an `installed[]` entry is emitted as a filesystem bundle
- * pointing at its already-materialized `stashRoot` (the runtime read path is
- * preserved verbatim — resolveSourceEntries walked exactly that root before).
- * Its original registry id is preserved in the entry's `registryId` locator so
- * nothing is lost. Splitting the desired source descriptor (git/npm + ref) from
- * the resolved cache root into the lock (§10.2) is a follow-up — see the WI-8.5
- * handoff.
+ * WI-8.5 desired/resolved split (spec §10.2): an `installed[]` entry is emitted
+ * as its DESIRED source descriptor — a git/npm bundle carrying the re-installable
+ * LOCATOR (`{ git: ref }` / `{ npm: ref }`), NOT the materialized cache root. The
+ * resolved root lives exclusively in the lock (`localRoot`), emitted by
+ * {@link migratedLockEntries} keyed by the same derived bundle id, from which the
+ * runtime ({@link import("../../indexer/search/search-source").resolveSourceEntries})
+ * resolves the git/npm bundle's content dir. A local/filesystem install still
+ * emits `{ path: stashRoot }` (a real path, no cache to re-materialize). The
+ * original registry id is preserved in the entry's `registryId` locator so
+ * nothing is lost.
  */
 
 import os from "node:os";
 import path from "node:path";
+import { installedSourceDescriptor } from "../../core/config/config-sources";
 import type { BundleConfigEntry } from "../../core/config/config-types";
 import { deriveBundleId } from "../../indexer/installations";
 import type { SearchSource } from "../../indexer/search/search-source";
+import type { LockfileEntry } from "../../integrations/lockfile";
+import type { InstallKind } from "../../registry/types";
 
 /** The pre-cutover source keys this transform consumes and removes. */
 const OLD_SOURCE_KEYS = ["stashDir", "sources", "installed"] as const;
@@ -65,6 +71,14 @@ interface MigratableSource {
   writable?: boolean;
   primary?: boolean;
   descriptor: BundleConfigEntry;
+  /**
+   * §10.2 resolved lock state for an `installed[]` entry whose desired
+   * descriptor is a git/npm LOCATOR (not a real filesystem path). The
+   * materialized `stashRoot` lives here as `localRoot` (NEVER in the config
+   * descriptor — spec §10.2:453), keyed at emit time by the derived bundle id.
+   * Absent for filesystem/local bundles, which resolve directly from their path.
+   */
+  lock?: { source: InstallKind; ref: string; localRoot: string };
 }
 
 function readString(value: unknown): string | undefined {
@@ -144,17 +158,50 @@ export function oldConfigMigratableSources(raw: Record<string, unknown>): Migrat
   for (const entry of installed) {
     const stashRoot = readString(entry.stashRoot);
     if (!stashRoot) continue;
-    // Emit the materialized root as a filesystem bundle so the runtime read path
-    // is preserved (see the module NOTE). Preserve the install id as the locator.
+    const source = readString(entry.source);
+    const ref = readString(entry.ref);
+    // WI-8.5 desired/resolved split: emit the DESIRED source descriptor (git/npm
+    // locator), NOT the materialized cache root. The resolved root belongs in the
+    // lock (`localRoot`), keyed by the derived bundle id — see {@link migratedLockEntries}.
+    const descriptor = source ? installedSourceDescriptor(source, ref, stashRoot) : { path: stashRoot };
+    const resolvedRoot = path.resolve(expandTilde(stashRoot));
+    // A git/npm descriptor carries a locator, so the runtime resolves its content
+    // dir from the lock's localRoot; record that resolved state for the lock.
+    const needsLock = ("git" in descriptor || "npm" in descriptor) && !!source && !!ref;
     out.push({
-      derivationPath: path.resolve(expandTilde(stashRoot)),
+      derivationPath: resolvedRoot,
       registryId: readString(entry.id),
       writable: entry.writable === true,
-      descriptor: { path: stashRoot },
+      descriptor,
+      ...(needsLock ? { lock: { source: source as InstallKind, ref: ref as string, localRoot: resolvedRoot } } : {}),
     });
   }
 
   return out;
+}
+
+/**
+ * Derive the §10.2 lock entries the config-shape migration produces for
+ * `installed[]` entries whose desired descriptor is a git/npm LOCATOR. Each
+ * entry is keyed by the SAME derived bundle id as {@link migrateConfigSourcesToBundles}
+ * (both share {@link oldConfigMigratableSources} + {@link deriveBundleId} over
+ * the same ordered list), so the runtime resolves the git/npm bundle's content
+ * dir from `localRoot`. Filesystem/local bundles resolve directly from their
+ * config `path` and get no lock entry. Returns `[]` for an already-migrated or
+ * old-shape-free config (idempotent, side-effect free).
+ */
+export function migratedLockEntries(raw: Record<string, unknown>): LockfileEntry[] {
+  if ("bundles" in raw) return [];
+  if (!hasOldSourceShape(raw)) return [];
+  const usedIds = new Set<string>();
+  const entries: LockfileEntry[] = [];
+  for (const src of oldConfigMigratableSources(raw)) {
+    const id = deriveBundleId(src.registryId, src.derivationPath, usedIds);
+    if (src.lock) {
+      entries.push({ id, source: src.lock.source, ref: src.lock.ref, localRoot: src.lock.localRoot });
+    }
+  }
+  return entries;
 }
 
 /**

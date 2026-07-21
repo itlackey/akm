@@ -9,6 +9,7 @@
 
 import * as p from "../../cli/clack";
 import type { AkmConfig } from "../../core/config/config";
+import { primaryBundlePath } from "../../core/config/config";
 import { assertSafeStashDir, getDefaultStashDir } from "../../core/paths";
 import { prompt } from "../prompt";
 
@@ -16,7 +17,9 @@ export async function stepStashDir(
   current: AkmConfig,
   options?: { nonInteractive?: boolean; preferredDir?: string },
 ): Promise<string> {
-  const defaultDir = options?.preferredDir ?? current.stashDir ?? getDefaultStashDir();
+  // 0.9.0 (spec §10.1): the current primary stash is the defaultBundle's path.
+  const currentPrimary = primaryBundlePath(current);
+  const defaultDir = options?.preferredDir ?? currentPrimary ?? getDefaultStashDir();
 
   if (options?.nonInteractive) {
     return defaultDir;
@@ -26,7 +29,7 @@ export async function stepStashDir(
     p.select({
       message: "Where should akm store skills, commands, and other assets?",
       options: [
-        { value: "default", label: defaultDir, hint: current.stashDir ? "current" : "default" },
+        { value: "default", label: defaultDir, hint: currentPrimary ? "current" : "default" },
         { value: "custom", label: "Enter a custom path..." },
       ],
     }),
