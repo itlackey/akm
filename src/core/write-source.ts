@@ -26,6 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { lockContentRootFor } from "../integrations/lockfile";
 import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
@@ -508,13 +509,6 @@ export function formatRefForMessage(ref: AssetRef): string {
  * `git` by the config loader, so this mapping is straightforward.
  */
 function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
-  const repoPath = pathFromConfiguredSource(runtime);
-  if (!repoPath) {
-    throw new ConfigError(
-      `Source "${runtime.name}" has no resolvable on-disk path; writes are unsupported for this entry.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
   // Map the runtime kind to the write helper's `kind` discriminator. Only
   // filesystem and git produce writable sources at v1; any other kind
   // reaching this point is a config-loader bug (assertWritableAllowedForKind
@@ -530,10 +524,26 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   }
   const kind: "filesystem" | "git" = runtime.type;
 
+  // §10.2 lock-first (BEHAVIOR FIX): a managed git bundle's resolved content
+  // root lives in the lock (`localRoot`), NOT the desired config. Resolve there
+  // FIRST — via the SAME shared resolver the indexer READ path uses — so a write
+  // lands in exactly the directory a read walks; git sync/commit then runs
+  // against that same root. When no lock row records a localRoot (a git bundle
+  // migrated from a `sources[]` url), fall back to the derived cache repoDir +
+  // content/-subdir convention — the identical chain the read path applies.
+  const lockRoot = kind === "git" ? lockContentRootFor(runtime.name, runtime.type) : undefined;
+  const repoPath = lockRoot ?? pathFromConfiguredSource(runtime);
+  if (!repoPath) {
+    throw new ConfigError(
+      `Source "${runtime.name}" has no resolvable on-disk path; writes are unsupported for this entry.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   const config: SourceConfigEntry = {
     type: runtime.type,
     name: runtime.name,
-    ...(repoPath !== undefined ? { path: repoPath } : {}),
+    path: repoPath,
     ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
     ...(runtime.options ? { options: runtime.options } : {}),
   };
@@ -543,7 +553,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
     source: {
       kind,
       name: runtime.name,
-      path: kind === "git" ? resolveGitContentRoot(repoPath) : repoPath,
+      path: kind === "git" ? (lockRoot ?? resolveGitContentRoot(repoPath)) : repoPath,
       ...(kind === "git" ? { repoPath } : {}),
     },
     config,

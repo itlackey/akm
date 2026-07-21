@@ -106,6 +106,29 @@ export function readLockfile(): LockfileEntry[] {
   }
 }
 
+/**
+ * The materialized content root recorded in the lock for a managed (git/npm)
+ * bundle — spec §10.2 desired/resolved split, where the desired config carries
+ * only the source LOCATOR and the resolved `localRoot` lives here.
+ *
+ * This is the SINGLE lock-first resolution point shared by the indexer READ
+ * path (`resolveEntryContentDir` in indexer/search) and the command-layer WRITE
+ * path (`adaptConfiguredSource` in core/write-source): consulting it first makes
+ * a write land in exactly the directory a read walks. Returns `undefined` for a
+ * bundle with no lock `localRoot` (e.g. a config migrated from a `sources[]`
+ * url, whose provider re-derives the cache path) or a non-managed type, so both
+ * callers fall back to the identical provider-path derivation.
+ */
+export function lockContentRootFor(bundleId: string | undefined, type: string): string | undefined {
+  if (!bundleId || (type !== "git" && type !== "npm")) return undefined;
+  for (const lock of readLockfile()) {
+    if (lock.id === bundleId && typeof lock.localRoot === "string" && lock.localRoot.length > 0) {
+      return lock.localRoot;
+    }
+  }
+  return undefined;
+}
+
 function writeLockfileUnlocked(entries: LockfileEntry[]): void {
   // Always write to $DATA — never to the legacy $CONFIG location.
   const lockfilePath = getLockfilePath();

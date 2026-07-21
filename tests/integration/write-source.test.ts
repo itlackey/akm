@@ -36,6 +36,8 @@ import {
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../src/core/write-source";
+import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { writeLockfile } from "../../src/integrations/lockfile";
 import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -504,6 +506,38 @@ describe("resolveWriteTarget", () => {
     );
     expect(written.path).toBe(path.join(paths.repoDir, "knowledge", "layout.md"));
     fs.rmSync(paths.rootDir, { recursive: true, force: true });
+  });
+
+  test("git target with a lock localRoot reads AND writes through that root (§10.2 lock-first unification)", async () => {
+    const url = "https://example.invalid/acme/locked-layout.git";
+    // The derived cache repoDir is what BOTH paths used to (write) or would
+    // (read fallback) resolve to WITHOUT a lock — the divergence under test.
+    const derivedRepoDir = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    // A materialized content root deliberately DIFFERENT from the derived cache
+    // path (e.g. an install extracted elsewhere, or a moved cache).
+    const localRoot = makeTempDir("akm-lock-localroot-");
+    expect(path.resolve(localRoot)).not.toBe(path.resolve(derivedRepoDir));
+
+    // Record the resolved lock state (spec §10.2). The lockfile lives under
+    // XDG_DATA_HOME (set in beforeEach), keyed by the bundle name ("team").
+    await writeLockfile([{ id: "team", source: "git", ref: url, localRoot }]);
+
+    const config = {
+      semanticSearchMode: "off" as const,
+      bundles: { team: { git: url, writable: true } },
+    };
+
+    // WRITE side: routes to the lock localRoot, not the derived cache repoDir.
+    const target = resolveWriteTarget(config, "team");
+    expect(target.source.path).toBe(localRoot);
+    expect(target.source.repoPath).toBe(localRoot);
+    expect(target.source.path).not.toBe(derivedRepoDir);
+
+    // READ side (indexer): resolves the SAME directory for the "team" bundle.
+    const readStash = makeTempDir("akm-lock-readstash-");
+    const readSources = resolveSourceEntries(readStash, config);
+    const teamSource = readSources.find((s) => s.registryId === "team");
+    expect(teamSource?.path).toBe(path.resolve(localRoot));
   });
 
   test("falls back to defaultWriteTarget", () => {

@@ -10,7 +10,7 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { bundlesToSourceEntries, getSources, loadConfig } from "../../core/config/config";
 import { resolveGitContentRoot } from "../../core/write-source";
-import { readLockfile } from "../../integrations/lockfile";
+import { lockContentRootFor, readLockfile } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -127,15 +127,15 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
-  // resolved root lives in the lock (`localRoot`). Resolve from there first; the
-  // localRoot is the already-walkable content root (installed sources are
-  // extracted to their content dir), so no content/-subdir step is applied. Fall
-  // back to the provider path logic when no lock entry exists (e.g. a git bundle
-  // migrated from a `sources[]` url, whose provider re-derives the mirror path).
-  if (entry.type === "git" || entry.type === "npm") {
-    const localRoot = lockLocalRootFor(entry.name);
-    if (localRoot != null) return localRoot;
-  }
+  // resolved root lives in the lock (`localRoot`). Resolve from there first via
+  // the SHARED lock-first resolver (the same one write-source consults, so reads
+  // and writes agree on where content is); the localRoot is the already-walkable
+  // content root (installed sources are extracted to their content dir), so no
+  // content/-subdir step is applied. Fall back to the provider path logic when no
+  // lock entry exists (e.g. a git bundle migrated from a `sources[]` url, whose
+  // provider re-derives the mirror path).
+  const localRoot = lockContentRootFor(entry.name, entry.type);
+  if (localRoot != null) return localRoot;
 
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return undefined;
@@ -300,21 +300,6 @@ function isValidDirectory(dir: string): boolean {
   }
 }
 
-/**
- * Resolved materialized root (`localRoot`) for a bundle id from the lock (spec
- * §10.2), or `undefined` when no lock entry records one. Used to resolve a
- * git/npm bundle's content dir without re-deriving the provider cache path.
- */
-function lockLocalRootFor(bundleId: string | undefined): string | undefined {
-  if (!bundleId) return undefined;
-  for (const lock of readLockfile()) {
-    if (lock.id === bundleId && typeof lock.localRoot === "string" && lock.localRoot.length > 0) {
-      return lock.localRoot;
-    }
-  }
-  return undefined;
-}
-
 // ── Stash cache integration ─────────────────────────────────────────────────
 
 /**
@@ -331,6 +316,12 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
   // resolveEntryContentDir. NEW shape reads `bundles`; old shape reads sources[].
+  //
+  // DISTINCTION (deliberately NOT lock-first): refresh derives the PROVIDER's
+  // own cache path to git-pull/re-materialize INTO — that derived path is where
+  // content ENDS UP; the lock's `localRoot` merely records the result. So this
+  // path correctly uses the provider, not the shared `lockContentRootFor`
+  // resolver that reads/writes use to agree on where content already IS.
   for (const entry of getSources(cfg)) {
     if (entry.enabled === false) continue;
     const factory = resolveSourceProviderFactory(entry.type);
