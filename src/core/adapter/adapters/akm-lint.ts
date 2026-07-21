@@ -99,7 +99,7 @@ function suggestSlug(filePath: string): string {
 // ── name/type linter (CommandLinter / AgentLinter) ───────────────────────────
 
 /** Reproduce CommandLinter/AgentLinter's extra checks (`command-linter.ts` / `agent-linter.ts`). */
-function nameOrTypeDiagnostics(
+export function nameOrTypeDiagnostics(
   relPath: string,
   data: Record<string, unknown>,
   frontmatter: string | null,
@@ -269,7 +269,7 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
 }
 
 /** FactLinter extra check (`fact-linter.ts:23-44`). */
-function factDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
+export function factDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
   const category = typeof data.category === "string" ? data.category.trim() : "";
   if (!category) {
     return [
@@ -295,7 +295,7 @@ function factDiagnostics(relPath: string, data: Record<string, unknown>): Diagno
 }
 
 /** TaskLinter extra check (`task-linter.ts:25-58`). `data` is the parsed YAML. */
-function taskDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
+export function taskDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
   if (data === null || Object.keys(data).length === 0) return [];
   const missing: string[] = [];
   if (!("schedule" in data) || typeof data.schedule !== "string" || data.schedule.trim() === "") {
@@ -320,6 +320,50 @@ function taskDiagnostics(relPath: string, data: Record<string, unknown>): Diagno
 }
 
 /**
+ * The first placeholder marker present in a workflow body, or `null`
+ * (`workflow-linter.ts:80-85` `#checkPlaceholderStub`). Shared with the live
+ * `akmLint --fix` path (`commands/lint/index.ts`) so the placeholder-stub RULE
+ * has ONE home; the caller decides fixability (validate flags, the CLI deletes).
+ */
+export function matchWorkflowPlaceholder(body: string): string | null {
+  return PLACEHOLDER_STRINGS.find((p) => body.includes(p)) ?? null;
+}
+
+/**
+ * WorkflowLinter's `invalid-workflow-structure` check (`workflow-linter.ts:48-77`):
+ * re-parse via `parseWorkflow` and surface every structural error, skipping the
+ * read-only `/.cache/`+`/registry/` cached copies. Shared with the live linter;
+ * `parsePath` is the path handed to `parseWorkflow` (the adapter passes the
+ * change relPath, the CLI passes the absolute filePath — matching each caller's
+ * legacy behavior). NEVER writes.
+ */
+export function workflowStructureDiagnostics(relPath: string, raw: string, parsePath: string): Diagnostic[] {
+  if (parsePath.includes("/.cache/") || parsePath.includes("/registry/")) return [];
+  const diagnostics: Diagnostic[] = [];
+  try {
+    const result = parseWorkflow(raw, { path: parsePath });
+    if (!result.ok) {
+      for (const err of result.errors ?? []) {
+        diagnostics.push({
+          file: relPath,
+          issue: "invalid-workflow-structure",
+          detail: err.message ?? String(err),
+          fixed: false,
+        });
+      }
+    }
+  } catch (e) {
+    diagnostics.push({
+      file: relPath,
+      issue: "invalid-workflow-structure",
+      detail: `workflow parser error: ${e instanceof Error ? e.message : String(e)}`,
+      fixed: false,
+    });
+  }
+  return diagnostics;
+}
+
+/**
  * WorkflowLinter extra checks (`workflow-linter.ts:22-79`), READ-ONLY:
  * `placeholder-stub` is NEVER deleted here (validate MUST NOT write) — emitted
  * as a non-fixable Diagnostic. `invalid-workflow-structure` re-parses via
@@ -327,7 +371,7 @@ function taskDiagnostics(relPath: string, data: Record<string, unknown>): Diagno
  */
 function workflowDiagnostics(relPath: string, raw: string, body: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  const placeholderMatch = PLACEHOLDER_STRINGS.find((p) => body.includes(p)) ?? null;
+  const placeholderMatch = matchWorkflowPlaceholder(body);
   if (placeholderMatch) {
     diagnostics.push({
       file: relPath,
@@ -336,30 +380,23 @@ function workflowDiagnostics(relPath: string, raw: string, body: string): Diagno
       fixed: false,
     });
   }
-  // The live linter skips `/.cache/` and `/registry/` (read-only cached copies).
-  if (!relPath.includes("/.cache/") && !relPath.includes("/registry/")) {
-    try {
-      const result = parseWorkflow(raw, { path: relPath });
-      if (!result.ok) {
-        for (const err of result.errors ?? []) {
-          diagnostics.push({
-            file: relPath,
-            issue: "invalid-workflow-structure",
-            detail: err.message ?? String(err),
-            fixed: false,
-          });
-        }
-      }
-    } catch (e) {
-      diagnostics.push({
-        file: relPath,
-        issue: "invalid-workflow-structure",
-        detail: `workflow parser error: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: false,
-      });
-    }
-  }
+  diagnostics.push(...workflowStructureDiagnostics(relPath, raw, relPath));
   return diagnostics;
+}
+
+/** The non-fixable orphaned-stub finding detail (`memory-linter.ts` no-fix branch). Shared with the live linter. */
+export const ORPHANED_STUB_DETAIL = "inferenceProcessed stub with no derived sibling";
+
+/**
+ * The CONTENT half of MemoryLinter's orphaned-stub predicate
+ * (`memory-linter.ts:67-73` `#isOrphanedStub`, minus the sibling probe):
+ * `inferenceProcessed: true` AND a body under 100 chars. The `.derived.md`
+ * sibling existence is I/O and is checked by the caller (the CLI via
+ * `fs.existsSync`, the adapter via `ctx.readFile`), so the RULE stays here while
+ * each caller supplies its own read.
+ */
+export function memoryOrphanStubApplies(data: Record<string, unknown>, body: string): boolean {
+  return data.inferenceProcessed === true && body.trim().length < 100;
 }
 
 /**
@@ -374,14 +411,11 @@ async function memoryDiagnostics(
   body: string,
   ctx: ValidateContext,
 ): Promise<Diagnostic[]> {
-  if (data.inferenceProcessed !== true) return [];
-  if (body.trim().length >= 100) return [];
+  if (!memoryOrphanStubApplies(data, body)) return [];
   const derivedPath = `${relPath.replace(/\.md$/, "")}.derived.md`;
   const sibling = await ctx.readFile(derivedPath);
   if (sibling !== null) return [];
-  return [
-    { file: relPath, issue: "orphaned-stub", detail: "inferenceProcessed stub with no derived sibling", fixed: false },
-  ];
+  return [{ file: relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false }];
 }
 
 // Re-export the component type so `akm-adapter.ts` can share it without a

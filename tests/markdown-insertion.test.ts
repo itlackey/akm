@@ -314,26 +314,23 @@ describe("findSafeInsertionPointInText", () => {
   });
 });
 
-// ── Integration: BaseLinter.insertLinesSafely ────────────────────────────────
+// ── Integration: safe line insertion ─────────────────────────────────────────
+//
+// akm 0.9.0 chunk-3 (plan §12): the `BaseLinter.insertLinesSafely` protected
+// helper died with the linter class hierarchy (it was unused by any linter).
+// Its two lines of logic — `findSafeInsertionPoint` + `splice` — are exercised
+// directly here, which is what the helper wrapped.
 
-describe("BaseLinter.insertLinesSafely integration", () => {
-  test("a fixer-style call routed through the helper preserves the table", async () => {
-    // Use a tiny subclass to gain access to the protected helper, mimicking
-    // what a real future fixer (e.g. one that inserts a `.yml` advisory note)
-    // would look like.
-    const { BaseLinter } = await import("../src/commands/lint/base-linter");
+/** The former `BaseLinter.insertLinesSafely` body: pick a safe index, splice. */
+function insertLinesSafely(raw: string, newLines: string[], proposedLineNumber: number): string {
+  const ls = raw.split(/\r?\n/);
+  const safeIdx = findSafeInsertionPoint(ls, proposedLineNumber);
+  ls.splice(safeIdx, 0, ...newLines);
+  return ls.join("\n");
+}
 
-    class TestLinter extends BaseLinter {
-      readonly types = ["test"] as const;
-      lint() {
-        return [];
-      }
-      // Expose the protected helper for the test.
-      runInsert(raw: string, newLines: string[], proposed: number): string {
-        return this.insertLinesSafely(raw, newLines, proposed);
-      }
-    }
-
+describe("safe line insertion (findSafeInsertionPoint + splice)", () => {
+  test("a fixer-style call routed through the helper preserves the table", () => {
     const raw = [
       "---",
       "description: example",
@@ -355,9 +352,8 @@ describe("BaseLinter.insertLinesSafely integration", () => {
 
     // Proposed line 12 = inside the table body (between data rows). This is
     // exactly the regression case from the akm-stash alignment sweep.
-    const fixer = new TestLinter();
     const callout = ["", "> NOTE: Task files must be `.yml`.", ""];
-    const fixed = fixer.runInsert(raw, callout, 12);
+    const fixed = insertLinesSafely(raw, callout, 12);
     const fixedLines = fixed.split("\n");
 
     // The table header + separator + 3 data rows must remain contiguous.
@@ -376,19 +372,9 @@ describe("BaseLinter.insertLinesSafely integration", () => {
     expect(fixedLines).toContain("More text after the table.");
   });
 
-  test("the helper is a no-op for prose-line insertion", async () => {
-    const { BaseLinter } = await import("../src/commands/lint/base-linter");
-    class TestLinter extends BaseLinter {
-      readonly types = ["test"] as const;
-      lint() {
-        return [];
-      }
-      runInsert(raw: string, newLines: string[], proposed: number): string {
-        return this.insertLinesSafely(raw, newLines, proposed);
-      }
-    }
+  test("the helper is a no-op for prose-line insertion", () => {
     const raw = ["# Heading", "", "Paragraph one.", "", "Paragraph two."].join("\n");
-    const result = new TestLinter().runInsert(raw, ["INSERTED"], 2);
+    const result = insertLinesSafely(raw, ["INSERTED"], 2);
     const out = result.split("\n");
     expect(out[2]).toBe("INSERTED");
     expect(out[3]).toBe("Paragraph one.");

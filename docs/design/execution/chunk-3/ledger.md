@@ -103,13 +103,26 @@ end-state. Contemporaneous chunk-close gate logs are **NO RECORD**.
 
 ## Deviations from manifest scope
 
-- **Undelivered scope item (VERIFIER-SURFACED 2026-07-21): the "9 per-type
-  linters + LINTER_MAP → runBaseChecks + adapter validate()" consolidation
-  (plan §12, −250 LOC target) was NOT attempted.** Only the literal
-  `LINTER_MAP` name died (renamed `LINTERS_BY_SUBDIR`); the 9 linter classes
-  still dispatch at HEAD. `a0c3ee02`'s own body records why: "the per-type
+- **Scope item completed at close-out (2026-07-21, user ruling): the "9
+  per-type linters + LINTER_MAP → runBaseChecks + adapter validate()"
+  consolidation (plan §12, −250 LOC target) LANDED in the close-out pass** —
+  the 9 linter classes + registry dispatch deleted (−454 net, exceeding the
+  target), finding output verified identical, the lint golden re-designated
+  to this chunk per the surface-owner rule (its pinned class names died with
+  the classes). Original execution had skipped it (`a0c3ee02`: "the per-type
   linters stay — akmLint --fix is live and the frozen lint golden pins their
-  dispatch." Unowned residue as of this backfill.
+  dispatch").
+- **Placement/presentation fold — ASSESSED AND CLOSED AS STRUCTURALLY
+  INFEASIBLE (2026-07-21):** routing the indexer's placement/presentation
+  reads through the adapter contract inverts proven import edges
+  (`akm-adapter → metadata.ts → asset-placement`; `akm-adapter →
+  recognize-match → matchers.ts → type-presentation`) → direct cycle,
+  violating the EMPTY-absolute cycle gate; any runtime access path would be
+  new machinery (forbidden). The current structure already realizes the
+  plan's boundary cycle-free: the adapter exposes placement via
+  `placeNew`/`directoryList` and presentation via the table it reads, with
+  the shared pure-data leaves neutral so indexer and adapter both consume
+  them acyclically. The leaves cannot be emptied (35 core/indexer consumers).
 - **Net LOC −191 vs. target ~−1000+** (see Actuals) — surface relocated, not net
   deleted; frozen migrator retains the taxonomy duplicate. Scope-vs-actuals
   deviation on the estimate; deletion set itself matches scope.
