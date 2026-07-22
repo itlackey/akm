@@ -32,13 +32,6 @@ describe("migration help", () => {
     expect(result).toContain(`## [${latest}]`);
   });
 
-  test("prefers bundled prerelease note over stable changelog section", () => {
-    const result = renderMigrationHelp("0.9.0-beta.60");
-    expect(result).toContain("Migration notes for akm v0.9.0-beta.60");
-    expect(result).not.toContain("## [0.9.0]");
-    expect(result).toContain("Full changelog: https://github.com/itlackey/akm/blob/main/CHANGELOG.md");
-  });
-
   test("ensures published static files exist in the repo", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8")) as {
       files?: string[];

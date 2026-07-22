@@ -57,12 +57,22 @@ before the 0.10.x series begins**. To get there quickly, 0.9.x patch releases
 may include breaking changes (see [STABILITY.md](../../STABILITY.md)); every
 break ships with a CHANGELOG migration note.
 
+Alongside the bug fixes and compatibility improvements, `0.9.x` also focuses
+on **tuning the improve processes** — reflect, distill, consolidate, memory
+inference, graph extraction, and proactive maintenance — and **settling the
+final design of those features** so the `0.10.0` release starts from a
+finished improve surface rather than one still being reshaped.
+
 ## 0.10
 
 The `0.10.x` series is focused on **bug fixes and tuning** on top of the
 debt-free 0.9 core — no new architecture. With the clean-up done, 0.10.x
 attempts to return to the normal semver discipline: breaking changes only in
 major and minor releases, never in patches.
+
+## 0.X
+
+There may be other minor releases between 0.10.x and 1.0.0. The goal is to minimize the number of minor releases after 0.10.x, and they will only be used for addressing breaking changes that are justifiable before the 1.0.0 release.
 
 ## 1.0
 
