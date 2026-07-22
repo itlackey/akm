@@ -8,6 +8,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { main, shouldBypassConfigStartup } from "../../src/cli";
+import {
+  _setApplyPreflightHookForTests,
+  _setMigrationSnapshotHookForTests,
+  type MigrationPlan,
+} from "../../src/cli/config-migrate";
 import { MAX_CONFIG_FILE_BYTES } from "../../src/core/common";
 import { loadUserConfig, mutateConfig, saveConfig } from "../../src/core/config/config";
 import { acquireMaintenanceActivity } from "../../src/core/maintenance-barrier";
@@ -24,9 +29,12 @@ import {
 } from "../../src/core/migration-backup";
 import { _setAfterPendingOperationCheckHookForTests } from "../../src/core/migration-operation";
 import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
-import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
+import { runMigrations as runStateMigrations, STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { openStateDatabase } from "../../src/core/state-db";
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
+import { FROZEN_WORKFLOW_MIGRATIONS } from "../../src/migrate/legacy/workflow-migrations-bodies";
+import { openDatabaseFinalizing } from "../../src/storage/database";
+import { runMigrations as runSqliteMigrations } from "../../src/storage/engines/sqlite-migrations";
 import { runCliCapture } from "../_helpers/cli";
 import { createLegacyWorkflowDb } from "../_helpers/legacy-workflow-db";
 import {
@@ -36,6 +44,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const STATE_PRE_CUTOVER_IDS = [
   "001-initial-schema",
@@ -168,6 +177,31 @@ function readDurable(dbPath: string): string {
   }
 }
 
+function openStatusWalWriters(paths: string[]): Database[] {
+  return paths.map((dbPath, index) => {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new Database(dbPath);
+    db.exec(`
+      PRAGMA journal_mode=WAL;
+      PRAGMA wal_autocheckpoint=0;
+      CREATE TABLE IF NOT EXISTS status_snapshot_probe_${index}(value TEXT);
+      INSERT INTO status_snapshot_probe_${index} VALUES ('committed');
+    `);
+    fs.rmSync(`${dbPath}-shm`, { force: true });
+    return db;
+  });
+}
+
+function sqliteSourceBytes(paths: string[]): Map<string, Buffer> {
+  return new Map(
+    paths.flatMap((dbPath) =>
+      [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]
+        .filter((filePath) => fs.existsSync(filePath))
+        .map((filePath) => [filePath, fs.readFileSync(filePath)] as const),
+    ),
+  );
+}
+
 function restoreJournalEntries(
   backup: ReturnType<typeof createMigrationBackup>,
   operationId: string,
@@ -284,6 +318,128 @@ function writeApplyJournalForTest(
   return journalPath;
 }
 
+function seedOlderRcApplyJournal(
+  phase: "state-applied" | "workflow-applied",
+  options?: { failingCutover?: boolean },
+): {
+  journalPath: string;
+  operationId: string;
+} {
+  writeConfig("0.8.0");
+  seedPreCutoverState("older-rc-state");
+  seedPreCutoverWorkflow();
+  const backup = createMigrationBackup();
+
+  const state = openDatabaseFinalizing(getStateDbPathInDataDir());
+  runStateMigrations(state);
+  if (options?.failingCutover) {
+    state.exec(`
+      CREATE TABLE asset_salience(asset_ref TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT 0);
+      INSERT INTO asset_salience(asset_ref) VALUES (':bad');
+    `);
+  }
+  expect(
+    state.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='akm_migration_generation'").get(),
+  ).toBe(null);
+  expect(state.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='akm_cutover_ledger'").get()).toBe(
+    null,
+  );
+  state.exec("PRAGMA journal_mode=WAL");
+  state.close();
+
+  if (phase === "workflow-applied") {
+    const workflow = openDatabaseFinalizing(getLegacyWorkflowDbPath());
+    runSqliteMigrations(workflow, FROZEN_WORKFLOW_MIGRATIONS);
+    workflow.close();
+  }
+
+  // A closed WAL database can legitimately have no sidecars. The old journal
+  // authenticates this exact physical generation; recovery must not open SQLite
+  // before deciding whether that generation can be rewound safely.
+  fs.rmSync(`${getStateDbPathInDataDir()}-wal`, { force: true });
+  fs.rmSync(`${getStateDbPathInDataDir()}-shm`, { force: true });
+  const operationId = `older-rc-${phase}`;
+  const journalPath = writeApplyJournalForTest(backup, {
+    operationId,
+    phase,
+    targetConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
+    generation: fingerprintMigrationGeneration(),
+  });
+  return { journalPath, operationId };
+}
+
+const OLDER_RC_FORWARD_PHASES = [
+  "cutover-applied",
+  "config-applied",
+  "tasks-prepared",
+  "tasks-applied",
+  "pilot-prepared",
+  "pilot-applied",
+  "committed",
+] as const;
+
+type OlderRcForwardPhase = (typeof OLDER_RC_FORWARD_PHASES)[number];
+
+function seedOlderRcForwardJournal(
+  phase: OlderRcForwardPhase,
+  nonexact: boolean,
+): { backupPath: string; guard: Database; journalPath: string; operationId: string } {
+  writeConfig("0.8.0");
+  seedPreCutoverState("older-rc-forward");
+  seedPreCutoverWorkflow();
+  const backup = createMigrationBackup();
+  const operationId = `older-rc-${phase}-${nonexact ? "nonexact" : "exact"}`;
+  const statePath = getStateDbPathInDataDir();
+  const state = openDatabaseFinalizing(statePath);
+  runStateMigrations(state);
+  state.exec(`
+    CREATE TABLE akm_cutover_ledger (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      operation_id TEXT NOT NULL,
+      merged_at TEXT NOT NULL
+    );
+    INSERT INTO akm_cutover_ledger VALUES (1, '${operationId}', datetime('now'));
+    CREATE TABLE compatibility_wal(value TEXT PRIMARY KEY);
+    PRAGMA journal_mode=WAL;
+  `);
+  expect(
+    state.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='akm_migration_generation'").get(),
+  ).toBe(null);
+  state.close();
+  fs.rmSync(getLegacyWorkflowDbPath(), { force: true });
+
+  if (phase !== "cutover-applied") {
+    fs.writeFileSync(
+      getConfigPath(),
+      `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  }
+  const refMapPath = path.join(path.dirname(getMigrationApplyJournalPath()), `cutover-refmap-${operationId}.json`);
+  fs.mkdirSync(path.dirname(refMapPath), { recursive: true });
+  fs.writeFileSync(refMapPath, '{"formatVersion":1,"entries":{}}\n', { mode: 0o600 });
+
+  const guard = new Database(statePath, { readonly: true });
+  guard.exec("BEGIN");
+  guard.query("SELECT COUNT(*) AS count FROM sqlite_master").get();
+  const wal = new Database(statePath);
+  wal.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO compatibility_wal VALUES ('journaled')");
+  wal.close();
+  expect(fs.existsSync(`${statePath}-wal`)).toBe(true);
+
+  const journalPath = writeApplyJournalForTest(backup, {
+    operationId,
+    phase,
+    generation: fingerprintMigrationGeneration(),
+  });
+  if (nonexact) {
+    const external = new Database(statePath);
+    external.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO compatibility_wal VALUES ('external')");
+    external.close();
+  }
+  return { backupPath: backup.path, guard, journalPath, operationId };
+}
+
 describe("migration lifecycle regressions", () => {
   test("registers one top-level migration contract and bypasses normal config startup", async () => {
     const subCommands = main.subCommands as Record<string, unknown>;
@@ -302,6 +458,86 @@ describe("migration lifecycle regressions", () => {
     const ready = await runCliCapture(["migrate", "status", "--config", prepared]);
     expect(ready.code, ready.stderr).toBe(0);
     expect(ready.stdout).toContain('"targetConfig"');
+  });
+
+  for (const phase of ["prepared", "rollback-prepared"] as const) {
+    test(`migrate status leaves source WAL artifacts untouched for an exact ${phase} journal`, async () => {
+      writeConfig("0.8.0");
+      seedPreCutoverState();
+      seedPreCutoverWorkflow();
+      const backup = createMigrationBackup();
+      const sqlitePaths = [getStateDbPathInDataDir(), getLegacyWorkflowDbPath(), getDbPath()];
+      const writers = openStatusWalWriters(sqlitePaths);
+      try {
+        const journalPath = writeApplyJournalForTest(backup, {
+          phase,
+          generation: fingerprintMigrationGeneration(),
+        });
+        const journalBefore = fs.readFileSync(journalPath);
+        const sourcesBefore = sqliteSourceBytes(sqlitePaths);
+
+        const status = await runCliCapture(["migrate", "status"]);
+        expect(status.code, status.stderr).toBe(0);
+        expect(status.stdout).toContain(`"phase":"${phase}"`);
+        expect(fs.readFileSync(journalPath)).toEqual(journalBefore);
+        expect(sqliteSourceBytes(sqlitePaths)).toEqual(sourcesBefore);
+        for (const dbPath of sqlitePaths) expect(fs.existsSync(`${dbPath}-shm`)).toBe(false);
+      } finally {
+        for (const writer of writers) writer.close();
+      }
+    });
+  }
+
+  test("workflow-marker-adjacent status uses snapshots and preserves its journal", async () => {
+    writeConfig("0.8.0");
+    seedPreCutoverState();
+    seedPreCutoverWorkflow();
+    const prepared = path.join(path.dirname(getConfigPath()), "prepared-0.9.json");
+    fs.writeFileSync(prepared, '{"configVersion":"0.9.0","semanticSearchMode":"off"}\n');
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env, AKM_TEST_MIGRATION_CRASH_GAP: "workflow" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const journalPath = getMigrationApplyJournalPath();
+    expect(JSON.parse(fs.readFileSync(journalPath, "utf8")).phase).toBe("state-applied");
+
+    const sqlitePaths = [getLegacyWorkflowDbPath(), getDbPath()];
+    const writers = openStatusWalWriters(sqlitePaths);
+    try {
+      const journalBefore = fs.readFileSync(journalPath);
+      const sourcesBefore = sqliteSourceBytes([getStateDbPathInDataDir(), ...sqlitePaths]);
+      const status = await runCliCapture(["migrate", "status"]);
+      expect(status.code, status.stderr).toBe(0);
+      expect(status.stdout).toContain('"phase":"state-applied"');
+      expect(fs.readFileSync(journalPath)).toEqual(journalBefore);
+      expect(sqliteSourceBytes([getStateDbPathInDataDir(), ...sqlitePaths])).toEqual(sourcesBefore);
+      for (const dbPath of sqlitePaths) expect(fs.existsSync(`${dbPath}-shm`)).toBe(false);
+    } finally {
+      for (const writer of writers) writer.close();
+    }
+  }, 20_000);
+
+  test("migrate status without an active journal inspects private WAL snapshots", async () => {
+    writeConfig("0.8.0");
+    seedPreCutoverState();
+    seedPreCutoverWorkflow();
+    const prepared = path.join(path.dirname(getConfigPath()), "prepared-0.9.json");
+    fs.writeFileSync(prepared, '{"configVersion":"0.9.0","semanticSearchMode":"off"}\n');
+    const sqlitePaths = [getStateDbPathInDataDir(), getLegacyWorkflowDbPath(), getDbPath()];
+    const writers = openStatusWalWriters(sqlitePaths);
+    try {
+      const sourcesBefore = sqliteSourceBytes(sqlitePaths);
+      const status = await runCliCapture(["migrate", "status", "--config", prepared]);
+      expect(status.code, status.stderr).toBe(0);
+      expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+      expect(sqliteSourceBytes(sqlitePaths)).toEqual(sourcesBefore);
+      for (const dbPath of sqlitePaths) expect(fs.existsSync(`${dbPath}-shm`)).toBe(false);
+    } finally {
+      for (const writer of writers) writer.close();
+    }
   });
 
   test("classifies missing, old, newer, inconsistent, and corrupt artifacts", () => {
@@ -585,6 +821,346 @@ describe("migration lifecycle regressions", () => {
       config: { status: "current" },
       state: { status: "current" },
       workflow: { status: "missing" }, // deleted by the three-DB cutover
+    });
+  });
+
+  test("ledger-current WAL state still enters cutover and a cutover failure restores the backup", async () => {
+    writeConfig("0.9.0");
+    seedPreCutoverState("current-wal-before");
+    const state = openDatabaseFinalizing(getStateDbPathInDataDir());
+    runStateMigrations(state);
+    state.exec(`
+      CREATE TABLE asset_salience(asset_ref TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT 0);
+      INSERT INTO asset_salience(asset_ref) VALUES (':bad');
+    `);
+    state.exec("PRAGMA journal_mode=WAL");
+    expect((state.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
+    state.close();
+
+    seedPreCutoverWorkflow();
+    const workflow = openDatabaseFinalizing(getLegacyWorkflowDbPath());
+    runSqliteMigrations(workflow, FROZEN_WORKFLOW_MIGRATIONS);
+    workflow.close();
+    expect(inspectMigrationState()).toMatchObject({
+      config: { status: "current" },
+      state: { status: "current" },
+      workflow: { status: "current" },
+    });
+
+    const status = await runCliCapture(["migrate", "status"]);
+    expect(status.code, status.stderr).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({ status: "ready" });
+
+    // The deliberately sparse synthetic schemas have current ledgers but cannot
+    // satisfy the data merge. The important contract is that the failed cutover
+    // can restore instead of being stranded by WAL sidecar mutation.
+    const applied = await runCliCapture(["migrate", "apply"]);
+    expect(applied.code).not.toBe(0);
+    expect(applied.stderr).toMatch(/migration apply failed.*restored/i);
+    expect(applied.stderr).not.toMatch(/rollback could not complete/i);
+    expect(readDurable(getStateDbPathInDataDir())).toBe("current-wal-before");
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(true);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+  });
+
+  for (const phase of ["state-applied", "workflow-applied"] as const) {
+    test(`${phase} apply preflight preserves committed workflow WAL without a source SHM`, async () => {
+      const { journalPath } = seedOlderRcApplyJournal(phase);
+      if (phase === "state-applied") {
+        const workflow = openDatabaseFinalizing(getLegacyWorkflowDbPath());
+        try {
+          runSqliteMigrations(workflow, FROZEN_WORKFLOW_MIGRATIONS);
+        } finally {
+          workflow.close();
+        }
+      }
+
+      const workflowPath = getLegacyWorkflowDbPath();
+      const writers = openStatusWalWriters([workflowPath]);
+      try {
+        const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as Record<string, unknown>;
+        journal.generation = fingerprintMigrationGeneration();
+        fs.writeFileSync(journalPath, `${JSON.stringify(journal)}\n`, { mode: 0o600 });
+        const workflowBefore = sqliteSourceBytes([workflowPath]);
+        expect(fs.existsSync(`${workflowPath}-wal`)).toBe(true);
+        expect(fs.existsSync(`${workflowPath}-shm`)).toBe(false);
+
+        const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply"], {
+          cwd: path.resolve(import.meta.dir, "../.."),
+          env: {
+            ...process.env,
+            AKM_TEST_MIGRATION_CRASH_GAP: phase === "state-applied" ? "workflow" : "cutover",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [exitCode] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        expect(exitCode).not.toBe(0);
+        expect(JSON.parse(fs.readFileSync(journalPath, "utf8")).phase).toBe(phase);
+        expect(fs.existsSync(`${workflowPath}-shm`)).toBe(false);
+        if (phase === "state-applied") expect(sqliteSourceBytes([workflowPath])).toEqual(workflowBefore);
+        else expect(fs.existsSync(workflowPath)).toBe(false);
+
+        const status = await runCliCapture(["migrate", "status"]);
+        expect(status.code, status.stderr).toBe(0);
+        const resumed = await runCliCapture(["migrate", "apply"]);
+        expect(resumed.code, resumed.stderr).toBe(0);
+        expect(fs.existsSync(journalPath)).toBe(false);
+      } finally {
+        for (const writer of writers) writer.close();
+      }
+    }, 20_000);
+
+    test(`${phase} apply preflight fails closed on a generation changed after journal authentication`, async () => {
+      const { journalPath } = seedOlderRcApplyJournal(phase);
+      const changedPath = phase === "state-applied" ? getLegacyWorkflowDbPath() : getStateDbPathInDataDir();
+      let hookCalls = 0;
+      overrideSeam(_setApplyPreflightHookForTests, (actualPhase) => {
+        if (actualPhase !== phase || hookCalls > 0) return;
+        hookCalls += 1;
+        const external = new Database(changedPath);
+        try {
+          external.exec(
+            "CREATE TABLE preflight_external_generation(value TEXT); INSERT INTO preflight_external_generation VALUES ('preserve-me')",
+          );
+        } finally {
+          external.close();
+        }
+      });
+
+      const resumed = await runCliCapture(["migrate", "apply"]);
+      expect(resumed.code).not.toBe(0);
+      expect(resumed.stderr).toMatch(/forward recovery.*changed before its next mutation/i);
+      expect(hookCalls).toBe(1);
+      expect(fs.existsSync(journalPath)).toBe(true);
+      const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+        backupPath: string;
+        generation: unknown;
+        phase: string;
+      };
+      expect(journal.phase).toBe(phase);
+      expect(journal.generation).not.toEqual(fingerprintMigrationGeneration());
+      expect(fs.existsSync(journal.backupPath)).toBe(true);
+
+      const preserved = new Database(changedPath, { readonly: true });
+      try {
+        expect(preserved.query("SELECT value FROM preflight_external_generation").get()).toEqual({
+          value: "preserve-me",
+        });
+      } finally {
+        preserved.close();
+      }
+    });
+  }
+
+  for (const phase of ["state-applied", "workflow-applied"] as const) {
+    test(`${phase} apply preserves a source changed during snapshot construction`, async () => {
+      const { journalPath } = seedOlderRcApplyJournal(phase);
+      const changedPath = phase === "state-applied" ? getLegacyWorkflowDbPath() : getStateDbPathInDataDir();
+      let hookCalls = 0;
+      overrideSeam(_setMigrationSnapshotHookForTests, ({ sourcePath, applyPhase }) => {
+        if (applyPhase !== phase || sourcePath !== changedPath || hookCalls > 0) return;
+        hookCalls += 1;
+        const external = new Database(changedPath);
+        try {
+          external.exec(
+            "CREATE TABLE snapshot_external_generation(value TEXT); INSERT INTO snapshot_external_generation VALUES ('preserve-me')",
+          );
+        } finally {
+          external.close();
+        }
+      });
+
+      const resumed = await runCliCapture(["migrate", "apply"]);
+      expect(resumed.code).not.toBe(0);
+      expect(resumed.stderr).toMatch(/forward recovery.*changed while creating a private status snapshot/i);
+      expect(resumed.stderr).not.toMatch(/restored from|rollback/i);
+      expect(hookCalls).toBe(1);
+      expect(fs.existsSync(journalPath)).toBe(true);
+      const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+        backupPath: string;
+        generation: unknown;
+        phase: string;
+      };
+      expect(journal.phase).toBe(phase);
+      expect(journal.generation).not.toEqual(fingerprintMigrationGeneration());
+      expect(fs.existsSync(journal.backupPath)).toBe(true);
+
+      const preserved = new Database(changedPath, { readonly: true });
+      try {
+        expect(preserved.query("SELECT value FROM snapshot_external_generation").get()).toEqual({
+          value: "preserve-me",
+        });
+      } finally {
+        preserved.close();
+      }
+    });
+  }
+
+  test("migrate status reports a source changed during snapshot construction", async () => {
+    const { journalPath } = seedOlderRcApplyJournal("state-applied");
+    const changedPath = getLegacyWorkflowDbPath();
+    const journalBefore = JSON.parse(fs.readFileSync(journalPath, "utf8")) as { backupPath: string };
+    let hookCalls = 0;
+    overrideSeam(_setMigrationSnapshotHookForTests, ({ sourcePath, applyPhase }) => {
+      if (applyPhase !== undefined || sourcePath !== changedPath || hookCalls > 0) return;
+      hookCalls += 1;
+      const external = new Database(changedPath);
+      try {
+        external.exec(
+          "CREATE TABLE status_snapshot_external(value TEXT); INSERT INTO status_snapshot_external VALUES ('preserve-me')",
+        );
+      } finally {
+        external.close();
+      }
+    });
+
+    const status = await runCliCapture(["migrate", "status"]);
+    expect(status.code).not.toBe(0);
+    expect(status.stdout).toMatch(/changed while creating a private status snapshot/i);
+    expect(hookCalls).toBe(1);
+    expect(fs.existsSync(journalPath)).toBe(true);
+    expect(fs.existsSync(journalBefore.backupPath)).toBe(true);
+    const preserved = new Database(changedPath, { readonly: true });
+    try {
+      expect(preserved.query("SELECT value FROM status_snapshot_external").get()).toEqual({ value: "preserve-me" });
+    } finally {
+      preserved.close();
+    }
+  });
+
+  for (const phase of ["state-applied", "workflow-applied"] as const) {
+    test(`resumes an exact older-RC ${phase} journal through durable state conversion`, async () => {
+      const { journalPath, operationId } = seedOlderRcApplyJournal(phase);
+      const generationBeforeStatus = fingerprintMigrationGeneration();
+      const journalBeforeStatus = fs.readFileSync(journalPath);
+
+      const status = await runCliCapture(["migrate", "status"]);
+      expect(status.code, status.stderr).toBe(0);
+      expect(status.stdout).toContain(`"phase":"${phase}"`);
+      const statusPlan = JSON.parse(status.stdout) as MigrationPlan;
+      expect(statusPlan.artifacts.state).toMatchObject({ status: "current" });
+      expect(statusPlan.artifacts.state).not.toHaveProperty("migrationIds");
+      if (phase === "workflow-applied") {
+        expect(statusPlan.artifacts.workflow).toMatchObject({ status: "current" });
+        expect(statusPlan.artifacts.workflow).not.toHaveProperty("migrationIds");
+      }
+      expect(fingerprintMigrationGeneration()).toEqual(generationBeforeStatus);
+      expect(fs.readFileSync(journalPath)).toEqual(journalBeforeStatus);
+
+      const resumed = await runCliCapture(["migrate", "apply"]);
+      expect(resumed.code, resumed.stderr).toBe(0);
+      expect(fs.existsSync(journalPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).toMatchObject({ configVersion: "0.9.0" });
+      expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
+
+      const state = new Database(getStateDbPathInDataDir(), { readonly: true });
+      try {
+        expect((state.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("delete");
+        expect(state.query("SELECT operation_id, phase FROM akm_migration_generation WHERE singleton=1").get()).toEqual(
+          { operation_id: operationId, phase: "state-applied" },
+        );
+        expect((state.query("SELECT COUNT(*) AS count FROM akm_cutover_ledger").get() as { count: number }).count).toBe(
+          1,
+        );
+      } finally {
+        state.close();
+      }
+    });
+
+    test(`fails closed on a nonexact older-RC ${phase} journal before opening WAL state`, async () => {
+      const { journalPath } = seedOlderRcApplyJournal(phase);
+      const statePath = getStateDbPathInDataDir();
+      const shmPath = `${statePath}-shm`;
+      const tripwire = Buffer.from("nonexact generation: SQLite inspection must not touch this SHM path\n");
+      fs.writeFileSync(shmPath, tripwire);
+      const stateBefore = fs.readFileSync(statePath);
+      const journalBefore = fs.readFileSync(journalPath);
+
+      const status = await runCliCapture(["migrate", "status"]);
+      expect(status.code).not.toBe(0);
+      expect(fs.readFileSync(statePath)).toEqual(stateBefore);
+      expect(fs.readFileSync(shmPath)).toEqual(tripwire);
+      expect(fs.readFileSync(journalPath)).toEqual(journalBefore);
+
+      const resumed = await runCliCapture(["migrate", "apply"]);
+      expect(resumed.code).not.toBe(0);
+      expect(resumed.stderr).toMatch(/exact live artifact generation/i);
+      expect(fs.readFileSync(statePath)).toEqual(stateBefore);
+      expect(fs.readFileSync(shmPath)).toEqual(tripwire);
+      expect(fs.readFileSync(journalPath)).toEqual(journalBefore);
+    });
+  }
+
+  for (const phase of OLDER_RC_FORWARD_PHASES) {
+    for (const nonexact of [false, true]) {
+      test(`resumes an ${nonexact ? "nonexact" : "exact"} older-RC WAL journal from ${phase} without a conversion marker`, async () => {
+        const { backupPath, guard, journalPath, operationId } = seedOlderRcForwardJournal(phase, nonexact);
+        const journalBeforeStatus = fs.readFileSync(journalPath);
+
+        const status = await runCliCapture(["migrate", "status"]);
+        expect(status.code, status.stderr).toBe(0);
+        expect(status.stdout).toContain(`"phase":"${phase}"`);
+        expect(fs.readFileSync(journalPath)).toEqual(journalBeforeStatus);
+
+        let resumed: Awaited<ReturnType<typeof runCliCapture>>;
+        try {
+          resumed = await runCliCapture(["migrate", "apply"]);
+        } finally {
+          guard.close();
+        }
+        expect(resumed.code, resumed.stderr).toBe(0);
+        expect(fs.existsSync(journalPath)).toBe(false);
+        expect(fs.existsSync(backupPath)).toBe(true);
+        const completed = new Database(getStateDbPathInDataDir(), { readonly: true });
+        try {
+          expect(completed.query("SELECT operation_id FROM akm_cutover_ledger WHERE singleton=1").get()).toEqual({
+            operation_id: operationId,
+          });
+          expect(completed.query("SELECT value FROM compatibility_wal ORDER BY value").all()).toEqual(
+            nonexact ? [{ value: "external" }, { value: "journaled" }] : [{ value: "journaled" }],
+          );
+          expect(
+            completed.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='akm_migration_generation'").get(),
+          ).toBe(null);
+        } finally {
+          completed.close();
+        }
+      });
+    }
+  }
+
+  test("rejects an older-RC cutover-applied journal with another operation's cutover marker", async () => {
+    const seeded = seedOlderRcForwardJournal("cutover-applied", false);
+    const journalBefore = fs.readFileSync(seeded.journalPath);
+    seeded.guard.close();
+    const state = new Database(getStateDbPathInDataDir());
+    state.exec("UPDATE akm_cutover_ledger SET operation_id='another-operation'");
+    state.close();
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code).not.toBe(0);
+    expect(resumed.stderr).toMatch(/operation-bound cutover marker/i);
+    expect(fs.readFileSync(seeded.journalPath)).toEqual(journalBefore);
+    expect(fs.existsSync(seeded.backupPath)).toBe(true);
+  });
+
+  test("a rewound older-RC workflow journal retains rollback authority when cutover fails", async () => {
+    const { journalPath } = seedOlderRcApplyJournal("workflow-applied", { failingCutover: true });
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code).not.toBe(0);
+    expect(resumed.stderr).toMatch(/migration apply failed.*restored/i);
+    expect(resumed.stderr).not.toMatch(/rollback could not complete/i);
+    expect(fs.existsSync(journalPath)).toBe(false);
+    expect(inspectMigrationState()).toMatchObject({
+      config: { status: "old" },
+      state: { status: "old" },
+      workflow: { status: "old" },
     });
   });
 

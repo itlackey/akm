@@ -54,7 +54,7 @@ export const DEFAULT_IMPROVE_TASKS: readonly DefaultTaskSpec[] = [
     strategy: "frequent",
     command: "akm improve --strategy frequent --skip-if-locked",
     schedule: "40 * * * *",
-    description: "Frequent extract + inference pass (hourly at :40)",
+    description: "Frequent inference pass (hourly at :40; improve-stage extract off)",
     enableMode: "always",
   },
   {

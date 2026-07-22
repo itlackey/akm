@@ -1,5 +1,5 @@
 {
-  "description": "Proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+  "description": "Opt-in proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
   "processes": {
     "reflect": {
       "enabled": true,

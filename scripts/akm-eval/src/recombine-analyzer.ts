@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveIndexDbPath, resolveStateDbPath } from "./sources/paths";
 
@@ -11,6 +12,11 @@ export type RecombineRelatedness = "tags" | "graph" | "both";
 export interface RecombineGraphStatus {
   availability: "available" | "degraded" | "not-requested";
   degradedReason: string | null;
+  fileCount: number | null;
+  entityCount: number | null;
+  coveredMemoryCount: number | null;
+  memoryCount: number | null;
+  memoryCoverage: number | null;
 }
 
 export interface RecombineProvenance {
@@ -129,6 +135,28 @@ interface ReadIndexResult {
   graphStatus: RecombineGraphStatus;
 }
 
+interface ReadGraphResult {
+  entities: Map<string, string[]>;
+  status: RecombineGraphStatus;
+}
+
+interface OpenSnapshotSource {
+  path: string;
+  fd: number;
+  dev: bigint;
+  ino: bigint;
+}
+
+interface SnapshotFingerprint {
+  bytes: number;
+  sha256: string;
+}
+
+interface SnapshotState {
+  main: SnapshotFingerprint;
+  wal: SnapshotFingerprint | null;
+}
+
 const DEFAULT_MIN_CLUSTER_SIZE = 3;
 const DEFAULT_MAX_CLUSTERS = 5;
 const RESERVED_TAG_SLOTS = 3;
@@ -140,6 +168,23 @@ const PROMPT_OVERHEAD_TOKENS = 256;
 const ESTIMATED_OUTPUT_TOKENS_PER_CALL = 800;
 const PROVENANCE_CHANNELS = ["xrefs", "sources", "sourceRefs", "evidenceSources"] as const;
 const DECISION_PROVENANCE_CHANNELS = ["sources", "sourceRefs", "evidenceSources"] as const;
+const SNAPSHOT_BUFFER_BYTES = 1024 * 1024;
+
+function baseGraphStatus(
+  availability: RecombineGraphStatus["availability"],
+  degradedReason: string | null = null,
+): RecombineGraphStatus {
+  return {
+    availability,
+    degradedReason,
+    fileCount: null,
+    entityCount: null,
+    coveredMemoryCount: null,
+    memoryCount: null,
+    memoryCoverage: null,
+  };
+}
+
 const CURRENT_CONCEPT_ROOTS = new Set([
   "agents",
   "commands",
@@ -387,10 +432,8 @@ function buildClusters(
     const first = scopedEntries[0];
     if (!first) continue;
     const groups = new Map<string, RecombineAnalyzerEntry[]>();
-    const graphAvailable = scopedEntries.some((entry) => entry.entities.length > 0);
     const useTags = options.relatedness === "tags" || options.relatedness === "both";
-    const useGraph = options.relatedness !== "tags" && graphAvailable;
-    const tagsFallback = options.relatedness === "graph" && !graphAvailable;
+    const useGraph = options.relatedness !== "tags" && scopedEntries.some((entry) => entry.entities.length > 0);
 
     const add = (signature: string, entry: RecombineAnalyzerEntry): void => {
       const members = groups.get(signature);
@@ -399,7 +442,7 @@ function buildClusters(
     };
 
     for (const entry of scopedEntries) {
-      if (useTags || tagsFallback) {
+      if (useTags) {
         for (const tag of [...new Set(entry.tags.map((value) => value.trim().toLowerCase()))].sort()) {
           if (tag && !isRecombineJunkTag(tag)) add(`tag:${tag}`, entry);
         }
@@ -565,9 +608,7 @@ export function analyzeRecombineCandidates(
   const relatedness = rawOptions.relatedness ?? "both";
   const graphStatus =
     rawOptions.graphStatus ??
-    (relatedness === "tags"
-      ? { availability: "not-requested" as const, degradedReason: null }
-      : { availability: "available" as const, degradedReason: null });
+    (relatedness === "tags" ? baseGraphStatus("not-requested") : baseGraphStatus("available"));
   if (!Number.isInteger(minClusterSize) || minClusterSize < 2) throw new Error("minClusterSize must be an integer >= 2");
   if (!Number.isInteger(maxClusters) || maxClusters < 0) throw new Error("maxClusters must be an integer >= 0");
   if (
@@ -768,35 +809,228 @@ function graphFailureReason(error: unknown): string {
 function readGraphEntities(
   db: Database,
   relatedness: RecombineRelatedness,
-): { entities: Map<string, string[]>; status: RecombineGraphStatus } {
+): ReadGraphResult {
   const result = new Map<string, string[]>();
+  const fileKeys = new Set<string>();
   if (relatedness === "tags") {
-    return { entities: result, status: { availability: "not-requested", degradedReason: null } };
+    return { entities: result, status: baseGraphStatus("not-requested") };
   }
   try {
     const rows = db
       .query(
-        `SELECT gf.stash_root, gf.file_path, gfe.entity_norm
-         FROM graph_files gf
-         JOIN graph_file_entities gfe
-           ON gfe.stash_root = gf.stash_root
-          AND gfe.file_path = gf.file_path
-          AND gfe.body_hash = gf.body_hash
-         ORDER BY gf.stash_root, gf.file_path, gfe.entity_norm`,
+         `SELECT gf.stash_root, gf.file_path, gfe.entity_norm
+          FROM graph_files gf
+          LEFT JOIN graph_file_entities gfe
+            ON gfe.stash_root = gf.stash_root
+           AND gfe.file_path = gf.file_path
+           AND gfe.body_hash = gf.body_hash
+          ORDER BY gf.stash_root, gf.file_path, gfe.entity_norm`,
       )
-      .all() as Array<{ stash_root: string; file_path: string; entity_norm: string }>;
+      .all() as Array<{ stash_root: string; file_path: string; entity_norm: string | null }>;
+    const uniqueEntities = new Set<string>();
     for (const row of rows) {
       const key = `${row.stash_root}\0${row.file_path}`;
+      fileKeys.add(key);
+      const entity = row.entity_norm?.trim();
+      if (!entity) continue;
+      uniqueEntities.add(entity);
       const entities = result.get(key);
-      if (entities) entities.push(row.entity_norm);
-      else result.set(key, [row.entity_norm]);
+      if (entities) {
+        if (!entities.includes(entity)) entities.push(entity);
+      } else {
+        result.set(key, [entity]);
+      }
     }
-    return { entities: result, status: { availability: "available", degradedReason: null } };
+    return {
+      entities: result,
+      status: {
+        ...baseGraphStatus("available"),
+        fileCount: fileKeys.size,
+        entityCount: uniqueEntities.size,
+      },
+    };
   } catch (error) {
     return {
       entities: result,
-      status: { availability: "degraded", degradedReason: graphFailureReason(error) },
+      status: baseGraphStatus("degraded", graphFailureReason(error)),
     };
+  }
+}
+
+function snapshotChangedError(): Error {
+  return new Error("index database changed while creating read-only snapshot; retry when indexing is idle");
+}
+
+function sameOpenSourceStat(
+  a: fs.BigIntStats,
+  b: fs.BigIntStats,
+): boolean {
+  return (
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.size === b.size &&
+    a.mtimeNs === b.mtimeNs &&
+    a.ctimeNs === b.ctimeNs
+  );
+}
+
+function assertOpenSourceIdentity(source: OpenSnapshotSource): void {
+  let stat: fs.BigIntStats;
+  try {
+    stat = fs.lstatSync(source.path, { bigint: true });
+  } catch {
+    throw snapshotChangedError();
+  }
+  if (!stat.isFile() || stat.dev !== source.dev || stat.ino !== source.ino) throw snapshotChangedError();
+}
+
+function assertPathAbsent(filePath: string): void {
+  try {
+    fs.lstatSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw snapshotChangedError();
+}
+
+function openSnapshotSource(filePath: string, optional = false): OpenSnapshotSource | undefined {
+  let pathStat: fs.BigIntStats;
+  try {
+    pathStat = fs.lstatSync(filePath, { bigint: true });
+  } catch (error) {
+    if (optional && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (!pathStat.isFile()) throw new Error(`index snapshot source is not a regular file: ${filePath}`);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const fdStat = fs.fstatSync(fd, { bigint: true });
+    if (!fdStat.isFile() || fdStat.dev !== pathStat.dev || fdStat.ino !== pathStat.ino) {
+      throw snapshotChangedError();
+    }
+    return { path: filePath, fd, dev: fdStat.dev, ino: fdStat.ino };
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
+function readSnapshotSource(source: OpenSnapshotSource, destinationFd?: number): SnapshotFingerprint {
+  assertOpenSourceIdentity(source);
+  const before = fs.fstatSync(source.fd, { bigint: true });
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(SNAPSHOT_BUFFER_BYTES);
+  let position = 0;
+  while (true) {
+    const bytesRead = fs.readSync(source.fd, buffer, 0, buffer.length, position);
+    if (bytesRead === 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    if (destinationFd !== undefined) {
+      let written = 0;
+      while (written < bytesRead) {
+        written += fs.writeSync(destinationFd, buffer, written, bytesRead - written);
+      }
+    }
+    position += bytesRead;
+  }
+  const after = fs.fstatSync(source.fd, { bigint: true });
+  assertOpenSourceIdentity(source);
+  if (!sameOpenSourceStat(before, after) || BigInt(position) !== after.size) throw snapshotChangedError();
+  return { bytes: position, sha256: hash.digest("hex") };
+}
+
+function fingerprintSnapshotSources(
+  main: OpenSnapshotSource,
+  wal: OpenSnapshotSource | undefined,
+  walPath: string,
+): SnapshotState {
+  const mainFingerprint = readSnapshotSource(main);
+  const walFingerprint = wal ? readSnapshotSource(wal) : null;
+  if (!wal) assertPathAbsent(walPath);
+  return { main: mainFingerprint, wal: walFingerprint };
+}
+
+function copySnapshotSource(source: OpenSnapshotSource, destination: string): SnapshotFingerprint {
+  const destinationFd = fs.openSync(destination, "wx", 0o600);
+  try {
+    const fingerprint = readSnapshotSource(source, destinationFd);
+    fs.fsyncSync(destinationFd);
+    return fingerprint;
+  } finally {
+    fs.closeSync(destinationFd);
+  }
+}
+
+function copySnapshotSources(
+  main: OpenSnapshotSource,
+  wal: OpenSnapshotSource | undefined,
+  walPath: string,
+  databasePath: string,
+): SnapshotState {
+  const mainFingerprint = copySnapshotSource(main, databasePath);
+  const walFingerprint = wal ? copySnapshotSource(wal, `${databasePath}-wal`) : null;
+  if (!wal) assertPathAbsent(walPath);
+  return { main: mainFingerprint, wal: walFingerprint };
+}
+
+function sameSnapshotFingerprint(a: SnapshotFingerprint | null, b: SnapshotFingerprint | null): boolean {
+  return a === null || b === null
+    ? a === b
+    : a.bytes === b.bytes && a.sha256 === b.sha256;
+}
+
+function sameSnapshotState(a: SnapshotState, b: SnapshotState): boolean {
+  return sameSnapshotFingerprint(a.main, b.main) && sameSnapshotFingerprint(a.wal, b.wal);
+}
+
+function createRecombineIndexSnapshot(indexDbPath: string): { databasePath: string; cleanup: () => void } {
+  const sourcePath = fs.realpathSync(indexDbPath);
+  const walPath = `${sourcePath}-wal`;
+  const main = openSnapshotSource(sourcePath);
+  if (!main) throw new Error(`index database not found: ${indexDbPath}`);
+  let wal: OpenSnapshotSource | undefined;
+  let snapshotDir: string | undefined;
+  let mainOpen = true;
+  let walOpen = false;
+  try {
+    wal = openSnapshotSource(walPath, true);
+    walOpen = wal !== undefined;
+    snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-recombine-index-"));
+    fs.chmodSync(snapshotDir, 0o700);
+    const databasePath = path.join(snapshotDir, "index.db");
+    const before = fingerprintSnapshotSources(main, wal, walPath);
+    const copied = copySnapshotSources(main, wal, walPath, databasePath);
+    const after = fingerprintSnapshotSources(main, wal, walPath);
+    if (!sameSnapshotState(before, copied) || !sameSnapshotState(before, after)) throw snapshotChangedError();
+    const completedDir = snapshotDir;
+    fs.closeSync(main.fd);
+    mainOpen = false;
+    if (wal) {
+      fs.closeSync(wal.fd);
+      walOpen = false;
+    }
+    snapshotDir = undefined;
+    return {
+      databasePath,
+      cleanup: () => fs.rmSync(completedDir, { recursive: true, force: true }),
+    };
+  } finally {
+    if (mainOpen) {
+      try {
+        fs.closeSync(main.fd);
+      } catch {
+        // The original snapshot/close failure remains authoritative.
+      }
+    }
+    if (walOpen && wal) {
+      try {
+        fs.closeSync(wal.fd);
+      } catch {
+        // The original snapshot/close failure remains authoritative.
+      }
+    }
+    if (snapshotDir) fs.rmSync(snapshotDir, { recursive: true, force: true });
   }
 }
 
@@ -805,8 +1039,13 @@ export function readCurrentRecombineEntries(
   relatedness: RecombineRelatedness = "both",
 ): ReadIndexResult {
   if (!fs.existsSync(indexDbPath)) throw new Error(`index database not found: ${indexDbPath}`);
-  const db = new Database(indexDbPath, { readonly: true, create: false });
+  const snapshot = createRecombineIndexSnapshot(indexDbPath);
+  let db: Database | undefined;
+  let transactionOpen = false;
   try {
+    db = new Database(snapshot.databasePath, { readonly: true, create: false });
+    db.exec("BEGIN");
+    transactionOpen = true;
     const columns = new Set(
       (db.query("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((column) => column.name),
     );
@@ -816,7 +1055,6 @@ export function readCurrentRecombineEntries(
         `index database lacks current canonical-ref columns (${missingCanonicalColumns.join(", ")}); refusing legacy ref reconstruction`,
       );
     }
-    const graph = readGraphEntities(db, relatedness);
     const rows = db
       .query(
         `SELECT id, item_ref, bundle_id, stash_dir, file_path, entry_json
@@ -832,9 +1070,11 @@ export function readCurrentRecombineEntries(
       file_path: string;
       entry_json: string;
     }>;
+    const graph = readGraphEntities(db, relatedness);
     const entries: RecombineAnalyzerEntry[] = [];
     const seenItemRefs = new Set<string>();
     let skippedMissingCanonicalRef = 0;
+    let coveredMemoryCount = 0;
     for (const row of rows) {
       const itemRef = row.item_ref;
       const boundary = itemRef?.indexOf("//") ?? -1;
@@ -854,6 +1094,7 @@ export function readCurrentRecombineEntries(
         document = {};
       }
       const name = conceptId.slice("memories/".length);
+      if ((graph.entities.get(`${row.stash_dir}\0${row.file_path}`)?.length ?? 0) > 0) coveredMemoryCount += 1;
       let fileSize =
         typeof document.fileSize === "number" && Number.isFinite(document.fileSize) && document.fileSize >= 0
           ? document.fileSize
@@ -883,9 +1124,34 @@ export function readCurrentRecombineEntries(
         ...(fileSize === undefined ? {} : { fileSize }),
       });
     }
-    return { entries, skippedMissingCanonicalRef, graphStatus: graph.status };
+    const memoryCoverage = entries.length === 0 ? null : coveredMemoryCount / entries.length;
+    const populatedGraphStatus: RecombineGraphStatus =
+      graph.status.availability === "available"
+        ? {
+            ...graph.status,
+            coveredMemoryCount,
+            memoryCount: entries.length,
+            memoryCoverage,
+          }
+        : graph.status;
+    db.exec("COMMIT");
+    transactionOpen = false;
+    return { entries, skippedMissingCanonicalRef, graphStatus: populatedGraphStatus };
+  } catch (error) {
+    if (transactionOpen) {
+      try {
+        db?.exec("ROLLBACK");
+      } catch {
+        // Preserve the read failure when SQLite has already closed the transaction.
+      }
+    }
+    throw error;
   } finally {
-    db.close();
+    try {
+      db?.close();
+    } finally {
+      snapshot.cleanup();
+    }
   }
 }
 
@@ -991,11 +1257,24 @@ function parseArgs(argv: string[]): CliOptions | undefined {
 }
 
 function renderMarkdown(report: RecombineAnalyzerReport): string {
+  const memoryCoverage =
+    report.graph.memoryCoverage === null ? "undefined" : `${(report.graph.memoryCoverage * 100).toFixed(1)}%`;
+  const graphCoverage =
+    report.graph.availability === "available"
+      ? `${report.graph.coveredMemoryCount}/${report.graph.memoryCount} memories (${memoryCoverage}); ${report.graph.fileCount} files; ${report.graph.entityCount} entities`
+      : report.graph.availability === "degraded"
+        ? "unavailable"
+        : "not requested";
   const lines = [
     "# Recombine candidate analysis",
     "",
     `Read-only: yes`,
-    `Graph: ${report.graph.availability}${report.graph.degradedReason ? ` (${report.graph.degradedReason})` : ""}`,
+    `Graph status: ${report.graph.availability}`,
+    `Graph coverage: ${graphCoverage}`,
+    ...(report.graph.degradedReason ? [`Graph detail: ${report.graph.degradedReason}`] : []),
+    ...(report.graph.availability === "degraded" && report.options.relatedness === "both"
+      ? ["Graph fallback: tags"]
+      : []),
     `Clusters: ${report.summary.clusterCount} formed, ${report.summary.selectedClusterCount} selected`,
     `Eligible memories: ${report.summary.eligibleMemoryCount} (${report.summary.excludedSessionTelemetry} telemetry and ${report.summary.excludedDerived} derived excluded)`,
     `Observe pass worthwhile: ${report.decision.observePassWorthwhile ? "yes" : "no"}`,

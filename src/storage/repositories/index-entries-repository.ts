@@ -198,18 +198,20 @@ function getUpsertStmts(db: Database): UpsertStmts {
  * ordering keeps results deterministic). Returns `null` when no derived
  * child has been indexed for this parent.
  */
-export function getDerivedForParent(db: Database, parentRef: string): DbIndexedEntry | null {
+export function getDerivedForParent(db: Database, parentRef: string, stashDir?: string): DbIndexedEntry | null {
   if (!parentRef) return null;
   try {
+    const sourceScope = stashDir ? "AND stash_dir = ?" : "";
     const row = db
       .prepare(
         `SELECT ${ENTRY_COLUMNS}
          FROM entries
          WHERE derived_from = ?
+         ${sourceScope}
          ORDER BY id DESC
          LIMIT 1`,
       )
-      .get(parentRef) as EntryRow | undefined;
+      .get(parentRef, ...(stashDir ? [stashDir] : [])) as EntryRow | undefined;
     if (!row) return null;
     return rowToIndexedEntry(row, "getDerivedForParent");
   } catch {

@@ -6,8 +6,9 @@ import { displayRef } from "../../core/asset/resolve-ref";
 import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { getDerivedForParent } from "../../storage/repositories/index-entries-repository";
+import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getRenderer } from "../walk/file-context";
+import { attachSearchHitAttribution } from "./search-attribution";
 
 export interface SearchHitContext {
   type: string;
@@ -75,13 +76,17 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     // column now stores this same conceptId grammar (Group-C item 2 flip — the
     // metadata producer + this consumer move together).
     const parentRef = `memories/${hit.name}`;
-    const derived = getDerivedForParent(ctx.db, parentRef);
+    const derived = getDerivedForParent(ctx.db, parentRef, ctx.stashDir);
     if (!derived) return;
 
     // Swap description / searchHints / tags from the derived child.
     // The parent ref itself is preserved — only the surface text is swapped.
+    const surfaceFields: Array<"description" | "tags"> = [];
+    let surfaceDescription: string | undefined;
     if (typeof derived.entry.description === "string" && derived.entry.description.length > 0) {
       hit.description = derived.entry.description;
+      surfaceDescription = derived.entry.description;
+      surfaceFields.push("description");
     }
     if (Array.isArray(derived.entry.searchHints) && derived.entry.searchHints.length > 0) {
       // We don't have a `searchHints` field on SourceSearchHit today — it's
@@ -91,10 +96,22 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     }
     if (Array.isArray(derived.entry.tags) && derived.entry.tags.length > 0) {
       hit.tags = derived.entry.tags;
+      surfaceFields.push("tags");
     }
     // F4b output-spelling flip: `expandTo` is a user-facing `akm show <ref>`
     // target, so emit the 0.9.0 short conceptId grammar (`memories/<name>`).
     hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
+    const childRef = getItemRefById(ctx.db, derived.id);
+    if (childRef && surfaceFields.length > 0) {
+      attachSearchHitAttribution(hit, {
+        memoryInference: {
+          exposure: "surface",
+          childRef,
+          surfaceFields,
+          ...(surfaceDescription ? { surfaceDescription } : {}),
+        },
+      });
+    }
   },
 };
 

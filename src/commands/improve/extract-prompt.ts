@@ -19,6 +19,9 @@
 import promptTemplate from "../../assets/prompts/extract-session.md" with { type: "text" };
 import type { InlineRefMention, SessionData, SessionEvent } from "../../integrations/session-logs/types";
 
+const EXTRACT_CANDIDATE_NAME_PATTERN = "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$";
+const EXTRACT_CANDIDATE_NAME_RE = new RegExp(EXTRACT_CANDIDATE_NAME_PATTERN);
+
 /**
  * JSON Schema for the structured extract output. Passed to `chatCompletion`
  * when the configured LLM connection has `supportsJsonSchema: true`.
@@ -53,7 +56,7 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
           name: {
             type: "string",
             description: "Kebab-case slug, optionally under one stable scope/domain segment.",
-            pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$",
+            pattern: EXTRACT_CANDIDATE_NAME_PATTERN,
           },
           description: {
             type: "string",
@@ -238,7 +241,7 @@ export function parseExtractPayload(stdout: string): ExtractPayload {
     const c = raw as Record<string, unknown>;
     const type = c.type;
     if (type !== "memory" && type !== "lesson" && type !== "knowledge") continue;
-    if (typeof c.name !== "string" || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(c.name)) continue;
+    if (typeof c.name !== "string" || !EXTRACT_CANDIDATE_NAME_RE.test(c.name)) continue;
     if (typeof c.description !== "string" || c.description.trim().length < 20) continue;
     if (typeof c.body !== "string" || c.body.trim().length < 50) continue;
     if (typeof c.confidence !== "number" || !Number.isFinite(c.confidence)) continue;

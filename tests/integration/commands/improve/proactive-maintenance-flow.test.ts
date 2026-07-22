@@ -104,8 +104,7 @@ describe("proactive maintenance — explicitly disabled", () => {
     const res = await akmImprove({
       scope: "skill",
       stashDir: stash,
-      // The `default` profile now ships proactiveMaintenance ON (the sustaining
-      // lane), so this test must disable it explicitly to pin the "off" behaviour.
+      // Keep the opt-out explicit so this test does not depend on a shipped preset.
       config: enabledConfig({ enabled: false }),
       ...noopIndexFns,
       reflectFn: async ({ ref }) => {

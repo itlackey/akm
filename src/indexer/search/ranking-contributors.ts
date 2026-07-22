@@ -8,6 +8,7 @@ import type { ScopedUtilityRow, UtilityScoreRow } from "../../storage/repositori
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
 import type { RankedEntryInput } from "./ranking-types";
+import { attachSearchHitAttribution } from "./search-attribution";
 
 /**
  * Chunk 1.5 (D1.5-5) — retyped from `Record<string, number>` to a FULL
@@ -95,6 +96,7 @@ export interface RankingContributor {
   name: string;
   appliesTo(item: RankedEntryInput, ctx: RankingContext): boolean;
   adjust(item: RankedEntryInput, ctx: RankingContext): number;
+  applied?(item: RankedEntryInput, ctx: RankingContext, contribution: number): void;
 }
 
 export interface UtilityRankingContext extends RankingContext {
@@ -338,6 +340,19 @@ const graphRankingContributor: RankingContributor = {
   adjust(item, ctx) {
     return ctx.graphContext ? computeGraphBoost(ctx.graphContext, item.filePath) : 0;
   },
+  applied(item, ctx, contribution) {
+    if (!ctx.graphContext || contribution <= 0) return;
+    const graphNode = ctx.graphContext.nodesByPath.get(item.filePath);
+    attachSearchHitAttribution(item, {
+      graphExtraction: {
+        boost: contribution,
+        ...(graphNode?.bodyHash ? { bodyHash: graphNode.bodyHash } : {}),
+        ...((graphNode?.extractionRunId ?? ctx.graphContext.graph.telemetry?.extractionRunId)
+          ? { extractionRunId: graphNode?.extractionRunId ?? ctx.graphContext.graph.telemetry?.extractionRunId }
+          : {}),
+      },
+    });
+  },
 };
 
 /**
@@ -575,7 +590,11 @@ export function applyScoreContributors(
   let boostSum = 0;
   for (const contributor of contributors) {
     if (!contributor.appliesTo(item, ctx)) continue;
+    const cappedBefore = Math.min(boostSum, MAX_BOOST_SUM);
     boostSum += contributor.adjust(item, ctx);
+    // Attribution receives only the share admitted by the common boost cap,
+    // never a raw contributor value that scoring discarded.
+    contributor.applied?.(item, ctx, Math.min(boostSum, MAX_BOOST_SUM) - cappedBefore);
   }
   item.score *= 1 + Math.min(boostSum, MAX_BOOST_SUM);
 }

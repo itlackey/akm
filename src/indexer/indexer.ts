@@ -1037,9 +1037,9 @@ function persistDirRecords(
     }
   }
 
-  // Cross-stash dedup: track indexed assets by content identity
-  // (type + filename + description) so the same asset from a lower-priority
-  // stash root is skipped when a higher-priority root already covers it.
+  // Cross-stash dedup: track indexed assets by type + entry.name so a
+  // lower-priority stash row with the same logical index identity is skipped
+  // when a higher-priority root already covers it.
   // Sources are ordered by priority (primary stash first), so the first
   // occurrence wins.
   const indexedAssetIdentities = new Set<string>();

@@ -327,19 +327,25 @@ function inspectIndexDbArtifact(filePath: string): MigrationArtifactState {
   }
 }
 
-/** Recoverability inspection per artifact (state.db live ledger; workflow.db frozen copy; index.db quick_check). */
+export interface MigrationInspectionPaths {
+  stateDbPath?: string;
+  workflowDbPath?: string;
+  indexDbPath?: string;
+}
+
+/** Recoverability inspection per artifact, optionally against caller-owned SQLite snapshots. */
 function inspectLedgerArtifact(name: Exclude<ArtifactName, "config.json">, filePath: string): MigrationArtifactState {
   if (name === "state.db") return inspectSqlite(filePath, STATE_MIGRATIONS);
   if (name === "workflow.db") return inspectSqliteSealed(filePath, WORKFLOW_MIGRATIONS_CHECKSUMS);
   return inspectIndexDbArtifact(filePath);
 }
 
-export function inspectMigrationState(): MigrationState {
+export function inspectMigrationState(paths: MigrationInspectionPaths = {}): MigrationState {
   return {
     config: inspectConfig(getConfigPath()),
-    state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
-    workflow: inspectSqliteSealed(getLegacyWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
-    index: inspectIndexDbArtifact(getDbPath()),
+    state: inspectSqlite(paths.stateDbPath ?? getStateDbPathInDataDir(), STATE_MIGRATIONS),
+    workflow: inspectSqliteSealed(paths.workflowDbPath ?? getLegacyWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
+    index: inspectIndexDbArtifact(paths.indexDbPath ?? getDbPath()),
   };
 }
 
@@ -841,8 +847,11 @@ function activeWorkflowClaims(): string[] {
 }
 
 /** Caller must hold the maintenance start barrier while checking and replacing artifacts. */
-export function assertNoArtifactReplacementBlockers(bundlePath?: string): void {
-  const blockers = [...activeRestoreLocks(bundlePath), ...activeWorkflowClaims()];
+export function assertNoArtifactReplacementBlockers(
+  bundlePath?: string,
+  options?: { skipWorkflowClaims?: boolean },
+): void {
+  const blockers = [...activeRestoreLocks(bundlePath), ...(options?.skipWorkflowClaims ? [] : activeWorkflowClaims())];
   if (blockers.length > 0) {
     const prefix = "Refusing artifact replacement while AKM locks, activities, or workflow leases are active: ";
     const omission = " ... additional blockers omitted.";
@@ -1300,6 +1309,7 @@ function recoverInterruptedRestore(): void {
 
 /** Caller must hold the config lock and maintenance barrier. */
 export function recoverInterruptedRestoreWithLocksHeld(): void {
+  if (!fs.existsSync(restoreJournalPath())) return;
   assertNoArtifactReplacementBlockers();
   recoverInterruptedRestore();
 }

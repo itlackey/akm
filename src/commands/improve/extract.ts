@@ -14,9 +14,9 @@
  * Architectural notes:
  *   - Stateless. All file/LLM access goes through injectable seams so tests
  *     never touch a real platform.
- *   - Bounded LLM call routed through `callStructured` under the
- *     `session_extraction` gate (default-on; opt out via
- *     `improve.strategies.<name>.processes.extract.enabled: false`).
+ *   - Bounded LLM call routed through `callStructured`. Improve-stage
+ *     enablement comes from the active strategy; explicit `akm extract` always
+ *     runs regardless of that stage toggle.
  *   - Proposals routed via `createProposal({ source: "extract", ... })` — the
  *     same review queue as reflect / distill / consolidate. Never direct-write.
  *   - Per-candidate body assembly merges description (+ when_to_use for lessons)

@@ -20,6 +20,11 @@ import { isTransientStashPath } from "../../core/paths";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
+import {
+  type AttributionProjection,
+  getSearchHitAttribution,
+  usageEventAttributionMetadata,
+} from "../../indexer/search/search-attribution";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { bumpUtilityScoresBatch } from "../../storage/repositories/index-utility-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
@@ -41,6 +46,13 @@ import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositori
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
+
+interface SearchEventLoggingInput {
+  skipLogging?: boolean;
+  eventSource?: UsageEventSource;
+  disableScopedUtility?: boolean;
+  attributionProjection?: AttributionProjection;
+}
 
 export async function akmSearch(input: {
   query: string;
@@ -93,6 +105,8 @@ export async function akmSearch(input: {
    * so events can be filtered out of user-facing history.
    */
   eventSource?: UsageEventSource;
+  /** Internal projection used only to decide whether derived surface content was emitted. */
+  attributionProjection?: AttributionProjection;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -139,7 +153,7 @@ export async function akmSearch(input: {
       warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
+    maybeLogSearchEvent(input, query, response);
     return response;
   }
   // Primary stash directory — used for DB path lookups and as the default
@@ -190,15 +204,7 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    if (!input.skipLogging) {
-      logSearchEvent(
-        query,
-        response,
-        localResult?.mode ?? "keyword",
-        input.eventSource,
-        input.disableScopedUtility === true,
-      );
-    }
+    maybeLogSearchEvent(input, query, response, localResult?.mode ?? "keyword");
     return response;
   }
 
@@ -235,8 +241,7 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging)
-      logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
+    maybeLogSearchEvent(input, query, response);
     return response;
   }
 
@@ -255,9 +260,25 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  if (!input.skipLogging)
-    logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
+  maybeLogSearchEvent(input, query, response);
   return response;
+}
+
+function maybeLogSearchEvent(
+  input: SearchEventLoggingInput,
+  query: string,
+  response: SearchResponse,
+  mode?: "semantic" | "keyword",
+): void {
+  if (input.skipLogging) return;
+  logSearchEvent(
+    query,
+    response,
+    mode,
+    input.eventSource,
+    input.disableScopedUtility === true,
+    input.attributionProjection,
+  );
 }
 
 /**
@@ -266,8 +287,8 @@ export async function akmSearch(input: {
 function resolveEntryIds(
   db: import("../../storage/database").Database,
   hits: SourceSearchHit[],
-): Array<{ entryId: number; ref: string }> {
-  const results: Array<{ entryId: number; ref: string }> = [];
+): Array<{ entryId: number; ref: string; hit: SourceSearchHit }> {
+  const results: Array<{ entryId: number; ref: string; hit: SourceSearchHit }> = [];
   for (const hit of hits) {
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
@@ -277,7 +298,7 @@ function resolveEntryIds(
         // come from the resolved item, never raw input).
         const itemRef = getItemRefById(db, entryId);
         if (itemRef !== null) {
-          results.push({ entryId, ref: itemRef });
+          results.push({ entryId, ref: itemRef, hit });
         }
       }
     } catch {
@@ -308,6 +329,7 @@ function logSearchEvent(
   mode: "semantic" | "keyword" = "keyword",
   eventSource: UsageEventSource = "user",
   disableScopedUtility = false,
+  attributionProjection: AttributionProjection = "full",
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
@@ -332,12 +354,13 @@ function logSearchEvent(
         const stashHitCount = response.hits.length;
         const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
         withStateDbTelemetry((stateDb) => {
-          for (const { entryId, ref } of resolved) {
+          for (const { entryId, ref, hit } of resolved) {
             insertUsageEvent(stateDb, {
               event_type: "search",
               query,
               entry_id: entryId,
               entry_ref: ref,
+              metadata: usageEventAttributionMetadata(getSearchHitAttribution(hit), ref, attributionProjection),
               source: eventSource,
             });
           }

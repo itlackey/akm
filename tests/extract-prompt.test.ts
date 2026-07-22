@@ -28,6 +28,32 @@ function sampleData(overrides: Partial<SessionData> = {}): SessionData {
   };
 }
 
+function extractCandidateNamePattern(): RegExp {
+  const nameSchema = (
+    EXTRACT_JSON_SCHEMA as {
+      properties: { candidates: { items: { properties: { name: { pattern: string } } } } };
+    }
+  ).properties.candidates.items.properties.name;
+  return new RegExp(nameSchema.pattern);
+}
+
+function parseCandidateNamed(name: string): ExtractPayload {
+  return parseExtractPayload(
+    JSON.stringify({
+      candidates: [
+        {
+          type: "memory",
+          name,
+          description: "This candidate has a complete description long enough for extraction.",
+          body: "This candidate body is deliberately long enough to pass the parser's minimum body-length validation.",
+          confidence: 0.8,
+          evidence: "representative parser test",
+        },
+      ],
+    }),
+  );
+}
+
 // ── Schema shape ────────────────────────────────────────────────────────────
 
 describe("EXTRACT_JSON_SCHEMA", () => {
@@ -77,6 +103,28 @@ describe("EXTRACT_JSON_SCHEMA", () => {
 // ── Prompt builder ──────────────────────────────────────────────────────────
 
 describe("buildExtractPrompt", () => {
+  test("keeps the live candidate contract aligned with the strict schema", () => {
+    const prompt = buildExtractPrompt({ data: sampleData(), events: [], inlineRefs: [] });
+    const candidateProperties = (
+      EXTRACT_JSON_SCHEMA as {
+        properties: { candidates: { items: { properties: Record<string, unknown> } } };
+      }
+    ).properties.candidates.items.properties;
+    const outputContract = prompt.split("## Output contract")[1]?.split("## Rules")[0] ?? "";
+    const documentedCandidateKeys = [...outputContract.matchAll(/^ {6}"([^"]+)":/gm)].map((match) => match[1]);
+    const nameGuidance = outputContract.match(/^ {6}"name": "([^"]+)"/m)?.[1] ?? "";
+    const documentedNameExamples = [...nameGuidance.matchAll(/e\.g\. ([a-z0-9/-]+)/g)].flatMap((match) =>
+      match[1] ? [match[1]] : [],
+    );
+
+    expect(documentedCandidateKeys).toEqual(Object.keys(candidateProperties));
+    expect(documentedNameExamples).toEqual(["jwt-token", "auth/jwt-token"]);
+    for (const name of documentedNameExamples) expect(extractCandidateNamePattern().test(name)).toBe(true);
+    expect(prompt).not.toContain("orderedActions");
+    expect(prompt).not.toContain("outcomeData");
+    expect(prompt).not.toMatch(/\baction[- ]sequence(?:-shaped)?\b|\bordered steps\b/i);
+  });
+
   test("interpolates harness, title, dates, project hint into the template", () => {
     const prompt = buildExtractPrompt({ data: sampleData(), events: [], inlineRefs: [] });
     expect(prompt).toContain("claude-code");
@@ -220,6 +268,42 @@ describe("parseExtractPayload", () => {
     const out = parseExtractPayload(JSON.stringify(payload));
     expect(out.candidates).toHaveLength(1);
     expect(out.candidates[0]).toMatchObject({ type: "memory", name: "auth-uses-jwt", confidence: 0.85 });
+  });
+
+  test("preserves representative scoped names accepted by the strict schema", () => {
+    const namePattern = extractCandidateNamePattern();
+    const names = ["auth/jwt-token", "platform-ops/deploy-vpn", "a/b"];
+
+    for (const name of names) {
+      expect(namePattern.test(name)).toBe(true);
+      expect(parseCandidateNamed(name).candidates[0]?.name).toBe(name);
+    }
+  });
+
+  test("schema and parser reject unsafe candidate names", () => {
+    const namePattern = extractCandidateNamePattern();
+    const names = [
+      "/absolute-name",
+      "C:\\absolute-name",
+      ".",
+      "..",
+      "scope/.",
+      "scope/..",
+      "scope//empty",
+      "scope/",
+      "scope\\backslash",
+      "scope/\0control",
+      "scope/\ncontrol",
+      ["memory", "legacy-ref"].join(":"),
+      "bundle//qualified-ref",
+      "../traversal",
+      "scope/../../traversal",
+    ];
+
+    for (const name of names) {
+      expect(namePattern.test(name)).toBe(false);
+      expect(parseCandidateNamed(name).candidates).toHaveLength(0);
+    }
   });
 
   test("parses a lesson candidate with when_to_use", () => {

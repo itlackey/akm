@@ -81,11 +81,10 @@ async function buildIndex(stashDir: string): Promise<void> {
 // guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
 // guard. (A dedicated suite covers the minPoolSize guard itself.)
 //
-// proactiveMaintenance is ALSO disabled here: the `default` profile now ships it
-// ON (the sustaining lane), but these tests pin the signal-delta /
-// high-salience SELECTION gates in isolation. The proactive lane deliberately
-// selects never-reflected refs regardless of signal, which is a separate
-// behaviour covered by proactive-maintenance-flow.test.ts; leaving it on here
+// proactiveMaintenance is ALSO disabled explicitly because these tests pin the
+// signal-delta / high-salience SELECTION gates in isolation. The opt-in lane
+// deliberately selects never-reflected refs regardless of signal. That separate
+// behaviour is covered by proactive-maintenance-flow.test.ts; leaving it on here
 // would mask the gate each test is asserting.
 function configWithoutPoolGuard(): import("../../../../src/core/config/config").AkmConfig {
   return withTestImproveLlm({
@@ -288,7 +287,7 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(), // isolate the signal-delta gate from the now-default-on proactive lane
+      config: configWithoutPoolGuard(), // isolate the signal-delta gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -721,7 +720,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(), // isolate the high-salience gate from the now-default-on proactive lane
+      config: configWithoutPoolGuard(), // isolate the high-salience gate from proactive selection
       limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -754,7 +753,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(), // isolate the high-salience gate from the now-default-on proactive lane
+      config: configWithoutPoolGuard(), // isolate the high-salience gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {

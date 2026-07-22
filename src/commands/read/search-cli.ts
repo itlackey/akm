@@ -95,6 +95,7 @@ export const searchCommand = defineJsonCommand({
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
     const includeSessions = args["include-sessions"];
+    const outputMode = getOutputMode();
     const result = await akmSearch({
       query,
       type,
@@ -107,6 +108,7 @@ export const searchCommand = defineJsonCommand({
       disableProjectContext: noProjectContext,
       disableScopedUtility: noProjectContext,
       eventSource: resolveUsageEventSource(),
+      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });
     output("search", result);
   },
@@ -145,7 +147,15 @@ export const curateCommand = defineJsonCommand({
     const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
     const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
     const source = parseSearchSource(args.source ?? "stash");
-    const curated = await akmCurate({ query: args.query, type, limit, source, eventSource: resolveUsageEventSource() });
+    const outputMode = getOutputMode();
+    const curated = await akmCurate({
+      query: args.query,
+      type,
+      limit,
+      source,
+      eventSource: resolveUsageEventSource(),
+      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+    });
     output("curate", curated);
   },
 });

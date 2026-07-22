@@ -126,6 +126,20 @@ incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
 built-in `default` strategy before applying their own overrides.
 
+The shipped `default` and `frequent` strategies keep improve-stage session
+extraction off. `proactiveMaintenance` is off in `default` and
+`reflect-distill`; run `akm improve --strategy proactive-maintenance` to use the
+dedicated opt-in preset. Because strategies inherit from `default`, a preset
+that omits either process also inherits the off value. User strategy overrides
+are applied last, so an explicit `enabled: true` still opts the selected
+strategy in.
+
+These improve-stage defaults do not gate explicit standalone extraction through
+`akm extract --type <harness>` or `akm extract --auto`. The interactive
+scheduled-task step also continues to offer the bundled `core/extract` template
+as an unselected opt-in; it is not installed merely because the template is
+bundled.
+
 ## Indexing
 
 `index.indexBodyOpening` defaults to `false`. When enabled, AKM captures the

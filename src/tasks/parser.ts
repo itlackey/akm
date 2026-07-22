@@ -10,7 +10,7 @@
  * ```yaml
  * schedule: "0 9 * * *"
  * # one of:
- * workflow: workflow:daily-backup
+ * workflow: workflows/daily-backup
  * params:
  *   region: us-east-1
  * # ...or:

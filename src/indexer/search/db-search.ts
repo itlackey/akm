@@ -38,16 +38,12 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { searchVec } from "../../storage/repositories/index-vec-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { ensureIndex } from "../ensure-index";
-import {
-  collectGraphRelatedHit,
-  computeGraphBoost,
-  type GraphBoostContext,
-  loadGraphBoostContext,
-} from "../graph/graph-boost";
+import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "../graph/graph-boost";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
 import { resolveProjectContext } from "../walk/project-context";
 import { parseRefPrefixQuery, sanitizeFtsQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
+import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
@@ -416,7 +412,6 @@ async function searchDatabase(
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
   // so that sort order and displayed scores are always consistent).
-  //
   // Ranking philosophy: the goal is to surface the MOST USEFUL result for the
   // user's intent. An exact name match is the strongest signal. Actionable
   // asset types (skills, commands, agents) are more useful than passive
@@ -538,7 +533,8 @@ async function searchDatabase(
 
   const selected = beliefFiltered.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
+    selected.map((ranked) => {
+      const { entry, filePath, score, rankingMode, utilityBoosted } = ranked;
       // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
       // exceed 1.0 (this was a pre-existing breach that #207's graph boost
       // — up to ~1.05 additive contribution — made detectable); clamp here
@@ -557,6 +553,7 @@ async function searchDatabase(
         config,
         utilityBoosted,
         graphContext,
+        attributionSource: ranked,
         rendererRegistry,
         db,
       });
@@ -821,6 +818,7 @@ export async function buildDbHit(input: {
   config?: AkmConfig;
   utilityBoosted?: boolean;
   graphContext?: GraphBoostContext | null;
+  attributionSource?: object;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
   /**
@@ -846,7 +844,7 @@ export async function buildDbHit(input: {
   // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
-  const graphBoost = input.graphContext ? computeGraphBoost(input.graphContext, input.path) : 0;
+  const graphBoost = getSearchHitAttribution(input.attributionSource ?? {})?.graphExtraction?.boost ?? 0;
 
   const whyMatched = buildWhyMatched(
     input.entry,
@@ -891,6 +889,13 @@ export async function buildDbHit(input: {
     ...(graphHit ? { graph: { entities: graphHit.entities, relations: graphHit.relations } } : {}),
   };
 
+  if (input.attributionSource) copySearchHitAttribution(input.attributionSource, hit);
+
+  if (input.entry.derivedFrom) {
+    attachSearchHitAttribution(hit, {
+      memoryInference: { exposure: "direct" },
+    });
+  }
   await enrichSearchHit(hit, {
     type: input.entry.type,
     stashDir: entryStashDir,

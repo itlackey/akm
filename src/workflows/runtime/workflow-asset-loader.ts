@@ -48,14 +48,6 @@ export type WorkflowAsset = {
 };
 
 /**
- * Parse a workflow ref in EITHER grammar: the new-grammar conceptId
- * (`[bundle//]workflows/<name>`, the canonical spelling — also the durable
- * `workflow_runs.workflow_ref` run-key, re-keyed by the chunk-8 cutover per
- * normative §11.4) OR the pre-cutover legacy `[origin//]workflow:<name>`
- * still found in un-migrated rows/inputs.
- * Returns the {@link AssetRef} `{type, name, origin}` shape.
- */
-/**
  * The canonical durable `workflow_runs.workflow_ref` run-key:
  * `[origin//]workflows/<canonical-name>` (normative §11.4 — the chunk-8
  * cutover re-keys pre-existing legacy rows onto this spelling; every mint
@@ -65,24 +57,9 @@ export function canonicalWorkflowRunRef(origin: string | undefined, canonicalNam
   return `${origin ? `${origin}//` : ""}workflows/${canonicalName}`;
 }
 
-/**
- * DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): a tolerant
- * dual-grammar reader. The legacy `[origin//]workflow:<name>` arm survives ONLY
- * to keep parsing pre-Chunk-8 durable rows that still carry the old spelling on
- * disk / in state; the canonical arm delegates to `parseRefInput`. Input-side
- * tolerance only — every WRITE mints through `canonicalWorkflowRunRef`. Remove
- * the legacy arm at the 0.10.0 grammar removal, once un-migrated rows are gone.
- */
+/** Parse a workflow ref using the canonical `[bundle//]workflows/<name>` grammar. */
 export function parseWorkflowRefInput(ref: string): AssetRef {
-  const trimmed = ref.trim();
-  const boundary = trimmed.indexOf("//");
-  const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
-  const LEGACY_PREFIX = "workflow:";
-  if (body.startsWith(LEGACY_PREFIX)) {
-    const origin = boundary > 0 ? trimmed.slice(0, boundary) : undefined;
-    return { type: "workflow", name: body.slice(LEGACY_PREFIX.length), origin };
-  }
-  return parseRefInput(trimmed);
+  return parseRefInput(ref.trim());
 }
 
 /**
@@ -93,7 +70,7 @@ export function parseWorkflowRefInput(ref: string): AssetRef {
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   const parsed = parseWorkflowRefInput(ref);
   if (parsed.type !== "workflow") {
-    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${ref}".`);
+    throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${ref}".`);
   }
 
   const config = loadConfig();
@@ -117,7 +94,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   }
 
   const resolvedSourcePath = sourcePath ?? resolveStashDir() ?? assetPath;
-  // Canonicalize the stored ref: `workflow:foo.yaml` and `workflow:foo`
+  // Canonicalize the stored ref: `workflows/foo.yaml` and `workflows/foo`
   // resolve to the same file, so they MUST share one run identity. The raw
   // `parsed.name` (with any extension) is what drives file resolution above;
   // only the persisted/queried ref is collapsed (matches the index entry key,

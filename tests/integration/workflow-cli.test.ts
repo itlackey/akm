@@ -7,10 +7,26 @@ import { createMigrationBackup } from "../../src/core/migration-backup";
 import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { parseWorkflow } from "../../src/workflows/parser";
+import { parseWorkflowRefInput } from "../../src/workflows/runtime/workflow-asset-loader";
 import { runCliCapture } from "../_helpers/cli";
 import { withEnvSync } from "../_helpers/sandbox";
 
 const tempDirs: string[] = [];
+
+test("workflow runtime accepts only canonical conceptId refs", () => {
+  expect(parseWorkflowRefInput("workflows/release")).toEqual({
+    type: "workflow",
+    name: "release",
+    origin: undefined,
+  });
+  expect(parseWorkflowRefInput("team//workflows/release")).toEqual({
+    type: "workflow",
+    name: "release",
+    origin: "team",
+  });
+  expect(() => parseWorkflowRefInput("workflow:release")).toThrow();
+  expect(() => parseWorkflowRefInput("team//workflow:release")).toThrow();
+});
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

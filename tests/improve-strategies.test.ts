@@ -29,6 +29,41 @@ describe("resolveImproveStrategy", () => {
     expect(selected.config.processes?.proactiveMaintenance?.enabled).toBe(false);
   });
 
+  test("explicit user opt-ins override inherited built-in process defaults", () => {
+    const defaultStrategy = resolveImproveStrategy("default", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              extract: { enabled: true },
+              proactiveMaintenance: { enabled: true },
+            },
+          },
+        },
+      },
+    });
+    const frequent = resolveImproveStrategy("frequent", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: { frequent: { processes: { extract: { enabled: true } } } },
+      },
+    });
+    const reflectDistill = resolveImproveStrategy("reflect-distill", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          "reflect-distill": { processes: { proactiveMaintenance: { enabled: true } } },
+        },
+      },
+    });
+
+    expect(defaultStrategy.config.processes?.extract?.enabled).toBe(true);
+    expect(defaultStrategy.config.processes?.proactiveMaintenance?.enabled).toBe(true);
+    expect(frequent.config.processes?.extract?.enabled).toBe(true);
+    expect(reflectDistill.config.processes?.proactiveMaintenance?.enabled).toBe(true);
+  });
+
   test("uses defaults.improveStrategy before the built-in default", () => {
     const selected = resolveImproveStrategy(undefined, {
       configVersion: "0.9.0",

@@ -34,6 +34,7 @@ import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction"
 import { lookup } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
+import { usageEventAttributionMetadata } from "../../indexer/search/search-attribution";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { buildFileContext, buildRenderContext, getRenderer } from "../../indexer/walk/file-context";
@@ -45,6 +46,7 @@ import { closeDatabase, openExistingDatabase } from "../../storage/repositories/
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import {
   findEntryIdByRef,
+  getEntryById,
   getEntryIdByFilePath,
   getItemRefById,
 } from "../../storage/repositories/index-entries-repository";
@@ -81,6 +83,8 @@ export async function akmShowUnified(input: {
    * so events can be filtered out of user-facing history.
    */
   eventSource?: UsageEventSource;
+  /** Internal nested reads can render without recording a second user consumption row. */
+  skipLogging?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -108,11 +112,13 @@ export async function akmShowUnified(input: {
     enforceScopeOrThrow(result.path, ref, input.scope);
   }
   // Count prior shows of this ref before logging the current one.
-  const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref, input.eventSource, result.path, result.origin);
-  if (priorShowCount >= 2) {
-    // Agent has shown this same asset 3+ times — inject a loop-break hint.
-    (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
+  if (!input.skipLogging) {
+    const priorShowCount = recentShowCount(ref);
+    logShowEvent(ref, input.eventSource, result.path, result.origin);
+    if (priorShowCount >= 2) {
+      // Agent has shown this same asset 3+ times — inject a loop-break hint.
+      (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
+    }
   }
   return result;
 }
@@ -265,11 +271,16 @@ function logShowEvent(
         // unresolved / not-yet-indexed show. entry_id/item_ref resolve from
         // index.db (`db`); the usage_events write lands in state.db (WI-8.3).
         const entryRef = (entryId !== undefined ? getItemRefById(db, entryId) : null) ?? eventRef;
+        const entry = entryId !== undefined ? getEntryById(db, entryId) : undefined;
         withStateDbTelemetry((stateDb) => {
           insertUsageEvent(stateDb, {
             event_type: "show",
             entry_ref: entryRef,
             entry_id: entryId,
+            metadata: usageEventAttributionMetadata(
+              entry?.entry.derivedFrom ? { memoryInference: { exposure: "direct" } } : undefined,
+              entryRef,
+            ),
             source: eventSource,
           });
         }, TELEMETRY_BUSY_TIMEOUT_MS);

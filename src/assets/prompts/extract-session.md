@@ -46,21 +46,17 @@ Respond with EXACTLY one JSON object matching this shape:
   "candidates": [
     {
       "type": "memory" | "lesson" | "knowledge",
-      "name": "<kebab-case-slug>",
+      "name": "<kebab-case name, e.g. jwt-token; optionally under one kebab-case scope, e.g. auth/jwt-token>",
       "description": "<one sentence 20-400 chars>",
       "when_to_use": "<one sentence 15-400 chars; REQUIRED only when type=lesson>",
       "body": "<markdown body, 200-3000 chars typical>",
       "confidence": <number 0.0-1.0>,
-      "evidence": "<one-line pointer to the moment in the session>",
-      "orderedActions": ["<action-1>", "<action-2>", ...],
-      "outcomeData": "<one sentence describing the outcome of the action sequence>"
+      "evidence": "<one-line pointer to the moment in the session>"
     }
   ],
   "rationale_if_empty": "<one sentence; REQUIRED when candidates is empty>"
 }
 ```
-
-`orderedActions` and `outcomeData` are **optional**. Include them only when the candidate represents a recurring action sequence (e.g. a recovery procedure, a build-fix recipe, a deployment checklist) where preserving the ordered steps adds future value. When present, `outcomeData` is required and must describe what happened when the sequence completed (success or failure). Omit both fields entirely for standalone facts, observations, or lessons that are not action-sequence-shaped.
 
 ## Rules
 

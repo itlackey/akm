@@ -49,6 +49,7 @@
  *    reads the durable `item_ref` directly.
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { warn } from "../../core/warn";
@@ -351,20 +352,28 @@ export function migratePilotTreatmentFiles(
         return `${prefix}${target}${suffix}`;
       })
       .join("\n");
-    if (rewritten === original) continue;
-    const tmp = `${file}.tmp-${process.pid}`;
+    if (rewritten === original) {
+      fsyncPilotTreatmentDirectory(path.dirname(file));
+      continue;
+    }
+    const mode = fs.statSync(file).mode & 0o777;
+    const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
+    let ownsTmp = false;
     try {
-      const fd = fs.openSync(tmp, "w", fs.statSync(file).mode & 0o777);
+      const fd = fs.openSync(tmp, "wx", mode);
+      ownsTmp = true;
       try {
+        fs.fchmodSync(fd, mode);
         fs.writeFileSync(fd, rewritten);
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
       }
       fs.renameSync(tmp, file);
+      ownsTmp = false;
       fsyncPilotTreatmentDirectory(path.dirname(file));
     } catch (error) {
-      fs.rmSync(tmp, { force: true });
+      if (ownsTmp) fs.rmSync(tmp, { force: true });
       throw error;
     }
     migrated += 1;
@@ -671,9 +680,18 @@ function ensureCutoverLedger(db: Database): void {
  * (tripping the "state changed outside the journaled transition" guard). The
  * table is created inside the transaction alongside the marker INSERT.
  */
-function cutoverAlreadyMerged(db: Database): boolean {
+function cutoverAlreadyMerged(db: Database, operationId: string): boolean {
   if (!tableExists(db, "main", "akm_cutover_ledger")) return false;
-  return !!db.prepare("SELECT 1 FROM akm_cutover_ledger WHERE singleton = 1").get();
+  const marker = db.prepare("SELECT operation_id FROM akm_cutover_ledger WHERE singleton = 1").get() as
+    | { operation_id: string }
+    | undefined;
+  if (!marker) return false;
+  if (marker.operation_id !== operationId) {
+    throw new CutoverIntegrityError(
+      `state.db cutover marker belongs to operation ${marker.operation_id}, not ${operationId}`,
+    );
+  }
+  return true;
 }
 
 /**
@@ -681,12 +699,15 @@ function cutoverAlreadyMerged(db: Database): boolean {
  * the durable key the boundary ops (index quarantine, workflow.db unlink) and
  * the apply-flow idempotency check consult.
  */
-export function cutoverMergeCommitted(statePath: string): boolean {
+export function cutoverMergeCommitted(statePath: string, operationId?: string): boolean {
   if (!fs.existsSync(statePath)) return false;
   const db = openDatabaseFinalizing(statePath, { readonly: true });
   try {
     if (!tableExists(db, "main", "akm_cutover_ledger")) return false;
-    return !!db.prepare("SELECT 1 FROM akm_cutover_ledger WHERE singleton = 1").get();
+    const marker = db.prepare("SELECT operation_id FROM akm_cutover_ledger WHERE singleton = 1").get() as
+      | { operation_id: string }
+      | undefined;
+    return !!marker && (operationId === undefined || marker.operation_id === operationId);
   } finally {
     db.close();
   }
@@ -711,7 +732,7 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
   try {
     db.exec("PRAGMA busy_timeout = 30000");
 
-    if (cutoverAlreadyMerged(db)) {
+    if (cutoverAlreadyMerged(db, opts.operationId)) {
       return { merged: false, workflowMissing: !fs.existsSync(opts.workflowPath), copied };
     }
 
@@ -904,14 +925,20 @@ const DB_SIDECARS = ["-wal", "-shm"] as const;
  */
 export function quarantineIndexDb(runId: string, indexPath: string): { quarantined: boolean; target?: string } {
   try {
-    if (!fs.existsSync(indexPath)) return { quarantined: false };
     const target = `${indexPath}.pre-cutover-${runId}`;
-    if (fs.existsSync(target)) return { quarantined: true, target }; // already quarantined (resume)
-    fs.renameSync(indexPath, target);
-    for (const suffix of DB_SIDECARS) {
-      const src = `${indexPath}${suffix}`;
-      if (fs.existsSync(src)) fs.renameSync(src, `${target}${suffix}`);
+    const sourceMainExists = fs.existsSync(indexPath);
+    const targetMainExists = fs.existsSync(target);
+    if (sourceMainExists && targetMainExists) return { quarantined: true, target };
+    if (!sourceMainExists && !targetMainExists) return { quarantined: false };
+
+    const remainingSidecars = DB_SIDECARS.filter((suffix) => fs.existsSync(`${indexPath}${suffix}`));
+    if (remainingSidecars.some((suffix) => fs.existsSync(`${target}${suffix}`))) {
+      warn("[akm] three-DB cutover: index.db quarantine sidecar collision; canonical sidecars were preserved.");
+      return { quarantined: targetMainExists, ...(targetMainExists ? { target } : {}) };
     }
+
+    if (sourceMainExists) fs.renameSync(indexPath, target);
+    for (const suffix of remainingSidecars) fs.renameSync(`${indexPath}${suffix}`, `${target}${suffix}`);
     return { quarantined: true, target };
   } catch (error) {
     warn(
@@ -929,7 +956,7 @@ export function quarantineIndexDb(runId: string, indexPath: string): { quarantin
 export function deleteWorkflowDb(workflowPath: string): { deleted: boolean } {
   let deleted = false;
   try {
-    for (const suffix of ["", ...DB_SIDECARS]) {
+    for (const suffix of ["-shm", "-wal", ""] as const) {
       const target = `${workflowPath}${suffix}`;
       if (fs.existsSync(target)) {
         fs.rmSync(target, { force: true });

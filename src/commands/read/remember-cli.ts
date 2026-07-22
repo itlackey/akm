@@ -37,7 +37,13 @@ async function fetchSimilarMemories(
   eventSource: UsageEventSource,
 ): Promise<Array<{ ref: string; title?: string }>> {
   try {
-    const result = await akmSearch({ query, type: "memory", limit: 4, eventSource });
+    const result = await akmSearch({
+      query,
+      type: "memory",
+      limit: 4,
+      eventSource,
+      attributionProjection: "brief",
+    });
     return (result.hits ?? [])
       .filter((h): h is SourceSearchHit => "ref" in h && (h as { ref: string }).ref !== excludeRef)
       .slice(0, 3)

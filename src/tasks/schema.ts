@@ -18,7 +18,7 @@ export const TASK_SCHEMA_VERSION = 2;
 
 export interface TaskWorkflowTarget {
   kind: "workflow";
-  /** A workflow ref, e.g. `workflow:daily-backup`. */
+  /** A workflow ref, e.g. `workflows/daily-backup`. */
   ref: string;
   params: Record<string, unknown>;
 }

@@ -18,7 +18,7 @@
  *
  * Both driver handles are structurally compatible across the small surface AKM
  * uses (`prepare`, `exec`, `run`, `transaction`, `close` on the handle;
- * `get`, `all`, `run` on prepared statements). The Bun-specific `db.query()`
+ * `get`, `all`, `iterate`, `run` on prepared statements). The Bun-specific `db.query()`
  * helper is normalised away — callers use `db.prepare(sql).all(...)` instead.
  *
  * This file is intentionally NOT an adapter/DI/ports-and-adapters layer. It is
@@ -54,11 +54,11 @@ export interface RunResult {
 
 /**
  * A prepared statement, narrowed to the methods AKM calls. Generic over the
- * row shape returned by `get`/`all`. Both drivers accept positional bind
+ * row shape returned by `get`/`all`/`iterate`. Both drivers accept positional bind
  * parameters via rest args.
  *
  * The return types are deliberately wide (`Row | null | undefined` for `get`,
- * and the `Row` element type stays unconstrained for `all`) so that a concrete
+ * and the `Row` element type stays unconstrained for `all`/`iterate`) so that a concrete
  * `bun:sqlite` statement — whose `get()` may return `null` and whose `all()`
  * elements are `Row | undefined` — remains structurally assignable to this
  * type. Every call site in AKM casts the result to its concrete row shape, so
@@ -67,6 +67,7 @@ export interface RunResult {
 export interface Statement<Row = unknown> {
   get(...params: SqlValue[]): Row | null | undefined;
   all(...params: SqlValue[]): Row[];
+  iterate(...params: SqlValue[]): IterableIterator<Row>;
   run(...params: SqlValue[]): RunResult;
 }
 

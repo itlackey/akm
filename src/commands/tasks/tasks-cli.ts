@@ -36,7 +36,7 @@ const tasksAddCommand = defineJsonCommand({
   args: {
     id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
     schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
-    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflow:my-flow)" },
+    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflows/my-flow)" },
     prompt: {
       type: "string",
       description: "Prompt for the configured agent harness — inline text, an asset ref like agent:foo, or ./path.md",

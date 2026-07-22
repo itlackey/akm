@@ -728,15 +728,13 @@ export async function resolveRunId(target: string): Promise<string> {
     const byId = repo.getRunById(target);
     if (byId) return byId.id;
 
-    // Run-id vs workflow-ref: a run id has neither `:` (legacy `workflow:name`)
-    // nor `/` (new-grammar `workflows/name`). F5: fold the `/` arm into the ref
-    // check once the legacy grammar is gone.
+    // Run-id vs workflow-ref: a run id has no `/`; canonical workflow refs do.
     if (!target.includes(":") && !target.includes("/")) {
       throw new NotFoundError(`Workflow run "${target}" not found.`, "WORKFLOW_NOT_FOUND");
     }
     const parsed = parseRefInput(target);
     if (parsed.type !== "workflow") {
-      throw new UsageError(`Expected a workflow run id or workflow ref (workflow:<name>), got "${target}".`);
+      throw new UsageError(`Expected a workflow run id or workflow ref (workflows/<name>), got "${target}".`);
     }
     const ref = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
     const active = repo.getActiveRunRowForScope(ref, getCurrentWorkflowScopeKey());

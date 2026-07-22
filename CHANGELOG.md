@@ -66,6 +66,17 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Added
 
+- **Local downstream value attribution for memory inference and graph
+  extraction.** Private search-hit sidecars now write versioned, source-qualified
+  per-entry `usage_events.metadata` for emitted MI direct/surface value and the
+  active graph contributor's positive applied/capped contribution. Current plain
+  traffic is marked as control, brief/replaced MI surfaces and graph ablations do
+  not claim attribution, and nested curate reads avoid duplicate show rows. The
+  read-only `akm-eval-attribution-rollup` separates user-only exposure,
+  selection/show consumption, current controls, and historical unattributed rows
+  without emitting bodies, query text, or provenance content. Graph contribution
+  is an input attribution signal, not a causal claim that rank changed. No table,
+  migration, dashboard, or health schema was added.
 - **Explicit, crash-resumable 0.9 migration coordination.** `akm migrate
   status` classifies config, `state.db`, and `workflow.db` independently;
   `akm migrate apply [--config <prepared>]` creates a verified,
@@ -359,6 +370,16 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Changed
 
+- **Improve-stage extraction and proactive maintenance now ship opt-in.** The
+  built-in `default` and `frequent` strategies resolve extract off, while
+  `default` and `reflect-distill` resolve `proactiveMaintenance` off. The
+  dedicated `proactive-maintenance` strategy remains enabled. Built-ins such as
+  `thorough` that omit these fields inherit the new `default` off values; user
+  overrides are merged last, so explicit `enabled: true` values still win.
+  Standalone extraction remains independent of the improve-stage toggle but
+  still requires `--type <harness>` or `--auto`. The bundled, unselected
+  `core/extract` task now uses `akm extract --auto`; existing scheduled tasks
+  with invalid bare `akm extract` commands must be updated explicitly.
 - **Indexing dispatches each bundle's detected adapter.** The indexer's per-
   directory scan now resolves the component's adapter (`adapterForId`) and runs
   THAT adapter's `recognize`, instead of always using the `akm` adapter. A

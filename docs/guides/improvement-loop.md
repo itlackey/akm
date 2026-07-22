@@ -68,8 +68,9 @@ akm log list --since 7d --type select --format text
 `akm improve` is the main entry point for the self-improvement pass. It reads
 feedback signals and usage patterns, then runs whichever processes the active
 strategy enables — reflect, distill, consolidate, memory inference, graph
-extraction, and proactive maintenance — to generate proposals. Generated
-proposals always queue for review; there is no auto-accept threshold.
+extraction, session extraction, and proactive maintenance — to generate
+proposals. Generated proposals always queue for review; there is no auto-accept
+threshold.
 
 ```sh
 akm improve                           # Full stash pass
@@ -79,6 +80,12 @@ akm improve --task "reduce duplication"
 akm improve --dry-run                 # Show planned refs without generating proposals
 akm improve --limit 10                # Cap assets processed
 ```
+
+The shipped `default` and `frequent` strategies leave improve-stage session
+extraction off. Proactive maintenance is also opt-in: use `akm improve
+--strategy proactive-maintenance` or explicitly enable the process in your
+selected strategy. Direct extraction commands (`akm extract --type <harness>`
+and `akm extract --auto`) remain independent of the improve-stage toggle.
 
 Selection defaults to assets with recent feedback signals first, with a
 retrieval-count fallback for high-traffic assets that have no feedback yet.

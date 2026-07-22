@@ -23,6 +23,12 @@ import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
+import {
+  type AttributionProjection,
+  copySearchHitAttribution,
+  getSearchHitAttribution,
+  usageEventAttributionMetadata,
+} from "../../indexer/search/search-attribution";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
@@ -92,6 +98,8 @@ export interface CurateOptions {
    * recorded as user demand (was previously hardcoded to "user").
    */
   eventSource?: UsageEventSource;
+  /** Internal projection used only to decide whether derived surface content was emitted. */
+  attributionProjection?: AttributionProjection;
 }
 
 const CURATE_FALLBACK_FILTER_WORDS = new Set([
@@ -150,7 +158,12 @@ const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
  * Never blocks the caller; errors are silently ignored.
  */
-function logCurateEvent(query: string, result: CurateResponse, eventSource: UsageEventSource = "user"): void {
+function logCurateEvent(
+  query: string,
+  result: CurateResponse,
+  eventSource: UsageEventSource = "user",
+  attributionProjection: AttributionProjection = "full",
+): void {
   const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
   appendEvent({
     eventType: "curate",
@@ -170,7 +183,7 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
             const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
             // Post-flip the resolved row carries `item_ref`; fall back to the
             // item's own (new-grammar) ref for an unresolved straggler.
-            return { entryRef: itemRef ?? item.ref, entryId };
+            return { entryRef: itemRef ?? item.ref, entryId, item };
           });
         withStateDbTelemetry((stateDb) => {
           insertUsageEvent(stateDb, {
@@ -182,12 +195,13 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
             }),
             source: eventSource,
           });
-          for (const { entryRef, entryId } of perItem) {
+          for (const { entryRef, entryId, item } of perItem) {
             insertUsageEvent(stateDb, {
               event_type: "curate",
               query,
               entry_ref: entryRef,
               entry_id: entryId,
+              metadata: usageEventAttributionMetadata(getSearchHitAttribution(item), entryRef, attributionProjection),
               source: eventSource,
             });
           }
@@ -220,7 +234,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       source,
     }));
   const result = await curateSearchResults(options.query, searchResponse, limit, options.type, options.eventSource);
-  logCurateEvent(options.query, result, options.eventSource);
+  logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   return result;
 }
 
@@ -277,7 +291,7 @@ async function enrichCuratedStashHit(
 ): Promise<CuratedStashItem> {
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref, eventSource });
+    shown = await akmShowUnified({ ref: hit.ref, eventSource, skipLogging: true });
   } catch {
     shown = undefined;
   }
@@ -291,7 +305,7 @@ async function enrichCuratedStashHit(
   const preview = buildCuratedPreview(shown, hit);
   const mergedSupportRefs = mergeCurateSupportRefs(supportRefs, shown?.related?.hits, selectedRefs, hit.ref);
 
-  return {
+  const item: CuratedStashItem = {
     source: "stash",
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
@@ -306,6 +320,8 @@ async function enrichCuratedStashHit(
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
+  copySearchHitAttribution(hit, item, item.description);
+  return item;
 }
 
 /**

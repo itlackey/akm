@@ -34,6 +34,9 @@ scripts/akm-eval/bin/akm-eval-trend --limit 20 --metric overall
 
 # Ingest a stash's improve-result.json into a paired-mode-ready summary
 scripts/akm-eval/bin/akm-eval-collect --from-improve-run latest
+
+# Read-only memory-inference and graph-extraction downstream attribution
+scripts/akm-eval/bin/akm-eval-attribution-rollup --format json
 ```
 
 Outputs land in `<stash>/.akm/evals/runs/<eval-run-id>/`:
@@ -396,9 +399,11 @@ JSON file matching the `EvalCase` shape in `src/types.ts`.
 
 `akm-eval-recombine-analyze` estimates whether the current memory index has
 recurring clusters worth an opt-in observe pass. It reads `index.db`
-and its graph tables in SQLite read-only mode. It does not run indexing or an
-LLM, restore the removed recombine process, create proposals, emit events, or
-change stash/state files.
+and its graph tables from a verified private copy of the main database and WAL,
+so it does not create source-directory sidecars. Concurrent changes during
+snapshot capture fail explicitly. It does not run indexing or an LLM, restore
+the removed recombine process, create proposals, emit events, or change
+stash/state files.
 
 ```sh
 scripts/akm-eval/bin/akm-eval-recombine-analyze
@@ -420,7 +425,27 @@ bundle/source scopes before applying entity/tag preferences within each scope.
 `--relatedness graph` fails with remediation guidance when graph tables cannot
 be queried. The default `both` mode falls back to tags but marks the report's
 graph status as `degraded` with the query/schema reason; it never presents that
-fallback as a healthy empty graph analysis.
+fallback as a healthy empty graph analysis. Available graph status includes
+graph-file/unique-entity counts and entity-bearing current-memory coverage, all
+read with the entries from one SQLite transaction snapshot. Graph-only mode
+does not fall back to tags when graph data is available but empty or uncovered.
+
+## Downstream attribution rollup
+
+`akm-eval-attribution-rollup` copies a stable SQLite main/WAL snapshot into a
+private temporary directory without opening the source database through SQLite.
+It includes committed WAL data while creating no source sidecars and changing no
+source files. The disposable snapshot reports user-only memory-inference
+direct/surface exposure and show/curate consumption, graph-ranking exposure and
+selected/shown read-back, current versioned controls, historical unattributed
+rows, and fully-qualified refs. Curate rows become exposure candidates for a
+same-ref show within 60 seconds.
+
+Graph contribution is the positive amount admitted by the active ranking
+contributor after the shared cap. It does not establish that graph caused a rank
+or selection change. Raw query, body, metadata, and provenance content are never
+rendered. The command writes stdout unless `--out` explicitly names a new file;
+it never migrates the database or clobbers an existing path.
 
 ## Exit codes
 
@@ -444,6 +469,7 @@ scripts/akm-eval/
     akm-eval-graph-ablation dispatches to src/graph-ablation.ts (Phase 5, R5)
     akm-eval-replay        dispatches to src/replay.ts (Phase 6)
     akm-eval-recombine-analyze dispatches to the read-only cluster analyzer
+    akm-eval-attribution-rollup dispatches to the read-only attribution report
   src/
     run.ts                 orchestrator (baseline | akm | paired)
     replay.ts              deterministic replay orchestrator (Phase 6)
@@ -451,6 +477,7 @@ scripts/akm-eval/
     trend.ts               N-run trend command
     collect.ts             improve-result.json ingestion command
     recombine-analyzer.ts  read-only current-index cluster analysis
+    attribution-rollup.ts  read-only downstream attribution report
     types.ts               EvalCase, EvalCaseResult, EvalRunResult
     scoring.ts             weighted aggregation
     report.ts              Markdown renderer

@@ -734,9 +734,8 @@ async function resolveRunSpecifier(
     return { run: explicitRun, autoStarted: false };
   }
 
-  // Run-id vs workflow-ref disambiguation: a run id is a bare token (no `:` and
-  // no `/`); a legacy `workflow:name` carries a `:` and a new-grammar
-  // `workflows/name` carries a `/`. F5: fold the `/` arm into the ref check.
+  // Run-id vs workflow-ref disambiguation: a run id is a bare token, while a
+  // canonical `workflows/name` ref carries a `/`.
   if (!specifier.includes(":") && !specifier.includes("/")) {
     throw new NotFoundError(`Workflow run "${specifier}" not found.`, "WORKFLOW_NOT_FOUND");
   }

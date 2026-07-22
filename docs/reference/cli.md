@@ -1905,6 +1905,12 @@ akm improve workflows/release-checklist --task "reduce duplication"
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow.
 
+Built-in `default` and `frequent` leave the improve-stage extract process off,
+and `default` plus `reflect-distill` leave proactive maintenance off. Use the
+explicit `proactive-maintenance` strategy or set the selected strategy's
+process `enabled: true` to opt in. The stage toggle does not disable a direct
+`akm extract --type <harness>` or `akm extract --auto` invocation.
+
 The maintenance pass run by `improve` also expires stale proposals: any pending
 proposal older than `improve.archiveRetentionDays` (default 30) is moved to the
 archive with the reason `expired: no action within retention window` and a

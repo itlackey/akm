@@ -482,9 +482,10 @@ async function runSessionExtractPass(args: {
   // / `akm feedback` invocations. Replaces the akm-plugin session-checkpoint
   // hook with an on-demand pull pipeline.
   //
-  // Default-on; opt out via the ACTIVE profile's `processes.extract.enabled: false`
-  // (#593: the gate respects the resolved improve profile, not just the
-  // hardcoded `default` profile path the legacy feature flag reads).
+  // Runs only when the ACTIVE strategy resolves
+  // `processes.extract.enabled: true` (#593: the gate respects the resolved
+  // improve strategy, not just the hardcoded `default` path the legacy feature
+  // flag read). Shipped `default` and `frequent` strategies leave this off.
   // Each available harness gets one call with the default --since window;
   // already-seen sessions (tracked in state.db.extract_sessions_seen) are
   // skipped automatically so re-runs don't burn LLM calls on unchanged data.
@@ -499,10 +500,10 @@ async function runSessionExtractPass(args: {
   // 22% of improve runs produce zero memory-inference writes because extract
   // finds no new sessions, yet still burns the full extract pipeline. Default 0
   // (disabled) preserves existing always-run behaviour; only opted-in profiles
-  // (e.g. `frequent`) set it. Evaluated BEFORE any LLM call so a skip costs zero
-  // LLM work AND writes nothing — a skipped extract never flags work for the
-  // NEXT run's consolidation mtime-gate (the downstream trigger #554 asks us
-  // to suppress).
+  // (e.g. a user-enabled `frequent` strategy) set it. Evaluated BEFORE any LLM
+  // call so a skip costs zero LLM work AND writes nothing. A skipped extract
+  // never flags work for the NEXT run's consolidation mtime-gate (the
+  // downstream trigger #554 asks us to suppress).
   const EXTRACT_DEFAULT_MIN_NEW_SESSIONS = 0;
   // Read from the ACTIVE resolved profile (not always `default`), matching how
   // `extract.enabled` resolves — otherwise a non-default profile (e.g.

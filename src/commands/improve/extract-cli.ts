@@ -86,7 +86,7 @@ export const extractCommand = defineJsonCommand({
     watch: {
       type: "boolean",
       description:
-        "Watch harness session-log directories and run extract on change (debounced). Stays alive until SIGINT/SIGTERM. Falls back to the */30 cron when off.",
+        "Watch harness session-log directories and run extract on change (debounced). Stays alive until SIGINT/SIGTERM.",
       default: false,
     },
     "debounce-ms": {
@@ -190,8 +190,8 @@ export const extractCommand = defineJsonCommand({
         totalProposals,
         results,
       });
-      // Signal failure to callers/cron when every harness failed. output()
-      // only renders; without this the */30 cron exits 0 on a total failure
+      // Signal failure to callers/schedulers when every harness failed. output()
+      // only renders; without this a scheduled run exits 0 on a total failure
       // and the breakage is invisible to exit-code monitoring. process.exitCode
       // (not process.exit) lets stdout flush and the watcher/timers settle.
       if (!ok) process.exitCode = EXIT_CODES.GENERAL;
@@ -210,8 +210,8 @@ export const extractCommand = defineJsonCommand({
  * injectable + fully unit-tested); it is intentionally not unit-covered.
  *
  * `fs.watch(dir, { recursive: true })` is unreliable for recursive mode on some
- * Node/Bun/Linux combinations — that is acceptable here: missed events degrade
- * to the unchanged scheduled cron fallback, never worse than today.
+ * Node/Bun/Linux combinations. A root that cannot be watched is skipped while
+ * successfully-created watchers continue running.
  */
 function createFsWatchEventSource(roots: string[]): WatchEventSource {
   return {
@@ -228,7 +228,7 @@ function createFsWatchEventSource(roots: string[]): WatchEventSource {
           });
           watchers.push(watcher);
         } catch {
-          // A root that can't be watched is skipped; the cron fallback covers it.
+          // A root that can't be watched is skipped.
         }
       }
       return () => {

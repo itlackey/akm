@@ -590,6 +590,39 @@ report file. Existing output files and any exact, symlinked, or hard-linked
 index/state database path are refused. Use `--help` for the clustering and
 format flags.
 
+## Downstream attribution rollup
+
+```sh
+scripts/akm-eval/bin/akm-eval-attribution-rollup [--format md|json]
+```
+
+This standalone report copies a stable SQLite main/WAL snapshot into a private
+temporary directory without opening the source database through SQLite, then
+aggregates exact `source='user'` per-entry usage rows from that disposable
+snapshot. Committed WAL data is included without creating source `-wal`/`-shm`
+sidecars or modifying source files. It separates memory-inference direct and
+surface search exposure from show/curate consumption, and graph-ranking exposure
+from final curate selection and shown read-back. A curate selection is also an
+exposure candidate for a following show. Show read-back uses the latest same-ref
+search or curate attribution within 60 seconds; search impressions are never
+themselves counted as consumption.
+
+Version-1 control rows are reported separately from historical rows that lack a
+valid attribution marker. Bare legacy refs are counted as excluded rather than
+merged across bundles; reported refs and inferred child refs are fully
+qualified. The report never emits query text, body content, raw metadata, or
+provenance content.
+
+Graph `boost` means the positive contribution actually admitted by the active
+`graph-ranking` contributor after the shared cap. It is not a causal rank-change
+claim: the same result can retain its rank when the score saturates or other
+contributors dominate. Contributor ablation produces a control row, not graph
+exposure.
+
+The command never creates or migrates `usage_events`. Stdout is the default;
+`--out` uses create-only writes and refuses existing files and input-database
+collisions.
+
 ## Status
 
 All eight phases of the original implementation plan are

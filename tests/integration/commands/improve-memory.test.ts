@@ -174,7 +174,7 @@ describe("akm improve memory cleanup", () => {
     // reflectFn / distillFn assertions don't fire.
     appendEvent({
       eventType: "feedback",
-      ref: "memory:deploy",
+      ref: "memories/deploy",
       metadata: { signal: "positive" },
     });
 
@@ -1170,7 +1170,7 @@ describe("akm improve memory cleanup", () => {
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
 
-    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+    appendEvent({ eventType: "feedback", ref: "memories/vpn", metadata: { signal: "positive", note: "good" } });
 
     const callOrder: string[] = [];
 

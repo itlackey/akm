@@ -40,7 +40,7 @@ export const SCRIPT_EXTENSIONS = new Set([
  * Recognized workflow asset extensions, in resolution-priority order.
  * `.md` (classic linear markdown workflows — the stable contract) stays
  * FIRST for back-compat; `.yaml`/`.yml` hold YAML workflow *programs*
- * (redesign addendum, R1). `workflow:<name>` refs resolve against this list.
+ * (redesign addendum, R1). `workflows/<name>` refs resolve against this list.
  */
 export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
 
@@ -48,10 +48,10 @@ export const WORKFLOW_EXTENSIONS = [".md", ".yaml", ".yml"] as const;
  * Strip a recognized workflow extension (`.md`/`.yaml`/`.yml`) from a workflow
  * asset *name* so `foo`, `foo.yaml`, `foo.yml`, and `foo.md` collapse to one
  * canonical identity — the same collapse `workflowSpec.toCanonicalName`
- * performs on a resolved file path. Callers that turn a `workflow:<name>` ref
+ * performs on a resolved file path. Callers that turn a `workflows/<name>` ref
  * into run identity (the active-run guard, list/status filters) MUST route the
- * name through this so an aliased spelling (`workflow:foo.yaml`) and the
- * canonical `workflow:foo` cannot start or hide parallel runs of the same
+ * name through this so an aliased spelling (`workflows/foo.yaml`) and the
+ * canonical `workflows/foo` cannot start or hide parallel runs of the same
  * workflow. Names without a recognized workflow extension pass through
  * unchanged.
  */

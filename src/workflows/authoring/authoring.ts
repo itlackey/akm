@@ -109,10 +109,10 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
   }
-  // Codex round-3 finding C: a `workflow:<name>` ref is canonical across every
+  // Codex round-3 finding C: a `workflows/<name>` ref is canonical across every
   // recognized extension (`.md`/`.yaml`/`.yml`) and resolves `.md` BEFORE
   // `.yaml`. So creating `foo.yaml` while `foo.md` exists would return the ref
-  // `workflow:foo` that still starts the OLD markdown workflow — a silently
+  // `workflows/foo` that still starts the OLD markdown workflow — a silently
   // shadowed asset. Reject creation when ANY recognized extension already holds
   // the same canonical name, naming the existing file. A same-extension collision
   // (the target path itself exists) keeps the classic `--force` overwrite escape;
@@ -198,7 +198,7 @@ function readWorkflowSource(source: string, stashDir: string): string {
 
 function normalizeWorkflowName(name: string): string {
   // Strip any recognized workflow extension (.md/.yaml/.yml) so the canonical
-  // name — and thus the `workflow:<name>` ref — is extension-free regardless of
+  // name — and thus the `workflows/<name>` ref — is extension-free regardless of
   // how the user spelled it. The chosen format is recovered from the raw suffix
   // by the caller (createWorkflowAsset).
   const normalized = canonicalizeWorkflowName(
@@ -246,7 +246,7 @@ export function formatWorkflowErrors(path: string, errors: WorkflowError[]): str
 }
 
 /**
- * Validate a workflow by ref (`workflow:<name>`) or filesystem path.
+ * Validate a workflow filesystem path.
  *
  * Returns the parse result plus the source-relative path used. Throws
  * `UsageError` only when the target cannot be located on disk; parse
@@ -257,16 +257,6 @@ export function validateWorkflowSource(target: string): {
   path: string;
   parse: ReturnType<typeof parseWorkflow>;
 } {
-  // DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): a
-  // legacy-`workflow:`-prefix sniff, kept ONLY as a guard so a caller that
-  // forgot to resolve a legacy ref to a path gets a clear error instead of a
-  // spurious not-found. Pre-Chunk-8 durable-row tolerance; retire at the 0.10.0
-  // grammar removal.
-  if (target.startsWith("workflow:")) {
-    throw new UsageError(
-      `validateWorkflowSource expects a filesystem path; resolve refs to paths in the caller before invoking.`,
-    );
-  }
   const resolved = path.resolve(target);
   if (!fs.existsSync(resolved)) {
     throw new UsageError(`Workflow file not found: "${target}".`);

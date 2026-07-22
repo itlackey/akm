@@ -745,8 +745,8 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
               processes: {
                 memoryInference: { enabled: false },
                 graphExtraction: { enabled: false },
-                // default profile now ships proactiveMaintenance ON; disable it so
-                // this test pins the zero-SIGNAL gate, not the proactive lane.
+                // Keep this explicit so the test pins the zero-SIGNAL gate,
+                // independent of strategy defaults.
                 proactiveMaintenance: { enabled: false },
               },
             },

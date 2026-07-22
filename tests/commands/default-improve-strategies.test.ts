@@ -37,13 +37,16 @@ describe("default improve strategies (#552)", () => {
       expect(resolveImproveStrategy(name, MINIMAL_CONFIG)).toMatchSnapshot(name);
     }
   });
-  test("default profile ships the sustaining proactiveMaintenance lane ON", () => {
-    // Intentional default (deep-tuning 2026-06-29): on a mature stash, reflect is
-    // signal-delta-gated to ~0 actionable, so proactiveMaintenance is the lane
-    // that keeps the nightly default-profile cron producing. This pins that the
-    // default profile resolves it ON (other built-ins inherit the OFF code default).
-    const p = resolveImproveStrategy("default", MINIMAL_CONFIG).config;
-    expect(p.processes?.proactiveMaintenance?.enabled).toBe(true);
+  test("proactive maintenance is opt-in", () => {
+    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled).toBe(
+      false,
+    );
+    expect(
+      resolveImproveStrategy("reflect-distill", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
+    ).toBe(false);
+    expect(
+      resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
+    ).toBe(true);
   });
 
   test("frequent: validates against the live schema", () => {
@@ -58,7 +61,7 @@ describe("default improve strategies (#552)", () => {
     expect(() => ImproveProfileConfigSchema.parse(profileCatchup)).not.toThrow();
   });
 
-  test("frequent resolves with extract + inference on, consolidate/distill off", () => {
+  test("frequent resolves with inference on and improve-stage extract/consolidate/distill off", () => {
     const p = resolveImproveStrategy("frequent", MINIMAL_CONFIG).config;
     expect(p.description).toContain("Frequent");
     expect(p.processes?.reflect?.enabled).toBe(true);
@@ -66,9 +69,13 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.consolidate?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(true);
     expect(p.processes?.graphExtraction?.enabled).toBe(true);
-    expect(p.processes?.extract?.enabled).toBe(true);
+    expect(p.processes?.extract?.enabled).toBe(false);
     expect(p.processes?.triage?.enabled).toBe(false);
     expect(p.sync?.push).toBe(true);
+  });
+
+  test("default resolves with improve-stage extract off", () => {
+    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.extract?.enabled).toBe(false);
   });
 
   test("consolidate resolves to consolidation-only with maxChunkSize 25 and minPoolSize 500", () => {
@@ -114,10 +121,9 @@ describe("default improve strategies (#552)", () => {
   });
 
   test("minNewSessions (#554) lives only on the frequent profile's extract process", () => {
-    // #554 added `minNewSessions: 3` to frequent.json's extract process — the
-    // only profile that opts into the extract candidate-pool gate. The in-code
-    // default is 0 (disabled), so consolidate/catchup (which don't run extract)
-    // must NOT carry the key; existing behaviour is preserved everywhere else.
+    // `frequent` keeps its tuned candidate-pool gate for users who explicitly
+    // enable its extract stage. The shipped stage is off; the in-code
+    // minNewSessions default remains 0 (disabled) everywhere else.
     expect(profileFrequent.processes?.extract?.minNewSessions).toBe(3);
     for (const raw of [profileConsolidate, profileCatchup]) {
       expect(JSON.stringify(raw)).not.toContain("minNewSessions");

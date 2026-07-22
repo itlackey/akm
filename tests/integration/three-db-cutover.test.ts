@@ -30,7 +30,7 @@ import { type ContentMigrationReport, runContentMigration } from "../../src/migr
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json";
 import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
-import { migratePilotTreatmentFiles } from "../../src/migrate/legacy/three-db-cutover";
+import { migratePilotTreatmentFiles, quarantineIndexDb } from "../../src/migrate/legacy/three-db-cutover";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
@@ -448,29 +448,116 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
 });
 
 describe("WI-8.2 pilot treatment recovery", () => {
+  for (const collision of ["symlink", "file"] as const) {
+    test(`does not follow or overwrite a pre-existing ${collision} at the treatment temp path`, () => {
+      const stash = path.join(getDataDir(), `pilot-temp-${collision}`);
+      const treatmentFile = path.join(stash, ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+      const victim = path.join(stash, "victim.txt");
+      fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+      fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`, { mode: 0o600 });
+      fs.writeFileSync(victim, "KEEP_ME\n", { mode: 0o600 });
+
+      const originalOpen = fs.openSync;
+      let plantedTemp: string | undefined;
+      let attemptedFlags: string | undefined;
+      spyOn(fs, "openSync").mockImplementation((filePath, flags, mode) => {
+        const candidate = String(filePath);
+        if (!plantedTemp && candidate.startsWith(`${treatmentFile}.tmp`)) {
+          plantedTemp = candidate;
+          attemptedFlags = String(flags);
+          if (collision === "symlink") fs.symlinkSync(victim, candidate);
+          else fs.writeFileSync(candidate, "COLLISION\n", { mode: 0o600 });
+        }
+        return originalOpen(filePath, flags, mode);
+      });
+
+      expect(() =>
+        migratePilotTreatmentFiles(
+          [{ path: stash, primary: true }],
+          new Map([[RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF]]),
+        ),
+      ).toThrow();
+      expect(attemptedFlags).toBe("wx");
+      expect(plantedTemp).toBeDefined();
+      expect(plantedTemp).toMatch(new RegExp(`\\.tmp-${process.pid}-[a-f0-9]{16}$`));
+      expect(fs.readFileSync(victim, "utf8")).toBe("KEEP_ME\n");
+      expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${RC_TRAIN_LIVE_REFS.skill}\n`);
+      if (!plantedTemp) throw new Error("temp collision was not planted");
+      expect(fs.lstatSync(plantedTemp).isSymbolicLink()).toBe(collision === "symlink");
+      if (collision === "file") expect(fs.readFileSync(plantedTemp, "utf8")).toBe("COLLISION\n");
+    });
+  }
+
   test("fsyncs the parent directory after atomically replacing a treatment file", () => {
     const stash = path.join(getDataDir(), "pilot-durability");
     const treatmentFile = path.join(stash, ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
     fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
-    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`);
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`, { mode: 0o600 });
+    fs.chmodSync(treatmentFile, 0o660);
 
     const originalFsync = fs.fsyncSync;
+    let fileSyncObserved = false;
     let directorySyncObserved = false;
     spyOn(fs, "fsyncSync").mockImplementation((fd) => {
       if (fs.fstatSync(fd).isDirectory()) {
         directorySyncObserved = true;
         expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
+      } else {
+        fileSyncObserved = true;
       }
       return originalFsync(fd);
     });
+
+    const previousUmask = process.umask(0o077);
+    let migrated: number;
+    try {
+      migrated = migratePilotTreatmentFiles(
+        [{ path: stash, primary: true }],
+        new Map([[RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF]]),
+      );
+    } finally {
+      process.umask(previousUmask);
+    }
+    expect(migrated).toBe(1);
+    expect(fileSyncObserved).toBe(true);
+    expect(directorySyncObserved).toBe(true);
+    expect(fs.statSync(treatmentFile).mode & 0o777).toBe(0o660);
+  });
+
+  test("retries a failed parent fsync on an idempotent rewrite before reporting success", () => {
+    const stash = path.join(getDataDir(), "pilot-directory-retry");
+    const treatmentFile = path.join(stash, ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`, { mode: 0o640 });
+
+    const originalFsync = fs.fsyncSync;
+    let directorySyncAttempts = 0;
+    spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (fs.fstatSync(fd).isDirectory()) {
+        directorySyncAttempts += 1;
+        if (directorySyncAttempts === 1) {
+          throw Object.assign(new Error("injected parent fsync failure"), { code: "EIO" });
+        }
+      }
+      return originalFsync(fd);
+    });
+
+    expect(() =>
+      migratePilotTreatmentFiles(
+        [{ path: stash, primary: true }],
+        new Map([[RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF]]),
+      ),
+    ).toThrow("injected parent fsync failure");
+    expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
 
     expect(
       migratePilotTreatmentFiles(
         [{ path: stash, primary: true }],
         new Map([[RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF]]),
       ),
-    ).toBe(1);
-    expect(directorySyncObserved).toBe(true);
+    ).toBe(0);
+    expect(directorySyncAttempts).toBe(2);
+    expect(fs.statSync(treatmentFile).mode & 0o777).toBe(0o640);
   });
 
   test("keeps forward recovery pending when the treatment rewrite fails", async () => {
@@ -752,4 +839,54 @@ describe("(g) migrate apply imports pre-0.9 filesystem proposals into state.db",
     expect(importLegacyProposalsIntoState(getStateDbPathInDataDir(), [stash])).toBe(0);
     expect(readProposalRows(stash).map((r) => r.id)).toEqual([pendingId, acceptedId]);
   }, 30_000);
+});
+
+describe("index quarantine boundary recovery", () => {
+  test("finishes moving sidecars after the main file was already quarantined", () => {
+    const indexPath = getDbPath();
+    fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+    const target = `${indexPath}.pre-cutover-partial`;
+    fs.writeFileSync(target, "original-main");
+    fs.writeFileSync(`${indexPath}-wal`, "original-wal");
+    fs.writeFileSync(`${indexPath}-shm`, "original-shm");
+
+    expect(quarantineIndexDb("partial", indexPath)).toEqual({ quarantined: true, target });
+    expect(fs.existsSync(indexPath)).toBe(false);
+    expect(fs.readFileSync(target, "utf8")).toBe("original-main");
+    expect(fs.readFileSync(`${target}-wal`, "utf8")).toBe("original-wal");
+    expect(fs.readFileSync(`${target}-shm`, "utf8")).toBe("original-shm");
+    expect(fs.existsSync(`${indexPath}-wal`)).toBe(false);
+    expect(fs.existsSync(`${indexPath}-shm`)).toBe(false);
+  });
+
+  test("preserves a recreated canonical generation when the quarantine target exists", () => {
+    const indexPath = getDbPath();
+    fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+    const target = `${indexPath}.pre-cutover-external`;
+    fs.writeFileSync(target, "original-main");
+    fs.writeFileSync(indexPath, "external-main");
+    fs.writeFileSync(`${indexPath}-wal`, "external-wal");
+
+    expect(quarantineIndexDb("external", indexPath)).toEqual({ quarantined: true, target });
+    expect(fs.readFileSync(target, "utf8")).toBe("original-main");
+    expect(fs.readFileSync(indexPath, "utf8")).toBe("external-main");
+    expect(fs.readFileSync(`${indexPath}-wal`, "utf8")).toBe("external-wal");
+    expect(fs.existsSync(`${target}-wal`)).toBe(false);
+  });
+
+  test("preserves remaining canonical sidecars when a target sidecar collides", () => {
+    const indexPath = getDbPath();
+    fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+    const target = `${indexPath}.pre-cutover-collision`;
+    fs.writeFileSync(target, "original-main");
+    fs.writeFileSync(`${target}-wal`, "target-wal");
+    fs.writeFileSync(`${indexPath}-wal`, "canonical-wal");
+    fs.writeFileSync(`${indexPath}-shm`, "canonical-shm");
+
+    expect(quarantineIndexDb("collision", indexPath)).toEqual({ quarantined: true, target });
+    expect(fs.readFileSync(`${target}-wal`, "utf8")).toBe("target-wal");
+    expect(fs.readFileSync(`${indexPath}-wal`, "utf8")).toBe("canonical-wal");
+    expect(fs.readFileSync(`${indexPath}-shm`, "utf8")).toBe("canonical-shm");
+    expect(fs.existsSync(`${target}-shm`)).toBe(false);
+  });
 });

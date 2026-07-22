@@ -124,7 +124,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * That convention is part of the akm content layout, not a provider concern,
  * so it stays here.
  */
-function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
+export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via

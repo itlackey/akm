@@ -3,7 +3,7 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — all sub-processes + sustaining proactive lane.",
+    "description": "Standard improve pass — reflect, distill, consolidate, memory inference, graph extraction, and validation; improve-stage extract and proactive maintenance off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -20,7 +20,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "requirePlannedRefs": true,
       },
       "extract": {
-        "enabled": true,
+        "enabled": false,
         "triage": {
           "enabled": true,
           "minScore": 2,
@@ -34,7 +34,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       },
       "proactiveMaintenance": {
         "dueDays": 30,
-        "enabled": true,
+        "enabled": false,
         "maxPerRun": 15,
       },
       "reflect": {
@@ -156,7 +156,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "requirePlannedRefs": true,
       },
       "extract": {
-        "enabled": true,
+        "enabled": false,
         "triage": {
           "enabled": true,
           "minScore": 2,
@@ -170,7 +170,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       },
       "proactiveMaintenance": {
         "dueDays": 30,
-        "enabled": true,
+        "enabled": false,
         "maxPerRun": 15,
       },
       "reflect": {
@@ -339,7 +339,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: frequent 1`] = `
 {
   "config": {
-    "description": "Frequent extract + inference pass — sessions, memory inference, graph, reflect.",
+    "description": "Frequent inference pass — memory inference, graph extraction, and reflect; improve-stage extract off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -356,7 +356,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "requirePlannedRefs": true,
       },
       "extract": {
-        "enabled": true,
+        "enabled": false,
         "minNewSessions": 3,
         "triage": {
           "enabled": true,
@@ -547,7 +547,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: reflect-distill 1`] = `
 {
   "config": {
-    "description": "Reflect + distill sustaining pass — reflect, distill, memoryInference, proposal triage (promote), and the proactive-maintenance lane; consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+    "description": "Reflect + distill pass — reflect, distill, memoryInference, and proposal triage (promote); proactiveMaintenance/consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -580,7 +580,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       },
       "proactiveMaintenance": {
         "dueDays": 30,
-        "enabled": true,
+        "enabled": false,
         "maxPerRun": 15,
       },
       "reflect": {
@@ -620,7 +620,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: proactive-maintenance 1`] = `
 {
   "config": {
-    "description": "Proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+    "description": "Opt-in proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
         "allowedTypes": [

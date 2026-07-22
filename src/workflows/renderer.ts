@@ -66,9 +66,8 @@ export const workflowMdRenderer: AssetRenderer = {
     // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
     // output — its spelling follows the D-R5 display rule (`displayRef`). A
     // primary/default-bundle workflow renders the SHORT conceptId
-    // (`workflows/<name>`); a slug-clean named source qualifies it
-    // (`<bundle>//workflows/<name>`); a non-slug registry origin keeps the legacy
-    // `origin//workflow:name` display, exactly as displayRef defines it.
+    // (`workflows/<name>`); a named source qualifies it as
+    // (`<bundle>//workflows/<name>`).
     const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     return {
       type: "workflow",

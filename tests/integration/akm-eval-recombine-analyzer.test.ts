@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -560,6 +560,31 @@ function breakGraphSchema(indexDb: string, mode: "missing-table" | "incompatible
   db.close();
 }
 
+function insertGraphMemory(db: Database, fixtureDb: DbFixture, id: number, entity: string): void {
+  const name = `project-a/auth-${id}`;
+  const filePath = path.join(fixtureDb.stashDir, "memories", `${name}.md`);
+  db.prepare(
+    `INSERT INTO entries
+     (id, entry_key, file_path, stash_dir, entry_json, search_text, entry_type, item_ref, bundle_id, concept_id)
+     VALUES (?, ?, ?, ?, ?, '', 'memory', ?, 'team', ?)`,
+  ).run(
+    id,
+    `ignored-entry-key-${id}`,
+    filePath,
+    fixtureDb.stashDir,
+    JSON.stringify({ name, type: "memory", tags: ["auth"], fileSize: 1000 }),
+    `team//memories/${name}`,
+    `memories/${name}`,
+  );
+  db.prepare("INSERT INTO graph_files VALUES (?, ?, ?)").run(fixtureDb.stashDir, filePath, `hash-${id}`);
+  db.prepare("INSERT INTO graph_file_entities VALUES (?, ?, ?, 0, ?)").run(
+    fixtureDb.stashDir,
+    filePath,
+    `hash-${id}`,
+    entity,
+  );
+}
+
 describe("akm-eval recombine analyzer CLI read-only boundary", () => {
   test("refuses a pre-canonical index instead of rebuilding refs from legacy entry_key", () => {
     const root = tempDir();
@@ -613,9 +638,25 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     expect(result.stdout.toString()).not.toContain("SENSITIVE_DESCRIPTION_CANARY");
     expect(result.stdout.toString()).not.toContain("SENSITIVE_SEARCH_TEXT_CANARY");
     const report = JSON.parse(result.stdout.toString()) as {
+      graph: {
+        availability: string;
+        fileCount: number | null;
+        entityCount: number | null;
+        coveredMemoryCount: number | null;
+        memoryCount: number | null;
+        memoryCoverage: number | null;
+      };
       clusters: Array<{ memberRefs: string[] }>;
       summary: { skippedMissingCanonicalRef: number };
     };
+    expect(report.graph).toMatchObject({
+      availability: "available",
+      fileCount: 3,
+      entityCount: 1,
+      coveredMemoryCount: 3,
+      memoryCount: 3,
+      memoryCoverage: 1,
+    });
     expect(report.clusters[0]?.memberRefs).toEqual([
       "team//memories/project-a/auth-1",
       "team//memories/project-a/auth-2",
@@ -624,6 +665,266 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     expect(report.summary.skippedMissingCanonicalRef).toBe(1);
     expect(digestTree(fixtureDb.root)).toEqual(beforeTree);
     expect(rowCounts(fixtureDb.stateDb)).toEqual(beforeRows);
+  });
+
+  test("does not count entity-empty graph files as covered memories", () => {
+    const fixtureDb = buildDbFixture();
+    const db = new Database(fixtureDb.indexDb);
+    db.exec("DELETE FROM graph_file_entities");
+    db.exec(`
+      INSERT INTO graph_file_entities
+        SELECT stash_root, file_path, body_hash, 0, '' FROM graph_files;
+      INSERT INTO graph_file_entities
+        SELECT stash_root, file_path, body_hash, 1, '   ' FROM graph_files;
+    `);
+    db.close();
+
+    const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+
+    expect(input.graphStatus).toEqual({
+      availability: "available",
+      degradedReason: null,
+      fileCount: 3,
+      entityCount: 0,
+      coveredMemoryCount: 0,
+      memoryCount: 3,
+      memoryCoverage: 0,
+    });
+    expect(input.entries.every((entry) => entry.entities.length === 0)).toBe(true);
+  });
+
+  for (const graphPopulation of ["empty", "uncovered"] as const) {
+    test(`graph-only mode does not use tag fallback for an available ${graphPopulation} graph`, () => {
+      const fixtureDb = buildDbFixture();
+      const db = new Database(fixtureDb.indexDb);
+      db.exec("DELETE FROM graph_file_entities; DELETE FROM graph_files");
+      if (graphPopulation === "uncovered") {
+        db.prepare("INSERT INTO graph_files VALUES (?, ?, 'foreign-hash')").run(
+          fixtureDb.stashDir,
+          path.join(fixtureDb.stashDir, "knowledge", "foreign.md"),
+        );
+        db.prepare("INSERT INTO graph_file_entities VALUES (?, ?, 'foreign-hash', 0, 'guardian')").run(
+          fixtureDb.stashDir,
+          path.join(fixtureDb.stashDir, "knowledge", "foreign.md"),
+        );
+      }
+      db.close();
+
+      const result = Bun.spawnSync(
+        [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "graph", "--format", "json"],
+        {
+          cwd: REPO_ROOT,
+          env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const report = JSON.parse(result.stdout.toString()) as {
+        graph: { availability: string; coveredMemoryCount: number; entityCount: number };
+        clusters: Array<{ signature: string }>;
+      };
+      expect(report.graph.availability).toBe("available");
+      expect(report.graph.coveredMemoryCount).toBe(0);
+      expect(report.graph.entityCount).toBe(graphPopulation === "uncovered" ? 1 : 0);
+      expect(report.clusters).toEqual([]);
+    });
+  }
+
+  test("opens a WAL-mode index through a private snapshot without creating source sidecars", () => {
+    const fixtureDb = buildDbFixture();
+    const db = new Database(fixtureDb.indexDb);
+    expect(db.query("PRAGMA journal_mode = WAL").get()).toEqual({ journal_mode: "wal" });
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+    fs.rmSync(`${fixtureDb.indexDb}-wal`, { force: true });
+    fs.rmSync(`${fixtureDb.indexDb}-shm`, { force: true });
+    const before = digestTree(fixtureDb.root);
+    fs.chmodSync(fixtureDb.dataDir, 0o555);
+
+    try {
+      const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+      expect(input.entries).toHaveLength(3);
+      expect(fs.existsSync(`${fixtureDb.indexDb}-wal`)).toBe(false);
+      expect(fs.existsSync(`${fixtureDb.indexDb}-shm`)).toBe(false);
+      expect(digestTree(fixtureDb.root)).toEqual(before);
+    } finally {
+      fs.chmodSync(fixtureDb.dataDir, 0o755);
+    }
+  });
+
+  test("includes committed WAL content without SHM or source-directory mutation", () => {
+    const fixtureDb = buildDbFixture();
+    const writer = new Database(fixtureDb.indexDb);
+    expect(writer.query("PRAGMA journal_mode = WAL").get()).toEqual({ journal_mode: "wal" });
+    writer.exec("BEGIN IMMEDIATE");
+    insertGraphMemory(writer, fixtureDb, 4, "wal-sentinel");
+    writer.exec("COMMIT");
+    expect(fs.existsSync(`${fixtureDb.indexDb}-wal`)).toBe(true);
+    fs.rmSync(`${fixtureDb.indexDb}-shm`, { force: true });
+    const before = digestTree(fixtureDb.root);
+    fs.chmodSync(fixtureDb.dataDir, 0o555);
+
+    try {
+      const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+      expect(input.entries.map((entry) => entry.ref)).toContain("team//memories/project-a/auth-4");
+      expect(input.entries.find((entry) => entry.id === 4)?.entities).toEqual(["wal-sentinel"]);
+      expect(input.graphStatus).toMatchObject({
+        entityCount: 2,
+        coveredMemoryCount: 4,
+        memoryCount: 4,
+        memoryCoverage: 1,
+      });
+      expect(fs.existsSync(`${fixtureDb.indexDb}-shm`)).toBe(false);
+      expect(digestTree(fixtureDb.root)).toEqual(before);
+    } finally {
+      fs.chmodSync(fixtureDb.dataDir, 0o755);
+      writer.close();
+    }
+  });
+
+  test("rejects a concurrent WAL commit during snapshot capture", () => {
+    const fixtureDb = buildDbFixture();
+    const writer = new Database(fixtureDb.indexDb);
+    expect(writer.query("PRAGMA journal_mode = WAL").get()).toEqual({ journal_mode: "wal" });
+    const sourcePath = fs.realpathSync(fixtureDb.indexDb);
+    const originalOpen = fs.openSync;
+    const originalRead = fs.readSync;
+    let sourceFd: number | undefined;
+    let snapshotDir: string | undefined;
+    let sourceReadPasses = 0;
+    let committed = false;
+    spyOn(fs, "openSync").mockImplementation((filePath, flags, mode) => {
+      const fd = originalOpen(filePath, flags, mode);
+      if (path.resolve(String(filePath)) === sourcePath) sourceFd = fd;
+      if (String(filePath).includes("akm-recombine-index-")) snapshotDir = path.dirname(String(filePath));
+      return fd;
+    });
+    spyOn(fs, "readSync").mockImplementation(((
+      fd: number,
+      buffer: NodeJS.ArrayBufferView,
+      offset: number,
+      length: number,
+      position: number | null,
+    ) => {
+      const bytesRead = originalRead(fd, buffer, offset, length, position);
+      if (fd === sourceFd && position === 0) {
+        sourceReadPasses += 1;
+        if (sourceReadPasses === 2) {
+          writer.exec("BEGIN IMMEDIATE");
+          insertGraphMemory(writer, fixtureDb, 4, "concurrent-sentinel");
+          writer.exec("COMMIT");
+          committed = true;
+        }
+      }
+      return bytesRead;
+    }) as typeof fs.readSync);
+
+    try {
+      expect(() => readCurrentRecombineEntries(fixtureDb.indexDb, "both")).toThrow(
+        "index database changed while creating read-only snapshot",
+      );
+      expect(committed).toBe(true);
+      expect(snapshotDir).toBeDefined();
+      if (snapshotDir) expect(fs.existsSync(snapshotDir)).toBe(false);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test("renders zero-memory graph coverage as undefined in JSON and Markdown", () => {
+    const fixtureDb = buildDbFixture();
+    const db = new Database(fixtureDb.indexDb);
+    db.exec("DELETE FROM entries; DELETE FROM graph_file_entities; DELETE FROM graph_files");
+    db.close();
+
+    const json = Bun.spawnSync([WRAPPER, "--index-db", fixtureDb.indexDb, "--format", "json"], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const markdown = Bun.spawnSync([WRAPPER, "--index-db", fixtureDb.indexDb, "--format", "md"], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(json.exitCode).toBe(0);
+    expect(markdown.exitCode).toBe(0);
+    const report = JSON.parse(json.stdout.toString()) as {
+      graph: { memoryCount: number; coveredMemoryCount: number; memoryCoverage: number | null };
+    };
+    expect(report.graph).toMatchObject({ memoryCount: 0, coveredMemoryCount: 0, memoryCoverage: null });
+    expect(markdown.stdout.toString()).toContain("Graph coverage: 0/0 memories (undefined)");
+    expect(markdown.stdout.toString()).not.toContain("0.0%");
+  });
+
+  test("reads entries and graph population from one consistent SQLite snapshot", () => {
+    const fixtureDb = buildDbFixture();
+    const setup = new Database(fixtureDb.indexDb);
+    setup.exec("PRAGMA journal_mode = WAL");
+    setup.close();
+    const writer = new Database(fixtureDb.indexDb);
+    const originalQuery = Database.prototype.query;
+    let mutated = false;
+    const querySpy = spyOn(Database.prototype, "query");
+    querySpy.mockImplementation(function (this: Database, sql: string) {
+      const statement = Reflect.apply(originalQuery, this, [sql]) as ReturnType<Database["query"]>;
+      if (!sql.includes("FROM entries") && !sql.includes("FROM graph_files")) return statement;
+      return new Proxy(statement, {
+        get(target, property, receiver) {
+          if (property !== "all") return Reflect.get(target, property, receiver);
+          return (...bindings: unknown[]) => {
+            const rows = Reflect.apply(target.all, target, bindings) as unknown[];
+            if (!mutated) {
+              mutated = true;
+              const id = 4;
+              const name = "project-a/auth-4";
+              const filePath = path.join(fixtureDb.stashDir, "memories", `${name}.md`);
+              writer
+                .prepare(
+                  `INSERT INTO entries
+                     (id, entry_key, file_path, stash_dir, entry_json, search_text, entry_type, item_ref, bundle_id, concept_id)
+                     VALUES (?, ?, ?, ?, ?, '', 'memory', ?, 'team', ?)`,
+                )
+                .run(
+                  id,
+                  `ignored-entry-key-${id}`,
+                  filePath,
+                  fixtureDb.stashDir,
+                  JSON.stringify({ name, type: "memory", tags: ["auth"], fileSize: 1000 }),
+                  `team//memories/${name}`,
+                  `memories/${name}`,
+                );
+              writer.prepare("INSERT INTO graph_files VALUES (?, ?, ?)").run(fixtureDb.stashDir, filePath, "hash-4");
+              writer
+                .prepare("INSERT INTO graph_file_entities VALUES (?, ?, ?, 0, 'guardian')")
+                .run(fixtureDb.stashDir, filePath, "hash-4");
+            }
+            return rows;
+          };
+        },
+      });
+    } as typeof Database.prototype.query);
+
+    try {
+      const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+      expect(mutated).toBe(true);
+      expect(input.entries).toHaveLength(3);
+      expect(input.graphStatus).toMatchObject({
+        fileCount: 3,
+        entityCount: 1,
+        coveredMemoryCount: 3,
+        memoryCount: 3,
+        memoryCoverage: 1,
+      });
+    } finally {
+      writer.close();
+    }
   });
 
   for (const graphFailure of ["missing-table", "incompatible-column"] as const) {
@@ -687,6 +988,47 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
       expect(rowCounts(fixtureDb.stateDb)).toEqual(beforeRows);
     });
   }
+
+  test("Markdown makes blended graph degradation and tag fallback explicit", () => {
+    const fixtureDb = buildDbFixture();
+    breakGraphSchema(fixtureDb.indexDb, "missing-table");
+    const result = Bun.spawnSync(
+      [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "both", "--format", "md"],
+      {
+        cwd: REPO_ROOT,
+        env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    expect(result.stdout.toString()).toContain("Graph status: degraded");
+    expect(result.stdout.toString()).toContain("Graph coverage: unavailable");
+    expect(result.stdout.toString()).toContain("Graph fallback: tags");
+    expect(result.stdout.toString()).toContain("akm index --full");
+  });
+
+  test("graph-only failure does not create the requested output file", () => {
+    const fixtureDb = buildDbFixture();
+    breakGraphSchema(fixtureDb.indexDb, "missing-table");
+    const out = path.join(fixtureDb.root, "must-not-exist.md");
+    const result = Bun.spawnSync(
+      [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "graph", "--format", "md", "--out", out],
+      {
+        cwd: REPO_ROOT,
+        env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain("graph relatedness unavailable");
+    expect(fs.existsSync(out)).toBe(false);
+  });
 
   test("duplicate canonical refs in the index are rejected without modifying inputs", () => {
     const fixtureDb = buildDbFixture();

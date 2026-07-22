@@ -1,5 +1,5 @@
 {
-  "description": "Reflect + distill sustaining pass — reflect, distill, memoryInference, proposal triage (promote), and the proactive-maintenance lane; consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+  "description": "Reflect + distill pass — reflect, distill, memoryInference, and proposal triage (promote); proactiveMaintenance/consolidate/graphExtraction/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
   "processes": {
     "reflect": {
       "enabled": true,
@@ -24,7 +24,7 @@
       "maxDiffLines": 200,
       "judgment": {}
     },
-    "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 }
+    "proactiveMaintenance": { "enabled": false, "dueDays": 30, "maxPerRun": 15 }
   },
   "sync": { "enabled": false }
 }

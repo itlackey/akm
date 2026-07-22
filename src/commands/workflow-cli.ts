@@ -49,6 +49,7 @@ import {
   resumeWorkflowRun,
   startWorkflowRun,
 } from "../workflows/runtime/runs";
+import { canonicalWorkflowRunRef } from "../workflows/runtime/workflow-asset-loader";
 
 const workflowStartCommand = defineJsonCommand({
   meta: {
@@ -56,7 +57,7 @@ const workflowStartCommand = defineJsonCommand({
     description: "Start a new workflow run in the current working scope",
   },
   args: {
-    ref: { type: "positional", description: "Workflow ref (workflow:<name>)", required: true },
+    ref: { type: "positional", description: "Workflow ref (workflows/<name>)", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object" },
     force: {
       type: "boolean",
@@ -114,8 +115,8 @@ const workflowNextCommand = defineJsonCommand({
 
 /**
  * Heuristic: a workflow run id is a UUID-shaped or hex-id-shaped string with
- * no `:` separator (refs always contain a colon: `workflow:<name>` or
- * `<origin>//workflow:<name>`). When this matches we can give a much better
+ * no `/` separator (canonical refs contain `workflows/<name>`). When this
+ * matches we can give a much better
  * error than the ref parser's "Invalid asset type" failure.
  */
 function looksLikeWorkflowRunId(target: string): boolean {
@@ -172,7 +173,7 @@ const workflowStatusCommand = defineJsonCommand({
     description: "Show full workflow run state for review or resume; workflow refs resolve within the current scope",
   },
   args: {
-    target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
+    target: { type: "positional", description: "Workflow run id or workflow ref (workflows/<name>)", required: true },
     units: {
       type: "boolean",
       description:
@@ -193,7 +194,7 @@ const workflowStatusCommand = defineJsonCommand({
       }
     })();
     if (parsed?.type === "workflow") {
-      const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+      const ref = canonicalWorkflowRunRef(parsed.origin, parsed.name);
       const { runs } = await listWorkflowRuns({ workflowRef: ref });
       if (runs.length === 0) {
         throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
@@ -310,7 +311,7 @@ const workflowValidateCommand = defineJsonCommand({
   args: {
     target: {
       type: "positional",
-      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md/.yaml",
+      description: "Workflow ref (workflows/<name>) or filesystem path to a workflow .md/.yaml",
       required: true,
     },
   },
@@ -352,27 +353,13 @@ const workflowValidateCommand = defineJsonCommand({
 });
 
 async function resolveWorkflowFilePath(target: string): Promise<string> {
-  // A bare (`workflow:<name>`) OR origin-qualified (`<origin>//workflow:<name>`)
-  // ref resolves through the source search, exactly like `workflow start` /
-  // `status` / `next`. Anything else is treated as a filesystem path. Detecting
-  // the origin-qualified form here (not just the bare prefix) keeps `validate`'s
-  // ref contract in lockstep with the rest of the workflow command family — an
-  // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
-  // starts, rather than being mistaken for a relative path that does not exist.
-  // DOCUMENTED EXCEPTION (ref-grammar decision D-R3 migration window): the two
-  // legacy `workflow:` sniffs survive ONLY as pre-Chunk-8 durable-row tolerance,
-  // classifying an old-spelled ref as a ref (not a path) so it routes through the
-  // resolver rather than being mistaken for a relative path. Input-side only;
-  // remove the legacy arms at the 0.10.0 grammar removal.
-  const looksLikeWorkflowRef =
-    target.startsWith("workflow:") ||
-    target.includes("//workflow:") ||
-    target.startsWith("workflows/") ||
-    target.includes("//workflows/");
+  // Canonical workflow refs resolve through the source search; anything else is
+  // treated as a filesystem path.
+  const looksLikeWorkflowRef = target.startsWith("workflows/") || target.includes("//workflows/");
   if (!looksLikeWorkflowRef) return target;
   const parsed = parseRefInput(target);
   if (parsed.type !== "workflow") {
-    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
+    throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${target}".`);
   }
   const config = loadConfig();
   const allSources = resolveSourceEntries(undefined, config);
@@ -384,7 +371,7 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
       /* try next source */
     }
   }
-  throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
+  throw new UsageError(`Workflow not found for ref: workflows/${parsed.name}`);
 }
 
 const workflowRunCommand = defineJsonCommand({

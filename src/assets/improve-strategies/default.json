@@ -1,5 +1,5 @@
 {
-  "description": "Standard improve pass — all sub-processes + sustaining proactive lane.",
+  "description": "Standard improve pass — reflect, distill, consolidate, memory inference, graph extraction, and validation; improve-stage extract and proactive maintenance off.",
   "processes": {
     "reflect": {
       "enabled": true,
@@ -10,9 +10,9 @@
     "consolidate": { "enabled": true, "allowedTypes": ["memory"], "minPoolSize": 500 },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": true },
-    "extract": { "enabled": true, "triage": { "enabled": true, "minScore": 2 } },
+    "extract": { "enabled": false, "triage": { "enabled": true, "minScore": 2 } },
     "validation": { "enabled": true },
-    "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 },
+    "proactiveMaintenance": { "enabled": false, "dueDays": 30, "maxPerRun": 15 },
     "triage": { "enabled": false, "applyMode": "queue", "policy": "personal-stash" }
   },
   "sync": { "enabled": true, "push": true }
