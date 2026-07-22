@@ -46,7 +46,7 @@ export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore overrides. Inert in production; only tests install fakes,
 // via tests/_helpers/seams.ts (which restores them automatically after each
-// test). See docs/design/di-seams-plan.md.
+// test). See docs/architecture/specs/di-seams-plan.md.
 
 interface EmbedderOverridesForTests {
   embed?: typeof embed;

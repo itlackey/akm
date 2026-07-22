@@ -112,7 +112,12 @@ function step(label: string, args: string[], opts: StepOptions = {}): string {
   }
   // A Node-branch regression in the runtime boundary surfaces as these messages
   // even when the command still prints a result — treat them as hard failures.
-  for (const marker of ["appendEvent failed", "ERR_MODULE_NOT_FOUND", "ERR_UNKNOWN_FILE_EXTENSION", "Bun is not defined"]) {
+  for (const marker of [
+    "appendEvent failed",
+    "ERR_MODULE_NOT_FOUND",
+    "ERR_UNKNOWN_FILE_EXTENSION",
+    "Bun is not defined",
+  ]) {
     if (err.includes(marker) || out.includes(marker)) {
       ok = false;
       problems.push(`runtime-boundary marker in output: ${marker}`);
@@ -154,7 +159,7 @@ try {
     console.error("       note: 'widget' hit not found by ref-name match; checking it executed cleanly only.");
   }
   // Read a single asset back out of the stash.
-  step("show", ["show", "memory:node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
+  step("show", ["show", "memories/node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
   // Health aggregates DB + artifacts; touches detection.
   // health exits 0 (ok) or 4 (EXIT_HEALTH_WARN) — a minimal fresh stash often
   // reports `status: "warn"` (e.g. semantic search not ready), which is a valid,

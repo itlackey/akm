@@ -30,9 +30,15 @@ import path from "node:path";
 import type { Database } from "../storage/database";
 import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
 import { rethrowIfTestIsolationError } from "./errors";
+import type { EventEnvelope } from "./events-types";
 import { getDataDir } from "./paths";
 import { openStateDatabase, withStateDb } from "./state-db";
 import { error } from "./warn";
+
+// Re-exported so existing `import type { EventEnvelope } from "./core/events"`
+// sites are unaffected by the KILL 1 sever (type moved to events-types.ts to
+// break the events.ts ↔ events-repository.ts import cycle).
+export type { EventEnvelope };
 
 /**
  * Stable, machine-readable event types. New types may be added freely.
@@ -114,13 +120,6 @@ export type EventType =
   /** Per-call LLM usage telemetry (#576) — carries `{stage?, model?, durationMs, *Tokens?, finishReason?}`. */
   | "llm_usage"
   /**
-   * #612 — emitted by the opt-in auto-accept threshold auto-tune when it nudges
-   * the gate threshold. Metadata carries `{previousThreshold, newThreshold,
-   * delta, reason, samples, overallAcceptRate, calibrationGap, minThreshold,
-   * maxThreshold}`.
-   */
-  | "calibration_autotune"
-  /**
    * WS-1 forgetting-safety rank-change report (plan §WS-1 step 7). Emitted once
    * per improve run on the second and subsequent runs, when the stash-wide rank
    * comparison can be made. Metadata carries `{stashSize, totalChanged,
@@ -141,19 +140,6 @@ export type EventType =
    */
   | "improve_replay_selected"
   /**
-   * #609 — emitted once per recombine cluster. Metadata carries `{signal,
-   * memberCount, outcome: 'queued'|'null_returned'|'skipped'|'quality_rejected',
-   * proposalId?, reason?, sourceRun}`.
-   */
-  | "recombine_invoked"
-  /**
-   * #615 — emitted once per procedural-compilation cluster. Metadata carries
-   * `{groupKey, memberCount, outcome:
-   * 'queued'|'null_returned'|'skipped'|'quality_rejected'|'invalid_workflow',
-   * proposalId?, reason?, skipReason?, sourceRun}`.
-   */
-  | "procedural_compiled"
-  /**
    * #626 — emitted once per extract run when the pre-LLM triage gate is enabled
    * and evaluated at least one session. Counts-only metadata: `{evaluated,
    * passed, triagedOut, sourceRun}` (aggregated, never per-session).
@@ -173,18 +159,9 @@ export type EventType =
 
 export interface AppendEventInput {
   eventType: EventType;
-  /** Asset ref like `memory:alpha`. Optional for stash-wide events. */
+  /** Asset ref in the 0.9.0 `[bundle//]conceptId` grammar (e.g. `memories/alpha`), or a colon-free synthetic sentinel label (e.g. `health/_probe`). Optional for stash-wide events. */
   ref?: string;
   /** Free-form structured payload. Must be JSON-serialisable. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface EventEnvelope {
-  schemaVersion: 1;
-  id: number;
-  ts: string;
-  eventType: string;
-  ref?: string;
   metadata?: Record<string, unknown>;
 }
 

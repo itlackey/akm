@@ -8,7 +8,7 @@
  *     without throwing (the missing-builder ConfigError no longer fires for
  *     codex/gemini/aider);
  *   - the workflow-engine descriptor fields (pattern, structuredOutput,
- *     resume, identityEnv, agentBuilder, resultExtractor) are populated per
+ *     identityEnv, agentBuilder, resultExtractor) are populated per
  *     the capability matrix;
  *   - `getCommandBuilder` resolves each canonical id to the harness-owned
  *     builder and rejects retired profile aliases.
@@ -79,20 +79,6 @@ describe("HARNESS_REGISTRY — P2 adapter integration", () => {
     for (const id of ["aider", "amazonq"]) {
       expect(requireHarness(id).structuredOutput).toBe("none");
     }
-  });
-
-  test("resume support matches the capability matrix", () => {
-    // codex resume is the `exec resume <id>` subcommand, not a flag — the
-    // flag-shaped seam stays absent (codexResumeArgs covers the argv prefix).
-    expect(requireHarness("codex").resume).toBeUndefined();
-    expect(requireHarness("copilot").resume).toEqual({ flag: "--resume", takesSessionId: true });
-    expect(requireHarness("pi").resume).toEqual({ flag: "--session", takesSessionId: true });
-    expect(requireHarness("gemini").resume).toEqual({ flag: "--resume", takesSessionId: true });
-    // Q's --resume is a bare, directory-scoped flag (takes no session id).
-    expect(requireHarness("amazonq").resume).toEqual({ flag: "--resume", takesSessionId: false });
-    // Aider has chat-history files, OpenHands workspace state — no flag.
-    expect(requireHarness("aider").resume).toBeUndefined();
-    expect(requireHarness("openhands").resume).toBeUndefined();
   });
 
   test("identity markers: session-id vars on identityEnv, presence-only flags on presenceEnv", () => {

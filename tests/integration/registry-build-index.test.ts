@@ -300,7 +300,7 @@ describe("buildRegistryIndex", () => {
     expect(legacyStash as unknown as Record<string, unknown>).not.toHaveProperty("curated");
   });
 
-  test("respects .stash.json metadata and akm.include when enriching assets", async () => {
+  test(".stash.json sidecars are INERT (#39 retirement) while akm.include still narrows enrichment", async () => {
     const fixtureRoot = makeTempDir("akm-registry-build-include-");
     const npmPackageDir = path.join(fixtureRoot, "package");
 
@@ -355,8 +355,12 @@ describe("buildRegistryIndex", () => {
     ]);
 
     const reviewAsset = npmStash?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
-    expect(reviewAsset?.description).toBe("Curated review workflow");
-    expect(reviewAsset?.tags).toEqual(["quality", "code-review"]);
+    // #39: the `.stash.json` live reader is retired — the sidecar's curated
+    // description/tags ("Curated review workflow", ["quality","code-review"])
+    // must NOT surface; the asset carries only its generated metadata. A
+    // published stash that wants curated metadata migrates to frontmatter.
+    expect(reviewAsset?.description).toBe("skill");
+    expect(reviewAsset?.tags).toEqual(["skill"]);
     expect(reviewAsset?.estimatedTokens).toBeGreaterThan(0);
     expect(npmStash?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });

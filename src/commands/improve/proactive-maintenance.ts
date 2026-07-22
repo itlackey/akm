@@ -6,27 +6,26 @@
  * Layer 2 of the `akm improve` redesign — the PROACTIVE MAINTENANCE SELECTOR.
  *
  * The signal-delta gate (Layer 1) only surfaces assets that have *fresh*
- * feedback, and the P0-A high-retrieval fallback only rescues never-rated assets
- * that have crossed a raw retrieval threshold. Neither path ever revisits a
- * stable, useful asset on a schedule. On a quiet stash with no new feedback the
- * improve loop can therefore go indefinitely without touching high-value assets
- * that have simply gone stale.
+ * feedback. It never revisits a stable, useful asset on a schedule. On a quiet
+ * stash with no new feedback the improve loop can therefore go indefinitely
+ * without touching high-value assets that have simply gone stale.
  *
- * This selector is a THIRD eligibility SOURCE. It runs only on whole-stash /
+ * This selector is a SECOND eligibility SOURCE. It runs only on whole-stash /
  * type scope, enumerates the eligible asset population, computes a composite
  * maintenance priority per asset, gates on staleness (the "due" gate), bounds
  * the result to top-N by priority, and feeds the winners into the SAME
- * reflect/distill candidate set as the other two sources — so they flow through
+ * reflect/distill candidate set as the signal-delta gate — so they flow through
  * the existing #580 empty-diff/cosmetic suppression and additive-distill gates.
  * It adds NO new mutation or suppression logic of its own.
  *
  * The selector is intentionally pure: it takes pre-built staleness maps and
- * retrieval counts (the planner already builds these for the signal-delta gate
- * and P0-A) plus an injectable `now`, and returns a deterministic selection.
+ * retrieval counts (the planner already builds these for the signal-delta gate)
+ * plus an injectable `now`, and returns a deterministic selection.
  * All DB access happens in the caller through the existing storage abstractions;
  * this module never opens a database.
  */
 
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { ImproveEligibleRef } from "../../core/improve-types";
 import { computeSalience } from "./salience";
 
@@ -46,7 +45,8 @@ export interface ProactiveSelectorParams {
   /**
    * Candidate population to consider. Every entry should already be confined to
    * the improve-eligible, writable, validated set (the planner passes the
-   * no-feedback / non-signal pool). Each ref must parse as `type:name`.
+   * no-feedback / non-signal pool). Each ref is the canonical
+   * `[bundle//]<stash-subdir>/<name>` conceptId (D-R2/D-R3).
    */
   candidates: ImproveEligibleRef[];
   /**
@@ -99,10 +99,17 @@ export interface ProactiveSelectionResult {
   scored: ProactiveScoredRef[];
 }
 
-/** Parse the bare asset type out of a `type:name` ref. Returns "" when unparseable. */
+/**
+ * Derive the asset type from a candidate's canonical conceptId ref
+ * (`[bundle//]<stash-subdir>/<name>`, ref-grammar decision D-R2/D-R3) via the
+ * permanent reverse table. Returns "" when the leading segment is not a known
+ * stash subdir. The candidate refs are the SHORT conceptId derived fresh from
+ * the index each run (`eligibility.ts`), never a durable `type:name` row, so no
+ * legacy colon arm is needed here.
+ */
 function refType(ref: string): string {
-  const i = ref.indexOf(":");
-  return i > 0 ? ref.slice(0, i) : "";
+  const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
+  return typeNameFromConceptId(body)?.type ?? "";
 }
 
 /**

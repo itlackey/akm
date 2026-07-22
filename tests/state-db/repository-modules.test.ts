@@ -34,13 +34,13 @@ describe("events-repository.eventRowToEnvelope (pure, no DB)", () => {
   });
 
   test("attaches non-empty metadata and ref; tolerates corrupt JSON", () => {
-    const withMeta: EventRow = { id: 1, event_type: "x", ts: "t", ref: "memory:a", metadata_json: '{"k":1}' };
+    const withMeta: EventRow = { id: 1, event_type: "x", ts: "t", ref: "memories/a", metadata_json: '{"k":1}' };
     expect(eventRowToEnvelope(withMeta)).toEqual({
       schemaVersion: 1,
       id: 1,
       ts: "t",
       eventType: "x",
-      ref: "memory:a",
+      ref: "memories/a",
       metadata: { k: 1 },
     });
     const corrupt: EventRow = { id: 2, event_type: "x", ts: "t", ref: null, metadata_json: "{not json" };
@@ -54,7 +54,7 @@ describe("embeddings-repository blob codec (pure, no DB)", () => {
     const roundTripped = blobToEmbedding(embeddingToBlob(vec));
     expect(roundTripped).toHaveLength(vec.length);
     for (let i = 0; i < vec.length; i++) {
-      expect(roundTripped[i]).toBeCloseTo(vec[i], 3);
+      expect(roundTripped[i]).toBeCloseTo(vec[i]!, 3);
     }
   });
 });

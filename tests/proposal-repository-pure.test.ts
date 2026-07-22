@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
+import { formatUnifiedDiff } from "../src/commands/proposal/diff-format";
 // Import directly from the relocated module (the proposals repository split
 // out of `validators/proposals.ts`).
 import {
-  formatUnifiedDiff,
   isAutomatedProposalSource,
   isValidProposalSource,
   PROPOSAL_SOURCES,
@@ -31,14 +31,14 @@ describe("proposal repository — pure helpers (post-split)", () => {
   });
 
   test("formatUnifiedDiff returns empty string when sides are identical", () => {
-    expect(formatUnifiedDiff("a\nb\n", "a\nb\n", "skill:x")).toBe("");
+    expect(formatUnifiedDiff("a\nb\n", "a\nb\n", "skills/x")).toBe("");
   });
 
   test("formatUnifiedDiff renders a familiar header + line markers", () => {
-    const out = formatUnifiedDiff("one\ntwo", "one\nTWO", "skill:x");
+    const out = formatUnifiedDiff("one\ntwo", "one\nTWO", "skills/x");
     const lines = out.split("\n");
-    expect(lines[0]).toBe("--- skill:x (existing)");
-    expect(lines[1]).toBe("+++ skill:x (proposed)");
+    expect(lines[0]).toBe("--- skills/x (existing)");
+    expect(lines[1]).toBe("+++ skills/x (proposed)");
     expect(lines[2]).toBe("@@ 1,2 1,2 @@");
     // Unchanged line kept with a leading space; changed line shows -/+ pair.
     expect(out).toContain(" one");

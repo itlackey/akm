@@ -72,8 +72,7 @@ export function writeCodexOutputSchemaFile(schema: Record<string, unknown>): str
 
 /**
  * Argv prefix that resumes a previous codex session: `exec resume <id>`.
- * Codex resume is a subcommand chain, not a flag — kept here so the flag-shaped
- * `HarnessResumeSupport` seam is not force-fitted. The harness-native session
+ * Codex resume is a subcommand chain, not a flag. The harness-native session
  * id comes from the unit row (stored opportunistically by the result
  * extractor); akm never depends on it (plan §"Session, MCP, and identity").
  */

@@ -14,10 +14,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { type AssetRef, makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -32,7 +32,10 @@ import {
 } from "../../core/write-source";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { fetchWebsiteMarkdownSnapshot, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
+import {
+  fetchWebsiteMarkdownSnapshot,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
@@ -144,24 +147,30 @@ export async function readKnowledgeInput(
 /** A `--xref` / `--supersedes` flag value parsed to its components. */
 interface ParsedWriteRef {
   /**
-   * The CANONICAL `type:name` spelling rebuilt from the parsed components —
-   * what lands in frontmatter. Persisting the raw flag value instead would
-   * store spellings `parseAssetRef` accepts but later ref scanners (lint's
-   * registry-derived `REF_RE`, mv's rewriter) do not recognize: the
-   * `environment:` alias of `env:`, backslash-separated names, and the
-   * `local//` origin prefix (stripped here the same way lint strips it).
+   * The CANONICAL bare `conceptId` (`<stash-subdir>/<name>`, D-R2) rebuilt from
+   * the parsed components — what lands in frontmatter. WI-8.5a flips this from
+   * the legacy `type:name`: frontmatter refs are intra-bundle SHORT refs (§11.1,
+   * D-R4 "short refs inside bundle content resolve to the containing bundle"),
+   * and `--xref`/`--supersedes` only ever resolve LOCAL targets (any non-`local`
+   * origin is rejected below), so the containing-bundle short conceptId is the
+   * canonical write spelling — never a fully-qualified `bundle//conceptId`.
+   * Persisting the raw flag value instead would store spellings the ref parser
+   * accepts but later ref scanners (lint's ref-list scan, mv's rewriter) key on
+   * differently; the bare conceptId is exactly what both now recognize.
    */
   ref: string;
-  /** Canonical asset type (aliases resolved by `parseAssetRef`). */
+  /** Canonical asset type (aliases resolved by the ref parser). */
   type: string;
   /** Normalized asset name. */
   name: string;
 }
 
 /**
- * Parse a `--xref` / `--supersedes` value through the canonical ref parser
- * (`parseAssetRef`) so malformed and origin-prefixed spellings get a
- * structured error instead of a misleading "did not resolve". A `local//`
+ * Parse a `--xref` / `--supersedes` value through the new-grammar input parser
+ * (`parseRefInput`, the 0.9.0 `[bundle//]conceptId` grammar) so malformed and
+ * origin-prefixed spellings get a structured error instead of a misleading "did
+ * not resolve". Chunk-8 WI-8.5c: the legacy `[origin//]type:name` content-surface
+ * arm is retired — `--xref`/`--supersedes` take the conceptId form. A `local//`
  * origin is accepted (it names the same local resolution this validator
  * performs, mirroring lint's `local//` strip); any other origin is rejected —
  * write-time validation only resolves local stash roots.
@@ -169,25 +178,28 @@ interface ParsedWriteRef {
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
   try {
-    parsed = parseAssetRef(raw);
+    parsed = parseRefInput(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new UsageError(
       `${flag} "${raw}" is not a valid asset ref: ${message}`,
       "INVALID_FLAG_VALUE",
-      `Refs use the form type:name, e.g. ${flag} knowledge:auth-flow.`,
+      `Refs use the conceptId form, e.g. ${flag} knowledge/auth-flow.`,
     );
   }
   if (parsed.origin && parsed.origin !== "local") {
     throw new UsageError(
       `${flag} "${raw}" carries the origin prefix "${parsed.origin}//" — ${flag} only resolves refs in the write target, the working stash, and configured sources.`,
       "INVALID_FLAG_VALUE",
-      `Pass the plain type:name form, e.g. ${flag} ${parsed.type}:${parsed.name}.`,
+      `Pass the plain conceptId form, e.g. ${flag} ${conceptIdFromTypeName(parsed.type, parsed.name)}.`,
     );
   }
-  // Canonical bare form: type alias resolved, name normalized, `local//`
-  // dropped (it names the same local resolution this validator performs).
-  return { ref: makeAssetRef(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
+  // Canonical bare conceptId: type alias resolved, name normalized, `local//`
+  // dropped (it names the same local resolution this validator performs). The
+  // bare `<stash-subdir>/<name>` short ref (WI-8.5a) is what lands in the
+  // containing bundle's frontmatter (§11.1 short-ref rule); the name is already
+  // normalized by the parser.
+  return { ref: conceptIdFromTypeName(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
 }
 
 /**
@@ -265,8 +277,8 @@ function isFailOpenRefType(type: string, name: string): boolean {
  */
 function locateWriteRefInRoot(type: string, name: string, root: string): string | null {
   if (type === "workflow") {
-    const typeRoot = path.join(root, TYPE_DIRS.workflow ?? "workflows");
-    const candidate = resolveAssetPathFromName("workflow", typeRoot, name);
+    const typeRoot = path.join(root, stashDirFor("workflow") ?? "workflows");
+    const candidate = assetPathForName("workflow", typeRoot, name);
     if (fs.existsSync(candidate)) return candidate;
   }
   const relPath = refToRelPath(type, name);
@@ -276,11 +288,11 @@ function locateWriteRefInRoot(type: string, name: string, root: string): string 
 
 /** Build the shared exit-2 error for refs that resolved in no root. */
 function unresolvedRefsError(flag: "--xref" | "--supersedes", unresolved: ParsedWriteRef[]): UsageError {
-  const first = unresolved[0];
+  const first = unresolved[0]!;
   return new UsageError(
     `${flag} ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.map((u) => u.ref).join(", ")}`,
     "INVALID_FLAG_VALUE",
-    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form type:name.`,
+    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form [bundle//]conceptId (e.g. knowledge/guide.md).`,
   );
 }
 
@@ -608,7 +620,7 @@ export async function writeMarkdownAsset(options: {
   // Pre-flight: existence + force semantics. The helper itself overwrites
   // unconditionally; the CLI surfaces a friendlier UsageError before any
   // disk activity when --force is absent.
-  const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
+  const assetPath = assetPathForName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
   }
@@ -681,6 +693,10 @@ export async function writeMarkdownAsset(options: {
     // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
     // Degrade to the same applied:false report the non-writable path uses.
     try {
+      // supersededBy points at the correction's canonical write ref (F4b-flipped
+      // display spelling), keeping it in lockstep with the reported `result.ref`.
+      // The --xref/--supersedes input path (resolveXrefsForWrite/parseWriteRef)
+      // is now the new-grammar conceptId surface too (WI-8.5c).
       writeSupersededEdge(item.filePath, result.ref);
       if (path.resolve(item.stashRoot) === path.resolve(source.path)) {
         recordWriteTargetPath(source, item.filePath);

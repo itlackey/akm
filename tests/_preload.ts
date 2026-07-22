@@ -33,7 +33,7 @@
  * The tripwire throws on any detected leak. If a future investigation needs
  * to inventory leaks without failing the build, temporarily replace `throw`
  * with `console.warn` in the `afterEach` handler below
- * (see knowledge:projects/akm/test-harness-redesign for context).
+ * (see knowledge/projects/akm/test-harness-redesign for context).
  *
  * Tests that legitimately need to mutate cwd or fetch within a test should
  * use `tests/_helpers/sandbox.ts` (`withMockedFetch`, etc.) — the helpers
@@ -76,8 +76,6 @@ const HARNESSED: readonly string[] = [
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
-  // ECharts delivery toggle read by the html health report builder.
-  "AKM_ECHARTS",
   // Registry overrides used by registry-providers tests.
   "AKM_REGISTRY_URL",
   "AKM_NPM_REGISTRY",
@@ -281,7 +279,7 @@ function healSandboxEnv(): void {
   // can't bleed in. (Verified: no test persists shared-sandbox config across
   // tests.) Guarded by safeRm/safeMkdir → can only touch the /tmp sandbox.
   if (process.env.XDG_CONFIG_HOME === SANDBOX_ENV.XDG_CONFIG_HOME) {
-    const akmDir = path.join(SANDBOX_ENV.XDG_CONFIG_HOME, "akm");
+    const akmDir = path.join(SANDBOX_ENV.XDG_CONFIG_HOME!, "akm");
     const cfg = path.join(akmDir, "config.json");
     if (fs.existsSync(cfg)) safeRm(cfg);
     safeMkdir(akmDir);

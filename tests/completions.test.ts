@@ -126,7 +126,7 @@ describe("completions command", () => {
   test("contains flag value completions for --type", () => {
     expect(script).toContain("--type)");
     expect(script).toContain(
-      "skill command agent knowledge workflow script memory env secret wiki lesson task session fact any",
+      "skill command agent knowledge workflow script memory env secret lesson task session fact any",
     );
   });
 

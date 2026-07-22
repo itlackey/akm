@@ -15,12 +15,10 @@ const NON_USER_FACING_DOC_DIRS = new Set([
 const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "SECURITY.md", "STABILITY.md"];
 const HELP_DOCS_ROOT = path.join(repoRoot, "src", "assets", "help");
 
-export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");
-export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
-export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "configuration.md");
-export const IMPROVE_AUTOSYNC_PATH = path.join(repoRoot, "docs", "technical", "improve-autosync-investigation.md");
+export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "architecture", "architecture.md");
+export const CLI_DOC_PATH = path.join(repoRoot, "docs", "reference", "cli.md");
+export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "reference", "configuration.md");
 export const MIGRATION_PATH = path.join(repoRoot, "docs", "migration", "v0.8-to-v0.9.md");
-export const PR_714_REPRO_PATH = path.join(repoRoot, "docs", "technical", "pr-714-workflow-validation-repro.md");
 
 export function readDoc(p: string): string {
   return fs.readFileSync(p, "utf8");
@@ -37,8 +35,13 @@ export function activeMarkdownDocs(): string[] {
     }
   };
   walk(docsRoot);
-  for (const entry of fs.readdirSync(HELP_DOCS_ROOT, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name.endsWith(".md")) docs.push(path.join(HELP_DOCS_ROOT, entry.name));
+  // The static help-asset dir was emptied when its orphaned files were pruned
+  // (nothing loads them); tolerate its absence so the scan covers it only when
+  // help assets exist again.
+  if (fs.existsSync(HELP_DOCS_ROOT)) {
+    for (const entry of fs.readdirSync(HELP_DOCS_ROOT, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".md")) docs.push(path.join(HELP_DOCS_ROOT, entry.name));
+    }
   }
   return docs.sort();
 }
@@ -50,9 +53,9 @@ function withoutRetiredSections(doc: string): string {
   for (const line of lines) {
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);
     if (heading) {
-      const depth = heading[1].length;
+      const depth = heading[1]!.length;
       if (ignoredHeadingDepth !== undefined && depth <= ignoredHeadingDepth) ignoredHeadingDepth = undefined;
-      if (/\b(?:legacy|migration|retired)\b/i.test(heading[2])) ignoredHeadingDepth = depth;
+      if (/\b(?:legacy|migration|retired)\b/i.test(heading[2]!)) ignoredHeadingDepth = depth;
     }
     if (ignoredHeadingDepth === undefined) kept.push(line);
   }

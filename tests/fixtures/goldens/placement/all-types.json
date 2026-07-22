@@ -1,0 +1,119 @@
+{
+  "byType": {
+    "agent": {
+      "assetPath": "agents/all-types-agent.md",
+      "name": "all-types-agent",
+      "stashDir": "agents"
+    },
+    "command": {
+      "assetPath": "commands/all-types-command.md",
+      "name": "all-types-command",
+      "stashDir": "commands"
+    },
+    "env": {
+      "assetPath": "env/all-types-env.env",
+      "name": "all-types-env",
+      "stashDir": "env"
+    },
+    "fact": {
+      "assetPath": "facts/all-types-fact.md",
+      "name": "all-types-fact",
+      "stashDir": "facts"
+    },
+    "knowledge": {
+      "assetPath": "knowledge/all-types-knowledge.md",
+      "name": "all-types-knowledge",
+      "stashDir": "knowledge"
+    },
+    "lesson": {
+      "assetPath": "lessons/all-types-lesson.md",
+      "name": "all-types-lesson",
+      "stashDir": "lessons"
+    },
+    "memory": {
+      "assetPath": "memories/all-types-memory.md",
+      "name": "all-types-memory",
+      "stashDir": "memories"
+    },
+    "script": {
+      "assetPath": "scripts/all-types-script.sh",
+      "name": "all-types-script.sh",
+      "stashDir": "scripts"
+    },
+    "secret": {
+      "assetPath": "secrets/all-types-secret",
+      "name": "all-types-secret",
+      "stashDir": "secrets"
+    },
+    "session": {
+      "assetPath": "sessions/all-types-harness/all-types-session.md",
+      "name": "all-types-harness/all-types-session",
+      "stashDir": "sessions"
+    },
+    "skill": {
+      "assetPath": "skills/all-types-skill/SKILL.md",
+      "name": "all-types-skill",
+      "stashDir": "skills"
+    },
+    "task": {
+      "assetPath": "tasks/all-types-task.yml",
+      "name": "all-types-task",
+      "stashDir": "tasks"
+    },
+    "workflow": {
+      "assetPath": "workflows/all-types-workflow.md",
+      "name": "all-types-workflow",
+      "stashDir": "workflows"
+    }
+  },
+  "capturedAtHead": "ff7ee5975e915c11d3799cdf5454c8bc494a304b",
+  "edgeCases": {
+    "envAlreadySuffixedNameIsIdempotent": {
+      "assetPath": "env/all-types-env.env",
+      "name": "all-types-env.env",
+      "type": "env"
+    },
+    "envDefaultAlias": {
+      "assetPath": "env/.env",
+      "name": "default",
+      "type": "env"
+    },
+    "markdownSpecAlreadySuffixedNameIsIdempotent": {
+      "assetPath": "commands/all-types-command.md",
+      "name": "all-types-command.md",
+      "type": "command"
+    },
+    "secretNestedNameIsIdentityJoin": {
+      "assetPath": "secrets/team/deploy.key",
+      "name": "team/deploy.key",
+      "type": "secret"
+    },
+    "taskAlreadySuffixedNameIsIdempotent": {
+      "assetPath": "tasks/all-types-task.yml",
+      "name": "all-types-task.yml",
+      "type": "task"
+    },
+    "workflowExplicitExtensionSkipsProbe": {
+      "assetPath": "workflows/totally-nonexistent.yaml",
+      "name": "totally-nonexistent.yaml",
+      "type": "workflow"
+    },
+    "workflowProbeFallbackToMdWhenNoCandidateExists": {
+      "assetPath": "workflows/totally-nonexistent-workflow.md",
+      "name": "totally-nonexistent-workflow",
+      "type": "workflow"
+    },
+    "workflowProbeFindsYamlOnlyCandidateBeforeDefaultingToMd": {
+      "assetPath": "workflows/all-types-workflow-program.yaml",
+      "name": "all-types-workflow-program",
+      "type": "workflow"
+    }
+  },
+  "notes": [
+    "byType uses the SAME canonical name the all-types fixture already places on disk, so assetPath is a placement round-trip against real committed fixture bytes, not a synthetic path. typeRoot is always computed under the real all-types stash root (never a fabricated/nonexistent absolute path) so the workflow spec's fs.existsSync probe observes real files instead of depending on process.cwd().",
+    "edgeCases pins branches that byType's round-trip names don't exercise: the env \"default\" alias (bare .env), the already-suffixed-name idempotent alias shared by env/task/markdownSpec-family toAssetPath implementations, the workflow multi-extension fs.existsSync probe's explicit-extension short-circuit (skips the probe entirely), its no-candidate-exists fallback to .md, and its probe finding a real YAML-only candidate (all-types-workflow-program.yaml has no .md sibling) before ever reaching the .md default -- and a nested secret name (identity join, no extension logic).",
+    "All paths are stash-relative POSIX strings (never absolute) -- hard constraint per the WI-0b.3 brief.",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): Chunk 2's format adapters must reproduce this placement mapping byte-for-byte."
+  ],
+  "scenario": "ASSET_SPECS[type].toAssetPath(typeRoot, name) placement for every ASSET_SPECS_INTERNAL type (WI-0b.3b), round-tripped against the real tests/fixtures/stashes/all-types/ fixture layout plus documented edge-case branches"
+}

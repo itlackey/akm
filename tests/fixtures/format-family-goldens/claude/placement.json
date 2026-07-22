@@ -1,0 +1,45 @@
+{
+  "scenario": "claude adapter placeNew(component, conceptId) → on-disk relative path, per emitted type. Mirrors placement/all-types.json's byType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (placeNew replaces TYPE_DIRS + resolveAssetPathFromName), §7 (claude row: 'AKM workspace layout IS .claude minus the prefix'), §6 (type-derivation conventions fix the owning subdir).",
+  "realWorldSource": [
+    "https://code.claude.com/docs/en/claude-directory — .claude/commands/*.md, .claude/agents/*.md, .claude/skills/<name>/SKILL.md, CLAUDE.md at root"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no claude adapter exists yet. Paths are component-root-relative POSIX strings (never absolute), mirroring placement/all-types.json's hard constraint.",
+    "The claude tool-dir layout IS the AKM subdir layout minus the prefix (spec §7): commands/ ↔ command, agents/ ↔ agent, skills/<name>/ ↔ skill. The one FIXED path is instruction → CLAUDE.md at the component root (the .claude root when mounted as a sub-component, or repo root — Claude Code writes CLAUDE.md at the project root; the spec models it at the component root).",
+    "skill placement is the DIRECTORY form <name>/SKILL.md (the item is the dir); the conceptId supplied to placeNew is the skill's directory concept id, so placeNew appends /SKILL.md."
+  ],
+  "byType": {
+    "command": {
+      "conceptId": "commands/build-release",
+      "assetPath": "commands/build-release.md",
+      "name": "build-release"
+    },
+    "agent": {
+      "conceptId": "agents/planner",
+      "assetPath": "agents/planner.md",
+      "name": "planner"
+    },
+    "skill": {
+      "conceptId": "skills/csv-cleanup",
+      "assetPath": "skills/csv-cleanup/SKILL.md",
+      "name": "csv-cleanup"
+    },
+    "instruction": {
+      "conceptId": "CLAUDE",
+      "assetPath": "CLAUDE.md",
+      "name": "CLAUDE",
+      "note": "instruction placement is fixed at the component root (CLAUDE.md); there is one instruction file per component."
+    }
+  },
+  "edgeCases": {
+    "skillDirNameEqualsSkillName": {
+      "conceptId": "skills/pdf-processing",
+      "assetPath": "skills/pdf-processing/SKILL.md",
+      "note": "The skill directory name equals the Agent Skills `name` (§4.5 hard rule: name == parent dir name), so placement is stable round-trip against recognition."
+    }
+  }
+}

@@ -20,24 +20,14 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { opencodeBuilder } from "./agent-builder";
 import { OpenCodeProvider } from "./session-log";
 
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
 export { OpenCodeProvider } from "./session-log";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * OpenCode.
@@ -61,8 +51,6 @@ export class OpencodeHarness extends BaseHarness {
   // engine uses the prompt-injected schema + embedded-JSON extraction tier
   // (the matrix's "via prompt+validate"). The SDK entry is native-json.
   readonly structuredOutput = "none" as const;
-  // `opencode run --session <id>` continues a previous session.
-  readonly resume = { flag: "--session", takesSessionId: true } as const;
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();

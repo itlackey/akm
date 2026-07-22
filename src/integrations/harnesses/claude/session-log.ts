@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
+import { AbstractSessionLogProvider } from "../../session-logs/provider-base";
 import type {
   InlineRefMention,
   SessionData,
@@ -112,13 +113,13 @@ function parseClaudeEvent(
  * (`getHarness`), and the `--type` flag accepts both, so the canonical id and
  * the persisted runtime string coexist without drift.
  */
-export class ClaudeCodeProvider implements SessionLogHarness {
+export class ClaudeCodeProvider extends AbstractSessionLogProvider implements SessionLogHarness {
   // Runtime identity (NOT the canonical id) — see class doc. Equals
   // HARNESS_BY_ID.get("claude").runtimeId.
   readonly name = "claude-code";
 
-  isAvailable(): boolean {
-    return fs.existsSync(claudeProjectsDir());
+  protected availabilityRoot(): string {
+    return claudeProjectsDir();
   }
 
   /**
@@ -139,23 +140,13 @@ export class ClaudeCodeProvider implements SessionLogHarness {
         if (stat.mtimeMs < input.sinceMs) continue;
 
         const lines = fs.readFileSync(jsonlPath, "utf8").split("\n").filter(Boolean);
-        for (const line of lines) {
-          try {
-            const entry = JSON.parse(line);
-            const text = entry?.message?.content ?? entry?.content ?? "";
-            if (typeof text !== "string" || text.length < 10) continue;
-            yield {
-              harness: this.name,
-              text,
-              ts: typeof entry?.timestamp === "number" ? entry.timestamp : stat.mtimeMs,
-              sessionId: typeof entry?.session_id === "string" ? entry.session_id : undefined,
-              role: typeof entry?.role === "string" ? entry.role : "unknown",
-              filePath: jsonlPath,
-            };
-          } catch {
-            // skip malformed lines
-          }
-        }
+        yield* this.logLineEvents({
+          lines,
+          filePath: jsonlPath,
+          fallbackTsMs: stat.mtimeMs,
+          selectText: (entry) => entry?.message?.content ?? entry?.content ?? "",
+          selectSessionId: (entry) => entry?.session_id,
+        });
       }
     } catch {
       return;
@@ -164,36 +155,23 @@ export class ClaudeCodeProvider implements SessionLogHarness {
 
   listSessions(input: { sinceMs?: number; location?: string } = {}): SessionSummary[] {
     const root = input.location ?? claudeProjectsDir();
-    const sinceMs = input.sinceMs ?? 0;
-    const summaries: SessionSummary[] = [];
-    try {
-      for (const jsonlPath of this.#walkJsonl(root)) {
-        let stat: fs.Stats;
-        try {
-          stat = fs.statSync(jsonlPath);
-        } catch {
-          continue;
-        }
-        if (stat.mtimeMs < sinceMs) continue;
-        const sessionId = path.basename(jsonlPath, ".jsonl");
-        const projectHint = path.basename(path.dirname(jsonlPath));
+    return this.listSessionsFromFiles({
+      sinceMs: input.sinceMs ?? 0,
+      enumerate: () => this.#walkJsonl(root),
+      summarize: (jsonlPath, stat) => {
         // Peek first + last non-empty line to derive start/end timestamps and
         // title. Reading the whole file would be wasteful for listing.
         const peek = this.#peekJsonl(jsonlPath);
-        summaries.push({
-          harness: this.name,
-          sessionId,
+        return this.sessionRef({
+          sessionId: path.basename(jsonlPath, ".jsonl"),
           filePath: jsonlPath,
           startedAt: peek.firstTsMs ?? stat.ctimeMs,
           endedAt: peek.lastTsMs ?? stat.mtimeMs,
-          projectHint,
-          ...(peek.title ? { title: peek.title } : {}),
+          projectHint: path.basename(path.dirname(jsonlPath)),
+          title: peek.title,
         });
-      }
-    } catch {
-      // Root missing or unreadable — return what we have.
-    }
-    return summaries.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+      },
+    });
   }
 
   readSession(ref: SessionRef): SessionData {
@@ -228,15 +206,14 @@ export class ClaudeCodeProvider implements SessionLogHarness {
     }
 
     return {
-      ref: {
-        harness: this.name,
+      ref: this.sessionRef({
         sessionId: ref.sessionId,
         filePath: ref.filePath,
         startedAt: firstTsMs ?? stat.ctimeMs,
         endedAt: lastTsMs ?? stat.mtimeMs,
         projectHint,
-        ...(title ? { title } : {}),
-      },
+        title,
+      }),
       events,
       inlineRefs,
     };
@@ -307,15 +284,8 @@ export class ClaudeCodeProvider implements SessionLogHarness {
     return result;
   }
 
-  *#walkJsonl(dir: string): Generator<string> {
-    try {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) yield* this.#walkJsonl(full);
-        else if (entry.name.endsWith(".jsonl") && entry.name !== "journal.jsonl") yield full;
-      }
-    } catch {
-      // permission errors etc.
-    }
+  /** Session JSONL files under `dir`, excluding the shared journal file. */
+  #walkJsonl(dir: string): Generator<string> {
+    return this.walkFiles(dir, (name) => name.endsWith(".jsonl") && name !== "journal.jsonl");
   }
 }

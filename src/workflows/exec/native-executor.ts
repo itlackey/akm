@@ -622,7 +622,7 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
   const units = outcomes.map(
     (outcome, index) =>
       outcome ?? {
-        unitId: workUnits[index].unitId,
+        unitId: workUnits[index]!.unitId,
         ok: false,
         failureReason: "aborted",
         error: "unit was not dispatched (aborted or scheduler failure)",

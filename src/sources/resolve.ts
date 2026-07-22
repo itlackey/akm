@@ -4,15 +4,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { recognizeMatch } from "../core/adapter/recognize-match";
 import {
+  assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
-  resolveAssetPathFromName,
-  TYPE_DIRS,
-} from "../core/asset/asset-spec";
+  stashDirFor,
+} from "../core/asset/asset-placement";
 import { hasErrnoCode, isWithin } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
-import { runMatchers } from "../indexer/walk/file-context";
 import { walkStashFlat } from "../indexer/walk/walker";
 
 /**
@@ -20,7 +20,7 @@ import { walkStashFlat } from "../indexer/walk/walker";
  */
 export async function resolveAssetPath(stashDir: string, type: string, name: string): Promise<string> {
   try {
-    return resolveInTypeDir(stashDir, TYPE_DIRS[type], type, name);
+    return resolveInTypeDir(stashDir, stashDirFor(type) as string, type, name);
   } catch (error) {
     if (!(error instanceof NotFoundError)) throw error;
 
@@ -36,7 +36,7 @@ export async function resolveAssetPath(stashDir: string, type: string, name: str
  */
 function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name: string): string {
   const root = path.join(stashDir, typeDir);
-  const target = resolveAssetPathFromName(type, root, name);
+  const target = assetPathForName(type, root, name);
   const resolvedRoot = resolveAndValidateTypeRoot(root, type, name);
   const resolvedTarget = path.resolve(target);
   if (!isWithin(resolvedTarget, resolvedRoot)) {
@@ -92,7 +92,7 @@ async function resolveByCanonicalName(stashDir: string, type: string, name: stri
   const normalizedName = name.replace(/\\/g, "/");
 
   for (const ctx of walkStashFlat(stashDir)) {
-    const match = await runMatchers(ctx);
+    const match = recognizeMatch(ctx);
     if (!match || match.type !== type) continue;
 
     const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, stashDir, ctx.absPath);

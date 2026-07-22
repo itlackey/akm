@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createMigrationBackup, restoreMigrationBackup } from "../../src/core/migration-backup";
-import { getConfigPath, getWorkflowDbPath } from "../../src/core/paths";
+import { getConfigPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { pollUntil } from "./_helpers/workflow-crossproc";
 
@@ -23,7 +23,12 @@ beforeEach(() => {
 
 afterEach(() => storage.cleanup());
 
-describe("workflow.db maintenance activity", () => {
+// Chunk-8 WI-8.3: the workflow tables now live in state.db (workflow.db is
+// deleted at cutover), so a canonical workflow-runs handle — opened directly via
+// openStateDatabase or through withWorkflowRunsRepo — registers the "state-db"
+// maintenance activity. The restore-cannot-overlap-a-live-handle invariant is
+// unchanged; only the artifact (and activity name) moved.
+describe("state.db workflow-tables maintenance activity", () => {
   for (const mode of ["direct", "repository"] as const) {
     test(`restore cannot overlap a canonical ${mode} handle in another process`, async () => {
       const ready = path.join(storage.root, `${mode}.ready`);
@@ -39,9 +44,9 @@ describe("workflow.db maintenance activity", () => {
       const exitPromise = new Promise<number | null>((resolve) => child.once("exit", resolve));
       let exitCode: number | null;
       try {
-        await pollUntil(() => fs.existsSync(ready), { label: `${mode} workflow handle open` });
-        expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*workflow-db/);
-        expect(fs.existsSync(getWorkflowDbPath())).toBe(true);
+        await pollUntil(() => fs.existsSync(ready), { label: `${mode} state-db handle open` });
+        expect(() => restoreMigrationBackup(true)).toThrow(/maintenance-activities.*state-db/);
+        expect(fs.existsSync(getStateDbPathInDataDir())).toBe(true);
       } finally {
         fs.writeFileSync(release, "release");
         exitCode = await exitPromise;
@@ -49,7 +54,7 @@ describe("workflow.db maintenance activity", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       restoreMigrationBackup(true);
-      expect(fs.existsSync(getWorkflowDbPath())).toBe(false);
+      expect(fs.existsSync(getStateDbPathInDataDir())).toBe(false);
     });
   }
 });

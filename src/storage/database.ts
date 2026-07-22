@@ -11,14 +11,14 @@
  *
  * Runtime selection:
  *   - On Bun (the primary/test runtime) we use the built-in `bun:sqlite`.
- *   - On Node.js (additive, not CI-tested this pass) we use `better-sqlite3`,
- *     loaded via a runtime-gated dynamic `require` so the Bun path never
+ *   - On Node.js (CI-tested by the node-smoke job's smoke + compat suites) we
+ *     use `better-sqlite3`, loaded via a runtime-gated dynamic `require` so the Bun path never
  *     imports it (it is an optionalDependency and may be uninstalled or
  *     uncompiled when running under Bun).
  *
  * Both driver handles are structurally compatible across the small surface AKM
  * uses (`prepare`, `exec`, `run`, `transaction`, `close` on the handle;
- * `get`, `all`, `run` on prepared statements). The Bun-specific `db.query()`
+ * `get`, `all`, `iterate`, `run` on prepared statements). The Bun-specific `db.query()`
  * helper is normalised away — callers use `db.prepare(sql).all(...)` instead.
  *
  * This file is intentionally NOT an adapter/DI/ports-and-adapters layer. It is
@@ -54,11 +54,11 @@ export interface RunResult {
 
 /**
  * A prepared statement, narrowed to the methods AKM calls. Generic over the
- * row shape returned by `get`/`all`. Both drivers accept positional bind
+ * row shape returned by `get`/`all`/`iterate`. Both drivers accept positional bind
  * parameters via rest args.
  *
  * The return types are deliberately wide (`Row | null | undefined` for `get`,
- * and the `Row` element type stays unconstrained for `all`) so that a concrete
+ * and the `Row` element type stays unconstrained for `all`/`iterate`) so that a concrete
  * `bun:sqlite` statement — whose `get()` may return `null` and whose `all()`
  * elements are `Row | undefined` — remains structurally assignable to this
  * type. Every call site in AKM casts the result to its concrete row shape, so
@@ -67,6 +67,7 @@ export interface RunResult {
 export interface Statement<Row = unknown> {
   get(...params: SqlValue[]): Row | null | undefined;
   all(...params: SqlValue[]): Row[];
+  iterate(...params: SqlValue[]): IterableIterator<Row>;
   run(...params: SqlValue[]): RunResult;
 }
 
@@ -170,6 +171,50 @@ function selectProvider(): StorageProvider {
  */
 export function openDatabase(path: string, opts?: OpenDatabaseOptions): Database {
   return selectProvider().open(path, opts);
+}
+
+/**
+ * {@link openDatabase} with a finalize-on-close guard (issue #720).
+ *
+ * bun:sqlite's `Database.close()` is a `sqlite3_close_v2`: with any UNFINALIZED
+ * `prepare()` statement outstanding, the underlying connection — and its WAL
+ * shared-memory mapping — survives as a zombie until GC finalizes the
+ * statements. A later connection in the same process then cannot leave WAL
+ * mode (`PRAGMA journal_mode = DELETE` → "database is locked"), which is
+ * exactly what silently defeated the migrate-apply single-file conversion.
+ * (`db.query()` statements are Database-cached and immune; `prepare()` is the
+ * dominant idiom in the migration helpers.)
+ *
+ * This variant tracks `prepare()` results and finalizes them (idempotently)
+ * before the real `close()`, so close always means CLOSED. It is deliberately
+ * OPT-IN for the migrate-apply flow's short-lived helper connections and the
+ * migration test fixtures — NOT the global default: long-lived/hot paths cache
+ * prepared statements per connection (e.g. the entries upsert WeakMap) and
+ * worker flows may still be stepping a statement when a sibling close lands;
+ * force-finalizing under them changes behavior they were built on.
+ */
+export function openDatabaseFinalizing(path: string, opts?: OpenDatabaseOptions): Database {
+  const db = selectProvider().open(path, opts);
+  const tracked = new Set<{ finalize?: () => void }>();
+  const origPrepare = db.prepare.bind(db);
+  const origClose = db.close.bind(db);
+  (db as { prepare: typeof db.prepare }).prepare = ((sql: string, ...rest: unknown[]) => {
+    const stmt = (origPrepare as (...a: unknown[]) => { finalize?: () => void })(sql, ...rest);
+    tracked.add(stmt);
+    return stmt;
+  }) as typeof db.prepare;
+  (db as { close: typeof db.close }).close = ((...args: unknown[]) => {
+    for (const stmt of tracked) {
+      try {
+        stmt.finalize?.();
+      } catch {
+        // Already finalized (double-finalize is the idempotent no-op case).
+      }
+    }
+    tracked.clear();
+    return (origClose as (...a: unknown[]) => unknown)(...args);
+  }) as typeof db.close;
+  return db;
 }
 
 function openBunDatabase(path: string, opts?: OpenDatabaseOptions): Database {

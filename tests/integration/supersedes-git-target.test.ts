@@ -72,7 +72,7 @@ describe("--supersedes on a git write target", () => {
 
     writeSandboxConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", name: "team", url: repoUrl, writable: true }],
+      bundles: { team: { git: repoUrl, writable: true } },
     });
 
     const sourcePath = path.join(cache.rootDir, "corrected-guide.md");
@@ -89,7 +89,7 @@ describe("--supersedes on a git write target", () => {
       "--target",
       "team",
       "--supersedes",
-      "knowledge:old-guide",
+      "knowledge/old-guide",
     ]);
     expect(code).toBe(0);
     const json = JSON.parse(stdout) as { superseded?: Array<{ ref: string; applied: boolean }> };
@@ -109,6 +109,6 @@ describe("--supersedes on a git write target", () => {
     // The demotion itself is on disk in the git working tree.
     const oldParsed = parseFrontmatter(fs.readFileSync(oldPath, "utf8"));
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual(["knowledge:new-guide"]);
+    expect(oldParsed.data.supersededBy).toEqual(["knowledge/new-guide"]);
   });
 });

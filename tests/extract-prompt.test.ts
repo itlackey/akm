@@ -28,6 +28,32 @@ function sampleData(overrides: Partial<SessionData> = {}): SessionData {
   };
 }
 
+function extractCandidateNamePattern(): RegExp {
+  const nameSchema = (
+    EXTRACT_JSON_SCHEMA as {
+      properties: { candidates: { items: { properties: { name: { pattern: string } } } } };
+    }
+  ).properties.candidates.items.properties.name;
+  return new RegExp(nameSchema.pattern);
+}
+
+function parseCandidateNamed(name: string): ExtractPayload {
+  return parseExtractPayload(
+    JSON.stringify({
+      candidates: [
+        {
+          type: "memory",
+          name,
+          description: "This candidate has a complete description long enough for extraction.",
+          body: "This candidate body is deliberately long enough to pass the parser's minimum body-length validation.",
+          confidence: 0.8,
+          evidence: "representative parser test",
+        },
+      ],
+    }),
+  );
+}
+
 // ── Schema shape ────────────────────────────────────────────────────────────
 
 describe("EXTRACT_JSON_SCHEMA", () => {
@@ -48,7 +74,7 @@ describe("EXTRACT_JSON_SCHEMA", () => {
 
   test("candidate items require type, name, description, body, confidence, evidence", () => {
     const candItem = (EXTRACT_JSON_SCHEMA as { properties: Record<string, { items: { required: string[] } }> })
-      .properties.candidates.items;
+      .properties.candidates!.items;
     for (const key of ["type", "name", "description", "body", "confidence", "evidence"]) {
       expect(candItem.required).toContain(key);
     }
@@ -77,6 +103,28 @@ describe("EXTRACT_JSON_SCHEMA", () => {
 // ── Prompt builder ──────────────────────────────────────────────────────────
 
 describe("buildExtractPrompt", () => {
+  test("keeps the live candidate contract aligned with the strict schema", () => {
+    const prompt = buildExtractPrompt({ data: sampleData(), events: [], inlineRefs: [] });
+    const candidateProperties = (
+      EXTRACT_JSON_SCHEMA as {
+        properties: { candidates: { items: { properties: Record<string, unknown> } } };
+      }
+    ).properties.candidates.items.properties;
+    const outputContract = prompt.split("## Output contract")[1]?.split("## Rules")[0] ?? "";
+    const documentedCandidateKeys = [...outputContract.matchAll(/^ {6}"([^"]+)":/gm)].map((match) => match[1]);
+    const nameGuidance = outputContract.match(/^ {6}"name": "([^"]+)"/m)?.[1] ?? "";
+    const documentedNameExamples = [...nameGuidance.matchAll(/e\.g\. ([a-z0-9/-]+)/g)].flatMap((match) =>
+      match[1] ? [match[1]] : [],
+    );
+
+    expect(documentedCandidateKeys).toEqual(Object.keys(candidateProperties));
+    expect(documentedNameExamples).toEqual(["jwt-token", "auth/jwt-token"]);
+    for (const name of documentedNameExamples) expect(extractCandidateNamePattern().test(name)).toBe(true);
+    expect(prompt).not.toContain("orderedActions");
+    expect(prompt).not.toContain("outcomeData");
+    expect(prompt).not.toMatch(/\baction[- ]sequence(?:-shaped)?\b|\bordered steps\b/i);
+  });
+
   test("interpolates harness, title, dates, project hint into the template", () => {
     const prompt = buildExtractPrompt({ data: sampleData(), events: [], inlineRefs: [] });
     expect(prompt).toContain("claude-code");
@@ -97,11 +145,11 @@ describe("buildExtractPrompt", () => {
       events: [],
       inlineRefs: [
         { kind: "remember", text: "VPN required before deploy" },
-        { kind: "feedback", ref: "knowledge:auth", text: "saved time on debug" },
+        { kind: "feedback", ref: "knowledge/auth", text: "saved time on debug" },
       ],
     });
     expect(prompt).toContain("- remember: VPN required before deploy");
-    expect(prompt).toContain("- feedback knowledge:auth: saved time on debug");
+    expect(prompt).toContain("- feedback knowledge/auth: saved time on debug");
   });
 
   test("truncates long inline-ref text to keep the prompt focused", () => {
@@ -220,6 +268,42 @@ describe("parseExtractPayload", () => {
     const out = parseExtractPayload(JSON.stringify(payload));
     expect(out.candidates).toHaveLength(1);
     expect(out.candidates[0]).toMatchObject({ type: "memory", name: "auth-uses-jwt", confidence: 0.85 });
+  });
+
+  test("preserves representative scoped names accepted by the strict schema", () => {
+    const namePattern = extractCandidateNamePattern();
+    const names = ["auth/jwt-token", "platform-ops/deploy-vpn", "a/b"];
+
+    for (const name of names) {
+      expect(namePattern.test(name)).toBe(true);
+      expect(parseCandidateNamed(name).candidates[0]?.name).toBe(name);
+    }
+  });
+
+  test("schema and parser reject unsafe candidate names", () => {
+    const namePattern = extractCandidateNamePattern();
+    const names = [
+      "/absolute-name",
+      "C:\\absolute-name",
+      ".",
+      "..",
+      "scope/.",
+      "scope/..",
+      "scope//empty",
+      "scope/",
+      "scope\\backslash",
+      "scope/\0control",
+      "scope/\ncontrol",
+      ["memory", "legacy-ref"].join(":"),
+      "bundle//qualified-ref",
+      "../traversal",
+      "scope/../../traversal",
+    ];
+
+    for (const name of names) {
+      expect(namePattern.test(name)).toBe(false);
+      expect(parseCandidateNamed(name).candidates).toHaveLength(0);
+    }
   });
 
   test("parses a lesson candidate with when_to_use", () => {
@@ -346,140 +430,5 @@ describe("parseExtractPayload", () => {
     const out = parseExtractPayload("This is just prose with no JSON object at all.");
     expect(out.candidates).toEqual([]);
     expect(out.rationale_if_empty).toMatch(/not parseable/);
-  });
-
-  // ── #615 WS-0: orderedActions + outcomeData data-capture hook ──────────────
-
-  test("#615 WS-0: parses orderedActions and outcomeData when present", () => {
-    const payload = {
-      candidates: [
-        {
-          type: "lesson",
-          name: "vpn-deploy-sequence",
-          description: "Connecting to VPN before running deploy.sh prevents silent hangs at the stage-push step.",
-          when_to_use: "When initiating a production deploy from a fresh shell or after a laptop reboot.",
-          body: "Deploy.sh hangs at the 'pushing to stage' step when VPN is not active. The fix is a consistent pre-deploy sequence: check VPN, connect if needed, then run deploy.sh.",
-          confidence: 0.9,
-          evidence: "tool failure at session midpoint + agent recovery",
-          orderedActions: ["check vpn status", "connect to corporate vpn", "run deploy.sh", "verify stage push"],
-          outcomeData: "deploy succeeded after VPN reconnect",
-        },
-      ],
-    };
-    const out = parseExtractPayload(JSON.stringify(payload));
-    expect(out.candidates).toHaveLength(1);
-    const cand = out.candidates[0];
-    expect(cand?.orderedActions).toEqual([
-      "check vpn status",
-      "connect to corporate vpn",
-      "run deploy.sh",
-      "verify stage push",
-    ]);
-    expect(cand?.outcomeData).toBe("deploy succeeded after VPN reconnect");
-  });
-
-  test("#615 WS-0: candidate without orderedActions has no orderedActions/outcomeData fields", () => {
-    const payload = {
-      candidates: [
-        {
-          type: "memory",
-          name: "auth-uses-jwt",
-          description: "Auth pipeline uses JWT tokens with 24h TTL instead of session cookies.",
-          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.\n",
-          confidence: 0.85,
-          evidence: "user correction mid-session",
-        },
-      ],
-    };
-    const out = parseExtractPayload(JSON.stringify(payload));
-    expect(out.candidates).toHaveLength(1);
-    const cand = out.candidates[0];
-    expect(cand?.orderedActions).toBeUndefined();
-    expect(cand?.outcomeData).toBeUndefined();
-  });
-
-  test("#615 WS-0: orderedActions filters out non-string and too-short entries", () => {
-    const payload = {
-      candidates: [
-        {
-          type: "memory",
-          name: "auth-uses-jwt-24h",
-          description: "Auth pipeline uses JWT tokens with 24h TTL switched from session cookies in May.",
-          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.",
-          confidence: 0.8,
-          evidence: "user correction",
-          orderedActions: [42, "ok", "valid action step here", "", null, "another valid action"],
-        },
-      ],
-    };
-    const out = parseExtractPayload(JSON.stringify(payload));
-    const cand = out.candidates[0];
-    // 42 (non-string), "ok" (length 2 < 3), "" (empty), null (non-string) are dropped
-    expect(cand?.orderedActions).toEqual(["valid action step here", "another valid action"]);
-  });
-
-  test("#615 WS-0: outcomeData without orderedActions is not captured", () => {
-    const payload = {
-      candidates: [
-        {
-          type: "memory",
-          name: "some-fact",
-          description: "Auth pipeline uses JWT tokens with 24h TTL instead of session cookies.",
-          body: "The auth module switched from session-cookie storage to short-lived JWT tokens. TTL is 24h.",
-          confidence: 0.8,
-          evidence: "user correction",
-          // No orderedActions, but outcomeData present — should not be captured
-          outcomeData: "orphaned outcome without actions",
-        },
-      ],
-    };
-    const out = parseExtractPayload(JSON.stringify(payload));
-    const cand = out.candidates[0];
-    expect(cand?.orderedActions).toBeUndefined();
-    expect(cand?.outcomeData).toBeUndefined();
-  });
-
-  test("#615 WS-0: orderedActions is capped at 20 entries", () => {
-    const actions = Array.from({ length: 30 }, (_, i) => `step ${i + 1} of the sequence`);
-    const payload = {
-      candidates: [
-        {
-          type: "lesson",
-          name: "long-sequence",
-          description: "This lesson documents a long multi-step sequence with many discrete actions.",
-          when_to_use: "When executing the full integration test pipeline from a clean environment.",
-          body: "A long sequence with many steps. Each step is documented. Steps must run in order for the pipeline to succeed.",
-          confidence: 0.8,
-          evidence: "full run observed at session end",
-          orderedActions: actions,
-          outcomeData: "pipeline completed after all 30 steps",
-        },
-      ],
-    };
-    const out = parseExtractPayload(JSON.stringify(payload));
-    const cand = out.candidates[0];
-    expect(cand?.orderedActions?.length).toBe(20);
-  });
-
-  test("#615 WS-0: EXTRACT_JSON_SCHEMA includes orderedActions and outcomeData as optional fields", () => {
-    type CandidateProps = {
-      properties: {
-        orderedActions: { type: string; items: { type: string } };
-        outcomeData: { type: string };
-      };
-    };
-    const candItem = (
-      EXTRACT_JSON_SCHEMA as {
-        properties: { candidates: { items: CandidateProps } };
-      }
-    ).properties.candidates.items;
-    expect(candItem.properties.orderedActions).toBeDefined();
-    expect(candItem.properties.orderedActions.type).toBe("array");
-    expect(candItem.properties.outcomeData).toBeDefined();
-    expect(candItem.properties.outcomeData.type).toBe("string");
-    // These fields are NOT required (orderedActions and outcomeData are optional)
-    const required = (candItem as unknown as { required: string[] }).required;
-    expect(required).not.toContain("orderedActions");
-    expect(required).not.toContain("outcomeData");
   });
 });

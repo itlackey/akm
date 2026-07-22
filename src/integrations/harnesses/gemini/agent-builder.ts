@@ -13,9 +13,7 @@
  *   gemini -p "<prompt>"
  *
  * with `--output-format json` for structured output, `--model <m>` for model
- * selection, and `--resume <id>` for resume. Resume is registry-side
- * (`AkmHarness.resume` — Gemini's resume IS flag-shaped, so the shared
- * `HarnessResumeSupport` seam covers it); it is not built here because
+ * selection, and `--resume <id>` for resume; resume is not built here because
  * `AgentDispatchRequest` carries no session id. The `GEMINI_CLI=1` identity
  * env marker is likewise registry-side (`AkmHarness.identityEnv` /
  * `agent-identity.ts`), not a builder concern.

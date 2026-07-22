@@ -66,7 +66,7 @@ function isBatchTensor(v: unknown): v is TransformerBatchTensor {
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore override for the dynamic @huggingface/transformers import.
 // Inert in production; only tests install fakes, via tests/_helpers/seams.ts
-// (which restores them automatically). See docs/design/di-seams-plan.md.
+// (which restores them automatically). See docs/architecture/specs/di-seams-plan.md.
 
 export type TransformersLoader = () => Promise<{ pipeline: unknown }>;
 

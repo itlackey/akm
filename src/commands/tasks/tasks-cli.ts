@@ -36,7 +36,7 @@ const tasksAddCommand = defineJsonCommand({
   args: {
     id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
     schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
-    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflow:my-flow)" },
+    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflows/my-flow)" },
     prompt: {
       type: "string",
       description: "Prompt for the configured agent harness — inline text, an asset ref like agent:foo, or ./path.md",
@@ -44,7 +44,7 @@ const tasksAddCommand = defineJsonCommand({
     command: {
       type: "string",
       description:
-        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --auto-accept safe". Split on whitespace; quote the whole flag value.',
+        'Shell command to run on the schedule (no AI agent), e.g. "akm improve --strategy frequent". Split on whitespace; quote the whole flag value.',
     },
     engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
     model: { type: "string", description: "Model override for prompt targets" },
@@ -116,7 +116,7 @@ const tasksListCommand = defineJsonCommand({
 
 const tasksShowCommand = defineJsonCommand({
   meta: { name: "show", description: "Show a parsed task definition" },
-  args: { id: { type: "positional", description: "Task id or task:<id>", required: true } },
+  args: { id: { type: "positional", description: "Task id or tasks/<id>", required: true } },
   async run({ args }) {
     const { id } = parseTaskRef(args.id);
     const result = await akmTasksShow(id);

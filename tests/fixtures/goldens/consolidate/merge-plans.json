@@ -1,0 +1,91 @@
+{
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "cases": {
+    "contradictNoOverDedupByRefAlone": {
+      "ops": [
+        {
+          "contradictedByRef": "memories/mp-contradict-b",
+          "op": "contradict",
+          "reason": "test reason",
+          "ref": "memories/mp-contradict-a"
+        },
+        {
+          "contradictedByRef": "memories/mp-merge-delete-target",
+          "op": "contradict",
+          "reason": "test reason",
+          "ref": "memories/mp-contradict-a"
+        }
+      ],
+      "warnings": []
+    },
+    "contradictPairDedup": {
+      "ops": [
+        {
+          "contradictedByRef": "memories/mp-contradict-b",
+          "op": "contradict",
+          "reason": "first",
+          "ref": "memories/mp-contradict-a"
+        }
+      ],
+      "warnings": []
+    },
+    "hallucinatedPrimaryDropped": {
+      "ops": [],
+      "warnings": [
+        "mergePlans: primary memories/mp-hallucinated-primary not in loaded memory pool (LLM hallucination) — dropping op before execution."
+      ]
+    },
+    "hallucinatedSecondaryFiltered": {
+      "ops": [
+        {
+          "mergeStrategy": "synthesize",
+          "op": "merge",
+          "primary": "memories/mp-real-primary",
+          "secondaries": [
+            "memories/mp-real-secondary"
+          ]
+        }
+      ],
+      "warnings": [
+        "mergePlans: secondary memories/mp-hallucinated-secondary not in loaded memory pool (LLM hallucination) — dropping from op."
+      ]
+    },
+    "mergeWinsOverDelete": {
+      "ops": [
+        {
+          "mergeStrategy": "synthesize",
+          "op": "merge",
+          "primary": "memories/mp-merge-delete-target",
+          "secondaries": [
+            "memories/mp-merge-delete-secondary"
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    "promoteQueuedBeforeMerge": {
+      "ops": [
+        {
+          "knowledgeRef": "knowledge/mp-promote-merge-knowledge",
+          "op": "promote",
+          "reason": "test reason",
+          "ref": "memories/mp-promote-merge-target"
+        },
+        {
+          "mergeStrategy": "synthesize",
+          "op": "merge",
+          "primary": "memories/mp-promote-merge-target",
+          "secondaries": [
+            "memories/mp-merge-delete-secondary"
+          ]
+        }
+      ],
+      "warnings": []
+    }
+  },
+  "notes": [
+    "Pure-function goldens: mergePlans has no fs/LLM/config dependency, so this fixture is byte-for-byte the literal {ops, warnings} output -- no <TS>/<ID> placeholders apply. Refs are fixture-local constants from tests/fixtures/goldens/consolidate/fixture-refs.ts.",
+    "Extends (does not duplicate) tests/commands/consolidate/consolidate-promote-dedup.test.ts's mergePlans promote-by-ref dedup coverage."
+  ],
+  "scenario": "mergePlans reconciliation-algebra precedence table (WI-05, R5, consolidate/merge.ts:35,80-110)"
+}

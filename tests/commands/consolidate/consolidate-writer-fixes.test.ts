@@ -36,7 +36,7 @@ import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 function makeProposal(content: string, envelopeFm: Record<string, unknown> = {}): Proposal {
   return {
     id: "test-proposal-id",
-    ref: "knowledge:test-asset",
+    ref: "knowledge/test-asset",
     status: "pending",
     source: "consolidate",
     createdAt: new Date().toISOString(),
@@ -45,6 +45,7 @@ function makeProposal(content: string, envelopeFm: Record<string, unknown> = {})
       content,
       frontmatter: envelopeFm,
     },
+    changes: [{ path: "", after: content, op: "update" }],
   };
 }
 

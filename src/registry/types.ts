@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { SourceSpec } from "../core/config/config";
+// SourceSpec's defining module (config.ts only re-exports it) — importing the
+// leaf directly breaks the config → config-schema → registry/types → config
+// ring (chunk-8 WI-8.6, DoD 11).
+import type { SourceSpec } from "../core/config/config-types";
 
 /**
  * KitSource — the discriminator string of a {@link SourceSpec}.
@@ -62,7 +65,7 @@ export interface ResolvedRegistryArtifact {
   resolvedRevision?: string;
 }
 
-export interface InstalledStashEntry {
+export interface InstalledBundle {
   id: string;
   source: InstallKind;
   ref: string;
@@ -73,11 +76,9 @@ export interface InstalledStashEntry {
   cacheDir: string;
   installedAt: string;
   writable?: boolean;
-  /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
-  wikiName?: string;
 }
 
-export interface StashInstallResult extends InstalledStashEntry {
+export interface StashInstallResult extends InstalledBundle {
   extractedDir: string;
   integrity?: string;
 }
@@ -105,7 +106,7 @@ export interface RegistrySearchHit {
    * and may exceed `1` (e.g. `scoreStash()` in `providers/static-index.ts` can
    * emit values up to ~1.85). Use only for ranking within a single registry;
    * do not cross-compare with `SearchHit.score` or scores from other
-   * registries. See docs/cli.md and v1-architecture-spec §4.
+   * registries. See docs/reference/cli.md.
    */
   score?: number;
   metadata?: Record<string, string>;

@@ -75,9 +75,7 @@ const hasErrors = uniqueIssues.some((issue) => issue.severity === "error");
 
 if (hasErrors) {
   process.stderr.write(
-    options.fix
-      ? `\nFix the reported errors and rerun.\n`
-      : `\nRun with --fix to normalize characters in-place.\n`,
+    options.fix ? `\nFix the reported errors and rerun.\n` : `\nRun with --fix to normalize characters in-place.\n`,
   );
   process.exit(1);
 }
@@ -108,15 +106,13 @@ function parseArgs(argv: string[]): Options {
     }
 
     if (arg === "--root" && i + 1 < argv.length) {
-      rootDir = path.resolve(argv[i + 1]);
+      rootDir = path.resolve(argv[i + 1]!);
       i += 1;
       continue;
     }
 
     if (arg === "--help" || arg === "-h") {
-      process.stdout.write(
-        "Usage: bun scripts/lint-devto-posts.ts [--fix] [--root <repo-root>]\n",
-      );
+      process.stdout.write("Usage: bun scripts/lint-devto-posts.ts [--fix] [--root <repo-root>]\n");
       process.exit(0);
     }
 
@@ -157,29 +153,25 @@ function normalizePostText(text: string): string {
     .normalize("NFC");
 }
 
-function validateFrontmatter(
-  file: string,
-  frontmatter: Frontmatter,
-  issues: Issue[],
-): { descriptionTooLong: boolean } {
+function validateFrontmatter(file: string, frontmatter: Frontmatter, issues: Issue[]): { descriptionTooLong: boolean } {
   const title = stringValue(frontmatter.title);
   const description = stringValue(frontmatter.description);
   const tags = arrayValue(frontmatter.tags);
   let descriptionTooLong = false;
 
   if (!title) {
-    issues.push({ file, message: "frontmatter is missing required 'title'" });
+    issues.push({ file, message: "frontmatter is missing required 'title'", severity: "error" });
   } else {
     if (title.length > 100) {
-      issues.push({ file, message: "title exceeds 100 characters" });
+      issues.push({ file, message: "title exceeds 100 characters", severity: "error" });
     }
     if (hasControlChars(title)) {
-      issues.push({ file, message: "title contains control characters" });
+      issues.push({ file, message: "title contains control characters", severity: "error" });
     }
   }
 
   if (!description) {
-    issues.push({ file, message: "frontmatter is missing required 'description'" });
+    issues.push({ file, message: "frontmatter is missing required 'description'", severity: "error" });
   } else {
     if (description.length > MAX_DESCRIPTION_LENGTH) {
       descriptionTooLong = true;
@@ -256,13 +248,15 @@ function applyFixes(original: string, frontmatter: string, validation: { descrip
 function truncateDescription(frontmatter: string): string {
   const lines = frontmatter.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
-    if (!lines[i].startsWith("description:")) continue;
+    const line = lines[i]!;
+    if (!line.startsWith("description:")) continue;
 
-    const value = lines[i].slice("description:".length).trim();
+    const value = line.slice("description:".length).trim();
     const parsed = parseDescriptionValue(value);
     if (!parsed) return frontmatter;
 
-    const truncated = parsed.length > MAX_DESCRIPTION_LENGTH ? `${parsed.slice(0, MAX_DESCRIPTION_LENGTH - 3)}...` : parsed;
+    const truncated =
+      parsed.length > MAX_DESCRIPTION_LENGTH ? `${parsed.slice(0, MAX_DESCRIPTION_LENGTH - 3)}...` : parsed;
     lines[i] = `description: '${escapeSingleQuotes(truncated)}'`;
     return lines.join("\n");
   }

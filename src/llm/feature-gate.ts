@@ -27,7 +27,14 @@
 
 import type { AkmConfig } from "../core/config/config";
 
-/** Locked v1 feature keys, kept for backward-compat at the call-site API level. */
+/**
+ * Locked v1 feature keys, kept for backward-compat at the call-site API level.
+ *
+ * `reflect_proposal` (added with the chunk-7 structured-call migration) labels
+ * reflect's direct proposal call, which runs UNGATED at the seam — reflect
+ * enablement is resolved by the improve strategy before dispatch, so the key
+ * has no `FEATURE_LOCATION` resolver and gating it would hard-close it.
+ */
 export type LlmFeatureKey =
   | "memory_consolidation"
   | "distill"
@@ -37,7 +44,8 @@ export type LlmFeatureKey =
   | "lesson_quality_gate"
   | "proposal_quality_gate"
   | "memory_contradiction_detection"
-  | "session_extraction";
+  | "session_extraction"
+  | "reflect_proposal";
 
 /**
  * For each feature key, return the effective enabled state by reading the

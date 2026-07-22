@@ -19,24 +19,21 @@
 import promptTemplate from "../../assets/prompts/extract-session.md" with { type: "text" };
 import type { InlineRefMention, SessionData, SessionEvent } from "../../integrations/session-logs/types";
 
+const EXTRACT_CANDIDATE_NAME_PATTERN = "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$";
+const EXTRACT_CANDIDATE_NAME_RE = new RegExp(EXTRACT_CANDIDATE_NAME_PATTERN);
+
 /**
  * JSON Schema for the structured extract output. Passed to `chatCompletion`
  * when the configured LLM connection has `supportsJsonSchema: true`.
  *
  * Shape:
  *   {
- *     "candidates": [{type, name, description, when_to_use?, body, confidence, evidence,
- *                     orderedActions?, outcomeData?}, ...],
+ *     "candidates": [{type, name, description, when_to_use?, body, confidence, evidence}, ...],
  *     "rationale_if_empty"?: string
  *   }
  *
  * `additionalProperties: false` at each level so any hallucinated keys are
  * dropped before parsing.
- *
- * `orderedActions` and `outcomeData` are additive fields for #615 procedural
- * compilation (WS-0 data-capture hook). Source transcripts are external logs
- * not guaranteed re-extractable; we capture the ordered-action sequence and
- * outcome now even though the detection/compilation feature is deferred to 0.10+.
  */
 export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -59,7 +56,7 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
           name: {
             type: "string",
             description: "Kebab-case slug, optionally under one stable scope/domain segment.",
-            pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$",
+            pattern: EXTRACT_CANDIDATE_NAME_PATTERN,
           },
           description: {
             type: "string",
@@ -89,19 +86,6 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
             type: "string",
             minLength: 5,
             description: "One-line pointer to the moment in the session that supports this candidate.",
-          },
-          orderedActions: {
-            type: "array",
-            description:
-              "OPTIONAL. Ordered list of discrete actions taken during this episode, as brief imperative phrases (e.g. 'run deploy.sh', 'check VPN status', 'retry with --force'). Capture only when the candidate represents a recurring action sequence that could become a skill or workflow. Omit when the candidate is a standalone fact or observation.",
-            items: { type: "string", minLength: 3 },
-            maxItems: 20,
-          },
-          outcomeData: {
-            type: "string",
-            description:
-              "OPTIONAL. One-sentence description of the outcome when the ordered action sequence completed (e.g. 'deploy succeeded after VPN reconnect', 'build failed with error X'). Required when orderedActions is present; omit otherwise.",
-            maxLength: 400,
           },
         },
       },
@@ -213,20 +197,6 @@ export interface ExtractCandidate {
   body: string;
   confidence: number;
   evidence: string;
-  /**
-   * #615 procedural-compilation data-capture hook (WS-0).
-   * Ordered list of discrete actions taken during this episode. Captured now
-   * so the data survives even if source transcripts are not re-extractable
-   * later. The detection/compilation feature itself is deferred to 0.10+.
-   * Optional — only populated when the candidate represents an action sequence.
-   */
-  orderedActions?: string[];
-  /**
-   * #615 procedural-compilation data-capture hook (WS-0).
-   * One-sentence description of the outcome of the ordered action sequence.
-   * Present only when `orderedActions` is non-empty.
-   */
-  outcomeData?: string;
 }
 
 export interface ExtractPayload {
@@ -271,7 +241,7 @@ export function parseExtractPayload(stdout: string): ExtractPayload {
     const c = raw as Record<string, unknown>;
     const type = c.type;
     if (type !== "memory" && type !== "lesson" && type !== "knowledge") continue;
-    if (typeof c.name !== "string" || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(c.name)) continue;
+    if (typeof c.name !== "string" || !EXTRACT_CANDIDATE_NAME_RE.test(c.name)) continue;
     if (typeof c.description !== "string" || c.description.trim().length < 20) continue;
     if (typeof c.body !== "string" || c.body.trim().length < 50) continue;
     if (typeof c.confidence !== "number" || !Number.isFinite(c.confidence)) continue;
@@ -289,20 +259,6 @@ export function parseExtractPayload(stdout: string): ExtractPayload {
       evidence: c.evidence.trim(),
     };
     if (typeof c.when_to_use === "string") candidate.when_to_use = c.when_to_use.trim();
-    // #615 WS-0: parse optional ordered-action + outcome fields.
-    // Defensive: silently drop malformed entries rather than rejecting the whole candidate.
-    if (Array.isArray(c.orderedActions) && c.orderedActions.length > 0) {
-      const actions = c.orderedActions
-        .filter((a): a is string => typeof a === "string" && a.trim().length >= 3)
-        .map((a) => a.trim())
-        .slice(0, 20);
-      if (actions.length > 0) {
-        candidate.orderedActions = actions;
-        if (typeof c.outcomeData === "string" && c.outcomeData.trim().length > 0) {
-          candidate.outcomeData = c.outcomeData.trim().slice(0, 400);
-        }
-      }
-    }
     candidates.push(candidate);
   }
   const result: ExtractPayload = { candidates };

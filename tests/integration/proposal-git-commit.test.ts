@@ -40,12 +40,15 @@ describe("proposal Git target commits", () => {
     git(repo, ["add", "--", "content/lessons/git-proposal.md"]);
     git(repo, ["commit", "-m", "initial"]);
     const config = {
-      stashDir: storage.stashDir,
-      sources: [{ type: "git", name: "team", url, writable: true }],
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        team: { git: url, writable: true },
+      } as AkmConfig["bundles"],
+      defaultBundle: "stash",
       defaultWriteTarget: "team",
     } as AkmConfig;
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:git-proposal",
+      ref: "lessons/git-proposal",
       source: "distill",
       force: true,
       payload: { content: ACCEPTED },

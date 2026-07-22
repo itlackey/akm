@@ -29,10 +29,11 @@
 import path from "node:path";
 import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
+import { getParsedInvocation } from "../../cli/invocation";
 import { defineJsonCommand, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { isHttpUrl } from "../../core/common";
+import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -40,7 +41,7 @@ import { getCacheDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { akmIndex } from "../../indexer/indexer";
-import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
+import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import {
   inferAssetName,
   mergeXrefsIntoContent,
@@ -69,7 +70,8 @@ export const initCommand = defineJsonCommand({
   async run({ args }) {
     // Accept both historical spellings for backwards compatibility with
     // older docs/scripts that used `--stashDir`.
-    const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
+    const invocation = getParsedInvocation();
+    const legacyDir = invocation.getFlagValue("--stashDir") ?? invocation.getFlagValue("--stash-dir");
     const result = await akmInit({
       dir: args.dir ?? legacyDir,
       setDefault: args["set-default"],
@@ -100,12 +102,12 @@ export const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "enrich") || parseFlagValue(process.argv, "--enrich") !== undefined) {
+      if (getHyphenatedBoolean(args, "enrich") || getParsedInvocation().getFlagValue("--enrich") !== undefined) {
         throw new UsageError(
           "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
         );
       }
-      if (getHyphenatedBoolean(args, "re-enrich") || parseFlagValue(process.argv, "--re-enrich") !== undefined) {
+      if (getHyphenatedBoolean(args, "re-enrich") || getParsedInvocation().getFlagValue("--re-enrich") !== undefined) {
         throw new UsageError(
           "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
         );
@@ -129,8 +131,13 @@ export const indexCommand = defineCommand({
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
       let latestMessage = "";
+      // Resolve the stash dir once at the `akm index` command boundary and
+      // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
+      // no longer reads the ambient `resolveStashDir()`.
+      const stashDir = resolveStashDir();
       try {
         const result = await akmIndex({
+          stashDir,
           full: args.full,
           clean: args.clean,
           dryRun: args["dry-run"],

@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
@@ -18,7 +18,7 @@ akm search "knowledge:"                       # List every asset of a type
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `env`, `secret`, `wiki`, `any` | `any` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `env`, `secret`, `any` | `any` |
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
@@ -26,10 +26,10 @@ akm search "knowledge:"                       # List every asset of a type
 | `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
 
 Ref-prefix queries (`"<type>:<prefix>/"` or a bare `"<type>:"`) return a
-deterministic listing, not a relevance ranking. A full ref without the
-trailing slash (`memory:projectA/auth-tip`) stays an ordinary keyword search —
-resolving a single ref is `akm show`'s job — and an explicit `--type` flag
-wins over the type parsed from the query.
+deterministic listing, not a relevance ranking. Drop the trailing slash and the
+same text becomes an ordinary keyword search — resolving a single asset by its
+`<subdir>/<name>` id is `akm show`'s job — and an explicit `--type` flag wins
+over the type parsed from the query.
 
 ## Curate
 
@@ -46,15 +46,15 @@ akm curate "review architecture" --type workflow # Restrict to one asset type
 Display an asset by ref. Knowledge assets support view modes as positional arguments.
 
 ```sh
-akm show script:deploy.sh                     # Show script (returns run command)
-akm show skill:code-review                    # Show skill (returns full content)
-akm show command:release                      # Show command (returns template)
-akm show agent:architect                      # Show agent (returns system prompt)
-akm show workflow:ship-release                # Show parsed workflow steps
-akm show knowledge:guide toc                  # Table of contents
-akm show knowledge:guide section "Auth"       # Specific section
-akm show knowledge:guide lines 10 30          # Line range
-akm show knowledge:my-doc                    # Show content (local or remote)
+akm show scripts/deploy.sh                    # Show script (returns run command)
+akm show skills/code-review                   # Show skill (returns full content)
+akm show commands/release                     # Show command (returns template)
+akm show agents/architect                     # Show agent (returns system prompt)
+akm show workflows/ship-release               # Show parsed workflow steps
+akm show knowledge/guide toc                  # Table of contents
+akm show knowledge/guide section "Auth"       # Specific section
+akm show knowledge/guide lines 10 30          # Line range
+akm show knowledge/my-doc                     # Show content (local or remote)
 ```
 
 | Type | Key fields returned |
@@ -68,7 +68,6 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | memory | `content` (recalled context) |
 | env | `keys` (key names only — values and comment text never returned) |
 | secret | `name` only (the whole file is the value — never returned) |
-| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list`. To ingest sources, `akm wiki ingest <name>` dispatches the configured agent (`defaults.engine` or `--engine`) to execute the ingest workflow. |
 
 ## Capture Knowledge While You Work
 
@@ -76,65 +75,53 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm remember "note" --target my-other-stash    # Route write to a named writable stash source
-akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
-akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the old asset (beliefState: superseded)
+akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable; ref must resolve)
+akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the old asset (beliefState: superseded)
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
-akm import ./doc.md --xref knowledge:auth-flow # Merge provenance xrefs into the imported doc's frontmatter
-akm import ./new.md --supersedes knowledge:old # Import a correction AND demote the doc it replaces
+akm import ./doc.md --xref knowledge/auth-flow # Merge provenance xrefs into the imported doc's frontmatter
+akm import ./new.md --supersedes knowledge/old # Import a correction AND demote the doc it replaces
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflows/foo.yaml       # Validate a YAML v2/markdown workflow or ref; lists every error
-akm workflow next workflow:ship-release        # Start or resume the next workflow step
-akm feedback skill:code-review --positive      # Record that an asset helped
-akm feedback agent:reviewer --negative         # Record that an asset missed the mark
-akm feedback memory:deployment-notes --positive # Works for memories too
-akm feedback env:prod --positive               # Records env feedback without surfacing values
+akm workflow next workflows/ship-release       # Start or resume the next workflow step
+akm feedback skills/code-review --positive     # Record that an asset helped
+akm feedback agents/reviewer --negative        # Record that an asset missed the mark
+akm feedback memories/deployment-notes --positive # Works for memories too
+akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
 
-## Wikis
+## LLM Wiki bundles
 
-Multi-wiki knowledge bases (Karpathy-style). A stash-owned wiki lives at
-`<stashDir>/wikis/<name>/`; external directories or repos can also be registered
-as first-class wikis. akm owns lifecycle + raw-slug + lint + index regeneration
-for stash-owned wikis; page edits use your native Read/Write/Edit tools.
+An LLM Wiki (Karpathy-style knowledge base) is a **bundle format**, not an akm
+asset type — there is no `akm wiki` command family. akm's LLM Wiki adapter
+recognizes one deterministically at install time: a bundle component whose root
+holds a `schema.md` plus a `pages/` directory is mounted as an `llm-wiki`
+component. Its pages are then indexed like any other content and resolve to
+`bundle//conceptId` refs (e.g. `team-catalog//pages/attention`).
+
+Install one as a source, then search and read its pages with the ordinary
+commands — no wiki-specific verbs:
 
 ```sh
-akm wiki list                                  # List wikis (name, pages, raws, last-modified)
-akm wiki create research                       # Scaffold a new wiki
-akm wiki register ics-docs ~/code/ics-documentation # Register an external wiki
-akm wiki show research                         # Path, description, counts, last 3 log entries
-akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log; includes raw/)
-akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
-akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
-akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug>.md
-akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
-echo "..." | akm wiki stash research -         # stdin form
-akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
-akm wiki ingest research                       # Dispatch defaults.engine to run the ingest workflow on this wiki
-akm wiki ingest research --engine claude --model sonnet  # Override engine and model
-akm wiki ingest research --timeout-ms 600000   # Override the invocation timeout
-akm wiki remove research -y                    # Delete pages/schema/index/log; preserves raw/ (--force is a deprecated alias for -y)
-akm wiki remove research -y --with-sources     # Full nuke, including raw/
+akm add owner/llm-wiki-repo                    # Install an LLM Wiki bundle as a source (npm, GitHub, git, or local dir)
+akm search "attention"                         # Wiki pages surface in ordinary search results
+akm show team-catalog//pages/attention          # Read a page by its bundle//conceptId ref (copy the ref from search)
+akm list                                       # Confirm the bundle is installed
 ```
 
-**For any wiki task, start with `akm wiki list`. Then `akm wiki ingest <name>`
-dispatches the configured agent (`defaults.engine` or `--engine`) to execute
-the wiki's ingest workflow end-to-end — schema read, source dedup, search,
-page create/update, log entry, lint, reindex.** Wiki pages are also addressable as
-`wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
-`type: wiki`. Files under `raw/` and the wiki root infrastructure files
+Files under the bundle's `raw/` directory and the wiki infrastructure files
 `schema.md`, `index.md`, and `log.md` are not indexed and do not appear in
 search results. No `--llm` anywhere — akm never reasons about page content.
 
 ## Env files
 
 A group of related CONFIGURATION for an app/service in one `.env` file at
-`<stashDir>/env/<name>.env`, sourced/injected wholesale. Key names are
+`<stash>/env/<name>.env`, sourced/injected wholesale. Key names are
 discoverable; values and comment text stay on disk and never reach stdout or
 the index (comments can contain commented-out credentials). akm does not edit
 entries — you edit the file with your own editor and akm loads it.
@@ -143,31 +130,31 @@ entries — you edit the file with your own editor and akm loads it.
 akm env create prod                           # Create an empty env file
 akm env create prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across stashes with key names
-akm show env:prod                             # Inspect key names (never values or comments)
-akm env run env:prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
-akm env run env:prod -- $SHELL                # Open an interactive shell with values injected
-akm env export env:prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
-akm env path env:prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
-akm env remove env:prod                       # Delete the env file
+akm show env/prod                             # Inspect key names (never values or comments)
+akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
+akm env run env/prod -- $SHELL                # Open an interactive shell with values injected
+akm env export env/prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
+akm env path env/prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
+akm env remove env/prod                       # Delete the env file
 ```
 
 ## Secrets
 
 A single sensitive value used on its own for authentication (a token, key, or
-cert) — one file = one value at `<stashDir>/secrets/<name>`. The ENTIRE file is
+cert) — one file = one value at `<stash>/secrets/<name>`. The ENTIRE file is
 the value; only the name is ever surfaced.
 
 ```sh
-printf '%s' "$TOKEN" | akm secret set secret:deploy-token   # Store a single value
+printf '%s' "$TOKEN" | akm secret set secrets/deploy-token  # Store a single value
 akm secret list                                             # List secrets (names only)
-akm secret path secret:deploy-token                         # Print the file path (Docker `_FILE`)
-akm secret run secret:deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
-akm secret remove secret:deploy-token                       # Delete the secret
+akm secret path secrets/deploy-token                        # Print the file path (Docker `_FILE`)
+akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm secret remove secrets/deploy-token                      # Delete the secret
 ```
 
 ## Workflows
 
-Workflows live under `<stashDir>/workflows/` as markdown or YAML v2 (`.yaml`/`.yml`).
+Workflows live under `<stash>/workflows/` as markdown or YAML v2 (`.yaml`/`.yml`).
 
 Ref-based workflow commands are scoped to the current project/worktree/directory,
 so one active run does not block unrelated directories from starting the same
@@ -176,8 +163,8 @@ workflow. Direct run-id commands still target the exact run.
 ```sh
 akm workflow template                         # Print a starter workflow template
 akm workflow create ship-release             # Scaffold a new workflow asset
-akm workflow start workflow:ship-release     # Start a new run in the current scope
-akm workflow next workflow:ship-release      # Advance to the next step (or auto-start) in the current scope
+akm workflow start workflows/ship-release    # Start a new run in the current scope
+akm workflow next workflows/ship-release     # Advance to the next step (or auto-start) in the current scope
 akm workflow complete <run-id>               # Mark a step complete and advance
 akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Resume a blocked or failed run
@@ -193,7 +180,7 @@ akm clone <ref>                               # Clone to working stash
 akm clone <ref> --name new-name               # Rename on clone
 akm clone <ref> --dest ./project/.claude       # Clone to custom location
 akm clone <ref> --force                       # Overwrite existing
-akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
+akm clone "npm:@scope/pkg//scripts/deploy.sh" # Clone from remote package
 ```
 
 When `--dest` is provided, `akm init` is not required first.
@@ -209,11 +196,11 @@ and re-keys the index row in place so the asset's learned ranking history
 survives.
 
 ```sh
-akm mv memory:projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
-akm mv memory:solo memory:renamed-solo             # Same-type ref-shaped target also accepted
+akm mv memories/projectA/old-note projectA/new-note  # Rename; subdirectories allowed in the new name
+akm mv memories/solo memories/renamed-solo           # Same-type ref-shaped target also accepted
 ```
 
-Wiki refs, cross-type targets, existing targets, `../` escapes, non-canonical
+Cross-type targets, existing targets, `../` escapes, non-canonical
 source spellings (the error names the canonical ref), `.derived` twin sources
 (rename the base — the twin follows), and `.derived`-suffixed target names are
 rejected (exit 2, nothing moved). Read-only sources are scanned but never
@@ -321,10 +308,10 @@ akm improve <ref>                                       # Propose improvement fo
 akm proposal list                                       # List pending proposals
 akm proposal show <id>                                  # Render the proposal body
 akm proposal diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix
-akm proposal diff skill:akm-dream                       # Diff by asset ref
+akm proposal diff skills/akm-dream                      # Diff by asset ref
 akm proposal accept 7c115132                            # Accept by UUID prefix
 akm proposal accept <id> --target team-stash            # Accept to a named writable stash source
-akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
 akm proposal revert <id>                                # Restore the pre-promotion content
 ```

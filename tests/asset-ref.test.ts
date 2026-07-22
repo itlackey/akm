@@ -1,312 +1,226 @@
 import { describe, expect, test } from "bun:test";
-import { type AssetRef, makeAssetRef, parseAssetRef, refToString } from "../src/core/asset/asset-ref";
-import { type AkmAssetType, ASSET_TYPES } from "../src/core/common";
+import {
+  BUNDLE_REF_RE,
+  type BundleRef,
+  bundleRefToString,
+  makeBundleRef,
+  parseBundleRef,
+} from "../src/core/asset/asset-ref";
 
-// ── makeAssetRef ────────────────────────────────────────────────────────────
+// ── Bundle-scoped ref grammar (0.9.0, spec §11.1) ────────────────────────────
+//
+// The `[bundle//]conceptId[#fragment]` grammar is the SOLE ref grammar after
+// the Chunk-5 flip closed (F5). `type` is no longer part of identity; the ref
+// is a bundle-scoped path id. The pre-0.9.0 `[origin//]type:name` grammar and
+// its `parseAssetRef`/`makeAssetRef`/`refToString` API were deleted here and
+// relocated to `src/migrate/legacy-ref-grammar.ts` (Chunk-8 content migration
+// + the §11.4 re-key). The grammar-invariant intents that survived — name
+// validation (empty / null-byte / absolute / traversal / drive-letter),
+// backslash normalization, origin↔bundle boundary, and round-trip — are all
+// preserved below against the surviving bundle API.
 
-describe("makeAssetRef", () => {
-  test("script ref", () => {
-    expect(makeAssetRef("script", "deploy.sh")).toBe("script:deploy.sh");
+describe("makeBundleRef", () => {
+  test("short form — no bundle", () => {
+    expect(makeBundleRef(undefined, "knowledge/http-caching")).toBe("knowledge/http-caching");
   });
 
-  test("skill ref", () => {
-    expect(makeAssetRef("skill", "code-review")).toBe("skill:code-review");
+  test("fully-qualified with bundle", () => {
+    expect(makeBundleRef("core", "knowledge/http-caching")).toBe("core//knowledge/http-caching");
   });
 
-  test("nested path — slashes stay literal", () => {
-    expect(makeAssetRef("script", "azure/container-apps/scale.sh")).toBe("script:azure/container-apps/scale.sh");
+  test("with export fragment", () => {
+    expect(makeBundleRef("core", "skills/review", "usage")).toBe("core//skills/review#usage");
   });
 
-  test("name with spaces — no encoding", () => {
-    expect(makeAssetRef("script", "my script.sh")).toBe("script:my script.sh");
+  test("short form with fragment", () => {
+    expect(makeBundleRef(undefined, "skills/review", "usage")).toBe("skills/review#usage");
   });
 
-  test("with local origin", () => {
-    expect(makeAssetRef("script", "deploy.sh", "local")).toBe("local//script:deploy.sh");
+  test("script conceptId keeps its extension", () => {
+    expect(makeBundleRef("kit", "scripts/deploy.sh")).toBe("kit//scripts/deploy.sh");
   });
 
-  test("with npm origin — colons and @ stay literal", () => {
-    expect(makeAssetRef("script", "deploy.sh", "npm:@itlackey/openkit")).toBe(
-      "npm:@itlackey/openkit//script:deploy.sh",
+  test("nested conceptId — slashes stay literal", () => {
+    expect(makeBundleRef("kit", "scripts/azure/container-apps/scale.sh")).toBe(
+      "kit//scripts/azure/container-apps/scale.sh",
     );
   });
 
-  test("with github shorthand origin", () => {
-    expect(makeAssetRef("skill", "code-review", "itlackey/dimm-city-stash")).toBe(
-      "itlackey/dimm-city-stash//skill:code-review",
-    );
+  test("conceptId with spaces — no encoding", () => {
+    expect(makeBundleRef(undefined, "scripts/my script.sh")).toBe("scripts/my script.sh");
   });
 
-  test("with github prefixed origin", () => {
-    expect(makeAssetRef("script", "lint.sh", "github:owner/repo#v1.2")).toBe("github:owner/repo#v1.2//script:lint.sh");
+  test("normalizes backslashes in conceptId", () => {
+    expect(makeBundleRef("kit", "a\\b\\c")).toBe("kit//a/b/c");
   });
 
-  test("nested name with origin", () => {
-    expect(makeAssetRef("script", "db/migrate/run.sh", "npm:@corp/db-tools")).toBe(
-      "npm:@corp/db-tools//script:db/migrate/run.sh",
-    );
+  test("rejects a bundle slug with a colon", () => {
+    expect(() => makeBundleRef("npm:pkg", "a/b")).toThrow("Invalid bundle slug");
   });
 
-  test("normalizes backslashes", () => {
-    expect(makeAssetRef("script", "dir\\file.sh")).toBe("script:dir/file.sh");
+  test("rejects a bundle slug with a dot", () => {
+    expect(() => makeBundleRef("foo.com", "a/b")).toThrow("Invalid bundle slug");
   });
 
-  test("no origin produces plain ref", () => {
-    expect(makeAssetRef("agent", "architect.md")).toBe("agent:architect.md");
-    expect(makeAssetRef("agent", "architect.md", undefined)).toBe("agent:architect.md");
+  test("rejects a bundle slug with a slash", () => {
+    expect(() => makeBundleRef("owner/repo", "a/b")).toThrow("Invalid bundle slug");
   });
 
-  test("rejects empty name", () => {
-    expect(() => makeAssetRef("script", "")).toThrow("Empty asset name");
+  test("rejects empty conceptId", () => {
+    expect(() => makeBundleRef("core", "")).toThrow("Empty asset name");
   });
 
-  test("rejects null byte", () => {
-    expect(() => makeAssetRef("script", "foo\0bar")).toThrow("Null byte");
+  test("rejects path traversal in conceptId", () => {
+    expect(() => makeBundleRef("core", "../outside")).toThrow("Path traversal");
   });
 
-  test("rejects absolute path", () => {
-    expect(() => makeAssetRef("script", "/etc/passwd")).toThrow("Absolute path");
+  test("rejects an absolute conceptId", () => {
+    expect(() => makeBundleRef("core", "/etc/passwd")).toThrow("Absolute path");
+  });
+
+  test("rejects a Windows drive path in conceptId", () => {
+    expect(() => makeBundleRef("core", "C:\\foo")).toThrow("Windows drive");
+  });
+
+  test("rejects null byte in conceptId", () => {
+    expect(() => makeBundleRef("core", "foo\0bar")).toThrow("Null byte");
+  });
+
+  test("rejects `#` embedded in conceptId", () => {
+    expect(() => makeBundleRef("core", "a#b")).toThrow("reserved for the export fragment");
+  });
+});
+
+describe("parseBundleRef", () => {
+  test("short form leaves bundle undefined", () => {
+    const ref = parseBundleRef("knowledge/http-caching");
+    expect(ref.bundle).toBeUndefined();
+    expect(ref.conceptId).toBe("knowledge/http-caching");
+    expect(ref.fragment).toBeUndefined();
+  });
+
+  test("fully-qualified form", () => {
+    const ref = parseBundleRef("core//knowledge/http-caching");
+    expect(ref.bundle).toBe("core");
+    expect(ref.conceptId).toBe("knowledge/http-caching");
+  });
+
+  test("export fragment form", () => {
+    const ref = parseBundleRef("core//skills/review#usage");
+    expect(ref.bundle).toBe("core");
+    expect(ref.conceptId).toBe("skills/review");
+    expect(ref.fragment).toBe("usage");
+  });
+
+  test("short form with fragment", () => {
+    const ref = parseBundleRef("skills/review#usage");
+    expect(ref.bundle).toBeUndefined();
+    expect(ref.conceptId).toBe("skills/review");
+    expect(ref.fragment).toBe("usage");
+  });
+
+  test("byte-wise case sensitivity is preserved", () => {
+    expect(parseBundleRef("Core//Skills/Review").conceptId).toBe("Skills/Review");
+    expect(parseBundleRef("Core//Skills/Review").bundle).toBe("Core");
+  });
+
+  test("normalizes backslashes in conceptId", () => {
+    expect(parseBundleRef("kit//dir\\file.sh").conceptId).toBe("dir/file.sh");
+  });
+
+  test("trailing `#` yields no fragment", () => {
+    const ref = parseBundleRef("core//skills/review#");
+    expect(ref.fragment).toBeUndefined();
+    expect(ref.conceptId).toBe("skills/review");
+  });
+
+  test("rejects empty bundle", () => {
+    expect(() => parseBundleRef("//knowledge/foo")).toThrow("Empty bundle");
+  });
+
+  test("rejects a bundle slug with a colon (URL-shaped)", () => {
+    expect(() => parseBundleRef("https://example.com")).toThrow("Invalid bundle slug");
+  });
+
+  test("rejects empty string", () => {
+    expect(() => parseBundleRef("")).toThrow("Empty ref");
+  });
+
+  test("rejects whitespace-only string", () => {
+    expect(() => parseBundleRef("   ")).toThrow("Empty ref");
   });
 
   test("rejects path traversal", () => {
-    expect(() => makeAssetRef("script", "../outside.sh")).toThrow("Path traversal");
+    expect(() => parseBundleRef("core//../outside")).toThrow("Path traversal");
   });
 
-  test("rejects Windows drive path", () => {
-    expect(() => makeAssetRef("script", "C:\\foo")).toThrow("Windows drive");
+  test("rejects an absolute conceptId", () => {
+    expect(() => parseBundleRef("core///etc/passwd")).toThrow("Absolute path");
+  });
+
+  test("rejects null byte", () => {
+    expect(() => parseBundleRef("core//foo\0bar")).toThrow("Null byte");
   });
 });
 
-// ── refToString ─────────────────────────────────────────────────────────────
-
-describe("refToString", () => {
-  test("serializes a plain ref", () => {
-    expect(refToString({ type: "script", name: "deploy.sh", origin: undefined })).toBe("script:deploy.sh");
-  });
-
-  test("serializes a ref with origin", () => {
-    expect(refToString({ type: "skill", name: "review", origin: "local" })).toBe("local//skill:review");
-  });
-
-  test("serializes a ref with a registry origin", () => {
-    expect(refToString({ type: "script", name: "deploy.sh", origin: "npm:@scope/pkg" })).toBe(
-      "npm:@scope/pkg//script:deploy.sh",
-    );
-  });
-
-  test("matches makeAssetRef for the same components", () => {
-    const ref: AssetRef = { type: "command", name: "do/thing", origin: "owner/repo" };
-    expect(refToString(ref)).toBe(makeAssetRef(ref.type, ref.name, ref.origin));
-  });
-
-  test("refToString(parseAssetRef(s)) round-trips", () => {
+describe("bundleRefToString round-trip", () => {
+  test("bundleRefToString(parseBundleRef(s)) round-trips", () => {
     for (const s of [
-      "script:deploy.sh",
-      "local//skill:review",
-      "npm:@corp/db-tools//script:db/migrate/run.sh",
-      "github:owner/repo#v1.2//script:lint.sh",
-      "agent:architect.md",
+      "knowledge/http-caching",
+      "core//knowledge/http-caching",
+      "core//skills/review#usage",
+      "skills/review#usage",
+      "kit//scripts/deploy.sh",
     ]) {
-      expect(refToString(parseAssetRef(s))).toBe(s);
+      expect(bundleRefToString(parseBundleRef(s))).toBe(s);
     }
+  });
+
+  test("matches makeBundleRef for the same components", () => {
+    const ref: BundleRef = { bundle: "core", conceptId: "skills/review", fragment: "usage" };
+    expect(bundleRefToString(ref)).toBe(makeBundleRef(ref.bundle, ref.conceptId, ref.fragment));
   });
 });
 
-// ── parseAssetRef ───────────────────────────────────────────────────────────
+describe("BUNDLE_REF_RE — body-ref recognition (prose)", () => {
+  function scan(body: string): string[] {
+    const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
+    const out: string[] = [];
+    let m: RegExpExecArray | null;
+    // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
+    while ((m = re.exec(body)) !== null) out.push(m[1]!);
+    return out;
+  }
 
-describe("parseAssetRef", () => {
-  test("simple script ref", () => {
-    const ref = parseAssetRef("script:deploy.sh");
-    expect(ref.type).toBe("script");
-    expect(ref.name).toBe("deploy.sh");
-    expect(ref.origin).toBeUndefined();
+  test("matches a fully-qualified ref mid-sentence", () => {
+    expect(scan("see core//knowledge/http-caching for details")).toEqual(["core//knowledge/http-caching"]);
   });
 
-  test("nested path stays literal", () => {
-    const ref = parseAssetRef("script:azure/container-apps/scale.sh");
-    expect(ref.name).toBe("azure/container-apps/scale.sh");
+  test("matches a ref at line start", () => {
+    expect(scan("core//skills/review is relevant")).toEqual(["core//skills/review"]);
   });
 
-  test("name with spaces", () => {
-    const ref = parseAssetRef("script:my script.sh");
-    expect(ref.name).toBe("my script.sh");
+  test("matches inside a markdown link bracket", () => {
+    expect(scan("[core//knowledge/foo]")).toEqual(["core//knowledge/foo"]);
   });
 
-  test("local origin", () => {
-    const ref = parseAssetRef("local//script:deploy.sh");
-    expect(ref.origin).toBe("local");
-    expect(ref.type).toBe("script");
-    expect(ref.name).toBe("deploy.sh");
+  test("captures the export fragment", () => {
+    expect(scan("core//skills/review#usage here")).toEqual(["core//skills/review#usage"]);
   });
 
-  test("npm origin with scope", () => {
-    const ref = parseAssetRef("npm:@itlackey/openkit//script:deploy.sh");
-    expect(ref.origin).toBe("npm:@itlackey/openkit");
-    expect(ref.type).toBe("script");
-    expect(ref.name).toBe("deploy.sh");
+  test("does NOT match an https URL", () => {
+    expect(scan("visit https://example.com/foo/bar now")).toEqual([]);
   });
 
-  test("github shorthand origin", () => {
-    const ref = parseAssetRef("itlackey/dimm-city-stash//skill:code-review");
-    expect(ref.origin).toBe("itlackey/dimm-city-stash");
-    expect(ref.type).toBe("skill");
-    expect(ref.name).toBe("code-review");
+  test("does NOT match a scheme-relative URL", () => {
+    expect(scan("load //cdn.example.com/lib.js please")).toEqual([]);
   });
 
-  test("github origin with tag", () => {
-    const ref = parseAssetRef("github:owner/repo#v1.2//script:lint.sh");
-    expect(ref.origin).toBe("github:owner/repo#v1.2");
-    expect(ref.type).toBe("script");
-    expect(ref.name).toBe("lint.sh");
+  test("does NOT match a short-form ref (fully-qualified only in prose)", () => {
+    expect(scan("see knowledge/http-caching for details")).toEqual([]);
   });
 
-  test("nested name with origin", () => {
-    const ref = parseAssetRef("npm:@corp/db-tools//script:db/migrate/run.sh");
-    expect(ref.origin).toBe("npm:@corp/db-tools");
-    expect(ref.name).toBe("db/migrate/run.sh");
-  });
-
-  test("path-based origin", () => {
-    const ref = parseAssetRef("/mnt/shared-stash//skill:code-review");
-    expect(ref.origin).toBe("/mnt/shared-stash");
-    expect(ref.type).toBe("skill");
-    expect(ref.name).toBe("code-review");
-  });
-
-  test("all asset types parse", () => {
-    for (const type of ["skill", "command", "agent", "knowledge", "script"] as const) {
-      const ref = parseAssetRef(`${type}:test`);
-      expect(ref.type).toBe(type);
-    }
-  });
-
-  test("normalizes backslashes in name", () => {
-    const ref = parseAssetRef("script:dir\\file.sh");
-    expect(ref.name).toBe("dir/file.sh");
-  });
-
-  test("throws for invalid type", () => {
-    expect(() => parseAssetRef("widget:foo")).toThrow("Invalid asset type");
-  });
-
-  test("throws for removed tool type", () => {
-    expect(() => parseAssetRef("tool:deploy.sh")).toThrow("Invalid asset type");
-  });
-
-  test("throws for missing colon", () => {
-    expect(() => parseAssetRef("scriptname")).toThrow("Invalid ref");
-  });
-
-  test("throws for empty origin", () => {
-    expect(() => parseAssetRef("//script:deploy.sh")).toThrow("Empty origin");
-  });
-
-  test("throws for empty name", () => {
-    expect(() => parseAssetRef("script:")).toThrow("Empty asset name");
-  });
-
-  test("throws for path traversal in name", () => {
-    expect(() => parseAssetRef("script:../outside.sh")).toThrow("Path traversal");
-  });
-
-  test("throws for absolute name", () => {
-    expect(() => parseAssetRef("script:/etc/passwd")).toThrow("Absolute path");
-  });
-
-  test("throws for null byte in name", () => {
-    expect(() => parseAssetRef("script:foo\0bar")).toThrow("Null byte");
-  });
-
-  test("throws for Windows drive in name", () => {
-    expect(() => parseAssetRef("script:C:\\foo")).toThrow("Windows drive");
-  });
-
-  test("throws for empty string", () => {
-    expect(() => parseAssetRef("")).toThrow("Empty ref");
-  });
-
-  test("throws for whitespace-only string", () => {
-    expect(() => parseAssetRef("   ")).toThrow("Empty ref");
-  });
-});
-
-// ── AkmAssetType literal union (#492) ───────────────────────────────────────
-
-describe("AkmAssetType literal union", () => {
-  test("parseAssetRef returns a typed AssetRef for skill:foo", () => {
-    const ref: AssetRef = parseAssetRef("skill:foo");
-    // ref.type must be a narrowed AkmAssetType literal
-    const t: AkmAssetType = ref.type;
-    expect(t).toBe("skill");
-    expect(ref.name).toBe("foo");
-    expect(ref.origin).toBeUndefined();
-  });
-
-  test("parseAssetRef returns typed refs for every canonical asset type", () => {
-    for (const type of ASSET_TYPES) {
-      const ref: AssetRef = parseAssetRef(`${type}:sample`);
-      expect(ref.type).toBe(type);
-      expect(ref.name).toBe("sample");
-    }
-  });
-
-  test("parseAssetRef throws for an unknown asset type", () => {
-    expect(() => parseAssetRef("nonexistent:foo")).toThrow("Invalid asset type");
-  });
-
-  test("parseAssetRef throws for dynamic unknown type (not in ASSET_TYPES)", () => {
-    const unknown = "bogus-type";
-    expect(() => parseAssetRef(`${unknown}:bar`)).toThrow("Invalid asset type");
-  });
-});
-
-// ── Round-trips ─────────────────────────────────────────────────────────────
-
-describe("round-trip", () => {
-  test("script round-trips", () => {
-    const str = makeAssetRef("script", "deploy.sh");
-    expect(str).toBe("script:deploy.sh");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "script", name: "deploy.sh", origin: undefined });
-  });
-
-  test("with npm origin", () => {
-    const str = makeAssetRef("script", "deploy.sh", "npm:@scope/pkg");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "script", name: "deploy.sh", origin: "npm:@scope/pkg" });
-  });
-
-  test("nested path with origin", () => {
-    const str = makeAssetRef("script", "db/migrate/run.sh", "npm:@corp/tools");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "script", name: "db/migrate/run.sh", origin: "npm:@corp/tools" });
-  });
-
-  test("local origin", () => {
-    const str = makeAssetRef("skill", "review", "local");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "skill", name: "review", origin: "local" });
-  });
-
-  test("github origin with tag", () => {
-    const str = makeAssetRef("script", "lint.sh", "github:owner/repo#v2.0");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "script", name: "lint.sh", origin: "github:owner/repo#v2.0" });
-  });
-
-  test("name with spaces", () => {
-    const str = makeAssetRef("command", "my command.md");
-    const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "command", name: "my command.md", origin: undefined });
-  });
-
-  test("every asset type round-trips", () => {
-    for (const type of ["skill", "command", "agent", "knowledge", "script"] as const) {
-      const str = makeAssetRef(type, "test-asset", "owner/repo");
-      const parsed = parseAssetRef(str);
-      expect(parsed.type).toBe(type);
-      expect(parsed.name).toBe("test-asset");
-      expect(parsed.origin).toBe("owner/repo");
-    }
+  test("matches multiple refs in one body", () => {
+    expect(scan("core//a/b and kit//c/d")).toEqual(["core//a/b", "kit//c/d"]);
   });
 });

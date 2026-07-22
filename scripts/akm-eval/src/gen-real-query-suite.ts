@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 /**
- * gen-real-query-suite — mine `index.db` usage_events into an akm-eval
+ * gen-real-query-suite — mine `state.db` usage_events into an akm-eval
  * retrieval suite that reflects what users ACTUALLY search for.
  *
  * For each distinct meaningful search/curate query, the generator derives
  * `mustIncludeRefs` = the refs the user subsequently ENGAGED with for that
- * query (show / select / curate / positive-feedback within a short window),
- * normalised across bare (`type:name`) and origin-prefixed
- * (`origin//type:name`) forms. The emitted files are ordinary
+ * query (show / curate / positive-feedback within a short window),
+ * preserving exact current-grammar bundle identity. The emitted files are ordinary
  * `type: "retrieval"` EvalCase JSON consumed by the existing runner.
  *
  * This is the CORPUS-QUALITY BENCHMARK: it measures whether retrieval finds
@@ -16,11 +15,12 @@
  * better or worse" signal that the proactive-verdict runner consumes as
  * metric (a).
  *
- * READ-ONLY against index.db. Writes only suite case files + a manifest.
+ * READ-ONLY against state.db telemetry and the index.db entries catalog.
  *
  * Usage:
  *   bun run scripts/akm-eval/src/gen-real-query-suite.ts \
- *     [--index-db <path>]              (default: <dataDir>/index.db)
+ *     [--state-db <path>]              (default: <dataDir>/state.db)
+ *     [--index-db <path>]              (default: <dataDir>/index.db; entries only)
  *     [--out-suite <name>]             (default: real-query)
  *     [--cases-root <path>]            (default: scripts/akm-eval/cases)
  *     [--max-cases <n>]                (default: 150)
@@ -35,9 +35,10 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveDataDir } from "./sources/paths";
-import { normalizeRef, refVariants } from "./lib/ref-normalize";
+import { normalizeRef } from "./lib/ref-normalize";
 
 interface CliOptions {
+  stateDb: string;
   indexDb: string;
   outSuite: string;
   casesRoot: string;
@@ -56,6 +57,7 @@ interface UsageRow {
   entryRef: string | null;
   signal: string | null;
   metadata: string | null;
+  source: string | null;
   createdAt: string;
 }
 
@@ -76,8 +78,29 @@ interface DropRecord {
   engagedCount: number;
 }
 
+interface RealQueryManifest {
+  schemaVersion: 1;
+  generatedAt: string;
+  stateDb: string;
+  indexDb: string;
+  suite: string;
+  suiteDir: string;
+  params: {
+    maxCases: number;
+    windowMin: number;
+    minQueryLen: number;
+    minEngaged: number;
+    topK: number;
+  };
+  emittedCases: number;
+  droppedTotal: number;
+  dropByReason: Record<string, number>;
+  sampleDrops: DropRecord[];
+}
+
 function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
+    stateDb: path.join(resolveDataDir(), "state.db"),
     indexDb: path.join(resolveDataDir(), "index.db"),
     outSuite: "real-query",
     casesRoot: path.resolve(path.join(import.meta.dir, "..", "cases")),
@@ -96,6 +119,7 @@ function parseArgs(argv: string[]): CliOptions {
       return v;
     };
     switch (arg) {
+      case "--state-db": opts.stateDb = path.resolve(next()); break;
       case "--index-db": opts.indexDb = path.resolve(next()); break;
       case "--out-suite": opts.outSuite = next(); break;
       case "--cases-root": opts.casesRoot = path.resolve(next()); break;
@@ -129,7 +153,8 @@ Usage:
   bun run scripts/akm-eval/src/gen-real-query-suite.ts [options]
 
 Options:
-  --index-db <path>     index.db path (default: <dataDir>/index.db).
+  --state-db <path>     state.db path containing usage_events (default: <dataDir>/state.db).
+  --index-db <path>     index.db entries catalog (default: <dataDir>/index.db).
   --out-suite <name>    Suite directory name (default: real-query).
   --cases-root <path>   Cases root (default: scripts/akm-eval/cases).
   --max-cases <n>       Cap emitted cases (default: 150).
@@ -142,13 +167,11 @@ Options:
 }
 
 /**
- * Engagement event types that signal "the user used this ref". A `select`
- * is the strongest in-session pick; `curate` pulls a batch into context;
- * `show` is an explicit read; positive `feedback` is an endorsement.
+ * Engagement event types that signal "the user used this ref". `curate` pulls
+ * a batch into context; `show` is an explicit read; positive `feedback` is an endorsement.
  * Weights bias the ranking but every type above zero counts as engagement.
  */
 const ENGAGEMENT_WEIGHTS: Record<string, number> = {
-  select: 3,
   curate: 2,
   feedback: 3, // positive only — negative is filtered out below
   show: 1,
@@ -178,7 +201,7 @@ function extractCurateRefs(metadata: string | null): string[] {
   return [];
 }
 
-function mineCandidates(db: Database, opts: CliOptions): {
+function mineCandidates(db: Database, currentRefs: Set<string>, opts: CliOptions): {
   candidates: QueryCandidate[];
   drops: DropRecord[];
 } {
@@ -186,7 +209,7 @@ function mineCandidates(db: Database, opts: CliOptions): {
   // subsequent engagement events. Bounded by the table size (read-only).
   const rows = db
     .query(
-      `SELECT id, event_type, query, entry_ref, signal, metadata, created_at
+      `SELECT id, event_type, query, entry_ref, signal, metadata, source, created_at
        FROM usage_events
        ORDER BY created_at ASC, id ASC`,
     )
@@ -197,6 +220,7 @@ function mineCandidates(db: Database, opts: CliOptions): {
       entry_ref: string | null;
       signal: string | null;
       metadata: string | null;
+      source: string | null;
       created_at: string;
     }>;
 
@@ -207,6 +231,7 @@ function mineCandidates(db: Database, opts: CliOptions): {
     entryRef: r.entry_ref,
     signal: r.signal,
     metadata: r.metadata,
+    source: r.source,
     createdAt: r.created_at,
   }));
 
@@ -220,6 +245,7 @@ function mineCandidates(db: Database, opts: CliOptions): {
 
   // Pre-index engagement events by epoch for windowed lookup.
   const engagementEvents = events.filter((e) => {
+    if (e.source !== "user") return false;
     if (e.eventType === "feedback") return e.signal === "positive";
     return ENGAGEMENT_WEIGHTS[e.eventType] !== undefined;
   });
@@ -239,6 +265,7 @@ function mineCandidates(db: Database, opts: CliOptions): {
 
   for (const ev of events) {
     if (ev.eventType !== "search" && ev.eventType !== "curate") continue;
+    if (ev.source !== "user" || ev.entryRef !== null) continue;
     const q = ev.query?.trim();
     if (!q) continue;
     const tQuery = toEpoch(ev.createdAt);
@@ -263,27 +290,23 @@ function mineCandidates(db: Database, opts: CliOptions): {
     if (ev.eventType === "curate") {
       for (const raw of extractCurateRefs(ev.metadata)) {
         const norm = normalizeRef(raw);
-        if (!norm) continue;
+        if (!norm || !currentRefs.has(norm)) continue;
         cand.engaged.set(norm, (cand.engaged.get(norm) ?? 0) + ENGAGEMENT_WEIGHTS.curate);
       }
     }
-    // A search event sometimes records the clicked ref directly on the row.
-    if (ev.eventType === "search" && ev.entryRef) {
-      const norm = normalizeRef(ev.entryRef);
-      if (norm) cand.engaged.set(norm, (cand.engaged.get(norm) ?? 0) + ENGAGEMENT_WEIGHTS.select);
-    }
 
-    // Windowed downstream engagement: any select/show/curate/positive-feedback
-    // in [tQuery, tQuery+window]. Linear scan over the time-sorted slice.
+    // Windowed downstream engagement: any show/curate/positive-feedback
+    // strictly after the query and within its window.
     for (const { e, t } of engSorted) {
       if (t < tQuery) continue;
       if (t > tQuery + windowMs) break;
+      if (t === tQuery && e.id <= ev.id) continue;
       const refs: string[] = [];
       if (e.entryRef) refs.push(e.entryRef);
       if (e.eventType === "curate") refs.push(...extractCurateRefs(e.metadata));
       for (const raw of refs) {
         const norm = normalizeRef(raw);
-        if (!norm) continue;
+        if (!norm || !currentRefs.has(norm)) continue;
         const w = ENGAGEMENT_WEIGHTS[e.eventType] ?? 0;
         cand.engaged.set(norm, (cand.engaged.get(norm) ?? 0) + w);
       }
@@ -344,11 +367,11 @@ function slugify(q: string, idx: number): string {
 
 function buildCase(cand: QueryCandidate, idx: number, topK: number, suite: string) {
   // Take the top engaged refs by weight as mustIncludeRefs. We cap at 5 so a
-  // single noisy query can't demand the entire result set. Emit both the
-  // normalised form and known variants so the retrieval runner (exact ref
-  // match) hits whichever form `akm search` returns for that asset.
+  // single noisy query can't demand the entire result set. Emit the exact
+  // current-grammar form. Bundle identity must not collapse when two
+  // installed bundles expose the same conceptId.
   const ranked = [...cand.engaged.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const mustIncludeRefs = ranked.flatMap(([ref]) => refVariants(ref));
+  const mustIncludeRefs = ranked.map(([ref]) => ref);
 
   return {
     schemaVersion: 1 as const,
@@ -392,45 +415,147 @@ function buildCase(cand: QueryCandidate, idx: number, topK: number, suite: strin
   };
 }
 
+function readGenerationManifest(manifestPath: string): RealQueryManifest {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RealQueryManifest;
+  if (manifest.schemaVersion !== 1 || typeof manifest.suite !== "string" || !Number.isSafeInteger(manifest.emittedCases)) {
+    throw new Error(`invalid real-query generation manifest: ${manifestPath}`);
+  }
+  return manifest;
+}
+
+function recoverInterruptedPublication(
+  publicationDir: string,
+  suiteDir: string,
+  manifestPath: string,
+): RealQueryManifest | undefined {
+  if (!fs.existsSync(publicationDir)) return undefined;
+  const stagingSuite = path.join(publicationDir, "suite");
+  const stagingManifest = path.join(publicationDir, "manifest.json");
+  const suitePublished = fs.existsSync(suiteDir);
+  const manifestPublished = fs.existsSync(manifestPath);
+  const suiteStaged = fs.existsSync(stagingSuite);
+  const manifestStaged = fs.existsSync(stagingManifest);
+
+  if (manifestPublished && !suitePublished) {
+    throw new Error(`conflicting real-query publication state at ${publicationDir}`);
+  }
+  if (!manifestStaged && !manifestPublished) {
+    if (suitePublished) throw new Error(`incomplete real-query publication at ${publicationDir}`);
+    fs.rmSync(publicationDir, { recursive: true, force: true });
+    return undefined;
+  }
+  if ((suitePublished && suiteStaged) || (manifestPublished && manifestStaged)) {
+    throw new Error(`conflicting real-query publication state at ${publicationDir}`);
+  }
+  const manifest = readGenerationManifest(manifestPublished ? manifestPath : stagingManifest);
+  if (manifest.suiteDir !== suiteDir) {
+    throw new Error(`real-query publication manifest does not match ${suiteDir}`);
+  }
+  if (!suitePublished) {
+    if (!suiteStaged) throw new Error(`incomplete real-query suite publication at ${publicationDir}`);
+    fs.renameSync(stagingSuite, suiteDir);
+  }
+  if (!manifestPublished) {
+    if (!manifestStaged) throw new Error(`incomplete real-query manifest publication at ${publicationDir}`);
+    fs.renameSync(stagingManifest, manifestPath);
+  }
+  fs.rmSync(publicationDir, { recursive: true, force: true });
+  return manifest;
+}
+
+function printManifest(manifest: RealQueryManifest, format: "json" | "md"): void {
+  if (format === "json") {
+    process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
+    return;
+  }
+  const lines: string[] = [];
+  lines.push(`# gen-real-query-suite — \`${manifest.suite}\``);
+  lines.push("");
+  lines.push(`- state.db: \`${manifest.stateDb}\``);
+  lines.push(`- index.db entries: \`${manifest.indexDb}\``);
+  lines.push(`- suite dir: \`${manifest.suiteDir}\``);
+  lines.push(`- emitted cases: **${manifest.emittedCases}** (cap ${manifest.params.maxCases})`);
+  lines.push(`- dropped: **${manifest.droppedTotal}**`);
+  lines.push("");
+  lines.push("## Dropped, by reason");
+  lines.push("");
+  lines.push("| Reason | Count |");
+  lines.push("| --- | ---: |");
+  for (const [reason, count] of Object.entries(manifest.dropByReason).sort((a, b) => b[1] - a[1])) {
+    lines.push(`| ${reason} | ${count} |`);
+  }
+  lines.push("");
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 function main(): number {
   const opts = parseArgs(process.argv.slice(2));
+  const suiteDir = path.join(opts.casesRoot, opts.outSuite);
+  const manifestPath = path.join(opts.casesRoot, `${opts.outSuite}.manifest.json`);
+  const publicationDir = path.join(opts.casesRoot, `.${path.basename(opts.outSuite)}.publishing`);
+  const recovered = recoverInterruptedPublication(publicationDir, suiteDir, manifestPath);
+  if (recovered) {
+    printManifest(recovered, opts.format);
+    process.stderr.write(`[gen-real-query-suite] recovered publication for ${suiteDir} (manifest: ${manifestPath})\n`);
+    return 0;
+  }
+  if (!fs.existsSync(opts.stateDb)) {
+    process.stderr.write(`[gen-real-query-suite] state.db not found: ${opts.stateDb}\n`);
+    return 2;
+  }
   if (!fs.existsSync(opts.indexDb)) {
     process.stderr.write(`[gen-real-query-suite] index.db not found: ${opts.indexDb}\n`);
     return 2;
   }
 
-  const db = new Database(opts.indexDb, { readonly: true });
+  const indexDb = new Database(opts.indexDb, { readonly: true });
+  const currentRefs = new Set(
+    (indexDb.query("SELECT item_ref FROM entries WHERE item_ref IS NOT NULL").all() as Array<{ item_ref: string }>).map(
+      (row) => row.item_ref,
+    ),
+  );
+  indexDb.close();
+
+  const db = new Database(opts.stateDb, { readonly: true });
   let candidates: QueryCandidate[];
   let drops: DropRecord[];
   try {
-    ({ candidates, drops } = mineCandidates(db, opts));
+    ({ candidates, drops } = mineCandidates(db, currentRefs, opts));
   } finally {
     db.close();
   }
 
-  const suiteDir = path.join(opts.casesRoot, opts.outSuite);
-  fs.mkdirSync(suiteDir, { recursive: true });
-
-  // Clean any prior generated cases for this suite so re-runs are idempotent.
-  // Only removes rq-*.json files this generator owns — never other suites.
-  for (const f of fs.readdirSync(suiteDir)) {
-    if (/^rq-.*\.json$/.test(f)) fs.rmSync(path.join(suiteDir, f));
+  if (fs.existsSync(suiteDir) || fs.existsSync(manifestPath)) {
+    throw new Error(
+      `generated suite already exists: ${fs.existsSync(suiteDir) ? suiteDir : manifestPath}; choose a new --out-suite generation name`,
+    );
   }
+  fs.mkdirSync(opts.casesRoot, { recursive: true });
+  fs.mkdirSync(publicationDir);
+  const stagingDir = path.join(publicationDir, "suite");
+  const stagingManifest = path.join(publicationDir, "manifest.json");
+  fs.mkdirSync(stagingDir);
 
   let emitted = 0;
-  for (const cand of candidates) {
-    const c = buildCase(cand, emitted + 1, opts.topK, opts.outSuite);
-    fs.writeFileSync(path.join(suiteDir, `${c.id}.json`), `${JSON.stringify(c, null, 2)}\n`);
-    emitted += 1;
+  try {
+    for (const cand of candidates) {
+      const c = buildCase(cand, emitted + 1, opts.topK, opts.outSuite);
+      fs.writeFileSync(path.join(stagingDir, `${c.id}.json`), `${JSON.stringify(c, null, 2)}\n`);
+      emitted += 1;
+    }
+  } catch (error) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    throw error;
   }
 
   // Drop-reason rollup for the log.
   const dropByReason: Record<string, number> = {};
   for (const d of drops) dropByReason[d.reason] = (dropByReason[d.reason] ?? 0) + 1;
 
-  const manifest = {
+  const manifest: RealQueryManifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    stateDb: opts.stateDb,
     indexDb: opts.indexDb,
     suite: opts.outSuite,
     suiteDir,
@@ -449,30 +574,18 @@ function main(): number {
   // Write the manifest OUTSIDE the suite dir: the orchestrator's loadCases()
   // greedily parses every *.json under the suite dir as an EvalCase, so a
   // `_manifest.json` sibling would blow up the run. Park it one level up.
-  const manifestPath = path.join(opts.casesRoot, `${opts.outSuite}.manifest.json`);
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-
-  if (opts.format === "json") {
-    process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-  } else {
-    const lines: string[] = [];
-    lines.push(`# gen-real-query-suite — \`${opts.outSuite}\``);
-    lines.push("");
-    lines.push(`- index.db: \`${opts.indexDb}\``);
-    lines.push(`- suite dir: \`${suiteDir}\``);
-    lines.push(`- emitted cases: **${emitted}** (cap ${opts.maxCases})`);
-    lines.push(`- dropped: **${drops.length}**`);
-    lines.push("");
-    lines.push("## Dropped, by reason");
-    lines.push("");
-    lines.push("| Reason | Count |");
-    lines.push("| --- | ---: |");
-    for (const [r, n] of Object.entries(dropByReason).sort((a, b) => b[1] - a[1])) {
-      lines.push(`| ${r} | ${n} |`);
-    }
-    lines.push("");
-    process.stdout.write(`${lines.join("\n")}\n`);
+  try {
+    fs.writeFileSync(stagingManifest, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+    fs.renameSync(stagingDir, suiteDir);
+    if (process.env.AKM_TEST_REAL_QUERY_CRASH_AFTER_SUITE_PUBLISH === "1") process.kill(process.pid, "SIGKILL");
+    fs.renameSync(stagingManifest, manifestPath);
+    fs.rmSync(publicationDir, { recursive: true, force: true });
+  } catch (error) {
+    if (!fs.existsSync(suiteDir)) fs.rmSync(publicationDir, { recursive: true, force: true });
+    throw error;
   }
+
+  printManifest(manifest, opts.format);
 
   process.stderr.write(`[gen-real-query-suite] wrote ${emitted} cases to ${suiteDir} (manifest: ${manifestPath})\n`);
   return 0;

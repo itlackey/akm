@@ -2,13 +2,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isKnownType, type KnownType } from "../../core/recognition-util";
 import type { Database } from "../../storage/database";
-import type { ScopedUtilityRow, UtilityScoreRow } from "../db/db";
+import type { ScopedUtilityRow, UtilityScoreRow } from "../../storage/repositories/index-entry-types";
 import { computeGraphBoost, type GraphBoostContext } from "../graph/graph-boost";
 import type { ProjectContext } from "../walk/project-context";
-import type { RankedEntryInput } from "./ranking";
+import type { RankedEntryInput } from "./ranking-types";
+import { attachSearchHitAttribution } from "./search-attribution";
 
-const TYPE_BOOST: Record<string, number> = {
+/**
+ * Chunk 1.5 (D1.5-5) — retyped from `Record<string, number>` to a FULL
+ * `Record<KnownType, number>`. Only 8/14 types carried an entry before this
+ * chunk (`env`, `secret`, `wiki`, `lesson`, `task`, `session` silently fell
+ * through to the `?? 0` fallback at the sole consumer,
+ * {@link typeRankingContributor}). The 6 additions below are explicit `0`
+ * entries — behavior-preserving (they already defaulted to `0`), but now
+ * compile-time-exhaustive: adding a new `KNOWN_TYPE` forces an explicit
+ * boost decision instead of silently defaulting.
+ */
+export const TYPE_BOOST: Record<KnownType, number> = {
   skill: 0.4,
   command: 0.35,
   workflow: 0.35,
@@ -18,15 +30,37 @@ const TYPE_BOOST: Record<string, number> = {
   // Facts are authoritative, durable declarations about the stash — rank them
   // alongside knowledge so they surface reliably when relevant.
   fact: 0.22,
+  // Instruction files (CLAUDE.md / AGENTS.md) are project instructions read
+  // like knowledge (maintainer resolution 2026-07) — rank them alongside
+  // knowledge so they surface reliably when relevant.
+  instruction: 0.22,
   memory: -0.02,
+  // Chunk 1.5: previously-absent entries, all defaulted to 0 pre-chunk —
+  // explicit now, unchanged in effect.
+  env: 0,
+  secret: 0,
+  lesson: 0,
+  task: 0,
+  session: 0,
 };
+
+/**
+ * Open-string accessor over {@link TYPE_BOOST} (plan §2.3 "ranking
+ * accessor"). Foreign/unknown types (outside `KNOWN_TYPES`) fall back to `0`
+ * — identical to the old `TYPE_BOOST[item.entry.type] ?? 0` behavior on a
+ * loosely-typed `Record<string, number>`, now expressed safely over the
+ * exhaustive `Record<KnownType, number>`.
+ */
+export function typeBoostFor(type: string): number {
+  return isKnownType(type) ? TYPE_BOOST[type] : 0;
+}
 
 const MAX_BOOST_SUM = 3.0;
 const UTILITY_WEIGHT = 0.5;
 const UTILITY_MAX_BOOST = 1.5;
 
 /**
- * R2 (docs/design/improve-self-learning-analysis.md) — weight of the improve
+ * R2 — weight of the improve
  * loop's `asset_salience.rank_score` in user-facing ranking. Bounded well
  * below the utility boost so the composed signal refines, never dominates,
  * lexical/semantic relevance. rank_score ∈ [0,1] → boost ∈ [1, 1.2].
@@ -62,6 +96,7 @@ export interface RankingContributor {
   name: string;
   appliesTo(item: RankedEntryInput, ctx: RankingContext): boolean;
   adjust(item: RankedEntryInput, ctx: RankingContext): number;
+  applied?(item: RankedEntryInput, ctx: RankingContext, contribution: number): void;
 }
 
 export interface UtilityRankingContext extends RankingContext {
@@ -199,7 +234,7 @@ const typeRankingContributor: RankingContributor = {
   name: "type-ranking",
   appliesTo: () => true,
   adjust(item) {
-    return TYPE_BOOST[item.entry.type] ?? 0;
+    return typeBoostFor(item.entry.type);
   },
 };
 
@@ -305,6 +340,19 @@ const graphRankingContributor: RankingContributor = {
   adjust(item, ctx) {
     return ctx.graphContext ? computeGraphBoost(ctx.graphContext, item.filePath) : 0;
   },
+  applied(item, ctx, contribution) {
+    if (!ctx.graphContext || contribution <= 0) return;
+    const graphNode = ctx.graphContext.nodesByPath.get(item.filePath);
+    attachSearchHitAttribution(item, {
+      graphExtraction: {
+        boost: contribution,
+        ...(graphNode?.bodyHash ? { bodyHash: graphNode.bodyHash } : {}),
+        ...((graphNode?.extractionRunId ?? ctx.graphContext.graph.telemetry?.extractionRunId)
+          ? { extractionRunId: graphNode?.extractionRunId ?? ctx.graphContext.graph.telemetry?.extractionRunId }
+          : {}),
+      },
+    });
+  },
 };
 
 /**
@@ -348,7 +396,7 @@ const lessonStrengthContributor: RankingContributor = {
  * Pinned-fact boost.
  *
  * Facts marked `pinned: true` form the small always-injected "core context"
- * (see docs/design/fact-asset-type.md). The fact metadata contributor records
+ * (see docs/architecture/specs/fact-asset-type.md). The fact metadata contributor records
  * a `pinned` search hint; here we give those facts a modest additive boost so
  * the core outranks ordinary facts on otherwise-equal queries. Capped small so
  * it cannot overpower an exact-name match.
@@ -512,11 +560,10 @@ export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [
  * `name`s). A no-op — returns the input list unchanged (same reference) — when
  * the env value is unset/empty, so production ranking is never affected unless
  * the operator opts in. Its sole purpose is per-contributor ablation for the
- * curate ablation harness (see `docs/technical/ranking-ablation-and-saturation-analysis.md`
- * and `scripts/akm-eval/`): run the same fixture with and without a contributor
+ * curate ablation harness (`scripts/akm-eval/`): run the same fixture with and without a contributor
  * and diff the ranked results to measure whether that contributor is load-bearing.
  *
- * NOTE (see the analysis doc): a contributor's ablation delta is only observable
+ * NOTE (from the 2026-06 ablation analysis): a contributor's ablation delta is only observable
  * in the UNSATURATED score regime — once entries saturate at the `displayScore`
  * ceiling their contributor deltas are absorbed and ablation reads Δ=0.
  */
@@ -543,7 +590,11 @@ export function applyScoreContributors(
   let boostSum = 0;
   for (const contributor of contributors) {
     if (!contributor.appliesTo(item, ctx)) continue;
+    const cappedBefore = Math.min(boostSum, MAX_BOOST_SUM);
     boostSum += contributor.adjust(item, ctx);
+    // Attribution receives only the share admitted by the common boost cap,
+    // never a raw contributor value that scoring discarded.
+    contributor.applied?.(item, ctx, Math.min(boostSum, MAX_BOOST_SUM) - cappedBefore);
   }
   item.score *= 1 + Math.min(boostSum, MAX_BOOST_SUM);
 }

@@ -92,7 +92,7 @@ steps:
 describe.skipIf(!BUN)("multi-process crash windows", () => {
   test("Window A: SIGKILL after the unit row is running but before finish → resume re-dispatches it exactly once and completes", async () => {
     writeProgram(storage.stashDir, "crash-solo", SOLO_WF);
-    const started = await startWorkflowRun("workflow:crash-solo", {});
+    const started = await startWorkflowRun("workflows/crash-solo", {});
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
@@ -104,11 +104,11 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
       CHAOS_MARKER_DIR: markerDir,
       CHAOS_HOLD_MATCH: "Do the work now",
     });
-    await pollUntil(() => holdStartExists(markerDir, unit), { label: "unit is dispatching" });
+    await pollUntil(() => holdStartExists(markerDir, unit!), { label: "unit is dispatching" });
     // The durable state at the kill point: exactly the running window.
-    const midRow = await withWorkflowRunsRepo((repo) => repo.getUnit(runId, unit));
+    const midRow = await withWorkflowRunsRepo((repo) => repo.getUnit(runId, unit!));
     expect(midRow?.status).toBe("running");
-    expect(dispatchCount(markerDir, unit)).toBe(1);
+    expect(dispatchCount(markerDir, unit!)).toBe(1);
 
     crasher.kill("SIGKILL");
     await crasher.done();
@@ -122,20 +122,20 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
     expect(status.run.status).toBe("completed");
     // Dispatched twice total (killed attempt + the single resume attempt); the
     // journal's attempts counter agrees — no third dispatch.
-    expect(dispatchCount(markerDir, unit)).toBe(2);
-    const finalRow = await withWorkflowRunsRepo((repo) => repo.getUnit(runId, unit));
+    expect(dispatchCount(markerDir, unit!)).toBe(2);
+    const finalRow = await withWorkflowRunsRepo((repo) => repo.getUnit(runId, unit!));
     expect(finalRow?.status).toBe("completed");
     expect(finalRow?.attempts).toBe(2);
 
     // A further invocation is a pure no-op — the completed run dispatches nothing.
     const noop = spawnRunner({ CHAOS_RUN_ID: runId, CHAOS_MARKER_DIR: markerDir });
     expect(await noop.done()).toBe(0);
-    expect(dispatchCount(markerDir, unit)).toBe(2);
+    expect(dispatchCount(markerDir, unit!)).toBe(2);
   }, 30_000);
 
   test("Window B: SIGKILL after the unit completes but before the step does → resume reuses the unit, replaces the dangling gate row, finalizes once", async () => {
     writeProgram(storage.stashDir, "crash-gate", GATE_WF);
-    const started = await startWorkflowRun("workflow:crash-gate", {});
+    const started = await startWorkflowRun("workflows/crash-gate", {});
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [unit] = await unitIds(runId, {});
@@ -156,8 +156,8 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
     expect(rowsMid.find((r) => r.unit_id === unit)?.status).toBe("completed");
     const gateMid = rowsMid.filter((r) => r.node_id === "work.gate");
     expect(gateMid).toHaveLength(1);
-    expect(gateMid[0].status).toBe("running");
-    expect(dispatchCount(markerDir, unit)).toBe(1);
+    expect(gateMid[0]!.status).toBe("running");
+    expect(dispatchCount(markerDir, unit!)).toBe(1);
 
     crasher.kill("SIGKILL");
     await crasher.done();
@@ -171,13 +171,13 @@ describe.skipIf(!BUN)("multi-process crash windows", () => {
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("completed");
     // The completed unit was reused, never re-dispatched.
-    expect(dispatchCount(markerDir, unit)).toBe(1);
+    expect(dispatchCount(markerDir, unit!)).toBe(1);
     // Exactly one gate row, now completed — INSERT OR REPLACE took the dangling
     // row over, no duplicate.
     const gateRows = (await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "work"))).filter(
       (r) => r.node_id === "work.gate",
     );
     expect(gateRows).toHaveLength(1);
-    expect(gateRows[0].status).toBe("completed");
+    expect(gateRows[0]!.status).toBe("completed");
   }, 30_000);
 });

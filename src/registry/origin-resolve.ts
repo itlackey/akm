@@ -23,7 +23,7 @@ export function resolveSourcesForOrigin(origin: string | undefined, allSources: 
 
   // "local" means the primary stash (first entry)
   if (origin === "local") {
-    return allSources.length > 0 ? [allSources[0]] : [];
+    return allSources.length > 0 ? [allSources[0]!] : [];
   }
 
   // Exact registryId match (e.g. origin is "npm:@scope/pkg")

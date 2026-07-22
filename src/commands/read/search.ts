@@ -13,19 +13,25 @@
  * Provider `search()` methods do not exist.
  */
 
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
-import { loadConfig } from "../../core/config/config";
+import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTransientStashPath } from "../../core/paths";
-import { bumpUtilityScoresBatch, getEntryIdByFilePath } from "../../indexer/db/db";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
+import {
+  type AttributionProjection,
+  getSearchHitAttribution,
+  usageEventAttributionMetadata,
+} from "../../indexer/search/search-attribution";
+import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import { bumpUtilityScoresBatch } from "../../storage/repositories/index-utility-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
 import "../../sources/providers/index";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type {
   AkmSearchType,
@@ -40,6 +46,13 @@ import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositori
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
+
+interface SearchEventLoggingInput {
+  skipLogging?: boolean;
+  eventSource?: UsageEventSource;
+  disableScopedUtility?: boolean;
+  attributionProjection?: AttributionProjection;
+}
 
 export async function akmSearch(input: {
   query: string;
@@ -92,6 +105,8 @@ export async function akmSearch(input: {
    * so events can be filtered out of user-facing history.
    */
   eventSource?: UsageEventSource;
+  /** Internal projection used only to decide whether derived surface content was emitted. */
+  attributionProjection?: AttributionProjection;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -102,25 +117,14 @@ export async function akmSearch(input: {
   const config = loadConfig();
 
   // Named-source filter: when --source is not a standard enum value, treat it
-  // as a named source from config.sources[].name. Validate early (before
+  // as a named source (a `bundles` key). Validated early (before
   // resolveSourceEntries, which can throw STASH_DIR_NOT_FOUND) so that a bad
   // --source name always produces INVALID_SOURCE_VALUE regardless of stash state.
   let namedSourceName: string | undefined;
   let source: SearchSource;
   if (parsedSource !== "stash" && parsedSource !== "registry" && parsedSource !== "both") {
     namedSourceName = parsedSource as string;
-    // Check that the named source exists in the config before touching the stash.
-    const configSources = config.sources ?? [];
-    const foundInConfig =
-      configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
-    if (!foundInConfig) {
-      const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
-      const hint =
-        validNames.length > 0
-          ? `Known source names: ${validNames.join(", ")}`
-          : "No named sources are configured. Run `akm list` to see installed stashes.";
-      throw new UsageError(`Unknown source name: "${namedSourceName}". ${hint}`, "INVALID_SOURCE_VALUE");
-    }
+    assertNamedSourceExists(config, namedSourceName);
     source = "stash";
   } else {
     source = parsedSource as SearchSource;
@@ -149,12 +153,12 @@ export async function akmSearch(input: {
       warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging) logSearchEvent(query, response, undefined, input.eventSource);
+    maybeLogSearchEvent(input, query, response);
     return response;
   }
   // Primary stash directory — used for DB path lookups and as the default
   // stash root. Safe because the empty-sources case is handled above.
-  const stashDir = allSources[0].path;
+  const stashDir = allSources[0]!.path;
   // Expose the filtered source list to downstream search calls.
   const sources = allSources;
 
@@ -200,15 +204,7 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    if (!input.skipLogging) {
-      logSearchEvent(
-        query,
-        response,
-        localResult?.mode ?? "keyword",
-        input.eventSource,
-        input.disableScopedUtility === true,
-      );
-    }
+    maybeLogSearchEvent(input, query, response, localResult?.mode ?? "keyword");
     return response;
   }
 
@@ -245,8 +241,7 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
-    if (!input.skipLogging)
-      logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
+    maybeLogSearchEvent(input, query, response);
     return response;
   }
 
@@ -265,9 +260,25 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  if (!input.skipLogging)
-    logSearchEvent(query, response, undefined, input.eventSource, input.disableScopedUtility === true);
+  maybeLogSearchEvent(input, query, response);
   return response;
+}
+
+function maybeLogSearchEvent(
+  input: SearchEventLoggingInput,
+  query: string,
+  response: SearchResponse,
+  mode?: "semantic" | "keyword",
+): void {
+  if (input.skipLogging) return;
+  logSearchEvent(
+    query,
+    response,
+    mode,
+    input.eventSource,
+    input.disableScopedUtility === true,
+    input.attributionProjection,
+  );
 }
 
 /**
@@ -276,15 +287,19 @@ export async function akmSearch(input: {
 function resolveEntryIds(
   db: import("../../storage/database").Database,
   hits: SourceSearchHit[],
-): Array<{ entryId: number; ref: string }> {
-  const results: Array<{ entryId: number; ref: string }> = [];
+): Array<{ entryId: number; ref: string; hit: SourceSearchHit }> {
+  const results: Array<{ entryId: number; ref: string; hit: SourceSearchHit }> = [];
   for (const hit of hits) {
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
       if (entryId !== undefined) {
-        const parsed = parseAssetRef(hit.ref);
-        const origin = parsed.origin ?? hit.origin ?? undefined;
-        results.push({ entryId, ref: refToString({ ...parsed, ...(origin ? { origin } : {}) }) });
+        // F4c: persist the DURABLE fully-qualified `bundle//conceptId` spelling,
+        // derived from the resolved entry row's `item_ref` (D-R3: durable keys
+        // come from the resolved item, never raw input).
+        const itemRef = getItemRefById(db, entryId);
+        if (itemRef !== null) {
+          results.push({ entryId, ref: itemRef, hit });
+        }
       }
     } catch {
       /* skip unresolvable */
@@ -314,6 +329,7 @@ function logSearchEvent(
   mode: "semantic" | "keyword" = "keyword",
   eventSource: UsageEventSource = "user",
   disableScopedUtility = false,
+  attributionProjection: AttributionProjection = "full",
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
@@ -333,21 +349,42 @@ function logSearchEvent(
     withIndexDb(
       (db) => {
         const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
-        for (const { entryId, ref } of resolved) {
-          insertUsageEvent(db, {
+        // usage_events telemetry now writes to state.db (Chunk-8 WI-8.3);
+        // entry_id/entry_ref are resolved from index.db above and carried across.
+        const stashHitCount = response.hits.length;
+        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
+        withStateDbTelemetry((stateDb) => {
+          for (const { entryId, ref, hit } of resolved) {
+            insertUsageEvent(stateDb, {
+              event_type: "search",
+              query,
+              entry_id: entryId,
+              entry_ref: ref,
+              metadata: usageEventAttributionMetadata(getSearchHitAttribution(hit), ref, attributionProjection),
+              source: eventSource,
+            });
+          }
+          // Count registry hits separately so registry-only searches record a
+          // non-zero resultCount. response.hits is always [] when source="registry".
+          insertUsageEvent(stateDb, {
             event_type: "search",
             query,
-            entry_id: entryId,
-            entry_ref: ref,
+            metadata: JSON.stringify({
+              resultCount: stashHitCount + registryHitCount,
+              stashHitCount,
+              registryHitCount,
+              resolvedCount: resolved.length,
+              mode,
+            }),
             source: eventSource,
           });
-        }
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
         // Bump utility scores for all resolved entries (MemRL retrieval signal).
         // The indexer overwrites these at next reindex; bumps are temporary hints.
         // Gated to user-sourced events: pipeline searches (improve probes, task
         // runner) must not feed the utility signal (meta-review 05 DRIFT-6 —
         // the bump previously fired unconditionally, so even correctly-tagged
-        // machine traffic inflated utility).
+        // machine traffic inflated utility). utility_scores stays in index.db.
         const resolvedIds =
           eventSource === "user" ? resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined) : [];
         if (resolvedIds.length > 0) {
@@ -361,22 +398,6 @@ function logSearchEvent(
           }
           bumpUtilityScoresBatch(db, resolvedIds, 1.0, 0.1, scopeKey);
         }
-        // Count registry hits separately so registry-only searches record a
-        // non-zero resultCount. response.hits is always [] when source="registry".
-        const stashHitCount = response.hits.length;
-        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
-        insertUsageEvent(db, {
-          event_type: "search",
-          query,
-          metadata: JSON.stringify({
-            resultCount: stashHitCount + registryHitCount,
-            stashHitCount,
-            registryHitCount,
-            resolvedCount: resolved.length,
-            mode,
-          }),
-          source: eventSource,
-        });
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );
@@ -387,6 +408,26 @@ function logSearchEvent(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Validate a named `--source` against the bundle-derived source list (0.9.0
+ * spec §10.1: a named source is a `bundles` key, matched via its derived
+ * source entry's `name`, or an exact path). Throws INVALID_SOURCE_VALUE with
+ * the known names before any stash access can fail differently.
+ */
+function assertNamedSourceExists(config: AkmConfig, namedSourceName: string): void {
+  const configSources = getSources(config);
+  const foundInConfig =
+    configSources.some((s) => s.name === namedSourceName) || configSources.some((s) => s.path === namedSourceName);
+  if (!foundInConfig) {
+    const validNames = configSources.map((s) => s.name).filter((n): n is string => Boolean(n));
+    const hint =
+      validNames.length > 0
+        ? `Known source names: ${validNames.join(", ")}`
+        : "No named sources are configured. Run `akm list` to see installed stashes.";
+    throw new UsageError(`Unknown source name: "${namedSourceName}". ${hint}`, "INVALID_SOURCE_VALUE");
+  }
+}
 
 function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {
@@ -499,15 +540,4 @@ export function entryMatchesScopeFilters(
     if (!scope || scope[key] !== expected) return false;
   }
   return true;
-}
-
-/**
- * Merge stash hits and registry hits via simple concatenation.
- */
-export function mergeSearchHits(
-  localHits: SourceSearchHit[],
-  registryHits: RegistrySearchResultHit[],
-  limit: number,
-): SearchHit[] {
-  return [...localHits, ...registryHits].slice(0, limit);
 }

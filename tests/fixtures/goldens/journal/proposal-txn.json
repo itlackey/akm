@@ -1,0 +1,82 @@
+{
+  "accept": {
+    "idempotentReaccept": {
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "sameAcceptedContentHash": true,
+      "sameAssetPath": true,
+      "treeUnchanged": true
+    },
+    "newAsset": {
+      "acceptedContentHashPresent": true,
+      "backupContentPresent": false,
+      "fileTree": {
+        "lessons/jnl-accept-new-asset.md": "a935fa98f1abfe9bd34aa107386c4ddf721d8111d4f1cebb0f0c9d86169c8df9"
+      },
+      "journalDirCleaned": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    },
+    "overwrite": {
+      "acceptedContentHashPresent": true,
+      "backupContentPresent": true,
+      "fileTree": {
+        "lessons/jnl-accept-overwrite.md": "2877d24b4a724704d1671df30364b41b8111f5eafdf442066014b80380e3dc1f"
+      },
+      "status": "accepted"
+    },
+    "targetMutatedAbort": {
+      "abortErrorPrefix": "Cannot roll back proposal transaction:",
+      "finalContentIsByteIdenticalToOriginal": false,
+      "finalContentIsMutatorContent": true,
+      "proposalStatus": "pending",
+      "strayPublishFileCount": 1,
+      "transactionDirOrphaned": true,
+      "triggered": true
+    }
+  },
+  "capturedAtHead": "3d9ee7b1917e8c4872f135fe9993d94b61b36ed1",
+  "notes": [
+    "No journal bytes/paths asserted -- journal phase sequences are informational only (brief S3.2 rule 4); Chunk 6 replaces the journal engines. Only observable outcomes (file trees, DB status, exactly-once events, abort error prefixes, recovery end-states) are the preserved contract.",
+    "Reject engine has NO before-hash: rejectConcurrentEdit pins that a concurrently-edited target does not block a reject (repository.ts:1405-1415, DB-only journal, no paths/hashes). A unified FileChange transaction must not invent a hash check here.",
+    "DEVIATION from the brief's testsFirst description: the target-mutated-during-displace abort's REAL surfaced error is 'Cannot roll back proposal transaction: <path> diverged.', not 'Proposal target changed while its backup was being acquired.' (which IS thrown internally at repository.ts:1608 but is always shadowed by rollbackPreparedProposalTransaction's own divergence check re-firing on the same persisted mutation). The asset is left holding the mutator's content (not byte-identical restored) and the transaction dir + a stray .publish file are orphaned. See this file's header comment for the full trace. Captured as-is per brief S1 (\"capture, not aspiration\")."
+  ],
+  "reject": {
+    "concurrentEditSucceeds": {
+      "concurrentEditUntouched": true,
+      "ok": true,
+      "status": "rejected"
+    },
+    "nonPending": {
+      "errorCode": "INVALID_FLAG_VALUE"
+    },
+    "success": {
+      "rejectedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "rejected"
+    }
+  },
+  "revert": {
+    "refuseClobber": {
+      "bContentSurvives": true,
+      "errorCode": "INVALID_FLAG_VALUE",
+      "proposalAStatus": "accepted"
+    },
+    "success": {
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    }
+  },
+  "scenario": "proposal accept/revert/reject transaction round-trip outcomes (WI-03, R3)"
+}

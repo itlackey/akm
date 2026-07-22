@@ -12,8 +12,7 @@
  *
  *   q chat --no-interactive --trust-all-tools "<prompt>"
  *
- * with `--model <m>` for model selection and `--resume` for resume. Resume is
- * registry-side (`AkmHarness.resume`, {@link AMAZONQ_RESUME_FLAG}) — and NOTE:
+ * with `--model <m>` for model selection and `--resume` for resume — NOTE:
  * unlike every other harness's resume, Q's `--resume` is a bare flag that
  * replays the previous conversation *of the working directory*; it takes no
  * session id. There is nothing to thread from `workflow_run_units` — akm's own
@@ -71,14 +70,6 @@ import {
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AMAZONQ_PLATFORM = "amazonq";
-
-/**
- * Resume flag per the capability matrix (`--resume`). Exported for the
- * integration task's `AkmHarness.resume` registry entry. Bare flag: Q resumes
- * the previous conversation of the current working directory and takes NO
- * session id value — do not append one after it.
- */
-export const AMAZONQ_RESUME_FLAG = "--resume";
 
 /**
  * Split a tool policy into individual tool names for `--trust-tools`.

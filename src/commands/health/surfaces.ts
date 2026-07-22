@@ -190,7 +190,9 @@ export function collectOrphanStoresAdvisory(input: {
  */
 export interface EgressConfigView {
   registries?: Array<{ url?: string; name?: string; enabled?: boolean }>;
-  sources?: Array<{ type?: string; url?: string; name?: string; enabled?: boolean; path?: string }>;
+  // 0.9.0 (spec §10.1): remote source URLs come from the `bundles` map's git /
+  // website descriptors, not the retired `sources[]`.
+  bundles?: Record<string, { path?: string; git?: string; website?: { url?: string }; npm?: string } | undefined>;
   engines?: Record<string, { kind?: string; endpoint?: string } | undefined>;
   embedding?: { endpoint?: string };
 }
@@ -210,9 +212,11 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     if (reg.enabled === false || !reg.url) continue;
     endpoints.push(`registry ${reg.name ?? "(unnamed)"}: ${reg.url}`);
   }
-  for (const source of config.sources ?? []) {
-    if (source.enabled === false || !source.url) continue;
-    endpoints.push(`source ${source.name ?? "(unnamed)"} (${source.type ?? "?"}): ${source.url}`);
+  for (const [key, bundle] of Object.entries(config.bundles ?? {})) {
+    if (!bundle) continue;
+    const url = bundle.git ?? bundle.website?.url;
+    if (!url) continue;
+    endpoints.push(`source ${key} (${bundle.git ? "git" : "website"}): ${url}`);
   }
   for (const [name, engine] of Object.entries(config.engines ?? {})) {
     if (engine?.kind !== "llm" || !engine.endpoint) continue;

@@ -48,7 +48,7 @@ export function resolveSinceWindow(value: unknown, now: Date = new Date()): stri
   const m = /^(\d+)\s*([smhd])$/i.exec(trimmed);
   if (m) {
     const n = Number(m[1]);
-    const unit = m[2].toLowerCase();
+    const unit = m[2]!.toLowerCase();
     const ms =
       unit === "s" ? n * 1000 :
       unit === "m" ? n * 60_000 :
@@ -126,7 +126,7 @@ export async function runProposalQualityCase(c: EvalCase, ctx: EvalContext): Pro
     else if (p.status === "pending") bySource[s].pending += 1;
   }
   for (const s of Object.keys(bySource)) {
-    const row = bySource[s];
+    const row = bySource[s]!;
     const d = row.accepted + row.rejected;
     row.acceptRate = d === 0 ? null : row.accepted / d;
   }

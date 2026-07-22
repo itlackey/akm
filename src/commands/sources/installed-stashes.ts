@@ -7,93 +7,144 @@
  *
  * Provides unified operations across all source kinds (local, managed, remote).
  * The CLI's `akm list`, `akm remove`, and `akm update` commands are wired here.
+ *
+ * 0.9.0 (spec §10.1/§10.2): the retired `installed[]` array is gone — a
+ * registry-managed source is now a `bundles.<slug>` entry (the desired locator)
+ * paired with a lock entry (the resolved `localRoot`/version). A bundle that has
+ * a lock entry is "managed" (installed from a registry and overwritten on
+ * `akm update`); a bundle with no lock is a plain filesystem/git/website source.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir } from "../../core/common";
+import { resolveStashDir } from "../../core/common";
+import type { AkmConfig } from "../../core/config/config";
 import { getSources, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
-import { removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
+import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
-import type { InstalledStashEntry } from "../../registry/types";
+import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { parseGitRepoUrl, syncMirroredRepo } from "../../sources/providers/git";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
-import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../../sources/types";
-import { ensureWebsiteMirror, shouldAllowPrivateWebsiteUrlForTests } from "../../sources/website-ingest";
-import { listWikis, resolveWikisRoot } from "../../wiki/wiki";
+import {
+  ensureWebsiteMirror,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
+import type {
+  RemoveResponse,
+  SourceEntry,
+  SourceKind,
+  SourceListResponse,
+  UpdateResponse,
+  UpdateResultItem,
+} from "../../sources/types";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
+
+/**
+ * A registry-managed source: its `bundles` entry (desired locator) joined with
+ * its lock entry (resolved cache state). `installId` is the original registry id
+ * — the bundle's preserved `registryId`, else the slug-legal bundle key used
+ * verbatim.
+ */
+interface ManagedInstall {
+  bundleKey: string;
+  installId: string;
+  source: InstallKind;
+  ref: string;
+  localRoot: string;
+  resolvedVersion?: string;
+  resolvedRevision?: string;
+  writable: boolean;
+}
+
+/** Enumerate the registry-managed installs (lock-backed bundles) in a config. */
+function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
+  const bundles = config.bundles ?? {};
+  const locks = new Map(readLockfile().map((entry) => [entry.id, entry]));
+  const out: ManagedInstall[] = [];
+  for (const [key, bundle] of Object.entries(bundles)) {
+    const lock = locks.get(key);
+    if (!lock) continue; // only lock-backed bundles are registry-managed
+    out.push({
+      bundleKey: key,
+      installId: bundle.registryId ?? key,
+      source: lock.source,
+      ref: lock.ref,
+      localRoot: lock.localRoot ?? "",
+      resolvedVersion: lock.resolvedVersion,
+      resolvedRevision: lock.resolvedRevision,
+      writable: bundle.writable === true,
+    });
+  }
+  return out;
+}
+
+/** Resolve an `akm remove`/`akm update` target to a managed install, if any. */
+function resolveManagedTarget(config: AkmConfig, target: string): ManagedInstall | undefined {
+  const installs = listManagedInstalls(config);
+  const byId = installs.find((m) => m.installId === target || m.bundleKey === target);
+  if (byId) return byId;
+  const byRef = installs.find((m) => m.ref === target);
+  if (byRef) return byRef;
+  const isUrl = target.startsWith("http://") || target.startsWith("https://");
+  if (!isUrl) {
+    const resolved = path.resolve(target);
+    const byPath = installs.find((m) => m.localRoot && path.resolve(m.localRoot) === resolved);
+    if (byPath) return byPath;
+  }
+  let parsedId: string | undefined;
+  try {
+    parsedId = parseRegistryRef(target).id;
+  } catch {
+    parsedId = undefined;
+  }
+  if (parsedId) return installs.find((m) => m.installId === parsedId);
+  return undefined;
+}
 
 export async function akmListSources(input?: { stashDir?: string; kind?: SourceKind[] }): Promise<SourceListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const config = loadConfig();
   const kindFilter = input?.kind;
+  const locks = new Map(readLockfile().map((entry) => [entry.id, entry]));
 
   const sources: SourceEntry[] = [];
 
-  // Stash entries — each entry exposes its provider type as kind (spec §2.1).
-  // Writable defaults: true for filesystem, false for git/npm/website (CLAUDE.md "Writes").
-  for (const stash of getSources(config)) {
-    const kind: SourceKind = (stash.type as SourceKind) ?? "filesystem";
-    if (kindFilter && !kindFilter.includes(kind)) continue;
+  // Every source is a bundle. A bundle with a lock entry is registry-managed;
+  // otherwise it is a plain filesystem/git/website source.
+  for (const bundle of getSources(config)) {
+    const key = bundle.name ?? bundle.path ?? bundle.url ?? "unknown";
+    const lock = bundle.name ? locks.get(bundle.name) : undefined;
 
-    const isFilesystem = kind === "filesystem";
-    const writableDefault = isFilesystem;
-    const name = stash.name ?? stash.path ?? stash.url ?? "unknown";
-    sources.push({
-      name,
-      kind,
-      wiki: stash.wikiName,
-      path: stash.path,
-      provider: stash.url != null ? stash.type : undefined,
-      writable: stash.writable !== undefined ? stash.writable : writableDefault,
-      status: { exists: stash.path ? directoryExists(stash.path) : true },
-    });
-  }
-
-  // Installed entries → managed sources
-  for (const entry of config.installed ?? []) {
-    const kind: SourceKind = "managed";
-    if (kindFilter && !kindFilter.includes(kind)) continue;
-
-    sources.push({
-      name: entry.id,
-      kind,
-      wiki: entry.wikiName,
-      path: entry.stashRoot,
-      ref: entry.ref,
-      version: entry.resolvedVersion,
-      writable: entry.writable === true,
-      status: { exists: directoryExists(entry.stashRoot) },
-    });
-  }
-
-  if (!kindFilter || kindFilter.includes("filesystem")) {
-    const wikisRoot = resolveWikisRoot(stashDir);
-    const seenPaths = new Set(
-      sources
-        .map((source) => source.path)
-        .filter((sourcePath): sourcePath is string => typeof sourcePath === "string")
-        .map((sourcePath) => path.resolve(sourcePath)),
-    );
-    for (const wiki of listWikis(stashDir)) {
-      // `listWikis()` also includes externally-registered wikis. `akm list`
-      // should synthesize source entries here only for stash-owned wiki dirs.
-      if (!isWithin(wiki.path, wikisRoot)) continue;
-      const resolvedPath = path.resolve(wiki.path);
-      if (seenPaths.has(resolvedPath)) continue;
-      seenPaths.add(resolvedPath);
+    if (lock) {
+      const kind: SourceKind = "managed";
+      if (kindFilter && !kindFilter.includes(kind)) continue;
+      const root = lock.localRoot ?? bundle.path ?? "";
       sources.push({
-        name: wiki.name,
-        kind: "filesystem",
-        wiki: wiki.name,
-        path: wiki.path,
-        writable: true,
-        status: { exists: directoryExists(wiki.path) },
+        name: key,
+        kind,
+        ...(root ? { path: root } : {}),
+        ref: lock.ref,
+        version: lock.resolvedVersion,
+        writable: bundle.writable === true,
+        status: { exists: root ? directoryExists(root) : false },
       });
+      continue;
     }
+
+    const kind: SourceKind = (bundle.type as SourceKind) ?? "filesystem";
+    if (kindFilter && !kindFilter.includes(kind)) continue;
+    const isFilesystem = kind === "filesystem";
+    sources.push({
+      name: key,
+      kind,
+      path: bundle.path,
+      provider: bundle.url != null ? bundle.type : undefined,
+      writable: bundle.writable !== undefined ? bundle.writable : isFilesystem,
+      status: { exists: bundle.path ? directoryExists(bundle.path) : true },
+    });
   }
 
   return {
@@ -113,16 +164,13 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
 
   const stashDir = input.stashDir ?? resolveStashDir();
   const config = loadConfig();
-  const installed = config.installed ?? [];
 
-  // Try installed[] first (managed sources)
-  const entry = tryResolveInstalledTarget(installed, target);
-
-  if (entry) {
-    const updatedConfig = removeInstalledRegistryEntry(entry.id);
-    await removeLockEntry(entry.id);
-    if (entry.source !== "local") {
-      cleanupDirectoryBestEffort(entry.cacheDir);
+  // Registry-managed installs (lock-backed bundles) first.
+  const managed = resolveManagedTarget(config, target);
+  if (managed) {
+    const updatedConfig = await removeInstalledRegistryEntry(managed.installId);
+    if (managed.source !== "local" && managed.localRoot) {
+      cleanupDirectoryBestEffort(managed.localRoot);
     }
     const index = await akmIndex({ stashDir });
 
@@ -131,15 +179,15 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       stashDir,
       target,
       removed: {
-        id: entry.id,
-        source: entry.source,
-        ref: entry.ref,
-        cacheDir: entry.cacheDir,
-        stashRoot: entry.stashRoot,
+        id: managed.installId,
+        source: managed.source,
+        ref: managed.ref,
+        cacheDir: managed.localRoot,
+        stashRoot: managed.localRoot,
       },
       config: {
         sourceCount: getSources(updatedConfig).length,
-        installedKitCount: updatedConfig.installed?.length ?? 0,
+        installedKitCount: readLockfile().length,
       },
       index: {
         mode: index.mode,
@@ -150,7 +198,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     };
   }
 
-  // Fall through to stashes[] (local/remote sources)
+  // Plain sources (filesystem/git/website bundles) via the bundle-map remover.
   const stashResult = removeStash(target);
   if (!stashResult.removed || !stashResult.entry) {
     throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
@@ -173,7 +221,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -204,7 +252,7 @@ async function buildUpdateResponse(
     processed,
     config: {
       sourceCount: getSources(finalConfig).length,
-      installedKitCount: finalConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -215,7 +263,7 @@ async function buildUpdateResponse(
   };
 }
 
-/** Sync a git-mirrored source and return an UpdateResponse. */
+/** Sync a git-mirrored (plain) source and return an UpdateResponse. */
 async function updateGitSource(
   stashDir: string,
   target: string,
@@ -226,7 +274,7 @@ async function updateGitSource(
   return buildUpdateResponse(stashDir, target, all, [], true);
 }
 
-/** Re-crawl a website source and return an UpdateResponse. */
+/** Re-crawl a website (plain) source and return an UpdateResponse. */
 async function updateWebsiteSource(
   stashDir: string,
   target: string,
@@ -242,23 +290,22 @@ async function updateWebsiteSource(
   return buildUpdateResponse(stashDir, target, all, []);
 }
 
-/** Sync a single installed registry entry and return the processed record. */
-async function updateRegistryEntry(
-  entry: InstalledStashEntry,
-  force: boolean,
-): Promise<UpdateResponse["processed"][number]> {
-  if (force && shouldCleanupCache(entry)) {
-    cleanupDirectoryBestEffort(entry.cacheDir);
-  }
-  const synced = await syncFromRef(entry.ref, { force });
+/** Sync a single registry-managed install and return the processed record. */
+async function updateManagedInstall(managed: ManagedInstall, force: boolean): Promise<UpdateResultItem> {
+  // No pre-cleanup of the old root, even under --force: the providers already
+  // re-materialize staging-first (git clones into a `.tmp-*` sibling and swaps
+  // only on success), so destroying `managed.localRoot` BEFORE `syncFromRef`
+  // succeeds would turn any sync failure (network down, bad ref) into losing a
+  // previously-working install. The old root is cleaned up below, after the
+  // lock points at the new content.
+  const synced = await syncFromRef(managed.ref, { force });
 
-  const installedEntry: InstalledStashEntry = {
-    id: synced.id,
+  const installedEntry: InstalledBundle = {
+    id: managed.installId,
     // Preserve the original source classification. syncFromRef() re-derives the
     // source type from the ref scheme (e.g. "github:" → source: "github"), but
-    // an update should not reclassify an existing entry. A writable entry stored
-    // as source: "git" would fail config validation if rewritten to "github".
-    source: entry.source,
+    // an update should not reclassify an existing entry.
+    source: managed.source,
     ref: synced.ref,
     artifactUrl: synced.artifactUrl,
     resolvedVersion: synced.resolvedVersion,
@@ -266,33 +313,42 @@ async function updateRegistryEntry(
     stashRoot: synced.contentDir,
     cacheDir: synced.cacheDir,
     installedAt: synced.syncedAt,
-    writable: synced.writable ?? entry.writable,
-    ...(entry.wikiName ? { wikiName: entry.wikiName } : {}),
+    writable: synced.writable ?? managed.writable,
   };
-  upsertInstalledRegistryEntry(installedEntry);
+  const { bundleId } = upsertInstalledRegistryEntry(installedEntry);
   await upsertLockEntry({
-    id: synced.id,
-    source: synced.source,
+    id: bundleId,
+    // Preserve the STORED install kind: a `github:`-ref entry recorded as
+    // source "git" must not be reclassified by the sync flow's re-derivation
+    // (the issue this file's update pin exists for).
+    source: managed.source,
     ref: synced.ref,
     resolvedVersion: synced.resolvedVersion,
     resolvedRevision: synced.resolvedRevision,
     integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
+    // §10.2 resolved lock state the sync flow has on hand.
+    localRoot: synced.contentDir,
+    installedAt: synced.syncedAt,
   });
-  if (entry.cacheDir !== synced.cacheDir && shouldCleanupCache(entry)) {
-    cleanupDirectoryBestEffort(entry.cacheDir);
+  if (
+    managed.localRoot &&
+    path.resolve(managed.localRoot) !== path.resolve(synced.contentDir) &&
+    managed.source !== "local"
+  ) {
+    cleanupDirectoryBestEffort(managed.localRoot);
   }
 
-  const versionChanged = (entry.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
-  const revisionChanged = (entry.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
+  const versionChanged = (managed.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
+  const revisionChanged = (managed.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
 
   return {
-    id: entry.id,
-    source: entry.source,
-    ref: entry.ref,
+    id: managed.installId,
+    source: managed.source,
+    ref: managed.ref,
     previous: {
-      resolvedVersion: entry.resolvedVersion,
-      resolvedRevision: entry.resolvedRevision,
-      cacheDir: entry.cacheDir,
+      resolvedVersion: managed.resolvedVersion,
+      resolvedRevision: managed.resolvedRevision,
+      cacheDir: managed.localRoot,
     },
     installed: { ...installedEntry, extractedDir: synced.extractedDir },
     changed: {
@@ -316,11 +372,16 @@ export async function akmUpdate(input?: {
   const all = input?.all === true;
   const force = input?.force === true;
   const config = loadConfig();
-  const installedEntries = config.installed ?? [];
+  const managedInstalls = listManagedInstalls(config);
 
-  // Check if the target refers to a git or website source — those are stored
-  // in sources[] not installed[] and need a different update path.
   if (target && !all) {
+    // Registry-managed install (lock-backed) — re-download from its locator.
+    const managed = resolveManagedTarget(config, target);
+    if (managed) {
+      return buildUpdateResponse(stashDir, target, all, [await updateManagedInstall(managed, force)]);
+    }
+
+    // Plain git / website source (bundles without a lock) — provider re-sync.
     const stashes = getSources(config);
     const isUrl = target.startsWith("http://") || target.startsWith("https://");
     const resolvedPath = !isUrl ? path.resolve(target) : undefined;
@@ -351,33 +412,33 @@ export async function akmUpdate(input?: {
     if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch);
   }
 
-  const selectedEntries = selectTargets(installedEntries, target, all);
+  const selected = selectManagedTargets(config, managedInstalls, target, all);
   const processed: UpdateResponse["processed"] = [];
-  for (const entry of selectedEntries) {
-    processed.push(await updateRegistryEntry(entry, force));
+  for (const managed of selected) {
+    processed.push(await updateManagedInstall(managed, force));
   }
 
   return buildUpdateResponse(stashDir, target, all, processed);
 }
 
-function selectTargets(
-  installed: InstalledStashEntry[],
+function selectManagedTargets(
+  config: AkmConfig,
+  installs: ManagedInstall[],
   target: string | undefined,
   all: boolean,
-): InstalledStashEntry[] {
+): ManagedInstall[] {
   if (all && target) {
     throw new UsageError("Specify either <target> or --all, not both.", "MISSING_OR_AMBIGUOUS_TARGET");
   }
-  if (all) return installed;
+  if (all) return installs;
   if (!target) {
     throw new UsageError("Either <target> or --all is required.", "MISSING_OR_AMBIGUOUS_TARGET");
   }
 
-  const found = tryResolveInstalledTarget(installed, target);
+  const found = resolveManagedTarget(config, target);
   if (found) return [found];
 
-  // Check if target matches a stash source and give a helpful message
-  const config = loadConfig();
+  // Give a helpful message when the target names a plain (non-managed) source.
   const stashes = getSources(config);
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
   const resolvedPath = !isUrl ? path.resolve(target) : undefined;
@@ -390,8 +451,6 @@ function selectTargets(
 
   if (stashMatch) {
     if (stashMatch.type === "website") {
-      // Website sources should be handled before reaching selectTargets.
-      // This path should not be reached; surface a clear message if it is.
       throw new UsageError(
         `"${target}" is a website source — website caching not yet implemented for --all. ` +
           `Run \`akm update ${target}\` to re-mirror this source individually.`,
@@ -407,37 +466,12 @@ function selectTargets(
   throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
 }
 
-function tryResolveInstalledTarget(installed: InstalledStashEntry[], target: string): InstalledStashEntry | undefined {
-  const byId = installed.find((entry) => entry.id === target);
-  if (byId) return byId;
-
-  const byRef = installed.find((entry) => entry.ref === target);
-  if (byRef) return byRef;
-
-  let parsedId: string | undefined;
-  try {
-    parsedId = parseRegistryRef(target).id;
-  } catch {
-    parsedId = undefined;
-  }
-  if (parsedId) {
-    const byParsedId = installed.find((entry) => entry.id === parsedId);
-    if (byParsedId) return byParsedId;
-  }
-
-  return undefined;
-}
-
 function cleanupDirectoryBestEffort(target: string): void {
   try {
     fs.rmSync(target, { recursive: true, force: true });
   } catch {
     // Best-effort cleanup only.
   }
-}
-
-function shouldCleanupCache(entry: InstalledStashEntry): boolean {
-  return entry.source !== "local";
 }
 
 function directoryExists(target: string): boolean {

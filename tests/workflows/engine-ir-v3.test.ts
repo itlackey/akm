@@ -177,7 +177,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -357,7 +357,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -398,7 +398,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -444,7 +444,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -466,7 +466,7 @@ describe("workflow engine v3 contracts", () => {
     if (!root || root.kind !== "unit") throw new Error("fixture root must be unit");
 
     expect(root.invocation?.model).toBe("fallback/exact");
-    const work = computeStepWorkList(frozen.plan.steps[0], {
+    const work = computeStepWorkList(frozen.plan.steps[0]!, {
       runId: "run-sdk-fallback",
       params: {},
       stepOutputs: {},
@@ -485,7 +485,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:review",
+        ref: "workflows/review",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "review",
@@ -521,7 +521,7 @@ describe("workflow engine v3 contracts", () => {
     if (!parsed.ok) throw new Error("fixture must parse");
     const frozen = compileResolveFreezeWorkflow(
       {
-        ref: "workflow:direct",
+        ref: "workflows/direct",
         path: SOURCE.path,
         sourcePath: "/tmp",
         title: "direct",
@@ -713,5 +713,11 @@ describe("workflow engine v3 contracts", () => {
       });
     expect(input(WORKFLOW_MAX_MAP_EXPANSION).ok).toBe(true);
     expect(input(WORKFLOW_MAX_MAP_EXPANSION + 1).ok).toBe(false);
-  }, 15_000);
+    // 10k-item expansion is CPU-heavy (~8s alone, ~18s under 4-way shard
+    // contention in sandboxed CI containers); the timeout guards against a
+    // hang, not a performance contract — keep it clear of contended runs.
+    // 180s: this 10k-fan-out contract runs ~60s solo on a loaded 4-core box
+    // (comfortably faster on CI); the budget exists to catch hangs, not to
+    // police throughput on shared hardware.
+  }, 180_000);
 });

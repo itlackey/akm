@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   assessMemoryKnowledgePromotionCandidate,
+  DEFAULT_PROMOTION_POLICY_SELECTION,
   deriveKnowledgeRef,
   evaluateMemoryPromotionBenchmark,
-  getDefaultPromotionPolicySelection,
   type PromotionBenchmarkCase,
+  selectPromotionPolicy,
 } from "../../../src/commands/improve/distill-promotion-policy";
-import { DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
+import { CANDIDATE_MODELS, DEFAULT_PROMOTION_POLICY_CORPUS } from "./promotion-policy-corpus";
 
 function fixtureByName(name: string): PromotionBenchmarkCase {
   const fixture = DEFAULT_PROMOTION_POLICY_CORPUS.find((candidate) => candidate.name === name);
@@ -16,11 +17,11 @@ function fixtureByName(name: string): PromotionBenchmarkCase {
 
 describe("distill promotion policy", () => {
   test("does not copy a memory project scope into the reusable knowledge namespace", () => {
-    expect(deriveKnowledgeRef("memory:project-a/oauth-refresh-race")).toBe("knowledge:oauth-refresh-race");
+    expect(deriveKnowledgeRef("memories/project-a/oauth-refresh-race")).toBe("knowledge/oauth-refresh-race");
   });
 
   test("selected model is derived from a larger train/held-out corpus", () => {
-    const selection = getDefaultPromotionPolicySelection();
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS, CANDIDATE_MODELS);
 
     expect(DEFAULT_PROMOTION_POLICY_CORPUS.length).toBeGreaterThanOrEqual(20);
     expect(selection.trainingSize).toBeGreaterThan(0);
@@ -30,7 +31,7 @@ describe("distill promotion policy", () => {
   });
 
   test("selected model beats simpler held-out baselines", () => {
-    const selection = getDefaultPromotionPolicySelection();
+    const selection = selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS, CANDIDATE_MODELS);
 
     expect(selection.heldOut.f1).toBeGreaterThanOrEqual(0.8);
     expect(selection.heldOut.netOutcomeScore).toBeGreaterThan(0);
@@ -58,12 +59,12 @@ describe("distill promotion policy", () => {
   });
 
   test("promoted fixtures emit knowledge payload content", () => {
-    const promoted = assessMemoryKnowledgePromotionCandidate(DEFAULT_PROMOTION_POLICY_CORPUS[0].input);
+    const promoted = assessMemoryKnowledgePromotionCandidate(DEFAULT_PROMOTION_POLICY_CORPUS[0]!.input);
 
     expect(promoted.promote).toBe(true);
-    expect(promoted.modelName).toBe(getDefaultPromotionPolicySelection().selectedModel.name);
+    expect(promoted.modelName).toBe(DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name);
     expect(promoted.content).toContain("xrefs:");
-    expect(promoted.content).toContain("memory:deploy-vpn-required");
+    expect(promoted.content).toContain("memories/deploy-vpn-required");
     expect(promoted.content).toContain("Always connect the VPN before starting production deploys.");
   });
 

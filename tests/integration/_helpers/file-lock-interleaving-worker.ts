@@ -6,7 +6,13 @@ import fs from "node:fs";
 import { releaseImproveLock, tryAcquireImproveLock } from "../../../src/commands/improve/locks";
 import { probeLock, reclaimStaleLock, tryAcquireLockSync } from "../../../src/core/file-lock";
 
-const [mode, lockPath, readyPath, gatePath, resultPath, payload = String(process.pid)] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const mode = args[0];
+const lockPath = args[1]!;
+const readyPath = args[2]!;
+const gatePath = args[3]!;
+const resultPath = args[4]!;
+const payload = args[5] ?? String(process.pid);
 
 function waitForGate(): void {
   while (!fs.existsSync(gatePath)) {

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
+import { AbstractSessionLogProvider } from "../../session-logs/provider-base";
 import type {
   InlineRefMention,
   SessionData,
@@ -44,12 +45,12 @@ function getOpenCodeBaseDir(): string {
 /** Filename of opencode's SQLite session store, relative to its base dir. */
 const OPENCODE_DB_FILENAME = "opencode.db";
 
-export class OpenCodeProvider implements SessionLogHarness {
+export class OpenCodeProvider extends AbstractSessionLogProvider implements SessionLogHarness {
   readonly name = "opencode";
   readonly #baseDir = getOpenCodeBaseDir();
 
-  isAvailable(): boolean {
-    return fs.existsSync(this.#baseDir);
+  protected availabilityRoot(): string {
+    return this.#baseDir;
   }
 
   /** Absolute path to opencode's SQLite store under `base`. */
@@ -82,35 +83,20 @@ export class OpenCodeProvider implements SessionLogHarness {
       try {
         for (const file of fs.readdirSync(dir)) {
           const full = path.join(dir, file);
-          let stat: fs.Stats;
-          try {
-            stat = fs.statSync(full);
-          } catch {
-            continue;
-          }
-          if (!stat.isFile()) continue;
+          const stat = this.statSafe(full);
+          if (!stat?.isFile()) continue;
           if (stat.mtimeMs < input.sinceMs) continue;
           if (!file.endsWith(".json") && !file.endsWith(".jsonl") && !file.endsWith(".log")) continue;
 
           const content = fs.readFileSync(full, "utf8");
           const lines = content.includes("\n") ? content.split("\n") : [content];
-          for (const line of lines) {
-            try {
-              const entry = JSON.parse(line);
-              const text = entry?.content ?? entry?.message ?? entry?.text ?? "";
-              if (typeof text !== "string" || text.length < 10) continue;
-              yield {
-                harness: this.name,
-                text,
-                ts: typeof entry?.timestamp === "number" ? entry.timestamp : stat.mtimeMs,
-                sessionId: typeof entry?.sessionId === "string" ? entry.sessionId : undefined,
-                role: typeof entry?.role === "string" ? entry.role : "unknown",
-                filePath: full,
-              };
-            } catch {
-              // skip malformed
-            }
-          }
+          yield* this.logLineEvents({
+            lines,
+            filePath: full,
+            fallbackTsMs: stat.mtimeMs,
+            selectText: (entry) => entry?.content ?? entry?.message ?? entry?.text ?? "",
+            selectSessionId: (entry) => entry?.sessionId,
+          });
         }
       } catch {
         // unreadable dir — skip
@@ -125,54 +111,43 @@ export class OpenCodeProvider implements SessionLogHarness {
     if (fs.existsSync(dbPath)) return this.#listSessionsFromDb(dbPath, sinceMs);
     const sessionRoot = path.join(base, "storage", "session");
     if (!fs.existsSync(sessionRoot)) return [];
-    const summaries: SessionSummary[] = [];
-    try {
-      for (const projectId of fs.readdirSync(sessionRoot)) {
-        const projectDir = path.join(sessionRoot, projectId);
-        let pstat: fs.Stats;
-        try {
-          pstat = fs.statSync(projectDir);
-        } catch {
-          continue;
-        }
-        if (!pstat.isDirectory()) continue;
-        for (const file of fs.readdirSync(projectDir)) {
-          if (!file.endsWith(".json")) continue;
-          const filePath = path.join(projectDir, file);
-          let stat: fs.Stats;
-          try {
-            stat = fs.statSync(filePath);
-          } catch {
-            continue;
-          }
-          if (stat.mtimeMs < sinceMs) continue;
-          let meta: Record<string, unknown> | undefined;
-          try {
-            meta = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          const sessionId = typeof meta?.id === "string" ? meta.id : path.basename(file, ".json");
-          const time = (meta?.time as Record<string, unknown> | undefined) ?? undefined;
-          const startedAt = typeof time?.created === "number" ? time.created : stat.ctimeMs;
-          const endedAt = typeof time?.updated === "number" ? time.updated : stat.mtimeMs;
-          const title = typeof meta?.title === "string" ? meta.title : undefined;
-          const projectHint = typeof meta?.directory === "string" ? meta.directory : projectId;
-          summaries.push({
-            harness: this.name,
-            sessionId,
-            filePath,
-            startedAt,
-            endedAt,
-            projectHint,
-            ...(title ? { title } : {}),
-          });
-        }
+    return this.listSessionsFromFiles({
+      sinceMs,
+      enumerate: () => this.#legacySessionFiles(sessionRoot),
+      summarize: (filePath, stat) => this.#legacySessionSummary(filePath, stat),
+    });
+  }
+
+  /** Legacy JSON layout: `<sessionRoot>/<projectId>/<sessionId>.json`. */
+  *#legacySessionFiles(sessionRoot: string): Generator<string> {
+    for (const projectId of fs.readdirSync(sessionRoot)) {
+      const projectDir = path.join(sessionRoot, projectId);
+      if (!this.statSafe(projectDir)?.isDirectory()) continue;
+      for (const file of fs.readdirSync(projectDir)) {
+        if (!file.endsWith(".json")) continue;
+        yield path.join(projectDir, file);
       }
-    } catch {
-      // unreadable session root — return what we have
     }
-    return summaries.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  }
+
+  /** Summarize one legacy session metadata file; `undefined` when unreadable. */
+  #legacySessionSummary(filePath: string, stat: fs.Stats): SessionSummary | undefined {
+    let meta: Record<string, unknown> | undefined;
+    try {
+      meta = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+    const time = (meta?.time as Record<string, unknown> | undefined) ?? undefined;
+    return this.sessionRef({
+      sessionId: typeof meta?.id === "string" ? meta.id : path.basename(filePath, ".json"),
+      filePath,
+      startedAt: typeof time?.created === "number" ? time.created : stat.ctimeMs,
+      endedAt: typeof time?.updated === "number" ? time.updated : stat.mtimeMs,
+      // Fallback is the project directory name (the legacy layout's projectId).
+      projectHint: typeof meta?.directory === "string" ? meta.directory : path.basename(path.dirname(filePath)),
+      title: typeof meta?.title === "string" ? meta.title : undefined,
+    });
   }
 
   readSession(ref: SessionRef): SessionData {
@@ -220,15 +195,14 @@ export class OpenCodeProvider implements SessionLogHarness {
     events.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
 
     return {
-      ref: {
-        harness: this.name,
+      ref: this.sessionRef({
         sessionId: ref.sessionId,
         filePath: ref.filePath,
-        ...(startedAt !== undefined ? { startedAt } : {}),
-        ...(endedAt !== undefined ? { endedAt } : {}),
-        ...(projectHint ? { projectHint } : {}),
-        ...(title ? { title } : {}),
-      },
+        startedAt,
+        endedAt,
+        projectHint,
+        title,
+      }),
       events,
       inlineRefs,
     };
@@ -259,21 +233,16 @@ export class OpenCodeProvider implements SessionLogHarness {
           "SELECT id, title, directory, time_created, time_updated FROM session WHERE time_updated >= ? ORDER BY time_updated DESC",
         )
         .all(sinceMs);
-      return rows.map((r) => {
-        const startedAt = typeof r.time_created === "number" ? r.time_created : undefined;
-        const endedAt = typeof r.time_updated === "number" ? r.time_updated : undefined;
-        const title = typeof r.title === "string" && r.title.length > 0 ? r.title : undefined;
-        const projectHint = typeof r.directory === "string" && r.directory.length > 0 ? r.directory : undefined;
-        return {
-          harness: this.name,
+      return rows.map((r) =>
+        this.sessionRef({
           sessionId: r.id,
           filePath: dbPath,
-          ...(startedAt !== undefined ? { startedAt } : {}),
-          ...(endedAt !== undefined ? { endedAt } : {}),
-          ...(projectHint ? { projectHint } : {}),
-          ...(title ? { title } : {}),
-        };
-      });
+          startedAt: typeof r.time_created === "number" ? r.time_created : undefined,
+          endedAt: typeof r.time_updated === "number" ? r.time_updated : undefined,
+          projectHint: typeof r.directory === "string" && r.directory.length > 0 ? r.directory : undefined,
+          title: typeof r.title === "string" && r.title.length > 0 ? r.title : undefined,
+        }),
+      );
     } catch {
       // Missing `session` table / unexpected schema — treat as no sessions.
       return [];
@@ -289,7 +258,7 @@ export class OpenCodeProvider implements SessionLogHarness {
    * (never throws) when the DB is unreadable.
    */
   #readSessionFromDb(ref: SessionRef): SessionData {
-    const emptyRef: SessionSummary = { harness: this.name, sessionId: ref.sessionId, filePath: ref.filePath };
+    const emptyRef: SessionSummary = this.sessionRef({ sessionId: ref.sessionId, filePath: ref.filePath });
     let db: ReturnType<typeof openDatabase>;
     try {
       db = openDatabase(ref.filePath, { readonly: true, create: false });
@@ -363,15 +332,14 @@ export class OpenCodeProvider implements SessionLogHarness {
       events.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
 
       return {
-        ref: {
-          harness: this.name,
+        ref: this.sessionRef({
           sessionId: ref.sessionId,
           filePath: ref.filePath,
-          ...(startedAt !== undefined ? { startedAt } : {}),
-          ...(endedAt !== undefined ? { endedAt } : {}),
-          ...(projectHint ? { projectHint } : {}),
-          ...(title ? { title } : {}),
-        },
+          startedAt,
+          endedAt,
+          projectHint,
+          title,
+        }),
         events,
         inlineRefs,
       };

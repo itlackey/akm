@@ -8,7 +8,7 @@
 
 import fs from "node:fs";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { cacheHash } from "../dedup";
+import { cacheHash } from "../content-hash";
 import type { MemoryEntry } from "./types";
 
 /**
@@ -94,8 +94,9 @@ export function buildChunkPrompt(
   pendingProposalBodyHashes: Set<string> = new Set(),
   standardsContext = "",
 ): string {
-  const start = memories[0] ? `memory:${memories[0].name}` : "";
-  const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
+  const start = memories[0] ? `memories/${memories[0].name}` : "";
+  const lastMemory = memories[memories.length - 1];
+  const end = lastMemory ? `memories/${lastMemory.name}` : "";
 
   // First pass: classify each memory's annotations + collect hot refs so a
   // prominent top-of-prompt list can be emitted. 2026-05-27 controlled
@@ -123,7 +124,7 @@ export function buildChunkPrompt(
     const bodyHash = cacheHash(body);
     const isAlreadyQueued = pendingProposalBodyHashes.has(bodyHash);
     annotationsByIndex.push({ isHot, isAlreadyQueued, body });
-    if (isHot) hotRefs.push(`memory:${m.name}`);
+    if (isHot) hotRefs.push(`memories/${m.name}`);
   }
 
   const lines: string[] = [
@@ -152,15 +153,16 @@ export function buildChunkPrompt(
   }
 
   for (let i = 0; i < memories.length; i++) {
-    const m = memories[i];
-    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i];
+    const m = memories[i]!;
+    // `annotationsByIndex` has exactly one entry per memory (built in the loop above).
+    const { isHot, isAlreadyQueued, body } = annotationsByIndex[i]!;
 
     const annotations: string[] = [];
     if (isHot) annotations.push("captureMode: hot");
     if (isAlreadyQueued) annotations.push("already queued");
     const annotationSuffix = annotations.length > 0 ? ` (${annotations.join("; ")})` : "";
 
-    lines.push(`[${i + 1}] memory:${m.name}${annotationSuffix}`);
+    lines.push(`[${i + 1}] memories/${m.name}${annotationSuffix}`);
     lines.push(`Description: ${m.description || "(none)"}`);
     lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
     lines.push("---");

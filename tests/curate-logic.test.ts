@@ -56,7 +56,7 @@ describe("mergeCurateSearchResponses", () => {
   test("keeps the highest-scoring duplicate stash and registry hits and merges warnings", () => {
     const base = searchResponse({
       hits: [
-        stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/a", score: 0.3 }),
+        stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/a", score: 0.3 }),
       ],
       registryHits: [registryHit({ name: "docker-kit", id: "reg-1", score: 0.2 })],
       tip: "No phrase results.",
@@ -65,8 +65,8 @@ describe("mergeCurateSearchResponses", () => {
     const merged = mergeCurateSearchResponses(base, [
       searchResponse({
         hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/a", score: 0.9 }),
-          stashHit({ type: "script", name: "docker-clean", ref: "script:docker-clean", path: "/tmp/b", score: 0.5 }),
+          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/a", score: 0.9 }),
+          stashHit({ type: "script", name: "docker-clean", ref: "scripts/docker-clean", path: "/tmp/b", score: 0.5 }),
         ],
         registryHits: [registryHit({ name: "docker-kit", id: "reg-1", score: 0.8 })],
         warnings: ["fallback warning"],
@@ -74,8 +74,8 @@ describe("mergeCurateSearchResponses", () => {
     ]);
 
     expect(merged.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "skill:docker-homelab",
-      "script:docker-clean",
+      "skills/docker-homelab",
+      "scripts/docker-clean",
     ]);
     expect(merged.registryHits?.map((hit) => [hit.id, hit.score])).toEqual([["reg-1", 0.8]]);
     expect(merged.warnings).toEqual(["base warning", "fallback warning"]);
@@ -90,22 +90,22 @@ describe("mergeCurateSearchResponses", () => {
     // score, so the keyword junk leapfrogged the relevant hit. Base order MUST
     // win; fallback-only hits append below.
     const base = searchResponse({
-      hits: [stashHit({ type: "memory", name: "relevant", ref: "memory:relevant", path: "/tmp/r", score: 0.5 })],
+      hits: [stashHit({ type: "memory", name: "relevant", ref: "memories/relevant", path: "/tmp/r", score: 0.5 })],
     });
     const merged = mergeCurateSearchResponses(base, [
       searchResponse({
         hits: [
           // Unrelated asset that scored high on a single-token title match.
-          stashHit({ type: "knowledge", name: "junk", ref: "knowledge:junk", path: "/tmp/j", score: 0.95 }),
+          stashHit({ type: "knowledge", name: "junk", ref: "knowledge/junk", path: "/tmp/j", score: 0.95 }),
           // The relevant ref also surfaced via a key term → dup keeps MAX score.
-          stashHit({ type: "memory", name: "relevant", ref: "memory:relevant", path: "/tmp/r", score: 0.6 }),
+          stashHit({ type: "memory", name: "relevant", ref: "memories/relevant", path: "/tmp/r", score: 0.6 }),
         ],
       }),
     ]);
 
     expect(merged.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "memory:relevant", // base hit stays first despite the 0.95 fallback-only junk
-      "knowledge:junk", // fallback-only appended below
+      "memories/relevant", // base hit stays first despite the 0.95 fallback-only junk
+      "knowledge/junk", // fallback-only appended below
     ]);
     // The dup base hit is bumped to the higher score for the downstream floor.
     expect((merged.hits[0] as SourceSearchHit).score).toBe(0.6);
@@ -128,28 +128,28 @@ describe("curateSearchResults", () => {
           stashHit({
             type: "skill",
             name: "release-playbook",
-            ref: "skill:release-playbook",
+            ref: "skills/release-playbook",
             path: "/tmp/1",
             score: 0.99,
           }),
           stashHit({
             type: "knowledge",
             name: "release-guide",
-            ref: "knowledge:release-guide",
+            ref: "knowledge/release-guide",
             path: "/tmp/2",
             score: 0.8,
           }),
           stashHit({
             type: "command",
             name: "release-manager",
-            ref: "command:release-manager",
+            ref: "commands/release-manager",
             path: "/tmp/3",
             score: 0.15,
           }),
           stashHit({
             type: "agent",
             name: "release-reviewer",
-            ref: "agent:release-reviewer",
+            ref: "agents/release-reviewer",
             path: "/tmp/4",
             score: 0.05,
           }),
@@ -159,8 +159,8 @@ describe("curateSearchResults", () => {
     );
 
     expect(result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`))).toEqual([
-      "skill:release-playbook",
-      "knowledge:release-guide",
+      "skills/release-playbook",
+      "knowledge/release-guide",
     ]);
   });
 
@@ -172,18 +172,18 @@ describe("curateSearchResults", () => {
           stashHit({
             type: "command",
             name: "release-manager",
-            ref: "command:release-manager",
+            ref: "commands/release-manager",
             path: "/tmp/1",
             score: 0.9,
           }),
           stashHit({
             type: "command",
             name: "release-notes",
-            ref: "command:release-notes",
+            ref: "commands/release-notes",
             path: "/tmp/2",
             score: 0.7,
           }),
-          stashHit({ type: "skill", name: "release-review", ref: "skill:release-review", path: "/tmp/3", score: 1 }),
+          stashHit({ type: "skill", name: "release-review", ref: "skills/release-review", path: "/tmp/3", score: 1 }),
         ],
       }),
       2,
@@ -191,8 +191,8 @@ describe("curateSearchResults", () => {
     );
 
     expect(result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`))).toEqual([
-      "command:release-manager",
-      "command:release-notes",
+      "commands/release-manager",
+      "commands/release-notes",
     ]);
   });
 
@@ -201,7 +201,7 @@ describe("curateSearchResults", () => {
       "deploy",
       searchResponse({
         hits: [
-          stashHit({ type: "script", name: "deploy-check", ref: "script:deploy-check", path: "/tmp/1", score: 0.8 }),
+          stashHit({ type: "script", name: "deploy-check", ref: "scripts/deploy-check", path: "/tmp/1", score: 0.8 }),
         ],
         registryHits: [
           registryHit({ name: "deploy-kit-a", id: "reg-a", score: 0.95 }),
@@ -213,7 +213,7 @@ describe("curateSearchResults", () => {
     );
 
     expect(result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`))).toEqual([
-      "script:deploy-check",
+      "scripts/deploy-check",
       "registry:reg-a",
       "registry:reg-b",
     ]);
@@ -224,18 +224,18 @@ describe("curateSearchResults", () => {
       "docker homelab",
       searchResponse({
         hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/1", score: 1 }),
+          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/1", score: 1 }),
           stashHit({
             type: "knowledge",
             name: "skills/docker-homelab/references/compose",
-            ref: "knowledge:skills/docker-homelab/references/compose",
+            ref: "knowledge/skills/docker-homelab/references/compose",
             path: "/tmp/2",
             score: 1,
           }),
           stashHit({
             type: "knowledge",
             name: "skills/docker-homelab/references/networking",
-            ref: "knowledge:skills/docker-homelab/references/networking",
+            ref: "knowledge/skills/docker-homelab/references/networking",
             path: "/tmp/3",
             score: 0.9,
           }),
@@ -246,15 +246,15 @@ describe("curateSearchResults", () => {
 
     expect(result.items).toHaveLength(1);
     const first = result.items[0] as Record<string, unknown>;
-    expect(first.ref).toBe("skill:docker-homelab");
+    expect(first.ref).toBe("skills/docker-homelab");
     expect(first.supportRefs).toEqual([
       {
-        ref: "knowledge:skills/docker-homelab/references/compose",
+        ref: "knowledge/skills/docker-homelab/references/compose",
         type: "knowledge",
         reason: "Related family asset to inspect next.",
       },
       {
-        ref: "knowledge:skills/docker-homelab/references/networking",
+        ref: "knowledge/skills/docker-homelab/references/networking",
         type: "knowledge",
         reason: "Related family asset to inspect next.",
       },
@@ -269,21 +269,21 @@ describe("curateSearchResults", () => {
           stashHit({
             type: "skill",
             name: "system-ops/docker-homelab",
-            ref: "skill:system-ops/docker-homelab",
+            ref: "skills/system-ops/docker-homelab",
             path: "/tmp/1",
             score: 1,
           }),
           stashHit({
             type: "knowledge",
             name: "skills/system-ops/docker-homelab/references/containers",
-            ref: "knowledge:skills/system-ops/docker-homelab/references/containers",
+            ref: "knowledge/skills/system-ops/docker-homelab/references/containers",
             path: "/tmp/2",
             score: 0.95,
           }),
           stashHit({
             type: "knowledge",
             name: "skills/system-ops/docker-homelab/references/homelab-stacks",
-            ref: "knowledge:skills/system-ops/docker-homelab/references/homelab-stacks",
+            ref: "knowledge/skills/system-ops/docker-homelab/references/homelab-stacks",
             path: "/tmp/3",
             score: 0.9,
           }),
@@ -294,10 +294,10 @@ describe("curateSearchResults", () => {
 
     expect(result.items).toHaveLength(1);
     const first = result.items[0] as Record<string, unknown>;
-    expect(first.ref).toBe("skill:system-ops/docker-homelab");
+    expect(first.ref).toBe("skills/system-ops/docker-homelab");
     expect(Array.isArray(first.supportRefs)).toBe(true);
     const supportRefs = first.supportRefs as Array<{ ref: string }>;
-    expect(supportRefs.map((s) => s.ref)).toContain("knowledge:skills/system-ops/docker-homelab/references/containers");
+    expect(supportRefs.map((s) => s.ref)).toContain("knowledge/skills/system-ops/docker-homelab/references/containers");
   });
 
   test("keeps the narrow child reference as the top-level family representative", async () => {
@@ -305,11 +305,11 @@ describe("curateSearchResults", () => {
       "docker compose reference",
       searchResponse({
         hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skill:docker-homelab", path: "/tmp/1", score: 1 }),
+          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/1", score: 1 }),
           stashHit({
             type: "knowledge",
             name: "skills/docker-homelab/references/compose",
-            ref: "knowledge:skills/docker-homelab/references/compose",
+            ref: "knowledge/skills/docker-homelab/references/compose",
             path: "/tmp/2",
             score: 1,
           }),
@@ -319,7 +319,7 @@ describe("curateSearchResults", () => {
     );
 
     expect(result.items).toHaveLength(1);
-    expect((result.items[0] as Record<string, unknown>).ref).toBe("knowledge:skills/docker-homelab/references/compose");
+    expect((result.items[0] as Record<string, unknown>).ref).toBe("knowledge/skills/docker-homelab/references/compose");
   });
 });
 
@@ -333,26 +333,26 @@ describe("akmCurate", () => {
       query: "deploy",
       searchResponse: searchResponse({
         hits: [
-          stashHit({ type: "script", name: "deploy-check", ref: "script:deploy-check", path: "/tmp/1", score: 0.9 }),
+          stashHit({ type: "script", name: "deploy-check", ref: "scripts/deploy-check", path: "/tmp/1", score: 0.9 }),
           stashHit({
             type: "command",
             name: "deploy-release",
-            ref: "command:deploy-release",
+            ref: "commands/deploy-release",
             path: "/tmp/2",
             score: 0.8,
           }),
           stashHit({
             type: "knowledge",
             name: "deploy-guide",
-            ref: "knowledge:deploy-guide",
+            ref: "knowledge/deploy-guide",
             path: "/tmp/3",
             score: 0.7,
           }),
-          stashHit({ type: "skill", name: "deploy-skill", ref: "skill:deploy-skill", path: "/tmp/4", score: 0.6 }),
+          stashHit({ type: "skill", name: "deploy-skill", ref: "skills/deploy-skill", path: "/tmp/4", score: 0.6 }),
           stashHit({
             type: "agent",
             name: "deploy-reviewer",
-            ref: "agent:deploy-reviewer",
+            ref: "agents/deploy-reviewer",
             path: "/tmp/5",
             score: 0.5,
           }),

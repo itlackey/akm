@@ -1,6 +1,6 @@
 name: akm-eval smoke
 
-# Runs the akm-eval read-only smoke suite against docs/example-stash on
+# Runs the akm-eval read-only smoke suite against scripts/akm-eval/example-stash on
 # every PR that touches the toolkit, akm internals, or the example stash.
 # Phase 8 of the akm-eval implementation plan.
 
@@ -14,14 +14,14 @@ on:
     paths:
       - "scripts/akm-eval/**"
       - "src/**"
-      - "docs/example-stash/**"
+      - "scripts/akm-eval/example-stash/**"
       - ".github/workflows/akm-eval-smoke.yml"
   pull_request:
     branches: [main, "release/*"]
     paths:
       - "scripts/akm-eval/**"
       - "src/**"
-      - "docs/example-stash/**"
+      - "scripts/akm-eval/example-stash/**"
       - ".github/workflows/akm-eval-smoke.yml"
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
 
       - name: Seed example-stash index
         env:
-          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_STASH_DIR: ${{ github.workspace }}/scripts/akm-eval/example-stash
           AKM_DATA_DIR: ${{ runner.temp }}/akm-data
           HOME: ${{ runner.temp }}/akm-home
         run: |
@@ -56,7 +56,7 @@ jobs:
 
       - name: akm-eval smoke (baseline)
         env:
-          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_STASH_DIR: ${{ github.workspace }}/scripts/akm-eval/example-stash
           AKM_DATA_DIR: ${{ runner.temp }}/akm-data
           HOME: ${{ runner.temp }}/akm-home
         run: |
@@ -70,7 +70,7 @@ jobs:
 
       - name: akm-eval smoke (deterministic replay)
         env:
-          AKM_STASH_DIR: ${{ github.workspace }}/docs/example-stash
+          AKM_STASH_DIR: ${{ github.workspace }}/scripts/akm-eval/example-stash
           AKM_DATA_DIR: ${{ runner.temp }}/akm-data
           HOME: ${{ runner.temp }}/akm-home
         run: |
@@ -110,6 +110,6 @@ jobs:
             /tmp/eval-summary.json
             /tmp/replay-summary.json
             /tmp/mem-summary.json
-            docs/example-stash/.akm/evals/runs/
+            scripts/akm-eval/example-stash/.akm/evals/runs/
           if-no-files-found: ignore
           retention-days: 7

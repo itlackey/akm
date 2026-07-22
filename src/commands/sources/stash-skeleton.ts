@@ -114,7 +114,7 @@ const STASH_META_INDEX_TEMPLATE = `---
 purpose:
   - Describe what this stash is for.
 entry_points:
-  # Refs an agent should start from, e.g. skill:code-review, workflow:ship-release
+  # Refs an agent should start from, e.g. skills/code-review, workflows/ship-release
 conventions:
   # House rules an agent should follow when working in this stash.
 maintainer:

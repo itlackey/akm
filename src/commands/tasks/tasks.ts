@@ -13,8 +13,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import type { AssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { assetPathForName } from "../../core/asset/asset-placement";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -110,14 +110,16 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   }
 
   // Validate the schedule for the active backend before writing anything.
-  const backend = backendNameForPlatform();
+  // WI-9.10e: the injected backend (tests) carries its own name, so derive it
+  // from `deps.backend` when present — retiring the `_setBackendsForTests` seam.
+  const backend = deps.backend?.name ?? backendNameForPlatform();
   parseSchedule(input.schedule, backend);
 
   const target = resolveTaskWriteTarget();
   const stashDir = target.source.path;
   const typeRoot = path.join(stashDir, "tasks");
 
-  const assetPath = resolveAssetPathFromName("task", typeRoot, id);
+  const assetPath = assetPathForName("task", typeRoot, id);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }
@@ -174,7 +176,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     await writeAsset(target.source, target.config, ref, yaml);
     await sched.install(task);
     installSucceeded = true;
-    commitBoundary(target, `Update task:${id}`);
+    commitBoundary(target, `Update tasks/${id}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -225,7 +227,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${id}`);
+        commitBoundary(target, `Restore tasks/${id}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -240,7 +242,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
   return {
     id,
-    ref: `task:${id}`,
+    ref: conceptIdFromTypeName("task", id),
     path: assetPath,
     stashDir,
     schedule: task.schedule,
@@ -327,7 +329,7 @@ export async function akmTasksList(): Promise<TasksListResult> {
     }
     tasks.push({
       id: task.id,
-      ref: `task:${task.id}`,
+      ref: conceptIdFromTypeName("task", task.id),
       path: filePath,
       schedule: task.schedule,
       enabled: task.enabled,
@@ -368,7 +370,7 @@ export async function akmTasksShow(id: string): Promise<{
   const spec = parseSchedule(task.schedule, backendNameForPlatform());
   return {
     id: task.id,
-    ref: `task:${task.id}`,
+    ref: conceptIdFromTypeName("task", task.id),
     path: filePath,
     schedule: task.schedule,
     cron: translateToCron(spec),
@@ -407,7 +409,7 @@ export async function akmTasksRemove(
     await sched.uninstall(normalised);
     deleteAttempted = true;
     await deleteAsset(target.source, target.config, ref);
-    commitBoundary(target, `Remove task:${normalised}`);
+    commitBoundary(target, `Remove tasks/${normalised}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -428,7 +430,7 @@ export async function akmTasksRemove(
     }
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${normalised}`);
+        commitBoundary(target, `Restore tasks/${normalised}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -481,7 +483,7 @@ export async function akmTasksSetEnabled(
     // both the current schedule and the new enabled state, and is idempotent.
     await sched.install(task);
     installSucceeded = true;
-    commitBoundary(target, `Update task:${normalised}`);
+    commitBoundary(target, `Update tasks/${normalised}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -503,7 +505,7 @@ export async function akmTasksSetEnabled(
     }
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore task:${normalised}`);
+        commitBoundary(target, `Restore tasks/${normalised}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -857,26 +859,47 @@ function collectStaleTaskIds(): string[] {
   return stale;
 }
 
-const STALE_GENERATED_COMMANDS: Record<string, { command: string; replacement: string }> = {
+// Old-spelling match keys for the default-task commands whose retired
+// `--auto-accept safe` flag is dropped in the `replacement`. Each id lists BOTH
+// deprecated spellings that can survive in a v2 task file: the original
+// `--profile X --auto-accept safe` and the intermediate `--strategy X
+// --auto-accept safe` (what the 0.8→0.9 migration writes — parser normalization
+// only rewrites `--profile`→`--strategy` for legacy v1 files, so a stored v2
+// file keeps whichever spelling it was minted with). Without the `--strategy`
+// variant, migrated default tasks match no key and warn on every run until 0.10
+// (chunk-6 ledger residue).
+const STALE_GENERATED_COMMANDS: Record<string, { commands: readonly string[]; replacement: string }> = {
   "akm-improve-frequent": {
-    command: "akm improve --profile frequent --auto-accept safe",
-    replacement: "akm improve --strategy frequent --auto-accept safe",
+    commands: [
+      "akm improve --profile frequent --auto-accept safe",
+      "akm improve --strategy frequent --auto-accept safe",
+    ],
+    replacement: "akm improve --strategy frequent",
   },
   "akm-improve-consolidate": {
-    command: "akm improve --profile consolidate --auto-accept safe",
-    replacement: "akm improve --strategy consolidate --auto-accept safe",
+    commands: [
+      "akm improve --profile consolidate --auto-accept safe",
+      "akm improve --strategy consolidate --auto-accept safe",
+    ],
+    replacement: "akm improve --strategy consolidate",
   },
   "akm-improve-nightly": {
-    command: "akm improve --profile thorough --auto-accept safe",
-    replacement: "akm improve --strategy thorough --auto-accept safe",
+    commands: [
+      "akm improve --profile thorough --auto-accept safe",
+      "akm improve --strategy thorough --auto-accept safe",
+    ],
+    replacement: "akm improve --strategy thorough",
   },
   "akm-improve-catchup": {
-    command: "akm improve --profile catchup --auto-accept safe",
-    replacement: "akm improve --strategy catchup --auto-accept safe",
+    commands: ["akm improve --profile catchup --auto-accept safe", "akm improve --strategy catchup --auto-accept safe"],
+    replacement: "akm improve --strategy catchup",
   },
   "akm-graph-refresh-weekly": {
-    command: "akm improve --profile graph-refresh --auto-accept safe",
-    replacement: "akm improve --strategy graph-refresh --auto-accept safe",
+    commands: [
+      "akm improve --profile graph-refresh --auto-accept safe",
+      "akm improve --strategy graph-refresh --auto-accept safe",
+    ],
+    replacement: "akm improve --strategy graph-refresh",
   },
 };
 
@@ -889,7 +912,7 @@ function collectStaleGeneratedCommands(): Array<{ id: string; replacement: strin
     if (!fs.existsSync(filePath)) continue;
     try {
       const task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
-      if (task.target.kind === "command" && task.target.cmd.join(" ") === expected.command) {
+      if (task.target.kind === "command" && expected.commands.includes(task.target.cmd.join(" "))) {
         stale.push({ id, replacement: expected.replacement });
       }
     } catch {
@@ -940,15 +963,32 @@ export function setEnabledInYaml(yaml: string, enabled: boolean): string {
 // `akm tasks run` completes.
 export { ConfigError, exitCodeForStatus, NotFoundError, parseTaskDocument, UsageError };
 
-// Helper: ensure the asset-spec resolver agrees with our id rules. If the
-// user passes a ref, we accept the bare name part too.
+// Accept a bare task id or the canonical 0.9.0 `[bundle//]tasks/<id>` ref
+// (ref-grammar decision D-R3). The pre-0.9.0 `task:<id>` colon grammar is
+// retired and rejected loudly — it appears NOWHERE after the flip.
 export function parseTaskRef(input: string): { id: string } {
-  if (input.includes(":")) {
-    const [typePart, ...rest] = input.split(":");
-    if (typePart !== "task" || rest.length === 0) {
-      throw new UsageError(`Expected a task id or task:<id> ref, got "${input}".`, "INVALID_FLAG_VALUE");
+  const trimmed = input.trim();
+  // Canonical conceptId form: `[bundle//]tasks/<id>`. A `/` unambiguously marks
+  // it — a bare task id can never contain `/` (`validateTaskId` forbids it) — so
+  // route it through the shared parser, which strips any bundle prefix and maps
+  // the `tasks/` stash-subdir back to the `task` type in one place.
+  if (trimmed.includes("/")) {
+    try {
+      const parsed = parseRefInput(trimmed);
+      if (parsed.type === "task") return { id: normaliseTaskId(parsed.name) };
+    } catch {
+      // fall through to the shared error below
     }
-    return { id: normaliseTaskId(rest.join(":")) };
+    throw new UsageError(`Expected a task id or tasks/<id> ref, got "${input}".`, "INVALID_FLAG_VALUE");
   }
-  return { id: normaliseTaskId(input) };
+  // Legacy `task:<id>` grammar is gone in 0.9.0 (D-R3) — reject it with a typed
+  // error that names the new form so muscle-memory callers get a clear fix.
+  if (trimmed.includes(":")) {
+    const legacyName = trimmed.slice(trimmed.indexOf(":") + 1);
+    throw new UsageError(
+      `The \`task:<id>\` ref grammar was removed in 0.9.0 — use the bare id or \`tasks/${legacyName || "<id>"}\`.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return { id: normaliseTaskId(trimmed) };
 }

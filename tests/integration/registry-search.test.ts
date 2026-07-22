@@ -10,7 +10,7 @@ import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "../_helpe
 
 // One entry intentionally carries the legacy `curated` boolean to exercise
 // the v1 parse-and-ignore rule (spec §4.2). The cast is necessary because
-// `curated` was removed from `RegistryStashEntry` in v1.
+// `curated` was removed from `RegistryBundleEntry` in v1.
 const FIXTURE_INDEX: RegistryIndex = {
   version: 3,
   updatedAt: "2026-03-09T00:00:00Z",
@@ -165,7 +165,7 @@ describe("scoring", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:someone/azure-ops-stash");
+      expect(result.hits[0]!.id).toBe("github:someone/azure-ops-stash");
     } finally {
       srv.close();
     }
@@ -178,7 +178,7 @@ describe("scoring", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:itlackey/dimm-city-stash");
+      expect(result.hits[0]!.id).toBe("github:itlackey/dimm-city-stash");
     } finally {
       srv.close();
     }
@@ -217,7 +217,7 @@ describe("scoring", () => {
       });
       expect(result.hits.length).toBeGreaterThan(0);
       // openkit has all three in its tags
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
+      expect(result.hits[0]!.id).toBe("npm:@itlackey/openkit");
     } finally {
       srv.close();
     }
@@ -230,7 +230,7 @@ describe("scoring", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:generic-agent-utils");
+      expect(result.hits[0]!.id).toBe("npm:generic-agent-utils");
     } finally {
       srv.close();
     }
@@ -298,7 +298,7 @@ describe("caching", () => {
     // Second call — should use cache
     const result2 = await searchRegistry("openkit", { registries: [{ url }] });
     expect(result2.hits.length).toBeGreaterThan(0);
-    expect(result2.hits[0].id).toBe(result1.hits[0].id);
+    expect(result2.hits[0]!.id).toBe(result1.hits[0]!.id);
   });
 });
 
@@ -417,7 +417,7 @@ describe("multiple registries", () => {
         registries: [{ url: good.url }, { url: bad.url }],
       });
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:good-stash");
+      expect(result.hits[0]!.id).toBe("npm:good-stash");
       expect(result.warnings.length).toBe(1);
     } finally {
       good.close();
@@ -541,8 +541,8 @@ describe("AKM_REGISTRY_URL env var", () => {
       const result = await searchRegistry("my-skill");
       // skills-sh provider should have handled this — hits use skills-sh id format
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("skills-sh:org/tools/my-skill");
-      expect(result.hits[0].installRef).toBe("github:org/tools");
+      expect(result.hits[0]!.id).toBe("skills-sh:org/tools/my-skill");
+      expect(result.hits[0]!.installRef).toBe("github:org/tools");
       expect(result.warnings).toEqual([]);
     } finally {
       skillsSrv.stop(true);
@@ -556,7 +556,7 @@ describe("AKM_REGISTRY_URL env var", () => {
       const result = await searchRegistry("openkit");
       expect(result.hits.length).toBeGreaterThan(0);
       // static-index uses the stash id directly
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
+      expect(result.hits[0]!.id).toBe("npm:@itlackey/openkit");
     } finally {
       srv.close();
     }
@@ -639,7 +639,7 @@ describe("cross-provider score normalization", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      const topScore = result.hits[0].score;
+      const topScore = result.hits[0]!.score;
       expect(topScore).toBe(1);
     } finally {
       srv.close();
@@ -699,7 +699,7 @@ describe("cross-provider score normalization", () => {
       }
       // Results should be sorted descending
       for (let i = 1; i < result.hits.length; i++) {
-        expect((result.hits[i - 1].score ?? 0) >= (result.hits[i].score ?? 0)).toBe(true);
+        expect((result.hits[i - 1]!.score ?? 0) >= (result.hits[i]!.score ?? 0)).toBe(true);
       }
     } finally {
       staticSrv.close();
@@ -727,7 +727,7 @@ describe("cross-provider score normalization", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].score).toBe(1);
+      expect(result.hits[0]!.score).toBe(1);
     } finally {
       srv.close();
     }
@@ -744,7 +744,7 @@ describe("provenance tagging", () => {
         registries: [{ url: srv.url, name: "test-registry" }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].registryName).toBe("test-registry");
+      expect(result.hits[0]!.registryName).toBe("test-registry");
     } finally {
       srv.close();
     }
@@ -757,7 +757,7 @@ describe("provenance tagging", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].registryName).toBeUndefined();
+      expect(result.hits[0]!.registryName).toBeUndefined();
     } finally {
       srv.close();
     }
@@ -853,7 +853,7 @@ describe("provider routing", () => {
       });
 
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:good-stash");
+      expect(result.hits[0]!.id).toBe("npm:good-stash");
       expect(result.warnings.length).toBe(1);
     } finally {
       goodSrv.close();
@@ -868,7 +868,7 @@ describe("provider routing", () => {
         registries: [{ url: srv.url }],
       });
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
+      expect(result.hits[0]!.id).toBe("npm:@itlackey/openkit");
     } finally {
       srv.close();
     }
@@ -920,7 +920,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset" as const,
               assetType: "skill",
               assetName: "deploy",
-              action: "akm show skill:deploy",
+              action: "akm show skills/deploy",
               stash: { id: "x", name: "x" },
             },
           ],
@@ -934,7 +934,7 @@ describe("incomplete hits filter (#159)", () => {
 
     expect(result.assetHits).toBeDefined();
     expect(result.assetHits?.length).toBe(1);
-    expect(result.assetHits?.[0].assetName).toBe("deploy");
+    expect(result.assetHits![0]!.assetName).toBe("deploy");
   });
 
   // PR #168 review #9: asset hits with missing/empty `stash.id` or `stash.name`
@@ -952,14 +952,14 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset",
               assetType: "skill",
               assetName: "no-stash",
-              action: "akm show skill:no-stash",
+              action: "akm show skills/no-stash",
             } as never,
             // stash present but id is empty
             {
               type: "registry-asset",
               assetType: "skill",
               assetName: "empty-id",
-              action: "akm show skill:empty-id",
+              action: "akm show skills/empty-id",
               stash: { id: "", name: "x" },
             } as never,
             // stash present but name is missing
@@ -967,7 +967,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset",
               assetType: "skill",
               assetName: "no-name",
-              action: "akm show skill:no-name",
+              action: "akm show skills/no-name",
               stash: { id: "x" },
             } as never,
             // valid — only this one should survive
@@ -975,7 +975,7 @@ describe("incomplete hits filter (#159)", () => {
               type: "registry-asset" as const,
               assetType: "skill",
               assetName: "good",
-              action: "akm show skill:good",
+              action: "akm show skills/good",
               stash: { id: "x", name: "x" },
             },
           ],
@@ -988,6 +988,6 @@ describe("incomplete hits filter (#159)", () => {
     });
 
     expect(result.assetHits?.length).toBe(1);
-    expect(result.assetHits?.[0].assetName).toBe("good");
+    expect(result.assetHits![0]!.assetName).toBe("good");
   });
 });

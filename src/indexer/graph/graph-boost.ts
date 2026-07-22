@@ -361,10 +361,12 @@ export function collectGraphRelatedHit(context: GraphBoostContext, filePath: str
  * NOT entries.id — so candidates are identified by file_path (the unique index
  * idx_graph_files_path guarantees one graph_files row per path).
  *
- * The returned `ref` field carries the canonical asset ref (`type:name`)
- * resolved from entries.entry_key when the file is indexed. Callers should
- * fall back to formatting `path` when `ref` is undefined (graph row with no
- * matching entries row).
+ * The returned `ref` field carries the CANONICAL asset ref resolved from the
+ * durable identity columns (`entries.concept_id`, the bundle-less tail of
+ * `item_ref`) when the file is indexed — NOT re-derived from the legacy
+ * `entry_key`. Callers should fall back to formatting `path` when `ref` is
+ * undefined (graph row with no matching entries row, or a NULL-provenance
+ * write-back straggler healed on the next full index).
  */
 export function listRelatedPathsForFile(
   stashRoot: string,
@@ -480,20 +482,29 @@ export function listRelatedPathsForFile(
     }
   }
 
-  // Optional: ref lookup via entries.entry_key. entry_key is stored as
-  // `${stash_dir}:${type}:${name}` — strip the stash-dir prefix to get the
-  // user-facing `type:name`. Resolve by (stash_dir, file_path) now that the
-  // graph rows are no longer keyed on entries.id.
+  // Ref lookup via the CANONICAL stored identity (spec §3.3): `item_ref` is THE
+  // durable ref (`<bundle>//<conceptId>`) and `concept_id` is its bundle-less
+  // tail — the exact spelling displayRef emits for a default-bundle item. This
+  // related list is always scoped to ONE stash root (every row shares a bundle),
+  // so the user-facing ref is that short conceptId. Resolve by (concept_id /
+  // item_ref, file_path) DIRECTLY — no entry_key→`type:name` string surgery.
+  // A NULL-provenance write-back straggler (item_ref/concept_id still NULL)
+  // simply carries no ref; the caller falls back to the path and the next full
+  // index heals the row.
   const refByPath = new Map<string, string>();
   try {
     const entryRows = db
       .prepare(
-        `SELECT entry_key, stash_dir, file_path FROM entries
+        `SELECT file_path, concept_id, item_ref FROM entries
           WHERE file_path IN (${placeholders}) AND stash_dir = ?`,
       )
-      .all(...candidatePaths, stashRoot) as Array<{ entry_key: string; stash_dir: string; file_path: string }>;
+      .all(...candidatePaths, stashRoot) as Array<{
+      file_path: string;
+      concept_id: string | null;
+      item_ref: string | null;
+    }>;
     for (const row of entryRows) {
-      const ref = stripStashPrefix(row.entry_key, row.stash_dir);
+      const ref = row.concept_id ?? conceptIdFromItemRef(row.item_ref);
       if (ref) refByPath.set(row.file_path, ref);
     }
   } catch {
@@ -515,18 +526,17 @@ export function listRelatedPathsForFile(
 }
 
 /**
- * Convert an entries.entry_key to a user-facing asset ref. Entry keys are
- * stored as `${stash_dir}:${type}:${name}`; strip the stash-dir prefix.
+ * The bundle-less conceptId tail of a canonical `item_ref`
+ * (`<bundle>//<conceptId>`), or `null` when the ref is absent. The graph-related
+ * ref is scoped to a single stash root, so the short conceptId is the
+ * user-facing spelling (matching displayRef's default-bundle output). The reader
+ * prefers the stored `concept_id` column; this derives the same value from
+ * `item_ref` when only that column is populated.
  */
-function stripStashPrefix(entryKey: string, stashDir: string): string {
-  const prefix = `${stashDir}:`;
-  if (entryKey.startsWith(prefix)) return entryKey.slice(prefix.length);
-  // Fall back to last two colon-separated segments.
-  const lastColon = entryKey.lastIndexOf(":");
-  if (lastColon < 0) return entryKey;
-  const prevColon = entryKey.lastIndexOf(":", lastColon - 1);
-  if (prevColon < 0) return entryKey;
-  return entryKey.slice(prevColon + 1);
+function conceptIdFromItemRef(itemRef: string | null): string | null {
+  if (!itemRef) return null;
+  const boundary = itemRef.indexOf("//");
+  return boundary >= 0 ? itemRef.slice(boundary + 2) : itemRef;
 }
 
 /**

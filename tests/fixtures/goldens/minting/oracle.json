@@ -1,0 +1,178 @@
+{
+  "callSiteBehavior": {
+    "genericOutsideTypeRootReject": {
+      "code": "INVALID_FLAG_VALUE",
+      "errorContainsOutsideTypeRootText": true,
+      "exitNonZero": true,
+      "nothingMoved": true
+    },
+    "steersToCanonicalSpelling": {
+      "code": "INVALID_FLAG_VALUE",
+      "errorContainsFallbackSpellingText": true,
+      "errorNamesCanonicalRef": true,
+      "exitNonZero": true,
+      "nothingMoved": true
+    }
+  },
+  "capturedAtHead": "ff7ee5975e915c11d3799cdf5454c8bc494a304b",
+  "notes": [
+    "pureFunction: keyed by [type][label] -> {relFilePath (relative to a synthetic, non-existent /stash literal -- the function is pure, no fs access), name (the derived canonical name, or undefined)}. Every type has a \"canonical\" (first path segment matches TYPE_DIRS[type]) and a \"fallback\" (custom top-level dir, e.g. the function's own doc-comment example tools/agents/svelte-file-editor) case; several types carry extra documented branches (workflow's multi-extension strip, memory's .derived.md twin, env's \"default\" alias in both branches, secret's nested-name identity join).",
+    "callSiteBehavior.steersToCanonicalSpelling: mv-cli.ts:739's reject-and-name-the-canonical-ref sub-branch, captured via a real `akm mv knowledge:notes <target>` against a sandboxed stash where the only on-disk note lives at knowledge/archive/notes.md (found via resolveRefPathInStash's nested-subdirectory fallback search) -- the CANONICAL branch of the minting oracle computes \"archive/notes\", which differs from what the user typed, so mv refuses rather than silently moving the wrong ref.",
+    "callSiteBehavior.genericOutsideTypeRootReject: the OTHER mv-cli.ts:739 sub-branch, where the resolved file lives under a custom top-level dir outside the type's own root (the FALLBACK branch of the minting oracle) and its derived canonical name is IDENTICAL to what the user typed -- so mv falls through to the generic \"outside the type root\" rejection instead of a canonical-ref steer.",
+    "mv-cli.ts:1239 (the ordinary-move call site) is NOT re-captured here: every accepted-move scenario in the WI-04 golden tests/fixtures/goldens/journal/move-txn.json already calls it to derive fromRef, so that fixture is this oracle's call-site-2 coverage by cross-reference rather than duplication.",
+    "FROZEN behavior-parity oracle (D0b-1/D0b-3): this is the exact function Chunk 8's full-table re-key pass leans on (anchors.md Section C) -- Chunk 2's format adapters and Chunk 8's re-key must reproduce both branches byte-for-byte."
+  ],
+  "pureFunction": {
+    "agent": {
+      "canonical": {
+        "name": "example-agent",
+        "relFilePath": "agents/example-agent.md"
+      },
+      "fallback": {
+        "name": "tools/agents/example-agent",
+        "relFilePath": "tools/agents/example-agent.md"
+      }
+    },
+    "command": {
+      "canonical": {
+        "name": "example-command",
+        "relFilePath": "commands/example-command.md"
+      },
+      "fallback": {
+        "name": "tools/commands/example-command",
+        "relFilePath": "tools/commands/example-command.md"
+      }
+    },
+    "env": {
+      "canonicalDefault": {
+        "name": "default",
+        "relFilePath": "env/.env"
+      },
+      "canonicalNamed": {
+        "name": "staging",
+        "relFilePath": "env/staging.env"
+      },
+      "fallback": {
+        "name": "tools/env/staging",
+        "relFilePath": "tools/env/staging.env"
+      },
+      "fallbackDefault": {
+        "name": "tools/env/default",
+        "relFilePath": "tools/env/.env"
+      }
+    },
+    "fact": {
+      "canonical": {
+        "name": "meta/example-fact",
+        "relFilePath": "facts/meta/example-fact.md"
+      },
+      "fallback": {
+        "name": "tools/facts/meta/example-fact",
+        "relFilePath": "tools/facts/meta/example-fact.md"
+      }
+    },
+    "knowledge": {
+      "canonical": {
+        "name": "example-knowledge",
+        "relFilePath": "knowledge/example-knowledge.md"
+      },
+      "fallback": {
+        "name": "docs/knowledge/example-knowledge",
+        "relFilePath": "docs/knowledge/example-knowledge.md"
+      }
+    },
+    "lesson": {
+      "canonical": {
+        "name": "example-lesson",
+        "relFilePath": "lessons/example-lesson.md"
+      },
+      "fallback": {
+        "name": "tools/lessons/example-lesson",
+        "relFilePath": "tools/lessons/example-lesson.md"
+      }
+    },
+    "memory": {
+      "canonical": {
+        "name": "example-memory",
+        "relFilePath": "memories/example-memory.md"
+      },
+      "canonicalDerivedTwin": {
+        "name": "example-memory.derived",
+        "relFilePath": "memories/example-memory.derived.md"
+      },
+      "fallback": {
+        "name": "tools/memories/example-memory",
+        "relFilePath": "tools/memories/example-memory.md"
+      }
+    },
+    "script": {
+      "canonical": {
+        "name": "example-script.sh",
+        "relFilePath": "scripts/example-script.sh"
+      },
+      "fallback": {
+        "name": "tools/scripts/example-script.sh",
+        "relFilePath": "tools/scripts/example-script.sh"
+      }
+    },
+    "secret": {
+      "canonical": {
+        "name": "example-secret",
+        "relFilePath": "secrets/example-secret"
+      },
+      "canonicalNested": {
+        "name": "team/deploy.key",
+        "relFilePath": "secrets/team/deploy.key"
+      },
+      "fallback": {
+        "name": "tools/secrets/example-secret",
+        "relFilePath": "tools/secrets/example-secret"
+      }
+    },
+    "session": {
+      "canonical": {
+        "name": "harness-a/example-session",
+        "relFilePath": "sessions/harness-a/example-session.md"
+      },
+      "fallback": {
+        "name": "tools/sessions/harness-a/example-session",
+        "relFilePath": "tools/sessions/harness-a/example-session.md"
+      }
+    },
+    "skill": {
+      "canonical": {
+        "name": "example-skill",
+        "relFilePath": "skills/example-skill/SKILL.md"
+      },
+      "fallback": {
+        "name": "tools/agents/svelte-file-editor",
+        "relFilePath": "tools/agents/svelte-file-editor/SKILL.md"
+      }
+    },
+    "task": {
+      "canonical": {
+        "name": "example-task",
+        "relFilePath": "tasks/example-task.yml"
+      },
+      "fallback": {
+        "name": "tools/tasks/example-task",
+        "relFilePath": "tools/tasks/example-task.yml"
+      }
+    },
+    "workflow": {
+      "canonical": {
+        "name": "example-workflow",
+        "relFilePath": "workflows/example-workflow.md"
+      },
+      "canonicalYaml": {
+        "name": "example-workflow",
+        "relFilePath": "workflows/example-workflow.yaml"
+      },
+      "fallback": {
+        "name": "installed/workflows/example-workflow",
+        "relFilePath": "installed/workflows/example-workflow.yaml"
+      }
+    }
+  },
+  "scenario": "deriveCanonicalAssetNameFromStashRoot minting oracle: canonical-typeRoot + fallback branches for all 14 ASSET_SPECS_INTERNAL types (WI-0b.3c, asset-spec.ts:338-353), plus mv-cli.ts:739 call-site reject-behavior sub-branches"
+}

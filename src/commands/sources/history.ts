@@ -18,12 +18,12 @@
  * consumers see a coherent lifecycle trail in a single output.
  */
 
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
+import { openStateDatabase } from "../../core/state-db";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
-import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
+import { getUsageEvents, type UsageEventRow, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type { Database } from "../../storage/database";
 import { listProposals } from "../proposal/repository";
 
@@ -87,10 +87,9 @@ export interface HistoryOptions {
   ref?: string;
   since?: string;
   /**
-   * Filter by event source: "user" for direct CLI invocations, "improve" for
-   * operations triggered by `akm improve`.
+   * Filter by event source. `unknown` includes nullable historical rows.
    */
-  source?: "user" | "improve";
+  source?: UsageEventSource;
   /**
    * When true, proposal lifecycle events (`promoted`, `rejected`) from the
    * `events.jsonl` stream are merged into the history output alongside usage
@@ -110,7 +109,10 @@ export interface HistoryOptions {
   acceptRateBySource?: boolean;
   /** Override stash directory for proposal store access. */
   stashDir?: string;
-  /** Test seam — caller-supplied DB. Defaults to opening the cache DB. */
+  /**
+   * Test seam — caller-supplied state.db handle (usage_events' durable home
+   * since Chunk-8 WI-8.3). Defaults to opening state.db.
+   */
   db?: Database;
   /** Test seam — overrides events.jsonl path and clock for proposal events. */
   eventsCtx?: EventsContext;
@@ -161,7 +163,7 @@ function isoToSqliteTimestamp(ts: string): string {
 
 /**
  * Read mutation/usage history. When `ref` is provided, results are filtered to
- * that asset (validated via `parseAssetRef`). Always returns chronological
+ * that asset (validated via the ref parser). Always returns chronological
  * order (oldest first) so consumers can display a lifecycle trail.
  *
  * When `includeProposals` is true, proposal lifecycle events (`promoted`,
@@ -175,15 +177,20 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     if (!trimmed) {
       throw new UsageError("--ref cannot be empty.", "INVALID_FLAG_VALUE");
     }
-    // Validate the ref grammar; we still query by exact entry_ref string so
-    // the user gets back exactly what they asked for.
-    parseAssetRef(trimmed);
+    // Validate the ref grammar with the DUAL stored-ref parser (accepting BOTH
+    // the 0.9.0 `[bundle//]conceptId` and the legacy `[origin//]type:name`
+    // forms); getUsageEvents bridges the stored entry_ref across both spellings,
+    // so the user gets back exactly the asset they asked for regardless of which
+    // grammar they typed.
+    parseRefInput(trimmed);
     normalizedRef = trimmed;
   }
 
   const sinceNormalized = options.since !== undefined ? isoToSqlite(parseSinceToIso(options.since)) : undefined;
 
-  const db = options.db ?? openExistingDatabase();
+  // usage_events lives in state.db (Chunk-8 WI-8.3); getUsageEvents reads it
+  // there (no entries join), so `history` opens state.db, not index.db.
+  const db = options.db ?? openStateDatabase();
   const ownsDb = options.db === undefined;
   try {
     const rows: UsageEventRow[] = getUsageEvents(db, {
@@ -295,6 +302,6 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     };
     return response;
   } finally {
-    if (ownsDb) closeDatabase(db);
+    if (ownsDb) db.close();
   }
 }

@@ -42,7 +42,7 @@ Use a knowledge asset for durable reference material, synthesized explanations, 
 ## Placement & linking
 
 - Knowledge is **reuse-born**: file it under a stable **domain** prefix from
-  `fact:conventions/domains` (`knowledge:auth/oauth-refresh-races`), not under a
+  `facts/conventions/domains` (`knowledge/auth/oauth-refresh-races`), not under a
   project — that domain slug is what any project searches to reuse it.
 - Knowledge pages are the rewritable synthesized layer — update them in place.
   Ingested source material stays immutable; corrections to it are new assets

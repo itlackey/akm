@@ -190,7 +190,7 @@ export class ReplayPlayer {
         `Replay divergence at akm-invocation #${this.akmIdx + 1}: queue exhausted (got ${JSON.stringify(args)})`,
       );
     }
-    const rec = this.akm[this.akmIdx];
+    const rec = this.akm[this.akmIdx]!;
     if (!this.argsMatch(rec.args, args)) {
       throw new ReplayDivergenceError(
         `Replay divergence at akm-invocation #${rec.id}: expected ${JSON.stringify(rec.args)}, got ${JSON.stringify(args)}`,
@@ -214,7 +214,7 @@ export class ReplayPlayer {
     // the recording captures it on first call, so it's normally the first
     // entry in the queue. Tolerate ordering by scanning forward.
     for (let i = this.stateDbIdx; i < this.stateDb.length; i++) {
-      const rec = this.stateDb[i];
+      const rec = this.stateDb[i]!;
       if (rec.kind === "state-db-available") {
         // Advance past this record without disturbing the events/proposals
         // pointer — we splice it out so subsequent calls don't trip over it.
@@ -233,7 +233,7 @@ export class ReplayPlayer {
   ): unknown[] {
     // Skip past any available records that haven't been consumed (the
     // splice in nextStateDbAvailable usually handles this, but defensive).
-    while (this.stateDbIdx < this.stateDb.length && this.stateDb[this.stateDbIdx].kind === "state-db-available") {
+    while (this.stateDbIdx < this.stateDb.length && this.stateDb[this.stateDbIdx]!.kind === "state-db-available") {
       this.stateDbIdx += 1;
     }
     if (this.stateDbIdx >= this.stateDb.length) {
@@ -241,7 +241,7 @@ export class ReplayPlayer {
         `Replay divergence at state-db query #${this.stateDbIdx + 1}: queue exhausted (kind=${kind}, opts=${JSON.stringify(opts)})`,
       );
     }
-    const rec = this.stateDb[this.stateDbIdx];
+    const rec = this.stateDb[this.stateDbIdx]!;
     if (rec.kind !== kind) {
       throw new ReplayDivergenceError(
         `Replay divergence at state-db query #${rec.id}: expected kind ${rec.kind}, got ${kind}`,
@@ -262,7 +262,7 @@ export class ReplayPlayer {
         `Replay divergence at improve-result #${this.improveIdx + 1}: queue exhausted (path=${filePath})`,
       );
     }
-    const rec = this.improve[this.improveIdx];
+    const rec = this.improve[this.improveIdx]!;
     if (rec.path !== filePath) {
       throw new ReplayDivergenceError(
         `Replay divergence at improve-result #${rec.id}: expected path ${rec.path}, got ${filePath}`,
@@ -350,7 +350,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     if (keysA.length !== keysB.length) return false;
     for (let i = 0; i < keysA.length; i++) {
       if (keysA[i] !== keysB[i]) return false;
-      if (!deepEqual(ao[keysA[i]], bo[keysB[i]])) return false;
+      if (!deepEqual(ao[keysA[i]!], bo[keysB[i]!])) return false;
     }
     return true;
   }

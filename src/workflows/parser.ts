@@ -160,7 +160,7 @@ function extractTitle(
     }
   }
 
-  const first = titleHeadings[0];
+  const first = titleHeadings[0]!;
   const title = first.text.slice(WORKFLOW_TITLE_PREFIX.length).trim();
   if (!title) {
     errors.push({
@@ -184,7 +184,7 @@ function extractSteps(
   let sequenceIndex = 0;
 
   for (let i = 0; i < headings.length; i++) {
-    const h = headings[i];
+    const h = headings[i]!;
     if (h.level !== 2 || !h.text.startsWith(STEP_PREFIX)) continue;
 
     const stepTitle = h.text.slice(STEP_PREFIX.length).trim();
@@ -200,7 +200,7 @@ function extractSteps(
     const stepSource: SourceRef = { path, start: h.line, end: stepEnd };
 
     const subsections = collectSubsections(headings, i, stepEnd);
-    const stepIdSearchEnd = subsections.length > 0 ? subsections[0].headingLine - 1 : stepEnd;
+    const stepIdSearchEnd = subsections.length > 0 ? subsections[0]!.headingLine - 1 : stepEnd;
     const stepId = scanStepId(lines, h.line + 1, stepIdSearchEnd, stepTitle, errors);
 
     const { instructions, completionCriteria } = collectStepBody(subsections, lines, path, stepTitle, errors);
@@ -241,7 +241,7 @@ function collectSubsections(
 ): Subsection[] {
   const subs: Subsection[] = [];
   for (let j = stepIndex + 1; j < headings.length; j++) {
-    const sub = headings[j];
+    const sub = headings[j]!;
     if (sub.level <= 2) break;
     if (sub.level !== 3) continue;
     const next = headings[j + 1];
@@ -350,7 +350,7 @@ function scanStepId(
       });
       continue;
     }
-    foundId = match[1].trim();
+    foundId = match[1]!.trim();
     foundLine = lineNum;
   }
 
@@ -376,7 +376,7 @@ function collectBullets(
     const match = trimmed.match(BULLET_LINE);
     if (!match) continue;
     items.push({
-      text: match[1].trim(),
+      text: match[1]!.trim(),
       source: { path, start: lineNum, end: lineNum },
     });
   }
@@ -389,7 +389,7 @@ function findNextSiblingOrParentLine(
   level: number,
 ): number {
   for (let i = fromIndex + 1; i < headings.length; i++) {
-    if (headings[i].level <= level) return headings[i].line;
+    if (headings[i]!.level <= level) return headings[i]!.line;
   }
   return Number.MAX_SAFE_INTEGER;
 }

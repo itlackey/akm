@@ -4,25 +4,27 @@
 
 import fs from "node:fs";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { parseAssetRef, refToString } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
+import { conceptIdFromTypeName, displayRef, parseRefInput } from "../core/asset/resolve-ref";
 import { writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
+import { withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { countFeedbackSignals, insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
+import type { Database } from "../storage/database";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
-  applyFeedbackToUtilityScore,
-  closeDatabase,
   findEntryIdByRef,
   getEntryById,
   getEntryFilePathById,
-  openExistingDatabase,
-} from "../indexer/db/db";
-import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
+  getItemRefById,
+} from "../storage/repositories/index-entries-repository";
+import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -40,7 +42,7 @@ function validateFeedbackTags(raw: string[]): string[] {
         "INVALID_FLAG_VALUE",
       );
     }
-    const key = parts[0];
+    const key = parts[0]!;
     if (!TAG_KEY_RE.test(key)) {
       throw new UsageError(
         `Invalid tag key "${key}" in "${tag}". Key must match [a-z_][a-z0-9_]*.`,
@@ -72,7 +74,10 @@ function validateFeedbackTags(raw: string[]): string[] {
  * `inferenceProcessed`.
  */
 function appendLessonStrength(type: string, name: string, feedbackRef: string): { strength: number } | null {
-  const ref = `${type}:${name}`;
+  // Canonical 0.9.0 conceptId (`lessons/<name>`, D-R3) — `findEntryIdByRef`
+  // keys on the stored `item_ref` and parses its argument as the new grammar,
+  // so a `type:name` lookup here would never match.
+  const ref = conceptIdFromTypeName(type, name);
   let filePath: string | undefined;
   const db = openExistingDatabase();
   try {
@@ -127,6 +132,44 @@ function appendLessonStrength(type: string, name: string, feedbackRef: string): 
   return { strength: strengthList.length };
 }
 
+/**
+ * Persist the feedback usage-event (state.db) and immediately fold it into the
+ * entry's MemRL utility score (index.db). Chunk-8 WI-8.3: usage_events lives in
+ * state.db; entries + utility_scores stay in `indexDb`. Positive signals raise
+ * search ranking on the next read without a full reindex; negatives are durable
+ * but take effect at the next `akm index`. Uses the bounded-step EMA policy
+ * (F-5 / #386, arXiv:2601.03192). Best-effort: a utility-update failure never
+ * fails the feedback record.
+ */
+function recordFeedbackUsage(
+  indexDb: Database,
+  entryId: number,
+  durableEntryRef: string | undefined,
+  signal: "positive" | "negative",
+  metadataStr: string | undefined,
+): ReturnType<typeof applyFeedbackToUtilityScore> | undefined {
+  let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  const eventSource = resolveUsageEventSource();
+  withStateDb((stateDb) => {
+    insertUsageEvent(stateDb, {
+      event_type: "feedback",
+      entry_ref: durableEntryRef,
+      entry_id: entryId,
+      signal,
+      metadata: metadataStr,
+      source: eventSource,
+    });
+    if (eventSource !== "user") return;
+    try {
+      const { pos, neg } = countFeedbackSignals(stateDb, entryId);
+      utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
+    } catch {
+      // best-effort — feedback recording succeeds even if utility update fails
+    }
+  });
+  return utilityResult;
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 export const feedbackCommand = defineJsonCommand({
@@ -145,7 +188,7 @@ export const feedbackCommand = defineJsonCommand({
     // Optional in citty so run() is invoked even when omitted; we re-validate
     // and throw a structured UsageError below so exit code is 2 (USAGE) rather
     // than citty's default 0 (help banner).
-    ref: { type: "positional", description: "Asset ref (type:name)", required: false },
+    ref: { type: "positional", description: "Asset ref ([bundle//]conceptId, e.g. lessons/deploy)", required: false },
     positive: { type: "boolean", description: "Record positive feedback (boosts ranking immediately)", default: false },
     negative: {
       type: "boolean",
@@ -172,7 +215,7 @@ export const feedbackCommand = defineJsonCommand({
     "applied-to": {
       type: "string",
       description:
-        "Credit a lesson that helped resolve this task. Accepts a `lesson:<name>` ref. " +
+        "Credit a lesson that helped resolve this task. Accepts a `lessons/<name>` ref. " +
         "When combined with --positive, appends this feedback ref to the target lesson's " +
         "`lessonStrength[]` frontmatter array (dedup, idempotent). Ignored on non-lesson targets.",
     },
@@ -183,10 +226,10 @@ export const feedbackCommand = defineJsonCommand({
       throw new UsageError(
         "Asset ref is required. Usage: akm feedback <ref> --positive|--negative",
         "MISSING_REQUIRED_ARGUMENT",
-        "Pass a ref like `skill:deploy` and either --positive or --negative.",
+        "Pass a ref like `skills/deploy` and either --positive or --negative.",
       );
     }
-    const parsedRef = parseAssetRef(ref);
+    const parsedRef = parseRefInput(ref);
     if (args.positive && args.negative) {
       throw new UsageError("Specify either --positive or --negative, not both.");
     }
@@ -294,29 +337,16 @@ export const feedbackCommand = defineJsonCommand({
       // in search results until after reindexing.
       const indexedEntry = getEntryById(db, entryId);
       const source = sources.find((candidate) => candidate.path === indexedEntry?.stashDir);
-      durableRef = refToString({
-        ...parsedRef,
-        origin: parsedRef.origin ?? source?.registryId ?? "stash",
-      });
-      insertUsageEvent(db, {
-        event_type: "feedback",
-        entry_ref: durableRef,
-        entry_id: entryId,
-        signal,
-        metadata: metadataStr,
-      });
-
-      // Apply feedback-derived utility score adjustment immediately so that
-      // positive/negative signals influence search ranking without requiring
-      // a full reindex. We query the total accumulated feedback counts from
-      // usage_events so the delta reflects the entire signal history.
-      // Uses MemRL bounded-step EMA (F-5 / #386, arXiv:2601.03192).
-      try {
-        const { pos, neg } = countFeedbackSignals(db, entryId);
-        utilityResult = applyFeedbackToUtilityScore(db, entryId, pos, neg);
-      } catch {
-        // best-effort — feedback recording succeeds even if utility update fails
-      }
+      const durableOrigin = parsedRef.origin ?? source?.registryId ?? "stash";
+      // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
+      // resolved entry's fully-qualified item_ref — the SAME durable key the
+      // usage_events row carries and the SAME spelling the signal-delta
+      // correlation reads (buildLatestFeedbackTsMap, collapsed to [item_ref]).
+      // The D-R5 display spelling is the fallback only for a NULL-provenance
+      // (pre-cutover) row that the one-time re-key has not yet finalized.
+      const itemRef = getItemRefById(db, entryId) ?? undefined;
+      durableRef = itemRef ?? displayRef({ type: parsedRef.type, name: parsedRef.name, bundleId: durableOrigin });
+      utilityResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
     } finally {
       closeDatabase(db);
     }
@@ -355,7 +385,7 @@ export const feedbackCommand = defineJsonCommand({
     }
 
     // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
-    // target is a `lesson:<name>` ref and the signal is positive, append
+    // target is a `lessons/<name>` ref and the signal is positive, append
     // the feedback ref to the target lesson's `lessonStrength[]`
     // frontmatter array (dedup, idempotent). Non-lesson targets are
     // ignored. Failures here are warnings — feedback recording is the
@@ -364,7 +394,7 @@ export const feedbackCommand = defineJsonCommand({
     let appliedToResult: { lessonRef: string; strength: number } | null = null;
     if (appliedToRaw && signal === "positive") {
       try {
-        const parsedApplied = parseAssetRef(appliedToRaw);
+        const parsedApplied = parseRefInput(appliedToRaw);
         if (parsedApplied.type === "lesson") {
           const updated = appendLessonStrength(parsedApplied.type, parsedApplied.name, ref);
           if (updated) {

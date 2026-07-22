@@ -1,0 +1,102 @@
+{
+  "capturedAtHead": "90640d4103ab4024ab0bf8b0705bd54d847c9a4a",
+  "notes": [
+    "Crash windows only (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/mv-crash-runner.ts subprocess harness.",
+    "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was told to hold at, never journal bytes/paths. Re-captured at Chunk 6 (WI-6.5): the mv journal now rides the unified FileChange transaction engine (src/core/fs-txn.ts) — phase vocabulary and every recovery outcome preserved through the swap.",
+    "'applying' rolls back in full (no partial state survives) because it is held right after the prepared->applying journal transition, before any citer/source rename has happened (mv-cli.ts:598); every later named phase rolls forward via finalizeMoveTransaction (mv-cli.ts:991) to the same accepted end state with exactly-one mv event and re-keyed index + state rows.",
+    "The four recovery entry points (mv run's own pre-flight recovery mv-cli.ts:486, proposal promotion repository.ts:1791, the full indexer indexer.ts:560, the targeted write-path indexer index-written-assets.ts:74) each independently discover and finish the SAME kind of interrupted mv journal via recoverTxnsForRoot with a kind === 'mv' filter. The old dual journal-home story (in-stash .akm/mv-transactions vs getDataDir() proposal journals) is GONE: every kind's journal lives in the engine's per-root namespace (getDataDir()/txn/<hash(canonical stash root)>), and the four entry points pin that mv recovery still fires from all four call sites after the collapse."
+  ],
+  "recoveryEntryPoints": {
+    "indexerFull": {
+      "recovered": true,
+      "usageEventReKeyedOntoRecoveredRow": true
+    },
+    "indexerTargeted": {
+      "indexRowIdPreserved": true,
+      "indexWrittenAssetsReturnedTrue": true,
+      "recovered": true
+    },
+    "mvRun": {
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recovered": true
+    },
+    "proposalPromote": {
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recovered": true
+    }
+  },
+  "rollForward": {
+    "event-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": [
+        "event-finalized"
+      ],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "filesystem-committed": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": [
+        "filesystem-committed"
+      ],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "index-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": [
+        "index-finalized"
+      ],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    },
+    "state-finalized": {
+      "indexRowIdPreserved": true,
+      "journalPhasesObserved": [
+        "state-finalized"
+      ],
+      "mvEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "recoveredMoveSucceeded": true,
+      "stateOutcomeRekeyed": true,
+      "stateSalienceRekeyed": true,
+      "targetCreated": true
+    }
+  },
+  "rollback": {
+    "applying": {
+      "recoveredMoveSucceeded": true,
+      "sourceStillAtOriginalPath": true,
+      "targetCreated": false,
+      "transactionsRootClean": true,
+      "treeByteIdenticalToPreCrash": true
+    }
+  },
+  "scenario": "mv SIGKILL crash-recovery outcomes (WI-04, R3, integration scope)"
+}

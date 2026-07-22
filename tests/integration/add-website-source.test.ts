@@ -138,17 +138,18 @@ describe("akm add website", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
         sources?: Array<{ type?: string; url?: string; name?: string }>;
       };
-      expect(config.sources).toContainEqual({
-        type: "website",
-        url: normalizedWebsiteUrl,
-        name: "docs-site",
-      });
+      // #37: the add flow persists a bundles entry keyed by --name.
+      expect(
+        (config as { bundles?: Record<string, { website?: { url?: string } }> }).bundles?.["docs-site"]?.website?.url,
+      ).toBe(normalizedWebsiteUrl);
 
       expect(parsed.sourceAdded?.stashRoot).toBeDefined();
       const knowledgeFiles = fs.readdirSync(path.join(parsed.sourceAdded?.stashRoot as string, "knowledge")).sort();
-      expect(knowledgeFiles).toEqual(["getting-started.md", "index.md"]);
+      // The home page must NOT be cached as `index.md` — that is a D-R6
+      // reserved structural filename the indexer refuses to classify.
+      expect(knowledgeFiles).toEqual(["getting-started.md", "index-content.md"]);
       const homeDoc = fs.readFileSync(
-        path.join(parsed.sourceAdded?.stashRoot as string, "knowledge", "index.md"),
+        path.join(parsed.sourceAdded?.stashRoot as string, "knowledge", "index-content.md"),
         "utf8",
       );
       expect(homeDoc).toContain("Example Docs");

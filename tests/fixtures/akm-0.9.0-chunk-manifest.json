@@ -1,0 +1,319 @@
+{
+  "docId": "akm-0.9.0-chunk-manifest",
+  "authority": "The 0.9.0 bundle-adapter architecture plan (removed 2026-07-21 in the completed-refactor doc prune; historical) was the authority. This manifest is a derived index of the plan's former §11 (Execution Order — Two Waves), retained only because tests/goldens-designations.test.ts still validates reBaselineChunk ids against it. Section references of the form §15.N mean numbered RULE N of plan §15 (the plan had no §15 sub-headings).",
+  "generated": "2026-07-14",
+  "amended": "2026-07-16 — gate hardening: golden presence/integrity globalGate; pre-armed cycle + fn-size + RunContext-adoption ratchets; chunk 9/5/0b/8 gate additions; cycle-kill ownership map (plan DoD 11) | 2026-07-21 — retroactive: the 2026-07-18 ref-grammar decision amended plan §11 Chunk 5 (D-R1..D-R6, F0-F5 flip staging) but this file was never regenerated at the time; chunk 5's parseAssetRef gate survivors live in src/migrate/legacy-ref-grammar.ts — OUTSIDE the literal src/migrate/legacy/ exclusion written here — sanctioned by decision §6 (the frozen migrator home is where type:name parsing lives forever); see the chunk-5 retroactive ledger's sanction note",
+  "planVersion": "final scope pass, commit 5555616 (Tier-A only, lifecycle deferred, no trust machinery, reported ledger, hygiene-first waves)",
+  "integrationBranch": "claude/akm-architecture-refactor-fubvd7",
+  "branchPrefix": "akm-090/chunk-",
+  "grepGateScope": "src/ + scripts/ + src/assets/, EXCLUDING src/migrate/legacy/ (the frozen §3.4 copy retains dead identifiers by design — plan §11 gate note) — tests are driven to zero by the §15.2 ratchet on the same identifiers; docs by the Chunk 10 sweep",
+  "globalGates": [
+    "Zero-count greps at declared scope (plan §11), each IN EFFECT ONLY FROM the chunk that deletes its referent onward — a gate runner applies a grep only if its effective chunk is this chunk or earlier in manifest order (order: 0a, 7, 6, 9, 0b, 1, 1.5, 2, 3, 4, 5, 6.5, 8, 10); before that it is out of scope, not red: AkmAssetType (from Chunk 1.5); TYPE_DIRS, resolveAssetPathFromName, runMatchers, getAssetTypes, ASSET_SPECS, LINTER_MAP (from Chunk 3); wikiName + the wiki type token (from Chunk 4); StashEntry, parseAssetRef, .stash.json/loadStashFile (from Chunk 5); resolveStashDir outside the RunContext builder (from Chunk 9)",
+    "Safety suites port-first and green at EVERY chunk boundary (plan §15.3): traversal/escape, symlink, redaction/dangerous-key, SQLite journal/busy/lock/contention/cross-proc, migration suites. Fixed points not to touch: tests/_helpers/sandbox.ts, tests/_preload.ts, the mock.module-ban lint, hand-rolled sharding",
+    "Every chunk lands its named §15 test bucket in the same chunk; chunk gate is not green until its bucket is (plan §15.1)",
+    "Every chunk commits its per-chunk deletion ledger — a HARD gate (plan §1.3: 'the hard gates are the zero-count greps, the per-chunk deletion ledgers, and the parity/contract/behavior tests'; §11 preamble; DoD 8)",
+    "The net-LOC NUMBER (signed adds + deletions) is REPORTED per chunk, never a pass/fail threshold (plan §1.3, DoD 8)",
+    "No new trust/approval/security machinery; memory lifecycle deferred entirely; anything lifecycle-shaped or trust-shaped in a diff is a scope-creep BLOCKER (plan §1.3, §12.4)",
+    "Local green gate per chunk: typecheck + unit + affected integration + safety suites (plan §11); bun run check is the full-suite superset used when no affected-only selection exists",
+    "Golden-oracle presence is mechanical: scripts/lint-goldens-presence.ts (in bun run lint) fails if tests/fixtures/goldens/DESIGNATIONS.json or any registered asset/consumer suite is missing. A chunk gate that references goldens/fixtures is RED — never skipped, never vacuously green — when the referenced files are absent; retiring an asset means updating DESIGNATIONS.json in the same change — in its designated re-baseline chunk, or under the registry's surface-owner rule (the chunk the plan orders to change a pinned surface re-designates the asset BEFORE the change lands). Frozen assets are additionally byte-pinned: the lint verifies each frozen entry's sha256, so AKM_UPDATE_GOLDENS=1 cannot silently re-record one"
+  ],
+  "chunks": [
+    {
+      "id": "0a",
+      "order": 1,
+      "wave": 1,
+      "branch": "akm-090/chunk-0a",
+      "title": "Hygiene goldens",
+      "scope": "Behavior baselines for the surfaces Wave 1 touches: improve-run output goldens (the §5 behavior-change ledger baseline — self-consistency call counts, P0-A selection sets), proposal/transaction round-trip goldens (all three journal engines), CLI output baselines for the commands the sweep rewires. Goldens grammar-agnostic where possible (counts/outcomes, not raw refs — §12.4 Wave-1 rebase friction).",
+      "gates": [
+        "Golden fixtures committed",
+        "All plan line anchors this chunk relies on re-measured at HEAD before capture (§12.4 line-drift risk)"
+      ],
+      "netLoc": "0 (capture-only)",
+      "testBucket": "§15.5 goldens (capture-only; each asset designated frozen vs re-baseline); §15.7 consolidate behavior-preservation goldens captured here",
+      "planRefs": [
+        "plan §11 Chunk 0a",
+        "plan §5",
+        "plan §12.4 (line drift, Wave-1 rebase friction)",
+        "plan §15.5",
+        "plan §15.7"
+      ]
+    },
+    {
+      "id": "7",
+      "order": 2,
+      "wave": 1,
+      "branch": "akm-090/chunk-7",
+      "title": "improve decomposition + dead-lane deletions",
+      "scope": "Decompose the 4 improve god fns + the consolidate ops (planConsolidation/handleMergeOp/handlePromoteOp → named passes; existing behavior preserved EXACTLY per §6 — no lifecycle state model, deferred). Adopt three-verb naming (revise/learn/consolidate — vocabulary only). Delete self-consistency/exploration/calibration/procedural/autotune/review_pressure/ValenceScore.lane/P0-A/multi-cycle with the §5 behavior-change ledger attached. Trim promotion-policy literal. RunContext into processSession + appendEvent ctx adoption (§10.7). Finish-or-delete structured-call (§10.7). Serializer/resolveParentRef consolidation. PLUS §13.1 fold-ins assigned to this chunk: delete the recombine/synthesis cross-episodic subsystem (recombine.ts ~1,009 LOC, recombine-repository.ts ~290, the migrations.ts:679 table — supersedes §5's earlier keep-as-learn-recipe wording; add to this chunk's deletion ledger and grep-gate) and, per §14.3 in the SAME chunk, the recombine-orphaned index-DB exports getEntitiesByEntryIds (db.ts:1109) and getNeighborsByEntryId (db.ts:896) — not left as dead index-DB APIs. The ~−1,300 for the fold-ins is ledgered under §12.1's residual row, outside this chunk's ~−3900.",
+      "gates": [
+        "§5 behavior-change ledger attached to the chunk",
+        "Consolidate behavior preservation vs Chunk 0a goldens — merge/delete/promote/contradict outcomes, journal round-trip, hot-capture guard, contradiction preserve-and-qualify, byte-for-byte where deterministic (§12.3, DoD 5)",
+        "No lifecycle state model — states/water-marks/pressure/CAS/purge are deferred and must not slip in (§6, §12.4)",
+        "No god fn >~200 LOC remains in improve (DoD 5)"
+      ],
+      "netLoc": "~−3900",
+      "testBucket": "§15.7 consolidate behavior-preservation (replay Chunk 0a goldens); §15.1 per-chunk pairing for deleted lanes",
+      "planRefs": [
+        "plan §11 Chunk 7",
+        "plan §5",
+        "plan §6",
+        "plan §9.2",
+        "plan §10.7",
+        "plan §12.3 (consolidate preservation)",
+        "plan §13.1 (recombine fold-in)",
+        "plan §14.3 (orphaned db.ts exports)"
+      ]
+    },
+    {
+      "id": "6",
+      "order": 3,
+      "wave": 1,
+      "branch": "akm-090/chunk-6",
+      "title": "Proposal → FileChange[] + one transaction",
+      "scope": "Collapse 3 FS journal engines into one FileChange transaction (preserve fsync + before-hash). Proposal{changes: FileChange[]}. Dedup/cooldown → fingerprints (with model-id term) + retained rejection backoff in this same chunk (§4.5). Delete the confidence gate. bulkAdjudicateProposals. Runs on the CURRENT ref grammar; proposal keys re-key at cutover like all state.",
+      "gates": [
+        "Journal dirs removed",
+        "One-transaction fault tests green — mid-apply fault leaves no partial write, before-hash abort (§12.3)",
+        "Outcome-level txn goldens (journal/proposal-txn.json, journal/move-txn.json — frozen) stay green through the engine collapse; the five journal-engine-shape goldens designated re-baseline @6 (journal/{proposal,move}-recovery.json, consolidate/journal-{lifecycle,recovery,guard-verdicts}.json) are re-captured HERE with a reviewed diff + ledger entry + registry update in the same chunk (surface-owner rule)"
+      ],
+      "netLoc": "~−800",
+      "testBucket": "§15.7 transaction fault injection; §15.5 proposal/transaction round-trip goldens from Chunk 0a stay green",
+      "planRefs": ["plan §11 Chunk 6", "plan §4.5", "plan §12.3 (one transaction)"],
+      "notes": "Moved to Wave 2 (Chunk 5) — do NOT do here: export #fragment refs, the parseAssetRef→0 gate, and the legacy-import→migrator fold (the migrator home doesn't exist until Chunk 1)."
+    },
+    {
+      "id": "9",
+      "order": 4,
+      "wave": 1,
+      "branch": "akm-090/chunk-9",
+      "title": "Cross-cutting sweep",
+      "scope": "Ambient RunContext threading (retire the 18 _set*ForTests seams). Config discriminated schemas + reserved-knob deletion. Output helpers/shape-registry dedup. Health/tasks god decomposition. cli argv normalization to one ParsedInvocation (§10.7) + duration residue + caps(×10)/homeDir/mirror/session-log/spawn/semver/connection dedup. npm.path() + parseSourceSpec fixes. Typed-error sweep (§10.7). Import-cycle workstream (§10.7): the ratchet is PRE-ARMED (scripts/lint-import-cycles.ts, 2026-07-16 gate hardening — no new participants ever, plus the dynamic-import() count companion); this chunk kills the named knots (improve-types, config↔integrations, harness/tasks barrels) PLUS the small unowned local knots (graph pair, graph-db pair, ranking pair, proposal repository↔validators, wiki-fetchers back-edge, write-source↔git, events pair), trimming the baseline in the same commits; the taxonomy set stays until Chunk 3, the indexer-db trio until Chunk 5, the workflows-runtime trio until Chunk 8 (plan DoD 11 ownership map). Delete stale database.ts:14 comment + add Node 24 to node-smoke/release-gates matrices. PLUS §13.1 fold-ins assigned to this chunk: vendored echarts.min.js → CDN default-flip and drop the vendored asset (−1 MB; a default flip of html-report.ts:41/:383, not an implementation — §14.1); deterministic-embedder relocation of TEST SCAFFOLDING ONLY (−60) — the AKM_EMBED_DETERMINISTIC env-gated switch STAYS in the production embedder facade (embedder.ts:120,154): scripts/akm-eval and the §13.2 measurement pass depend on it; core/eval/rank-metrics.ts → scripts/akm-eval (−180); the --format html generic template framework → health-only render (−160). PLUS §14.2 fold-ins: H1 AkmHarness capability-discriminated union (retire the load-time throw), H2 health-report view-model/HTML split (deeper than §4.7's line-count split), H3 scheduleKillLadder covering the in-file spawn.ts:527,545 copies, L1 text/registry.ts fold. PLUS §14.3: delete AkmHarness.resume + the *_RESUME_FLAG constants. Fold-ins are ledgered under §12.1's residual row, outside this chunk's ~−2000.",
+      "gates": [
+        "grep resolveStashDir → residual only in the RunContext builder",
+        "Cycle baseline trimmed to exactly the later-chunk-owned knots (taxonomy set → Chunk 3; indexer db/entry-mapper/schema trio → Chunk 5; workflows-runtime step-work/runs/unit-checkin trio → Chunk 8 — plan DoD 11 ownership map); every other participant dead; no new participants ever (ratchet pre-armed at the chunk-7 HEAD)",
+        "grep ImproveRunContext → 0 (the legacy dual context is unified into the minted RunContext; empties the tests/architecture/run-context-adoption.test.ts baseline, flipping it absolute)",
+        "createRunContext (src/commands/improve/run-context.ts) constructed at every improve verb entry — adoption verified by the run-context-adoption ratchet, not by prose"
+      ],
+      "netLoc": "~−2000",
+      "testBucket": "§15.1 per-chunk pairing (seam-retirement test updates land with each seam); CLI output baselines from Chunk 0a stay green",
+      "planRefs": [
+        "plan §11 Chunk 9",
+        "plan §10 (all subsections)",
+        "plan §10.7",
+        "plan §13.1 (echarts/embedder/rank-metrics/html fold-ins)",
+        "plan §14.1",
+        "plan §14.2 (H1/H2/H3/L1)",
+        "plan §14.3 (resume-field deletion)"
+      ]
+    },
+    {
+      "id": "0b",
+      "order": 5,
+      "wave": 2,
+      "branch": "akm-090/chunk-0b",
+      "title": "Migration goldens & oracles",
+      "scope": "Snapshot recognition/placement/renderer/lint outputs for all 14 formats. Capture deriveCanonicalAssetNameFromStashRoot minting oracle (mv-cli.ts:769,1266). Re-anchor ALL plan line numbers at HEAD (classifyBySmartMd is at matchers.ts:181, not :197; re-measure config-schema before sizing). Capture filter-behavior goldens (proposed/belief/scope result sets) and whyMatched alongside rank metrics. Build the orphan-bearing migration fixture (deleted-asset salience rows, bare refs, .derived twins) and the rc-train FROM-state fixture. Inventory the §15.5 golden/characterization assets with frozen-vs-re-baseline designation.",
+      "gates": [
+        "Golden fixtures committed",
+        "Line-anchor re-measurement recorded (§12.4 line-drift risk)",
+        "Orphan-bearing fixture + rc-train FROM-state fixture exist and load",
+        "§15.5 golden inventory committed with frozen-vs-re-baseline designation per asset",
+        "Re-key merge property fixtures committed: a seeded generator producing randomized state across the three ref spellings (bare / origin-qualified / .derived twins) + the invariant harness (no key lost, event rows carried as-is with counts preserved, scalar fields most-recently-updated wins, output deterministic and idempotent) — exercised for real by Chunk 8"
+      ],
+      "netLoc": "0 (capture-only)",
+      "testBucket": "§15.5 goldens; capture is the deliverable",
+      "planRefs": [
+        "plan §11 Chunk 0b",
+        "plan §12.4 (line drift)",
+        "plan §15.5",
+        "plan §12.3 (golden parity, migration round-trip)"
+      ]
+    },
+    {
+      "id": "1",
+      "order": 6,
+      "wave": 2,
+      "branch": "akm-090/chunk-1",
+      "title": "Adapter base + util home",
+      "scope": "Introduce the amended BundleAdapter interface (recognize-required / index-optional, ValidateContext, affectedItems) + the core-owned scanComponent walk. Relocate SCRIPT_EXTENSIONS/WORKFLOW_EXTENSIONS/canonicalizeWorkflowName + ref grammar constants to core/recognition-util.ts. Frozen COPY of the full legacy resolver surface into migrate/legacy/legacy-layout.ts (§3.4).",
+      "gates": [
+        "Amended BundleAdapter interface + scanComponent compile and are exercised by unit tests (adapter spec §§1–4 as amended — Chunk 2 mints against this contract only)",
+        "Frozen legacy resolver copy exists at migrate/legacy/legacy-layout.ts"
+      ],
+      "netLoc": "~0",
+      "testBucket": "§15.1 pairing: interface + scanComponent unit tests land here",
+      "planRefs": ["plan §11 Chunk 1", "plan §2.3", "plan §3.4", "adapter spec §§1–4"],
+      "notes": "§15.8 choke-point lands here (before Chunk 2): consolidate the ~15 duplicated stash-builder helpers and 51 local runCli wrappers onto tests/_helpers; migrate the 108 rogue mkdtemp sites onto the sandbox helper so sweep:tmp can be demoted. The frozen legacy copy INTENTIONALLY retains dead identifiers (per-type ASSET_SPECS, TYPE_DIRS walks — §3.4); src/migrate/legacy/ is therefore excluded from the zero-count grep scope (plan §11 gate note, amended 2026-07-14) — do NOT rename identifiers inside the frozen copy to appease greps."
+    },
+    {
+      "id": "1.5",
+      "order": 7,
+      "wave": 2,
+      "branch": "akm-090/chunk-1.5",
+      "title": "Open the type token (type-only severs)",
+      "scope": "Sever the closed union: common.ts:29-88 union block, salience.ts:52/650, eligibility.ts:9/39/169/477, mv-cli.ts:51,145,154,743, asset-ref.ts:109 (anchors from Chunk 0b re-measurement). Relax validateStashEntry to open-token. Mint the KNOWN_TYPES const tuple + typed presentation/ranking tables (§2.3) — compile-time exhaustiveness for AKM-owned tables, open string for the data space.",
+      "gates": [
+        "grep AkmAssetType → 0 (declared scope)",
+        "KNOWN_TYPES const tuple + typed tables in place (§2.3); presentationFor() open-string fallback"
+      ],
+      "netLoc": "−80",
+      "testBucket": "§15.4 taxonomy-pin deletions land WITH their §12.3 replacement contract tests in the same commit (exhaustiveness guard never gaps)",
+      "planRefs": ["plan §11 Chunk 1.5", "plan §2.3", "plan §15.4"]
+    },
+    {
+      "id": "2",
+      "order": 8,
+      "wave": 2,
+      "branch": "akm-090/chunk-2",
+      "title": "Per-format adapters (10 adapters covering the 14 formats)",
+      "scope": "Each adapter stamps recognize / placeNew / directoryList / presentation-table entries / validate locally (incl. the 6 static-only renderer mappings; the 9 index-time metadata contributors move into recognize). Minted against the amended contract ONLY (recognize-required, ValidateContext, affectedItems, ordered looksLikeRoot probes, nested-root subtraction). Skill adapter gains the Agent Skills contract (§4.5). The existing env/secret redaction renderers port as adapter-keyed presentation — behavior-preserving, NO new trust machinery (§1.3).",
+      "gates": [
+        "Adapter conformance suite green (§12.3): index() == fold(recognize) for adapters overriding index(); per-adapter looksLikeRoot fires on its own golden root and no sibling's",
+        "Recognition/placement/renderer/lint parity vs Chunk 0b goldens for all 14 formats",
+        "env/secret redaction behavior-preserving vs the Chunk 0b renderer goldens (port, not redesign — §1.3)"
+      ],
+      "netLoc": "≈ net-zero-to-negative (replaces deleted globals)",
+      "testBucket": "§15.7 adapter conformance suite; §15.5 format goldens replayed",
+      "planRefs": ["plan §11 Chunk 2", "plan §4.5", "plan §12.3 (golden parity, conformance)", "adapter spec §§1–7"]
+    },
+    {
+      "id": "3",
+      "order": 9,
+      "wave": 2,
+      "branch": "akm-090/chunk-3",
+      "title": "Delete taxonomy globals",
+      "scope": "Delete asset-registry.ts, asset-spec registry/renderer/action, matchers.ts competition, file-context:242-265, path-resolver disk-probe, LINTER_MAP + 9 linters, output/renderers.ts type-registry. Repoint graph-extraction/ensure-index/walker/write-source/sources-resolve/provider-utils/git-stash/build-index to adapter metadata. WIRE adapter directoryList() into git-stash pathspecs AND provider-utils.detectStashRoot/git-provider.hasExtractedRepo BEFORE the deletions land (§12.4 risks).",
+      "gates": [
+        "grep TYPE_DIRS → 0",
+        "grep resolveAssetPathFromName → 0",
+        "grep runMatchers → 0",
+        "grep getAssetTypes → 0, ASSET_SPECS → 0, LINTER_MAP → 0 (their registries are deleted in this chunk)",
+        "Taxonomy cycle participants leave the pre-armed ratchet baseline (asset-registry/asset-spec/matchers/renderers knot dead; indexer-db and workflows-runtime knots legitimately remain until Chunks 5/8 — plan DoD 11)",
+        "git exact-path staging contract test green — pathspecs scope to adapter directoryList(), not nothing-staged (§12.3, §12.4)",
+        "Install-time recognition still detects valid bundle roots (provider-utils/git-provider threaded — §12.4)"
+      ],
+      "netLoc": "~−1000+",
+      "testBucket": "§15.4 taxonomy-pin deletions with same-commit replacements; §15.6 install/recognition manual rewrites (source-providers/, provider-utils)",
+      "planRefs": ["plan §11 Chunk 3", "plan §12.4 (git-stash pathspec, install-time recognition)", "plan §7.2"]
+    },
+    {
+      "id": "4",
+      "order": 10,
+      "wave": 2,
+      "branch": "akm-090/chunk-4",
+      "title": "Wiki asset-type death; LLM Wiki adapter restored",
+      "scope": "The wiki ASSET-TYPE dies: delete the type token, wikiName config special-case at 5 sites + indexer/search + read path show.ts:428-432 + SearchSource.wikiName; rename wiki-fetchers/ → snapshot-fetchers/ KEEPING youtube/website (§12.4 — they feed the knowledge path, not wiki); collapse resolve-standards-context Feature-A. But the LLM Wiki adapter is a first-class built-in (DEV-7): relocate native wiki semantics from wiki/wiki.ts/wiki-templates.ts into an llm-wiki adapter owning schema.md/index.md/log.md/raw/pages/xrefs/citations/ingest + validation. Do NOT fold wiki pages into knowledge.",
+      "gates": [
+        "grep wikiName → 0",
+        "wiki type token → 0",
+        "llm-wiki adapter conformance tests green",
+        "website/youtube snapshot fetchers renamed, not deleted (§12.4)"
+      ],
+      "netLoc": "smaller than the prior −1300 (adapter retained, not deleted)",
+      "testBucket": "§15.4 wiki.test deletion minus the fetcher subset, same-commit with llm-wiki conformance tests",
+      "planRefs": [
+        "plan §11 Chunk 4",
+        "plan §7.4",
+        "plan §12.4 (website snapshot machinery)",
+        "deviation DEV-7 (deviation analysis §1, resolution §4 item 5)"
+      ]
+    },
+    {
+      "id": "5",
+      "order": 11,
+      "wave": 2,
+      "branch": "akm-090/chunk-5",
+      "title": "IndexDocument + ref grammar + db.ts split",
+      "scope": "Rename StashEntry → IndexDocument + provenance + pinned signal columns (adapter spec §3). The [bundle//]conceptId grammar lands HERE: anchored body-ref form, REF_RE retarget, export #fragment refs, parseAssetRef deletion. Schema-column migration (entry_key/stash_dir/entry_type/entry_json → new column set) with utility/usage re-keyed onto item_ref. Diff persistence (upsert-by-ref, drain-before-transaction, zero-document preflight — adapter spec §4) replaces truncate paths (#624-P1 lesson). Split db.ts into storage repos + jsonColumn() helper; invert storage↔indexer arrow. Unify scored/enumerate filter path. L0/L1/L2 derived index artifacts (cards/outlines per normative §15.2). item_links table + consumers. Fold .stash.json legacyOverrides + mergeLegacyEntry + pre-0.9 proposal legacy-import → migrator.",
+      "gates": [
+        "grep StashEntry → 0",
+        "grep parseAssetRef → 0",
+        "grep .stash.json / loadStashFile → 0",
+        "§12.3 search parity gate green: nDCG/MRR/recall/banned-hit + filter-behavior parity (proposed/belief/scope) + whyMatched parity; canary re-mint as a named step",
+        "Test codemod (scripts/) lands ATOMICALLY with the grammar change (§15.2); the codemod COMMIT contains ONLY the codemod script + mechanically regenerated files (including DESIGNATIONS.json path/sha256 updates the script emits when fixture paths move) — zero hand-edited test hunks (hand edits go in separate reviewable commits; mixing them into the codemod commit is an adherence BLOCKER); grep ratchet drives tests/ to zero",
+        "db.ts split lands cycle-free: the indexer db/entry-mapper/schema participants leave the pre-armed ratchet baseline (successor files must not cycle — plan DoD 11)",
+        "Post-codemod mutation spot-check recorded in the chunk report: revert ≥20 randomly sampled re-keyed literals → the suite MUST go red (proves the re-keyed assertions still bite; a sample that stays green is a gate failure)"
+      ],
+      "netLoc": "~−480",
+      "testBucket": "§15.2 codemod (~2,003 ref literals + ~100 layout files) atomic with this chunk; §15.6 manual rewrites (37 StashEntry consumers incl. mv.test/indexer.test/e2e.test, 12 parseAssetRef files); §15.7 search parity suite",
+      "planRefs": [
+        "plan §11 Chunk 5",
+        "plan §7",
+        "plan §7.5",
+        "plan §12.3 (search parity)",
+        "plan §15.2",
+        "adapter spec §§3–4",
+        "normative §15.2"
+      ]
+    },
+    {
+      "id": "6.5",
+      "order": 12,
+      "wave": 2,
+      "branch": "akm-090/chunk-6.5",
+      "title": "Activation policy (Tier A — install≠activate consolidation)",
+      "scope": "Consolidate today's scattered install≠activation enforcement — the registryId first-party/third-party block-vs-warn (env-binding.ts:110-121), the add-time dangerous-key scan (add-cli.ts:74-215), task enabled: state (YAML + runner.ts:159 fire-time check), and writable (search-source.ts:35) — into ONE workspace activation-policy point. Confirm-by-test that installing a bundle with tasks/env/workflows grants nothing until an explicit enable. These are PORTS of existing behavior. env/secret handling UNCHANGED. Accepted-by-design residual (documented, not gated): workflow refs resolve across installed sources and re-read current disk content per invocation — crontab semantics. DEFERRED to Tier B indefinitely: workspace_bindings record, digests, rebind-on-update, akm bind|unbind|bindings CLI.",
+      "gates": [
+        "Install≠activate port-preservation tests green (§12.3, DoD 10): install grants nothing; explicit enable grants exactly what it grants today; env injection from a registry-installed source still hard-blocks dangerous keys AFTER the config migration",
+        "No new trust/approval machinery: no labeling, no action clamps, no confirm prompts, no digests, no trust records (§1.3)",
+        "Scope tripwire: if threading source/trust context to the task runner or native executor exceeds ~150 LOC, STOP and re-scope — do not creep toward the record (§12.4)"
+      ],
+      "netLoc": "+200 to +400 (budgeted add — decision logic consolidates; interactive confirm/rollback UX in add-cli stays where it is)",
+      "testBucket": "§15.7 install≠activate port-preservation suite",
+      "planRefs": [
+        "plan §11 Chunk 6.5",
+        "plan §1.3",
+        "plan §12.3 (port-preservation)",
+        "plan §12.4 (scope creep)",
+        "deviation §4.3a–3c",
+        "decision D30"
+      ]
+    },
+    {
+      "id": "8",
+      "order": 13,
+      "wave": 2,
+      "branch": "akm-090/chunk-8",
+      "title": "Three-DB merge + migration cutover + config/lockfile",
+      "scope": "The §3.3 journaled cutover-as-code: workflow DDL fold + usage_events rescue (it lives in index.db!) + full §3.2 re-key + orphan quarantine (expected orphans → legacy_state quarantine; integrity failures → fail-closed) + ATTACH sequence (ATTACH outside txn; verified empirically on bun:sqlite 3.51). NO bindings/lifecycle DDL (§3.2). Delete workflows/db.ts + workflowDb locations/paths (frozen WORKFLOW_MIGRATIONS copy retained, §8.2). index.db quarantine-rename + out-of-gate rebuild. Config migration stashDir/sources[]/installed[]/wikiName → bundles/defaultBundle + bundle lock state (normative §10.2) — SUPERSEDES the per-source integrations/lockfile.ts shape; the bindings: config map is Tier B — NOT emitted (mirrored in Chunk 10's schemas item). report.ts barrier-fn decomposition with the W2 finalize-lock split (§10.7). Throwaway migrator @removeIn next-minor.",
+      "gates": [
+        "4 → 3 DBs",
+        "Backup-verified restore green INCLUDING a pre-cutover backup restored by the post-cutover binary",
+        "Orphan fixture completes-with-quarantine (not aborted)",
+        "rc-train FROM-state fixture green",
+        "No bindings/lifecycle DDL minted; bindings: config key not emitted (§3.2, Tier B)",
+        "Migration suites extended, not rewritten (§15.3)",
+        "Property-based re-key merge test green over ≥1000 generated cases (Chunk 0b generator; three-spelling merge invariants) — hand-built fixtures alone do not satisfy this gate",
+        "The workflows-runtime knot (step-work/runs/unit-checkin) leaves the pre-armed ratchet baseline with the report.ts decomposition — the cycle baseline is EMPTY from this chunk and the ratchet absolute (plan DoD 11)"
+      ],
+      "netLoc": "~−200 (coordination rework priced in)",
+      "testBucket": "§15.7 migration crash/orphan/rc-FROM-state suites; §15.3 migration-lifecycle-regression + migration-backup extended",
+      "planRefs": [
+        "plan §11 Chunk 8",
+        "plan §3.2",
+        "plan §3.3",
+        "plan §8",
+        "plan §12.3 (migration round-trip)",
+        "normative §10.2"
+      ]
+    },
+    {
+      "id": "10",
+      "order": 14,
+      "wave": 2,
+      "branch": "akm-090/chunk-10",
+      "title": "Contract-surface + docs/assets sweep",
+      "scope": "STABILITY.md/roadmap/AGENTS.md ref-contract rewrite (D28). CHANGELOG normalization + the one true 0.9.0 migration note. docs/migration/v0.8-to-v0.9.md + release-notes/0.9.0.md rewritten to this refactor's story. Stash-skeleton conventions → adapters + stamped-copy refresh decision. improve-strategy allowedTypes schema + shipped JSONs + user-file migration. Published schemas/ regen (NO bindings: key — Tier B) + remove schemas/** from ci paths-ignore. Docs three-tier sweep (rewrite ref.md/concepts/cli/classification/architecture/features; archive superseded plans; posts untouched). Embedded assets (hints/help/akm-asset/akm-eval cases) migrated with the §7.3 shipped-assets lint. scripts/ into biome+tsc. check:changed fixed. noExplicitAny → error (16 sites) + evaluate noUncheckedIndexedAccess. Example-stash re-laid out. CLI convergence per normative §29 (bundle command family; akm bind|unbind|bindings deferred Tier B; wiki/manifest/curate/propose <type> folds land with the chunks that delete them).",
+      "gates": [
+        "No shipped asset, hint, published schema, or normative doc teaches the dead grammar (DoD 12)",
+        "Published schemas regenerated without the bindings: key; schemas/** back in CI paths",
+        "Shipped-assets lint (§7.3) green",
+        "check:changed fixed; noExplicitAny at error"
+      ],
+      "netLoc": "docs/assets — LOC-neutral in src",
+      "testBucket": "§7.3 shipped-assets lint; docs link checks; schema regen check (gen-config-schema --check)",
+      "planRefs": ["plan §11 Chunk 10", "plan §16", "plan §7.3", "decision D28", "normative §29"]
+    }
+  ]
+}

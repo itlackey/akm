@@ -1,0 +1,22 @@
+{
+  "json": {
+    "exitCode": 0,
+    "status": "pass",
+    "stdoutKeys": [
+      "advisories",
+      "hardChecks",
+      "improve",
+      "metrics",
+      "ok",
+      "schemaVersion",
+      "sessionLogAdvisories",
+      "shape",
+      "since",
+      "status"
+    ]
+  },
+  "text": {
+    "exitCode": 0,
+    "stdoutNonEmpty": true
+  }
+}

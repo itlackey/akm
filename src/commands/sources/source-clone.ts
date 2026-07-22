@@ -4,9 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { stashDirFor } from "../../core/asset/asset-placement";
+import { displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   findSourceForPath,
   getPrimarySource,
@@ -42,7 +42,14 @@ export interface CloneResponse {
 }
 
 export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
-  const parsed = parseAssetRef(options.sourceRef);
+  // F1b/F4b: accept the 0.9.0 conceptId spelling (`akm clone scripts/deploy.sh`).
+  // F5 origin split (parseQualifiedRefInput): `akm clone` also accepts a NON-slug
+  // clone SOURCE as the `origin//conceptId` prefix — a registry ref
+  // (`npm:@scope/pkg`), a bare path, or a URL — resolved by
+  // resolveSourcesForOrigin's registry-id / path matching + the remote-fetch
+  // fallback below (the strict new-grammar parser rejects such origins as they
+  // are not bundle slugs).
+  const parsed = parseQualifiedRefInput(options.sourceRef);
 
   // When --dest is provided, the working stash is optional
   let allSources: SearchSource[];
@@ -60,7 +67,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const destRoot = options.dest ? path.resolve(options.dest) : primarySource?.path;
 
   if (!destRoot) {
-    throw new Error("No working stash configured and no --dest provided. Run `akm init` or pass --dest.");
+    throw new ConfigError(
+      "No working stash configured and no --dest provided. Run `akm init` or pass --dest.",
+      "STASH_DIR_NOT_FOUND",
+    );
   }
 
   let searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
@@ -106,10 +116,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const sourceSource = findSourceForPath(sourcePath, allSources);
 
   const destName = options.newName ?? parsed.name;
-  const typeDir = TYPE_DIRS[parsed.type];
+  const typeDir = stashDirFor(parsed.type) as string;
 
   // Validate destName to prevent path traversal (parsed.name is already
-  // validated by parseAssetRef, but newName comes directly from user input).
+  // validated by the ref parser, but newName comes directly from user input).
   // Run whenever newName is provided, including empty string.
   if (options.newName !== undefined) {
     if (destName === "") {
@@ -161,16 +171,30 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     const overwritten = fs.existsSync(destSkillDir);
 
     if (overwritten && !options.force) {
-      throw new Error(`Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`);
+      throw new UsageError(
+        `Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
     }
 
-    if (overwritten) {
-      fs.rmSync(destSkillDir, { recursive: true, force: true });
+    // Stage-then-swap (never destroy-then-copy): a mid-copy failure must not
+    // leave the destination gone under --force. Copy into a tmp sibling, then
+    // remove the old dir and rename — the same pattern git-install uses.
+    const stagingDir = `${destSkillDir}.tmp-${process.pid}`;
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    try {
+      fs.cpSync(sourceSkillDir, stagingDir, { recursive: true });
+      if (overwritten) {
+        fs.rmSync(destSkillDir, { recursive: true, force: true });
+      }
+      fs.renameSync(stagingDir, destSkillDir);
+    } catch (err) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      throw err;
     }
-    fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
 
     destPath = path.join(destSkillDir, "SKILL.md");
-    const ref = makeAssetRef(parsed.type, destName, "local");
+    const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
 
     return {
       source: { path: sourcePath, registryId: sourceSource?.registryId },
@@ -184,13 +208,16 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const overwritten = fs.existsSync(destPath);
 
   if (overwritten && !options.force) {
-    throw new Error(`Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`);
+    throw new UsageError(
+      `Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`,
+      "RESOURCE_ALREADY_EXISTS",
+    );
   }
 
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   fs.copyFileSync(sourcePath, destPath);
 
-  const ref = makeAssetRef(parsed.type, destName, "local");
+  const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
 
   return {
     source: { path: sourcePath, registryId: sourceSource?.registryId },

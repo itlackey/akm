@@ -9,7 +9,7 @@
  *   - the single batch-at-boundary commit (issue #507) produces exactly one
  *     complete commit + clean tree, pushes per the writable+remote+push gate,
  *     and is a no-op for filesystem targets
- *   - deprecated `pushOnCommit` maps onto the batch push gate
+ *   - deprecated `pushOnCommit` is now fully ignored (warn-and-ignore, Decision 6)
  *   - rejection of `writable: true` on website / npm at config load
  *   - rejection of unsupported `kind` reaching the helper
  *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → stashDir)
@@ -36,6 +36,8 @@ import {
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../src/core/write-source";
+import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { writeLockfile } from "../../src/integrations/lockfile";
 import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -137,7 +139,7 @@ describe("writeAssetToSource — filesystem", () => {
     const result = await writeAssetToSource(source, config, { type: "memory", name: "alpha" }, "hello world");
 
     expect(result.path).toBe(path.join(dir, "memories", "alpha.md"));
-    expect(result.ref).toBe("memory:alpha");
+    expect(result.ref).toBe("memories/alpha");
     expect(fs.readFileSync(result.path, "utf8")).toBe("hello world\n");
   });
 
@@ -301,7 +303,13 @@ describe("writeAssetToSource — git (no per-write commit)", () => {
     expect(remoteLog.stdout.trim()).toBe("seed");
   });
 
-  test("deprecated pushOnCommit maps onto the batch push gate (still pushes)", async () => {
+  test("deprecated pushOnCommit is ignored — writable+remote pushes anyway via the batch default", async () => {
+    // pushOnCommit no longer maps onto the push gate in any way (Decision 6,
+    // WI-9.6b): this still pushes, but because the target is writable with a
+    // remote and no explicit `push` override was given — NOT because of
+    // pushOnCommit. See the "content-layout sync" test in
+    // improve-sync.test.ts for a case where the old mapping's absence is
+    // actually observable (pushOnCommit: false no longer suppresses push).
     const { remoteDir, workDir } = initBareGitRepo();
     const target = gitTarget(workDir, { writable: true, pushOnCommit: true });
 
@@ -440,7 +448,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: dir, name: "explicit", writable: true }],
+        bundles: { explicit: { path: dir, writable: true } },
       },
       "explicit",
     );
@@ -458,7 +466,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "git", url, name: "team", writable: true }],
+        bundles: { team: { git: url, writable: true } },
       },
       "team",
     );
@@ -483,7 +491,7 @@ describe("resolveWriteTarget", () => {
     const result = resolveWriteTarget(
       {
         semanticSearchMode: "off",
-        sources: [{ type: "git", url, name: "team", writable: true }],
+        bundles: { team: { git: url, writable: true } },
       },
       "team",
     );
@@ -500,11 +508,43 @@ describe("resolveWriteTarget", () => {
     fs.rmSync(paths.rootDir, { recursive: true, force: true });
   });
 
+  test("git target with a lock localRoot reads AND writes through that root (§10.2 lock-first unification)", async () => {
+    const url = "https://example.invalid/acme/locked-layout.git";
+    // The derived cache repoDir is what BOTH paths used to (write) or would
+    // (read fallback) resolve to WITHOUT a lock — the divergence under test.
+    const derivedRepoDir = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    // A materialized content root deliberately DIFFERENT from the derived cache
+    // path (e.g. an install extracted elsewhere, or a moved cache).
+    const localRoot = makeTempDir("akm-lock-localroot-");
+    expect(path.resolve(localRoot)).not.toBe(path.resolve(derivedRepoDir));
+
+    // Record the resolved lock state (spec §10.2). The lockfile lives under
+    // XDG_DATA_HOME (set in beforeEach), keyed by the bundle name ("team").
+    await writeLockfile([{ id: "team", source: "git", ref: url, localRoot }]);
+
+    const config = {
+      semanticSearchMode: "off" as const,
+      bundles: { team: { git: url, writable: true } },
+    };
+
+    // WRITE side: routes to the lock localRoot, not the derived cache repoDir.
+    const target = resolveWriteTarget(config, "team");
+    expect(target.source.path).toBe(localRoot);
+    expect(target.source.repoPath).toBe(localRoot);
+    expect(target.source.path).not.toBe(derivedRepoDir);
+
+    // READ side (indexer): resolves the SAME directory for the "team" bundle.
+    const readStash = makeTempDir("akm-lock-readstash-");
+    const readSources = resolveSourceEntries(readStash, config);
+    const teamSource = readSources.find((s) => s.registryId === "team");
+    expect(teamSource?.path).toBe(path.resolve(localRoot));
+  });
+
   test("falls back to defaultWriteTarget", () => {
     const dir = makeTempDir("akm-target-default-");
     const result = resolveWriteTarget({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: dir, name: "default-one", writable: true }],
+      bundles: { "default-one": { path: dir, writable: true } },
       defaultWriteTarget: "default-one",
     });
     expect(result.selector).toBe("default-one");
@@ -525,7 +565,7 @@ describe("resolveWriteTarget", () => {
     expect(() =>
       resolveWriteTarget({
         semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: "/tmp/akm-missing", name: "exists", writable: true }],
+        bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
         defaultWriteTarget: "ghost",
       }),
     ).toThrow(ConfigError);
@@ -536,7 +576,7 @@ describe("resolveWriteTarget", () => {
       resolveWriteTarget(
         {
           semanticSearchMode: "off",
-          sources: [{ type: "filesystem", path: "/tmp/akm-other", name: "other", writable: true }],
+          bundles: { other: { path: "/tmp/akm-other", writable: true } },
         },
         "nope",
       ),

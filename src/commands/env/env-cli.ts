@@ -21,17 +21,22 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
-import { deriveCanonicalAssetName, resolveAssetPathFromName } from "../../core/asset/asset-spec";
-import { isWithin, writeFileAtomic } from "../../core/common";
+import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
+import { writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { findEnvSource, makeEnvRef, parseEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
+import {
+  commitEnvSecretWrite,
+  makeEnvRef,
+  resolveEnvPath,
+  resolveEnvWriteTarget,
+  writeTargetDisplaySource,
+} from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { parseFlagValue } from "../../output/context";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -103,20 +108,20 @@ const envCreateCommand = defineJsonCommand({
       description: "Exclude this env file from env list output and the search index",
       default: false,
     },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
     const { createEnv, writeEnv } = await import("./env.js");
-    // `create` always targets env/, never the frozen vaults/ copy.
-    const parsed = parseEnvRef(args.name);
-    // `name` is flat; subdirectory placement is `--path`'s job.
-    assertFlatAssetName(parsed.name);
-    parsed.name = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), parsed.name);
-    const source = findEnvSource(parsed.origin);
-    const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-    if (!isWithin(absPath, envRoot)) {
-      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-    }
+    // `create` always targets env/, never the frozen vaults/ copy. `--path` is
+    // the subdirectory; `--target` selects the writable destination source.
+    const { name, absPath, target } = resolveEnvWriteTarget(args.name, args.target, {
+      subPath: getStringArg(args, "path"),
+    });
+    const displaySource = writeTargetDisplaySource(target);
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -128,7 +133,7 @@ const envCreateCommand = defineJsonCommand({
       // Ingest path: never silently clobber an existing env file.
       if (fs.existsSync(absPath)) {
         throw new UsageError(
-          `Env "${makeEnvRef(parsed.name, source)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
+          `Env "${makeEnvRef(name, displaySource)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
           "RESOURCE_ALREADY_EXISTS",
         );
       }
@@ -151,13 +156,16 @@ const envCreateCommand = defineJsonCommand({
       createEnv(absPath);
     }
 
+    const written = [absPath];
     if (args.sensitive) {
       const markerPath = absPath.replace(/\.env$/, ".sensitive");
       if (!fs.existsSync(markerPath)) {
         fs.writeFileSync(markerPath, "", { mode: 0o600 });
       }
+      written.push(markerPath);
     }
-    output("env-create", { ref: makeEnvRef(parsed.name, source) });
+    commitEnvSecretWrite(target, { type: "env", name }, "Update", written);
+    output("env-create", { ref: makeEnvRef(name, displaySource) });
   },
 });
 
@@ -229,11 +237,10 @@ async function runEnvInjected(
   target: string,
   opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[] },
 ): Promise<void> {
-  const dashIndex = process.argv.indexOf("--");
-  if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+  const command = getParsedInvocation().passthroughArgs();
+  if (command.length === 0) {
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
   }
-  const command = process.argv.slice(dashIndex + 1);
 
   const { name, absPath, source } = resolveEnvPath(target);
   if (!fs.existsSync(absPath)) {
@@ -356,15 +363,15 @@ const envRemoveCommand = defineJsonCommand({
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
-    const parsed = parseEnvRef(args.ref);
-    const source = findEnvSource(parsed.origin);
-    const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-    if (!isWithin(absPath, envRoot)) {
-      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-    }
+    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
+    const displaySource = writeTargetDisplaySource(target);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -374,11 +381,12 @@ const envRemoveCommand = defineJsonCommand({
       return;
     }
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+      throw new NotFoundError(`Env not found: ${makeEnvRef(name, displaySource)}`);
     }
     const { removeEnv } = await import("./env.js");
     const removed = removeEnv(absPath);
-    output("env-remove", { ref: makeEnvRef(parsed.name, source), removed });
+    commitEnvSecretWrite(target, { type: "env", name }, "Remove", [absPath, `${absPath}.sensitive`]);
+    output("env-remove", { ref: makeEnvRef(name, displaySource), removed });
   },
 });
 
@@ -393,15 +401,15 @@ const envSetCommand = defineJsonCommand({
     key: { type: "positional", description: "Key name to set (e.g. API_URL)", required: true },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
     "from-file": { type: "string", description: "Read the value from this file" },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
-    const parsed = parseEnvRef(args.ref);
-    const source = findEnvSource(parsed.origin);
-    const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-    if (!isWithin(absPath, envRoot)) {
-      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-    }
+    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
+    const displaySource = writeTargetDisplaySource(target);
     const key = String(args.key);
     const { ENV_KEY_RE, setEnvKey } = await import("./env.js");
     if (!ENV_KEY_RE.test(key)) {
@@ -434,6 +442,7 @@ const envSetCommand = defineJsonCommand({
       value = buf.toString("utf8").replace(/\n$/, "");
     }
     setEnvKey(absPath, key, value);
+    commitEnvSecretWrite(target, { type: "env", name }, "Update", [absPath]);
     // Warn (never block) on process-hijacking key names, matching the env-run audit.
     const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
     if (isDangerousEnvKey(key) && !isQuiet()) {
@@ -441,7 +450,7 @@ const envSetCommand = defineJsonCommand({
         `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
       );
     }
-    output("env-set", { ref: makeEnvRef(parsed.name, source), key });
+    output("env-set", { ref: makeEnvRef(name, displaySource), key });
   },
 });
 
@@ -456,25 +465,26 @@ const envUnsetCommand = defineJsonCommand({
     // `key` is read from the raw positionals (one or more) in run(); declared
     // non-required so citty doesn't block before we emit a structured error.
     key: { type: "positional", description: "Key name(s) to remove (one or more)", required: false },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
-    const parsed = parseEnvRef(args.ref);
-    const source = findEnvSource(parsed.origin);
-    const envRoot = path.join(source.path, "env");
-    const absPath = resolveAssetPathFromName("env", envRoot, parsed.name);
-    if (!isWithin(absPath, envRoot)) {
-      throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-    }
+    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
+    const displaySource = writeTargetDisplaySource(target);
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(parsed.name, source)}`);
+      throw new NotFoundError(`Env not found: ${makeEnvRef(name, displaySource)}`);
     }
     // citty puts every positional in `args._` (incl. the ref at [0]); the keys
     // are the remaining positionals. citty also mis-captures the space-separated
     // value of a global flag (`--format json`) as a positional, so drop any
     // token that is actually a global flag's value (cli.ts:1335 documents this).
+    const invocation = getParsedInvocation();
     const globalFlagValues = new Set(
       ["--format", "--shape", "--detail", "--scope", "--filter", "--target"]
-        .map((flag) => parseFlagValue(process.argv, flag))
+        .map((flag) => invocation.getFlagValue(flag))
         .filter((v): v is string => typeof v === "string"),
     );
     const keys = (Array.isArray(args._) ? (args._ as unknown[]).map(String) : [])
@@ -489,7 +499,8 @@ const envUnsetCommand = defineJsonCommand({
       throw new UsageError(`Invalid env key(s): ${invalid.join(", ")}.`, "INVALID_FLAG_VALUE");
     }
     const { removed, missing } = unsetEnvKeys(absPath, keys);
-    output("env-unset", { ref: makeEnvRef(parsed.name, source), removed, missing });
+    commitEnvSecretWrite(target, { type: "env", name }, "Update", [absPath]);
+    output("env-unset", { ref: makeEnvRef(name, displaySource), removed, missing });
   },
 });
 

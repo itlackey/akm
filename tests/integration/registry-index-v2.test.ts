@@ -136,8 +136,8 @@ describe("parser: v1 index compatibility", () => {
       const result = await searchRegistry("legacy", { registries: [{ url: srv.url }] });
       expect(result.warnings).toEqual([]);
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:legacy-stash");
-      expect(result.hits[0].title).toBe("Legacy Stash");
+      expect(result.hits[0]!.id).toBe("npm:legacy-stash");
+      expect(result.hits[0]!.title).toBe("Legacy Stash");
     } finally {
       srv.close();
     }
@@ -164,7 +164,7 @@ describe("parser: v2 index with assets", () => {
       const result = await searchRegistry("automation", { registries: [{ url: srv.url }] });
       expect(result.warnings).toEqual([]);
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:owner/my-stash");
+      expect(result.hits[0]!.id).toBe("github:owner/my-stash");
     } finally {
       srv.close();
     }
@@ -263,7 +263,7 @@ describe("asset-level search", () => {
       expect(result.assetHits).toBeDefined();
       expect(result.assetHits?.length).toBeGreaterThan(0);
       // The deploy.sh asset should score higher than code-review for this query
-      expect(result.assetHits?.[0].assetName).toBe("deploy.sh");
+      expect(result.assetHits![0]!.assetName).toBe("deploy.sh");
     } finally {
       srv.close();
     }
@@ -415,7 +415,7 @@ describe("edge cases", () => {
       });
       expect(result.assetHits).toBeDefined();
       expect(result.assetHits?.length).toBe(1);
-      expect(result.assetHits?.[0].assetName).toBe("good.sh");
+      expect(result.assetHits![0]!.assetName).toBe("good.sh");
     } finally {
       srv.close();
     }

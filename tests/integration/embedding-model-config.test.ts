@@ -221,7 +221,9 @@ describe("dimension consistency on model change", () => {
     // This is already tested in db.test.ts but we verify the concept:
     // when embedding dimensions change (due to model change), the
     // database handles it by recreating the vec table
-    const { openIndexDatabase, closeDatabase, getMeta, isVecAvailable } = await import("../../src/indexer/db/db");
+    const { openIndexDatabase, closeDatabase } = await import("../../src/storage/repositories/index-connection");
+    const { getMeta } = await import("../../src/storage/repositories/index-meta-repository");
+    const { isVecAvailable } = await import("../../src/storage/repositories/index-vec-repository");
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");

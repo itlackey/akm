@@ -145,8 +145,8 @@ describe("deduplicateGraph", () => {
     expect(result.entities).toHaveLength(2);
     expect(result.relations).toHaveLength(1);
     // The surviving relation must use canonical casing.
-    expect(result.relations[0].from).toBe("ServiceA");
-    expect(result.relations[0].to).toBe("ServiceB");
+    expect(result.relations[0]!.from).toBe("ServiceA");
+    expect(result.relations[0]!.to).toBe("ServiceB");
   });
 
   // ── Multiple distinct entities and relations all survive ────────────────────

@@ -1,0 +1,49 @@
+{
+  "scenario": "presentationFor(type) for llm-wiki content. Under the RESOLVED reading A (pageKind = the open type), the page kinds (concept/entity/note) and wiki-source are NOT in KNOWN_TYPES → generic fallback. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden (llm-wiki adapter = Chunk 4).",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — llm-wiki adapter is built in CHUNK 4.",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 / §3.4 (unknown type ⇒ generic renderer + `akm show <ref>`); §0.2 (the `wiki` asset-type dies); src/core/type-presentation.ts (TYPE_PRESENTATION has a 'wiki' entry → wiki-md, but 'wiki' is retired per §0.2); src/core/recognition-util.ts KNOWN_TYPES.",
+  "realWorldSource": [
+    "src/output/renderers.ts wiki-md renderer (still present in code); src/wiki/wiki.ts page model"
+  ],
+  "notes": [
+    "SPECIFICATION golden. RESOLVED (open question 2, maintainer resolution 2026-07) — wiki page `type` = frontmatter pageKind (reading A). concept/entity/note/wiki-source are NOT in KNOWN_TYPES → presentationFor returns DEFAULT_PRESENTATION {label:'Asset'}, renderer=null, generic action `akm show <ref>`. Wiki pages render GENERICALLY; the pre-existing `wiki-md` renderer (still in src/output/renderers.ts) goes UNUSED under this resolution.",
+    "Reading B (map all wiki page kinds to the `wiki-md` renderer / label 'Wiki', carrying pageKind as metadata) was CONSIDERED and REJECTED because it reuses the retired-per-§0.2 `wiki` presentation. The per-entry `alternativeRenderer` blocks that recorded reading B have been removed — reading A is the single finalized form.",
+    "The reserved files (schema/index/log) are not rendered as concepts."
+  ],
+  "byRelPath": {
+    "pages/http-caching.md": {
+      "type": "concept",
+      "ref": "sample-wiki//pages/http-caching",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/http-caching",
+      "note": "RESOLVED (reading A): concept ∉ KNOWN_TYPES → generic render (renderer=null, label 'Asset')."
+    },
+    "pages/entities/varnish.md": {
+      "type": "entity",
+      "ref": "sample-wiki//pages/entities/varnish",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/entities/varnish",
+      "note": "RESOLVED (reading A): entity ∉ KNOWN_TYPES → generic render."
+    },
+    "pages/orphan.md": {
+      "type": "note",
+      "ref": "sample-wiki//pages/orphan",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//pages/orphan",
+      "note": "RESOLVED (reading A): note ∉ KNOWN_TYPES → generic render."
+    },
+    "raw/2026-07-http-rfc.md": {
+      "type": "wiki-source",
+      "ref": "sample-wiki//raw/2026-07-http-rfc",
+      "label": "Asset",
+      "renderer": null,
+      "action": "akm show sample-wiki//raw/2026-07-http-rfc",
+      "note": "RESOLVED (reading A): wiki-source ∉ KNOWN_TYPES → generic render. Raw sources are source material; a generic reader is the finalized behavior."
+    }
+  }
+}

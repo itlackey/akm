@@ -30,16 +30,6 @@ export const UTILITY_WEIGHT = 0.7;
 /** Weight on the feedback attention term in the combined eligibility score. */
 export const FEEDBACK_WEIGHT = 0.3;
 
-/**
- * Minimum |valence| magnitude for an item to be ROUTED to the fix / reinforce
- * lane. Below this the feedback is too weak/mixed to be a confident signal and
- * the item carries no attention lane (`null`). Pure magnitude in [0, 1].
- */
-export const STRONG_VALENCE_THRESHOLD = 0.5;
-
-/** Attention lane an asset is routed to based on the SIGN of its valence. */
-export type FeedbackLane = "fix" | "reinforce" | null;
-
 export interface FeedbackCounts {
   positive: number;
   negative: number;
@@ -60,11 +50,6 @@ export interface ValenceScore {
    * assets contribute the SAME attention, so neither is ignored.
    */
   attention: number;
-  /**
-   * Lane routing by valence sign once `magnitude >= STRONG_VALENCE_THRESHOLD`:
-   * high-negative → `"fix"`, high-positive → `"reinforce"`, otherwise `null`.
-   */
-  lane: FeedbackLane;
 }
 
 /**
@@ -78,16 +63,11 @@ export function computeValenceScore(counts: FeedbackCounts): ValenceScore {
   const total = positive + negative;
 
   if (total === 0) {
-    return { valence: 0, magnitude: 0, attention: 0, lane: null };
+    return { valence: 0, magnitude: 0, attention: 0 };
   }
 
   const valence = (positive - negative) / total;
   const magnitude = Math.abs(valence);
 
-  let lane: FeedbackLane = null;
-  if (magnitude >= STRONG_VALENCE_THRESHOLD) {
-    lane = valence < 0 ? "fix" : "reinforce";
-  }
-
-  return { valence, magnitude, attention: magnitude, lane };
+  return { valence, magnitude, attention: magnitude };
 }

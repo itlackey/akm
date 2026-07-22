@@ -18,7 +18,7 @@
  */
 
 import type { WorkflowRunUnitRow } from "../../storage/repositories/workflow-runs-repository";
-import { GATE_EVALUATION_PHASE } from "../exec/step-work";
+import { GATE_EVALUATION_PHASE } from "./unit-phases";
 
 /**
  * Default staleness window. A unit claimed `running` whose last heartbeat (or,

@@ -14,15 +14,15 @@
  */
 
 import { defineCommand } from "citty";
+import { getParsedInvocation } from "../cli/invocation";
 import { getStringArg } from "../cli/parse-args";
 import { defineJsonCommand, output, runWithJsonErrors } from "../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { hasBooleanFlag } from "../output/context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";
 import {
@@ -49,6 +49,7 @@ import {
   resumeWorkflowRun,
   startWorkflowRun,
 } from "../workflows/runtime/runs";
+import { canonicalWorkflowRunRef } from "../workflows/runtime/workflow-asset-loader";
 
 const workflowStartCommand = defineJsonCommand({
   meta: {
@@ -56,7 +57,7 @@ const workflowStartCommand = defineJsonCommand({
     description: "Start a new workflow run in the current working scope",
   },
   args: {
-    ref: { type: "positional", description: "Workflow ref (workflow:<name>)", required: true },
+    ref: { type: "positional", description: "Workflow ref (workflows/<name>)", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object" },
     force: {
       type: "boolean",
@@ -84,10 +85,10 @@ const workflowNextCommand = defineJsonCommand({
   },
   async run({ args }) {
     // `--dry-run` is intentionally NOT a declared arg (so it stays out of
-    // --help). The guard reads it straight from process.argv so existing
-    // callers still get a clear, actionable error instead of a generic
-    // "unknown flag" from citty.
-    if (hasBooleanFlag(process.argv, "--dry-run")) {
+    // --help). The guard reads it straight from the invocation singleton so
+    // existing callers still get a clear, actionable error instead of a
+    // generic "unknown flag" from citty.
+    if (getParsedInvocation().hasFlag("--dry-run")) {
       throw new UsageError(
         "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
         "INVALID_FLAG_VALUE",
@@ -96,7 +97,7 @@ const workflowNextCommand = defineJsonCommand({
     const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
     // If the target looks like a UUID-style run id (no `:` and matches the
     // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
-    // error before parseAssetRef gets to throw an unhelpful ref-parse error.
+    // error before the ref parser throws an unhelpful ref-parse error.
     if (looksLikeWorkflowRunId(args.target)) {
       const { hasWorkflowRun } = await import("../workflows/runtime/runs.js");
       if (!(await hasWorkflowRun(args.target))) {
@@ -114,9 +115,9 @@ const workflowNextCommand = defineJsonCommand({
 
 /**
  * Heuristic: a workflow run id is a UUID-shaped or hex-id-shaped string with
- * no `:` separator (refs always contain a colon: `workflow:<name>` or
- * `<origin>//workflow:<name>`). When this matches we can give a much better
- * error than parseAssetRef's "Invalid asset type" failure.
+ * no `/` separator (canonical refs contain `workflows/<name>`). When this
+ * matches we can give a much better
+ * error than the ref parser's "Invalid asset type" failure.
  */
 function looksLikeWorkflowRunId(target: string): boolean {
   if (target.includes(":")) return false;
@@ -172,7 +173,7 @@ const workflowStatusCommand = defineJsonCommand({
     description: "Show full workflow run state for review or resume; workflow refs resolve within the current scope",
   },
   args: {
-    target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
+    target: { type: "positional", description: "Workflow run id or workflow ref (workflows/<name>)", required: true },
     units: {
       type: "boolean",
       description:
@@ -187,13 +188,13 @@ const workflowStatusCommand = defineJsonCommand({
     // Check if target looks like a workflow ref
     const parsed = (() => {
       try {
-        return parseAssetRef(target);
+        return parseRefInput(target);
       } catch {
         return null;
       }
     })();
     if (parsed?.type === "workflow") {
-      const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+      const ref = canonicalWorkflowRunRef(parsed.origin, parsed.name);
       const { runs } = await listWorkflowRuns({ workflowRef: ref });
       if (runs.length === 0) {
         throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
@@ -310,7 +311,7 @@ const workflowValidateCommand = defineJsonCommand({
   args: {
     target: {
       type: "positional",
-      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md/.yaml",
+      description: "Workflow ref (workflows/<name>) or filesystem path to a workflow .md/.yaml",
       required: true,
     },
   },
@@ -352,18 +353,13 @@ const workflowValidateCommand = defineJsonCommand({
 });
 
 async function resolveWorkflowFilePath(target: string): Promise<string> {
-  // A bare (`workflow:<name>`) OR origin-qualified (`<origin>//workflow:<name>`)
-  // ref resolves through the source search, exactly like `workflow start` /
-  // `status` / `next`. Anything else is treated as a filesystem path. Detecting
-  // the origin-qualified form here (not just the bare prefix) keeps `validate`'s
-  // ref contract in lockstep with the rest of the workflow command family — an
-  // `extra//workflow:foo` ref validates the file that `extra//workflow:foo`
-  // starts, rather than being mistaken for a relative path that does not exist.
-  const looksLikeWorkflowRef = target.startsWith("workflow:") || target.includes("//workflow:");
+  // Canonical workflow refs resolve through the source search; anything else is
+  // treated as a filesystem path.
+  const looksLikeWorkflowRef = target.startsWith("workflows/") || target.includes("//workflows/");
   if (!looksLikeWorkflowRef) return target;
-  const parsed = parseAssetRef(target);
+  const parsed = parseRefInput(target);
   if (parsed.type !== "workflow") {
-    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
+    throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${target}".`);
   }
   const config = loadConfig();
   const allSources = resolveSourceEntries(undefined, config);
@@ -375,7 +371,7 @@ async function resolveWorkflowFilePath(target: string): Promise<string> {
       /* try next source */
     }
   }
-  throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
+  throw new UsageError(`Workflow not found for ref: workflows/${parsed.name}`);
 }
 
 const workflowRunCommand = defineJsonCommand({

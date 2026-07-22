@@ -190,15 +190,15 @@ describe("chatCompletion usage capture", () => {
     expect(content).toBe("hello");
     expect(records).toHaveLength(1);
     const rec = records[0];
-    expect(rec.stage).toBe("distill");
-    expect(rec.model).toBe("served-model-7b");
-    expect(rec.finishReason).toBe("stop");
-    expect(rec.promptTokens).toBe(12);
-    expect(rec.completionTokens).toBe(8);
-    expect(rec.totalTokens).toBe(20);
-    expect(rec.reasoningTokens).toBe(5);
-    expect(typeof rec.durationMs).toBe("number");
-    expect(rec.durationMs).toBeGreaterThanOrEqual(0);
+    expect(rec!.stage).toBe("distill");
+    expect(rec!.model).toBe("served-model-7b");
+    expect(rec!.finishReason).toBe("stop");
+    expect(rec!.promptTokens).toBe(12);
+    expect(rec!.completionTokens).toBe(8);
+    expect(rec!.totalTokens).toBe(20);
+    expect(rec!.reasoningTokens).toBe(5);
+    expect(typeof rec!.durationMs).toBe("number");
+    expect(rec!.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   test("absent usage block still records duration + model (token fields omitted)", async () => {
@@ -212,14 +212,14 @@ describe("chatCompletion usage capture", () => {
 
     expect(records).toHaveLength(1);
     const rec = records[0];
-    expect(rec.durationMs).toBeGreaterThanOrEqual(0);
+    expect(rec!.durationMs).toBeGreaterThanOrEqual(0);
     // Provider omitted `model`, so we fall back to the configured model.
-    expect(rec.model).toBe("configured-model");
-    expect(rec.promptTokens).toBeUndefined();
-    expect(rec.completionTokens).toBeUndefined();
-    expect(rec.totalTokens).toBeUndefined();
-    expect(rec.reasoningTokens).toBeUndefined();
-    expect(rec.finishReason).toBeUndefined();
+    expect(rec!.model).toBe("configured-model");
+    expect(rec!.promptTokens).toBeUndefined();
+    expect(rec!.completionTokens).toBeUndefined();
+    expect(rec!.totalTokens).toBeUndefined();
+    expect(rec!.reasoningTokens).toBeUndefined();
+    expect(rec!.finishReason).toBeUndefined();
   });
 
   test("garbled usage block degrades to duration + model only", async () => {
@@ -236,8 +236,8 @@ describe("chatCompletion usage capture", () => {
     );
 
     expect(records).toHaveLength(1);
-    expect(records[0].promptTokens).toBeUndefined();
-    expect(records[0].completionTokens).toBeUndefined();
+    expect(records[0]!.promptTokens).toBeUndefined();
+    expect(records[0]!.completionTokens).toBeUndefined();
   });
 
   test("a throwing sink does not fail the LLM call", async () => {

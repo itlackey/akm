@@ -1,0 +1,4 @@
+{
+  "exitCode": 0,
+  "stdoutScrubbed": "# knowledge: lines-fixture.md\nfile: <STASH>/knowledge/lines-fixture.md\n# origin: null\n# Reference material - read the content below. Use 'toc' view for large documents.\n\nrelated: 0\n\n# Heading\nline2\n\n---\nAPPLY (only if no workflow step is required for this task):\n  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.\n  2. Add/edit the fields shown above using the exact field names from this schema.\n  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Replace every placeholder value with a real, concrete value from your task context. Do not leave any field as null, empty, or a placeholder.\nRun `akm feedback 'knowledge:lines-fixture.md' --positive` after the task succeeds, or `--negative` if the task fails after following this guidance.\n"
+}

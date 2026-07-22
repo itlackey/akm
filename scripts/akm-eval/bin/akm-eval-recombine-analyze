@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# akm-eval-recombine-analyze - read-only recombine candidate analysis.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/recombine-analyzer.ts" "$@"

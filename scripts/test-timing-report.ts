@@ -32,7 +32,6 @@ const targets = args.filter((a) => !a.startsWith("--"));
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
-
 /** Resolve CLI targets (files or dirs) to a flat list of test files. */
 function resolveTargets(rawTargets: string[]): string[] {
   if (rawTargets.length === 0) {

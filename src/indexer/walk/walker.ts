@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isRelevantAssetFile } from "../../core/asset/asset-spec";
+import { isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 
@@ -68,7 +68,7 @@ export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[]
  *
  * If the directory is a git repo, uses `git ls-files` to respect .gitignore.
  * Otherwise falls back to a manual walk that skips .git, node_modules, bin,
- * .cache, dot-directories, and .stash.json files.
+ * .cache, dot-directories, and the legacy metadata sidecar.
  */
 export function walkStashFlat(stashRoot: string): FileContext[] {
   if (!fs.existsSync(stashRoot)) return [];
@@ -96,6 +96,8 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   // result.success is false if the process exited non-zero OR git was not found
   if (!result.success) return null;
 
+  // Data-hygiene filename skips: the legacy metadata sidecar (never indexed as
+  // content — Chunk-8 folds it into the bundle format) plus git dot-files.
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");

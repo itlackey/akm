@@ -1,12 +1,12 @@
 {
-  "description": "Frequent extract + inference pass — sessions, memory inference, graph, reflect.",
+  "description": "Frequent inference pass — memory inference, graph extraction, and reflect; improve-stage extract off.",
   "processes": {
     "reflect": { "enabled": true },
     "distill": { "enabled": false },
     "consolidate": { "enabled": false },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": true },
-    "extract": { "enabled": true, "minNewSessions": 3, "triage": { "enabled": true, "minScore": 2 } },
+    "extract": { "enabled": false, "minNewSessions": 3, "triage": { "enabled": true, "minScore": 2 } },
     "triage": { "enabled": false },
     "validation": { "enabled": false },
     "proactiveMaintenance": { "enabled": false }

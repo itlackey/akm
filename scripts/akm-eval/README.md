@@ -2,7 +2,7 @@
 
 Read-only-by-default, deterministic measurement of `akm` over the existing
 run envelopes, events table, and proposal queue. Implements all eight
-phases of `docs/archive/akm-eval-implementation-plan.md`.
+phases of the (since-retired) akm-eval implementation plan.
 
 Mirrors `scripts/improve-stats/`: shell entry points under `bin/`,
 TypeScript runners under `src/`, no `akm` subcommand integration.
@@ -34,6 +34,9 @@ scripts/akm-eval/bin/akm-eval-trend --limit 20 --metric overall
 
 # Ingest a stash's improve-result.json into a paired-mode-ready summary
 scripts/akm-eval/bin/akm-eval-collect --from-improve-run latest
+
+# Read-only memory-inference and graph-extraction downstream attribution
+scripts/akm-eval/bin/akm-eval-attribution-rollup --format json
 ```
 
 Outputs land in `<stash>/.akm/evals/runs/<eval-run-id>/`:
@@ -41,7 +44,7 @@ Outputs land in `<stash>/.akm/evals/runs/<eval-run-id>/`:
 ```
 <stash>/.akm/evals/runs/
   2026-05-21T19-12-44-002Z-a1b2c3d4/
-    eval-result.json     — summary envelope (schemaVersion: 1)
+    eval-result.json     — summary envelope (schemaVersion: 2)
     case-results.jsonl   — one line per case
     report.md            — human-readable rollup
   latest                 — symlink to most recent run
@@ -79,8 +82,8 @@ artifacts/replay/
   improve-results.jsonl   one record per <stash>/.akm/runs/<id>/improve-result.json
                           read.
   replay-result.json      written by akm-eval-replay; reports
-                          { deterministic, divergentCases, missingCases,
-                            extraCases }.
+                          { suiteFingerprint, deterministic, divergentCases,
+                            missingCases, extraCases }.
 ```
 
 Replay flags:
@@ -99,6 +102,10 @@ Phase 3. Memory-safety touches the sandboxed filesystem after `akm
 improve` mutates it, so its replay determinism depends on rerunning
 against the same fixture (a future filesystem-capture step lands in
 Phase 8 if needed).
+
+Before playback starts, replay recomputes the suite's canonical fingerprint,
+including transitive fixture and probe bytes, and rejects missing or changed
+suite identity. The verified fingerprint is propagated to the replay result.
 
 ## Coverage
 
@@ -308,7 +315,13 @@ Exits non-zero if any regressions are surfaced.
 `ts | suite | mode | label | <metric>`. `--metric` accepts `overall`,
 `deterministic`, or any dot-separated path into the envelope (e.g.
 `scores.delta`, `countsByType.retrieval.passed`). Pipe to `column -t`
-for a pretty table.
+for a pretty table. Trend rejects missing or mixed fingerprints within a suite;
+start a separate suite generation when case or fixture bytes change.
+
+New `eval-result.json` files use schema v2, where
+`inputs.suiteFingerprint` is required. Historical schema-v1 envelopes remain
+readable, but comparison, regression, trend, verdict, and replay operations
+fail closed if that optional historical field is absent.
 
 ## Collect (improve-run ingestion)
 
@@ -382,6 +395,58 @@ machinery is verified and the metrics block is still emitted.
 Author your own suite by creating a sibling directory. Each case is a
 JSON file matching the `EvalCase` shape in `src/types.ts`.
 
+## Recombine candidate analyzer
+
+`akm-eval-recombine-analyze` estimates whether the current memory index has
+recurring clusters worth an opt-in observe pass. It reads `index.db`
+and its graph tables from a verified private copy of the main database and WAL,
+so it does not create source-directory sidecars. Concurrent changes during
+snapshot capture fail explicitly. It does not run indexing or an LLM, restore
+the removed recombine process, create proposals, emit events, or change
+stash/state files.
+
+```sh
+scripts/akm-eval/bin/akm-eval-recombine-analyze
+scripts/akm-eval/bin/akm-eval-recombine-analyze --format json \
+  --min-cluster-size 3 --max-cluster-size 20 --max-clusters 5
+scripts/akm-eval/bin/akm-eval-recombine-analyze --out ./recombine-report.md
+```
+
+The report goes to stdout by default. `--out` exclusively creates the requested
+path; existing files and index/state database aliases are refused. Results
+include canonical member refs, source/bundle-isolated clusters, relocation-stable
+member-set fingerprints, coverage-gated recurrence/source/project proxies,
+generalizability risks (including unknown evidence), and estimated LLM calls
+and tokens for a hypothetical observe pass. No observe token limit is enforced.
+Associative `xrefs` contribute linkage coverage only; recurrence and the observe
+decision require independently supporting members with normalized current refs
+in `sources`, `sourceRefs`, or `evidenceSources`. Selection rotates across
+bundle/source scopes before applying entity/tag preferences within each scope.
+`--relatedness graph` fails with remediation guidance when graph tables cannot
+be queried. The default `both` mode falls back to tags but marks the report's
+graph status as `degraded` with the query/schema reason; it never presents that
+fallback as a healthy empty graph analysis. Available graph status includes
+graph-file/unique-entity counts and entity-bearing current-memory coverage, all
+read with the entries from one SQLite transaction snapshot. Graph-only mode
+does not fall back to tags when graph data is available but empty or uncovered.
+
+## Downstream attribution rollup
+
+`akm-eval-attribution-rollup` copies a stable SQLite main/WAL snapshot into a
+private temporary directory without opening the source database through SQLite.
+It includes committed WAL data while creating no source sidecars and changing no
+source files. The disposable snapshot reports user-only memory-inference
+direct/surface exposure and show/curate consumption, graph-ranking exposure and
+selected/shown read-back, current versioned controls, historical unattributed
+rows, and fully-qualified refs. Curate rows become exposure candidates for a
+same-ref show within 60 seconds.
+
+Graph contribution is the positive amount admitted by the active ranking
+contributor after the shared cap. It does not establish that graph caused a rank
+or selection change. Raw query, body, metadata, and provenance content are never
+rendered. The command writes stdout unless `--out` explicitly names a new file;
+it never migrates the database or clobbers an existing path.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -403,12 +468,16 @@ scripts/akm-eval/
     akm-eval-collect       dispatches to src/collect.ts
     akm-eval-graph-ablation dispatches to src/graph-ablation.ts (Phase 5, R5)
     akm-eval-replay        dispatches to src/replay.ts (Phase 6)
+    akm-eval-recombine-analyze dispatches to the read-only cluster analyzer
+    akm-eval-attribution-rollup dispatches to the read-only attribution report
   src/
     run.ts                 orchestrator (baseline | akm | paired)
     replay.ts              deterministic replay orchestrator (Phase 6)
     compare.ts             two-run diff command
     trend.ts               N-run trend command
     collect.ts             improve-result.json ingestion command
+    recombine-analyzer.ts  read-only current-index cluster analysis
+    attribution-rollup.ts  read-only downstream attribution report
     types.ts               EvalCase, EvalCaseResult, EvalRunResult
     scoring.ts             weighted aggregation
     report.ts              Markdown renderer
@@ -430,6 +499,5 @@ scripts/akm-eval/
 
 ## See also
 
-- `docs/akm-eval.md` — operator guide.
-- `docs/archive/akm-eval-implementation-plan.md` — the full plan.
+- `docs/reference/akm-eval.md` — operator guide.
 - `scripts/improve-stats/` — the toolkit pattern this one mirrors.

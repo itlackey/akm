@@ -27,18 +27,24 @@
  *
  * Gated vs ungated semantics (the two control-flow paths in the function):
  *   - akmConfig === undefined  -> gate BYPASSED: runLlm runs unconditionally,
- *                                 errors PROPAGATE to the caller.
- *   - akmConfig present, gate enabled  -> tryLlmFeature runs runLlm and
- *                                 SWALLOWS any throw to `{}` (no warn/telemetry).
+ *                                 errors PROPAGATE to the caller. A processed
+ *                                 response is `{ status: "enriched", metadata }`.
+ *   - akmConfig present, gate enabled  -> tryLlmFeature runs runLlm and, on a
+ *                                 throw, reports `{ status: "failed", error }`
+ *                                 WITHOUT warning or bumping telemetry.
  *   - akmConfig present, gate disabled -> runLlm never runs (chat NOT called),
- *                                 returns `{}`.
+ *                                 returns `{ status: "skipped" }`.
+ *
+ * The `status` discriminates a genuine LLM success (which the indexer marks
+ * `enriched` and caches) from a gated-off skip or a swallowed failure (which it
+ * must NOT), so a failed/disabled enrichment never poisons the cache.
  *
  * Every branch is covered below.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
-import type { StashEntry } from "../../src/indexer/passes/metadata";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 
 // ── Injected chat seam ───────────────────────────────────────────────────────
 // `chatResponder` returns a raw string (the model body) or throws. Reset per
@@ -73,7 +79,7 @@ const DISABLED_CONFIG = {
   index: { metadataEnhance: { enabled: false } },
 } as unknown as AkmConfig;
 
-const ENTRY: StashEntry = { name: "build-image", type: "script", description: "build image" };
+const ENTRY: IndexDocument = { name: "build-image", type: "script", description: "build image" };
 
 function validPayload(): string {
   return JSON.stringify({
@@ -114,9 +120,12 @@ describe("enhanceMetadata — characterization", () => {
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY);
 
     expect(result).toEqual({
-      description: "Builds Docker images from Dockerfiles",
-      searchHints: ["build a docker image", "create container image", "package application"],
-      tags: ["docker", "container", "build", "image"],
+      status: "enriched",
+      metadata: {
+        description: "Builds Docker images from Dockerfiles",
+        searchHints: ["build a docker image", "create container image", "package application"],
+        tags: ["docker", "container", "build", "image"],
+      },
     });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
@@ -128,9 +137,12 @@ describe("enhanceMetadata — characterization", () => {
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY, undefined, undefined, ENABLED_CONFIG);
 
     expect(result).toEqual({
-      description: "Builds Docker images from Dockerfiles",
-      searchHints: ["build a docker image", "create container image", "package application"],
-      tags: ["docker", "container", "build", "image"],
+      status: "enriched",
+      metadata: {
+        description: "Builds Docker images from Dockerfiles",
+        searchHints: ["build a docker image", "create container image", "package application"],
+        tags: ["docker", "container", "build", "image"],
+      },
     });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
@@ -144,12 +156,13 @@ describe("enhanceMetadata — characterization", () => {
       });
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY);
+    const metadata = result.status === "enriched" ? result.metadata : {};
 
     // searchHints: blanks/non-strings filtered first, then sliced to 8.
-    expect(result.searchHints).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+    expect(metadata.searchHints).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
     // tags: blanks/non-strings filtered first, then sliced to 10.
-    expect(result.tags).toEqual(["good", "fine", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"]);
-    expect(result.description).toBeUndefined();
+    expect(metadata.tags).toEqual(["good", "fine", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"]);
+    expect(metadata.description).toBeUndefined();
     expect(warnCalls).toEqual([]);
   });
 
@@ -158,28 +171,30 @@ describe("enhanceMetadata — characterization", () => {
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "enriched", metadata: {} });
     expect(warnCalls).toEqual([]);
   });
 
-  // ----- empty / invalid JSON -> {} fallback, NO warn -----
-  test("unparseable response -> {} fallback, NO warn (ungated)", async () => {
+  // ----- empty / invalid JSON -> enriched with empty metadata (genuine success), NO warn -----
+  test("unparseable response -> empty-but-enriched, NO warn (ungated)", async () => {
     chatResponder = () => "This is not JSON at all";
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY);
 
-    expect(result).toEqual({});
+    // A response that arrived but did not parse is still a genuine success — it
+    // caches (empty) so the caller does not re-pay for the same no-op.
+    expect(result).toEqual({ status: "enriched", metadata: {} });
     expect(chatCalls).toBe(1);
     // Pins that enhanceMetadata does NOT warn on parse failure (unlike siblings).
     expect(warnCalls).toEqual([]);
   });
 
-  test("empty chat body -> {} fallback, NO warn", async () => {
+  test("empty chat body -> empty-but-enriched, NO warn", async () => {
     chatResponder = () => "";
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "enriched", metadata: {} });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
   });
@@ -220,8 +235,9 @@ describe("enhanceMetadata — characterization", () => {
     expect(warnCalls).toEqual([]);
   });
 
-  // ----- thrown errors, GATED+ENABLED -> swallow to {} identically, NO warn -----
-  test("thrown context-size error (gated, enabled) -> swallowed to {}, no warn", async () => {
+  // ----- thrown errors, GATED+ENABLED -> reported as `failed` (carrying the
+  //       message), NOT swallowed to a success, NO warn -----
+  test("thrown context-size error (gated, enabled) -> status failed, no warn", async () => {
     const ctxMsg = "This model's maximum context length is 8192 tokens; your prompt exceeded that limit.";
     chatResponder = () => {
       throw new LlmCallError(ctxMsg, "provider_error");
@@ -229,42 +245,42 @@ describe("enhanceMetadata — characterization", () => {
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY, undefined, undefined, ENABLED_CONFIG);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "failed", error: ctxMsg });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
   });
 
-  test("thrown provider_html_error (gated, enabled) -> swallowed to {}, no warn, no telemetry", async () => {
+  test("thrown provider_html_error (gated, enabled) -> status failed, no warn, no telemetry", async () => {
     chatResponder = () => {
       throw new LlmCallError("LLM provider returned HTML instead of JSON", "provider_html_error");
     };
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY, undefined, undefined, ENABLED_CONFIG);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "failed", error: "LLM provider returned HTML instead of JSON" });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
   });
 
-  test("thrown generic error (gated, enabled) -> swallowed to {}, no warn", async () => {
+  test("thrown generic error (gated, enabled) -> status failed, no warn", async () => {
     chatResponder = () => {
       throw new Error("connection refused");
     };
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY, undefined, undefined, ENABLED_CONFIG);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "failed", error: "connection refused" });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
   });
 
   // ----- gate disabled -> chat never runs -----
-  test("gate disabled -> {} fallback, chat NOT called, no warn", async () => {
+  test("gate disabled -> status skipped, chat NOT called, no warn", async () => {
     chatResponder = () => validPayload();
 
     const result = await enhanceMetadata(LLM_CONFIG, ENTRY, undefined, undefined, DISABLED_CONFIG);
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ status: "skipped" });
     expect(chatCalls).toBe(0);
     expect(warnCalls).toEqual([]);
   });

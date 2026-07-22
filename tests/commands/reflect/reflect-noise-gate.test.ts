@@ -235,12 +235,12 @@ const SOURCE_ASSET = [
 ].join("\n");
 
 function agentJson(content: string): string {
-  return JSON.stringify({ ref: "knowledge:sample", content });
+  return JSON.stringify({ ref: "knowledge/sample", content });
 }
 
 async function runReflect(stash: string, agentStdout: string) {
   return akmReflect({
-    ref: "knowledge:sample",
+    ref: "knowledge/sample",
     stashDir: stash,
     assetContent: SOURCE_ASSET,
     config: quietQualityGateConfig(),
@@ -266,7 +266,7 @@ describe("akm reflect — noise gate (#580)", () => {
     expect(meta.reason).toBe("no_change");
     expect(meta.subreason).toBe("reflect_skipped_noop");
     expect(meta.changeKind).toBe("noop");
-    expect(events[0]?.ref).toBe("knowledge:sample");
+    expect(events[0]?.ref).toBe("knowledge/sample");
   });
 
   test("whitespace-reflow-only candidate → suppressed as reflect_skipped_cosmetic", async () => {
@@ -312,11 +312,11 @@ describe("akm reflect — noise gate (#580)", () => {
     const source = "---\nname: stack-diagnostics\ndescription: Diagnose the stack\n---\n\nBody prose for the skill.\n";
     const renamedOnly = source.replace("name: stack-diagnostics", "name: renamed-by-llm");
     const result = await akmReflect({
-      ref: "skill:stack-diagnostics",
+      ref: "skills/stack-diagnostics",
       stashDir: stash,
       assetContent: source,
       config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "skill:stack-diagnostics", content: renamedOnly })) },
+      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "skills/stack-diagnostics", content: renamedOnly })) },
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected suppression");
@@ -328,7 +328,7 @@ describe("akm reflect — noise gate (#580)", () => {
     const stash = makeSandboxedStash();
     // No assetContent seam and no indexed asset → nothing to diff against.
     const result = await akmReflect({
-      ref: "knowledge:sample",
+      ref: "knowledge/sample",
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: { spawn: fakeSpawn(agentJson(SOURCE_ASSET)) },

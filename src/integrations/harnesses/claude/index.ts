@@ -27,7 +27,8 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { claudeBuilder } from "./agent-builder";
 import { claudeResultExtractor } from "./result-extractor";
 import { ClaudeCodeProvider } from "./session-log";
@@ -36,17 +37,6 @@ export { claudeBuilder } from "./agent-builder";
 export { claudeCodeImporter } from "./config-import";
 export { claudeResultExtractor } from "./result-extractor";
 export { ClaudeCodeProvider } from "./session-log";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Claude Code.
@@ -79,8 +69,6 @@ export class ClaudeHarness extends BaseHarness {
   // but that is a different surface than the dispatch builder — the descriptor
   // is aligned to what the builder honestly does.)
   readonly structuredOutput = "native-json" as const;
-  // `claude --resume <sessionId>` replays a previous session in headless mode.
-  readonly resume = { flag: "--resume", takesSessionId: true } as const;
   // Session-id env marker: presence of a concrete session id (not the bare
   // "running under Claude Code" flag) attributes a run to this harness.
   readonly identityEnv = ["CLAUDE_SESSION_ID"] as const;

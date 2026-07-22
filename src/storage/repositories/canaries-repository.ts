@@ -29,7 +29,14 @@ export interface CanaryQueryRow {
 export interface CycleMetricsRow {
   run_id: string;
   ts: string;
-  pass: "consolidate" | "recombine" | "both";
+  /**
+   * Historical rows may carry values from the whole-corpus synthesis pass
+   * removed in 0.9.0 (chunk-7 ledger); this type
+   * only covers writes going forward. `queryRecentCycleMetrics`/
+   * `getLatestCycleMetrics` cast raw SQL rows, so old values still round-trip
+   * at runtime even though the type is narrowed.
+   */
+  pass: "consolidate";
   canary_set_id: string;
   mean_recall: number;
   mean_ndcg: number;

@@ -3,13 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { getAssetTypes } from "../../core/asset/asset-spec";
+import { placementTypes } from "../../core/asset/asset-placement";
 import { getSources, loadConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
-import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../../indexer/db/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../../indexer/search/semantic-status";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { getEntryCount } from "../../storage/repositories/index-entries-repository";
+import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { isVecAvailable } from "../../storage/repositories/index-vec-repository";
 import { pkgVersion } from "../../version";
 
 /**
@@ -21,8 +24,8 @@ import { pkgVersion } from "../../version";
 export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   const config = loadConfig();
 
-  // Asset types (copy into a mutable array — `getAssetTypes()` returns readonly)
-  const assetTypes = [...getAssetTypes()];
+  // Asset types (copy into a mutable array — `placementTypes()` returns readonly)
+  const assetTypes = [...placementTypes()];
 
   const semanticRuntime = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, semanticRuntime);
@@ -41,15 +44,10 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(r.enabled !== undefined ? { enabled: r.enabled } : {}),
   }));
 
-  // Stash providers — prefer `sources[]`; fall back to `stashDir` when the
-  // user has not yet migrated to the sources[] config shape so that info
-  // always reflects at least one provider when a stash is configured.
+  // Stash providers — the unified `bundles` source list (spec §10.1), which
+  // already includes the primary (`defaultBundle`) stash first.
   const configuredSources = getSources(config);
-  const stashesList =
-    configuredSources.length === 0 && config.stashDir
-      ? [{ type: "filesystem", path: config.stashDir, name: "primary" }]
-      : configuredSources;
-  const sourceProviders = stashesList.map((s) => ({
+  const sourceProviders = configuredSources.map((s) => ({
     type: s.type,
     ...(s.name ? { name: s.name } : {}),
     ...(s.path ? { path: s.path } : {}),

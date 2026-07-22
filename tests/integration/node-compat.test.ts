@@ -75,7 +75,7 @@ function generatedCronCommand(crontab: string, id: string): string {
   const body = lines[begin + 1] ?? "";
   const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
   if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1];
+  return match[1]!;
 }
 
 function parseJson(text: string): unknown {
@@ -879,7 +879,7 @@ describe("workflow smoke parity", () => {
     assertNoBoundaryLeak(created, "workflow create");
     expect(created.status).toBe(0);
 
-    const start = nodeRun(["workflow", "start", "workflow:smoke-flow"], nodeEnv);
+    const start = nodeRun(["workflow", "start", "workflows/smoke-flow"], nodeEnv);
     assertNoBoundaryLeak(start, "workflow start");
     expect(start.status).toBe(0);
     const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
@@ -954,7 +954,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      const start = nodeRun(["workflow", "start", "workflow:judge-smoke"], nodeEnv);
+      const start = nodeRun(["workflow", "start", "workflows/judge-smoke"], nodeEnv);
       assertNoBoundaryLeak(start, "judge start");
       expect(start.status).toBe(0);
       const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;
@@ -983,7 +983,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("dispatch-smoke");
 
-      const start = nodeRun(["workflow", "start", "workflow:dispatch-smoke"], nodeEnv);
+      const start = nodeRun(["workflow", "start", "workflows/dispatch-smoke"], nodeEnv);
       assertNoBoundaryLeak(start, "dispatch start");
       expect(start.status).toBe(0);
       const runId = (parseJson(start.stdout) as { run?: { id?: string } } | undefined)?.run?.id;

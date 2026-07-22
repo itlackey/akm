@@ -1,0 +1,48 @@
+{
+  "scenario": "generic-files adapter recognize(component, file) for every file in tests/fixtures/bundles/generic-files/. Arbitrary files → document / script / file. Explicit-config ONLY (never auto-probed). SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future generic-files adapter must reproduce (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (generic-files adapter row: 'any leftover file → document/script/file; explicit-config ONLY (never auto-selected, §1.2)'), §1.2 (generic-files is never in the auto-probe order; looksLikeRoot never fires).",
+  "realWorldSource": [
+    "SCRIPT_EXTENSIONS (src/core/recognition-util.ts) — the 16 script extensions: .sh .ts .js .ps1 .cmd .bat .py .rb .go .pl .php .lua .r .swift .kt .kts",
+    "AKM-native fallback family; the v0.2 sensitive-content refusal was withdrawn (deviation §4.3c) — the user indexes exactly what they pointed generic-files at"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no generic-files adapter module exists. This adapter is EXPLICIT-CONFIG ONLY: it is never in the §1.2 auto-probe order, and its looksLikeRoot must NOT fire on any root (a user opts in deliberately).",
+    "TYPE MAPPING — RESOLVED (open question 5, maintainer resolution 2026-07): files with a SCRIPT_EXTENSIONS extension → `script` (conceptId keeps the extension, like the akm script type); markdown/plain-text files → `document`; everything else (binary, data, unknown) → `file`. This is the FINALIZED classification predicate — no longer open for the adapter author.",
+    "conceptId: `document` follows OKF markdown convention when applicable, but generic-files generally KEEPS the file's natural path/extension (it indexes what it was pointed at); `script` and `file` keep the extension. Recorded per-file below."
+  ],
+  "byRelPath": {
+    "notes.md": {
+      "recognized": true,
+      "adapterId": "generic-files",
+      "component": "main",
+      "type": "document",
+      "conceptId": "notes",
+      "ref": "sample-generic//notes",
+      "name": "notes",
+      "derivation": "markdown/plain-text → document (best-reasoned default). conceptId strips .md."
+    },
+    "build.sh": {
+      "recognized": true,
+      "adapterId": "generic-files",
+      "component": "main",
+      "type": "script",
+      "conceptId": "build.sh",
+      "ref": "sample-generic//build.sh",
+      "name": "build.sh",
+      "derivation": ".sh ∈ SCRIPT_EXTENSIONS → script; conceptId KEEPS the extension (mirrors the akm script type)."
+    },
+    "data.csv": {
+      "recognized": true,
+      "adapterId": "generic-files",
+      "component": "main",
+      "type": "file",
+      "conceptId": "data.csv",
+      "ref": "sample-generic//data.csv",
+      "name": "data.csv",
+      "derivation": "not markdown, not a script extension → file (the catch-all); conceptId keeps the natural path/extension."
+    }
+  }
+}

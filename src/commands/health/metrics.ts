@@ -4,16 +4,15 @@
 
 /**
  * State.db-backed health metrics for `akm health`: the round-trip probe,
- * auto-accept calibration, denominator-fixed coverage, the enrichment-vs-
- * minting rollup, and the WS-5 per-run degradation metrics.
+ * denominator-fixed coverage, the enrichment-vs-minting rollup, and the WS-5
+ * per-run degradation metrics.
  */
 
 import { appendEvent, readEvents } from "../../core/events";
 import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
 import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import { listProposalGateDecisions, listStateProposals } from "../../storage/repositories/proposals-repository";
-import { type CalibrationSummary, gateDecisionsToSamples, summarizeCalibration } from "../improve/calibration";
+import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { roundRate, toFiniteNumber } from "./improve-metrics";
 import {
   ENRICHMENT_LANES,
@@ -29,12 +28,16 @@ const HEALTH_PROBE_EVENT = "health_probe";
 export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: number | null; error?: string } {
   const before = readEvents({}, { dbPath: stateDbPath }).nextOffset;
   const started = Date.now();
+  // Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
+  // `<subsystem>/_<marker>` label. `health` has no asset stash-subdir, so
+  // `health/_probe` names the subsystem. Written and read back in lockstep here;
+  // the round-trip matches on `eventType` + this exact ref, so both must agree.
   appendEvent(
-    { eventType: HEALTH_PROBE_EVENT, ref: "health:probe", metadata: { source: "akm health" } },
+    { eventType: HEALTH_PROBE_EVENT, ref: "health/_probe", metadata: { source: "akm health" } },
     { dbPath: stateDbPath },
   );
   const after = readEvents(
-    { sinceOffset: before, type: HEALTH_PROBE_EVENT, ref: "health:probe" },
+    { sinceOffset: before, type: HEALTH_PROBE_EVENT, ref: "health/_probe" },
     { dbPath: stateDbPath },
   );
   const durationMs = Date.now() - started;
@@ -42,18 +45,6 @@ export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durat
     return { ok: false, durationMs, error: "probe event was not readable after append" };
   }
   return { ok: true, durationMs };
-}
-
-/**
- * Read the auto-accept gate calibration summary (#612) over `[since, until)`.
- * Reads every proposal's `gateDecision` from the open state.db, projects the
- * acted-on (auto-accepted / auto-rejected) decisions into calibration samples
- * within the window, and aggregates them deterministically.
- */
-export function readCalibration(db: Database, since: string, until?: string): CalibrationSummary {
-  const decisions = listProposalGateDecisions(db);
-  const samples = gateDecisionsToSamples(decisions, { since, ...(until !== undefined ? { until } : {}) });
-  return summarizeCalibration(samples);
 }
 
 // ── WS-5 Observability helpers ───────────────────────────────────────────────
@@ -164,7 +155,7 @@ export function computeEnrichmentMintingRollup(
     const byLane: Record<string, { minted: number; updated: number }> = {};
     for (const row of rows) {
       byLane[row.lane] ??= { minted: 0, updated: 0 };
-      const entry = byLane[row.lane];
+      const entry = byLane[row.lane]!;
       if (row.is_minted === 1) entry.minted += row.cnt;
       else entry.updated += row.cnt;
     }

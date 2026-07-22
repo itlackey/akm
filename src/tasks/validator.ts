@@ -18,8 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../core/asset/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError } from "../core/errors";
 import { resolveEngine } from "../integrations/agent/engine-resolution";
@@ -30,8 +29,12 @@ import type { TaskDocument } from "./schema";
 export interface ValidateTaskOptions {
   /** Which backend the schedule must translate to. */
   backend: ScheduleBackend;
-  /** Override stashDir; defaults to {@link resolveStashDir}. */
-  stashDir?: string;
+  /**
+   * The stash directory the task's asset refs resolve against. Resolved once at
+   * the `akm tasks` command boundary (WI-9.10 CLI-wide sweep) and threaded in —
+   * this leaf no longer reads the ambient stash-dir resolver.
+   */
+  stashDir: string;
 }
 
 export async function validateTaskDocument(task: TaskDocument, options: ValidateTaskOptions): Promise<void> {
@@ -39,8 +42,8 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
   parseSchedule(task.schedule, options.backend);
 
   if (task.target.kind === "workflow") {
-    const stashDir = options.stashDir ?? resolveStashDir();
-    const ref = parseAssetRef(task.target.ref);
+    const stashDir = options.stashDir;
+    const ref = parseRefInput(task.target.ref);
     if (ref.type !== "workflow") {
       throw new NotFoundError(
         `Task "${task.id}" workflow target must be a workflow ref (got "${task.target.ref}").`,
@@ -69,8 +72,8 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
 
   const src = task.target.source;
   if (src.kind === "asset") {
-    const stashDir = options.stashDir ?? resolveStashDir();
-    const ref = parseAssetRef(src.ref);
+    const stashDir = options.stashDir;
+    const ref = parseRefInput(src.ref);
     await resolveAssetPath(stashDir, ref.type, ref.name);
   } else if (src.kind === "file") {
     const taskDir = path.dirname(task.source.path);

@@ -18,6 +18,7 @@ import { akmAdd } from "../../src/commands/sources/source-add";
 import { addStash } from "../../src/commands/sources/source-manage";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import { mergeLockEntriesSync, readLockfile } from "../../src/integrations/lockfile";
 import * as gitProvider from "../../src/sources/providers/git";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 
@@ -120,12 +121,11 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
     expect(result.sourceAdded).toBeDefined();
     expect(result.sourceAdded?.name).toBe("extra");
 
-    // Config should persist the name
+    // Config should persist the name as the bundle key (#37: bundles shape)
     const config = loadConfig();
-    const sources = config.sources ?? [];
-    const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(extraStash));
+    const added = config.bundles?.extra;
     expect(added).toBeDefined();
-    expect(added?.name).toBe("extra");
+    expect(added?.path).toBe(path.resolve(extraStash));
   });
 
   test("akm remove works when source was added with --name", async () => {
@@ -135,10 +135,9 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
     await akmAdd({ ref: extraStash, name: "extra" });
 
-    // Verify the name is in the config
+    // Verify the name is in the config (#37: as a bundle key)
     const configBefore = loadConfig();
-    const sources = configBefore.sources ?? [];
-    expect(sources.some((s) => s.name === "extra")).toBe(true);
+    expect(Object.keys(configBefore.bundles ?? {})).toContain("extra");
   });
 
   test("akmAdd without --name falls back to readable path", async () => {
@@ -149,13 +148,11 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
     await akmAdd({ ref: someStash });
 
     const config = loadConfig();
-    const sources = config.sources ?? [];
-    const added = sources.find((s) => s.type === "filesystem" && s.path === path.resolve(someStash));
-    expect(added).toBeDefined();
-    // Name should NOT be the raw path (it's the readable form), but should not be empty
-    expect(added?.name).toBeTruthy();
-    // name should not be undefined
-    expect(typeof added?.name).toBe("string");
+    const entry = Object.entries(config.bundles ?? {}).find(([, b]) => b.path === path.resolve(someStash));
+    expect(entry).toBeDefined();
+    // The bundle key is the readable name — NOT the raw path, never empty.
+    expect(entry?.[0]).toBeTruthy();
+    expect(entry?.[0]).not.toBe(path.resolve(someStash));
   });
 });
 
@@ -189,7 +186,7 @@ describe("issue #10: filesystem kind in list output", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: sourceDir }],
+      bundles: { src: { path: sourceDir } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -202,7 +199,7 @@ describe("issue #10: filesystem kind in list output", () => {
   test("git source has kind='git' in akmListSources", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: "https://github.com/example/repo.git", name: "my-git" }],
+      bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -219,7 +216,7 @@ describe("issue #17: website kind in list output", () => {
   test("website source has kind='website' in akmListSources", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "website", url: "https://example.com", name: "docs-site" }],
+      bundles: { "docs-site": { website: { url: "https://example.com" } } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -239,7 +236,7 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: sourceDir }],
+      bundles: { src: { path: sourceDir } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -255,7 +252,7 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: sourceDir, writable: false }],
+      bundles: { src: { path: sourceDir, writable: false } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -268,7 +265,7 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
   test("git source without explicit writable defaults to false", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: "https://github.com/example/repo.git", name: "my-git" }],
+      bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -281,7 +278,7 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
   test("website source without explicit writable defaults to false", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "website", url: "https://example.com", name: "docs-site" }],
+      bundles: { "docs-site": { website: { url: "https://example.com" } } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -301,7 +298,7 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", path: sourceDir }],
+      bundles: { src: { path: sourceDir } },
     });
 
     const result = await akmListSources({ stashDir });
@@ -312,24 +309,22 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
   });
 
   test("managed sources do not expose updatable field", async () => {
-    const cacheDir = createTmpDir("akm-qa-managed-cache-");
     const stashRoot = createTmpDir("akm-qa-managed-root-");
     makeStashDir(stashRoot);
 
     saveConfig({
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "test-pkg",
-          source: "npm" as const,
-          ref: "test-pkg",
-          artifactUrl: "https://example.com/test-pkg.tgz",
-          stashRoot,
-          cacheDir,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "test-pkg": { npm: "test-pkg" } },
     });
+    mergeLockEntriesSync([
+      {
+        id: "test-pkg",
+        source: "npm",
+        ref: "test-pkg",
+        localRoot: stashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
 
     const result = await akmListSources({ stashDir });
 
@@ -358,7 +353,7 @@ describe("issue #19: akm update website sources", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        sources: [{ type: "website", url: siteUrl, name: "test-site" }],
+        bundles: { "test-site": { website: { url: siteUrl } } },
       });
 
       // Should not throw TARGET_NOT_UPDATABLE
@@ -387,7 +382,7 @@ describe("issue #19: akm update website sources", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: "https://github.com/example/repo", name: "test-git" }],
+      bundles: { "test-git": { git: "https://github.com/example/repo" } },
     });
 
     const result = await akmUpdate({ target: "test-git", stashDir });
@@ -416,20 +411,24 @@ describe("update preserves entry.source for writable installed entries", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "github:dimm-city/agent-stash",
-          source: "git",
-          ref: "github:dimm-city/agent-stash",
-          artifactUrl: "https://github.com/dimm-city/agent-stash.git",
-          stashRoot,
-          cacheDir,
-          installedAt: "2026-04-22T16:39:07.564Z",
+      bundles: {
+        "dimm-city-agent-stash": {
+          git: "https://github.com/dimm-city/agent-stash.git",
           writable: true,
-          resolvedRevision: "abc123",
+          registryId: "github:dimm-city/agent-stash",
         },
-      ],
+      },
     });
+    mergeLockEntriesSync([
+      {
+        id: "dimm-city-agent-stash",
+        source: "git",
+        ref: "github:dimm-city/agent-stash",
+        localRoot: stashRoot,
+        installedAt: "2026-04-22T16:39:07.564Z",
+        resolvedRevision: "abc123",
+      },
+    ]);
 
     // syncFromRef for a github: ref returns source: "github" — this is what
     // triggered the bug: updateRegistryEntry was using synced.source ("github")
@@ -456,13 +455,15 @@ describe("update preserves entry.source for writable installed entries", () => {
     expect(result).toBeDefined();
 
     const config = loadConfig();
-    const entry = config.installed?.find((e) => e.id === "github:dimm-city/agent-stash");
-    expect(entry).toBeDefined();
-    // source must remain "git" — not reclassified to "github"
-    expect(entry?.source).toBe("git");
+    const bundle = Object.values(config.bundles ?? {}).find((b) => b.registryId === "github:dimm-city/agent-stash");
+    expect(bundle).toBeDefined();
+    // Desired descriptor stays git (#37 split: desired in config, resolved in lock)
+    expect(typeof bundle?.git).toBe("string");
     // writable must survive the update
-    expect(entry?.writable).toBe(true);
-    // revision should be updated
-    expect(entry?.resolvedRevision).toBe("def456");
+    expect(bundle?.writable).toBe(true);
+    // resolved revision lives in the lock and should be updated
+    const lock = readLockfile().find((e) => e.ref === "github:dimm-city/agent-stash");
+    expect(lock?.source).toBe("git");
+    expect(lock?.resolvedRevision).toBe("def456");
   });
 });

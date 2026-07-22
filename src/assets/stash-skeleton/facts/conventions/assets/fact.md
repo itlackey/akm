@@ -42,7 +42,7 @@ Use a fact for stable information that future agents should treat as true or nor
 ## Placement & linking
 
 - Facts are **reuse-born**: give a policy/standard fact a domain-like prefix
-  (`fact:policies/pii-handling`) or the type root for personal/meta facts.
+  (`facts/policies/pii-handling`) or the type root for personal/meta facts.
 - Facts are also the **delivery layer** for stash-wide conventions:
   `category: convention` or `category: meta` facts are surfaced to every non-wiki
   author, so this is where naming, placement, and linking house-rules live. Keep

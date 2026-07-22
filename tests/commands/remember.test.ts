@@ -71,7 +71,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "writable-target", path: targetDir, writable: true }],
+      bundles: { "writable-target": { path: targetDir, writable: true } },
     });
 
     const { stashDir, result } = await runCli([
@@ -84,7 +84,7 @@ describe("remember --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memory:pinned-context-for-the-rollout");
+    expect(json.ref).toBe("memories/pinned-context-for-the-rollout");
 
     // The memory must land in the explicit target — NOT the working stash.
     const expectedPath = path.join(targetDir, "memories", "pinned-context-for-the-rollout.md");
@@ -97,7 +97,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-target", path: targetDir, writable: true }],
+      bundles: { "real-target": { path: targetDir, writable: true } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "nope"]);
@@ -112,7 +112,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "read-only", path: targetDir, writable: false }],
+      bundles: { "read-only": { path: targetDir, writable: false } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "read-only"]);
@@ -139,7 +139,7 @@ describe("remember --target", () => {
     const secondaryDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "secondary", path: secondaryDir, writable: true }],
+      bundles: { secondary: { path: secondaryDir, writable: true } },
     });
 
     const { stashDir, result } = await runCli(["remember", "Pinned note for secondary stash", "--target", "secondary"]);
@@ -147,7 +147,7 @@ describe("remember --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memory:pinned-note-for-secondary-stash");
+    expect(json.ref).toBe("memories/pinned-note-for-secondary-stash");
 
     // Must land in the explicit secondary stash, NOT the working stash.
     const expectedPath = path.join(secondaryDir, "memories", "pinned-note-for-secondary-stash.md");
@@ -160,7 +160,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+      bundles: { "real-stash": { path: targetDir, writable: true } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "ghost-stash"]);
@@ -175,7 +175,7 @@ describe("remember --target", () => {
     const targetDir = makeTargetDir();
     writeConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "filesystem", name: "frozen-stash", path: targetDir, writable: false }],
+      bundles: { "frozen-stash": { path: targetDir, writable: false } },
     });
 
     const { result } = await runCli(["remember", "won't be written", "--target", "frozen-stash"]);

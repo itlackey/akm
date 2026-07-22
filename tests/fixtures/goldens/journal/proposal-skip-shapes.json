@@ -1,0 +1,58 @@
+{
+  "capturedAtHead": "42e4dd1d104bb2c8b18b8b11cca0a74f84feee7a",
+  "createProposalSkipShapes": {
+    "fingerprintMatchSameInputs": {
+      "existingProposalIdMatches": true,
+      "keySet": [
+        "existingProposalId",
+        "message",
+        "reason",
+        "skipped"
+      ],
+      "reason": "fingerprint_match",
+      "skipped": true
+    },
+    "fingerprintMatchVsRejected": {
+      "existingProposalIdMatches": true,
+      "keySet": [
+        "existingProposalId",
+        "message",
+        "reason",
+        "skipped"
+      ],
+      "reason": "fingerprint_match",
+      "skipped": true
+    },
+    "forceBypass": {
+      "isNewProposal": true,
+      "skipped": false,
+      "status": "pending"
+    },
+    "modelIdTerm": {
+      "differentModelSkipped": false,
+      "sameModelExistingIdMatches": true,
+      "sameModelReason": "fingerprint_match",
+      "sameModelSkipped": true
+    },
+    "newInputsAfterTargetChange": {
+      "isNewProposal": true,
+      "skipped": false,
+      "status": "pending"
+    },
+    "rejectionBackoff": {
+      "existingProposalIdMatches": true,
+      "keySet": [
+        "existingProposalId",
+        "message",
+        "reason",
+        "skipped"
+      ],
+      "reason": "rejection_backoff",
+      "skipped": true
+    }
+  },
+  "notes": [
+    "Split out of the frozen journal/proposal-txn.json on 2026-07-16: Chunk 6's WI-6.4 replaces the dedup/cooldown guard with §23.6 input fingerprints (+ engine/model-id term, rejection backoff retained), which legitimately changes these observable skip shapes. Per the registry's surface-owner rule the skip-shape section is re-designated re-baseline @6 BEFORE that change lands; the accept/revert/reject outcome scenarios remain frozen in proposal-txn.json — they are designed to survive the engine swap."
+  ],
+  "scenario": "createProposal dedup/cooldown/force skip-record shapes (split from proposal-txn.json, WI-6.4 surface-owner re-designation)"
+}

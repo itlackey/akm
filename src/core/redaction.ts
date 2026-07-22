@@ -295,11 +295,11 @@ function addMappedMatches(coverageDelta: Int32Array, haystack: NormalizedText, n
   while (offset <= haystack.text.length - needle.length) {
     const match = haystack.text.indexOf(needle, offset);
     if (match < 0) break;
-    const start = haystack.starts[match];
+    const start = haystack.starts[match]!;
     const normalizedEnd = match + needle.length;
-    const end = normalizedEnd < haystack.text.length ? haystack.starts[normalizedEnd] : haystack.sourceLength;
-    coverageDelta[start]++;
-    coverageDelta[end]--;
+    const end = normalizedEnd < haystack.text.length ? haystack.starts[normalizedEnd]! : haystack.sourceLength;
+    coverageDelta[start] = coverageDelta[start]! + 1;
+    coverageDelta[end] = coverageDelta[end]! - 1;
     offset = match + Math.max(needle.length, 1);
   }
 }
@@ -333,7 +333,7 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
   let found = false;
   for (let index = 0; index <= text.length; index++) {
     const wasCovered = coverage > 0;
-    coverage += coverageDelta[index];
+    coverage += coverageDelta[index]!;
     const isCovered = coverage > 0;
     if (!wasCovered && isCovered) {
       redacted += `${text.slice(offset, index)}[REDACTED]`;

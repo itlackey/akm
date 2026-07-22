@@ -1,0 +1,22 @@
+{
+  "scenario": "website-snapshot placement — the adapter is READ-ONLY (Mode A), so it has no placeNew. Export (Mode B) routes content through the destination adapter. Mirrors placement/all-types.json's envelope with a read-only marker. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (website-snapshot row: 'writable: no (Mode A)'; export (Mode B) 'routes content through the destination adapter + FileChange txn'), §2 (placeNew is OPTIONAL).",
+  "realWorldSource": [
+    "src/sources/website-ingest.ts — snapshots are read-only mirrors; akm never writes back into the crawl cache"
+  ],
+  "notes": [
+    "SPECIFICATION golden. website-snapshot is READ-ONLY: the component is writable:false and the adapter does NOT implement placeNew. There is no on-disk placement for a `website` item within a website-snapshot component.",
+    "Mode B (export) is the write path, and it does NOT place a `website` item — it routes the page `content` through the DESTINATION adapter (e.g. okf/akm), which owns placement for the exported item. So placement is a property of the destination adapter, not of website-snapshot.",
+    "Open question 3 RESOLVED (maintainer 2026-07): the recognition-side resolution (GATED re-type on the website tag/sourceUrl, KEEP sourceUrl, STRIP the stash/knowledge/ prefix from the conceptId) does NOT change placement — the adapter stays read-only (placeNew: null). Any exported ref uses the stripped conceptId form (example-com/index), but the destination adapter, not website-snapshot, owns where it lands."
+  ],
+  "byType": {
+    "website": {
+      "readOnly": true,
+      "placeNew": null,
+      "note": "no placement — read-only snapshot (Mode A). Export (Mode B) routes content through the destination adapter's placeNew, not this one."
+    }
+  }
+}

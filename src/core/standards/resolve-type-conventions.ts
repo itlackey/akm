@@ -18,7 +18,7 @@
  * hard, validator-rejecting rules: a user editing or deleting one must never be
  * able to weaken the authoring contract the gate enforces (#645 boundary).
  *
- * Selection is by a `getAssetTypes()`-validated basename: only
+ * Selection is by a `placementTypes()`-validated basename: only
  * `facts/conventions/assets/<known-type>.md` resolves. Read directly from disk
  * (no index rebuild); any missing dir/file, unknown type, or read error degrades
  * to `""` and never throws.
@@ -26,7 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getAssetTypes } from "../asset/asset-spec";
+import { placementTypes } from "../asset/asset-placement";
 import { parseFrontmatter } from "../asset/frontmatter";
 
 /** Sub-path (under the stash root) for per-type SOFT convention facts. */
@@ -48,7 +48,7 @@ export function resolveTypeConventions(stashRoot: string, type: string | undefin
   if (!stashRoot || !type) return "";
 
   // Basename MUST be a known asset type — never resolve an arbitrary file.
-  if (!getAssetTypes().includes(type)) return "";
+  if (!placementTypes().includes(type)) return "";
 
   const abs = path.join(stashRoot, TYPE_CONVENTIONS_SUBDIR, `${type}.md`);
   let raw: string;

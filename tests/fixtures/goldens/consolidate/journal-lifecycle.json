@@ -1,0 +1,54 @@
+{
+  "capturedAtHead": "6dc0354cd0ad5638ea06904bad5720f24b8eca54",
+  "cases": {
+    "allHotZeroLlm": {
+      "chatCompletionCallCount": 0,
+      "deleted": 0,
+      "failedChunkMemories": 0,
+      "failedChunks": 0,
+      "judgedNoAction": 2,
+      "merged": 0,
+      "processed": 2
+    },
+    "fullRunLifecycle": {
+      "backupCopyBasenames": [
+        "cj-lifecycle-delete.md"
+      ],
+      "chatCompletionCallCount": 1,
+      "deleted": 1,
+      "firstJournalWrite": {
+        "completed": [],
+        "operations": [
+          {
+            "op": "delete",
+            "reason": "redundant",
+            "ref": "memories/cj-lifecycle-delete"
+          }
+        ],
+        "phase": "applying"
+      },
+      "journalWriteCount": 3,
+      "lastJournalWrite": {
+        "completed": [
+          "memories/cj-lifecycle-delete"
+        ],
+        "operations": [
+          {
+            "op": "delete",
+            "reason": "redundant",
+            "ref": "memories/cj-lifecycle-delete"
+          }
+        ],
+        "phase": "committed"
+      },
+      "namespaceCleanAfterRun": true,
+      "ok": true
+    }
+  },
+  "notes": [
+    "Re-captured at WI-6.3e: the consolidate checklist journal rides the unified fs-txn engine (kind `consolidate`, root = stash; backups under the transaction dir). Write-time shape observed via spyOn(fs.writeFileSync/copyFileSync) interception of the engine's durable journal.json.tmp writes around a REAL akmConsolidate run.",
+    "Only the write COUNT and each write's parsed phase/checklist shape are recorded as informational data (brief §3.2 rule 4) -- never raw journal bytes or directory layout.",
+    "fullRunLifecycle.firstJournalWrite/lastJournalWrite.operations[].ref embeds a fixture-local ref (tests/fixtures/goldens/consolidate/fixture-refs.ts) -- re-baseline @ 5 caveat on that field only."
+  ],
+  "scenario": "consolidate journal round-trip: full-run lifecycle + all-hot chunk early-exit (WI-06, R5)"
+}

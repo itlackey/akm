@@ -73,6 +73,7 @@ import { computePlanHash } from "../ir/plan-hash";
 import { decodeWorkflowPlanV3, type WorkflowPlanGraph } from "../ir/schema";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, getNextWorkflowStep, type WorkflowNextResult } from "../runtime/runs";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge } from "./frozen-judge";
 import { executeStepPlan, type StepExecutionResult, type UnitDispatcher } from "./native-executor";
@@ -84,7 +85,6 @@ import {
   activeGateLoop,
   cascadeSkippedRouter,
   finalizeExecutedStep,
-  GATE_EVALUATION_PHASE,
   type GateFeedback,
   type RouteSkipInfo,
   recoverGateFeedback,
@@ -695,7 +695,7 @@ async function driveRun(
       if (finalize.kind === "advanced") {
         // A route-only step's summary IS its decision (finalize surfaces it).
         if (finalize.summaryOverride !== undefined) {
-          executed[executed.length - 1] = { ...executed[executed.length - 1], summary: finalize.summaryOverride };
+          executed[executed.length - 1] = { ...executed[executed.length - 1]!, summary: finalize.summaryOverride };
         }
         advanced = true;
         break;
@@ -704,7 +704,7 @@ async function driveRun(
         // A route-failure was pushed as ok:true (the units succeeded); reflect
         // the deterministic route failure in the executed report.
         if (finalize.routeFailure) {
-          executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: finalize.summary };
+          executed[executed.length - 1] = { ...executed[executed.length - 1]!, ok: false, summary: finalize.summary };
         }
         stopEngine = true;
         break;
@@ -713,7 +713,7 @@ async function driveRun(
         // Reviewer #18: a required gate with no judge available — the step is
         // BLOCKED (not failed) for a human. The units succeeded, so overwrite the
         // report's ok/summary to reflect the block, then stop this invocation.
-        executed[executed.length - 1] = { ...executed[executed.length - 1], ok: false, summary: finalize.summary };
+        executed[executed.length - 1] = { ...executed[executed.length - 1]!, ok: false, summary: finalize.summary };
         stopEngine = true;
         break;
       }

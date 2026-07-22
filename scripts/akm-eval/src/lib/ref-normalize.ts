@@ -1,70 +1,53 @@
 /**
- * Ref normalisation shared by the real-query suite generator and the
- * proactive-verdict runner.
- *
- * AKM asset refs appear in three forms across the data surfaces:
- *
- *   - bare:            `knowledge:openpalm-deploy-spine`
- *   - origin-prefixed: `github:hieutrtr/ai1-skills//script:skills/.../deploy.sh`
- *   - stash-prefixed:  `itlackey/akm-stash//skill:akm-dream`
- *
- * `usage_events.entry_ref` and `curate` metadata `itemRefs` mix all three;
- * `akm search` returns bare for local-stash assets and origin-prefixed for
- * imported ones. To compare them we normalise to the canonical `type:name`
- * tail and, where useful, keep the origin as a separate field.
+ * Minimal parser for akm's current `[bundle//]conceptId[#fragment]` grammar.
+ * Eval correlation keeps the bundle prefix because it is part of durable
+ * identity; no legacy `type:name`, `.md`, or `.derived` rewriting occurs here.
  */
 
+import { bundleRefToString, parseBundleRef } from "../../../../src/core/asset/asset-ref";
+
 export interface ParsedRef {
-  /** Origin segment before `//`, or undefined for bare refs. */
-  origin?: string;
-  /** Asset type (knowledge, skill, command, agent, memory, ...). */
-  type: string;
-  /** Name/path tail after `type:`. */
-  name: string;
-  /** Canonical `type:name` (origin stripped). */
+  bundle?: string;
+  conceptId: string;
+  fragment?: string;
+  /** Trimmed current-grammar spelling, including bundle and fragment. */
   canonical: string;
 }
 
-/**
- * Parse a raw ref into its parts. Returns undefined for strings that don't
- * look like an asset ref at all (no `type:` segment).
- */
 export function parseRef(raw: string): ParsedRef | undefined {
-  if (!raw) return undefined;
-  let rest = raw.trim();
-  let origin: string | undefined;
-  const splitIdx = rest.indexOf("//");
-  if (splitIdx >= 0) {
-    origin = rest.slice(0, splitIdx);
-    rest = rest.slice(splitIdx + 2);
+  const canonical = raw.trim();
+  if (!canonical) return undefined;
+  try {
+    const parsed = parseBundleRef(canonical);
+    // Eval inputs are canonical, subdir-qualified concept refs. Requiring the
+    // first path separator to precede any colon rejects nested spellings of
+    // the retired `[origin//]type:name` grammar without rejecting colons in a
+    // later concept segment or fragment.
+    const firstSeparator = parsed.conceptId.indexOf("/");
+    const firstColon = parsed.conceptId.indexOf(":");
+    if (
+      firstSeparator < 1 ||
+      (firstColon >= 0 && firstColon < firstSeparator) ||
+      bundleRefToString(parsed) !== canonical
+    ) {
+      return undefined;
+    }
+    return {
+      ...(parsed.bundle ? { bundle: parsed.bundle } : {}),
+      conceptId: parsed.conceptId,
+      ...(parsed.fragment ? { fragment: parsed.fragment } : {}),
+      canonical,
+    };
+  } catch {
+    return undefined;
   }
-  const colon = rest.indexOf(":");
-  if (colon <= 0) return undefined;
-  const type = rest.slice(0, colon);
-  const name = rest.slice(colon + 1);
-  if (!type || !name) return undefined;
-  // Drop a trailing `.derived` marker and `.md` suffix so the same asset
-  // recorded in different surfaces collapses to one canonical key.
-  const cleanName = name.replace(/\.derived$/, "").replace(/\.md$/, "");
-  return { origin, type, name: cleanName, canonical: `${type}:${cleanName}` };
 }
 
-/** Canonical `type:name` for a raw ref, or "" if unparseable. */
 export function normalizeRef(raw: string): string {
   return parseRef(raw)?.canonical ?? "";
 }
 
-/**
- * All plausible string forms of a canonical ref that `akm search` might
- * return, so an exact-match retrieval check can hit whichever one shows up.
- * Always includes the bare canonical form. The generator emits these so a
- * single engaged asset is matched regardless of origin prefixing.
- */
-export function refVariants(canonical: string): string[] {
-  const parsed = parseRef(canonical);
-  if (!parsed) return [canonical];
-  const out = new Set<string>([parsed.canonical]);
-  // Also include a `.md`-suffixed name variant — some surfaces keep it.
-  out.add(`${parsed.type}:${parsed.name}.md`);
-  return [...out];
+export function refVariants(ref: string): string[] {
+  const normalized = normalizeRef(ref);
+  return normalized ? [normalized] : [];
 }

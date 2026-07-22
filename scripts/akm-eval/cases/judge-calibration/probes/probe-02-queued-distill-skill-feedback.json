@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-02-queued-distill-skill-feedback",
   "assetType": "memory",
-  "assetRef": "memory:probe-02-pr-review-checklist",
+  "assetRef": "memories/probe-02-pr-review-checklist",
   "asset": {
     "frontmatter": {
       "description": "A repeatable pre-review checklist used before opening any PR over 200 lines: regenerate the lockfile, run the integration suite locally, and re-verify the README quickstart.",

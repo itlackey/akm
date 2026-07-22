@@ -1,0 +1,38 @@
+{
+  "scenario": "opencode adapter placeNew(component, conceptId) → on-disk relative path, per emitted type. Mirrors placement/all-types.json's byType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (placeNew), §7 (opencode row: plural dirs, AGENTS.md=instruction).",
+  "realWorldSource": [
+    "https://opencode.ai/docs/commands/ , https://opencode.ai/docs/agents/ , https://opencode.ai/docs/skills/ — plural .opencode/commands/, .opencode/agents/, .opencode/skills/<name>/SKILL.md"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no opencode adapter exists yet. Component-root-relative POSIX paths. Same subdir layout as claude but the instruction file is AGENTS.md (not CLAUDE.md).",
+    "Plural dirs are canonical (spec §7). skill placement is the directory form <name>/SKILL.md.",
+    "DIRECTORY PLURALITY (open question 6 RESOLVED): reads accept BOTH plural and singular dirs, but WRITES normalize to the CANONICAL plural — placeNew always emits commands/agents/skills/ (never the singular command/agent/skill/ alias). So a new command placed by the adapter lands at commands/<name>.md even though a legacy singular command/<name>.md is still recognized on read."
+  ],
+  "byType": {
+    "command": {
+      "conceptId": "commands/lint-fix",
+      "assetPath": "commands/lint-fix.md",
+      "name": "lint-fix"
+    },
+    "agent": {
+      "conceptId": "agents/scout",
+      "assetPath": "agents/scout.md",
+      "name": "scout"
+    },
+    "skill": {
+      "conceptId": "skills/sql-review",
+      "assetPath": "skills/sql-review/SKILL.md",
+      "name": "sql-review"
+    },
+    "instruction": {
+      "conceptId": "AGENTS",
+      "assetPath": "AGENTS.md",
+      "name": "AGENTS",
+      "note": "instruction placement is fixed at the component root (AGENTS.md); one instruction file per component."
+    }
+  }
+}

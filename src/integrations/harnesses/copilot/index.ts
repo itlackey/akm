@@ -15,23 +15,13 @@
  * cloud-delegate pattern and is a separate, future descriptor.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { copilotBuilder } from "./agent-builder";
 import { copilotResultExtractor } from "./result-extractor";
 
 export { COPILOT_PLATFORM, copilotBuilder } from "./agent-builder";
 export { copilotResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * GitHub Copilot CLI (local headless CLI, not the cloud coding agent).
@@ -50,8 +40,6 @@ export class CopilotHarness extends BaseHarness {
   // `--output-format json` emits a documented JSON envelope akm parses, then
   // validates against the node schema ⇒ native-json tier.
   readonly structuredOutput = "native-json" as const;
-  // `copilot --resume <sessionId>` replays a previous session.
-  readonly resume = { flag: "--resume", takesSessionId: true } as const;
   // Session-id env marker only. The matrix's other candidates (GH_TOKEN,
   // bare COPILOT_* presence vars) are credential/presence flags that would
   // stamp identity onto manual runs, so they are deliberately NOT registered

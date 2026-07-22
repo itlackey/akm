@@ -12,7 +12,7 @@
  * `JSON.stringify` fallback).
  */
 
-import { parseAssetRef } from "../core/asset/asset-ref";
+import { parseRefInput } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
 import { type EventEnvelope, type EventsContext, readEvents, type TailOptions, tailEvents } from "../core/events";
 import { parseSinceToIso } from "../core/time";
@@ -73,7 +73,7 @@ function validateRef(ref: string | undefined): string | undefined {
   if (!trimmed) {
     throw new UsageError("--ref cannot be empty.", "INVALID_FLAG_VALUE");
   }
-  parseAssetRef(trimmed);
+  parseRefInput(trimmed);
   return trimmed;
 }
 

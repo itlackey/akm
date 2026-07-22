@@ -17,7 +17,7 @@ import { buildClsContext, checkDistillFidelity } from "../../../src/commands/imp
 
 describe("buildClsContext", () => {
   test("returns empty string when disabled", () => {
-    const ctx = buildClsContext([{ ref: "lesson:x", content: "foo" }], { enabled: false });
+    const ctx = buildClsContext([{ ref: "lessons/x", content: "foo" }], { enabled: false });
     expect(ctx).toBe("");
   });
 
@@ -29,21 +29,21 @@ describe("buildClsContext", () => {
   test("returns formatted context block when enabled and items present", () => {
     const ctx = buildClsContext(
       [
-        { ref: "lesson:alpha", content: "Learn from past mistakes." },
-        { ref: "knowledge:beta", content: "The sky is blue." },
+        { ref: "lessons/alpha", content: "Learn from past mistakes." },
+        { ref: "knowledge/beta", content: "The sky is blue." },
       ],
       { enabled: true },
     );
     expect(ctx).toContain("## Existing adjacent lessons / knowledge (CLS context)");
-    expect(ctx).toContain("lesson:alpha");
+    expect(ctx).toContain("lessons/alpha");
     expect(ctx).toContain("Learn from past mistakes.");
-    expect(ctx).toContain("knowledge:beta");
+    expect(ctx).toContain("knowledge/beta");
     expect(ctx).toContain("The sky is blue.");
   });
 
   test("truncates long content to 400 chars", () => {
     const longContent = "x".repeat(1000);
-    const ctx = buildClsContext([{ ref: "lesson:long", content: longContent }], { enabled: true });
+    const ctx = buildClsContext([{ ref: "lessons/long", content: longContent }], { enabled: true });
     // Only first 400 chars should appear
     expect(ctx).toContain("x".repeat(400));
     expect(ctx).not.toContain("x".repeat(401));

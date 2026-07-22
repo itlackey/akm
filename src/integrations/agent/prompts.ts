@@ -7,13 +7,13 @@
  *
  * `akm reflect` and `akm propose` both shell out to the configured agent CLI
  * (via {@link runAgent}) and ask it for a structured proposal payload. The
- * prompts are intentionally similar — both ask the agent to return a single
- * JSON object containing `ref`, `content`, and (optionally) `frontmatter` —
- * so we share the construction here. Keeping the prompt builders in
+ * prompts are intentionally similar and share their construction here. Agent
+ * and SDK stdout keeps the JSON/file-write contracts; direct LLM reflect adds
+ * native-schema and framed-markdown contracts. Keeping the prompt builders in
  * `src/integrations/agent/` rather than `src/llm/` is deliberate: these are
  * shell-out prompts targeting an agent CLI, not in-tree LLM API calls.
  *
- * The output the agent must produce is a *strict* JSON object:
+ * The legacy stdout output an agent must produce is a *strict* JSON object:
  *
  * ```json
  * {
@@ -27,7 +27,10 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import reflectLlmFramedContract from "../../assets/prompts/reflect-llm-framed-contract.md" with { type: "text" };
+import reflectLlmSchemaContract from "../../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
+import reflectOutputRepair from "../../assets/prompts/reflect-output-repair.md" with { type: "text" };
+import { placementTypes } from "../../core/asset/asset-placement";
 import {
   authoringRulesForType,
   DESCRIPTION_MAX_CHARS,
@@ -43,10 +46,10 @@ export interface AgentProposalPayload {
   frontmatter?: Record<string, unknown>;
   /**
    * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
-   * 6A). When provided by the agent (or LLM via structured output) and at or
-   * above the active threshold, `akm improve` may auto-accept the proposal
-   * without reviewer intervention. Out-of-range / non-finite values are
-   * clamped or dropped downstream in `createProposal`.
+   * 6A). Persisted on the proposal for reviewers and the triage judge — it no
+   * longer drives any automated accept path (the improve confidence gate died
+   * in 0.9.0). Out-of-range / non-finite values are clamped or dropped
+   * downstream in `createProposal`.
    */
   confidence?: number;
 }
@@ -81,7 +84,7 @@ function hintForType(type: string): string {
 }
 
 function knownTypeList(): string {
-  return Object.keys(TYPE_DIRS).sort().join(", ");
+  return [...placementTypes()].sort().join(", ");
 }
 
 /**
@@ -100,7 +103,7 @@ const RESPONSE_CONTRACT_JSON = [
   "  • 0.70–0.89 — clear improvement, but a reviewer might reasonably prefer different framing or scope.",
   "  • 0.50–0.69 — marginal / judgment call; might help, might not be worth the churn.",
   "  • Below 0.50 — you are not confident this improves on the source. Prefer returning the source body roughly unchanged with a low score over inventing changes.",
-  "Auto-accept gates on confidence ≥ 0.80 by default. Overclaiming ships low-quality changes; underclaiming leaves good ones stuck in queue. Be honest.",
+  "Reviewers and the triage judge read this score when adjudicating the proposal queue. Overclaiming erodes trust in your proposals; underclaiming buries good ones. Be honest.",
 ].join("\n");
 
 /**
@@ -119,7 +122,7 @@ function fileWriteContract(draftFilePath: string): string {
     "  • 0.70–0.89 — clear improvement, but a reviewer might prefer different framing.",
     "  • 0.50–0.69 — marginal / judgment call.",
     "  • Below 0.50 — not confident; prefer not writing changes at all.",
-    "Auto-accept gates on confidence ≥ 0.80. Overclaim → low-quality changes land; underclaim → good changes stuck in queue.",
+    "Reviewers and the triage judge read this score during adjudication. Overclaim → trust erodes; underclaim → good changes buried.",
   ].join("\n");
 }
 
@@ -127,7 +130,7 @@ function fileWriteContract(draftFilePath: string): string {
  * Extract a confidence score from a `DRAFT_WRITTEN confidence=<n>` line emitted
  * by an agent following {@link fileWriteContract}. Tolerates trailing prose,
  * surrounding log lines, and missing/invalid confidence (returns `undefined`
- * so callers can keep the proposal but skip auto-accept).
+ * so callers can keep the proposal without a score).
  *
  * Matched forms (case-insensitive, anywhere in stdout):
  *   - `DRAFT_WRITTEN confidence=0.85`
@@ -201,6 +204,35 @@ export interface ReflectPromptInput {
    * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
    */
   priorDraft?: string;
+  /** Direct-LLM response contract. Omitted for the existing agent/SDK contract. */
+  outputMode?: ReflectLlmOutputMode;
+}
+
+export type ReflectLlmOutputMode = "json_schema" | "framed_markdown";
+
+export function reflectLlmResponseContract(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
+  if (mode === "json_schema") {
+    return reflectLlmSchemaContract
+      .replace(
+        "{{FIELD_RULE}}",
+        targetScoped
+          ? "The response has exactly the required fields `content`, `confidence`, and `frontmatterPatch`; do not echo `ref` or arbitrary `frontmatter`."
+          : "The response has exactly the required fields `ref`, `content`, `confidence`, and `frontmatterPatch`; `ref` must identify the selected asset.",
+      )
+      .trim();
+  }
+  const refLine = targetScoped ? "" : "AKM_REFLECT_REF: <selected asset ref>\n";
+  return reflectLlmFramedContract.replace("{{REF_LINE}}", refLine).trim();
+}
+
+export function buildReflectOutputRepairPrompt(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
+  return reflectOutputRepair.replace("{{OUTPUT_CONTRACT}}", reflectLlmResponseContract(mode, targetScoped)).trim();
+}
+
+function reflectResponseContract(input: ReflectPromptInput): string {
+  if (input.draftFilePath) return fileWriteContract(input.draftFilePath);
+  if (input.outputMode) return reflectLlmResponseContract(input.outputMode, input.ref !== undefined);
+  return RESPONSE_CONTRACT_JSON;
 }
 
 /**
@@ -428,7 +460,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     // compares body-only lengths. Inline regex avoids importing parseFrontmatter.
     const rawContent = input.assetContent.trimEnd();
     const fmBodyMatch = rawContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1] : rawContent).trim().length;
+    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1]! : rawContent).trim().length;
     // Compute concrete char bounds matching checkReflectSize constants:
     //   REFLECT_SIZE_GUARD_MIN_BYTES=200, REFLECT_SHRINK_RATIO_MIN=0.5,
     //   REFLECT_ABSOLUTE_FLOOR_BYTES=150, REFLECT_EXPAND_RATIO_MAX=2.5,
@@ -453,12 +485,12 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
       ].join("\n"),
     );
   }
-  if (!input.draftFilePath && input.ref) {
+  if (!input.draftFilePath && !input.outputMode && input.ref) {
     // Reinforce that the `ref` field is mandatory and must exactly match the target.
     // Small models frequently omit `ref` from the response JSON, causing parse errors.
     sections.push(`IMPORTANT: The JSON "ref" field is REQUIRED. It MUST be exactly: "${input.ref}"`);
   }
-  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  sections.push(reflectResponseContract(input));
   return { prompt: sections.join("\n\n"), ...(maxOutputChars !== undefined ? { maxOutputChars } : {}) };
 }
 

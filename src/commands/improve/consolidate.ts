@@ -7,19 +7,28 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
+import {
+  advanceTxn,
+  beginTxn,
+  cleanupTxn,
+  registerTxnKind,
+  type Txn,
+  type TxnJournal,
+  txnNamespaceDir,
+} from "../../core/fs-txn";
 // Note: appendEvent import removed (WS-3a: archive TTL machinery retired)
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { detectTruncatedDescription } from "../../core/text-truncation";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { createProposal, isProposalSkipped, listProposals } from "../proposal/repository";
+import { parseSinceToIsoLenient } from "../../core/time";
+import { isProposalSkipped, listProposals, proposalContent } from "../proposal/repository";
 import {
   hasSupersededStatus,
   MERGE_ABSOLUTE_FLOOR_CHARS,
@@ -34,14 +43,15 @@ import {
   computeMergedGeneration,
   readAssetGeneration,
 } from "./anti-collapse";
-import { cacheHash, type DedupConfig, runDeterministicDedup, stripFrontmatterBody } from "./dedup";
-import { shouldSkipHotProbationInLlm } from "./hot-probation";
+import { cacheHash, stripFrontmatterBody } from "./content-hash";
 import { writeContradictEdge } from "./memory/memory-belief";
+import { emitProposal } from "./proposal-envelope";
+import { createRunContext, type RunContext } from "./run-context";
 
 // Re-export the moved helpers so existing test imports continue to resolve.
 export { hasSupersededStatus, validateProposalFrontmatter };
 
-import { openStateDatabase, withStateDb } from "../../core/state-db";
+import { openStateDatabase } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -50,28 +60,17 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import type { DbIndexedEntry } from "../../indexer/db/db";
-import {
-  closeDatabase,
-  findEntryIdByRef,
-  getAllEntries,
-  getEntryById,
-  getNeighborsByEntryId,
-  openExistingDatabase,
-} from "../../indexer/db/db";
+import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
-import { chatCompletion } from "../../llm/client";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import { callStructured } from "../../llm/structured-call";
 import type { Database } from "../../storage/database";
-import {
-  type ConsolidationJudgedRow,
-  getConsolidationJudgedMap,
-  upsertConsolidationJudged,
-} from "../../storage/repositories/consolidation-repository";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { findEntryIdByRef, getAllEntries, getEntryById } from "../../storage/repositories/index-entries-repository";
+import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
+import { getNeighborsByEntryId } from "../../storage/repositories/index-vec-repository";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { durableImproveRef } from "./source-identity";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -126,144 +125,13 @@ import { isValidOp, mergePlans } from "./consolidate/merge";
 
 export { mergePlans } from "./consolidate/merge";
 
-export interface ConsolidateResult {
-  schemaVersion: 1;
-  ok: boolean;
-  shape: "consolidate-result";
-  dryRun: boolean;
-  previewOnly: boolean;
-  target: string;
-  processed: number;
-  merged: number;
-  deleted: number;
-  promoted: string[];
-  /** Number of contradiction edges written (C-3 / #382). */
-  contradicted: number;
-  /**
-   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
-   * (provenance shrank or specificity retention below the configured floor).
-   * The merges still proceeded in v1; the count feeds the collapse detector's
-   * cycle metrics and the health advisory.
-   */
-  mergeFloorViolations?: number;
-  /**
-   * Number of LLM chunks that failed (HTTP error, empty/invalid plan, etc.)
-   * during this run. Counterpart to {@link processed}, which counts INPUT
-   * memories — `failedChunks` is the visibility signal for silent LLM
-   * failures so they surface in `akm health` instead of being absorbed into
-   * a misleadingly healthy `processed` count.
-   *
-   * Backstory: 2026-05-26 incident — 21/21 runs reported `processed: 118` /
-   * `merged: 0` / `deleted: 0` while every chunk was actually being rejected
-   * with `n_keep > n_ctx`. The "OK + warnings" envelope hid the fact that
-   * the pass was a no-op. See
-   * `/tmp/akm-health-investigations/consolidation-no-op.md`.
-   */
-  failedChunks?: number;
-  /** Total chunks attempted this run; lets callers compute a failure rate. */
-  totalChunks?: number;
-  /**
-   * Memories the LLM saw inside a chunk but proposed no op for. Per chunk:
-   * `chunk.length − unique(ops.targetRefs)`. Pre-2026-05-26 this was a pure
-   * silent drop — 66% of consolidate memories had no warning, event, or
-   * counter. Without it, no consolidate prompt tuning is possible.
-   * See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-   */
-  judgedNoAction?: number;
-  /**
-   * Structured per-op skip reasons emitted at every deterministic post-LLM
-   * rejection site. Replaces the regex-on-`warnings[]` smell with a typed
-   * histogram input. Codes intentionally use snake_case; see
-   * `ConsolidateSkipReason` in health.ts for the vocabulary.
-   */
-  skipReasons?: Array<{
-    ref: string;
-    skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
-  }>;
-  /**
-   * Secondary memories absorbed into successful merge operations. 2026-05-26
-   * accounting-leak fix: `merged` is an OP-LEVEL counter (1 per merge op), but
-   * each successful merge actions `1 + secondaries.length` memories. Without
-   * `mergedSecondaries`, those secondaries are excluded from `judgedNoAction`
-   * (their refs land in the chunk's `targetRefs`) and never accounted for
-   * elsewhere, producing the small "processed − actioned − noAction − skips
-   * = N missing" gap observed in the 2026-05-27 02:07 run (11 unaccounted)
-   * and prior runs. Required for the invariant
-   * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
-   *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
-   */
-  mergedSecondaries?: number;
-  /**
-   * Memories belonging to chunks whose LLM call failed (HTTP error / empty
-   * response / invalid plan / consolidation-aborted by failure-rate threshold).
-   * 2026-05-26 accounting-leak fix: these memories never reach the per-chunk
-   * `judgedNoAction` computation (it lives after the success-path continue
-   * guards) and never enter `skipReasons` either, so they were a pure silent
-   * drop on every `failedChunks > 0` run. Required for the accounting
-   * invariant.
-   */
-  failedChunkMemories?: number;
-  planned?: ConsolidateOperation[];
-  warnings: string[];
-  durationMs: number;
-  /**
-   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
-   * these are health VIEWS of the pipeline, not truth sources. Omitted on the
-   * early-exit paths (no memories, all judged-unchanged) to keep the envelope
-   * tidy.
-   */
-  perfTelemetry?: ConsolidatePerfTelemetry;
-}
+// ConsolidateResult / ConsolidatePerfTelemetry / ConsolidateOpKind moved DOWN
+// to core/improve-types.ts (WI-9.8 KILL 2 — the §10.7 layering inversion:
+// core/improve-types.ts imported these UP from this module). Re-exported here
+// verbatim so existing import sites (`from "./consolidate"`) are unchanged.
+import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 
-/**
- * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
- * All fields are optional so existing callers that spread ConsolidateResult
- * can adopt the shape incrementally.
- */
-export interface ConsolidatePerfTelemetry {
-  /**
-   * Pool size BEFORE the judged-state cache narrowing step.
-   * Measures the raw candidate set loaded from disk this run.
-   */
-  dedupPoolSize?: number;
-  /**
-   * Pool size AFTER judged-cache and limit filtering — the memories actually
-   * sent to the LLM for a fresh judgment. `dedupPoolSize − llmPoolSize` is
-   * the effective judgedCacheSkipped + limit-capped count.
-   */
-  llmPoolSize?: number;
-  /**
-   * Memories skipped because the judged-state cache recorded them as
-   * unchanged since the last LLM judgment. 0 when judgedCache is disabled.
-   * Health threshold: >95% hits on an incremental run (warm cache).
-   */
-  judgedCacheSkipped?: number;
-  /**
-   * Wall-clock milliseconds spent in the embedding stage (both cluster
-   * reordering and dedup cosine path). Extracted from timing around embedBatch
-   * calls so the LLM wall-clock accounts only for LLM calls.
-   */
-  embedMs?: number;
-  /**
-   * Number of body-embedding cache hits (content_hash found in body_embeddings).
-   * Healthy incremental run: >95% hits once the cache is warm.
-   */
-  embedCacheHits?: number;
-  /**
-   * Number of body-embedding cache misses (content_hash not found; embedBatch
-   * was called). High misses signal a cold cache or high corpus churn.
-   */
-  embedCacheMisses?: number;
-  /**
-   * Fraction of the run budget consumed by consolidation alone:
-   * `consolidation.durationMs / budgetMs`. Values >1.0 mean this consolidation
-   * pass alone exceeded the caller's declared budget — a SIGTERM risk signal.
-   */
-  estimatedBudgetFractionUsed?: number;
-}
-
-/** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
-type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
+export type { ConsolidateOpKind, ConsolidatePerfTelemetry, ConsolidateResult } from "../../core/improve-types";
 
 export interface AkmConsolidateOptions {
   /**
@@ -278,10 +146,13 @@ export interface AkmConsolidateOptions {
   writeTarget?: ResolvedWriteTarget;
   dryRun?: boolean; // generate AI plan but skip all writes
   /**
-   * Confidence threshold (0-100). Undefined disables auto-accept and enables
-   * interactive confirmation on the HTTP consolidation path.
+   * Skip the interactive confirm prompt on the HTTP consolidation path and
+   * apply the plan directly. Unset/false: the prompt fires on an interactive
+   * TTY; non-interactive contexts (CI, cron, piped stdin, AKM_NON_INTERACTIVE)
+   * default to a non-destructive "no". Replaces the deleted confidence-gate
+   * `autoAccept` knob's prompt-bypass role (0.9.0).
    */
-  autoAccept?: number;
+  assumeYes?: boolean;
   task?: string; // extra guidance appended to the system prompt
   stashDir?: string;
   config?: AkmConfig;
@@ -310,24 +181,6 @@ export interface AkmConsolidateOptions {
   /** Number of graph neighbours per changed memory during incremental consolidation. Default 5. */
   neighborsPerChanged?: number;
   /**
-   * Deterministic near-duplicate dedup pre-pass (#617). DEFAULT OFF. When
-   * `enabled`, a cheap no-LLM fast path collapses obvious duplicates
-   * (`.derived` ↔ origin pairs + content twins) before the LLM consolidation.
-   * Absent / disabled = byte-identical legacy behaviour.
-   */
-  dedup?: DedupConfig;
-  /**
-   * Judged-state cache (#581). DEFAULT OFF. When `enabled`, memories whose
-   * current frontmatter-stripped content hash equals the hash recorded the last
-   * time the consolidate LLM judged them are SKIPPED from the LLM pool
-   * (judged-unchanged → no re-judge), and every memory the LLM saw in a
-   * successfully-judged chunk has its judged state upserted afterwards. This
-   * lets a single run sweep the FULL corpus at O(changed/new) cost instead of
-   * narrowing to a recent time-window slice. Absent / disabled = byte-identical
-   * legacy behaviour (the `incrementalSince` path is unaffected).
-   */
-  judgedCache?: { enabled?: boolean };
-  /**
    * PROV-DM traceability token for proposals created by this run. When set,
    * every `createProposal` call includes it so accept-rate-per-run aggregation
    * works. When absent, a `consolidate-<timestamp>` token is generated at the
@@ -342,8 +195,8 @@ export interface AkmConsolidateOptions {
    * `budgetAbortController`). When aborted the consolidation loop breaks cleanly
    * after completing the current chunk, commits work done, and returns with a
    * `partial_timeout` outcome note in `warnings`. The signal is also forwarded
-   * to `embedBatch` and `runDeterministicDedup` so mid-embedding aborts are
-   * handled gracefully. Absent = run without a budget limit.
+   * to `embedBatch` so mid-embedding aborts are handled gracefully. Absent =
+   * run without a budget limit.
    */
   signal?: AbortSignal;
   /**
@@ -625,8 +478,8 @@ async function clusterMemoriesBySimilarity(
  * the per-chunk prompt can annotate memories whose body would just produce
  * a deterministic `dedup_pending_proposal` skip. Uses `cacheHash` (case-
  * preserving stripped body) — the same domain used by the body-embedding
- * cache and `computeMemoryContentHash`. Empty set on any read/parse error
- * — fail-safe to "annotate nothing" so the LLM still proposes.
+ * cache. Empty set on any read/parse error — fail-safe to "annotate nothing"
+ * so the LLM still proposes.
  */
 function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   const hashes = new Set<string>();
@@ -634,7 +487,7 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
     const pending = listProposals(stashDir, { status: "pending" }).filter((p) => p.source === "consolidate");
     for (const p of pending) {
       try {
-        hashes.add(cacheHash(p.payload.content));
+        hashes.add(cacheHash(proposalContent(p)));
       } catch {
         // skip malformed payloads — they can't dedup anyway
       }
@@ -645,131 +498,112 @@ function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
   return hashes;
 }
 
-// ── Journal helpers ──────────────────────────────────────────────────────────
+// ── Journal (unified fs-txn engine, WI-6.3e) ────────────────────────────────
+//
+// The consolidate journal is a CHECKLIST journal (planned ops + completed
+// marks + per-file backups), not a rollback/roll-forward transaction: recovery
+// stays a run-entry decision (`--consolidate-recovery abort|clean`), exactly
+// as before. What moved is the machinery: the in-stash
+// `.akm/consolidate-journal.json` + `.akm/consolidate-backup/<ts>/` homes are
+// gone; the journal rides the engine home (kind `consolidate`, root = stash)
+// with backups under the transaction directory.
 
-interface ConsolidateJournal {
+interface ConsolidateJournalPayload {
   startedAt: string;
   operations: ConsolidateOperation[];
   completed: string[];
-  backupTimestamp?: string;
 }
 
-function getJournalPath(stashDir: string): string {
-  return path.join(stashDir, ".akm", "consolidate-journal.json");
+type ConsolidateTxn = Txn<ConsolidateJournalPayload>;
+
+const CONSOLIDATE_TXN_KIND = "consolidate";
+// Checklist semantics: never auto-recovered. commitPhase is the initial phase
+// so the engine never classifies these as rollback-able; the registered
+// handlers below abort loudly if generic recovery ever reaches one.
+const CONSOLIDATE_TXN_PHASES = ["applying", "committed"] as const;
+
+function consolidateBackupDir(txn: ConsolidateTxn): string {
+  return path.join(txn.dir, "backup");
 }
 
-function getBackupDir(stashDir: string, timestamp: string): string {
-  return path.join(stashDir, ".akm", "consolidate-backup", timestamp);
+/** Open the checklist journal for this run (durably, before any mutation). */
+function beginConsolidateTxn(stashDir: string, ops: ConsolidateOperation[]): ConsolidateTxn {
+  return beginTxn<ConsolidateJournalPayload>({
+    kind: CONSOLIDATE_TXN_KIND,
+    root: stashDir,
+    changes: [],
+    payload: { startedAt: new Date().toISOString(), operations: ops, completed: [] },
+  });
 }
 
-function removeStaleJournal(stashDir: string, journal: ConsolidateJournal, warnings: string[]): void {
-  const journalPath = getJournalPath(stashDir);
+/** Durably mark one op complete on the checklist. Best-effort, like before. */
+function markJournalCompleted(txn: ConsolidateTxn, opRef: string): void {
   try {
-    fs.unlinkSync(journalPath);
-  } catch {
-    warnings.push(`Failed to remove stale consolidate journal at ${journalPath}.`);
-  }
-
-  const backupTimestamp =
-    typeof journal.backupTimestamp === "string" && journal.backupTimestamp.trim().length > 0
-      ? journal.backupTimestamp.trim()
-      : typeof journal.startedAt === "string" && journal.startedAt.trim().length > 0
-        ? journal.startedAt.replace(/[:.]/g, "-")
-        : "";
-  if (!backupTimestamp) return;
-
-  const backupDir = getBackupDir(stashDir, backupTimestamp);
-  if (!fs.existsSync(backupDir)) return;
-  try {
-    fs.rmSync(backupDir, { recursive: true, force: true });
-  } catch {
-    warnings.push(`Failed to remove stale consolidate backup at ${backupDir}.`);
-  }
-
-  warnings.push(`Cleared stale consolidate backup at ${backupDir}.`);
-}
-
-function checkForIncompleteJournal(stashDir: string, recoveryMode: "abort" | "clean", warnings: string[]): void {
-  const journalPath = getJournalPath(stashDir);
-  if (!fs.existsSync(journalPath)) return;
-
-  let journal: ConsolidateJournal;
-  try {
-    journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ConsolidateJournal;
-  } catch {
-    if (recoveryMode === "clean") {
-      try {
-        fs.unlinkSync(journalPath);
-        warnings.push(`Removed unreadable consolidate journal at ${journalPath}.`);
-      } catch {
-        warnings.push(`Failed to remove unreadable consolidate journal at ${journalPath}.`);
-      }
-      return;
-    }
-    throw new ConfigError(
-      `Incomplete consolidation state detected: unreadable journal at ${journalPath}. Re-run with --consolidate-recovery clean to remove stale journal artifacts, or remove the file manually.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-
-  const operationCount = Array.isArray(journal.operations) ? journal.operations.length : 0;
-  const completedCount = Array.isArray(journal.completed) ? journal.completed.length : 0;
-  if (completedCount >= operationCount) return;
-
-  if (recoveryMode === "clean") {
-    removeStaleJournal(stashDir, journal, warnings);
-    warnings.push(
-      `Removed stale consolidation journal at ${journalPath} (${completedCount}/${operationCount} operations completed).`,
-    );
-    return;
-  }
-
-  const backupHint =
-    typeof journal.backupTimestamp === "string" && journal.backupTimestamp.trim().length > 0
-      ? ` Backup dir: ${getBackupDir(stashDir, journal.backupTimestamp.trim())}.`
-      : "";
-  throw new ConfigError(
-    `Incomplete consolidation run detected at ${journalPath} (${completedCount}/${operationCount} operations completed). Re-run with --consolidate-recovery clean to remove stale journal artifacts.${backupHint}`,
-    "INVALID_CONFIG_FILE",
-  );
-}
-
-function writeJournal(stashDir: string, ops: ConsolidateOperation[], backupTimestamp: string): void {
-  const journalPath = getJournalPath(stashDir);
-  fs.mkdirSync(path.dirname(journalPath), { recursive: true });
-  const journal: ConsolidateJournal = {
-    startedAt: new Date().toISOString(),
-    operations: ops,
-    completed: [],
-    backupTimestamp,
-  };
-  fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), "utf8");
-}
-
-function markJournalCompleted(stashDir: string, opRef: string): void {
-  const journalPath = getJournalPath(stashDir);
-  if (!fs.existsSync(journalPath)) return;
-  try {
-    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ConsolidateJournal;
-    journal.completed.push(opRef);
-    fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), "utf8");
+    txn.journal.payload.completed.push(opRef);
+    advanceTxn(txn, "applying");
   } catch {
     // best-effort
   }
 }
 
-function cleanupJournal(stashDir: string, timestamp: string): void {
-  const journalPath = getJournalPath(stashDir);
-  try {
-    fs.unlinkSync(journalPath);
-  } catch {
-    // ignore
-  }
-  const backupDir = getBackupDir(stashDir, timestamp);
-  try {
-    fs.rmSync(backupDir, { recursive: true, force: true });
-  } catch {
-    // ignore
+/**
+ * Run-entry recovery decision for stale consolidate journals (unchanged
+ * semantics: `abort` refuses the run, `clean` removes stale artifacts). A
+ * journal whose checklist is complete is a committed leftover and is swept
+ * quietly — under the legacy single-path home the next run's journal write
+ * overwrote it as a side effect; per-transaction dirs need the sweep to be
+ * explicit (the legacy orphaned-backup leak documented in the journal
+ * lifecycle golden is gone with it).
+ */
+function checkForIncompleteJournal(stashDir: string, recoveryMode: "abort" | "clean", warnings: string[]): void {
+  const nsDir = txnNamespaceDir(stashDir);
+  if (!fs.existsSync(nsDir)) return;
+  for (const entry of fs.readdirSync(nsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transactionDir = path.join(nsDir, entry.name);
+    const journalPath = path.join(transactionDir, "journal.json");
+    if (!fs.existsSync(journalPath)) continue;
+    let journal: TxnJournal<ConsolidateJournalPayload>;
+    try {
+      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as TxnJournal<ConsolidateJournalPayload>;
+    } catch {
+      // An unreadable journal CANNOT be attributed to a kind — it may fence a
+      // sibling domain's interrupted, irreversible mutation (mv/proposal
+      // journals share the stash namespace). Never destroy it from here:
+      // `clean` skips it with a warning; the default aborts fail-closed with
+      // kind-agnostic guidance.
+      if (recoveryMode === "clean") {
+        warnings.push(
+          `Unreadable transaction journal at ${journalPath} may belong to another transaction kind; not removed — inspect manually.`,
+        );
+        continue;
+      }
+      throw new ConfigError(
+        `Incomplete transaction state detected: unreadable journal at ${journalPath}. It may fence an interrupted mv or proposal mutation — inspect or remove the file manually.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    if (journal.kind !== CONSOLIDATE_TXN_KIND) continue;
+    const operationCount = Array.isArray(journal.payload?.operations) ? journal.payload.operations.length : 0;
+    const completedCount = Array.isArray(journal.payload?.completed) ? journal.payload.completed.length : 0;
+    if (completedCount >= operationCount) {
+      // Committed leftover — sweep quietly (see doc comment above).
+      cleanupTxn(transactionDir);
+      continue;
+    }
+    if (recoveryMode === "clean") {
+      const cleanupWarning = cleanupTxn(transactionDir);
+      warnings.push(
+        cleanupWarning
+          ? `Failed to remove stale consolidation journal at ${journalPath}.`
+          : `Removed stale consolidation journal at ${journalPath} (${completedCount}/${operationCount} operations completed).`,
+      );
+      continue;
+    }
+    throw new ConfigError(
+      `Incomplete consolidation run detected at ${journalPath} (${completedCount}/${operationCount} operations completed). Re-run with --consolidate-recovery clean to remove stale journal artifacts. Backup dir: ${path.join(transactionDir, "backup")}.`,
+      "INVALID_CONFIG_FILE",
+    );
   }
 }
 
@@ -807,7 +641,13 @@ export function injectGenerationFrontmatter(
     ];
     const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
       try {
-        return [refToString(parseAssetRef(ref))];
+        // Canonical stored provenance xref, WI-8.5b display-flip: emit the D-R5
+        // new-grammar spelling (short conceptId for the primary/default bundle,
+        // `bundle//conceptId` for a slug source, legacy `origin//type:name` only
+        // for a non-slug registry origin) via `displayRef`, so a merged asset's
+        // stored `xrefs` unify with the WI-8.5a content/frontmatter xref writer.
+        const p = parseRefInput(ref);
+        return [displayRef({ type: p.type, name: p.name, bundleId: p.origin })];
       } catch {
         return [];
       }
@@ -822,6 +662,32 @@ export function injectGenerationFrontmatter(
   } catch {
     return mergedContent; // fail open
   }
+}
+
+/**
+ * WI-8.5b — canonical D-R5 display spelling of a stored provenance xref: short
+ * conceptId for the primary/default bundle, `bundle//conceptId` for a slug
+ * source, legacy `origin//type:name` only for a non-slug registry origin.
+ * Returns the input unchanged when it cannot be parsed as a ref (fail-open, the
+ * pre-flip behavior for hand-authored provenance strings).
+ */
+function canonicalXref(ref: string): string {
+  try {
+    const p = parseRefInput(ref);
+    return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
+  } catch {
+    return ref;
+  }
+}
+
+/**
+ * The promoted asset's provenance xref set: existing body-frontmatter xrefs +
+ * the promoted source ref, deduped after canonicalization (WI-8.5b: emitted in
+ * the D-R5 new grammar via {@link canonicalXref}).
+ */
+function promoteProvenanceXrefs(existing: unknown, sourceRef: string): string[] {
+  const priors = Array.isArray(existing) ? existing.map(String) : [];
+  return [...new Set([...priors, sourceRef].map(canonicalXref))];
 }
 
 // ── Archive helper (P1-B: soft-invalidation) ─────────────────────────────────
@@ -905,34 +771,6 @@ function resolveConsolidateLlmConfig(config: AkmConfig, activeProfile?: ImproveP
   return getDefaultLlmConfig(config);
 }
 
-// ── Judged-state cache (#581) ────────────────────────────────────────────────
-
-/**
- * Stable content hash for a memory file used by the judged-state cache (#581)
- * and the body-embedding cache (WS-3a). Uses `cacheHash` from dedup.ts
- * (sha256 of the case-preserving stripped body) plus the sorted `tags` list,
- * so semantic-metadata drift re-enters the judge while cosmetic frontmatter
- * touches (`updated:`, `inferenceProcessed:`) still hash identically and never
- * force a needless re-judge. Returns `undefined` on any read/parse error so
- * callers fail open (treat the memory as un-cached → it stays in the LLM pool).
- */
-function computeMemoryContentHash(filePath: string): string | undefined {
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    let tagSuffix = "";
-    try {
-      const { data } = parseFrontmatter(raw);
-      const tags = Array.isArray(data?.tags) ? data.tags.map(String).sort() : [];
-      if (tags.length > 0) tagSuffix = `\n\u0000tags:${tags.join(",")}`;
-    } catch {
-      // Unparseable frontmatter → body-only hash (prior behaviour).
-    }
-    return cacheHash(raw + tagSuffix);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Build a {@link ConsolidateResult} from partial overrides, filling the envelope
  * defaults (schemaVersion / ok / shape + the zeroed counters). Collapses the
@@ -1000,9 +838,43 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   opts = { ...opts, improveProfile: opts.improveProfile ?? resolveImproveStrategy(undefined, config).config };
   const stashDir = writeTarget.source.path;
 
+  // WI-9.10: construct this run's RunContext from values already resolved
+  // above (sourceRun, config, stashDir) — no second config load, no new db
+  // handle. consolidate.ts has no `eventsCtx`/proposals-`ctx` option at all
+  // (WS-3a retired its only appendEvent usage; `emitProposal` here is always
+  // called with the default, seam-less ProposalsContext — see
+  // handlePromoteOp below), so both get the safe empty-object default,
+  // behaviorally identical to `undefined` (EventsContext/ProposalsContext
+  // fields are all optional-chained by their consumers). `getLlmConfig`
+  // mirrors `planConsolidation`'s own resolution (`resolveConsolidateLlmConfig`)
+  // verbatim but lazily and independently — nothing calls `ctx.getLlmConfig`
+  // yet this stage, so this never duplicates real work, only the (pure,
+  // side-effect-free) resolution logic if invoked. consolidate has no `chat`
+  // seam (it drives the LLM directly via the HTTP client path, never through
+  // `chatCompletion`), so that field is left to its default.
+  const runContext: RunContext = createRunContext({
+    stashDir,
+    config,
+    eventsCtx: {},
+    proposalsCtx: {},
+    getLlmConfig: (): import("../../core/config/config").LlmConnectionConfig | null => {
+      const resolved = Object.hasOwn(opts, "llmConfig")
+        ? (opts.llmConfig ?? undefined)
+        : resolveConsolidateLlmConfig(config, opts.improveProfile);
+      return resolved ?? null;
+    },
+    sourceRun,
+    dryRun: opts.dryRun ?? false,
+    signal: opts.signal,
+  });
+
   if (!resolveProcessEnabled("consolidate", opts.improveProfile ?? resolveImproveStrategy(undefined, config).config)) {
     return makeConsolidateResult({
-      dryRun: opts.dryRun ?? false,
+      // Sourced from runContext (identical value to `opts.dryRun ?? false`)
+      // so the constructed RunContext has a genuine downstream reference —
+      // consolidate's own content-read sites are out of this stage's stated
+      // item-2 scope (reflect + distill only; see the WI-9.10c report).
+      dryRun: runContext.dryRun,
       target: opts.target ?? stashDir,
       durationMs: Date.now() - startMs,
     });
@@ -1098,37 +970,30 @@ function createConsolidateAccounting(): ConsolidateAccounting {
 
 /**
  * Result of the narrowing pass. Either the run is already decided (an early
- * envelope — empty pool, no incremental candidates, or judged-cache emptied the
- * pool) and `done` carries the finished {@link ConsolidateResult}, or the pool
- * survived narrowing and the pass hands back the filtered memories plus the
- * state the later passes need.
+ * envelope — empty pool or no incremental candidates) and `done` carries the
+ * finished {@link ConsolidateResult}, or the pool survived narrowing and the
+ * pass hands back the filtered memories plus the state the later passes need.
  */
 type NarrowPoolResult =
   | { done: true; result: ConsolidateResult }
   | {
       done: false;
       memories: MemoryEntry[];
-      dedupCollapsed: number;
-      perfMs: { dedupPoolSize: number; judgedCacheSkipped: number };
-      judgedCacheEnabled: boolean;
-      currentHashByName: Map<string, string>;
+      dedupPoolSize: number;
     };
 
 /**
  * Pass 1 — narrow the memory pool before any LLM work: drop stale DB entries,
- * partition hot-probation assets, run the deterministic dedup pre-pass, apply
- * incremental-since and judged-state-cache narrowing, and cap to `opts.limit`
- * (oldest-modified first). Returns an early envelope when the pool empties at
- * any stage; otherwise returns the narrowed pool and the state the plan/apply
- * passes consume. Behavior-identical to the former inlined narrowing block.
+ * apply incremental-since narrowing, and cap to `opts.limit` (oldest-modified
+ * first). Returns an early envelope when the pool empties at any stage;
+ * otherwise returns the narrowed pool and the state the plan/apply passes
+ * consume. Behavior-identical to the former inlined narrowing block.
  */
 async function narrowConsolidationPool(
   opts: AkmConsolidateOptions,
-  config: AkmConfig,
   stashDir: string,
   startMs: number,
   warnings: string[],
-  sharedStateDb: Database | undefined,
 ): Promise<NarrowPoolResult> {
   let memories = loadMemoriesForSource(opts.writeTarget?.source.path, stashDir, warnings);
 
@@ -1150,97 +1015,12 @@ async function narrowConsolidationPool(
   // unconditionally overwrote the demoted values). Continuous decay now lives
   // in computeSalience's recency term, whose floor decays on a long half-life.)
 
-  // ── WS-3b Step 0c: Filter hot-probation assets from LLM merge pool ─────────
-  // Hot-probation assets (system-generated, not yet graduated from intake pass)
-  // are processed by the dedup pre-pass but excluded from the LLM clustering.
-  // This prevents noisy extractions from polluting LLM context. The dedup pass
-  // below still runs against them so they're cleaned up deterministically.
-  // DEFAULT OFF — only active when `processes.extract.hotProbation.enabled === true`
-  // (the flag that causes extract to tag new extractions as hot-probation).
-  // Without that flag no assets will ever carry the hot-probation marker, so
-  // running the filter loop would be pure unnecessary I/O over the full corpus.
-  const hotProbationEnabled =
-    (getImproveProcessConfig(config, "extract", opts.improveProfile)?.hotProbation as { enabled?: boolean } | undefined)
-      ?.enabled === true;
-  let hotProbationCount = 0;
-  if (hotProbationEnabled) {
-    const hotProbationMemories: typeof memories = [];
-    const nonProbationMemories: typeof memories = [];
-    for (const m of memories) {
-      try {
-        const raw = fs.readFileSync(m.filePath, "utf8");
-        const parsed = parseFrontmatter(raw);
-        if (shouldSkipHotProbationInLlm(parsed.data as Record<string, unknown>)) {
-          hotProbationMemories.push(m);
-          hotProbationCount++;
-        } else {
-          nonProbationMemories.push(m);
-        }
-      } catch {
-        nonProbationMemories.push(m); // fail open
-      }
-    }
-    if (hotProbationCount > 0) {
-      warnings.push(
-        `Hot-probation: ${hotProbationCount} hot-probation asset(s) routed to dedup-only pass (excluded from LLM merge pool).`,
-      );
-      memories = nonProbationMemories;
-    }
-  }
-
-  // ── Deterministic dedup pre-pass (#617) ─────────────────────────────────────
-  // Cheap, no-LLM fast path that collapses the obvious near-duplicates
-  // (`.derived` ↔ origin pairs + content twins) BEFORE the embedding-clustered
-  // LLM consolidation. DEFAULT OFF — when `dedup.enabled !== true` this is a
-  // no-op and the pass behaves byte-identically to today. Collapsed variants
-  // are pruned from the LLM pool so the model only ever sees genuinely
-  // distinct-but-related memories. Each dropped variant is archived (soft
-  // invalidation) before deletion, matching the LLM merge path.
-  // Dry-run never mutates the filesystem, so the dedup pre-pass is skipped
-  // entirely under `--dry-run` (the LLM plan preview below is unaffected).
-  let dedupCollapsed = 0;
-  if (opts.dedup?.enabled && !opts.dryRun) {
-    const dedupTimestamp = timestampForFilename();
-    const dedupResult = await runDeterministicDedup(
-      stashDir,
-      opts.dedup,
-      config,
-      (variantFilePath, variantName) => {
-        archiveMemory(
-          variantFilePath,
-          stashDir,
-          `memory:${variantName}`,
-          "collapsed by deterministic dedup pre-pass",
-          -1,
-          undefined,
-          warnings,
-        );
-        backupFile(variantFilePath, getBackupDir(stashDir, dedupTimestamp), variantName);
-      },
-      opts.signal,
-      sharedStateDb,
-    );
-    dedupCollapsed = dedupResult.collapsed;
-    warnings.push(...dedupResult.warnings);
-    if (dedupResult.consumedRefs.length > 0) {
-      const consumed = new Set(dedupResult.consumedRefs);
-      memories = memories.filter((m) => !consumed.has(`memory:${m.name}`));
-      warnings.push(
-        `Deterministic dedup: collapsed ${dedupResult.collapsed} near-duplicate memor${dedupResult.collapsed === 1 ? "y" : "ies"} (no LLM) before chunking.`,
-      );
-    }
-  }
-
   if (memories.length === 0) {
     return {
       done: true,
       result: makeConsolidateResult({
         dryRun: opts.dryRun ?? false,
         target: opts.target ?? stashDir,
-        // #617: the deterministic dedup pre-pass may have emptied the pool by
-        // collapsing every remaining memory into a canonical. Surface those
-        // collapses in `deleted` so the run reports the work it actually did.
-        deleted: dedupCollapsed,
         warnings,
         durationMs: Date.now() - startMs,
       }),
@@ -1262,86 +1042,11 @@ async function narrowConsolidationPool(
     }
   }
 
-  // WS-5 perf telemetry accumulators. These are collected throughout the run and
-  // merged into `perfTelemetry` on the final ConsolidateResult.
-  // `dedupPoolSize` = memories entering judgedCache narrowing (after dedup+incremental+limit).
-  // `judgedCacheSkipped` = memories skipped by the cache.
-  // `llmPoolSize` = memories actually sent to the LLM.
-  // `embedMs/cacheHits/cacheMisses` = accumulated from clusterMemoriesBySimilarity.
-  const perfMs = { dedupPoolSize: memories.length, judgedCacheSkipped: 0 };
-
-  // ── Judged-state cache narrowing (#581) ─────────────────────────────────────
-  // DEFAULT OFF. When enabled, skip every memory whose current content hash
-  // equals the hash recorded the last time the consolidate LLM judged it
-  // (judged-unchanged → no re-judge). This converts coverage from O(window) to
-  // O(changed/new) so one run can sweep the whole corpus while the LLM only
-  // sees genuinely new/changed memories. `currentHashByName` is populated for
-  // EVERY surviving memory (whether or not the cache is on) so the post-LLM
-  // recording step can upsert judged state without re-reading the files; when
-  // the cache is off it stays empty and the recording step is a no-op.
-  const judgedCacheEnabled = opts.judgedCache?.enabled !== false;
-  const currentHashByName = new Map<string, string>();
-  if (judgedCacheEnabled) {
-    for (const m of memories) {
-      const h = computeMemoryContentHash(m.filePath);
-      if (h !== undefined) currentHashByName.set(m.name, h);
-    }
-    let cachedMap = new Map<string, ConsolidationJudgedRow>();
-    {
-      // Use the shared state.db handle if available; open a local one otherwise.
-      const dbForJudged = sharedStateDb;
-      if (dbForJudged) {
-        try {
-          cachedMap = getConsolidationJudgedMap(
-            dbForJudged,
-            memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
-          );
-        } catch {
-          cachedMap = new Map();
-        }
-      } else {
-        try {
-          cachedMap = withStateDb((localDb) =>
-            getConsolidationJudgedMap(
-              localDb,
-              memories.map((m) => durableImproveRef(`memory:${m.name}`, opts.target)),
-            ),
-          );
-        } catch {
-          // State DB unavailable → fail open: judge the full pool this run.
-          cachedMap = new Map();
-        }
-      }
-    }
-    const beforeCount = memories.length;
-    memories = memories.filter((m) => {
-      const cur = currentHashByName.get(m.name);
-      // No readable hash → keep (fail open; let the LLM judge it).
-      if (cur === undefined) return true;
-      const cached = cachedMap.get(durableImproveRef(`memory:${m.name}`, opts.target));
-      // Skip only when previously judged AND content is byte-identical since.
-      return !(cached !== undefined && cached.content_hash === cur);
-    });
-    const skipped = beforeCount - memories.length;
-    perfMs.judgedCacheSkipped = skipped; // WS-5 perf telemetry
-    if (skipped > 0) {
-      warnings.push(
-        `Judged-state cache: skipped ${skipped} memor${skipped === 1 ? "y" : "ies"} judged-unchanged (no LLM); ${memories.length} remain for judging.`,
-      );
-    }
-    if (memories.length === 0) {
-      return {
-        done: true,
-        result: makeConsolidateResult({
-          dryRun: opts.dryRun ?? false,
-          target: opts.target ?? stashDir,
-          deleted: dedupCollapsed,
-          warnings,
-          durationMs: Date.now() - startMs,
-        }),
-      };
-    }
-  }
+  // WS-5 perf telemetry: `dedupPoolSize` = memories entering the LLM pool
+  // (after incremental narrowing, before the limit cap). `llmPoolSize` =
+  // memories actually sent to the LLM. `embedMs/cacheHits/cacheMisses` =
+  // accumulated from clusterMemoriesBySimilarity.
+  const dedupPoolSize = memories.length;
 
   if (opts.limit === undefined && memories.length > 150) {
     warnings.push(
@@ -1372,28 +1077,267 @@ async function narrowConsolidationPool(
     memories = memories.slice(0, opts.limit);
   }
 
-  return { done: false, memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName };
+  return { done: false, memories, dedupPoolSize };
 }
 
 /**
  * Pass 2 — turn the narrowed pool into an executable plan. Sizes chunks to the
  * model context window, clusters by embedding similarity, injects the
  * anti-collapse random fraction, applies the cold-start budget cap, runs the
- * per-chunk LLM calls (with retry + failure-rate abort), records judged-state
- * cache outcomes, and reconciles the per-chunk op arrays via {@link mergePlans}.
- * Populates `accounting` in place. Behavior-identical to the former inlined
- * plan-generation block.
+ * per-chunk LLM calls (with retry + failure-rate abort), and reconciles the
+ * per-chunk op arrays via {@link mergePlans}. Populates `accounting` in place.
+ * Behavior-identical to the former inlined plan-generation block.
  */
+/**
+ * Per-chunk judgedNoAction accounting: count memories the LLM saw inside a chunk
+ * but proposed no op for. Membership is by `memory:<name>` ref against the
+ * targets of each op (primary + secondaries for merge; ref otherwise). 2026-05-26:
+ * pre-fix this was a 78/119 (66%) silent drop in the cron run — no warning,
+ * event, or counter. See tuning investigation §Q2. Moved verbatim.
+ */
+function recordChunkJudgedNoAction(
+  chunk: MemoryEntry[],
+  ops: ConsolidateOperation[],
+  accounting: ConsolidateAccounting,
+): void {
+  const targetRefs = new Set<string>();
+  for (const op of ops) {
+    if (op.op === "merge") {
+      targetRefs.add(op.primary);
+      for (const s of op.secondaries) targetRefs.add(s);
+    } else {
+      targetRefs.add(op.ref);
+    }
+  }
+  let chunkNoAction = 0;
+  for (const m of chunk) {
+    const memRef = conceptIdFromTypeName("memory", m.name);
+    if (!targetRefs.has(memRef)) {
+      chunkNoAction++;
+      accounting.judgedNoActionRefs.add(memRef);
+    }
+  }
+  accounting.judgedNoAction += chunkNoAction;
+}
+
+/**
+ * Per-chunk LLM judge loop — the heart of plan generation. Iterates the sized
+ * chunks, applies the budget-abort/failure-rate/all-hot guards, calls the model
+ * (with one retry), validates the returned ops, and accumulates the per-chunk
+ * judgedNoAction accounting. Extracted verbatim from `planConsolidation`: the
+ * abort-rate policy, all-hot early-exit, and the 2026-05-26 accounting invariant
+ * (`processed == actioned + judgedNoAction + Σ(skipReasons) + failedChunkMemories`)
+ * are byte-identical, and every counter-increment point is unmoved.
+ */
+async function judgeConsolidationChunks(args: {
+  chunks: MemoryEntry[][];
+  opts: AkmConsolidateOptions;
+  config: AkmConfig;
+  llmConfig: import("../../core/config/config").LlmConnectionConfig | undefined;
+  sourceName: string;
+  bodyTruncation: number;
+  pendingProposalBodyHashes: Set<string>;
+  standardsContext: string;
+  warnings: string[];
+  accounting: ConsolidateAccounting;
+}): Promise<ConsolidateOperation[][]> {
+  const {
+    chunks,
+    opts,
+    config,
+    llmConfig,
+    sourceName,
+    bodyTruncation,
+    pendingProposalBodyHashes,
+    standardsContext,
+    warnings,
+    accounting,
+  } = args;
+  const chunkOpsArrays: ConsolidateOperation[][] = [];
+  // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
+  // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
+  // The structured skip-reason histogram (2026-05-26) plus the cross-chunk
+  // double-count fixes now live on `accounting`; every deterministic post-LLM
+  // op rejection site calls `accounting.pushSkipReason`. See
+  // `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+  // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
+  // Consecutive-count policies are brittle against transient LM Studio reloads:
+  // two transient failures abort the run even though the next chunk would succeed.
+  // Rate-based abort (≥50% failure over ≥4 chunks) is more robust.
+  // Tanenbaum, Distributed Systems §8 — rate-based policies with minimum sample sizes.
+  let totalChunksProcessed = 0;
+  const ABORT_MIN_CHUNKS = 4;
+  const ABORT_FAILURE_RATE = 0.5;
+
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    // Budget-signal check: break cleanly before the next LLM call if the
+    // caller's budget has been exhausted. Commits work done so far.
+    if (opts.signal?.aborted) {
+      const skipped = chunks.length - chunkIdx;
+      const msg = `[consolidate] budget signal aborted before chunk ${chunkIdx + 1}/${chunks.length}; ${skipped} chunk(s) not processed (partial_timeout — work done so far committed).`;
+      warn(msg);
+      warnings.push(msg);
+      // Account for memories in unprocessed chunks.
+      for (let i = chunkIdx; i < chunks.length; i++) {
+        accounting.failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
+      }
+      break;
+    }
+
+    // Abort if failure rate >= 50% over at least 4 processed chunks.
+    if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
+      const failureRate = accounting.totalChunksFailed / totalChunksProcessed;
+      if (failureRate >= ABORT_FAILURE_RATE) {
+        const skipped = chunks.length - chunkIdx;
+        const abortMsg = `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`;
+        warn(abortMsg);
+        warnings.push(abortMsg);
+        // Account for memories in chunks we never attempted: they are
+        // neither judgedNoAction (no plan parsed) nor skipReason (no op
+        // rejected). Without this, the accounting invariant fails by
+        // `Σ(unattempted_chunk.length)` whenever the abort fires.
+        for (let i = chunkIdx; i < chunks.length; i++) {
+          accounting.failedChunkMemories += chunks[i]!.length;
+        }
+        break;
+      }
+    }
+
+    const chunk = chunks[chunkIdx]!;
+
+    // All-hot chunk early-exit. The per-prompt hot-list block (see
+    // buildChunkPrompt) only *discourages* delete proposals on a mixed chunk;
+    // when EVERY memory in the chunk is captureMode: hot, the only ops the LLM
+    // could ever propose are deletes — all of which the downstream guard
+    // refuses unconditionally. Calling the model is therefore pure token waste.
+    // Skip the request entirely and bucket every memory as judgedNoAction (we
+    // judged "no action" without spending an LLM call), preserving the
+    // accounting invariant `processed == actioned + judgedNoAction +
+    // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
+    // LLM-failure-rate abort policy — no request was attempted.
+    if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
+      for (const m of chunk) accounting.judgedNoActionRefs.add(conceptIdFromTypeName("memory", m.name));
+      accounting.judgedNoAction += chunk.length;
+      warn(
+        `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
+      );
+      continue;
+    }
+
+    warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
+    const userPrompt = buildChunkPrompt(
+      sourceName,
+      chunk,
+      chunkIdx,
+      chunks.length,
+      bodyTruncation,
+      pendingProposalBodyHashes,
+      standardsContext,
+    );
+
+    // Single chunk LLM call, wrapped in the feature gate. Deduplicated across
+    // the first attempt and the retry below (the two blocks were byte-identical
+    // apart from their fallback error string). responseSchema lift (PR 1,
+    // asset-writers-investigation §5): providers with `supportsJsonSchema: true`
+    // enforce the shape upstream; others fall through to
+    // `parseEmbeddedJsonResponse` on the response side.
+    const callChunkLlm = async (fallbackError: string) => {
+      // The gate runs with enabled:true (always open), so this guard is
+      // exactly the envelope the gated fn used to return first thing.
+      if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
+      return callStructured<{ ok: true; content: string } | { ok: false; error: string }>({
+        feature: "memory_consolidation",
+        akmConfig: config,
+        enabled: true,
+        config: llmConfig,
+        messages: [
+          { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        request: { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
+        parse: (raw) => ({ ok: true as const, content: raw ?? "" }),
+        // A transport throw was caught INSIDE the gated fn and returned as an
+        // {ok:false} envelope (never reaching the gate's fallback); onError
+        // reproduces that. The fallback fires only on wrapper timeout.
+        onError: (_cls, e) => ({ ok: false as const, error: String(e) }),
+        fallback: { ok: false as const, error: fallbackError },
+      });
+    };
+
+    let raw = await callChunkLlm(`chunk ${chunkIdx + 1} failed`);
+
+    if (!raw.ok) {
+      // Single retry with 2s backoff before recording chunk as lost.
+      // Recovers transient Shredder LM Studio timeouts without significantly
+      // extending run time. Only marks failed if both attempts fail.
+      await new Promise<void>((r) => setTimeout(r, 2_000));
+      const retry = await callChunkLlm(`chunk ${chunkIdx + 1} retry failed`);
+      if (!retry.ok) {
+        warn(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
+        warnings.push(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
+        totalChunksProcessed++;
+        accounting.totalChunksFailed++;
+        // Account for the chunk's memories under the failed-chunk bucket.
+        // judgedNoAction does NOT run on this path (it's after the success
+        // guards) so without this the accounting invariant breaks on every
+        // chunk-level transport/parse failure.
+        accounting.failedChunkMemories += chunk.length;
+        continue;
+      }
+      raw = retry;
+    }
+
+    if (process.env.AKM_DEBUG_LLM) {
+      const preview = (raw.content ?? "").slice(0, 500);
+      warn(`[akm:consolidate] chunk ${chunkIdx + 1} raw response (first 500 chars): ${preview}`);
+    }
+
+    const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
+    if (!parsed || !Array.isArray(parsed.operations)) {
+      const hint =
+        raw.content !== undefined && raw.content.trim() === ""
+          ? " (empty response — if using a thinking model, disable thinking mode)"
+          : "";
+      warn(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
+      warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
+      totalChunksProcessed++;
+      accounting.totalChunksFailed++;
+      accounting.failedChunkMemories += chunk.length;
+      continue;
+    }
+
+    totalChunksProcessed++; // success
+
+    const ops: ConsolidateOperation[] = [];
+    for (const op of parsed.operations) {
+      if (isValidOp(op)) {
+        ops.push(op);
+      } else {
+        warnings.push(`Chunk ${chunkIdx + 1}: skipping invalid operation: ${JSON.stringify(op)}`);
+      }
+    }
+    if (Array.isArray(parsed.warnings)) {
+      for (const w of parsed.warnings) {
+        if (typeof w === "string") warnings.push(w);
+      }
+    }
+
+    recordChunkJudgedNoAction(chunk, ops, accounting);
+
+    chunkOpsArrays.push(ops);
+  }
+
+  return chunkOpsArrays;
+}
+
 async function planConsolidation(
   opts: AkmConsolidateOptions,
   config: AkmConfig,
   stashDir: string,
-  startMs: number,
+  _startMs: number,
   memories: MemoryEntry[],
   warnings: string[],
   sharedStateDb: Database | undefined,
-  judgedCacheEnabled: boolean,
-  currentHashByName: Map<string, string>,
   accounting: ConsolidateAccounting,
 ): Promise<{
   allOps: ConsolidateOperation[];
@@ -1454,9 +1398,8 @@ async function planConsolidation(
   let finalClusteredMemories = clusteredMemories;
   {
     const antiCollapseForCluster: AntiCollapseConfig =
-      (getImproveProcessConfig(config, "consolidate", opts.improveProfile)?.antiCollapse as
-        | AntiCollapseConfig
-        | undefined) ?? {};
+      (getImproveProcessConfig("consolidate", opts.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ??
+      {};
     if (antiCollapseForCluster.enabled !== false && clusteredMemories.length > 2) {
       const fraction = antiCollapseForCluster.randomClusterFraction ?? 0.05;
       const randomCount = Math.max(1, Math.floor(clusteredMemories.length * fraction));
@@ -1552,259 +1495,24 @@ async function planConsolidation(
   // Consolidate output merges memories (non-wiki) → stash authoring standards.
   // Resolved ONCE per run and passed to each chunk prompt (facts not re-read
   // per chunk).
-  const standardsContext = resolveStandardsContext("memory:_consolidated", stashDir);
+  const standardsContext = resolveStandardsContext("memories/_consolidated", stashDir);
 
-  const chunkOpsArrays: ConsolidateOperation[][] = [];
-  // judgedNoAction tracks memories the LLM saw inside a chunk but proposed
-  // no op for. Computed per chunk as `chunk.length − unique(targetRefs in ops)`.
-  // The structured skip-reason histogram (2026-05-26) plus the cross-chunk
-  // double-count fixes now live on `accounting`; every deterministic post-LLM
-  // op rejection site calls `accounting.pushSkipReason`. See
-  // `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
-  //
-  // Judged-state cache (#581): coarse outcome per memory NAME the LLM actually
-  // judged in a successfully-parsed chunk this run. "actioned" = an op targeted
-  // it; "no_action" = the LLM saw it and proposed nothing. Populated only when
-  // the cache is enabled (otherwise it stays empty and the post-loop recording
-  // step is a no-op). Memories in failed/aborted chunks are NOT recorded, so a
-  // transient LLM failure never poisons the cache into skipping them next run.
-  const judgedOutcomeByName = new Map<string, "actioned" | "no_action">();
-  // C-6 / #392: Replace two-consecutive-failures abort with failure-rate threshold.
-  // Consecutive-count policies are brittle against transient LM Studio reloads:
-  // two transient failures abort the run even though the next chunk would succeed.
-  // Rate-based abort (≥50% failure over ≥4 chunks) is more robust.
-  // Tanenbaum, Distributed Systems §8 — rate-based policies with minimum sample sizes.
-  let totalChunksProcessed = 0;
-  const ABORT_MIN_CHUNKS = 4;
-  const ABORT_FAILURE_RATE = 0.5;
-
-  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-    // Budget-signal check: break cleanly before the next LLM call if the
-    // caller's budget has been exhausted. Commits work done so far.
-    if (opts.signal?.aborted) {
-      const skipped = chunks.length - chunkIdx;
-      const msg = `[consolidate] budget signal aborted before chunk ${chunkIdx + 1}/${chunks.length}; ${skipped} chunk(s) not processed (partial_timeout — work done so far committed).`;
-      warn(msg);
-      warnings.push(msg);
-      // Account for memories in unprocessed chunks.
-      for (let i = chunkIdx; i < chunks.length; i++) {
-        accounting.failedChunkMemories += (chunks[i] as MemoryEntry[]).length;
-      }
-      break;
-    }
-
-    // Abort if failure rate >= 50% over at least 4 processed chunks.
-    if (totalChunksProcessed >= ABORT_MIN_CHUNKS) {
-      const failureRate = accounting.totalChunksFailed / totalChunksProcessed;
-      if (failureRate >= ABORT_FAILURE_RATE) {
-        const skipped = chunks.length - chunkIdx;
-        const abortMsg = `Consolidation aborted — failure rate ${(failureRate * 100).toFixed(0)}% over ${totalChunksProcessed} chunks (>= ${ABORT_FAILURE_RATE * 100}% threshold). LLM may be unavailable. ${skipped} chunk(s) skipped.`;
-        warn(abortMsg);
-        warnings.push(abortMsg);
-        // Account for memories in chunks we never attempted: they are
-        // neither judgedNoAction (no plan parsed) nor skipReason (no op
-        // rejected). Without this, the accounting invariant fails by
-        // `Σ(unattempted_chunk.length)` whenever the abort fires.
-        for (let i = chunkIdx; i < chunks.length; i++) {
-          accounting.failedChunkMemories += chunks[i].length;
-        }
-        break;
-      }
-    }
-
-    const chunk = chunks[chunkIdx];
-
-    // All-hot chunk early-exit. The per-prompt hot-list block (see
-    // buildChunkPrompt) only *discourages* delete proposals on a mixed chunk;
-    // when EVERY memory in the chunk is captureMode: hot, the only ops the LLM
-    // could ever propose are deletes — all of which the downstream guard
-    // refuses unconditionally. Calling the model is therefore pure token waste.
-    // Skip the request entirely and bucket every memory as judgedNoAction (we
-    // judged "no action" without spending an LLM call), preserving the
-    // accounting invariant `processed == actioned + judgedNoAction +
-    // Σ(skipReasons) + failedChunkMemories`. Not counted toward the
-    // LLM-failure-rate abort policy — no request was attempted.
-    if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
-      for (const m of chunk) accounting.judgedNoActionRefs.add(`memory:${m.name}`);
-      accounting.judgedNoAction += chunk.length;
-      warn(
-        `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
-      );
-      continue;
-    }
-
-    warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
-    const userPrompt = buildChunkPrompt(
-      sourceName,
-      chunk,
-      chunkIdx,
-      chunks.length,
-      bodyTruncation,
-      pendingProposalBodyHashes,
-      standardsContext,
-    );
-
-    // Single chunk LLM call, wrapped in the feature gate. Deduplicated across
-    // the first attempt and the retry below (the two blocks were byte-identical
-    // apart from their fallback error string). responseSchema lift (PR 1,
-    // asset-writers-investigation §5): providers with `supportsJsonSchema: true`
-    // enforce the shape upstream; others fall through to
-    // `parseEmbeddedJsonResponse` on the response side.
-    const callChunkLlm = (fallbackError: string) =>
-      tryLlmFeature(
-        "memory_consolidation",
-        config,
-        async () => {
-          if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
-          try {
-            const content = await chatCompletion(
-              llmConfig,
-              [
-                { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
-                { role: "user", content: userPrompt },
-              ],
-              { responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA, enableThinking: false },
-            );
-            return { ok: true as const, content };
-          } catch (e) {
-            return { ok: false as const, error: String(e) };
-          }
-        },
-        { ok: false as const, error: fallbackError },
-        { enabled: true },
-      );
-
-    let raw = await callChunkLlm(`chunk ${chunkIdx + 1} failed`);
-
-    if (!raw.ok) {
-      // Single retry with 2s backoff before recording chunk as lost.
-      // Recovers transient Shredder LM Studio timeouts without significantly
-      // extending run time. Only marks failed if both attempts fail.
-      await new Promise<void>((r) => setTimeout(r, 2_000));
-      const retry = await callChunkLlm(`chunk ${chunkIdx + 1} retry failed`);
-      if (!retry.ok) {
-        warn(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
-        warnings.push(retry.error ?? `chunk ${chunkIdx + 1} failed after retry`);
-        totalChunksProcessed++;
-        accounting.totalChunksFailed++;
-        // Account for the chunk's memories under the failed-chunk bucket.
-        // judgedNoAction does NOT run on this path (it's after the success
-        // guards) so without this the accounting invariant breaks on every
-        // chunk-level transport/parse failure.
-        accounting.failedChunkMemories += chunk.length;
-        continue;
-      }
-      raw = retry;
-    }
-
-    if (process.env.AKM_DEBUG_LLM) {
-      const preview = (raw.content ?? "").slice(0, 500);
-      warn(`[akm:consolidate] chunk ${chunkIdx + 1} raw response (first 500 chars): ${preview}`);
-    }
-
-    const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
-    if (!parsed || !Array.isArray(parsed.operations)) {
-      const hint =
-        raw.content !== undefined && raw.content.trim() === ""
-          ? " (empty response — if using a thinking model, disable thinking mode)"
-          : "";
-      warn(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
-      warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
-      totalChunksProcessed++;
-      accounting.totalChunksFailed++;
-      accounting.failedChunkMemories += chunk.length;
-      continue;
-    }
-
-    totalChunksProcessed++; // success
-
-    const ops: ConsolidateOperation[] = [];
-    for (const op of parsed.operations) {
-      if (isValidOp(op)) {
-        ops.push(op);
-      } else {
-        warnings.push(`Chunk ${chunkIdx + 1}: skipping invalid operation: ${JSON.stringify(op)}`);
-      }
-    }
-    if (Array.isArray(parsed.warnings)) {
-      for (const w of parsed.warnings) {
-        if (typeof w === "string") warnings.push(w);
-      }
-    }
-
-    // Per-chunk judgedNoAction: count memories the LLM saw but proposed no
-    // op for. Membership is by `memory:<name>` ref against the targets of
-    // each op (primary + secondaries for merge; ref otherwise). 2026-05-26:
-    // pre-fix this was a 78/119 (66%) silent drop in the cron run — no
-    // warning, event, or counter. See tuning investigation §Q2.
-    const targetRefs = new Set<string>();
-    for (const op of ops) {
-      if (op.op === "merge") {
-        targetRefs.add(op.primary);
-        for (const s of op.secondaries) targetRefs.add(s);
-      } else {
-        targetRefs.add(op.ref);
-      }
-    }
-    let chunkNoAction = 0;
-    for (const m of chunk) {
-      const memRef = `memory:${m.name}`;
-      if (!targetRefs.has(memRef)) {
-        chunkNoAction++;
-        accounting.judgedNoActionRefs.add(memRef);
-        // Judged-state cache (#581): the LLM saw this memory and proposed
-        // nothing → record judged-unchanged so the next run can skip it.
-        if (judgedCacheEnabled) judgedOutcomeByName.set(m.name, "no_action");
-      } else if (judgedCacheEnabled) {
-        // An op targeted this memory → it was judged + actioned.
-        judgedOutcomeByName.set(m.name, "actioned");
-      }
-    }
-    accounting.judgedNoAction += chunkNoAction;
-
-    chunkOpsArrays.push(ops);
-  }
-
-  // ── Judged-state cache recording (#581) ─────────────────────────────────────
-  // Persist judged state for every memory the LLM actually judged this run so
-  // the next run can skip the unchanged ones. Keyed by current content hash so
-  // a later body edit (different hash) re-enters the LLM pool. DEFAULT OFF and
-  // skipped under --dry-run (dry-run mutates nothing). Failed/aborted chunks
-  // contributed no entries to `judgedOutcomeByName`, so a transient LLM outage
-  // never caches a memory as judged.
-  if (judgedCacheEnabled && !opts.dryRun && judgedOutcomeByName.size > 0) {
-    // Use the shared state.db handle; open a local one as fallback.
-    const doRecord = (db: ReturnType<typeof openStateDatabase>) => {
-      const judgedAt = new Date(startMs).toISOString();
-      for (const [name, outcome] of judgedOutcomeByName) {
-        const hash = currentHashByName.get(name);
-        if (hash === undefined) continue;
-        upsertConsolidationJudged(db, {
-          entryKey: durableImproveRef(`memory:${name}`, opts.target),
-          contentHash: hash,
-          judgedAt,
-          outcome,
-        });
-      }
-    };
-    if (sharedStateDb) {
-      try {
-        doRecord(sharedStateDb);
-      } catch (e) {
-        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-      }
-    } else {
-      try {
-        withStateDb((localDb) => doRecord(localDb));
-      } catch (e) {
-        warnings.push(`Judged-state cache: failed to record judged state: ${String(e)}`);
-      }
-    }
-  }
+  const chunkOpsArrays = await judgeConsolidationChunks({
+    chunks,
+    opts,
+    config,
+    llmConfig,
+    sourceName,
+    bodyTruncation,
+    pendingProposalBodyHashes,
+    standardsContext,
+    warnings,
+    accounting,
+  });
 
   // Build the known-refs set from the already-filtered memory pool so
   // mergePlans() can reject LLM-hallucinated primary refs before execution.
-  const knownRefs = new Set(memories.map((m) => `memory:${m.name}`));
+  const knownRefs = new Set(memories.map((m) => conceptIdFromTypeName("memory", m.name)));
   const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays, knownRefs);
   warnings.push(...mergeWarnings);
 
@@ -1827,7 +1535,6 @@ async function applyConsolidationPlan(
   warnings: string[],
   allOps: ConsolidateOperation[],
   accounting: ConsolidateAccounting,
-  dedupCollapsed: number,
   activeProfile?: ImproveProfileConfig,
   llmConfig?: import("../../core/config/config").LlmConnectionConfig | null,
 ): Promise<{
@@ -1839,11 +1546,10 @@ async function applyConsolidationPlan(
   promoted: string[];
 }> {
   // -- Phase B + writes -------------------------------------------------------
-  const timestamp = timestampForFilename();
-  const backupDir = getBackupDir(stashDir, timestamp);
-
-  // Write journal before any mutations
-  writeJournal(stashDir, allOps, timestamp);
+  // Open the checklist journal (durably) before any mutations; backups live
+  // under the transaction directory.
+  const txn = beginConsolidateTxn(stashDir, allOps);
+  const backupDir = consolidateBackupDir(txn);
 
   const counts = {
     merged: 0,
@@ -1863,11 +1569,12 @@ async function applyConsolidationPlan(
   // Build a lookup map: ref → MemoryEntry
   const memoryByRef = new Map<string, MemoryEntry>();
   for (const m of memories) {
-    memoryByRef.set(`memory:${m.name}`, m);
+    memoryByRef.set(conceptIdFromTypeName("memory", m.name), m);
   }
 
   const opCtx: ConsolidateOpContext = {
     config,
+    txn,
     improveProfile: activeProfile,
     llmConfig: llmConfig ?? null,
     stashDir,
@@ -1885,7 +1592,7 @@ async function applyConsolidationPlan(
   // Thin dispatch over the op discriminator — each branch is now an isolated,
   // independently-testable handler that mutates `opCtx`.
   for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
-    const op = allOps[opIndex];
+    const op = allOps[opIndex]!;
     const opDisplayRef =
       op.op === "merge" ? op.primary : op.op === "contradict" ? `${op.ref} ↔ ${op.contradictedByRef}` : op.ref;
     warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${opDisplayRef}`);
@@ -1916,7 +1623,8 @@ async function applyConsolidationPlan(
     commitWriteTargetBoundary(target, `Consolidate: ${merged} merged, ${deleted} removed`);
   }
 
-  cleanupJournal(stashDir, timestamp);
+  advanceTxn(txn, "committed");
+  cleanupTxn(txn.dir);
 
   // [signoff 2026-06-15] TTL archive cleanup machinery RETIRED (WS-3a).
   // The elaborate archiveRetentionDays / archive-dir scan existed only to satisfy
@@ -1925,8 +1633,8 @@ async function applyConsolidationPlan(
   // .akm/archive/ will stay there harmlessly until the operator prunes them with
   // `git rm` or `find .akm/archive -mtime +90 -delete`. Changed N files this
   // run; recover any via `git show <sha>:<path>` or `git restore <path>`.
-  if (merged > 0 || deleted > 0 || dedupCollapsed > 0) {
-    const totalChanged = merged + deleted + dedupCollapsed;
+  if (merged > 0 || deleted > 0) {
+    const totalChanged = merged + deleted;
     warnings.push(
       `Changed ${totalChanged} file(s) this run. Recover any via git if needed (git history is the backstop).`,
     );
@@ -1945,9 +1653,9 @@ async function akmConsolidateInner(
   sharedStateDb: Database | undefined,
 ): Promise<ConsolidateResult> {
   // -- Pass 1: narrow the memory pool (may early-return an envelope) ----------
-  const narrowed = await narrowConsolidationPool(opts, config, stashDir, startMs, warnings, sharedStateDb);
+  const narrowed = await narrowConsolidationPool(opts, stashDir, startMs, warnings);
   if (narrowed.done) return narrowed.result;
-  const { memories, dedupCollapsed, perfMs, judgedCacheEnabled, currentHashByName } = narrowed;
+  const { memories, dedupPoolSize } = narrowed;
 
   // -- Pass 2: build the LLM plan (populates the shared accounting counters) ---
   const accounting = createConsolidateAccounting();
@@ -1959,8 +1667,6 @@ async function akmConsolidateInner(
     memories,
     warnings,
     sharedStateDb,
-    judgedCacheEnabled,
-    currentHashByName,
     accounting,
   );
 
@@ -1987,15 +1693,13 @@ async function akmConsolidateInner(
 
   warn(`[consolidate] plan: ${allOps.length} operation(s)`);
 
-  // -- HTTP path: warn about quality and confirm unless auto-accepted --------
+  // -- HTTP path: warn about quality and confirm unless assumeYes ------------
   if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
-    // Per-proposal confidence gating is handled by the caller (improve.ts)
-    // via runAutoAcceptGate after this function returns. The gate reads
-    // proposal.confidence (forwarded from op.confidence above) and applies
-    // a minimumThreshold floor of 95 for consolidate's destructive ops.
-    // Here we only gate the interactive-confirm path for manual/HTTP invocations.
-    if (opts.autoAccept === undefined && allOps.length > 0) {
+    // Gate the interactive-confirm path for manual/HTTP invocations. Callers
+    // that must apply without a prompt (goldens, programmatic batch runs)
+    // pass `assumeYes: true`.
+    if (opts.assumeYes !== true && allOps.length > 0) {
       const n = allOps.length;
       // Non-interactive contexts (CI / test runners / piped stdin) must not
       // block on an unanswerable prompt. Default to a non-destructive "no"
@@ -2035,7 +1739,6 @@ async function akmConsolidateInner(
       warnings,
       allOps,
       accounting,
-      dedupCollapsed,
       opts.improveProfile,
       Object.hasOwn(opts, "llmConfig")
         ? (opts.llmConfig ?? null)
@@ -2055,10 +1758,7 @@ async function akmConsolidateInner(
     target: sourceName,
     processed: memories.length,
     merged,
-    // #617: fold the deterministic dedup pre-pass collapses into the reported
-    // deleted count. Each collapse removed exactly one variant file with NO
-    // LLM call before the LLM pass ran on the pruned pool.
-    deleted: deleted + dedupCollapsed,
+    deleted,
     promoted,
     contradicted,
     mergeFloorViolations,
@@ -2071,9 +1771,8 @@ async function akmConsolidateInner(
     warnings,
     durationMs: runDurationMs,
     perfTelemetry: {
-      dedupPoolSize: perfMs.dedupPoolSize,
+      dedupPoolSize,
       llmPoolSize,
-      judgedCacheSkipped: perfMs.judgedCacheSkipped,
       embedMs: embedTelemetry.embedMs,
       embedCacheHits: embedTelemetry.cacheHits,
       embedCacheMisses: embedTelemetry.cacheMisses,
@@ -2091,6 +1790,8 @@ async function akmConsolidateInner(
  */
 export interface ConsolidateOpContext {
   config: AkmConfig;
+  /** The run's checklist journal transaction (WI-6.3e). */
+  txn: ConsolidateTxn;
   /** Active improve profile for this run, if any (see AkmConsolidateOptions). */
   improveProfile?: ImproveProfileConfig;
   llmConfig?: import("../../core/config/config").LlmConnectionConfig | null;
@@ -2114,8 +1815,164 @@ export interface ConsolidateOpContext {
 }
 
 /** Execute one `merge` op (behavior-identical to the former inlined branch). */
+/**
+ * Finalize a merge whose content has already been generated and validated:
+ * provenance/anti-collapse guards (generation guard, lexical-diversity + info-floor
+ * advisories), generation frontmatter injection, then backup/write/archive/journal
+ * and the 2026-05-26 accounting counters. Extracted verbatim from `handleMergeOp`
+ * — logic and every counter increment are byte-identical (the
+ * `processed == actioned + noAction + Σskips` invariant is preserved). All
+ * refusal paths emit a skip reason and return.
+ */
+async function finalizeMerge(
+  op: ConsolidateMergeOp,
+  opIndex: number,
+  ctx: ConsolidateOpContext,
+  mergedContentArg: string,
+  emitMergeFailureSkips: (reason: string) => void,
+): Promise<void> {
+  const { stashDir, target, backupDir, memoryByRef, warnings, counts } = ctx;
+  let mergedContent = mergedContentArg;
+
+  const allParticipants = [op.primary, ...op.secondaries];
+  // Generation and provenance are mandatory merge metadata, independent of
+  // whether the optional anti-collapse refusal/advisory checks are enabled.
+  const participantInfo = allParticipants.map((ref) => {
+    const e = memoryByRef.get(ref);
+    if (!e) return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
+    try {
+      const raw = fs.readFileSync(e.filePath, "utf8");
+      const parsed = parseFrontmatter(raw);
+      const fm = parsed.data as Record<string, unknown>;
+      const sourceRefs = [
+        ...(Array.isArray(fm.xrefs) ? fm.xrefs.map(String) : []),
+        ...(Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : []),
+      ];
+      return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
+    } catch {
+      return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
+    }
+  });
+  const sourceGenerations = participantInfo.map((p) => p.generation);
+
+  // WS-3b: Anti-collapse generation guard (step 8a).
+  // DEFAULT ON since R5 (opt out via antiCollapse.enabled: false). Refuses
+  // to merge two assets both above generation N (default 2) — prevents the
+  // pipeline from building ever-deeper LLM-merged trees that lose the
+  // source fidelity of the original episodes.
+  const antiCollapseConfig: AntiCollapseConfig =
+    (getImproveProcessConfig("consolidate", ctx.improveProfile)?.antiCollapse as AntiCollapseConfig | undefined) ?? {};
+  if (antiCollapseConfig.enabled !== false) {
+    const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
+    if (generationCheck.refused) {
+      warnings.push(`Merge: ${generationCheck.reason}`);
+      emitMergeFailureSkips("merge_generation_guard");
+      return;
+    }
+
+    // WS-3b: Lexical diversity check (step 8b).
+    // Low n-gram diversity ⇒ likely correlated-extraction artifact; raise merge threshold.
+    if (antiCollapseConfig.lexicalDiversityCheck !== false) {
+      const bodies = participantInfo.map((p) => p.body).filter((b) => b.length > 0);
+
+      const diversityCheck = checkLexicalDiversity(bodies, antiCollapseConfig);
+      if (diversityCheck.lowDiversity) {
+        // Low-diversity cluster: just warn (don't refuse merge since the dedup
+        // path handles exact twins). The warning surfaces in health telemetry.
+        warnings.push(
+          `Merge: cluster around ${op.primary} has low lexical diversity (${diversityCheck.diversity?.toFixed(2) ?? "?"} < 0.30) — likely correlated extraction; merge proceeds but review is recommended.`,
+        );
+      }
+    }
+  }
+
+  // merged.generation = max(sourceGenerations) + 1. xrefs is the UNION of
+  // participants + canonical and legacy provenance already carried by them.
+  const provenanceUnion = [...new Set([...allParticipants, ...participantInfo.flatMap((p) => p.sourceRefs)])];
+  mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, provenanceUnion);
+
+  if (antiCollapseConfig.enabled !== false) {
+    // R5 §4.2: merge-information floor — ADVISORY in v1. A merge that
+    // shrinks provenance or genericizes below the retention floor is
+    // counted + warned, never refused (promotion path: design doc §7).
+    try {
+      const mergedParsed = parseFrontmatter(mergedContent);
+      const mergedFm = mergedParsed.data as Record<string, unknown>;
+      const mergedSourceRefs = Array.isArray(mergedFm.xrefs) ? mergedFm.xrefs.map(String) : [];
+      const floorCheck = checkMergeInformationFloor(
+        mergedParsed.content,
+        mergedSourceRefs,
+        participantInfo,
+        antiCollapseConfig,
+      );
+      if (!floorCheck.passed) {
+        counts.mergeFloorViolations++;
+        warnings.push(
+          `Merge: information floor advisory for ${op.primary}: ${floorCheck.reason ?? "unspecified"} — merge proceeds (v1 observe-only).`,
+        );
+      }
+    } catch {
+      // Floor measurement is best-effort; never blocks the merge path.
+    }
+  }
+
+  // Backup secondaries before deleting
+  for (const secRef of op.secondaries) {
+    const secEntry = memoryByRef.get(secRef);
+    if (secEntry && fs.existsSync(secEntry.filePath)) {
+      backupFile(secEntry.filePath, backupDir, secEntry.name);
+    }
+  }
+
+  // Write merged primary
+  try {
+    const parsedPrimary = parseRefInput(op.primary);
+    await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
+  } catch (e) {
+    warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
+    emitMergeFailureSkips("merge_write_failed");
+    return;
+  }
+
+  // Archive and delete secondaries (P1-B: soft-invalidation)
+  for (const secRef of op.secondaries) {
+    const secEntry = memoryByRef.get(secRef);
+    if (!secEntry) continue;
+    if (fs.existsSync(secEntry.filePath)) {
+      archiveMemory(secEntry.filePath, stashDir, secRef, "merged into primary", opIndex, op.primary, warnings);
+    }
+    try {
+      const parsedSec = parseRefInput(secRef);
+      await deleteAssetFromSource(target.source, target.config, parsedSec);
+      markJournalCompleted(ctx.txn, secRef);
+    } catch (e) {
+      warnings.push(`Merge: delete failed for ${secRef}: ${String(e)}`);
+    }
+  }
+
+  markJournalCompleted(ctx.txn, op.primary);
+  counts.merged++;
+  // 2026-05-26 accounting-leak fix: `merged` is op-level, but each
+  // successful merge actions `1 + secondaries.length` memories. Without
+  // this counter the accounting invariant breaks by `secondaries.length`
+  // per successful merge (chunk loop excluded all secondaries from
+  // judgedNoAction via targetRefs, but only the primary is credited to
+  // `merged`). Count only loaded-memory secondaries; phantom secondary
+  // refs never affected any chunk's targetRefs in the first place.
+  for (const secRef of op.secondaries) {
+    if (memoryByRef.has(secRef)) counts.mergedSecondaries++;
+  }
+  // Prune consumed refs from memoryByRef so later ops in this run cannot
+  // reference an absorbed secondary as a merge primary and proceed with a
+  // stale entry. Primary is rewritten (not deleted), so we only remove
+  // secondaries; the primary ref remains valid under its new content.
+  for (const secRef of op.secondaries) {
+    memoryByRef.delete(secRef);
+  }
+}
+
 export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx: ConsolidateOpContext): Promise<void> {
-  const { config, stashDir, target, backupDir, memoryByRef, warnings, pushSkipReason, counts } = ctx;
+  const { config, memoryByRef, warnings, pushSkipReason } = ctx;
   // Accounting helper: emit a per-participant skipReason for failed
   // merges so primary + every loaded-memory secondary land in the
   // structured skip histogram. Pre-2026-05-26 only the primary was
@@ -2217,7 +2074,7 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
     emitMergeFailureSkips(mergeResult.error);
     return;
   }
-  let mergedContent = mergeResult.content;
+  const mergedContent = mergeResult.content;
 
   // Validate frontmatter of merged content — must have a `---` block
   // with at minimum a `description` field. We parse via the hand-rolled
@@ -2273,143 +2130,7 @@ export async function handleMergeOp(op: ConsolidateMergeOp, opIndex: number, ctx
     return;
   }
 
-  const allParticipants = [op.primary, ...op.secondaries];
-  // Generation and provenance are mandatory merge metadata, independent of
-  // whether the optional anti-collapse refusal/advisory checks are enabled.
-  const participantInfo = allParticipants.map((ref) => {
-    const e = memoryByRef.get(ref);
-    if (!e) return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
-    try {
-      const raw = fs.readFileSync(e.filePath, "utf8");
-      const parsed = parseFrontmatter(raw);
-      const fm = parsed.data as Record<string, unknown>;
-      const sourceRefs = [
-        ...(Array.isArray(fm.xrefs) ? fm.xrefs.map(String) : []),
-        ...(Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : []),
-      ];
-      return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
-    } catch {
-      return { ref, generation: 0, body: "", sourceRefs: [] as string[] };
-    }
-  });
-  const sourceGenerations = participantInfo.map((p) => p.generation);
-
-  // WS-3b: Anti-collapse generation guard (step 8a).
-  // DEFAULT ON since R5 (opt out via antiCollapse.enabled: false). Refuses
-  // to merge two assets both above generation N (default 2) — prevents the
-  // pipeline from building ever-deeper LLM-merged trees that lose the
-  // source fidelity of the original episodes.
-  const antiCollapseConfig: AntiCollapseConfig =
-    (getImproveProcessConfig(config, "consolidate", ctx.improveProfile)?.antiCollapse as
-      | AntiCollapseConfig
-      | undefined) ?? {};
-  if (antiCollapseConfig.enabled !== false) {
-    const generationCheck = checkGenerationGuard(sourceGenerations, antiCollapseConfig);
-    if (generationCheck.refused) {
-      warnings.push(`Merge: ${generationCheck.reason}`);
-      emitMergeFailureSkips("merge_generation_guard");
-      return;
-    }
-
-    // WS-3b: Lexical diversity check (step 8b).
-    // Low n-gram diversity ⇒ likely correlated-extraction artifact; raise merge threshold.
-    if (antiCollapseConfig.lexicalDiversityCheck !== false) {
-      const bodies = participantInfo.map((p) => p.body).filter((b) => b.length > 0);
-
-      const diversityCheck = checkLexicalDiversity(bodies, antiCollapseConfig);
-      if (diversityCheck.lowDiversity) {
-        // Low-diversity cluster: just warn (don't refuse merge since the dedup
-        // path handles exact twins). The warning surfaces in health telemetry.
-        warnings.push(
-          `Merge: cluster around ${op.primary} has low lexical diversity (${diversityCheck.diversity?.toFixed(2) ?? "?"} < 0.30) — likely correlated extraction; merge proceeds but review is recommended.`,
-        );
-      }
-    }
-  }
-
-  // merged.generation = max(sourceGenerations) + 1. xrefs is the UNION of
-  // participants + canonical and legacy provenance already carried by them.
-  const provenanceUnion = [...new Set([...allParticipants, ...participantInfo.flatMap((p) => p.sourceRefs)])];
-  mergedContent = injectGenerationFrontmatter(mergedContent, sourceGenerations, provenanceUnion);
-
-  if (antiCollapseConfig.enabled !== false) {
-    // R5 §4.2: merge-information floor — ADVISORY in v1. A merge that
-    // shrinks provenance or genericizes below the retention floor is
-    // counted + warned, never refused (promotion path: design doc §7).
-    try {
-      const mergedParsed = parseFrontmatter(mergedContent);
-      const mergedFm = mergedParsed.data as Record<string, unknown>;
-      const mergedSourceRefs = Array.isArray(mergedFm.xrefs) ? mergedFm.xrefs.map(String) : [];
-      const floorCheck = checkMergeInformationFloor(
-        mergedParsed.content,
-        mergedSourceRefs,
-        participantInfo,
-        antiCollapseConfig,
-      );
-      if (!floorCheck.passed) {
-        counts.mergeFloorViolations++;
-        warnings.push(
-          `Merge: information floor advisory for ${op.primary}: ${floorCheck.reason ?? "unspecified"} — merge proceeds (v1 observe-only).`,
-        );
-      }
-    } catch {
-      // Floor measurement is best-effort; never blocks the merge path.
-    }
-  }
-
-  // Backup secondaries before deleting
-  for (const secRef of op.secondaries) {
-    const secEntry = memoryByRef.get(secRef);
-    if (secEntry && fs.existsSync(secEntry.filePath)) {
-      backupFile(secEntry.filePath, backupDir, secEntry.name);
-    }
-  }
-
-  // Write merged primary
-  try {
-    const parsedPrimary = parseAssetRef(op.primary);
-    await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
-  } catch (e) {
-    warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
-    emitMergeFailureSkips("merge_write_failed");
-    return;
-  }
-
-  // Archive and delete secondaries (P1-B: soft-invalidation)
-  for (const secRef of op.secondaries) {
-    const secEntry = memoryByRef.get(secRef);
-    if (!secEntry) continue;
-    if (fs.existsSync(secEntry.filePath)) {
-      archiveMemory(secEntry.filePath, stashDir, secRef, "merged into primary", opIndex, op.primary, warnings);
-    }
-    try {
-      const parsedSec = parseAssetRef(secRef);
-      await deleteAssetFromSource(target.source, target.config, parsedSec);
-      markJournalCompleted(stashDir, secRef);
-    } catch (e) {
-      warnings.push(`Merge: delete failed for ${secRef}: ${String(e)}`);
-    }
-  }
-
-  markJournalCompleted(stashDir, op.primary);
-  counts.merged++;
-  // 2026-05-26 accounting-leak fix: `merged` is op-level, but each
-  // successful merge actions `1 + secondaries.length` memories. Without
-  // this counter the accounting invariant breaks by `secondaries.length`
-  // per successful merge (chunk loop excluded all secondaries from
-  // judgedNoAction via targetRefs, but only the primary is credited to
-  // `merged`). Count only loaded-memory secondaries; phantom secondary
-  // refs never affected any chunk's targetRefs in the first place.
-  for (const secRef of op.secondaries) {
-    if (memoryByRef.has(secRef)) counts.mergedSecondaries++;
-  }
-  // Prune consumed refs from memoryByRef so later ops in this run cannot
-  // reference an absorbed secondary as a merge primary and proceed with a
-  // stale entry. Primary is rewritten (not deleted), so we only remove
-  // secondaries; the primary ref remains valid under its new content.
-  for (const secRef of op.secondaries) {
-    memoryByRef.delete(secRef);
-  }
+  await finalizeMerge(op, opIndex, ctx, mergedContent, emitMergeFailureSkips);
 }
 
 /** Execute one `delete` op (behavior-identical to the former inlined branch). */
@@ -2451,9 +2172,9 @@ export async function handleDeleteOp(
   }
 
   try {
-    const parsedRef = parseAssetRef(op.ref);
+    const parsedRef = parseRefInput(op.ref);
     await deleteAssetFromSource(target.source, target.config, parsedRef);
-    markJournalCompleted(stashDir, op.ref);
+    markJournalCompleted(ctx.txn, op.ref);
     counts.deleted++;
     // Prune from memoryByRef so later ops in this run cannot reference a
     // deleted memory as a merge primary or secondary.
@@ -2508,22 +2229,23 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
-  const knowledgeRef = `knowledge:${slug}`;
-  parseAssetRef(knowledgeRef);
+  const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
+  parseRefInput(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef) {
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   }
 
-  // Idempotency: check pending proposals by target ref
-  const existingProposals = listProposals(stashDir, { ref: knowledgeRef });
-  if (existingProposals.some((p) => p.status === "pending")) {
+  // Idempotency: a pending proposal already queued for this knowledge concept
+  // (grammar-independent — WI-8.5a stores proposals.ref as the item_ref, so an
+  // exact `{ ref: knowledge:slug }` filter would miss it).
+  if (hasPendingProposalForConcept(stashDir, knowledgeRef)) {
     warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
     pushSkipReason("promote", op.ref, "promote_pending_proposal_exists");
     return;
   }
 
   // Idempotency: check if knowledge asset already exists
-  const parsedKnowledgeRef = parseAssetRef(knowledgeRef);
+  const parsedKnowledgeRef = parseRefInput(knowledgeRef);
   const destPath = path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`);
   if (fs.existsSync(destPath)) {
     warnings.push(`Skipping promote: ${knowledgeRef} already exists in source`);
@@ -2598,7 +2320,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     (p) => p.source === "consolidate",
   );
   const contentDupProposal = allPendingConsolidateProposals.find((p) => {
-    return cacheHash(p.payload.content) === bodyHash;
+    return cacheHash(proposalContent(p)) === bodyHash;
   });
   if (contentDupProposal) {
     warnings.push(
@@ -2641,12 +2363,10 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
     const mergedBodyFm: Record<string, unknown> = {
       ...(parsedMemory.data ?? {}),
       description,
-      xrefs: [
-        ...new Set([...(Array.isArray(parsedMemory.data?.xrefs) ? parsedMemory.data.xrefs.map(String) : []), op.ref]),
-      ],
+      xrefs: promoteProvenanceXrefs(parsedMemory.data?.xrefs, op.ref),
     };
     const serializedMergedFm = serializeFrontmatter(mergedBodyFm);
-    const proposalContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
+    const promotedAssetContent = assembleAssetFromString(serializedMergedFm, parsedMemory.content);
 
     // Pre-emit dedup against pending consolidate proposals from the
     // same improve run (slug-variant match). The cross-run content-hash
@@ -2665,23 +2385,28 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
       return;
     }
 
-    const proposalResult = createProposal(stashDir, {
-      ref: knowledgeRef,
-      source: "consolidate",
-      sourceRun,
-      payload: {
-        content: proposalContent,
-        frontmatter: { description, xrefs: [op.ref] },
+    const proposalResult = emitProposal(
+      { stashDir },
+      {
+        ref: knowledgeRef,
+        source: "consolidate",
+        sourceRun,
+        // §23.6 fingerprint model-id term (WI-6.4).
+        ...(ctx.llmConfig?.model ? { modelId: ctx.llmConfig.model } : {}),
+        payload: {
+          content: promotedAssetContent,
+          frontmatter: { description, xrefs: [canonicalXref(op.ref)] },
+        },
+        ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       },
-      ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
-    });
+    );
     if (isProposalSkipped(proposalResult)) {
       warnings.push(`Promote: skipped proposal for ${op.ref} (${proposalResult.reason}): ${proposalResult.message}`);
       pushSkipReason("promote", op.ref, `promote_proposal_${proposalResult.reason}`);
     } else {
       promoted.push(proposalResult.id);
       promotedSourceRefs.add(op.ref);
-      markJournalCompleted(stashDir, op.ref);
+      markJournalCompleted(ctx.txn, op.ref);
     }
   } catch (e) {
     warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
@@ -2691,7 +2416,7 @@ export async function handlePromoteOp(op: ConsolidatePromoteOp, ctx: Consolidate
 
 /** Execute one `contradict` op (behavior-identical to the former inlined branch). */
 export async function handleContradictOp(op: ConsolidateContradictOp, ctx: ConsolidateOpContext): Promise<void> {
-  const { stashDir, memoryByRef, warnings, pushSkipReason, counts } = ctx;
+  const { memoryByRef, warnings, pushSkipReason, counts } = ctx;
   // Confidence gate: surface-level topic overlap causes false positives
   // (investigation 2026-06-18). Require ≥0.92 confidence before writing
   // contradiction edges. Missing confidence field defaults to 1.0 for
@@ -2730,7 +2455,7 @@ export async function handleContradictOp(op: ConsolidateContradictOp, ctx: Conso
     // Write the contradiction edge: op.ref is contradicted by op.contradictedByRef
     writeContradictEdge(entry.filePath, op.contradictedByRef);
     counts.contradicted++;
-    markJournalCompleted(stashDir, op.ref);
+    markJournalCompleted(ctx.txn, op.ref);
   } catch (e) {
     warnings.push(`Contradict: failed to write edge for ${op.ref}: ${String(e)}`);
     pushSkipReason("contradict", op.ref, "contradict_write_failed");
@@ -2749,8 +2474,35 @@ export async function handleContradictOp(op: ConsolidateContradictOp, ctx: Conso
  * Two slugs that normalise to the same string are considered the same asset
  * for dedup purposes even if they don't share an exact ref.
  */
+/** The conceptId a proposal ref maps to in EITHER grammar (WI-8.5a), or undefined. */
+function conceptIdForRef(ref: string): string | undefined {
+  try {
+    const p = parseRefInput(ref);
+    return conceptIdFromTypeName(p.type, p.name);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is a pending proposal already queued for `conceptRef`'s concept (grammar-independent)? */
+function hasPendingProposalForConcept(stashDir: string, conceptRef: string): boolean {
+  const want = conceptIdForRef(conceptRef);
+  return (
+    want !== undefined && listProposals(stashDir, { status: "pending" }).some((p) => conceptIdForRef(p.ref) === want)
+  );
+}
+
 function normalizeSlugForDedup(ref: string): string {
-  const slug = ref.replace(/^[^:]+:/, "");
+  // Extract the bare asset name from EITHER grammar (WI-8.5a: proposals.ref is the
+  // item_ref `bundle//conceptId`, which carries no `type:` colon — the old
+  // `replace(/^[^:]+:/,"")` strip would leave the bundle/type prefix in). The name
+  // is identical across grammars, so the dedup slug stays stable across the flip.
+  let slug: string;
+  try {
+    slug = parseRefInput(ref).name;
+  } catch {
+    slug = ref.replace(/^[^:]+:/, "");
+  }
   const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
   const tokens = slug
     .toLowerCase()
@@ -2816,27 +2568,15 @@ async function checkPreEmitDedup(opts: {
  * everything changed or the index can't answer (fail-open to preserve merge
  * correctness). `since` is an ISO timestamp.
  */
-/**
- * Parse a human-readable duration string (e.g. "30m", "24h", "7d") to an ISO
- * timestamp representing `now - duration`. Returns the input unchanged when it
- * doesn't match the pattern (assumed to already be an ISO timestamp).
- */
-function parseSinceToIso(since: string): string {
-  // Canonical CLI unit grammar: `m` = minutes, `M` = months (see core/time.ts
-  // DURATION_UNITS). Non-matching input is returned unchanged (assumed to
-  // already be an ISO timestamp).
-  const ms = parseDuration(since, DURATION_UNITS);
-  if (ms === null) return since;
-  return new Date(Date.now() - ms).toISOString();
-}
-
 export function narrowToIncrementalCandidates(
   memories: MemoryEntry[],
   since: string,
   warnings: string[],
   neighborsPerChanged = 5,
 ): MemoryEntry[] {
-  const sinceIso = parseSinceToIso(since);
+  // Lenient by design: garbage `since` passes through unchanged and the ISO
+  // string comparison below then selects nothing (see core/time.ts doc).
+  const sinceIso = parseSinceToIsoLenient(since);
   const isChanged = (m: MemoryEntry): boolean => {
     try {
       return fs.statSync(m.filePath).mtime.toISOString() > sinceIso;
@@ -2854,7 +2594,7 @@ export function narrowToIncrementalCandidates(
   try {
     db = openExistingDatabase();
     for (const m of changed) {
-      const id = findEntryIdByRef(db, `memory:${m.name}`);
+      const id = findEntryIdByRef(db, conceptIdFromTypeName("memory", m.name));
       if (id === undefined) continue;
       for (const hit of getNeighborsByEntryId(db, id, neighborsPerChanged + 1)) {
         if (hit.id === id) continue;
@@ -2959,7 +2699,7 @@ async function generateMergedContent(
 ): Promise<MergeResult> {
   // Only handle single-secondary merges per design (one call per merge op)
   const secRef = secondaryRefs[0];
-  const secEntry = memoryByRef.get(secRef);
+  const secEntry = secRef !== undefined ? memoryByRef.get(secRef) : undefined;
   if (!secEntry) return { error: "merge_read_failed", detail: `secondary ${secRef} not in memoryByRef` };
 
   let secBody = "";
@@ -3004,23 +2744,23 @@ async function generateMergedContent(
   // so the merge generation step doesn't silently revert to the default LLM.
   const llmConfig =
     resolvedLlmConfig === null ? undefined : (resolvedLlmConfig ?? resolveConsolidateLlmConfig(config, activeProfile));
-  const result = await tryLlmFeature(
-    "memory_consolidation",
-    config,
-    async () => {
-      if (!llmConfig) return { ok: false as const, error: "No LLM configured for consolidation" };
-      try {
-        const content = await chatCompletion(llmConfig, [{ role: "user", content: prompt }], {
-          enableThinking: false,
-        });
-        return { ok: true as const, content };
-      } catch (e) {
-        return { ok: false as const, error: String(e) };
-      }
-    },
-    { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
-    { enabled: true },
-  );
+  // Same envelope semantics as the chunk-plan call above: the gate runs with
+  // enabled:true, the missing-LLM guard returns the envelope the gated fn
+  // used to return, a transport throw becomes an {ok:false} envelope via
+  // onError, and the fallback fires only on wrapper timeout.
+  const result = !llmConfig
+    ? { ok: false as const, error: "No LLM configured for consolidation" }
+    : await callStructured<{ ok: true; content: string } | { ok: false; error: string }>({
+        feature: "memory_consolidation",
+        akmConfig: config,
+        enabled: true,
+        config: llmConfig,
+        messages: [{ role: "user", content: prompt }],
+        request: { enableThinking: false },
+        parse: (raw) => ({ ok: true as const, content: raw ?? "" }),
+        onError: (_cls, e) => ({ ok: false as const, error: String(e) }),
+        fallback: { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
+      });
 
   if (!result.ok) {
     return {
@@ -3116,3 +2856,19 @@ async function promptConfirm(message: string): Promise<boolean> {
     rl.once("close", () => done(false));
   });
 }
+
+// Checklist journals are never auto-recovered — recovery is a run-entry
+// decision (`--consolidate-recovery abort|clean`). Registered so any generic
+// engine recovery that reaches one aborts with the same guidance instead of
+// improvising a rollback.
+registerTxnKind<ConsolidateJournalPayload>(CONSOLIDATE_TXN_KIND, {
+  phases: CONSOLIDATE_TXN_PHASES,
+  commitPhase: "applying",
+  rollback: () => {},
+  finalize: (txn) => {
+    throw new ConfigError(
+      `Incomplete consolidation run detected at ${txn.journalPath}. Re-run with --consolidate-recovery clean to remove stale journal artifacts.`,
+      "INVALID_CONFIG_FILE",
+    );
+  },
+});

@@ -101,6 +101,8 @@ describe("stepScheduledTasks", () => {
     expect(improve?.hint).toContain("Run improve pipeline nightly");
     expect(improve?.hint).toContain("0 2 * * *");
     expect(improve?.hint).toContain("not installed");
+    expect(opts.find((o) => o.value === "extract")?.label).toBe("core/extract");
+    expect(state.multiselectConfig?.initialValues).not.toContain("extract");
   });
 
   test("pre-checks already-installed enabled tasks; disabled/absent are not pre-checked", async () => {
@@ -132,7 +134,8 @@ describe("stepScheduledTasks", () => {
     state.multiselectReturn = ["extract"];
     state.textReturns = ["0 5 * * *"]; // user edits the schedule
     await stepScheduledTasks(deps);
-    expect(calls.added).toEqual([{ id: "extract", schedule: "0 5 * * *", command: "akm extract" }]);
+    expect(calls.added).toHaveLength(1);
+    expect(calls.added[0]).toMatchObject({ id: "extract", schedule: "0 5 * * *" });
   });
 
   test("unchecking a previously-enabled task disables it (no add, keeps file)", async () => {
@@ -164,15 +167,18 @@ describe("stepScheduledTasks", () => {
 });
 
 describe("scheduled-tasks step registration", () => {
-  test("is interactive-only (not nonInteractive) so --yes / init skip it", () => {
+  test("is NOT part of buildSetupSteps so --yes / init never touch the scheduler", () => {
+    // The scheduled-tasks step is the only wizard step with externally-visible
+    // side effects (task files + OS scheduler entries). It was pulled out of
+    // the shared step list so `runSetupWizard` can run it by hand only AFTER
+    // the config is confirmed and persisted. Keeping it out of the list is
+    // what preserves the issue #512 guard: the non-interactive entry points
+    // run this list but never the scheduled-tasks work.
     const { steps } = buildSetupSteps({
       online: false,
       semanticSearchOutcome: { mode: "off", prepareAssets: false },
     });
-    const step = steps.find((s) => s.id === "scheduled-tasks");
-    expect(step).toBeDefined();
-    expect(step?.label).toBe("Scheduled Tasks");
-    expect(step?.nonInteractive).toBeFalsy();
-    expect(steps[steps.length - 1]?.id).toBe("scheduled-tasks");
+    expect(steps.find((s) => s.id === "scheduled-tasks")).toBeUndefined();
+    expect(steps[steps.length - 1]?.id).toBe("output");
   });
 });

@@ -83,7 +83,7 @@ export function deterministicEmbed(text: string, dim: number = DETERMINISTIC_EMB
     const idx = h % dim;
     // Use a higher bit for the sign so it is independent of the bucket index.
     const sign = (h >>> 16) & 1 ? 1 : -1;
-    vec[idx] += sign;
+    vec[idx] = vec[idx]! + sign;
   }
   let norm = 0;
   for (const v of vec) norm += v * v;
@@ -93,6 +93,6 @@ export function deterministicEmbed(text: string, dim: number = DETERMINISTIC_EMB
     vec[0] = 1;
     return vec;
   }
-  for (let i = 0; i < dim; i++) vec[i] /= norm;
+  for (let i = 0; i < dim; i++) vec[i] = vec[i]! / norm;
   return vec;
 }

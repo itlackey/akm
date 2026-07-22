@@ -48,6 +48,7 @@ import {
   resolveJudgeEndpoint,
 } from "./sources/llm-judge";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
+import { fingerprintEvalCases } from "./sources/eval-runs";
 import { ReplayRecorder, setCurrentRecorder } from "./sources/replay-log";
 import { createSandbox, type Sandbox } from "./sources/sandbox";
 import type {
@@ -661,6 +662,8 @@ async function main(): Promise<number> {
   };
 
   const cases = loadCases(casesRoot, opts.suite);
+  const suiteFingerprint = fingerprintEvalCases(cases, path.join(casesRoot, opts.suite));
+  baseCtx.suiteFingerprint = suiteFingerprint;
   let baselineResults: EvalCaseResult[] | undefined;
   let pairedImproveSummary: Record<string, unknown> | undefined;
   let pairedComparison: ReturnType<typeof compareResultsInMemory> | undefined;
@@ -708,7 +711,7 @@ async function main(): Promise<number> {
     scores.baseline = baselineAgg.overall;
     scores.delta = overall - baselineAgg.overall;
     const baselineEnvelope: EvalRunResult = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       evalRunId: `${evalRunId}-baseline`,
       suite: opts.suite,
       mode: "baseline",
@@ -717,7 +720,7 @@ async function main(): Promise<number> {
       completedAt: startedAt.toISOString(),
       durationMs: 0,
       akm: { version: akmVersion, stashRoot: activeStashRoot, dataDir: activeDataDir },
-      inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite) },
+      inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite), suiteFingerprint },
       scores: { overall: baselineAgg.overall, deterministic: baselineAgg.deterministic },
       countsByType: buildCountsByType(baselineResults),
       metrics: {},
@@ -725,7 +728,7 @@ async function main(): Promise<number> {
       artifacts: {},
     };
     const currentEnvelopePreview: EvalRunResult = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       evalRunId,
       suite: opts.suite,
       mode: opts.mode,
@@ -734,7 +737,7 @@ async function main(): Promise<number> {
       completedAt: completedAt.toISOString(),
       durationMs: completedAt.getTime() - startedAt.getTime(),
       akm: { version: akmVersion, stashRoot: activeStashRoot, dataDir: activeDataDir },
-      inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite) },
+      inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite), suiteFingerprint },
       scores,
       countsByType,
       metrics: {},
@@ -791,7 +794,7 @@ async function main(): Promise<number> {
   if (plannerWasteMetrics) envelopeMetrics.plannerWaste = plannerWasteMetrics;
 
   const envelope: EvalRunResult = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     evalRunId,
     suite: opts.suite,
     mode: opts.mode,
@@ -800,7 +803,7 @@ async function main(): Promise<number> {
     completedAt: completedAt.toISOString(),
     durationMs: completedAt.getTime() - startedAt.getTime(),
     akm: { version: akmVersion, stashRoot: activeStashRoot, dataDir: activeDataDir },
-    inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite) },
+    inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite), suiteFingerprint },
     scores,
     countsByType,
     metrics: envelopeMetrics,

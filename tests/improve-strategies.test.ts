@@ -29,6 +29,41 @@ describe("resolveImproveStrategy", () => {
     expect(selected.config.processes?.proactiveMaintenance?.enabled).toBe(false);
   });
 
+  test("explicit user opt-ins override inherited built-in process defaults", () => {
+    const defaultStrategy = resolveImproveStrategy("default", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          default: {
+            processes: {
+              extract: { enabled: true },
+              proactiveMaintenance: { enabled: true },
+            },
+          },
+        },
+      },
+    });
+    const frequent = resolveImproveStrategy("frequent", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: { frequent: { processes: { extract: { enabled: true } } } },
+      },
+    });
+    const reflectDistill = resolveImproveStrategy("reflect-distill", {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          "reflect-distill": { processes: { proactiveMaintenance: { enabled: true } } },
+        },
+      },
+    });
+
+    expect(defaultStrategy.config.processes?.extract?.enabled).toBe(true);
+    expect(defaultStrategy.config.processes?.proactiveMaintenance?.enabled).toBe(true);
+    expect(frequent.config.processes?.extract?.enabled).toBe(true);
+    expect(reflectDistill.config.processes?.proactiveMaintenance?.enabled).toBe(true);
+  });
+
   test("uses defaults.improveStrategy before the built-in default", () => {
     const selected = resolveImproveStrategy(undefined, {
       configVersion: "0.9.0",
@@ -69,8 +104,6 @@ describe("resolveImprovePlan", () => {
       "graphExtraction",
       "memoryInference",
       "proactiveMaintenance",
-      "procedural",
-      "recombine",
       "reflect",
       "triage",
       "validation",
@@ -94,10 +127,8 @@ describe("resolveImprovePlan", () => {
               consolidate: { enabled: true },
               memoryInference: { enabled: true },
               graphExtraction: { enabled: true },
-              extract: { enabled: true, hotProbation: { enabled: true } },
+              extract: { enabled: true, triage: { enabled: true } },
               validation: { enabled: true },
-              recombine: { enabled: true },
-              procedural: { enabled: true },
             },
           },
         },
@@ -112,15 +143,13 @@ describe("resolveImprovePlan", () => {
       "graphExtraction",
       "extract",
       "validation",
-      "recombine",
-      "procedural",
     ] as const) {
       expect(plan.processes[name].runner?.engine).toBe("default");
     }
-    expect(Object.isFrozen(plan.processes.extract.config.hotProbation)).toBe(true);
+    expect(Object.isFrozen(plan.processes.extract.config.triage)).toBe(true);
     const sourceExtract = config.improve?.strategies?.all?.processes?.extract;
-    if (sourceExtract?.hotProbation) sourceExtract.hotProbation.enabled = false;
-    expect(plan.processes.extract.config.hotProbation?.enabled).toBe(true);
+    if (sourceExtract?.triage) sourceExtract.triage.enabled = false;
+    expect(plan.processes.extract.config.triage?.enabled).toBe(true);
   });
 
   test("retains symbolic credentials in the frozen improve plan", () => {

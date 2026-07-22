@@ -41,7 +41,7 @@ describe("preFilterSession — drop rules", () => {
   test("drops read-only akm meta-ops via flattened tool_use", () => {
     const result = preFilterSession(
       makeData([
-        event({ text: "[tool:Bash] akm show knowledge:foo" }),
+        event({ text: "[tool:Bash] akm show knowledge/foo" }),
         event({ text: "[tool:Bash] akm search 'auth pattern' --type lesson" }),
         event({ text: "[tool:Bash] akm curate 'session extractor'" }),
         event({ text: "[tool:Bash] akm history --include-proposals" }),
@@ -59,7 +59,7 @@ describe("preFilterSession — drop rules", () => {
   test("keeps mutating akm commands (remember, feedback, accept, reject, extract, import)", () => {
     const events = [
       event({ text: `[tool:Bash] akm remember "VPN needed before deploy"` }),
-      event({ text: `[tool:Bash] akm feedback knowledge:auth --positive --note "saved time"` }),
+      event({ text: `[tool:Bash] akm feedback knowledge/auth --positive --note "saved time"` }),
       event({ text: "[tool:Bash] akm accept abc123" }),
       event({ text: "[tool:Bash] akm reject xyz789 --reason 'duplicate'" }),
       event({ text: "[tool:Bash] akm extract --type claude-code --session-id foo" }),
@@ -72,7 +72,7 @@ describe("preFilterSession — drop rules", () => {
   test("matches akm verb even when prose surrounds it", () => {
     const result = preFilterSession(
       makeData([
-        event({ text: "agent's response: I'll run akm show knowledge:foo to check the existing asset content" }),
+        event({ text: "agent's response: I'll run akm show knowledge/foo to check the existing asset content" }),
       ]),
     );
     expect(result.events).toHaveLength(0);

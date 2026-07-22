@@ -17,11 +17,12 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
-import { closeDatabase, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
 import { loadStoredGraphSnapshot } from "../../src/indexer/db/graph-db";
 import type { GraphExtractionResult } from "../../src/indexer/graph/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { GraphExtraction } from "../../src/llm/graph-extract";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
 

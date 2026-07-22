@@ -4,7 +4,8 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, parseAutoAcceptFlag, parseNonNegativeIntFlag, parsePositiveIntFlag } from "../../cli/parse-args";
+import { getParsedInvocation } from "../../cli/invocation";
+import { getStringArg, parseAutoAcceptFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -13,18 +14,17 @@ import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { closeDatabase, openExistingDatabase } from "../../indexer/db/db";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { parseFlagValue } from "../../output/context";
 import { getActiveCanaries, queryRecentCycleMetrics } from "../../storage/repositories/canaries-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { refreshCanarySet } from "./collapse-detector";
 import { akmImprove } from "./improve";
 import {
   buildImproveRunId,
+  improveRunLocator,
+  recordImproveRunResult,
   recordTerminatedImproveRun,
-  relativeImproveResultPath,
   type TerminationReason,
-  writeImproveResultFile,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
 import { resolveImprovePlan } from "./improve-strategies";
@@ -112,7 +112,7 @@ export const improveCommand = defineCommand({
     "auto-accept": {
       type: "string",
       description:
-        "Auto-accept proposals at or above this confidence threshold (0-100). Default: disabled. Pass a value 0-100 to enable. 'safe' is an alias for 90. Pass 'false' to be explicit.",
+        "DEPRECATED and ignored (the 0.9.0 confidence gate was removed; proposals queue for review via `akm proposal` / the drain engine). Accepted for one minor so existing crontabs keep working; removed in 0.10.",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {
@@ -126,13 +126,9 @@ export const improveCommand = defineCommand({
     },
     "require-feedback-signal": {
       type: "boolean",
-      description: "Only process assets with recent feedback signals (disables retrieval fallback)",
-      default: false,
-    },
-    "min-retrieval-count": {
-      type: "string",
       description:
-        "Minimum retrieval count for zero-feedback fallback eligibility (default: 1, set 0 to include all assets regardless of retrieval history)",
+        "Only process assets with recent feedback signals (disables the proactive/high-salience fallback lanes)",
+      default: false,
     },
     "json-to-stdout": {
       type: "boolean",
@@ -171,7 +167,7 @@ export const improveCommand = defineCommand({
       return;
     }
     await runWithJsonErrors(async () => {
-      const formatFlagValue = parseFlagValue(process.argv, "--format");
+      const formatFlagValue = getParsedInvocation().getFlagValue("--format");
       if (formatFlagValue !== undefined) {
         throw new UsageError(
           `akm improve does not accept --format. That flag controls output formatting for other commands (search, show, etc.).\n` +
@@ -180,8 +176,8 @@ export const improveCommand = defineCommand({
         );
       }
       const jsonToStdout = args["json-to-stdout"];
-      const autoAcceptRaw = args["auto-accept"];
-      const autoAccept = parseAutoAcceptFlag(autoAcceptRaw);
+      // Deprecated (0.9.0): warns when present, has no effect. Removed in 0.10.
+      parseAutoAcceptFlag(args["auto-accept"]);
       const targetArg = getStringArg(args, "target");
       const taskArg = getStringArg(args, "task");
       const dryRun = args["dry-run"];
@@ -198,8 +194,6 @@ export const improveCommand = defineCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const minRetrievalCountRaw = args["min-retrieval-count"];
-      const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
@@ -285,11 +279,9 @@ export const improveCommand = defineCommand({
                 resolvedPlan,
                 target: targetArg,
                 writeTarget,
-                autoAccept,
                 ...(runId !== undefined ? { runId } : {}),
                 ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
                 ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-                ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
@@ -297,7 +289,6 @@ export const improveCommand = defineCommand({
                 consolidateOptions: {
                   target: targetArg,
                   dryRun,
-                  autoAccept,
                   task: taskArg,
                   ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
                 },
@@ -348,11 +339,11 @@ export const improveCommand = defineCommand({
       //      ORDER BY started_at DESC LIMIT 10"
       // runId + primaryStashDir minted up-top so signal handlers can record
       // partial runs; reuse them here for the success path.
-      const resultRef = relativeImproveResultPath(runId);
+      const resultRef = improveRunLocator(runId);
       runRecorded = true; // Suppress any late signal-handler write — the success path owns the row now.
       if (primaryStashDir) {
         try {
-          writeImproveResultFile(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
+          recordImproveRunResult(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
           // Stderr warning on the failure path is preferable to crashing
           // the run after all the work has completed.

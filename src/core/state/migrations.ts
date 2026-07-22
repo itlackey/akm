@@ -361,12 +361,19 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // One-shot ledger for the legacy filesystem→SQLite proposal import (#578).
   //
-  // Before 0.9.0 the proposal queue lived as per-uuid JSON directories under
-  // `<stashDir>/.akm/proposals/` and the `proposals` table (created in 001) was
-  // dead weight. 0.9.0 makes the table canonical; the first proposal operation
-  // against a stash imports any legacy `proposal.json` files it finds (INSERT
-  // OR IGNORE, so re-runs never duplicate) and records the stash here so later
-  // invocations skip the directory walk entirely.
+  // VESTIGIAL as of the Chunk-8 fold: the legacy `proposal.json` import moved
+  // OUT of the live per-operation path and INTO the one-time migrator
+  // (`src/migrate/legacy/proposal-fs-import.ts`, wired through `akm migrate apply`),
+  // whose idempotency is INSERT OR IGNORE on the proposal UUID plus migrate-apply's
+  // own journal — it no longer reads or writes this ledger. The CREATE TABLE
+  // stays because the migration registry is APPEND-ONLY and checksum-sealed:
+  // removing a released fragment would make the schema_migrations ledger of an
+  // already-migrated rc database stop being an exact ordered prefix, and the
+  // runner would refuse to open it. The empty table is harmless.
+  //
+  // Original purpose (pre-fold): the first proposal operation against a stash
+  // imported any legacy `proposal.json` files (INSERT OR IGNORE) and recorded
+  // the stash here so later invocations skipped the directory walk.
   //
   // Indexed (query) columns:
   //   stash_dir    TEXT PK  — absolute stash root the import ran against.
@@ -721,7 +728,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   // ── Migration 016 — collapse/churn detector (R5) ─────────────────────────────
   //
   // Longitudinal store-health history for the improve pipeline
-  // (docs/design/improve-collapse-churn-detector-design.md).
+  // (docs/architecture/specs/improve-collapse-churn-detector-design.md).
   //
   //   canary_queries — the fixed canary set, minted deterministically from the
   //     live stash on first detector run and NEVER auto-refreshed (silent
@@ -730,7 +737,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //     rows stay interpretable. Tens of rows; never purged.
   //
   //   improve_cycle_metrics — one row per qualifying improve cycle (a run where
-  //     consolidate processed ≥1 op or recombine evaluated ≥1 cluster). Every
+  //     consolidate processed ≥1 op). Every
   //     column is a scalar or a size-capped JSON blob (< 2 KB/row by
   //     construction — the result_json lesson applied). Retention: 365 days via
   //     purgeOldCycleMetrics. Trend queries drive the collapse/churn alert
@@ -781,6 +788,194 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     up: `
       ALTER TABLE improve_runs ADD COLUMN strategy TEXT;
       CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
+    `,
+  },
+  // ── Migration 018 — drop dead-lane schema (Chunk 7, WI-7.3) ──────────────────
+  //
+  // Drops the on-disk schema for three lanes deleted by the 0.9.0 bundle-adapter
+  // refactor. Append-only: migrations 007/010/014 above are left verbatim; this
+  // migration only removes what they created.
+  //
+  //   - recombine_hypotheses (+ its last-seen index) — the whole-corpus
+  //     cross-episodic synthesis pass (migration 014) was deleted in Chunk 7
+  //     WI-7.1 (R28).
+  //   - consolidation_judged — the judged-state cache (#581, migration 007) was
+  //     deleted in Chunk 7 WI-7.3 (plan §5). This is a LIVE behavior change:
+  //     every consolidate run now re-judges unchanged memories (more LLM calls)
+  //     instead of skipping them — see the chunk-7 ledger.
+  //   - asset_outcome.review_pressure (+ its DESC index) — the review-pressure
+  //     lane (#613, migration 010) was deleted in Chunk 7 WI-7.2 (R21); this
+  //     migration finishes the column/index drop the code-side deletion left
+  //     pending. `retrieval_count`/`outcome_score` and their index are untouched.
+  {
+    id: "018-drop-dead-lane-schema",
+    up: `
+      DROP INDEX IF EXISTS idx_recombine_hypotheses_last_seen;
+      DROP TABLE IF EXISTS recombine_hypotheses;
+
+      DROP TABLE IF EXISTS consolidation_judged;
+
+      DROP INDEX IF EXISTS idx_asset_outcome_review_pressure;
+      ALTER TABLE asset_outcome DROP COLUMN review_pressure;
+    `,
+  },
+
+  // ── Migration 019 — proposal input fingerprints (Chunk 6, WI-6.4) ────────────
+  //
+  // Durable store for the §23.6 input fingerprints that replace the
+  // dedup/cooldown content-hash machinery (plan §4.5): one row per processed
+  // fingerprint (scheme version + source + target ref + target before-hash +
+  // reserved evidence/guidance/evaluator terms + engine/model-id term). A
+  // matching fingerprint skips re-processing the same inputs unless
+  // explicitly forced; rows are pruned with the proposal retention window.
+  // Rejection backoff (the retained cooldown) keeps reading the proposals
+  // table itself and needs no schema.
+  {
+    id: "019-proposal-fingerprints",
+    up: `
+      CREATE TABLE IF NOT EXISTS proposal_fingerprints (
+        stash_dir TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model_id TEXT NOT NULL DEFAULT '',
+        proposal_id TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (stash_dir, fingerprint)
+      );
+      CREATE INDEX IF NOT EXISTS idx_proposal_fingerprints_ref
+        ON proposal_fingerprints(stash_dir, ref);
+    `,
+  },
+
+  // ── Migration 020 — three-DB cutover baseline DDL (Chunk 8, WI-8.2) ───────────
+  //
+  // The state.db half of the three-DB merge (plan §3.2/§8, normative §11.4,
+  // chunk-8 cutover design §1). This migration is PURE,
+  // SEALABLE, IDEMPOTENT DDL ONLY — `CREATE TABLE IF NOT EXISTS` (+ indexes),
+  // never a DROP or a data move. The actual data movement (the workflow.db merge,
+  // the usage_events rescue from index.db, the full old-ref→item_ref re-key, and
+  // the workflow.db delete / index.db quarantine) is CODE — a journaled step of
+  // the migrate-apply flow (`src/cli/config-migrate.ts` `cutover-applied` phase),
+  // driven by `src/migrate/legacy/three-db-cutover.ts`. See the no-DROP contract
+  // carve-out note in `src/core/state-db.ts`.
+  //
+  // The three workflow tables are the 10 pre-cutover workflow migrations
+  // (the frozen `src/migrate/legacy/workflow-migrations-bodies.ts` base schema +
+  // 001–010) folded into one baseline at their FINAL post-010 shape — column
+  // lists, CHECK constraints, and indexes copied verbatim. `usage_events` mirrors
+  // index.db's former `ensureUsageEventsSchema` (`src/indexer/usage/usage-events.ts`),
+  // its new durable home. `legacy_state` mirrors `ensureLegacyStateTable`
+  // (`src/storage/repositories/index-entries-repository.ts`), the orphan
+  // quarantine archive re-homed from index.db (durable, auditable, purgeable).
+  // Nothing else — NO bindings/lifecycle tables (Tier B / deferred, §3.2).
+  {
+    id: "020-three-db-cutover",
+    up: `
+      -- ── workflow_runs (workflows/db.ts base + migrations 001/002/003/006/010) ──
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id                  TEXT PRIMARY KEY,
+        workflow_ref        TEXT NOT NULL,
+        workflow_entry_id   INTEGER,
+        workflow_title      TEXT NOT NULL,
+        status              TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
+        params_json         TEXT NOT NULL DEFAULT '{}',
+        current_step_id     TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        completed_at        TEXT,
+        scope_key           TEXT,
+        agent_harness       TEXT,
+        agent_session_id    TEXT,
+        checkin_armed_at    TEXT,
+        plan_json           TEXT,
+        plan_hash           TEXT,
+        engine_lease_until  TEXT,
+        engine_lease_holder TEXT,
+        plan_ir_version     INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_ref ON workflow_runs(workflow_ref);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status
+        ON workflow_runs(scope_key, workflow_ref, status);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id);
+
+      -- ── workflow_run_steps (base + migration 003 summary) ─────────────────────
+      CREATE TABLE IF NOT EXISTS workflow_run_steps (
+        run_id          TEXT NOT NULL,
+        step_id         TEXT NOT NULL,
+        step_title      TEXT NOT NULL,
+        instructions    TEXT NOT NULL,
+        completion_json TEXT,
+        sequence_index  INTEGER NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),
+        notes           TEXT,
+        evidence_json   TEXT,
+        completed_at    TEXT,
+        summary         TEXT,
+        PRIMARY KEY (run_id, step_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_sequence
+        ON workflow_run_steps(run_id, sequence_index);
+
+      -- ── workflow_run_units (migration 004 + 005/007/008/009/010 columns) ──────
+      CREATE TABLE IF NOT EXISTS workflow_run_units (
+        run_id           TEXT NOT NULL,
+        unit_id          TEXT NOT NULL,
+        step_id          TEXT,
+        node_id          TEXT NOT NULL,
+        parent_unit_id   TEXT,
+        phase            TEXT,
+        runner           TEXT,
+        model            TEXT,
+        status           TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        input_hash       TEXT,
+        result_json      TEXT,
+        tokens           INTEGER,
+        failure_reason   TEXT,
+        worktree_path    TEXT,
+        started_at       TEXT,
+        finished_at      TEXT,
+        session_id       TEXT,
+        last_checkin_at  TEXT,
+        attempts         INTEGER NOT NULL DEFAULT 1,
+        claim_holder     TEXT,
+        claim_expires_at TEXT,
+        engine           TEXT,
+        PRIMARY KEY (run_id, unit_id),
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id);
+
+      -- ── usage_events (index.db ensureUsageEventsSchema — the durable new home) ─
+      CREATE TABLE IF NOT EXISTS usage_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        query      TEXT,
+        entry_id   INTEGER,
+        entry_ref  TEXT,
+        signal     TEXT,
+        metadata   TEXT,
+        source     TEXT NOT NULL DEFAULT 'user',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_source ON usage_events(source);
+
+      -- ── legacy_state (ensureLegacyStateTable — the orphan quarantine archive) ──
+      CREATE TABLE IF NOT EXISTS legacy_state (
+        surface        TEXT NOT NULL,
+        old_ref        TEXT NOT NULL,
+        row_count      INTEGER NOT NULL DEFAULT 0,
+        reason         TEXT NOT NULL,
+        quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (surface, old_ref)
+      );
     `,
   },
 ];

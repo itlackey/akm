@@ -10,11 +10,9 @@ import graphRefresh from "../../assets/improve-strategies/graph-refresh.json" wi
 import memoryFocus from "../../assets/improve-strategies/memory-focus.json" with { type: "json" };
 import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
-import recombineOnly from "../../assets/improve-strategies/recombine-only.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
-import synthesize from "../../assets/improve-strategies/synthesize.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -37,7 +35,7 @@ export interface SelectedStrategy {
 }
 
 export const DEFAULT_ALLOWED_TYPES: Record<"reflect" | "distill" | "consolidate", string[]> = {
-  reflect: ["agent", "command", "knowledge", "lesson", "memory", "skill", "wiki", "workflow"],
+  reflect: ["agent", "command", "knowledge", "lesson", "memory", "skill", "workflow"],
   distill: ["memory"],
   consolidate: ["memory"],
 };
@@ -59,10 +57,9 @@ export function shouldSkipRef(
   const process = strategy.processes?.[processName];
   if (process?.enabled === false) return { skip: true, reason: "process-disabled" };
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
-  if (parsed.type === "wiki" && parsed.name.split("/")[1] === "raw") return { skip: true, reason: "raw-wiki" };
   return { skip: false, reason: "" };
 }
 
@@ -79,10 +76,8 @@ const BUILTIN_STRATEGIES: Record<string, ImproveStrategyConfig> = {
   frequent: frequent as ImproveStrategyConfig,
   consolidate: consolidate as ImproveStrategyConfig,
   catchup: catchup as ImproveStrategyConfig,
-  synthesize: synthesize as ImproveStrategyConfig,
   "reflect-distill": reflectDistill as ImproveStrategyConfig,
   "proactive-maintenance": proactiveMaintenance as ImproveStrategyConfig,
-  "recombine-only": recombineOnly as ImproveStrategyConfig,
 };
 
 if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {

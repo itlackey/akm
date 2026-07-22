@@ -12,11 +12,11 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { mutateConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { assertSafeStashDir, getBinDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
-import { ensureRg } from "../../core/ripgrep/install";
+import { assertSafeStashDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
+import { primaryBundlePath, withPrimaryBundle } from "./bundle-config-ops";
 import { copyStashSkeleton, ensureStashGitignore, scaffoldStashMeta } from "./stash-skeleton";
 
 /**
@@ -77,11 +77,6 @@ export interface InitResponse {
    * NOT passed — so the CLI can tell the user their default is unchanged.
    */
   previousStashDir?: string;
-  ripgrep?: {
-    rgPath: string;
-    installed: boolean;
-    version: string;
-  };
 }
 
 // ── Test seam ────────────────────────────────────────────────────────────────
@@ -128,7 +123,7 @@ async function akmInitReal(options?: {
     created = true;
   }
 
-  for (const sub of Object.values(TYPE_DIRS)) {
+  for (const sub of stashDirNames()) {
     const subDir = path.join(stashDir, sub);
     if (!fs.existsSync(subDir)) {
       fs.mkdirSync(subDir, { recursive: true });
@@ -167,30 +162,21 @@ async function akmInitReal(options?: {
   let previousStashDir: string | undefined;
   if (options?.persistConfig !== false) {
     const result = mutateConfig((latest) => {
-      const shouldPersist = !dirExplicitlyProvided || !latest.stashDir || setDefault;
+      // 0.9.0 (spec §10.1): the primary stash is the `defaultBundle`'s filesystem
+      // `path`, not the retired top-level `stashDir`.
+      const currentPrimary = primaryBundlePath(latest);
+      const shouldPersist = !dirExplicitlyProvided || !currentPrimary || setDefault;
       if (!shouldPersist) {
-        previousStashDir = latest.stashDir;
+        previousStashDir = currentPrimary;
         return latest;
       }
-      if (latest.stashDir === stashDir) return latest;
-      return { ...latest, stashDir };
+      if (currentPrimary === stashDir) return latest;
+      return withPrimaryBundle(latest, stashDir);
     });
     defaultStashUpdated = result.written;
   }
 
-  // Ensure ripgrep is available (install to cache/bin if needed)
-  let ripgrep: InitResponse["ripgrep"];
-  if (!isUnderTestRunner()) {
-    try {
-      const binDir = getBinDir();
-      const rgResult = ensureRg(binDir);
-      ripgrep = rgResult;
-    } catch {
-      // Non-fatal: ripgrep is optional, search works without it
-    }
-  }
-
-  return { stashDir, created, configPath, defaultStashUpdated, previousStashDir, ripgrep };
+  return { stashDir, created, configPath, defaultStashUpdated, previousStashDir };
 }
 
 /** Initialise `dir` as a git repository if it is not already one. */

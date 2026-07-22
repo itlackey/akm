@@ -12,15 +12,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../../core/asset/asset-ref";
+import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { timestampForFilename } from "../../../core/common";
-import { type AkmConfig, getDefaultLlmConfig, type LlmConnectionConfig } from "../../../core/config/config";
-import { appendEvent } from "../../../core/events";
-import type { EligibilitySource } from "../../../core/improve-types";
+import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
+import { appendEvent, type EventsContext } from "../../../core/events";
+import type { AkmDistillResult, DistillOutcome, EligibilitySource } from "../../../core/improve-types";
 import { withStateDb } from "../../../core/state-db";
+import { getDefaultLlmConfig } from "../../../integrations/agent/engine-resolution";
 import { type ChatCompletionOptions, type ChatMessage, parseEmbeddedJsonResponse } from "../../../llm/client";
+import type { LlmFeatureKey } from "../../../llm/feature-gate";
+import { callStructured } from "../../../llm/structured-call";
 import { akmSearch } from "../../read/search";
-import type { AkmDistillResult, DistillOutcome } from "../distill";
 import { scoreEncodingSalience } from "../encoding-salience";
 import { computeSalience, upsertAssetSalience } from "../salience";
 
@@ -192,9 +194,10 @@ export interface QualityJudgeOptions {
 }
 
 async function runQualityJudge(
+  feature: LlmFeatureKey,
   config: AkmConfig,
   prompt: string,
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
   const llmConfig = options.llmConfig ?? getDefaultLlmConfig(config);
@@ -202,18 +205,27 @@ async function runQualityJudge(
     return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
   }
   try {
-    const raw = await chat(
-      llmConfig,
-      [
+    // UNGATED at the seam (no akmConfig): the quality gates' enablement is
+    // resolved by the caller before this function runs, and a transport throw
+    // propagates into the fail-closed catch below. `feature` labels the call.
+    const raw = await callStructured<string>({
+      feature,
+      config: llmConfig,
+      messages: [
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: prompt },
       ],
-      {
+      request: {
         enableThinking: false,
         ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
+        ...(chat ? { chat } : {}),
       },
-    );
+      parse: (rawResponse) => rawResponse ?? "",
+      // Unreachable on the ungated path (errors propagate); fail closed anyway.
+      onError: () => "",
+      fallback: "",
+    });
     const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
     if (
       !parsed ||
@@ -255,10 +267,16 @@ export async function runLessonQualityJudge(
   config: AkmConfig,
   lessonContent: string,
   sourceContent: string,
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(config, buildJudgePrompt(lessonContent, sourceContent, options.similarLessons), chat, options);
+  return runQualityJudge(
+    "lesson_quality_gate",
+    config,
+    buildJudgePrompt(lessonContent, sourceContent, options.similarLessons),
+    chat,
+    options,
+  );
 }
 
 /** Judge an in-place reflect revision without applying new-lesson novelty criteria. */
@@ -267,10 +285,16 @@ export async function runReflectQualityJudge(
   candidateContent: string,
   sourceContent: string,
   feedback: string[],
-  chat: QualityJudgeChat,
+  chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  return runQualityJudge(config, buildReflectJudgePrompt(candidateContent, sourceContent, feedback), chat, options);
+  return runQualityJudge(
+    "proposal_quality_gate",
+    config,
+    buildReflectJudgePrompt(candidateContent, sourceContent, feedback),
+    chat,
+    options,
+  );
 }
 
 // ── Quality-rejection helper ─────────────────────────────────────────────────
@@ -286,6 +310,7 @@ export async function runReflectQualityJudge(
  * @param score     - Quality score from the judge.
  * @param reason    - Human-readable rejection reason.
  * @param extraMeta - Optional additional metadata for the event.
+ * @param eventsCtx - Events context so the emit takes appendEvent's fast path (R25).
  */
 export function writeQualityRejection(
   stash: string,
@@ -296,6 +321,7 @@ export function writeQualityRejection(
   reason: string,
   extraMeta: Record<string, unknown> = {},
   eligibilitySource?: EligibilitySource,
+  eventsCtx?: EventsContext,
 ): AkmDistillResult {
   // D-5 / #388: reviewNeeded flag selects "review_needed" vs "quality_rejected" outcome.
   const outcome: DistillOutcome = extraMeta.reviewNeeded ? "review_needed" : "quality_rejected";
@@ -307,20 +333,23 @@ export function writeQualityRejection(
     `---\nscore: ${score}\nreason: ${reason}\noutcome: ${outcome}\n---\n\n${content}`,
     "utf8",
   );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: inputRef,
-    metadata: {
-      outcome,
-      lessonRef,
-      score,
-      reason,
-      ...extraMeta,
-      // Attribution tagging: stamp the eligibility lane so distill_invoked can be
-      // sliced by lane downstream. See EligibilitySource.
-      ...(eligibilitySource ? { eligibilitySource } : {}),
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      ref: inputRef,
+      metadata: {
+        outcome,
+        lessonRef,
+        score,
+        reason,
+        ...extraMeta,
+        // Attribution tagging: stamp the eligibility lane so distill_invoked can be
+        // sliced by lane downstream. See EligibilitySource.
+        ...(eligibilitySource ? { eligibilitySource } : {}),
+      },
     },
-  });
+    eventsCtx,
+  );
   return {
     schemaVersion: 1,
     ok: true,
@@ -352,7 +381,7 @@ export function persistOutputEncodingSalience(
   outcomeWeightEnabled: boolean,
 ): void {
   try {
-    const parsedRef = parseAssetRef(ref);
+    const parsedRef = parseRefInput(ref);
     const salienceResult = scoreEncodingSalience({
       body,
       type: parsedRef.type,

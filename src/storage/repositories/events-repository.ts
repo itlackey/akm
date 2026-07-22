@@ -11,7 +11,7 @@
  * @module events-repository
  */
 
-import type { EventEnvelope } from "../../core/events";
+import type { EventEnvelope } from "../../core/events-types";
 import { error } from "../../core/warn";
 import type { Database, SqlValue } from "../database";
 
@@ -177,7 +177,7 @@ export function readStateEvents(
     .all(...(params as SqlValue[])) as EventRow[];
 
   const events = rows.map(eventRowToEnvelope);
-  const nextId = events.length > 0 ? events[events.length - 1].id : (options.sinceId ?? 0);
+  const nextId = events.length > 0 ? events[events.length - 1]!.id : (options.sinceId ?? 0);
   return { events, nextId };
 }
 

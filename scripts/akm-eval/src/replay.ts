@@ -35,6 +35,8 @@ import { runRetrievalCase } from "./runners/retrieval";
 import { runWorkflowComplianceCase } from "./runners/workflow-compliance";
 import { makeAkmCli } from "./sources/akm-cli";
 import {
+  assertMatchingSuiteFingerprints,
+  fingerprintEvalCases,
   loadCaseResults,
   loadEvalRunResult,
   resolveRunDir,
@@ -66,9 +68,10 @@ interface DivergenceEntry {
 }
 
 interface ReplayResultFile {
-  schemaVersion: 1;
+  schemaVersion: 2;
   originalRunId: string;
   replayRunId: string;
+  suiteFingerprint: string;
   deterministic: boolean;
   divergentCases: DivergenceEntry[];
   missingCases: string[];
@@ -361,9 +364,10 @@ async function main(): Promise<number> {
     process.stderr.write(`[akm-eval-replay] failed to load replay logs: ${err instanceof Error ? err.message : String(err)}\n`);
     return 2;
   }
-  setCurrentPlayer(player);
-
   const cases = loadCases(casesRoot, suite);
+  const suiteFingerprint = fingerprintEvalCases(cases, path.join(casesRoot, suite));
+  assertMatchingSuiteFingerprints(envelope.inputs.suiteFingerprint, suiteFingerprint);
+  setCurrentPlayer(player);
   // Restore the recorded clock so runners that resolve a windowed `since`
   // (e.g. proposal-quality) recompute the EXACT same ISO timestamp the
   // record run sent to state-db. Without this, the replay's `new Date()`
@@ -380,6 +384,7 @@ async function main(): Promise<number> {
     keepSandbox: false,
     env: { ...(process.env as Record<string, string>) },
     currentRunId: original.runId,
+    suiteFingerprint,
     recording: true,
     runStartedAt: new Date(envelope.startedAt),
   };
@@ -404,9 +409,10 @@ async function main(): Promise<number> {
   const deterministic = cmp.divergent.length === 0 && (!opts.strict || (cmp.missing.length === 0 && cmp.extra.length === 0));
 
   const replayResult: ReplayResultFile = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     originalRunId: original.runId,
     replayRunId,
+    suiteFingerprint,
     deterministic,
     divergentCases: cmp.divergent,
     missingCases: cmp.missing,

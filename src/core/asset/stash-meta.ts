@@ -67,7 +67,7 @@ export function parseMetaRef(ref: string): MetaRef | null {
 
 /**
  * Reject meta names that would escape the `.meta/` directory. Mirrors the
- * traversal guards in `parseAssetRef`'s `validateName`.
+ * traversal guards in the ref parser's `validateName`.
  */
 function assertSafeMetaName(name: string): void {
   if (name.includes("\0")) {

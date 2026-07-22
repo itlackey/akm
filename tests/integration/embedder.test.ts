@@ -232,10 +232,10 @@ describe("remote embed", () => {
       expect(results).toHaveLength(2);
       // After sorting by index: index 0 -> [1,0], index 1 -> [0,1]
       // These are already unit vectors, so normalization preserves them
-      expect(results[0][0]).toBeCloseTo(1.0, 5); // first result is [1, 0]
-      expect(results[0][1]).toBeCloseTo(0.0, 5);
-      expect(results[1][0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
-      expect(results[1][1]).toBeCloseTo(1.0, 5);
+      expect(results[0]![0]).toBeCloseTo(1.0, 5); // first result is [1, 0]
+      expect(results[0]![1]).toBeCloseTo(0.0, 5);
+      expect(results[1]![0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
+      expect(results[1]![1]).toBeCloseTo(1.0, 5);
     } finally {
       server.stop(true);
     }

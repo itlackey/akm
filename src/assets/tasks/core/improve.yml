@@ -1,5 +1,5 @@
 version: 2
 schedule: "0 2 * * *"
-command: akm improve --auto-accept safe
+command: akm improve
 enabled: true
 description: Run improve pipeline nightly

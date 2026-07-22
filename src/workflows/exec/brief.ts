@@ -31,9 +31,9 @@
  * invariant R4 asserts.
  */
 
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
+import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import type { WorkflowRunUnitStatus } from "../../storage/repositories/workflow-runs-repository";
 import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
@@ -43,13 +43,14 @@ import type { ExpressionScope } from "../program/expressions";
 import { frozenStepRows, requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { snapshotRunForDriver } from "../runtime/runs";
 import { evaluateStaleUnits, type StaleUnit } from "../runtime/unit-checkin";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
+import { canonicalWorkflowRunRef } from "../runtime/workflow-asset-loader";
 import { detectSecretShapedParams } from "./param-secrets";
 import {
   activeGateLoop,
   assertJournaledRouteSelectionsValid,
   computeStepWorkList,
   evaluateRoute,
-  GATE_EVALUATION_PHASE,
   type GateFeedback,
   isWorkListFullyTerminal,
   recoverGateFeedback,
@@ -727,14 +728,15 @@ export async function resolveRunId(target: string): Promise<string> {
     const byId = repo.getRunById(target);
     if (byId) return byId.id;
 
-    if (!target.includes(":")) {
+    // Run-id vs workflow-ref: a run id has no `/`; canonical workflow refs do.
+    if (!target.includes(":") && !target.includes("/")) {
       throw new NotFoundError(`Workflow run "${target}" not found.`, "WORKFLOW_NOT_FOUND");
     }
-    const parsed = parseAssetRef(target);
+    const parsed = parseRefInput(target);
     if (parsed.type !== "workflow") {
-      throw new UsageError(`Expected a workflow run id or workflow ref (workflow:<name>), got "${target}".`);
+      throw new UsageError(`Expected a workflow run id or workflow ref (workflows/<name>), got "${target}".`);
     }
-    const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+    const ref = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
     const active = repo.getActiveRunRowForScope(ref, getCurrentWorkflowScopeKey());
     if (!active) {
       throw new NotFoundError(

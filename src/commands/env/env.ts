@@ -68,7 +68,7 @@ function scanKeys(text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     const m = line.match(ASSIGN_RE);
     if (!m) continue;
-    const key = m[1];
+    const key = m[1]!;
     if (seen.has(key)) continue;
     seen.add(key);
     keys.push(key);
@@ -346,7 +346,7 @@ export function unsetEnvKeys(envPath: string, keys: string[]): { removed: string
   const toRemove = new Set(keys);
   const out = text.split(/\r?\n/).filter((line) => {
     const m = line.match(ASSIGN_RE);
-    return !(m && toRemove.has(m[1]));
+    return !(m && toRemove.has(m[1]!));
   });
   let content = out.join("\n");
   if (content.length > 0 && !content.endsWith("\n")) content += "\n";

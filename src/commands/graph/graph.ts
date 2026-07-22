@@ -4,19 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
 import { warn } from "../../core/warn";
-import {
-  closeDatabase,
-  findEntryIdByRef,
-  getEntryById,
-  getEntryRefRowsForStashRoot,
-  openExistingDatabase,
-  openIndexDatabase,
-} from "../../indexer/db/db";
 import { loadStoredGraphSnapshot } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import type {
@@ -30,6 +22,12 @@ import { withIndexWriterLease } from "../../indexer/index-writer-lock";
 import { lookup } from "../../indexer/indexer";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
+import {
+  findEntryIdByRef,
+  getEntryById,
+  getEntryRefRowsForStashRoot,
+} from "../../storage/repositories/index-entries-repository";
 
 export interface GraphSummaryResult {
   schemaVersion: 1;
@@ -123,7 +121,7 @@ interface LoadedGraph {
 
 interface ResolvedGraphTarget {
   ref: string;
-  parsedRef: ReturnType<typeof parseAssetRef>;
+  parsedRef: ReturnType<typeof parseQualifiedRefInput>;
   filePath: string;
   stashPath: string;
 }
@@ -133,7 +131,7 @@ function resolveGraphStashPath(source?: string): string {
   if (sources.length === 0) {
     throw new NotFoundError("No stash sources are configured.", "STASH_NOT_FOUND");
   }
-  if (!source || source === "primary") return sources[0].path;
+  if (!source || source === "primary") return sources[0]!.path;
   const matched = sources.find((entry) => entry.registryId === source || entry.path === source);
   if (!matched) {
     throw new NotFoundError(`Source not found: ${source}`, "SOURCE_NOT_FOUND", "Run `akm list` to see source names.");
@@ -387,7 +385,8 @@ function buildRefByPath(
         name?: string;
       };
       if (typeof entry.type === "string" && typeof entry.name === "string") {
-        map.set(row.file_path, { ref: `${entry.type}:${entry.name}`, type: entry.type });
+        // F4b output-spelling flip: emit the 0.9.0 conceptId grammar.
+        map.set(row.file_path, { ref: displayRef({ type: entry.type, name: entry.name }), type: entry.type });
       }
     } catch {
       // ignore corrupt entry_json
@@ -637,7 +636,7 @@ export async function akmGraphUpdate(options: {
 }
 
 async function resolveGraphTarget(ref: string, source?: string): Promise<ResolvedGraphTarget> {
-  const parsedRef = parseAssetRef(ref);
+  const parsedRef = parseQualifiedRefInput(ref);
   const filePath =
     (await resolveAssetPath(parsedRef, {
       mode: "index-first",

@@ -1,0 +1,46 @@
+{
+  "scenario": "presentationFor(type) — renderer + action keyed on the open `type` (spec §2/§3.4, src/core/type-presentation.ts) — for each recognized claude file. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (renderer/action = data table keyed on the open `type`, generic fallback for unknown types), §3.4 (presentationFor: unknown type ⇒ generic renderer + `akm show <ref>`). Presentation table = src/core/type-presentation.ts TYPE_PRESENTATION; KNOWN_TYPES = src/core/recognition-util.ts.",
+  "realWorldSource": [
+    "https://code.claude.com/docs/en/claude-directory — command/agent/skill semantics the renderer actions describe"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no claude adapter exists yet. Presentation is keyed on the open `type`, NOT on the adapter (spec §2), so a claude `command` renders identically to an akm `command`: the value here is presentationFor(type) = {label, renderer, action(ref)} from src/core/type-presentation.ts, with the concrete `ref` substituted into the action.",
+    "RESOLVED (open question 1, maintainer resolution 2026-07): `instruction` (CLAUDE.md/AGENTS.md) is now a first-class KNOWN_TYPE (src/core/recognition-util.ts) with its OWN TYPE_PRESENTATION entry — label 'Instruction', renderer 'knowledge-md' (REUSED: instruction files are markdown read exactly like knowledge), action `akm show <ref> -> read the project instructions` (mirrors knowledge's read action). presentationFor('instruction') therefore returns this type-specific presentation, NOT the generic {label:'Asset'} fallback. The CLAUDE.md entry below is pinned to that presentation.",
+    "action strings are the src/core/type-presentation.ts forms (`akm show <ref> -> …`); the longer buildShowResponse action strings in renderer/all-types.json are the OLD src/output/renderers.ts surface — the format-neutral presentation table is the forward-looking one the new adapters key on."
+  ],
+  "byRelPath": {
+    "commands/deploy.md": {
+      "type": "command",
+      "ref": "sample-claude//commands/deploy",
+      "label": "Command",
+      "renderer": "command-md",
+      "action": "akm show sample-claude//commands/deploy -> fill placeholders and dispatch"
+    },
+    "agents/reviewer.md": {
+      "type": "agent",
+      "ref": "sample-claude//agents/reviewer",
+      "label": "Agent",
+      "renderer": "agent-md",
+      "action": "akm show sample-claude//agents/reviewer -> dispatch with full prompt"
+    },
+    "skills/pdf-processing/SKILL.md": {
+      "type": "skill",
+      "ref": "sample-claude//skills/pdf-processing",
+      "label": "Skill",
+      "renderer": "skill-md",
+      "action": "akm show sample-claude//skills/pdf-processing -> follow the instructions"
+    },
+    "CLAUDE.md": {
+      "type": "instruction",
+      "ref": "sample-claude//CLAUDE",
+      "label": "Instruction",
+      "renderer": "knowledge-md",
+      "action": "akm show sample-claude//CLAUDE -> read the project instructions",
+      "resolved": "RESOLVED (open question 1) — `instruction` is a first-class KNOWN_TYPE with its own TYPE_PRESENTATION entry: label 'Instruction', renderer 'knowledge-md' (reused — instruction files are markdown read exactly like knowledge), action mirrors knowledge's read action. NOT the generic fallback."
+    }
+  }
+}

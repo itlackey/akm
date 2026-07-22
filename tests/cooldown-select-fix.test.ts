@@ -61,7 +61,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * the lock.  filterProactiveDue must drop it.
    */
   test("drops ref reflected 3 min ago by concurrent run (in-flight reflect now committed)", () => {
-    const r = "skill:support-investigate-ticket";
+    const r = "skills/support-investigate-ticket";
     const selected = [makeRef(r)];
     const freshReflectTs = new Map([[r, isoMinutesAgo(3)]]);
 
@@ -75,7 +75,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * reflect_invoked is now in the store.
    */
   test("drops ref reflected 20 min ago by previous cron run", () => {
-    const r = "memory:deployment-runbook";
+    const r = "memories/deployment-runbook";
     const selected = [makeRef(r)];
     const freshReflectTs = new Map([[r, isoMinutesAgo(20)]]);
 
@@ -88,7 +88,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * SCENARIO C: distill by sibling run also resets the clock.
    */
   test("drops ref distilled 10 min ago by concurrent run", () => {
-    const r = "skill:incident-response";
+    const r = "skills/incident-response";
     const selected = [makeRef(r)];
     const freshDistillTs = new Map([[r, isoMinutesAgo(10)]]);
 
@@ -102,18 +102,18 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * are genuinely still due.  filterProactiveDue must keep only the still-due.
    */
   test("keeps refs that are genuinely still due, drops those claimed by concurrent runs", () => {
-    const claimed = makeRef("skill:claimed");
-    const stillDueRef = makeRef("skill:still-due");
+    const claimed = makeRef("skills/claimed");
+    const stillDueRef = makeRef("skills/still-due");
     const selected = [claimed, stillDueRef];
 
     const freshReflectTs = new Map([
-      ["skill:claimed", isoMinutesAgo(5)],
-      ["skill:still-due", isoDaysAgo(45)], // last reflected 45 days ago → still due
+      ["skills/claimed", isoMinutesAgo(5)],
+      ["skills/still-due", isoDaysAgo(45)], // last reflected 45 days ago → still due
     ]);
 
     const stillDue = callFilter(selected, freshReflectTs, new Map());
 
-    expect(stillDue.map((s) => s.ref)).toEqual(["skill:still-due"]);
+    expect(stillDue.map((s) => s.ref)).toEqual(["skills/still-due"]);
   });
 
   /**
@@ -121,7 +121,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * — must remain in the post-lock set.
    */
   test("keeps never-reflected refs that no concurrent run touched", () => {
-    const r = "skill:brand-new";
+    const r = "skills/brand-new";
     const selected = [makeRef(r)];
     const freshReflectTs = new Map<string, string>(); // no entry — still never reflected
 
@@ -135,7 +135,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * due = staleDays > dueDays → equal is NOT due → must be dropped.
    */
   test("drops ref reflected exactly dueDays ago (boundary: equal is not past the gate)", () => {
-    const r = "skill:boundary";
+    const r = "skills/boundary";
     const selected = [makeRef(r)];
     const freshReflectTs = new Map([[r, isoDaysAgo(DEFAULT_DUE_DAYS)]]);
 
@@ -148,7 +148,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
    * SCENARIO G: ref reflected one ms PAST dueDays — must remain due.
    */
   test("keeps ref reflected one ms past dueDays (boundary: just past the gate)", () => {
-    const r = "skill:just-past";
+    const r = "skills/just-past";
     const justPast = new Date(NOW - DEFAULT_DUE_DAYS * DAY - 1).toISOString();
     const selected = [makeRef(r)];
     const freshReflectTs = new Map([[r, justPast]]);
@@ -174,7 +174,7 @@ describe("filterProactiveDue — post-lock re-filter", () => {
 
 describe("cooldown-select-fix — selector purity regression guards (already GREEN)", () => {
   test("never-reflected assets are always due", () => {
-    const r = "skill:never";
+    const r = "skills/never";
     const res = selectProactiveMaintenanceRefs({
       candidates: [makeRef(r)],
       lastReflectTs: new Map(),
@@ -188,7 +188,7 @@ describe("cooldown-select-fix — selector purity regression guards (already GRE
   });
 
   test("assets reflected within dueDays are NOT due (selector-level gate is correct)", () => {
-    const r = "skill:fresh";
+    const r = "skills/fresh";
     const res = selectProactiveMaintenanceRefs({
       candidates: [makeRef(r)],
       lastReflectTs: new Map([[r, isoDaysAgo(5)]]),
@@ -204,7 +204,7 @@ describe("cooldown-select-fix — selector purity regression guards (already GRE
     // This documents the broken-path behavior that the orchestrator currently
     // exhibits: planning uses a stale map → ref selected even though a
     // concurrent run reflected it moments ago.
-    const r = "skill:k8s-debug";
+    const r = "skills/k8s-debug";
     const stalePreLockMap = new Map<string, string>(); // empty — Run A's reflect not visible
 
     const brokenResult = selectProactiveMaintenanceRefs({

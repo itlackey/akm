@@ -4,202 +4,36 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import {
-  deriveCanonicalAssetName,
-  deriveCanonicalAssetNameFromStashRoot,
-  isRelevantAssetFile,
-} from "../../core/asset/asset-spec";
+// akm 0.9.0 Chunk 5 (type-merge): the durable indexed-entry shape is the merged
+// `IndexDocument` (spec §3 = the pre-merge entry shape + provenance). Its body
+// — and the sub-shapes it references — live in `core/adapter/types.ts` so
+// `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
+// they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
+import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
-import { asNonEmptyString, isAssetType, writeFileAtomic } from "../../core/common";
+import { asNonEmptyString } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
+import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../walk/file-context";
-import { applyMetadataContributors } from "./metadata-contributors";
+import type { buildFileContext } from "../walk/file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
-export interface StashIntent {
-  when?: string;
-  input?: string;
-  output?: string;
-}
-
-export interface AssetParameter {
-  name: string;
-  type?: string;
-  description?: string;
-  required?: boolean;
-  default?: string;
-}
-
-/**
- * Multi-tenant / multi-agent scope keys. All four fields are optional;
- * persisted as the canonical top-level frontmatter keys
- * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`.
- *
- * This shape is the wire-level scope contract — the CLI's `--user`,
- * `--agent`, `--run`, `--channel` flags map into these fields, and
- * `akm search --filter user=…` queries against them.
- *
- * Memories written before scope flags shipped have no scope keys at all;
- * unfiltered queries continue to surface them.
- */
-export interface StashEntryScope {
-  user?: string;
-  agent?: string;
-  run?: string;
-  channel?: string;
-}
-
-/** Allowed keys in `--filter k=v` and `--scope k=v` flags. */
-export type ScopeKey = keyof StashEntryScope;
+export type {
+  AssetParameter,
+  IndexDocument,
+  ScopeKey,
+  StashEntryScope,
+  StashIntent,
+} from "../../core/adapter/types";
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
 
-export interface StashEntry {
-  name: string;
-  type: string;
-  description?: string;
-  tags?: string[];
-  examples?: string[];
-  searchHints?: string[];
-  intent?: StashIntent;
-  filename?: string;
-  /**
-   * Asset quality marker (v1 spec §4.2). Four values are well-known:
-   * `"generated"` and `"curated"` are included in default search;
-   * `"enriched"` marks entries that have been LLM-enhanced (also included in
-   * default search, excluded from re-enrichment unless `--re-enrich` is set);
-   * `"proposed"` is excluded from default search and surfaced only with
-   * `--include-proposed`. Unknown string values parse with a one-time
-   * `console.warn` and remain searchable (treated as included-by-default).
-   */
-  quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
-  confidence?: number;
-  source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm";
-  aliases?: string[];
-  toc?: TocHeading[];
-  usage?: string[];
-  /** How to run this asset (e.g. "bash deploy.sh", "bun run.ts") */
-  run?: string;
-  /** Setup command to run before execution (e.g. "bun install") */
-  setup?: string;
-  /** Working directory for execution */
-  cwd?: string;
-  /** File size in bytes for output sizing hints */
-  fileSize?: number;
-  /** Structured parameter definitions extracted from the asset content */
-  parameters?: AssetParameter[];
-  /**
-   * Multi-tenant / multi-agent scope. Populated from the canonical
-   * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`
-   * frontmatter keys. Used by `akm search --filter` and
-   * `akm show --scope`.
-   */
-  scope?: StashEntryScope;
-  /**
-   * Wiki role for knowledge pages following the LLM Wiki pattern.
-   * `schema` / `index` / `log` are the special files at the top of the wiki;
-   * `raw` marks immutable ingested sources; `page` (default) is an LLM-authored page.
-   */
-  wikiRole?: "schema" | "index" | "log" | "raw" | "page";
-  /**
-   * Page archetype for wiki pages. Any non-empty string is accepted so users
-   * can introduce categories freely (e.g. `entity`, `concept`, `question`,
-   * `note`, `decision-record`). Wiki conventions live in `schema.md`.
-   */
-  pageKind?: string;
-  /** Cross-references to other knowledge entries by ref (e.g. "knowledge:auth-design"). */
-  xrefs?: string[];
-  /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
-  sources?: string[];
-  /**
-   * Asset category, surfaced from the `category:` frontmatter key. Primarily
-   * used by fact assets: `convention` marks house-rule facts delivered via
-   * resolveStashStandards prompt injection; `meta` marks stash-about-itself
-   * canon (e.g. active-projects slug lists). Any non-empty string is accepted
-   * — this is descriptive metadata, not a validated enum. Captured into
-   * entry_json so category-keyed policies (SPEC-6) are implementable.
-   */
-  category?: string;
-  beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
-  supersededBy?: string[];
-  contradictedBy?: string[];
-  /**
-   * R5 — merge depth counter (frontmatter `generation`), maintained by
-   * consolidate's injectGenerationFrontmatter. Absent = original asset.
-   */
-  generation?: number;
-  /**
-   * R5 — provenance pointers (frontmatter `source_refs`): the refs this asset
-   * was merged/distilled from. Lets the collapse detector's canary scoring
-   * follow a legitimately-merged anchor instead of reading it as collapse.
-   */
-  sourceRefs?: string[];
-  currentBeliefRefs?: string[];
-  /**
-   * How the memory was captured. `hot` indicates a user-driven write
-   * (the `akm remember` CLI path); `background` indicates an
-   * agent/derived write (e.g. memory-inference). Absent on legacy memories.
-   * Surfaced from the `captureMode:` frontmatter key.
-   */
-  captureMode?: "hot" | "background";
-  /**
-   * Free-form guidance describing when this asset should be applied.
-   * Surfaced from the `when_to_use:` frontmatter key. Indexed into the
-   * `hints` FTS column so retrieval can match query intent.
-   */
-  whenToUse?: string;
-  /**
-   * Strength signal for lessons: count of refs that have credited this
-   * lesson via `akm feedback --applied-to`. Extracted from frontmatter:
-   * an array stores its length here, a number stores directly.
-   */
-  lessonStrength?: number;
-  /**
-   * Source refs that this asset is derived from. Surfaced from the
-   * `evidenceSources:` frontmatter key.
-   */
-  evidenceSources?: string[];
-  /**
-   * For derived memories (Phase 5A / Advantage D5), the parent ref that this
-   * entry was distilled from. Surfaced from the `source:` frontmatter key
-   * (form: `"memory:<parent-name>"`) when the entry is recognized as a
-   * derived child (either by frontmatter `inferred: true` or by name suffix
-   * `.derived`). Absent on non-derived entries.
-   *
-   * The indexer mirrors this value into the dedicated `entries.derived_from`
-   * column so `getDerivedForParent()` can resolve the child by parent ref
-   * without a full table scan.
-   */
-  derivedFrom?: string;
-  /**
-   * First prose paragraph of the asset body — the conventions' self-situating
-   * opening (stash-conventions SPEC-8). Captured by the metadata pass only
-   * when the `index.indexBodyOpening` config flag is enabled (default off),
-   * capped at {@link BODY_OPENING_MAX_CHARS} chars (word-boundary truncation
-   * with a trailing ellipsis). `buildSearchFields` folds it into the
-   * lowest-weight `content` FTS column whenever present on an entry (the fold
-   * is unconditional so FTS rebuilds from stored entry_json stay faithful).
-   * Never captured for secret/env files or session-kind memories
-   * (`akm_memory_kind` marker in outer or inner nested frontmatter).
-   */
-  bodyOpening?: string;
-}
-
 export interface StashFile {
-  entries: StashEntry[];
+  entries: IndexDocument[];
   warnings?: string[];
 }
-
-export interface LoadStashFileOptions {
-  requireFilename?: boolean;
-}
-
-// ── Load / Write ────────────────────────────────────────────────────────────
-
-const STASH_FILENAME = ".stash.json";
 
 // ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
 
@@ -246,56 +80,22 @@ export function isProposedQuality(quality: string | undefined): boolean {
   return quality === "proposed";
 }
 
-export function stashFilePath(dirPath: string): string {
-  return path.join(dirPath, STASH_FILENAME);
-}
-
-export function loadStashFile(dirPath: string, options?: LoadStashFileOptions): StashFile | null {
-  const filePath = stashFilePath(dirPath);
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    if (!raw || !Array.isArray(raw.entries)) return null;
-    const entries: StashEntry[] = [];
-    for (const e of raw.entries) {
-      const validated = validateStashEntry(e);
-      if (validated) {
-        if (options?.requireFilename && !validated.filename) continue;
-        entries.push(validated);
-      } else {
-        const name =
-          typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).name === "string"
-            ? (e as Record<string, unknown>).name
-            : "(unknown)";
-        warn(`Warning: Skipping invalid entry "${name}" in ${filePath}`);
-      }
-    }
-    return entries.length > 0 ? { entries } : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeStashFile(dirPath: string, stash: StashFile): void {
-  const filePath = stashFilePath(dirPath);
-  writeFileAtomic(filePath, `${JSON.stringify(stash, null, 2)}\n`);
-}
-
 /**
- * Validate and normalize a raw object into a `StashEntry`.
+ * Validate and normalize a raw object into a `IndexDocument`.
  *
- * **Ordering dependency:** Uses `isAssetType()` to check `entry.type`, which
- * only recognizes custom types registered via `registerAssetType()`. If this
- * function is called before custom types are registered, those entries will be
- * rejected as invalid.
+ * Open type token (chunk 1.5, D1.5-1/D1.5-6): `entry.type` accepts any
+ * non-empty string — foreign/adapter types are valid `IndexDocument` data, not
+ * just AKM's own built-in set — EXCEPT `DEPRECATED_REJECTED_TYPES`
+ * (`tool`/`vault`), which stay rejected so a hand-edited legacy sidecar can't
+ * silently resurrect a deliberately-retired type.
  */
-export function validateStashEntry(entry: unknown): StashEntry | null {
+export function validateStashEntry(entry: unknown): IndexDocument | null {
   if (typeof entry !== "object" || entry === null) return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.name !== "string" || !e.name) return null;
-  if (typeof e.type !== "string" || !isAssetType(e.type)) return null;
+  if (typeof e.type !== "string" || !e.type || DEPRECATED_REJECTED_TYPES.has(e.type)) return null;
 
-  const result: StashEntry = {
+  const result: IndexDocument = {
     name: e.name,
     type: e.type as string,
   };
@@ -323,7 +123,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     typeof e.source === "string" &&
     ["package", "frontmatter", "comments", "filename", "manual", "llm"].includes(e.source)
   ) {
-    result.source = e.source as StashEntry["source"];
+    result.source = e.source as IndexDocument["source"];
   }
   if (Array.isArray(e.aliases)) {
     const filtered = e.aliases.filter((a): a is string => typeof a === "string" && a.trim().length > 0);
@@ -361,14 +161,14 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (xrefs) result.xrefs = xrefs;
   const sources = normalizeNonEmptyStringList(e.sources);
   if (sources) result.sources = sources;
-  // SPEC-6: `category` must survive the whitelist or .stash.json-declared
+  // SPEC-6: `category` must survive the whitelist or legacy-sidecar-declared
   // facts lose their convention/meta marker on the round-trip. Non-string
   // values are dropped, not coerced.
   if (typeof e.category === "string" && e.category.trim().length > 0) {
     result.category = e.category.trim();
   }
   if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
-    result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
+    result.beliefState = e.beliefState.trim() as IndexDocument["beliefState"];
   }
   const supersededBy = normalizeNonEmptyStringList(e.supersededBy);
   if (supersededBy) result.supersededBy = supersededBy;
@@ -400,7 +200,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     result.derivedFrom = e.derivedFrom.trim();
   }
   // SPEC-8: `bodyOpening` must survive the whitelist so entries round-tripped
-  // through `.stash.json` keep their captured opening. Preserved verbatim —
+  // through the legacy sidecar keep their captured opening. Preserved verbatim —
   // the extractor already trimmed and capped it at capture time.
   if (typeof e.bodyOpening === "string" && e.bodyOpening.trim().length > 0) {
     result.bodyOpening = e.bodyOpening;
@@ -456,7 +256,7 @@ function normalizeScopeObject(raw: Record<string, unknown>): StashEntryScope | u
  * missing or malformed values; legacy memories without these keys are left
  * untouched (no `scope` field added).
  */
-export function applyScopeFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+export function applyScopeFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const collected: Record<string, unknown> = {};
   for (const key of SCOPE_KEYS) {
     const fmKey = `scope_${key}`;
@@ -486,7 +286,40 @@ function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
   return normalizeNonEmptyStringList(value);
 }
 
-export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+/**
+ * Normalise one derived-memory parent backref to the 0.9.0 `memories/<name>`
+ * conceptId for the `derived_from` column (Group-C item 2 flip), tolerant of
+ * BOTH the flipped `[bundle//]memories/<name>` producer output and the legacy
+ * `[origin//]memory:<name>` spelling still on disk pre content-migration.
+ * Returns `undefined` for a non-memory / bare value so the caller can fall back
+ * to the bare `derivedFrom` key. Kept inline (a two-branch pure string op) so
+ * the indexer stays self-contained and does not import the commands-layer
+ * reader — the two normalisers agree on output by construction.
+ */
+function normalizeMemoryBackref(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const boundary = trimmed.indexOf("//");
+  const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+  const MEMORY_PREFIX = "memory:";
+  if (body.startsWith(MEMORY_PREFIX)) return `memories/${body.slice(MEMORY_PREFIX.length)}`;
+  if (body.startsWith("memories/")) return body;
+  return undefined;
+}
+
+/**
+ * Resolve a derived memory's parent conceptId from its `source:` backref (new or
+ * legacy grammar) or, failing that, its bare `derivedFrom: <name>` frontmatter
+ * key (promoted to `memories/<name>`). `undefined` when neither yields a parent.
+ */
+function derivedFromConceptId(source: string | undefined, derivedFrom: string | undefined): string | undefined {
+  const fromSource = normalizeMemoryBackref(source);
+  if (fromSource) return fromSource;
+  if (derivedFrom) return normalizeMemoryBackref(derivedFrom) ?? `memories/${derivedFrom}`;
+  return undefined;
+}
+
+export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const description = asNonEmptyString(fmData.description);
   if (description) {
     entry.description = description;
@@ -526,7 +359,7 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
   if (category) entry.category = category;
 
   const beliefState = asNonEmptyString(fmData.beliefState);
-  if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];
+  if (beliefState) entry.beliefState = beliefState as IndexDocument["beliefState"];
 
   const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);
   if (supersededBy) entry.supersededBy = supersededBy;
@@ -568,26 +401,19 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
   if (evidenceSources) entry.evidenceSources = evidenceSources;
 
   // Phase 5A / Advantage D5: capture parent ref for derived memories.
-  // Memory-inference writes `source: "memory:<parent>"` and `inferred: true`
-  // (and a derived child name suffix `.derived`). We mirror that source ref
-  // into `entry.derivedFrom` so the indexer can populate the dedicated
-  // `derived_from` column. Non-derived entries leave this field unset.
+  // Memory-inference writes `source: "memories/<parent>"` and `inferred: true`
+  // (and a derived child name suffix `.derived`). We mirror that source ref into
+  // `entry.derivedFrom` so the indexer can populate the dedicated `derived_from`
+  // column. Group-C item 2: the column is stored in the 0.9.0 `memories/<name>`
+  // conceptId grammar — moving in lockstep with the `getDerivedForParent` lookup
+  // key (search-hit-enrichers) so producer + consumer speak one grammar.
+  // Non-derived entries leave this field unset.
   if (entry.type === "memory") {
     const isDerivedByName = entry.name.toLowerCase().endsWith(".derived");
     const isDerivedByFm = fmData.inferred === true;
     if (isDerivedByName || isDerivedByFm) {
-      const sourceStr = asNonEmptyString(fmData.source);
-      if (sourceStr?.includes(":")) {
-        entry.derivedFrom = sourceStr;
-      } else {
-        // Fallback: some legacy renderings store only `derivedFrom: <name>`
-        // (a bare parent name). Promote it to a `memory:` ref so the lookup
-        // column stays consistent.
-        const derivedFromName = asNonEmptyString(fmData.derivedFrom);
-        if (derivedFromName) {
-          entry.derivedFrom = derivedFromName.includes(":") ? derivedFromName : `memory:${derivedFromName}`;
-        }
-      }
+      const parent = derivedFromConceptId(asNonEmptyString(fmData.source), asNonEmptyString(fmData.derivedFrom));
+      if (parent) entry.derivedFrom = parent;
     }
   }
 
@@ -636,7 +462,7 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
   }
 
   for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
-    const name = match[1];
+    const name = match[1]!;
     if (!params.some((p) => p.name === name)) {
       params.push({ name });
     }
@@ -649,7 +475,7 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
  * Extract wiki frontmatter fields (wikiRole, pageKind, xrefs, sources) from a parsed
  * frontmatter block and apply them to the entry. Tolerates missing or malformed values.
  */
-export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+export function applyWikiFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
   const role = fmData.wikiRole;
   if (role === "schema" || role === "index" || role === "log" || role === "raw" || role === "page") {
     entry.wikiRole = role;
@@ -674,58 +500,10 @@ export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, u
   }
 }
 
-const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
-
-/**
- * Apply wiki-specific index exclusions while leaving all other stash files
- * untouched.
- *
- * - In a normal stash, excludes wiki-root `schema.md`, `index.md`, `log.md`.
- * - In a wiki-root stash source (`wikiName`), excludes those same root-level
- *   infrastructure files.
- */
-export function shouldIndexStashFile(
-  stashRoot: string,
-  file: string,
-  options?: { treatStashRootAsWikiRoot?: boolean },
-): boolean {
-  const relPath = path.relative(stashRoot, file);
-  if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) return true;
-
-  const segments = relPath.split(/[\\/]+/).filter(Boolean);
-  if (segments.length === 0) return true;
-
-  // Skip env .env files that have a sibling .sensitive marker file.
-  if (segments[0] === "env" && (file.endsWith(".env") || path.basename(file) === ".env")) {
-    const markerPath = file.replace(/\.env$/, ".sensitive");
-    if (fs.existsSync(markerPath)) return false;
-  }
-
-  // The legacy `vaults/` directory (frozen copy left by the 0.8 migration) is
-  // never indexed — the `vault` asset type was removed in 0.9.0.
-  if (segments[0] === "vaults") {
-    return false;
-  }
-
-  // Skip secret files that are themselves a `.sensitive` marker, or that have a
-  // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
-  // only (their bytes are never read — see buildEntryFromFile guards).
-  if (segments[0] === "secrets") {
-    if (file.endsWith(".sensitive") || file.endsWith(".lock")) return false;
-    if (fs.existsSync(`${file}.sensitive`)) return false;
-  }
-
-  if (options?.treatStashRootAsWikiRoot) {
-    return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
-  }
-
-  const wikisIdx = segments.indexOf("wikis");
-  if (wikisIdx < 0 || wikisIdx + 1 >= segments.length) return true;
-
-  const wikiRelativeSegments = segments.slice(wikisIdx + 2);
-  if (wikiRelativeSegments.length === 0) return true;
-  return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]));
-}
+// AKM-stash indexing policy (env/vaults/secrets sensitive-marker + wiki-infra
+// exclusions) moved to the `akm` adapter's `recognize` as path/stat-based
+// abstention (owner ruling 2026-07-21 — adapter-owned filtering). See
+// `akmStashAbstains` in `src/core/adapter/adapters/akm-adapter.ts`.
 
 /**
  * Extract `@param` JSDoc tags from a script file's leading comment block.
@@ -754,7 +532,7 @@ export function extractScriptParameters(filePath: string, content?: string): Ass
   for (const line of lines) {
     const match = line.match(paramRegex);
     if (match) {
-      const param: AssetParameter = { name: match[2] };
+      const param: AssetParameter = { name: match[2]! };
       if (match[1]) param.type = match[1].trim();
       if (match[3]) param.description = match[3].trim();
       params.push(param);
@@ -856,7 +634,7 @@ function parseIntentCommentLine(cleaned: string, metadata: CommentMetadata): boo
   const intentMatch = cleaned.match(/^@intent(?:\.(when|input|output))?\s+(.+)$/);
   if (!intentMatch) return false;
   metadata.intent ??= {};
-  const value = intentMatch[2].trim();
+  const value = intentMatch[2]!.trim();
   const key = intentMatch[1];
   if (key === "when") metadata.intent.when = value;
   else if (key === "input") metadata.intent.input = value;
@@ -891,61 +669,61 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
 
     const descMatch = cleaned.match(/^@description\s+(.+)$/);
     if (descMatch) {
-      metadata.description = descMatch[1].trim();
+      metadata.description = descMatch[1]!.trim();
       continue;
     }
 
     const tagsMatch = cleaned.match(/^@tags?\s+(.+)$/);
     if (tagsMatch) {
-      metadata.tags = splitCommentList(tagsMatch[1]);
+      metadata.tags = splitCommentList(tagsMatch[1]!);
       continue;
     }
 
     const aliasesMatch = cleaned.match(/^@aliases?\s+(.+)$/);
     if (aliasesMatch) {
-      metadata.aliases = splitCommentList(aliasesMatch[1]);
+      metadata.aliases = splitCommentList(aliasesMatch[1]!);
       continue;
     }
 
     const hintsMatch = cleaned.match(/^@searchHints?\s+(.+)$/);
     if (hintsMatch) {
-      metadata.searchHints = splitCommentList(hintsMatch[1]);
+      metadata.searchHints = splitCommentList(hintsMatch[1]!);
       continue;
     }
 
     const usageMatch = cleaned.match(/^@usage\s+(.+)$/);
     if (usageMatch) {
-      metadata.usage = [...(metadata.usage ?? []), usageMatch[1].trim()];
+      metadata.usage = [...(metadata.usage ?? []), usageMatch[1]!.trim()];
       continue;
     }
 
     const examplesMatch = cleaned.match(/^@examples?\s+(.+)$/);
     if (examplesMatch) {
-      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1].trim()];
+      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1]!.trim()];
       continue;
     }
 
     const runMatch = cleaned.match(/^@run\s+(.+)$/);
     if (runMatch) {
-      metadata.run = runMatch[1].trim();
+      metadata.run = runMatch[1]!.trim();
       continue;
     }
 
     const setupMatch = cleaned.match(/^@setup\s+(.+)$/);
     if (setupMatch) {
-      metadata.setup = setupMatch[1].trim();
+      metadata.setup = setupMatch[1]!.trim();
       continue;
     }
 
     const cwdMatch = cleaned.match(/^@cwd\s+(.+)$/);
     if (cwdMatch) {
-      metadata.cwd = cwdMatch[1].trim();
+      metadata.cwd = cwdMatch[1]!.trim();
       continue;
     }
 
     const scopeMatch = cleaned.match(/^@scope\s+(.+)$/);
     if (scopeMatch) {
-      const scope = parseCommentScope(scopeMatch[1]);
+      const scope = parseCommentScope(scopeMatch[1]!);
       if (scope) metadata.scope = scope;
     }
   }
@@ -953,7 +731,7 @@ export function extractCommentMetadata(filePath: string, content?: string): Comm
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-export function applyCommentMetadata(entry: StashEntry, metadata: CommentMetadata | undefined): void {
+export function applyCommentMetadata(entry: IndexDocument, metadata: CommentMetadata | undefined): void {
   if (!metadata) return;
   let usedCommentMetadata = false;
 
@@ -1028,7 +806,7 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
  * entries that were previously enriched and already carry all three fields.
  * Pass `reEnrich = true` in the caller to bypass this check.
  */
-export function isEnrichmentComplete(entry: StashEntry): boolean {
+export function isEnrichmentComplete(entry: IndexDocument): boolean {
   const hasDescription = typeof entry.description === "string" && entry.description.trim().length > 0;
   const hasTags = Array.isArray(entry.tags) && entry.tags.length > 0;
   const hasSearchHints = Array.isArray(entry.searchHints) && entry.searchHints.length > 0;
@@ -1080,7 +858,7 @@ function isBodyOpeningIndexingEnabled(): boolean {
  */
 function findInnerFrontmatterBlock(lines: string[]): { open: number; close: number } | null {
   let i = 0;
-  while (i < lines.length && i < 3 && lines[i].trim() === "") i += 1;
+  while (i < lines.length && i < 3 && lines[i]!.trim() === "") i += 1;
   if (lines[i] !== "---") return null;
   for (let j = i + 1; j < lines.length; j += 1) {
     if (lines[j] === "---") return { open: i, close: j };
@@ -1101,7 +879,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
   const block = findInnerFrontmatterBlock(lines);
   if (!block) return false;
   for (let i = block.open + 1; i < block.close; i += 1) {
-    if (/^akm_memory_kind:\s*\S/.test(lines[i])) return true;
+    if (/^akm_memory_kind:\s*\S/.test(lines[i]!)) return true;
   }
   return false;
 }
@@ -1118,7 +896,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
  */
 function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {
   for (let i = block.open + 1; i < block.close; i += 1) {
-    const line = lines[i];
+    const line = lines[i]!;
     if (line.trim() === "") continue;
     if (/^\s/.test(line)) continue; // indented continuation / nested value
     if (/^[A-Za-z0-9_.-]+:(\s|$)/.test(line)) continue; // top-level key
@@ -1154,12 +932,12 @@ export function extractBodyOpening(body: string): string | undefined {
   let fenceChar = "";
   let inHtmlComment = false;
   for (let i = start; i < lines.length; i += 1) {
-    const trimmed = lines[i].trim();
+    const trimmed = lines[i]!.trim();
     const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
     if (inFence) {
       // Fence interiors are never prose (and may be secrets-adjacent command
       // text); skip until the matching closing marker.
-      if (fenceMatch && fenceMatch[1][0] === fenceChar) inFence = false;
+      if (fenceMatch && fenceMatch[1]!.charAt(0) === fenceChar) inFence = false;
       continue;
     }
     if (inHtmlComment) {
@@ -1171,7 +949,7 @@ export function extractBodyOpening(body: string): string | undefined {
     if (fenceMatch) {
       if (paragraph.length > 0) break; // a fence ends an open paragraph
       inFence = true;
-      fenceChar = fenceMatch[1][0];
+      fenceChar = fenceMatch[1]!.charAt(0);
       continue;
     }
     if (trimmed.startsWith("<!--")) {
@@ -1215,47 +993,23 @@ export function extractBodyOpening(body: string): string | undefined {
 // ── Metadata Generation ─────────────────────────────────────────────────────
 
 /**
- * Shared pipeline (steps 2-6) for building a single StashEntry from a file.
- *
- * Both `generateMetadata` and `generateMetadataFlat` perform identical work
- * once the initial `entry` object has been seeded with type and canonical name.
- * This helper encapsulates that shared pipeline so the two callers only differ
- * in how they determine the asset type and canonical name (step 1):
- *
- *  - `generateMetadata`     — explicit `assetType` arg + `deriveCanonicalAssetName`
- *  - `generateMetadataFlat` — type from `runMatchers()` + `deriveCanonicalAssetNameFromStashRoot`
- *
- * @param file        Absolute path to the file being processed.
- * @param assetType   Resolved asset type string (already validated by caller).
- * @param canonicalName Resolved canonical name (already computed by caller).
- * @param dirPath     Directory containing the file (used for tag fallback).
- * @param pkgMeta     Pre-loaded package.json metadata for this directory (may be null/undefined).
- * @param stashRoot   Stash root used for renderer search hints context.
- * @param ctx         FileContext for the file (may be pre-built by the caller).
- * @param match       Pre-resolved MatchResult when available (from `generateMetadataFlat`).
- * @returns The populated entry, or `{ skip: true, warning: string }` when the
- *          renderer throws and the file should be dropped.
+ * Priorities 1-2 of the metadata pipeline — package.json (P1), `.md`
+ * frontmatter (P2), and script `@param`/comment metadata (P2b) — everything
+ * that runs BEFORE the renderer-contributor step (P3). Extracted (Chunk 5 M-b)
+ * so the `akm` adapter's synchronous `recognize` shares this exact assembly
+ * with the live index-drain path; the two differ ONLY in how they obtain the
+ * P3 renderer metadata (the adapter uses the synchronous
+ * `foldRecognizedMetadata`), guaranteeing P1/P2/P4 parity by construction.
+ * Behavior-preserving: this is a verbatim lift of the former inline P1/P2/P2b
+ * block. Mutates `entry` in place.
  */
-async function buildEntryFromFile(
+export function applyPreContributorFields(
+  entry: IndexDocument,
   file: string,
-  assetType: string,
-  canonicalName: string,
-  dirPath: string,
+  ctx: Pick<ReturnType<typeof buildFileContext>, "content">,
   pkgMeta: ReturnType<typeof extractPackageMetadata> | undefined,
-  stashRoot: string,
-  ctx: ReturnType<typeof buildFileContext>,
-  match: import("../walk/file-context").MatchResult | null,
-): Promise<StashEntry | { skip: true; warning: string }> {
+): void {
   const ext = path.extname(file).toLowerCase();
-  const baseName = path.basename(file, ext);
-
-  const entry: StashEntry = {
-    name: canonicalName,
-    type: assetType,
-    quality: "generated",
-    confidence: 0.55,
-    source: "filename",
-  };
 
   // Priority 1: Package.json metadata
   if (pkgMeta) {
@@ -1270,7 +1024,7 @@ async function buildEntryFromFile(
   // Priority 2: Frontmatter (for .md files -- overrides package.json description)
   // Secrets are excluded even when the file happens to be `.md`: the whole file
   // is the secret value and must never be read for frontmatter or any metadata.
-  if (ext === ".md" && assetType !== "secret") {
+  if (ext === ".md" && entry.type !== "secret") {
     const content = ctx.content();
     const parsed = parseFrontmatter(content);
     applyCuratedFrontmatter(entry, parsed.data);
@@ -1282,7 +1036,7 @@ async function buildEntryFromFile(
     // Stash-organization conventions (SPEC-8): config-gated capture of the
     // self-situating body opening. Default off — enabling it changes indexed
     // text (collapse-detector canary baselines shift, and embeddings for
-    // already-embedded entries are NOT regenerated; see docs/configuration.md).
+    // already-embedded entries are NOT regenerated; see docs/reference/configuration.md).
     // Session-kind memories are raw transcripts and are never captured;
     // secrets never reach this branch (guard above) and env files are not .md.
     if (isBodyOpeningIndexingEnabled() && !hasSessionMemoryMarker(parsed.data, parsed.content)) {
@@ -1302,34 +1056,29 @@ async function buildEntryFromFile(
   // Env files (.env) and secret files (whole-file secrets) are deliberately
   // excluded — their contents are secrets and must never be parsed for @param
   // or any other metadata that could embed a value into the entry.
-  if (ext !== ".md" && assetType !== "env" && assetType !== "secret") {
+  if (ext !== ".md" && entry.type !== "env" && entry.type !== "secret") {
     const content = ctx.content();
     const scriptParams = extractScriptParameters(file, content);
     if (scriptParams) entry.parameters = scriptParams;
     applyCommentMetadata(entry, extractCommentMetadata(file, content));
   }
+}
 
-  // Priority 3: Renderer metadata extraction
-  // When no pre-resolved match is available (generateMetadata path), run
-  // matchers now so the renderer can extract type-specific metadata.
-  const resolvedMatch = match ?? (await runMatchers(ctx));
-  if (resolvedMatch) {
-    const renderer = await getRenderer(resolvedMatch.renderer);
-    if (renderer) {
-      const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
-      try {
-        await applyMetadataContributors(entry, {
-          rendererName: renderer.name,
-          renderContext: renderCtx,
-        });
-      } catch (error) {
-        return {
-          skip: true,
-          warning: buildMetadataSkipWarning(file, assetType, error),
-        };
-      }
-    }
-  }
+/**
+ * Priority 4 of the metadata pipeline — filename-heuristic fallbacks (P4) that
+ * run AFTER the renderer-contributor step (P3): a filename description when none
+ * was set, path/dir-derived tags, tag normalization, and alias generation.
+ * Extracted (Chunk 5 M-b) alongside {@link applyPreContributorFields} so both
+ * pipeline paths share it. Behavior-preserving verbatim lift. Mutates `entry`.
+ */
+export function applyPostContributorFields(
+  entry: IndexDocument,
+  file: string,
+  canonicalName: string,
+  dirPath: string,
+): void {
+  const ext = path.extname(file).toLowerCase();
+  const baseName = path.basename(file, ext);
 
   // Priority 4: Filename heuristics (fallback)
   if (!entry.description) {
@@ -1360,96 +1109,17 @@ async function buildEntryFromFile(
   // Heuristic search hints are too noisy to be useful for search quality
 
   entry.filename = path.basename(file);
-  return entry;
 }
 
-export async function generateMetadata(
-  dirPath: string,
-  assetType: string,
-  files: string[],
-  typeRoot = dirPath,
-): Promise<StashFile> {
-  const entries: StashEntry[] = [];
-  const warnings: string[] = [];
-  const pkgMeta = extractPackageMetadata(dirPath);
+// The pre-0.9.0 flat-walk matcher-pass metadata source was DELETED in Chunk 5
+// F4a M-core-3. Its role (recognize a stash root's files into durable entries)
+// is now the `akm` adapter's `recognize`, drained by `indexer/scan/drain-dir.ts`
+// (`drainDirDocuments` for the live indexer, `recognizeStashEntries` for the
+// `manifest` fallback / `registry` index builder / metadata unit tests). The
+// flip is the F4 engine swap; the shadow-parity gate proved recognize produced
+// the identical entries before the old pass was removed.
 
-  for (const file of files) {
-    const ext = path.extname(file).toLowerCase();
-    const baseName = path.basename(file, ext);
-    const fileName = path.basename(file);
-
-    // Skip non-relevant files
-    if (!isRelevantAssetFile(assetType, fileName)) continue;
-
-    const canonicalName = deriveCanonicalAssetName(assetType, typeRoot, file) ?? baseName;
-
-    // Build file context with typeRoot as the stash root so renderer context
-    // and search hints are scoped to the type directory.
-    const fileCtx = buildFileContext(typeRoot, file);
-
-    // Step 1: type is explicit; delegate steps 2-6 to the shared pipeline.
-    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, typeRoot, fileCtx, null);
-    if ("skip" in result) {
-      warnings.push(result.warning);
-      continue;
-    }
-    entries.push(result);
-  }
-
-  return warnings.length > 0 ? { entries, warnings } : { entries };
-}
-
-/**
- * Generate metadata for files using the matcher system instead of a fixed asset type.
- *
- * This is the flat-walk counterpart of `generateMetadata`. It classifies each
- * file via `runMatchers()` and uses the matched type for canonical naming.
- * Files that no matcher claims are silently skipped.
- */
-export async function generateMetadataFlat(stashRoot: string, files: string[]): Promise<StashFile> {
-  const entries: StashEntry[] = [];
-  const warnings: string[] = [];
-  const pkgMetaCache = new Map<string, ReturnType<typeof extractPackageMetadata>>();
-
-  for (const file of files) {
-    if (!shouldIndexStashFile(stashRoot, file)) continue;
-
-    // Step 1: determine type and canonical name via the matcher system.
-    const ctx = buildFileContext(stashRoot, file);
-    const match = await runMatchers(ctx);
-    if (!match) continue;
-
-    const assetType = match.type;
-    if (!isAssetType(assetType)) continue;
-
-    // If the file lives under a known type directory, use that as the root
-    // for canonical naming so names don't include the type prefix.
-    // e.g. scripts/deploy.sh → "deploy.sh" not "scripts/deploy.sh"
-    const ext = path.extname(file).toLowerCase();
-    const baseName = path.basename(file, ext);
-    const canonicalName = deriveCanonicalAssetNameFromStashRoot(assetType, stashRoot, file) ?? baseName;
-
-    // Resolve package.json metadata with a per-directory cache.
-    const dirPath = path.dirname(file);
-    if (!pkgMetaCache.has(dirPath)) {
-      pkgMetaCache.set(dirPath, extractPackageMetadata(dirPath));
-    }
-    const pkgMeta = pkgMetaCache.get(dirPath);
-
-    // Steps 2-6: delegate to the shared pipeline; pass the pre-resolved match
-    // so we don't run matchers a second time.
-    const result = await buildEntryFromFile(file, assetType, canonicalName, dirPath, pkgMeta, stashRoot, ctx, match);
-    if ("skip" in result) {
-      warnings.push(result.warning);
-      continue;
-    }
-    entries.push(result);
-  }
-
-  return warnings.length > 0 ? { entries, warnings } : { entries };
-}
-
-function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
+export function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   // Workflow errors are already multi-line `path:line — message` blocks; print
   // them as-is so the author sees a flat list without a redundant prefix.
@@ -1517,7 +1187,7 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (blockStart >= 0) {
     const desc: string[] = [];
     for (let i = blockStart; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i]!;
       if (i > blockStart && /\*\//.test(line)) break;
       const cleaned = line
         .replace(/^\s*\/?\*\*?\s?/, "")
@@ -1533,7 +1203,7 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (lines[0]?.startsWith("#!")) start = 1;
   const hashLines: string[] = [];
   for (let i = start; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (line.startsWith("#") && !line.startsWith("#!")) {
       hashLines.push(line.replace(/^#+\s*/, "").trim());
     } else if (line === "") {
@@ -1596,7 +1266,7 @@ export function extractTagsFromPath(filePath: string, rootDir: string): string[]
  * Unlike {@link extractTagsFromPath} this never tokenizes the filename
  * segment: it exists so a nested asset's directory (scope/domain) tokens can
  * be merged into explicit author tags without dragging every filename word
- * into exact-tag matching (SPEC-2, docs/design/stash-conventions-code-spec.md).
+ * into exact-tag matching (SPEC-2, docs/architecture/specs/stash-conventions-code-spec.md).
  * Tokenization mirrors `extractTagsFromPath`: each segment splits on `-`/`_`/
  * `.`, lowercased, single-character tokens dropped. A name with no directory
  * segments yields no tags.

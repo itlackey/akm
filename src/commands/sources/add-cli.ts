@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "../../cli/clack";
 import { defineJsonCommand, output } from "../../cli/shared";
+import { decideDangerousKeyInstall } from "../../core/activation-policy";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
@@ -13,7 +14,7 @@ import { akmRemove } from "./installed-stashes";
 import { akmAdd } from "./source-add";
 import { addStash } from "./source-manage";
 
-// ── Shared website-options helper (also used by wikiRegisterCommand) ──────────
+// ── Shared website-options helper ──────────
 
 export function buildWebsiteOptions(args: Record<string, unknown>): Record<string, unknown> {
   const websiteOptions: Record<string, unknown> = {};
@@ -93,7 +94,7 @@ function collectDangerousKeyFindings(
     for (const finding of findings) {
       // Extract the key name from the detail string for the summary line.
       const keyMatch = finding.detail.match(/Env key `([^`]+)`/);
-      const keyName = keyMatch ? keyMatch[1] : finding.file;
+      const keyName = keyMatch ? keyMatch[1]! : finding.file;
       allFindings.push({ vaultRef, keyName, relPath });
     }
   }
@@ -127,9 +128,15 @@ export async function auditInstalledStashForDangerousKeys(opts: {
     return { blocked: false };
   }
 
-  if (allFindings.length === 0) return { blocked: false };
+  // The workspace activation policy fixes the baseline stance; the interactive
+  // confirm / rollback below is layered on top of the `"gate"` stance only.
+  const stance = decideDangerousKeyInstall({
+    findingsPresent: allFindings.length > 0,
+    allowInsecure: allowDangerousKeys,
+  });
+  if (stance === "allow") return { blocked: false };
 
-  if (allowDangerousKeys) {
+  if (stance === "warn-allow") {
     // Operator has explicitly accepted the risk — warn and continue.
     for (const f of allFindings) {
       warn(
@@ -235,10 +242,6 @@ export const addCommand = defineJsonCommand({
       description: "Mark a git stash as writable so changes can be pushed back",
       default: false,
     },
-    type: {
-      type: "string",
-      description: "Override asset type for all files in this stash (currently supports: wiki)",
-    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
@@ -311,26 +314,9 @@ export const addCommand = defineJsonCommand({
     }
     const websiteOptions = buildWebsiteOptions(args);
 
-    if (args.type === "wiki") {
-      const { registerWikiSource } = await import("./source-add");
-      const result = await registerWikiSource({
-        ref,
-        name: args.name,
-        options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
-        writable: args.writable,
-      });
-      appendEvent({
-        eventType: "add",
-        metadata: { target: ref, type: "wiki", name: args.name ?? null, writable: args.writable === true },
-      });
-      output("add", result);
-      return;
-    }
-
     const result = await akmAdd({
       ref,
       name: args.name,
-      overrideType: args.type,
       options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
       writable: args.writable,
     });
@@ -339,7 +325,6 @@ export const addCommand = defineJsonCommand({
       metadata: {
         target: ref,
         name: args.name ?? null,
-        overrideType: args.type ?? null,
         writable: args.writable === true,
       },
     });

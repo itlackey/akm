@@ -13,9 +13,9 @@
  *   pi -p "<prompt>"
  *
  * with `--mode json` for structured (JSONL) output, `--model <m>` for model
- * selection, and `-c`/`-r`/`--session <id>` for resume. Resume is
- * registry-side (`AkmHarness.resume`, flag-shaped: {@link PI_RESUME_FLAG}) —
- * not built here because `AgentDispatchRequest` carries no session id.
+ * selection, and `-c`/`-r`/`--session <id>` for resume — not built here
+ * because `AgentDispatchRequest` carries no session id (akm's
+ * `workflow_run_units` is the durable resume source of truth).
  *
  * Platform-specific mapping decisions (all localized here, per the adapter
  * contract):
@@ -59,15 +59,6 @@ import {
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const PI_PLATFORM = "pi";
-
-/**
- * Flag-shaped resume support per the capability matrix (`--session <id>`).
- * Exported for the integration task's `AkmHarness.resume` registry entry; the
- * harness-native session id comes from the unit row (stored opportunistically
- * by the result extractor) — akm never depends on it (plan §"Session, MCP,
- * and identity across harnesses").
- */
-export const PI_RESUME_FLAG = "--session";
 
 /**
  * Assemble the positional prompt payload: the task prompt and — when a schema

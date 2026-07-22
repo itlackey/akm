@@ -121,8 +121,8 @@ export async function runWorkflowComplianceCase(c: EvalCase, ctx: EvalContext): 
   if (expected.requiredOrder && expected.requiredOrder.length > 1) {
     const violations: Array<{ before: string; after: string; reason: string }> = [];
     for (let i = 0; i < expected.requiredOrder.length - 1; i++) {
-      const a = expected.requiredOrder[i];
-      const b = expected.requiredOrder[i + 1];
+      const a = expected.requiredOrder[i]!;
+      const b = expected.requiredOrder[i + 1]!;
       const seenA = firstSeen[a];
       const seenB = firstSeen[b];
       if (seenA === undefined) violations.push({ before: a, after: b, reason: `${a} never occurred` });

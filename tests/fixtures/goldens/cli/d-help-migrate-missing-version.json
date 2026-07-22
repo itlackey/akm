@@ -1,0 +1,5 @@
+{
+  "code": "MISSING_REQUIRED_ARGUMENT",
+  "exitCode": 2,
+  "stderrKeys": ["code", "error", "hint", "ok"]
+}

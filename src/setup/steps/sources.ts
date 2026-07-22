@@ -10,7 +10,8 @@
 
 import * as p from "../../cli/clack";
 import type { AkmConfig, RegistryConfigEntry, SourceConfigEntry } from "../../core/config/config";
-import { DEFAULT_CONFIG, getEffectiveRegistries } from "../../core/config/config";
+import { DEFAULT_CONFIG, getEffectiveRegistries, getSources } from "../../core/config/config";
+import { readLockfile } from "../../integrations/lockfile";
 import { prompt, promptOrBack } from "../prompt";
 import { loadSetupStashes } from "../registry-stash-loader";
 
@@ -43,8 +44,8 @@ function renderConfiguredSourceList(sources: SourceConfigEntry[]): string {
     .join("\n");
 }
 
-function renderInstalledSourceList(installed: NonNullable<AkmConfig["installed"]>): string {
-  return installed.map((entry) => `- ${entry.id} (${entry.source})`).join("\n");
+function renderInstalledSourceList(managed: SourceConfigEntry[]): string {
+  return managed.map((entry) => `- ${entry.name ?? entry.url ?? entry.path ?? "unknown"} (${entry.type})`).join("\n");
 }
 
 export async function stepAdditionalSources(currentSources: SourceConfigEntry[]): Promise<SourceConfigEntry[]> {
@@ -190,7 +191,17 @@ export async function stepAddSources(
   current: AkmConfig,
   options?: { promptForAdditional?: boolean },
 ): Promise<SourceConfigEntry[]> {
-  const existingSources: SourceConfigEntry[] = [...(current.sources ?? [])];
+  // 0.9.0 (spec §10.1): existing sources come from the `bundles` map. The
+  // wizard toggles the PLAIN additional sources (not the primary, not the
+  // lock-backed registry installs, which are preserved untouched).
+  const lockIds = new Set(readLockfile().map((entry) => entry.id));
+  const allSources = getSources(current);
+  const existingSources: SourceConfigEntry[] = allSources.filter(
+    (source) => !source.primary && !(source.name && lockIds.has(source.name)),
+  );
+  const managedSources: SourceConfigEntry[] = allSources.filter(
+    (source) => source.name != null && lockIds.has(source.name),
+  );
   const sources: SourceConfigEntry[] = [];
 
   if (existingSources.length > 0) {
@@ -212,8 +223,8 @@ export async function stepAddSources(
     }
   }
 
-  if ((current.installed?.length ?? 0) > 0) {
-    p.note(renderInstalledSourceList(current.installed ?? []), "Installed managed stashes (preserved)");
+  if (managedSources.length > 0) {
+    p.note(renderInstalledSourceList(managedSources), "Installed managed stashes (preserved)");
   }
 
   // ── Registry-driven stash recommendations ─────────────────────────────

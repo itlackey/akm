@@ -19,7 +19,6 @@ import { UsageError } from "../../core/errors";
 import type { ShowResponse } from "../../sources/types";
 import { resolveModel } from "./model-aliases";
 import type { AgentProfile } from "./profiles";
-import type { AgentRunResult } from "./spawn";
 
 /**
  * Platform-agnostic description of what the caller wants to dispatch.
@@ -96,13 +95,24 @@ export interface AgentResultExtraction {
  * Per-harness result extractor — the counterpart of {@link AgentCommandBuilder}
  * on the output side. Registered on the harness descriptor
  * (`AkmHarness.resultExtractor`) so the workflow engine can normalize any
- * harness's raw {@link AgentRunResult} without a hand-maintained switch.
+ * harness's raw `AgentRunResult` without a hand-maintained switch.
  *
  * A function type (not an object) because extraction is a pure
  * `raw result → { text, sessionId? }` mapping; schema validation and the
  * retry-until-valid loop stay in the engine, shared across harnesses.
+ *
+ * `AgentRunResult` is referenced via an inline `import("./spawn")` TYPE QUERY
+ * (WI-9.8 KILL 3, D.3 edge C) rather than a top-level `import type` — this
+ * file is a dependency-graph LEAF that every harness's agent-builder AND
+ * result-extractor import; `./spawn.ts` itself imports `./builders.ts`
+ * (`getCommandBuilder`), which imports the harness barrel, which imports
+ * every harness — a top-level import here would close that loop right back.
+ * An inline type query is erased at compile time (same as `core/config`'s
+ * `typeof import("./config-schema")` pattern) so it carries zero runtime
+ * footprint and is invisible to the static import graph, unlike a top-level
+ * `import type` (which the cycle ratchet DOES count — see trap list).
  */
-export type AgentResultExtractor = (result: AgentRunResult) => AgentResultExtraction;
+export type AgentResultExtractor = (result: import("./spawn").AgentRunResult) => AgentResultExtraction;
 
 /** Strategy for building the argv for one agent CLI platform. */
 export interface AgentCommandBuilder {

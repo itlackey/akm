@@ -10,13 +10,12 @@
  * `MatchResult` shape expected by the rest of the indexer.
  */
 
-import { defaultRendererRegistry } from "../../core/asset/asset-registry";
-import { SCRIPT_EXTENSIONS } from "../../core/asset/asset-spec";
+import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
+import { presentationFor } from "../../core/type-presentation";
 import { looksLikeWorkflow } from "../../workflows/parser";
 import { looksLikeWorkflowProgram } from "../../workflows/program/parser";
 import { WORKFLOW_PROGRAM_RENDERER_NAME } from "../../workflows/program/project";
-import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
-import { registerMatcher } from "./file-context";
+import type { FileContext, MatchResult } from "./file-context";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -90,7 +89,10 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
   {
     dir: "tasks",
     type: "task",
-    test: (ext) => ext === ".md",
+    // Tasks migrated from `.md` to `.yml` in 0.8.0 (commit 031c659f updated
+    // the placement specs, renderers, and the task-linter, but missed this
+    // matcher — tasks/*.yml were unrecognized until this fix).
+    test: (ext) => ext === ".yml",
   },
   {
     // #561 — agent session assets live under `sessions/<harness>/<id>.md`.
@@ -149,7 +151,7 @@ function matchDirectoryHint(dirName: string, ctx: FileContext, specificity: numb
 }
 
 function classifyByExtension(ctx: FileContext): MatchFact | null {
-  if (ctx.fileName === "SKILL.md" && !ctx.ancestorDirs.includes("wikis")) {
+  if (ctx.fileName === "SKILL.md") {
     return { type: "skill", specificity: 25 };
   }
 
@@ -248,14 +250,6 @@ function classifyByWorkflowProgram(ctx: FileContext): MatchFact | null {
   return null;
 }
 
-function classifyByWiki(ctx: FileContext): MatchFact | null {
-  if (ctx.ext !== ".md") return null;
-  const idx = ctx.ancestorDirs.indexOf("wikis");
-  if (idx < 0) return null;
-  if (idx + 1 >= ctx.ancestorDirs.length) return null;
-  return { type: "wiki", specificity: 20 };
-}
-
 // ---------------------------------------------------------------------------
 // Adapter: MatchFact → MatchResult
 // ---------------------------------------------------------------------------
@@ -263,7 +257,10 @@ function classifyByWiki(ctx: FileContext): MatchFact | null {
 function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFact | null): MatchResult | null {
   const fact = classify(ctx);
   if (!fact) return null;
-  const renderer = defaultRendererRegistry.rendererNameFor(fact.type);
+  // Renderer name resolved via TYPE_PRESENTATION (core leaf), so matchers.ts
+  // carries no edge into the taxonomy SCC (chunk-3 cutover enabler).
+  // TYPE_PRESENTATION.renderer is the single source of truth for renderer names.
+  const renderer = presentationFor(fact.type).renderer;
   if (!renderer) return null;
   return {
     type: fact.type,
@@ -293,10 +290,6 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
   return toMatchResult(ctx, classifyBySmartMd);
 }
 
-export function wikiMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, classifyByWiki);
-}
-
 export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
   const fact = classifyByWorkflowProgram(ctx);
   if (!fact) return null;
@@ -304,17 +297,8 @@ export function workflowProgramMatcher(ctx: FileContext): MatchResult | null {
   return { type: fact.type, specificity: fact.specificity, renderer: WORKFLOW_PROGRAM_RENDERER_NAME };
 }
 
-const builtinMatchers: AssetMatcher[] = [
-  extensionMatcher,
-  directoryMatcher,
-  parentDirHintMatcher,
-  smartMdMatcher,
-  wikiMatcher,
-  workflowProgramMatcher,
-];
-
-export function registerBuiltinMatchers(): void {
-  for (const matcher of builtinMatchers) {
-    registerMatcher(matcher);
-  }
-}
+// The five matcher functions above are consumed directly by the akm adapter's
+// synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
+// holds the same registration-order array for tie-breaking). The chunk-3 cutover
+// removed the file-context matcher registry, so there is no `registerBuiltinMatchers`
+// glue any more — recognition is adapter-driven, not registry-driven.

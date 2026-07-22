@@ -197,7 +197,7 @@ describe("akm sync", () => {
     writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      sources: [{ type: "git", name: "nopush-stash", url: repoUrl, writable: true }],
+      bundles: { "nopush-stash": { git: repoUrl, writable: true } },
     });
 
     const upstreamCountBefore = spawnSync("git", ["-C", upstream, "rev-list", "--count", "HEAD"], {
@@ -242,7 +242,7 @@ describe("akm sync", () => {
     writeJson(path.join(xdgConfigHome, "akm", "config.json"), {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      sources: [{ type: "git", name: "named-stash", url: namedRepoUrl }],
+      bundles: { "named-stash": { git: namedRepoUrl } },
     });
 
     const result = await runCliWithEnv(["sync", "named-stash", "-m", "named target commit"], primaryStashDir, {
@@ -279,7 +279,7 @@ describe("akm sync", () => {
     writeJson(path.join(configRoot, "akm", "config.json"), {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      sources: [{ type: "git", name: namedRepoName, url: namedRepoUrl }],
+      bundles: { "akm-stash": { git: namedRepoUrl, registryId: namedRepoName } },
     });
 
     const result = await withEnv(
@@ -316,17 +316,7 @@ describe("akm sync", () => {
     writeJson(path.join(configRoot, "akm", "config.json"), {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      installed: [
-        {
-          id: "installed-stash",
-          source: "filesystem",
-          ref: "file:/tmp/installed-stash",
-          artifactUrl: "file:/tmp/installed-stash.tgz",
-          stashRoot: installedStashDir,
-          cacheDir: installedStashDir,
-          installedAt: new Date().toISOString(),
-        },
-      ],
+      bundles: { "installed-stash": { path: installedStashDir } },
     });
 
     const result = await withEnv(

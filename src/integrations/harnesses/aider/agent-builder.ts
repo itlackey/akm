@@ -53,7 +53,7 @@
  *   therefore dropped rather than approximated — never silently widened.
  * - **resume/session** — NOT expressible: Aider persists context in
  *   chat-history files (`.aider.chat.history.md`), not session ids, so there
- *   is no flag-shaped `HarnessResumeSupport` to export and the extractor
+ *   is no flag-shaped resume to describe and the extractor
  *   never yields a `sessionId`. akm's `workflow_run_units` remains the
  *   durable source of truth; resume works even against a harness with no
  *   session model (plan §"Session, MCP, and identity across harnesses" —
@@ -63,7 +63,7 @@
  *
  * NOT registered anywhere: `builders.ts` / `harnesses/index.ts` wiring is a
  * follow-up integration task (as is the registry entry declaring
- * `structuredOutput: "none"` and no `resume`). Exported standalone so that
+ * `structuredOutput: "none"`). Exported standalone so that
  * task only adds a registry entry.
  */
 

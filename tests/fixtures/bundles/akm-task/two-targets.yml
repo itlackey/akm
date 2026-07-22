@@ -1,0 +1,6 @@
+# INVALID (fixture, intentional): declares BOTH a prompt and a command target.
+# A task must declare exactly one target — this exercises `invalid-task-yaml`.
+schedule: "@daily"
+enabled: true
+prompt: "Summarize yesterday's activity."
+command: "echo hello"

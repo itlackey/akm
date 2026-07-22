@@ -72,7 +72,7 @@ function parseShapeMode(value: string | undefined): ShapeMode | undefined {
 
 export function parseFlagValue(argv: string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const arg = argv[i]!;
     if (arg === flag) return argv[i + 1];
     if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
   }

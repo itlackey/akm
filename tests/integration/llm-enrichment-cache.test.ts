@@ -58,15 +58,11 @@ const { runGraphExtractionPass } = await import("../../src/indexer/graph/graph-e
 const { runMemoryInferencePass: runMemoryInferencePassImpl } = await import(
   "../../src/indexer/passes/memory-inference"
 );
-const {
-  computeBodyHash,
-  getLlmCacheEntry,
-  upsertLlmCacheEntry,
-  clearStaleCacheEntries,
-  openIndexDatabase,
-  closeDatabase,
-  upsertEntry,
-} = await import("../../src/indexer/db/db");
+const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheEntries } = await import(
+  "../../src/storage/repositories/index-llm-cache-repository"
+);
+const { openIndexDatabase, closeDatabase } = await import("../../src/storage/repositories/index-connection");
+const { upsertEntry } = await import("../../src/storage/repositories/index-entries-repository");
 const { loadStoredGraphSnapshot } = await import("../../src/indexer/db/graph-db");
 const { buildSearchText } = await import("../../src/indexer/search/search-fields");
 

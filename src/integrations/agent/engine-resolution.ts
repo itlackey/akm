@@ -3,7 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import type { LlmConnectionConfig } from "../../core/config/config";
+// LlmConnectionConfig / AkmConfig come from the dependency-free config-types.ts
+// leaf, NOT `../../core/config/config` (WI-9.8 KILL 3, D.3 edge A): config.ts
+// used to import `materializeLlmConnection`/`resolveLlmEngineUse` from this
+// file for its `requireLlmConfig`/`getDefaultLlmConfig` wrappers, while this
+// file imported `LlmConnectionConfig` back from config.ts — a direct 2-file
+// cycle that also dragged config.ts into the harness/agent-runtime SCC.
+// `requireLlmConfig`/`getDefaultLlmConfig` moved here (see bottom of file) so
+// config.ts no longer needs to import this module at all.
+import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
@@ -12,7 +20,15 @@ import { getHarness } from "../harnesses";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { resolveLlmModel, resolveModel } from "./model-aliases";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
-import type { RunnerSpec } from "./runner";
+
+// RunnerSpec referenced via an inline `import("./runner")` TYPE QUERY (WI-9.8
+// KILL 3) rather than a top-level `import type`: `./runner.ts` imports real
+// VALUES from this module (resolveEngine, resolveLlmEngineUse,
+// materializeLlmConnection), so a top-level type import here would close a
+// 2-file cycle (this file needs RunnerSpec only as a return-type annotation,
+// never a value). Same pattern as `builder-shared.ts`'s `AgentRunResult`
+// query — erased at compile time, invisible to the static import graph.
+type RunnerSpec = import("./runner").RunnerSpec;
 
 export interface LlmInvocationOverrides {
   temperature?: number;
@@ -316,4 +332,29 @@ export function resolveDefaultEngine(config: EngineResolutionConfig): RunnerSpec
   const name = config.defaults?.engine;
   if (!name) throw new ConfigError("No default engine is configured.", "INVALID_CONFIG_FILE");
   return resolveEngine(name, config);
+}
+
+// ── AkmConfig convenience wrappers (moved from core/config/config.ts, WI-9.8
+// KILL 3, D.3 edge A) ────────────────────────────────────────────────────────
+//
+// Moved verbatim: `config.ts` previously called `materializeLlmConnection` +
+// `resolveLlmEngineUse` directly for these two wrappers, which is what made
+// config.ts import this module — and this module imported `LlmConnectionConfig`
+// back from config.ts, closing a 2-file cycle. config.ts CANNOT re-export
+// these (a re-export is still a graph edge to this file), so the small number
+// of call sites that used to import them from "core/config/config" now import
+// them from here instead (see D.3 edge A "callers compose instead").
+
+/** Resolve and materialize the configured default LLM engine at dispatch time. */
+export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
+  return materializeLlmConnection(resolveLlmEngineUse(config, []));
+}
+
+/**
+ * Like {@link requireLlmConfig} but returns `undefined` instead of throwing
+ * when no LLM is configured. Use in code paths where the LLM is optional.
+ */
+export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
+  const resolved = resolveLlmEngineUse(config, [], { optional: true });
+  return resolved ? materializeLlmConnection(resolved) : undefined;
 }

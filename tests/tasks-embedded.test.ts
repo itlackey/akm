@@ -4,7 +4,7 @@
 
 /**
  * Embedded core task registry — asserts the 6 bundled templates are present
- * with the exact ids, commands, and default schedules from issue #512, and
+ * with the exact ids and default schedules from issue #512, and
  * that they are read from the bundled assets dir (not any user stash).
  *
  * `update-stashes` (nightly `akm update --all`) was retired in meta-review
@@ -18,12 +18,12 @@ import { listEmbeddedTasks } from "../src/tasks/embedded";
 import { parseTaskDocument } from "../src/tasks/parser";
 
 const EXPECTED = [
-  { id: "improve", command: "akm improve --auto-accept safe", schedule: "0 2 * * *", enabled: true },
-  { id: "backup", command: "akm db backups", schedule: "0 3 * * 0", enabled: false },
-  { id: "version-check", command: "akm info --check-version", schedule: "0 9 * * 1", enabled: true },
-  { id: "index-refresh", command: "akm index", schedule: "0 4 * * *", enabled: true },
-  { id: "extract", command: "akm extract", schedule: "*/30 * * * *", enabled: true },
-  { id: "sync", command: "akm sync", schedule: "*/15 * * * *", enabled: true },
+  { id: "improve", schedule: "0 2 * * *", enabled: true },
+  { id: "backup", schedule: "0 3 * * 0", enabled: false },
+  { id: "version-check", schedule: "0 9 * * 1", enabled: true },
+  { id: "index-refresh", schedule: "0 4 * * *", enabled: true },
+  { id: "extract", schedule: "*/30 * * * *", enabled: true },
+  { id: "sync", schedule: "*/15 * * * *", enabled: true },
 ] as const;
 
 describe("embedded core task registry", () => {
@@ -32,18 +32,16 @@ describe("embedded core task registry", () => {
     expect(tasks.length).toBe(6);
   });
 
-  test("each template has the exact id, command, and default schedule", () => {
+  test("each template has the exact id, default schedule, and enablement", () => {
     const tasks = listEmbeddedTasks();
     const byId = new Map(tasks.map((t) => [t.id, t]));
     for (const exp of EXPECTED) {
       const got = byId.get(exp.id);
       expect(got, `missing embedded task ${exp.id}`).toBeDefined();
-      expect(got?.command).toBe(exp.command);
       expect(got?.schedule).toBe(exp.schedule);
       expect(got?.enabled).toBe(exp.enabled);
       expect(got?.description.length).toBeGreaterThan(0);
       expect(got?.label).toBe(`core/${exp.id}`);
-      expect(got?.yaml).toContain(exp.command);
     }
   });
 

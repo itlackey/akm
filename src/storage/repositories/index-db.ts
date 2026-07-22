@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { openExistingDatabase } from "../../indexer/db/db";
 import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 import { withManagedDb } from "../managed-db";
+import { openExistingDatabase } from "./index-connection";
 
 /**
  * Busy-timeout (ms) for read-path telemetry writers. Small on purpose: a
@@ -28,8 +28,9 @@ export interface WithIndexDbOptions {
 /**
  * Scoped-resource (loan pattern) helper for the index database (`index.db`).
  *
- * This is the `index.db` twin of {@link ../../workflows/db withWorkflowDb} /
- * {@link ./workflow-runs-repository withWorkflowRunsRepo}: it opens the index
+ * This is the `index.db` twin of the state.db loan helpers ({@link
+ * ../../core/state-db withStateDb} / {@link ./workflow-runs-repository
+ * withWorkflowRunsRepo}): it opens the index
  * database bound to {@link StorageLocations.indexDb}, runs `fn` against the live
  * {@link Database}, and closes the connection exactly once when `fn` returns —
  * even if `fn` throws. Callers no longer hand-roll `open / try / finally / close`

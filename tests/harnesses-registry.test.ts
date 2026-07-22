@@ -113,7 +113,7 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     }
   });
 
-  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), --resume, CLAUDE_SESSION_ID", () => {
+  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), CLAUDE_SESSION_ID", () => {
     const claude = getHarness("claude");
     if (!claude) throw new Error("claude harness not registered");
     expect(claude.pattern).toBe("in-harness");
@@ -122,46 +122,38 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     // round-3 finding A). It carries a result extractor to unwrap that envelope.
     expect(claude.structuredOutput).toBe("native-json");
     expect(claude.resultExtractor).toBeDefined();
-    expect(claude.resume).toEqual({ flag: "--resume", takesSessionId: true });
     expect([...(claude.identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
   });
 
-  it("opencode (CLI path): local-runner, prompt+validate tier, --session, OPENCODE_SESSION_ID", () => {
+  it("opencode (CLI path): local-runner, prompt+validate tier, OPENCODE_SESSION_ID", () => {
     const opencode = getHarness("opencode");
     if (!opencode) throw new Error("opencode harness not registered");
     expect(opencode.pattern).toBe("local-runner");
     expect(opencode.structuredOutput).toBe("none");
-    expect(opencode.resume).toEqual({ flag: "--session", takesSessionId: true });
     expect([...(opencode.identityEnv ?? [])]).toEqual(["OPENCODE_SESSION_ID"]);
   });
 
-  it("opencode-sdk: local-runner, native-json, programmatic resume (no flag), no env marker", () => {
+  it("opencode-sdk: local-runner, native-json, no env marker", () => {
     const sdk = getHarness("opencode-sdk");
     if (!sdk) throw new Error("opencode-sdk harness not registered");
     expect(sdk.pattern).toBe("local-runner");
     expect(sdk.structuredOutput).toBe("native-json");
-    expect(sdk.resume).toBeUndefined();
     expect(sdk.identityEnv).toBeUndefined();
   });
 
-  it("every sessionLogs-capable harness supplies a sessionLogProvider whose name resolves back to it", () => {
-    // The session-logs index derives its provider array from this factory;
-    // a sessionLogs harness without one would throw at import time there.
+  // WI-9.7 (H1): the sessionLogs↔sessionLogProvider PAIRING (a session-log-
+  // capable harness has a provider factory, and a non-session-log harness has
+  // none) is now enforced by the `AkmHarness` discriminated union at compile
+  // time — `HARNESS_REGISTRY`'s `satisfies readonly AkmHarness[]` check would
+  // fail to build if any entry got this wrong. What's left to test at runtime
+  // is the part the type system can't see: whether a provider's own `name`
+  // string actually points back to the harness that produced it.
+  it("every sessionLogs-capable harness's provider name resolves back to it", () => {
     for (const h of SESSION_LOG_HARNESSES) {
-      expect(h.sessionLogProvider).toBeDefined();
-      const provider = h.sessionLogProvider?.();
-      if (!provider) throw new Error(`harness ${h.id} returned no provider`);
+      const provider = h.sessionLogProvider();
       // Provider runtime name (e.g. 'claude-code') must normalize to the
       // harness's canonical id via the #562 bridge.
       expect(normalizeHarnessId(provider.name)).toBe(h.id);
-    }
-  });
-
-  it("harnesses without sessionLogs capability do not carry a provider factory", () => {
-    for (const h of HARNESS_REGISTRY) {
-      if (!h.capabilities.sessionLogs) {
-        expect(h.sessionLogProvider).toBeUndefined();
-      }
     }
   });
 

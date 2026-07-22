@@ -10,7 +10,6 @@ import {
   getDefaultStashDir,
   getLockfileLockPath,
   getLockfilePath,
-  getWorkflowDbPath,
 } from "../core/paths";
 import { getStateDbPath } from "../core/state-db";
 
@@ -29,8 +28,6 @@ export interface StorageLocations {
   readonly indexDb: string;
   /** The state database file (`<dataDir>/state.db`). */
   readonly stateDb: string;
-  /** The workflow database file (`<dataDir>/workflow.db`). */
-  readonly workflowDb: string;
   /** The advisory lockfile (`<dataDir>/akm.lock`). */
   readonly lockfile: string;
   /** The lockfile write-sentinel (`<dataDir>/akm.lock.lck`). */
@@ -56,7 +53,6 @@ export function resolveStorageLocations(): StorageLocations {
   return {
     indexDb: getDbPath(),
     stateDb: getStateDbPath(),
-    workflowDb: getWorkflowDbPath(),
     lockfile: getLockfilePath(),
     lockfileSentinel: getLockfileLockPath(),
     dataDir: getDataDir(),

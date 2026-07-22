@@ -8,11 +8,11 @@
  * Extracted from indexer.ts to break the circular dependency:
  *   db.ts -> indexer.ts -> db.ts
  *
- * This module imports only from metadata.ts (for the StashEntry type),
+ * This module imports only from metadata.ts (for the IndexDocument type),
  * so it can be safely imported by both db.ts and indexer.ts.
  */
 
-import type { StashEntry } from "../passes/metadata";
+import type { IndexDocument } from "../passes/metadata";
 
 /**
  * Return per-field search text for multi-column FTS5 indexing.
@@ -31,7 +31,7 @@ import type { StashEntry } from "../passes/metadata";
 // the detector's recall baseline for ALL existing canary sets — coordinate
 // with src/commands/improve/collapse-detector.ts (buildCanaryQuery) and expect
 // operators to re-mint via `akm improve canary --refresh` after such a change.
-export function buildSearchFields(entry: StashEntry): {
+export function buildSearchFields(entry: IndexDocument): {
   name: string;
   description: string;
   tags: string;
@@ -89,7 +89,7 @@ export function buildSearchFields(entry: StashEntry): {
  * Used for the `search_text` column in the entries table (backward compat)
  * and for generating embedding text.
  */
-export function buildSearchText(entry: StashEntry): string {
+export function buildSearchText(entry: IndexDocument): string {
   const fields = buildSearchFields(entry);
   return [fields.name, fields.description, fields.tags, fields.hints, fields.content]
     .filter((s) => s.length > 0)

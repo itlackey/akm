@@ -42,6 +42,6 @@ Use a skill when the stash needs reusable procedural guidance for a recurring cl
 ## Placement & linking
 
 - Skills are **reuse-born**: place `skills/<domain>/<name>/SKILL.md` under a
-  stable **domain** prefix from `fact:conventions/domains`
-  (`skill:testing/flaky-test-triage`) so any project finds and reuses it instead
+  stable **domain** prefix from `facts/conventions/domains`
+  (`skills/testing/flaky-test-triage`) so any project finds and reuses it instead
   of duplicating the procedure.

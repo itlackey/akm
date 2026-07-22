@@ -10,15 +10,15 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { UtilityScoreRow } from "../src/indexer/db/db";
-import type { StashEntry } from "../src/indexer/passes/metadata";
+import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { shouldQueryPositiveFeedbackCounts } from "../src/indexer/search/db-search";
 import type { RankedEntryInput } from "../src/indexer/search/ranking";
 import { applyUtilityContributors, type UtilityRankingContext } from "../src/indexer/search/ranking-contributors";
 import type { Database } from "../src/storage/database";
+import type { UtilityScoreRow } from "../src/storage/repositories/index-entry-types";
 
 function makeRanked(id: number, name = "memory"): RankedEntryInput {
-  const entry: StashEntry = { name, type: "memory" };
+  const entry: IndexDocument = { name, type: "memory" };
   return {
     id,
     entry,

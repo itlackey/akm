@@ -3,16 +3,64 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `proposals` table (and its `proposal_fs_imports`
- * companion ledger). Extracted verbatim from core/state-db.ts — queries and
- * row-mapping unchanged, only relocated behind the repository boundary.
- * Re-exported by core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `proposals` table. Extracted verbatim from
+ * core/state-db.ts — queries and row-mapping unchanged, only relocated behind
+ * the repository boundary. Re-exported by core/state-db.ts so existing importers
+ * resolve.
+ *
+ * The pre-0.9 `proposal_fs_imports` ledger's read/write helpers used to live here
+ * too; they were dropped when the legacy filesystem-proposal import folded out of
+ * the live path into the one-time migrator (`src/migrate/legacy/proposal-fs-import.ts`),
+ * whose idempotency is now INSERT OR IGNORE on the proposal UUID
+ * ({@link insertProposalIfAbsent}) plus migrate-apply's own journal. Migration 005
+ * still creates the (now vestigial) table — the append-only ledger contract
+ * forbids removing a released migration.
  *
  * @module proposals-repository
  */
 
-import type { Proposal } from "../../commands/proposal/repository";
+import type { Proposal } from "../../commands/proposal/proposal-types";
+import type { FileChange } from "../../core/file-change";
 import type { Database, SqlValue } from "../database";
+
+/**
+ * Persisted shape of one `FileChange` inside `metadata_json.changes`.
+ *
+ * `before` is never persisted (transaction-time capture only), and the FIRST
+ * entry's `after` is implied by the dedicated `content` column — storing it
+ * again would double every row. Non-primary entries (multi-file proposals)
+ * carry their own `after`.
+ */
+interface StoredFileChange {
+  path: string;
+  op: FileChange["op"];
+  after?: string;
+}
+
+/** Serialize `Proposal.changes` for `metadata_json` (see {@link StoredFileChange}). */
+function changesToStored(changes: FileChange[]): StoredFileChange[] {
+  return changes.map((c, i) => ({
+    path: c.path,
+    op: c.op,
+    ...(i > 0 && c.after !== undefined ? { after: c.after } : {}),
+  }));
+}
+
+/**
+ * Reconstruct `Proposal.changes` from `metadata_json.changes` + the `content`
+ * column. Legacy rows (persisted before the envelope existed) synthesize one
+ * `update` entry with an empty `path` sentinel (resolve from the ref instead).
+ */
+function storedToChanges(stored: unknown, content: string): FileChange[] {
+  if (!Array.isArray(stored) || stored.length === 0) {
+    return [{ path: "", after: content, op: "update" }];
+  }
+  return (stored as StoredFileChange[]).map((c, i) => ({
+    path: typeof c.path === "string" ? c.path : "",
+    op: c.op === "create" || c.op === "delete" ? c.op : "update",
+    ...(i === 0 ? (c.op === "delete" ? {} : { after: content }) : c.after !== undefined ? { after: c.after } : {}),
+  }));
+}
 
 /**
  * Raw SQLite row shape for the `proposals` table.
@@ -67,6 +115,8 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       content: row.content,
       ...(frontmatter !== undefined ? { frontmatter } : {}),
     },
+    changes: storedToChanges(meta.changes, row.content),
+    ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
@@ -88,6 +138,18 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
 export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<ProposalRow, "id"> & { id: string } {
   // Fields that have no dedicated column live in metadata_json.
   const metaObj: Record<string, unknown> = {};
+  // Legacy filesystem proposal.json objects (pre-envelope, imported by the
+  // migrator's proposal-fs-import.ts) reach this mapper without `changes` at
+  // runtime despite the type — or, if hand-edited, with a malformed value.
+  // Synthesize the same sentinel entry the read path uses rather than letting
+  // one corrupt legacy file abort a whole import batch.
+  const safeChanges = Array.isArray(proposal.changes)
+    ? proposal.changes.filter((c): c is FileChange => typeof c === "object" && c !== null)
+    : undefined;
+  metaObj.changes = changesToStored(
+    safeChanges && safeChanges.length > 0 ? safeChanges : [{ path: "", after: proposal.payload.content, op: "update" }],
+  );
+  if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
@@ -187,39 +249,6 @@ export function listStateProposals(
 }
 
 /**
- * Read every proposal's `gateDecision` record across all stashes (#612).
- *
- * Calibration reads the auto-accept gate's per-proposal decisions regardless of
- * the proposal's current lifecycle status — a proposal that was auto-accepted
- * is now `accepted`, an auto-rejected one stays `pending`, so filtering by
- * status would drop half the join. Rows without a `gateDecision` (created
- * before #577, or never gated) are skipped. The result is ordered by
- * `decidedAt ASC` for deterministic downstream aggregation, falling back to
- * `created_at` ordering from the SQL layer for rows with equal/missing
- * timestamps.
- */
-export function listProposalGateDecisions(db: Database): NonNullable<Proposal["gateDecision"]>[] {
-  const rows = db.prepare("SELECT metadata_json FROM proposals ORDER BY created_at ASC, rowid ASC").all() as Array<{
-    metadata_json: string;
-  }>;
-  const decisions: NonNullable<Proposal["gateDecision"]>[] = [];
-  for (const row of rows) {
-    let meta: Record<string, unknown>;
-    try {
-      meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const decision = meta.gateDecision as Proposal["gateDecision"] | undefined;
-    if (decision && typeof decision === "object" && typeof decision.outcome === "string") {
-      decisions.push(decision);
-    }
-  }
-  decisions.sort((a, b) => new Date(a.decidedAt).getTime() - new Date(b.decidedAt).getTime());
-  return decisions;
-}
-
-/**
  * Look up a single proposal by id, optionally scoped to one stash root.
  * Returns undefined when not found.
  */
@@ -252,30 +281,12 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
 }
 
 /**
- * Whether the legacy filesystem proposal import has already run for `stashDir`.
- * See migration 005 (`proposal_fs_imports`).
- */
-export function hasImportedFsProposals(db: Database, stashDir: string): boolean {
-  // Drivers disagree on the no-row sentinel (bun:sqlite → null,
-  // better-sqlite3 → undefined) — Boolean() covers both.
-  return Boolean(db.prepare("SELECT 1 FROM proposal_fs_imports WHERE stash_dir = ?").get(stashDir));
-}
-
-/**
- * Record that the legacy filesystem proposal import completed for `stashDir`
- * so subsequent invocations skip the directory walk. INSERT OR REPLACE keeps
- * the call idempotent.
- */
-export function recordFsProposalsImport(db: Database, stashDir: string, importedCount: number): void {
-  db.prepare(
-    "INSERT OR REPLACE INTO proposal_fs_imports (stash_dir, imported_at, imported_count) VALUES (?, ?, ?)",
-  ).run(stashDir, new Date().toISOString(), importedCount);
-}
-
-/**
  * Insert a proposal row ONLY when the id is not already present (used by the
- * legacy filesystem import so re-runs never clobber rows that have since been
- * mutated through the canonical store). Returns true when a row was inserted.
+ * one-time legacy filesystem import in the migrator —
+ * `src/migrate/legacy/proposal-fs-import.ts` — so a re-run never clobbers rows
+ * that have since been mutated through the canonical store, and re-walking the
+ * still-on-disk legacy files is idempotent). Returns true when a row was
+ * inserted.
  */
 export function insertProposalIfAbsent(db: Database, proposal: Proposal, stashDir: string): boolean {
   const v = proposalToRowValues(proposal, stashDir);

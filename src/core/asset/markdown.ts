@@ -29,17 +29,17 @@ export function parseMarkdownToc(content: string): KnowledgeToc {
   let inFence = false;
   for (let i = start; i < lines.length; i++) {
     // Track fenced code blocks (``` or ~~~) so headings inside them are skipped.
-    if (/^\s*(`{3,}|~{3,})/.test(lines[i])) {
+    if (/^\s*(`{3,}|~{3,})/.test(lines[i]!)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
 
-    const match = lines[i].match(/^(#{1,6})\s+(.+)$/);
+    const match = lines[i]!.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       headings.push({
-        level: match[1].length,
-        text: match[2].replace(/\s+#+\s*$/, "").trim(),
+        level: match[1]!.length,
+        text: match[2]!.replace(/\s+#+\s*$/, "").trim(),
         line: i + 1,
       });
     }
@@ -61,13 +61,13 @@ export function extractSection(
   let startLevel = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^(#{1,6})\s+(.+)$/);
+    const match = lines[i]!.match(/^(#{1,6})\s+(.+)$/);
     if (!match) continue;
-    const text = match[2].replace(/\s+#+\s*$/, "").trim();
+    const text = match[2]!.replace(/\s+#+\s*$/, "").trim();
     if (text.toLowerCase() === target && startIdx === -1) {
       startIdx = i;
-      startLevel = match[1].length;
-    } else if (startIdx !== -1 && match[1].length <= startLevel) {
+      startLevel = match[1]!.length;
+    } else if (startIdx !== -1 && match[1]!.length <= startLevel) {
       return {
         content: lines.slice(startIdx, i).join("\n"),
         startLine: startIdx + 1,
@@ -131,6 +131,6 @@ export function stripMarkdownFences(raw: string): string {
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .trim();
   const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
-  if (fence) return fence[1].trim();
+  if (fence) return fence[1]!.trim();
   return stripped;
 }

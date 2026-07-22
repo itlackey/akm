@@ -130,7 +130,8 @@ export interface EvalCaseResult {
 export type EvalMode = "baseline" | "akm" | "paired";
 
 export interface EvalRunResult {
-  schemaVersion: 1;
+  /** v1 envelopes remain readable; v2 makes suiteFingerprint mandatory on disk. */
+  schemaVersion: 1 | 2;
   evalRunId: string;
   suite: string;
   mode: EvalMode;
@@ -146,6 +147,8 @@ export interface EvalRunResult {
   inputs: {
     caseCount: number;
     caseDir: string;
+    /** SHA-256 of the canonical case and transitive fixture/probe manifest. */
+    suiteFingerprint?: string;
     improveRunId?: string;
   };
   scores: {
@@ -205,6 +208,8 @@ export interface EvalContext {
   currentResults?: EvalCaseResult[];
   /** Phase 2: the in-flight eval run id; lets the regression runner skip self-diffs. */
   currentRunId?: string;
+  /** Frozen suite identity used to reject comparisons against changed cases. */
+  suiteFingerprint?: string;
   /** Phase 7: optional LLM-judge context (only present when `--llm-judge` is on). */
   judge?: LlmJudgeContext;
   /**

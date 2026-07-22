@@ -15,7 +15,7 @@ Run:
 ls scripts/migrate-storage.ts
 ```
 
-If the file does not exist, tell the user to download it from the akm repository or install it via `akm install command:migrate-storage`. Do not proceed until the script is present.
+If the file does not exist, tell the user to download it from the akm repository or install it via `akm install commands/migrate-storage`. Do not proceed until the script is present.
 
 ## Step 2 — Run a dry-run first
 

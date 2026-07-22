@@ -5,13 +5,17 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { openDatabase } from "../storage/database";
+import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
+import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
+import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
+import { type Database, openDatabaseFinalizing } from "../storage/database";
 import {
   inspectMigrationLedger,
+  inspectSealedMigrationLedger,
   type Migration,
   type MigrationLedgerState,
+  type SealedMigration,
 } from "../storage/engines/sqlite-migrations";
-import { WORKFLOW_MIGRATIONS } from "../workflows/db";
 import { MAX_CONFIG_FILE_BYTES, MAX_LOCAL_METADATA_BYTES, readTextFileWithLimit, writeFileAtomic } from "./common";
 import { parseConfigText, withConfigLock } from "./config/config-io";
 import { CURRENT_CONFIG_VERSION, validateConfigShape } from "./config/config-schema";
@@ -27,23 +31,36 @@ import {
 import {
   getConfigPath,
   getDataDir,
+  getDbPath,
   getIndexWriterLockPath,
   getLockfileLockPath,
   getStateDbPathInDataDir,
-  getWorkflowDbPath,
 } from "./paths";
 import { STATE_MIGRATIONS } from "./state/migrations";
 
 export const MIGRATION_BACKUP_VERSION = "0.9.0" as const;
-const MANIFEST_FORMAT_VERSION = 2 as const;
+const MANIFEST_FORMAT_VERSION = 3 as const;
+/** Pre-cutover manifests (three artifacts, no index.db) stay readable and restorable (plan §3.3 item 1). */
+const LEGACY_MANIFEST_FORMAT_VERSION = 2 as const;
 const RESTORE_JOURNAL_FORMAT_VERSION = 2 as const;
-const ARTIFACT_NAMES = ["config.json", "state.db", "workflow.db"] as const;
+const CORE_ARTIFACT_NAMES = ["config.json", "state.db", "workflow.db"] as const;
+// index.db joined the backup set at manifest v3 (chunk-8 WI-8.1): it is a
+// regenerable cache backed up ONLY as the pre-rescue home of usage_events,
+// which the three-DB cutover moves into state.db (plan §3.2/§3.3).
+const ARTIFACT_NAMES = [...CORE_ARTIFACT_NAMES, "index.db"] as const;
 const MAX_BLOCKER_DIRECTORY_SAMPLES = 100;
 const MAX_WORKFLOW_BLOCKER_SAMPLES = 100;
 const MAX_BLOCKER_FIELD_BYTES = 256;
 const MAX_BLOCKER_ITEM_BYTES = 512;
 const MAX_BLOCKER_DIAGNOSTIC_BYTES = 16 * 1024;
+type CoreArtifactName = (typeof CORE_ARTIFACT_NAMES)[number];
 type ArtifactName = (typeof ARTIFACT_NAMES)[number];
+type ManifestFormatVersion = typeof MANIFEST_FORMAT_VERSION | typeof LEGACY_MANIFEST_FORMAT_VERSION;
+
+/** The artifact set a manifest of the given format version records (v2 = pre-cutover three-artifact shape). */
+function artifactNamesFor(formatVersion: ManifestFormatVersion): readonly ArtifactName[] {
+  return formatVersion === LEGACY_MANIFEST_FORMAT_VERSION ? CORE_ARTIFACT_NAMES : ARTIFACT_NAMES;
+}
 export type MigrationArtifactStatus = "old" | "current" | "newer" | "inconsistent" | "missing" | "corrupt";
 
 export interface MigrationArtifactState {
@@ -57,6 +74,8 @@ export interface MigrationState {
   config: MigrationArtifactState;
   state: MigrationArtifactState;
   workflow: MigrationArtifactState;
+  /** index.db recoverability ("current" | "missing" | "corrupt") — never blocks backup eligibility. */
+  index: MigrationArtifactState;
 }
 
 export interface MigrationBackupArtifact extends MigrationArtifactState {
@@ -68,14 +87,24 @@ export interface MigrationBackupArtifact extends MigrationArtifactState {
 }
 
 export interface MigrationBackupManifest {
-  formatVersion: typeof MANIFEST_FORMAT_VERSION;
+  formatVersion: ManifestFormatVersion;
   version: typeof MIGRATION_BACKUP_VERSION;
   targetVersion: typeof MIGRATION_BACKUP_VERSION;
   installationId: string;
   runId: string;
   createdAt: string;
   complete: true;
-  artifacts: Record<ArtifactName, MigrationBackupArtifact>;
+  /** v2 manifests carry only the three core artifacts; index.db exists from v3 on. */
+  artifacts: Record<CoreArtifactName, MigrationBackupArtifact> & { "index.db"?: MigrationBackupArtifact };
+}
+
+/** Artifact lookup that enforces the per-version presence parseManifest guarantees. */
+function manifestArtifact(manifest: MigrationBackupManifest, name: ArtifactName): MigrationBackupArtifact {
+  const artifact = manifest.artifacts[name];
+  if (!artifact) {
+    throw new ConfigError(`Migration backup manifest is missing its ${name} entry.`, "INVALID_CONFIG_FILE");
+  }
+  return artifact;
 }
 
 export interface MigrationBackupResult {
@@ -111,7 +140,8 @@ function expectedSourcePaths(): Record<ArtifactName, string> {
   return {
     "config.json": getConfigPath(),
     "state.db": getStateDbPathInDataDir(),
-    "workflow.db": getWorkflowDbPath(),
+    "workflow.db": getLegacyWorkflowDbPath(),
+    "index.db": getDbPath(),
   };
 }
 
@@ -176,6 +206,30 @@ function mapLedgerState(state: MigrationLedgerState): MigrationArtifactState {
   };
 }
 
+/**
+ * True when a raw config carries a WELL-FORMED pre-cutover source shape
+ * (a non-empty `stashDir` string, or a `sources`/`installed` array) and has NOT
+ * yet grown the 0.9.0 `bundles` map. Such a config is the version-current-but-
+ * OLD-SHAPE case that the config-shape migration (WI-8.4) rewrites; the
+ * post-cutover strict schema hard-rejects those keys, so {@link inspectConfig}
+ * must probe them through the migrator-normalizing validator (NOT raw
+ * `validateConfigShape`) to keep classifying it "old" (migration-eligible)
+ * rather than "corrupt".
+ *
+ * Well-formedness matters: a MALFORMED old key (e.g. `sources: "not-an-array"`)
+ * is NOT a valid old shape, so it falls through to `validateConfigShape` and is
+ * correctly reported "corrupt". A config carrying BOTH `bundles` and an old key
+ * is half-migrated — also not this shape — and `validateConfigShape` rejects it.
+ */
+function isPreCutoverSourceShape(raw: Record<string, unknown>): boolean {
+  if (raw.bundles !== undefined) return false;
+  return (
+    (typeof raw.stashDir === "string" && raw.stashDir.length > 0) ||
+    Array.isArray(raw.sources) ||
+    Array.isArray(raw.installed)
+  );
+}
+
 function inspectConfig(configPath: string): MigrationArtifactState {
   if (!fs.existsSync(configPath)) return { status: "missing" };
   try {
@@ -184,8 +238,23 @@ function inspectConfig(configPath: string): MigrationArtifactState {
     if (comparison === undefined) return { status: "inconsistent", detail: "configVersion is missing or invalid" };
     if (comparison < 0) return { status: "old" };
     if (comparison > 0) return { status: "newer" };
+    // 0.9.0 config-shape cutover: a well-formed pre-cutover config (no `bundles`)
+    // is migration-eligible → "old". The strict schema hard-rejects the retired
+    // keys, so normalize old→bundles via the migrator FIRST, then validate the
+    // RESULT: a valid normalization is "old"; an old shape that stays invalid
+    // after normalization (or a malformed/half-migrated config) is "corrupt".
+    if (isPreCutoverSourceShape(raw)) {
+      const validatedMigrated = validateConfigShape(migrateConfigSourcesToBundles(raw));
+      if (validatedMigrated.ok) return { status: "old" };
+      return {
+        status: "corrupt",
+        detail: validatedMigrated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
+      };
+    }
     const validated = validateConfigShape(raw);
     if (!validated.ok) {
+      // Malformed at 0.9.0 — including a half-migrated config carrying `bundles`
+      // alongside a retired source key, or a malformed old key (rejected by superRefine).
       return {
         status: "corrupt",
         detail: validated.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "),
@@ -197,18 +266,18 @@ function inspectConfig(configPath: string): MigrationArtifactState {
   }
 }
 
-function quickCheck(db: ReturnType<typeof openDatabase>, filePath: string): void {
+function quickCheck(db: ReturnType<typeof openDatabaseFinalizing>, filePath: string): void {
   const rows = db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>;
-  if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") {
+  if (rows.length !== 1 || Object.values(rows[0]!)[0] !== "ok") {
     throw new ConfigError(`SQLite quick_check failed for ${filePath}.`, "INVALID_CONFIG_FILE");
   }
 }
 
 function inspectSqlite(filePath: string, migrations: readonly Migration[]): MigrationArtifactState {
   if (!fs.existsSync(filePath)) return { status: "missing" };
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(filePath, { readonly: true });
+    db = openDatabaseFinalizing(filePath, { readonly: true });
     quickCheck(db, filePath);
     return mapLedgerState(inspectMigrationLedger(db, migrations));
   } catch (error) {
@@ -218,15 +287,72 @@ function inspectSqlite(filePath: string, migrations: readonly Migration[]): Migr
   }
 }
 
-export function inspectMigrationState(): MigrationState {
+/**
+ * Ledger inspection against a FROZEN `{ id, checksum }` copy. Used for
+ * workflow.db, whose live `WORKFLOW_MIGRATIONS` array is deleted at the
+ * three-DB cutover (WI-8.3) but whose pre-cutover backups must stay verifiable
+ * (plan §3.3 item 1). Behaviourally identical to {@link inspectSqlite}.
+ */
+function inspectSqliteSealed(filePath: string, sealed: readonly SealedMigration[]): MigrationArtifactState {
+  if (!fs.existsSync(filePath)) return { status: "missing" };
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
+  try {
+    db = openDatabaseFinalizing(filePath, { readonly: true });
+    quickCheck(db, filePath);
+    return mapLedgerState(inspectSealedMigrationLedger(db, sealed));
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * index.db is NOT ledger-migrated (it uses the index-schema.ts DB_VERSION
+ * scheme, rebuilt rather than migrated), so its recoverability inspection is
+ * presence + SQLite quick_check only: "current" means readable and
+ * integrity-clean. It is backed up solely as the pre-rescue usage_events home.
+ */
+function inspectIndexDbArtifact(filePath: string): MigrationArtifactState {
+  if (!fs.existsSync(filePath)) return { status: "missing" };
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
+  try {
+    db = openDatabaseFinalizing(filePath, { readonly: true });
+    quickCheck(db, filePath);
+    return { status: "current" };
+  } catch (error) {
+    return { status: "corrupt", detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    db?.close();
+  }
+}
+
+export interface MigrationInspectionPaths {
+  stateDbPath?: string;
+  workflowDbPath?: string;
+  indexDbPath?: string;
+}
+
+/** Recoverability inspection per artifact, optionally against caller-owned SQLite snapshots. */
+function inspectLedgerArtifact(name: Exclude<ArtifactName, "config.json">, filePath: string): MigrationArtifactState {
+  if (name === "state.db") return inspectSqlite(filePath, STATE_MIGRATIONS);
+  if (name === "workflow.db") return inspectSqliteSealed(filePath, WORKFLOW_MIGRATIONS_CHECKSUMS);
+  return inspectIndexDbArtifact(filePath);
+}
+
+export function inspectMigrationState(paths: MigrationInspectionPaths = {}): MigrationState {
   return {
     config: inspectConfig(getConfigPath()),
-    state: inspectSqlite(getStateDbPathInDataDir(), STATE_MIGRATIONS),
-    workflow: inspectSqlite(getWorkflowDbPath(), WORKFLOW_MIGRATIONS),
+    state: inspectSqlite(paths.stateDbPath ?? getStateDbPathInDataDir(), STATE_MIGRATIONS),
+    workflow: inspectSqliteSealed(paths.workflowDbPath ?? getLegacyWorkflowDbPath(), WORKFLOW_MIGRATIONS_CHECKSUMS),
+    index: inspectIndexDbArtifact(paths.indexDbPath ?? getDbPath()),
   };
 }
 
 function assertBackupEligible(state: MigrationState): void {
+  // index.db is deliberately absent here: an unreadable index.db is excluded
+  // from the backup (regenerable cache; the cutover's usage_events rescue
+  // reports an empty result) rather than blocking migration entirely.
   const entries: Array<[string, MigrationArtifactState]> = [
     ["config.json", state.config],
     ["state.db", state.state],
@@ -259,7 +385,7 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
   }
   const manifest = value as Partial<MigrationBackupManifest>;
   if (
-    manifest.formatVersion !== MANIFEST_FORMAT_VERSION ||
+    (manifest.formatVersion !== MANIFEST_FORMAT_VERSION && manifest.formatVersion !== LEGACY_MANIFEST_FORMAT_VERSION) ||
     manifest.version !== MIGRATION_BACKUP_VERSION ||
     manifest.targetVersion !== MIGRATION_BACKUP_VERSION ||
     manifest.installationId !== path.basename(getMigrationOperationRoot()) ||
@@ -274,8 +400,10 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
     );
   }
   const expected = expectedSourcePaths();
-  for (const name of ARTIFACT_NAMES) {
+  for (const name of artifactNamesFor(manifest.formatVersion as ManifestFormatVersion)) {
     const artifact = manifest.artifacts?.[name];
+    // index.db is never ledger-classified: "current" (readable) or "missing" only.
+    const allowedStatuses = name === "index.db" ? ["current", "missing"] : ["old", "current", "missing"];
     if (
       !artifact ||
       artifact.sourcePath !== expected[name] ||
@@ -283,7 +411,7 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
       !Number.isSafeInteger(artifact.byteSize) ||
       artifact.byteSize < 0 ||
       typeof artifact.createdAt !== "string" ||
-      !["old", "current", "missing"].includes(artifact.status) ||
+      !allowedStatuses.includes(artifact.status) ||
       (artifact.present
         ? typeof artifact.sha256 !== "string" || artifact.sha256.length !== 64
         : artifact.sha256 !== null || artifact.status !== "missing")
@@ -342,8 +470,8 @@ export function verifyMigrationBackup(bundlePath = resolveBackupRun()): Migratio
   }
   const manifest = parseManifest(bundlePath);
   const expectedFiles = new Set(["manifest.json"]);
-  for (const name of ARTIFACT_NAMES) {
-    const artifact = manifest.artifacts[name];
+  for (const name of artifactNamesFor(manifest.formatVersion)) {
+    const artifact = manifestArtifact(manifest, name);
     const artifactPath = path.join(bundlePath, name);
     if (!artifact.present) {
       if (fs.existsSync(artifactPath)) {
@@ -368,10 +496,7 @@ export function verifyMigrationBackup(bundlePath = resolveBackupRun()): Migratio
         "INVALID_CONFIG_FILE",
       );
     }
-    const inspected =
-      name === "config.json"
-        ? inspectConfig(artifactPath)
-        : inspectSqlite(artifactPath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+    const inspected = inspectArtifactAt(name, artifactPath);
     if (!sameState(inspected, artifact)) {
       throw new ConfigError(
         `Migration backup artifact ${artifactPath} failed SQLite/config recoverability verification: expected ${artifact.status}, got ${inspected.status}${inspected.detail ? ` (${inspected.detail})` : ""}.`,
@@ -413,15 +538,15 @@ function backupSqlite(source: string, destination: string): void {
   }
   const resolvedSource = path.resolve(source);
   const activityName =
-    resolvedSource === path.resolve(getWorkflowDbPath())
+    resolvedSource === path.resolve(getLegacyWorkflowDbPath())
       ? "workflow-db"
       : resolvedSource === path.resolve(getStateDbPathInDataDir())
         ? "state-db"
         : undefined;
   const releaseActivity = activityName ? acquireMaintenanceActivitySync(activityName) : undefined;
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(source);
+    db = openDatabaseFinalizing(source);
     db.exec("PRAGMA busy_timeout = 10000");
     db.exec(`VACUUM INTO ${sqliteQuote(destination)}`);
   } finally {
@@ -440,7 +565,10 @@ function newRunId(): string {
 }
 
 function stateForName(state: MigrationState, name: ArtifactName): MigrationArtifactState {
-  return name === "config.json" ? state.config : name === "state.db" ? state.state : state.workflow;
+  if (name === "config.json") return state.config;
+  if (name === "state.db") return state.state;
+  if (name === "workflow.db") return state.workflow;
+  return state.index;
 }
 
 function createMigrationBackupUnlocked(): MigrationBackupResult {
@@ -460,23 +588,24 @@ function createMigrationBackupUnlocked(): MigrationBackupResult {
     for (const name of ARTIFACT_NAMES) {
       const sourcePath = sources[name];
       const sourceState = stateForName(state, name);
+      // index.db never blocks a backup: anything short of a clean read
+      // (corrupt cache) is recorded as absent — it is regenerable, and the
+      // cutover's usage_events rescue reports the empty result.
+      const effectiveState =
+        name === "index.db" && sourceState.status !== "current" ? { status: "missing" as const } : sourceState;
       const destination = path.join(temporary, name);
-      const present = sourceState.status !== "missing";
+      const present = effectiveState.status !== "missing";
       if (present) {
         if (name === "config.json") copyFileDurable(sourcePath, destination);
         else backupSqlite(sourcePath, destination);
       }
-      const inspected = present
-        ? name === "config.json"
-          ? inspectConfig(destination)
-          : inspectSqlite(destination, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS)
-        : { status: "missing" as const };
-      const expectedArtifact = { ...sourceState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
+      const inspected = present ? inspectArtifactAt(name, destination) : { status: "missing" as const };
+      const expectedArtifact = { ...effectiveState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
       if (!sameState(inspected, expectedArtifact)) {
         throw new ConfigError(`Snapshot ${name} does not match its source migration state.`, "INVALID_CONFIG_FILE");
       }
       artifacts[name] = {
-        ...sourceState,
+        ...effectiveState,
         sourcePath,
         present,
         byteSize: present ? fs.statSync(destination).size : 0,
@@ -631,68 +760,98 @@ function activeRestoreLocks(bundlePath?: string): string[] {
   return [...active, ...overflowBlockers];
 }
 
-function activeWorkflowClaims(): string[] {
-  const maxSamples = MAX_WORKFLOW_BLOCKER_SAMPLES;
-  const workflowPath = getWorkflowDbPath();
-  if (!fs.existsSync(workflowPath)) return [];
-  const db = openDatabase(workflowPath, { readonly: true });
-  try {
-    const blockers: string[] = [];
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
-      const columns = new Set(
-        (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+/**
+ * Scan ONE open workflow-table home (state.db post-cutover, or a pre-cutover
+ * workflow.db) for active engine leases + unit claims, tagging each blocker with
+ * `dbPath` so the operator can tell which artifact holds the lock. Same blocker
+ * semantics for both sources — the tables/columns are byte-identical between the
+ * pre-cutover workflow.db and the merged state.db (state migration 020 folds the
+ * final shape).
+ */
+function scanWorkflowClaimsFrom(db: Database, dbPath: string, maxSamples: number): string[] {
+  const blockers: string[] = [];
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
+    const columns = new Set(
+      (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
+      const leases = db
+        .prepare(
+          `SELECT substr(CAST(id AS TEXT), 1, 257) AS id, substr(CAST(engine_lease_holder AS TEXT), 1, 257) AS holder, substr(CAST(engine_lease_until AS TEXT), 1, 129) AS expires FROM workflow_runs WHERE engine_lease_holder IS NOT NULL AND engine_lease_until >= ? LIMIT ${maxSamples + 1}`,
+        )
+        .all(new Date().toISOString()) as Array<{ id: string; holder: string; expires: string }>;
+      blockers.push(
+        ...leases
+          .slice(0, maxSamples)
+          .map(
+            (lease) =>
+              `${sanitizeDiagnosticField(dbPath)}#run=${sanitizeDiagnosticField(lease.id)},holder=${sanitizeDiagnosticField(lease.holder)},expires=${sanitizeDiagnosticField(lease.expires, 128)}`,
+          ),
       );
-      if (columns.has("engine_lease_holder") && columns.has("engine_lease_until")) {
-        const leases = db
-          .prepare(
-            `SELECT substr(CAST(id AS TEXT), 1, 257) AS id, substr(CAST(engine_lease_holder AS TEXT), 1, 257) AS holder, substr(CAST(engine_lease_until AS TEXT), 1, 129) AS expires FROM workflow_runs WHERE engine_lease_holder IS NOT NULL AND engine_lease_until >= ? LIMIT ${maxSamples + 1}`,
-          )
-          .all(new Date().toISOString()) as Array<{ id: string; holder: string; expires: string }>;
-        blockers.push(
-          ...leases
-            .slice(0, maxSamples)
-            .map(
-              (lease) =>
-                `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(lease.id)},holder=${sanitizeDiagnosticField(lease.holder)},expires=${sanitizeDiagnosticField(lease.expires, 128)}`,
-            ),
-        );
-        if (leases.length > maxSamples) {
-          blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
-          return blockers;
-        }
+      if (leases.length > maxSamples) {
+        blockers.push(`${dbPath}#additional-active-workflow-blockers`);
+        return blockers;
       }
     }
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_units'").get())
-      return blockers;
-    const columns = new Set(
-      (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
-    );
-    if (!columns.has("claim_holder") || !columns.has("claim_expires_at")) return blockers;
-    const remaining = maxSamples - blockers.length;
-    if (remaining <= 0) return blockers;
-    const claims = db
-      .prepare(
-        `SELECT substr(CAST(run_id AS TEXT), 1, 257) AS runId, substr(CAST(unit_id AS TEXT), 1, 257) AS unitId, substr(CAST(claim_holder AS TEXT), 1, 257) AS holder, substr(CAST(claim_expires_at AS TEXT), 1, 129) AS expires FROM workflow_run_units WHERE status='running' AND claim_holder IS NOT NULL AND claim_expires_at >= ? LIMIT ${remaining + 1}`,
-      )
-      .all(new Date().toISOString()) as Array<{ runId: string; unitId: string; holder: string; expires: string }>;
-    blockers.push(
-      ...claims
-        .slice(0, remaining)
-        .map(
-          (claim) =>
-            `${sanitizeDiagnosticField(workflowPath)}#run=${sanitizeDiagnosticField(claim.runId)},unit=${sanitizeDiagnosticField(claim.unitId)},holder=${sanitizeDiagnosticField(claim.holder)},expires=${sanitizeDiagnosticField(claim.expires, 128)}`,
-        ),
-    );
-    if (claims.length > remaining) blockers.push(`${workflowPath}#additional-active-workflow-blockers`);
-    return blockers;
-  } finally {
-    db.close();
   }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_units'").get())
+    return blockers;
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(workflow_run_units)").all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  if (!columns.has("claim_holder") || !columns.has("claim_expires_at")) return blockers;
+  const remaining = maxSamples - blockers.length;
+  if (remaining <= 0) return blockers;
+  const claims = db
+    .prepare(
+      `SELECT substr(CAST(run_id AS TEXT), 1, 257) AS runId, substr(CAST(unit_id AS TEXT), 1, 257) AS unitId, substr(CAST(claim_holder AS TEXT), 1, 257) AS holder, substr(CAST(claim_expires_at AS TEXT), 1, 129) AS expires FROM workflow_run_units WHERE status='running' AND claim_holder IS NOT NULL AND claim_expires_at >= ? LIMIT ${remaining + 1}`,
+    )
+    .all(new Date().toISOString()) as Array<{ runId: string; unitId: string; holder: string; expires: string }>;
+  blockers.push(
+    ...claims
+      .slice(0, remaining)
+      .map(
+        (claim) =>
+          `${sanitizeDiagnosticField(dbPath)}#run=${sanitizeDiagnosticField(claim.runId)},unit=${sanitizeDiagnosticField(claim.unitId)},holder=${sanitizeDiagnosticField(claim.holder)},expires=${sanitizeDiagnosticField(claim.expires, 128)}`,
+      ),
+  );
+  if (claims.length > remaining) blockers.push(`${dbPath}#additional-active-workflow-blockers`);
+  return blockers;
+}
+
+/**
+ * Active engine leases / unit claims that must block artifact replacement.
+ *
+ * Chunk-8 dual source: the durable home of the workflow tables is now state.db
+ * (the three-DB cutover merged workflow.db into it via state migration 020), so
+ * the primary probe reads state.db. But a PRE-CUTOVER generation still has a
+ * physical workflow.db (not yet merged/deleted), so the read-only workflow.db
+ * file probe is RETAINED — if that file is present it is scanned too. Both use
+ * the same frozen-copy inspection and the same blocker semantics. A read-only
+ * open of each avoids ledger assertions / maintenance-activity acquisition
+ * during the blocker check.
+ */
+function activeWorkflowClaims(): string[] {
+  const maxSamples = MAX_WORKFLOW_BLOCKER_SAMPLES;
+  const blockers: string[] = [];
+  for (const dbPath of [getStateDbPathInDataDir(), getLegacyWorkflowDbPath()]) {
+    if (!fs.existsSync(dbPath)) continue;
+    const db = openDatabaseFinalizing(dbPath, { readonly: true });
+    try {
+      blockers.push(...scanWorkflowClaimsFrom(db, dbPath, maxSamples));
+    } finally {
+      db.close();
+    }
+  }
+  return blockers;
 }
 
 /** Caller must hold the maintenance start barrier while checking and replacing artifacts. */
-export function assertNoArtifactReplacementBlockers(bundlePath?: string): void {
-  const blockers = [...activeRestoreLocks(bundlePath), ...activeWorkflowClaims()];
+export function assertNoArtifactReplacementBlockers(
+  bundlePath?: string,
+  options?: { skipWorkflowClaims?: boolean },
+): void {
+  const blockers = [...activeRestoreLocks(bundlePath), ...(options?.skipWorkflowClaims ? [] : activeWorkflowClaims())];
   if (blockers.length > 0) {
     const prefix = "Refusing artifact replacement while AKM locks, activities, or workflow leases are active: ";
     const omission = " ... additional blockers omitted.";
@@ -753,7 +912,7 @@ function matchesFingerprint(filePath: string, fingerprint: FileFingerprint | nul
 
 export function fingerprintMigrationGeneration(): MigrationGenerationFingerprint {
   const statePath = getStateDbPathInDataDir();
-  const workflowPath = getWorkflowDbPath();
+  const workflowPath = getLegacyWorkflowDbPath();
   return {
     config: { main: fingerprintFile(getConfigPath()), wal: null, shm: null },
     state: {
@@ -865,12 +1024,139 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
       invalidRestoreJournal(journalPath, `${field} is not a safe operation identifier`);
     }
   }
-  if (!Array.isArray(raw.entries) || raw.entries.length !== ARTIFACT_NAMES.length) {
-    invalidRestoreJournal(journalPath, `expected exactly ${ARTIFACT_NAMES.length} artifact entries`);
+  // The exact entry count depends on the SOURCE manifest's format version
+  // (v2 = three artifacts, v3 adds index.db); the precise check happens after
+  // the source backup is verified below. Here: bound the shape.
+  if (
+    !Array.isArray(raw.entries) ||
+    (raw.entries.length !== ARTIFACT_NAMES.length && raw.entries.length !== CORE_ARTIFACT_NAMES.length)
+  ) {
+    invalidRestoreJournal(
+      journalPath,
+      `expected ${CORE_ARTIFACT_NAMES.length} or ${ARTIFACT_NAMES.length} artifact entries`,
+    );
   }
 
   const operationId = raw.operationId as string;
   const expectedPaths = expectedSourcePaths();
+  const byDestination = parseRestoreJournalEntries(raw.entries, operationId, expectedPaths, journalPath);
+
+  const sourceRunId = raw.sourceRunId as string;
+  let sourceManifest: MigrationBackupManifest;
+  try {
+    sourceManifest = verifyMigrationBackup(getMigrationBackupDir(sourceRunId));
+  } catch (error) {
+    invalidRestoreJournal(
+      journalPath,
+      `source backup ${sourceRunId} is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const journalNames = artifactNamesFor(sourceManifest.formatVersion);
+  if (raw.entries.length !== journalNames.length) {
+    invalidRestoreJournal(
+      journalPath,
+      `expected exactly ${journalNames.length} artifact entries for source backup format ${sourceManifest.formatVersion}`,
+    );
+  }
+  const entries = journalNames.map((name) => byDestination.get(expectedPaths[name]) as RestoreJournalEntry);
+  for (const [index, name] of journalNames.entries()) {
+    const entry = entries[index];
+    if (!entry) {
+      invalidRestoreJournal(journalPath, `journal has no entry for ${name}`);
+    }
+    const artifact = manifestArtifact(sourceManifest, name);
+    const expectedStage = artifact.present ? `${entry.destination}.restore-stage.${operationId}` : undefined;
+    if (entry.stage !== expectedStage) {
+      invalidRestoreJournal(journalPath, `${name} stage presence does not match source backup ${sourceRunId}`);
+    }
+
+    if (raw.phase === "committed") {
+      if (fs.existsSync(entry.destination) !== artifact.present || (entry.stage && fs.existsSync(entry.stage))) {
+        invalidRestoreJournal(journalPath, `committed ${name} publication state is stale`);
+      }
+      if (fs.existsSync(entry.quarantine) && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+        invalidRestoreJournal(journalPath, `committed ${name} quarantine does not match the original generation`);
+      }
+      if (entry.sidecars.some((sidecar) => fs.existsSync(sidecar.destination))) {
+        invalidRestoreJournal(journalPath, `committed ${name} still has a live sidecar`);
+      }
+      for (const sidecar of entry.sidecars) {
+        if (fs.existsSync(sidecar.quarantine) && !matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)) {
+          invalidRestoreJournal(journalPath, `committed ${name} sidecar quarantine is not the original generation`);
+        }
+      }
+      verifyArtifactAgainstManifest(entry.destination, name, artifact, "Committed restore publication");
+      continue;
+    }
+
+    const destinationPresent = fs.existsSync(entry.destination);
+    const quarantinePresent = fs.existsSync(entry.quarantine);
+    if (entry.originalPresent ? !destinationPresent && !quarantinePresent : quarantinePresent) {
+      invalidRestoreJournal(journalPath, `prepared ${name} original state is stale`);
+    }
+    if (quarantinePresent && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
+      invalidRestoreJournal(journalPath, `prepared ${name} quarantine does not match the original generation`);
+    }
+    if (entry.stage) {
+      const stagePresent = fs.existsSync(entry.stage);
+      const rolledBack =
+        !quarantinePresent && !stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const validPublicationState =
+        rolledBack ||
+        (entry.originalPresent
+          ? quarantinePresent
+            ? destinationPresent !== stagePresent
+            : destinationPresent && stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+          : destinationPresent !== stagePresent);
+      if (!validPublicationState) {
+        invalidRestoreJournal(journalPath, `prepared ${name} publication state is stale`);
+      }
+    } else {
+      const rolledBack = !quarantinePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
+      const forwardState = entry.originalPresent
+        ? quarantinePresent
+          ? !destinationPresent
+          : destinationPresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
+        : !destinationPresent;
+      if (!rolledBack && !forwardState) {
+        invalidRestoreJournal(journalPath, `prepared absent ${name} has an impossible publication state`);
+      }
+    }
+    for (const sidecar of entry.sidecars) {
+      const live = fs.existsSync(sidecar.destination);
+      const quarantined = fs.existsSync(sidecar.quarantine);
+      const authenticated = quarantined
+        ? matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)
+        : matchesFingerprint(sidecar.destination, sidecar.originalFingerprint);
+      if ((sidecar.originalPresent ? live === quarantined : live || quarantined) || !authenticated) {
+        invalidRestoreJournal(journalPath, `prepared ${name} sidecar state is stale`);
+      }
+    }
+  }
+
+  return {
+    formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
+    version: MIGRATION_BACKUP_VERSION,
+    operationId,
+    sourceRunId,
+    rescueRunId: raw.rescueRunId as string,
+    phase: raw.phase,
+    entries,
+  };
+}
+
+/**
+ * Parse + validate the journal's per-artifact entries (shape, operation-bound
+ * stage/quarantine paths, sidecar sets, global path uniqueness). Returns the
+ * entries keyed by destination; the caller checks the set against the SOURCE
+ * manifest's per-version artifact list.
+ */
+function parseRestoreJournalEntries(
+  rawEntries: unknown[],
+  operationId: string,
+  expectedPaths: Record<ArtifactName, string>,
+  journalPath: string,
+): Map<string, RestoreJournalEntry> {
   const byDestination = new Map<string, RestoreJournalEntry>();
   const allPaths = new Set<string>();
   const registerPath = (candidate: string, label: string): void => {
@@ -879,7 +1165,7 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
     allPaths.add(resolved);
   };
 
-  for (const value of raw.entries) {
+  for (const value of rawEntries) {
     if (
       !isRecord(value) ||
       !hasExactKeys(
@@ -962,99 +1248,7 @@ function validateRestoreJournal(raw: unknown, journalPath: string): RestoreJourn
       sidecars,
     });
   }
-
-  const sourceRunId = raw.sourceRunId as string;
-  let sourceManifest: MigrationBackupManifest;
-  try {
-    sourceManifest = verifyMigrationBackup(getMigrationBackupDir(sourceRunId));
-  } catch (error) {
-    invalidRestoreJournal(
-      journalPath,
-      `source backup ${sourceRunId} is unavailable or invalid: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const entries = ARTIFACT_NAMES.map((name) => byDestination.get(expectedPaths[name]) as RestoreJournalEntry);
-  for (const [index, name] of ARTIFACT_NAMES.entries()) {
-    const entry = entries[index];
-    const artifact = sourceManifest.artifacts[name];
-    const expectedStage = artifact.present ? `${entry.destination}.restore-stage.${operationId}` : undefined;
-    if (entry.stage !== expectedStage) {
-      invalidRestoreJournal(journalPath, `${name} stage presence does not match source backup ${sourceRunId}`);
-    }
-
-    if (raw.phase === "committed") {
-      if (fs.existsSync(entry.destination) !== artifact.present || (entry.stage && fs.existsSync(entry.stage))) {
-        invalidRestoreJournal(journalPath, `committed ${name} publication state is stale`);
-      }
-      if (fs.existsSync(entry.quarantine) && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
-        invalidRestoreJournal(journalPath, `committed ${name} quarantine does not match the original generation`);
-      }
-      if (entry.sidecars.some((sidecar) => fs.existsSync(sidecar.destination))) {
-        invalidRestoreJournal(journalPath, `committed ${name} still has a live sidecar`);
-      }
-      for (const sidecar of entry.sidecars) {
-        if (fs.existsSync(sidecar.quarantine) && !matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)) {
-          invalidRestoreJournal(journalPath, `committed ${name} sidecar quarantine is not the original generation`);
-        }
-      }
-      verifyArtifactAgainstManifest(entry.destination, name, artifact, "Committed restore publication");
-      continue;
-    }
-
-    const destinationPresent = fs.existsSync(entry.destination);
-    const quarantinePresent = fs.existsSync(entry.quarantine);
-    if (entry.originalPresent ? !destinationPresent && !quarantinePresent : quarantinePresent) {
-      invalidRestoreJournal(journalPath, `prepared ${name} original state is stale`);
-    }
-    if (quarantinePresent && !matchesFingerprint(entry.quarantine, entry.originalFingerprint)) {
-      invalidRestoreJournal(journalPath, `prepared ${name} quarantine does not match the original generation`);
-    }
-    if (entry.stage) {
-      const stagePresent = fs.existsSync(entry.stage);
-      const rolledBack =
-        !quarantinePresent && !stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
-      const validPublicationState =
-        rolledBack ||
-        (entry.originalPresent
-          ? quarantinePresent
-            ? destinationPresent !== stagePresent
-            : destinationPresent && stagePresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
-          : destinationPresent !== stagePresent);
-      if (!validPublicationState) {
-        invalidRestoreJournal(journalPath, `prepared ${name} publication state is stale`);
-      }
-    } else {
-      const rolledBack = !quarantinePresent && matchesFingerprint(entry.destination, entry.originalFingerprint);
-      const forwardState = entry.originalPresent
-        ? quarantinePresent
-          ? !destinationPresent
-          : destinationPresent && matchesFingerprint(entry.destination, entry.originalFingerprint)
-        : !destinationPresent;
-      if (!rolledBack && !forwardState) {
-        invalidRestoreJournal(journalPath, `prepared absent ${name} has an impossible publication state`);
-      }
-    }
-    for (const sidecar of entry.sidecars) {
-      const live = fs.existsSync(sidecar.destination);
-      const quarantined = fs.existsSync(sidecar.quarantine);
-      const authenticated = quarantined
-        ? matchesFingerprint(sidecar.quarantine, sidecar.originalFingerprint)
-        : matchesFingerprint(sidecar.destination, sidecar.originalFingerprint);
-      if ((sidecar.originalPresent ? live === quarantined : live || quarantined) || !authenticated) {
-        invalidRestoreJournal(journalPath, `prepared ${name} sidecar state is stale`);
-      }
-    }
-  }
-
-  return {
-    formatVersion: RESTORE_JOURNAL_FORMAT_VERSION,
-    version: MIGRATION_BACKUP_VERSION,
-    operationId,
-    sourceRunId,
-    rescueRunId: raw.rescueRunId as string,
-    phase: raw.phase,
-    entries,
-  };
+  return byDestination;
 }
 
 function rollbackRestoreJournal(journal: RestoreJournal): void {
@@ -1115,6 +1309,7 @@ function recoverInterruptedRestore(): void {
 
 /** Caller must hold the config lock and maintenance barrier. */
 export function recoverInterruptedRestoreWithLocksHeld(): void {
+  if (!fs.existsSync(restoreJournalPath())) return;
   assertNoArtifactReplacementBlockers();
   recoverInterruptedRestore();
 }
@@ -1135,19 +1330,22 @@ function resolveBackupRun(runId?: string): string {
 }
 
 function inspectArtifactAt(name: ArtifactName, filePath: string): MigrationArtifactState {
-  return name === "config.json"
-    ? inspectConfig(filePath)
-    : inspectSqlite(filePath, name === "state.db" ? STATE_MIGRATIONS : WORKFLOW_MIGRATIONS);
+  return name === "config.json" ? inspectConfig(filePath) : inspectLedgerArtifact(name, filePath);
 }
+
+// backupSqlite note: index.db takes no maintenance-activity lease (only
+// state.db/workflow.db have activity names) — VACUUM INTO under the 10s
+// busy_timeout suffices for the regenerable cache snapshot.
 
 function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBackupManifest, rescueRunId: string): void {
   const operationId = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
   const entries: RestoreJournalEntry[] = [];
   let journal: RestoreJournal | undefined;
   let committed = false;
+  const restoreNames = artifactNamesFor(manifest.formatVersion);
   try {
-    for (const name of ARTIFACT_NAMES) {
-      const artifact = manifest.artifacts[name];
+    for (const name of restoreNames) {
+      const artifact = manifestArtifact(manifest, name);
       const destination = artifact.sourcePath;
       const stage = artifact.present ? `${destination}.restore-stage.${operationId}` : undefined;
       if (stage) {
@@ -1199,8 +1397,8 @@ function replaceArtifactsFromBundle(bundlePath: string, manifest: MigrationBacku
         fsyncDirectory(path.dirname(entry.destination));
       }
     }
-    for (const name of ARTIFACT_NAMES) {
-      const artifact = manifest.artifacts[name];
+    for (const name of restoreNames) {
+      const artifact = manifestArtifact(manifest, name);
       const actual = artifact.present ? inspectArtifactAt(name, artifact.sourcePath) : { status: "missing" as const };
       if (!sameState(actual, artifact)) {
         throw new ConfigError(`Published restore artifact ${name} failed final verification.`, "INVALID_CONFIG_FILE");

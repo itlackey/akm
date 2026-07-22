@@ -8,11 +8,11 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 akm search "<query>"                          # Search for assets
 akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type workflow          # Filter to workflow assets
-akm search "memory:projectA/"                 # List a typed subtree (ref-prefix query; trailing slash required)
+akm search "memories/projectA/"                 # List a typed subtree (ref-prefix query; trailing slash required)
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
-akm show knowledge:my-doc                    # Show a knowledge asset
-akm workflow next workflow:ship-release       # Resume the active run or start a new one
+akm show knowledge/my-doc                    # Show a knowledge asset
+akm workflow next workflows/ship-release       # Resume the active run or start a new one
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm remember "note" --target my-stash         # Route write to a named writable stash source
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
@@ -25,7 +25,7 @@ akm wiki ingest <name>                        # Dispatch defaults.engine (or --e
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm mv memory:old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
+akm mv memories/old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
 akm sync                                      # Commit (and push if writable) the primary git stash
 akm sync my-skills -m "Update"               # Sync a named writable git stash
 akm registry search "<query>"                 # Search all registries
@@ -108,10 +108,10 @@ akm proposal list                              # List pending proposals
 akm proposal list --status pending|accepted|rejected
 akm proposal show <id>                          # Render the proposal body
 akm proposal diff <ref-or-id>                   # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
-akm proposal diff skill:akm-dream               # diff accepts full asset ref
+akm proposal diff skills/akm-dream               # diff accepts full asset ref
 akm proposal accept 7c115132                    # Accept by UUID prefix
 akm proposal accept <id>                        # Validate + promote into the stash
-akm proposal reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."         # Archive with a reason
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history --ref <ref>                        # Per-asset state-change trail

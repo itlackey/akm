@@ -12,8 +12,8 @@
  *
  * The LLM call is injected (`judge`) so the gate is unit-testable without a
  * live endpoint, and the whole gate is fail-open: when no criteria exist or no
- * judge is available the step completes as before. See
- * docs/technical/workflow-agent-checkin-adr.md.
+ * judge is available the step completes as before (per the workflow-agent
+ * check-in ADR).
  *
  * @module workflows/validate-summary
  */

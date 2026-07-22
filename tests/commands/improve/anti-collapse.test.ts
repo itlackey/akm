@@ -157,10 +157,10 @@ describe("checkLexicalDiversity", () => {
 
 describe("checkMergeInformationFloor", () => {
   const participants = [
-    { ref: "memory:a", body: "alpha beta gamma delta epsilon zeta", sourceRefs: ["memory:root"] },
-    { ref: "memory:b", body: "eta theta iota kappa lambda mu", sourceRefs: [] },
+    { ref: "memories/a", body: "alpha beta gamma delta epsilon zeta", sourceRefs: ["memories/root"] },
+    { ref: "memories/b", body: "eta theta iota kappa lambda mu", sourceRefs: [] },
   ];
-  const fullProvenance = ["memory:a", "memory:b", "memory:root"];
+  const fullProvenance = ["memories/a", "memories/b", "memories/root"];
 
   test("genuinely-additive merge passes (full provenance, full token retention)", () => {
     const merged = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu synthesis";
@@ -171,7 +171,7 @@ describe("checkMergeInformationFloor", () => {
 
   test("provenance shrink fails (merged source_refs missing a participant's cited source)", () => {
     const merged = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
-    const result = checkMergeInformationFloor(merged, ["memory:a", "memory:b"], participants, {});
+    const result = checkMergeInformationFloor(merged, ["memories/a", "memories/b"], participants, {});
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("provenance shrank");
     expect(result.provenanceBefore).toBe(3);

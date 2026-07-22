@@ -36,7 +36,7 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
       return {
         tasks: [...store.values()].map((c) => ({
           id: c.id,
-          ref: `task:${c.id}`,
+          ref: `tasks/${c.id}`,
           path: `/fake/${c.id}.yml`,
           schedule: c.schedule,
           enabled: c.disabled !== true,
@@ -53,7 +53,7 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
       store.set(input.id, input);
       return {
         id: input.id,
-        ref: `task:${input.id}`,
+        ref: `tasks/${input.id}`,
         path: `/fake/${input.id}.yml`,
         stashDir: "/fake",
         schedule: input.schedule,
@@ -144,6 +144,14 @@ describe("registerDefaultTasks (#552)", () => {
       const call = deps.calls.find((c) => c.id === spec.id);
       expect(String(call?.command)).toContain(`--strategy ${spec.strategy}`);
     }
+  });
+
+  test("scheduled improve tasks are staggered and lock-aware", () => {
+    const scheduled = DEFAULT_IMPROVE_TASKS.filter((task) => task.schedule !== null);
+    const scheduledMinutes = scheduled.map((task) => task.schedule?.split(" ")[0]);
+
+    expect(new Set(scheduledMinutes).size).toBe(scheduled.length);
+    for (const task of DEFAULT_IMPROVE_TASKS) expect(task.command).toContain("--skip-if-locked");
   });
 
   test("every effective default schedule translates on every backend", async () => {

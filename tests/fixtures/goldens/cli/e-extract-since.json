@@ -1,0 +1,29 @@
+{
+  "outcomes": {
+    "24h": {
+      "exitCode": 0,
+      "ok": true
+    },
+    "30m": {
+      "exitCode": 0,
+      "ok": true
+    },
+    "5M-case-variant": {
+      "exitCode": 0,
+      "ok": true
+    },
+    "7d": {
+      "exitCode": 0,
+      "ok": true
+    },
+    "garbage": {
+      "code": "INVALID_FLAG_VALUE",
+      "exitCode": 2,
+      "ok": false
+    },
+    "iso": {
+      "exitCode": 0,
+      "ok": true
+    }
+  }
+}

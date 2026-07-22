@@ -133,15 +133,30 @@ async function main(): Promise<number> {
   const runsRoot = path.join(resolveEvalsRoot(stashRoot), "runs");
   const allIds = listRunIds(runsRoot);
 
-  const rows: Array<{ ts: string; suite: string; mode: string; label: string; metric: string }> = [];
+  const candidates: Array<{ id: string; env: EvalRunResult }> = [];
   for (const id of allIds) {
     let env: EvalRunResult;
     try {
       env = loadEvalRunResult(path.join(runsRoot, id));
-    } catch {
-      continue;
+    } catch (error) {
+      throw new Error(`failed to load eval run ${id}: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (opts.suite && env.suite !== opts.suite) continue;
+    candidates.push({ id, env });
+  }
+
+  const selected =
+    opts.limit > 0 && candidates.length > opts.limit ? candidates.slice(candidates.length - opts.limit) : candidates;
+  const rows: Array<{ ts: string; suite: string; mode: string; label: string; metric: string }> = [];
+  const fingerprintsBySuite = new Map<string, string>();
+  for (const { id, env } of selected) {
+    const fingerprint = env.inputs.suiteFingerprint;
+    if (!fingerprint) throw new Error(`suite fingerprint unavailable for eval run ${id}`);
+    const prior = fingerprintsBySuite.get(env.suite);
+    if (prior && prior !== fingerprint) {
+      throw new Error(`mixed suite fingerprints for ${env.suite}: ${prior} and ${fingerprint}`);
+    }
+    fingerprintsBySuite.set(env.suite, fingerprint);
     rows.push({
       ts: env.startedAt,
       suite: env.suite,
@@ -151,10 +166,8 @@ async function main(): Promise<number> {
     });
   }
 
-  const trimmed = opts.limit > 0 && rows.length > opts.limit ? rows.slice(rows.length - opts.limit) : rows;
-
   process.stdout.write(`ts\tsuite\tmode\tlabel\t${opts.metric}\n`);
-  for (const r of trimmed) {
+  for (const r of rows) {
     process.stdout.write(`${r.ts}\t${r.suite}\t${r.mode}\t${r.label}\t${r.metric}\n`);
   }
   return 0;

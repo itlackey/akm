@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { lookup } from "../indexer";
@@ -21,13 +21,14 @@ export interface ResolveAssetPathOptions {
 }
 
 function normalizeRef(ref: string | AssetRef): AssetRef {
-  return typeof ref === "string" ? parseAssetRef(ref) : ref;
+  // Stored/resolved refs may still be in the legacy spelling → dual parser.
+  return typeof ref === "string" ? parseRefInput(ref) : ref;
 }
 
 function buildDiskCandidates(sourcePath: string, ref: AssetRef, preserveDirectNameFallback: boolean): string[] {
-  const typeDir = path.join(sourcePath, TYPE_DIRS[ref.type] ?? `${ref.type}s`);
+  const typeDir = path.join(sourcePath, stashDirFor(ref.type) ?? `${ref.type}s`);
   const candidates = [
-    resolveAssetPathFromName(ref.type, typeDir, ref.name),
+    assetPathForName(ref.type, typeDir, ref.name),
     path.join(sourcePath, ref.type, `${ref.name}.md`),
     path.join(sourcePath, ref.type, ref.name),
   ];

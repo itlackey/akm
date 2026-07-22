@@ -117,7 +117,7 @@ describe("parseTemplate references", () => {
 
   test("reference segments record raw source text and opener index", () => {
     const segments = segmentsOf("ab ${{ params.x }} cd");
-    const ref = segments[1];
+    const ref = segments[1]!;
     if (ref.kind !== "reference") throw new Error("expected reference");
     expect(ref.raw).toBe("${{ params.x }}");
     expect(ref.index).toBe(3);
@@ -130,21 +130,21 @@ describe("parseTemplate errors", () => {
   test("unterminated reference", () => {
     const errors = errorsOf("hi ${{ params.x");
     expect(errors).toHaveLength(1);
-    expect(errors[0].index).toBe(3);
-    expect(errors[0].message).toContain("nterminated");
+    expect(errors[0]!.index).toBe(3);
+    expect(errors[0]!.message).toContain("nterminated");
   });
 
   test("nested opener inside a reference", () => {
     const errors = errorsOf("${{ params.${{ item }} }}");
     expect(errors).toHaveLength(1);
-    expect(errors[0].index).toBe(11);
-    expect(errors[0].message.toLowerCase()).toContain("nested");
+    expect(errors[0]!.index).toBe(11);
+    expect(errors[0]!.message.toLowerCase()).toContain("nested");
   });
 
   test("unknown roots", () => {
-    expect(errorsOf("${{ env.HOME }}")[0].message).toContain("env");
-    expect(errorsOf("${{ secrets.token }}")[0].message).toContain("secrets");
-    expect(errorsOf("${{ params2.x }}")[0].message).toContain("params2");
+    expect(errorsOf("${{ env.HOME }}")[0]!.message).toContain("env");
+    expect(errorsOf("${{ secrets.token }}")[0]!.message).toContain("secrets");
+    expect(errorsOf("${{ params2.x }}")[0]!.message).toContain("params2");
   });
 
   test("empty expression", () => {
@@ -191,8 +191,8 @@ describe("parseTemplate errors", () => {
   test("multiple errors are all collected with ascending indexes", () => {
     const errors = errorsOf("${{ nope }} and ${{ params }}");
     expect(errors).toHaveLength(2);
-    expect(errors[0].index).toBe(0);
-    expect(errors[1].index).toBe(16);
+    expect(errors[0]!.index).toBe(0);
+    expect(errors[1]!.index).toBe(16);
   });
 });
 
@@ -283,36 +283,36 @@ describe("resolveTemplate", () => {
   test("missing param is a resolution error naming the path", () => {
     const errors = resolutionErrors("${{ params.ghost }}", EMPTY_SCOPE);
     expect(errors).toHaveLength(1);
-    expect(errors[0].reference).toBe("params.ghost");
-    expect(errors[0].message).toContain("params.ghost");
+    expect(errors[0]!.reference).toBe("params.ghost");
+    expect(errors[0]!.message).toContain("params.ghost");
   });
 
   test("null and undefined values are resolution errors", () => {
     const s = scope({ params: { a: null, b: undefined } });
-    expect(resolutionErrors("${{ params.a }}", s)[0].message).toContain("null");
+    expect(resolutionErrors("${{ params.a }}", s)[0]!.message).toContain("null");
     expect(resolutionErrors("${{ params.b }}", s)).toHaveLength(1);
   });
 
   test("missing step output is an error naming the step", () => {
     const errors = resolutionErrors("${{ steps.ghost.output }}", EMPTY_SCOPE);
-    expect(errors[0].message).toContain("ghost");
+    expect(errors[0]!.message).toContain("ghost");
   });
 
   test("missing deep path names the full failing path", () => {
     const s = scope({ stepOutputs: { review: { files: ["only-one"] } } });
     const errors = resolutionErrors("${{ steps.review.output.files[5] }}", s);
-    expect(errors[0].message).toContain("steps.review.output.files");
-    expect(errors[0].message).toContain("5");
+    expect(errors[0]!.message).toContain("steps.review.output.files");
+    expect(errors[0]!.message).toContain("5");
   });
 
   test("descending into a non-object is an error", () => {
     const s = scope({ stepOutputs: { d: { n: 42 } } });
-    expect(resolutionErrors("${{ steps.d.output.n.deeper }}", s)[0].message).toContain("steps.d.output.n");
+    expect(resolutionErrors("${{ steps.d.output.n.deeper }}", s)[0]!.message).toContain("steps.d.output.n");
   });
 
   test("item and item_index outside a fan-out are errors", () => {
-    expect(resolutionErrors("${{ item }}", EMPTY_SCOPE)[0].reference).toBe("item");
-    expect(resolutionErrors("${{ item_index }}", EMPTY_SCOPE)[0].reference).toBe("item_index");
+    expect(resolutionErrors("${{ item }}", EMPTY_SCOPE)[0]!.reference).toBe("item");
+    expect(resolutionErrors("${{ item_index }}", EMPTY_SCOPE)[0]!.reference).toBe("item_index");
   });
 
   test("all resolution errors are collected, not just the first", () => {
@@ -326,7 +326,7 @@ describe("resolveTemplate", () => {
 describe("resolveReference", () => {
   test("arrays stay arrays (raw value, same identity)", () => {
     const files = ["a.ts", "b.ts"];
-    const [expr] = refs("${{ steps.d.output.files }}");
+    const expr = refs("${{ steps.d.output.files }}")[0]!;
     const result = resolveReference(expr, scope({ stepOutputs: { d: { files } } }));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe(files);
@@ -334,26 +334,26 @@ describe("resolveReference", () => {
 
   test("objects come back raw, not canonicalized", () => {
     const value = { b: 1, a: 2 };
-    const [expr] = refs("${{ steps.d.output }}");
+    const expr = refs("${{ steps.d.output }}")[0]!;
     const result = resolveReference(expr, scope({ stepOutputs: { d: value } }));
     if (!result.ok) throw new Error(result.error.message);
     expect(result.value).toBe(value);
   });
 
   test("scalars and item resolve raw", () => {
-    const [itemExpr] = refs("${{ item }}");
+    const itemExpr = refs("${{ item }}")[0]!;
     const itemResult = resolveReference(itemExpr, scope({ item: { file: "x.ts" }, itemIndex: 3 }));
     if (!itemResult.ok) throw new Error(itemResult.error.message);
     expect(itemResult.value).toEqual({ file: "x.ts" });
 
-    const [idxExpr] = refs("${{ item_index }}");
+    const idxExpr = refs("${{ item_index }}")[0]!;
     const idxResult = resolveReference(idxExpr, scope({ item: "x", itemIndex: 3 }));
     if (!idxResult.ok) throw new Error(idxResult.error.message);
     expect(idxResult.value).toBe(3);
   });
 
   test("null value and missing path follow the same error discipline", () => {
-    const [expr] = refs("${{ steps.d.output.value }}");
+    const expr = refs("${{ steps.d.output.value }}")[0]!;
     const nullResult = resolveReference(expr, scope({ stepOutputs: { d: { value: null } } }));
     expect(nullResult.ok).toBe(false);
     if (!nullResult.ok) expect(nullResult.error.message).toContain("null");
@@ -377,7 +377,7 @@ describe("inherited properties never resolve (own-property lookups only)", () =>
     for (const key of INHERITED) {
       const errors = resolutionErrors(`\${{ steps.d.output.${key} }}`, s);
       expect(errors).toHaveLength(1);
-      expect(errors[0].reference).toBe(`steps.d.output.${key}`);
+      expect(errors[0]!.reference).toBe(`steps.d.output.${key}`);
     }
   });
 
@@ -386,12 +386,12 @@ describe("inherited properties never resolve (own-property lookups only)", () =>
     for (const key of INHERITED) {
       const errors = resolutionErrors(`\${{ params.${key} }}`, s);
       expect(errors).toHaveLength(1);
-      expect(errors[0].reference).toBe(`params.${key}`);
+      expect(errors[0]!.reference).toBe(`params.${key}`);
     }
   });
 
   test("resolveReference (whole-value) is equally guarded", () => {
-    const [expr] = refs("${{ steps.d.output.constructor }}");
+    const expr = refs("${{ steps.d.output.constructor }}")[0]!;
     const result = resolveReference(expr, scope({ stepOutputs: { d: { real: 1 } } }));
     expect(result.ok).toBe(false);
   });

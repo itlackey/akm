@@ -17,40 +17,33 @@
 
 import fs from "node:fs";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
-import { makeAssetRef } from "../../core/asset/asset-ref";
-import { defaultRendererRegistry, type RendererRegistry } from "../../core/asset/asset-registry";
-import { getAssetTypes } from "../../core/asset/asset-spec";
-import type { AkmAssetType } from "../../core/common";
+import { placementTypes } from "../../core/asset/asset-placement";
+import { displayRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
+import { defaultRendererRegistry, type RendererRegistry } from "../../core/type-presentation";
 import { warn } from "../../core/warn";
 import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import {
-  closeDatabase,
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
   getEntryById,
   getEntryCount,
-  getMeta,
   getPositiveFeedbackCountsByIds,
-  openExistingDatabase,
-  sanitizeFtsQuery,
-  searchFts,
-  searchVec,
-} from "../db/db";
+} from "../../storage/repositories/index-entries-repository";
+import { searchFts } from "../../storage/repositories/index-fts-repository";
+import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { searchVec } from "../../storage/repositories/index-vec-repository";
+import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { ensureIndex } from "../ensure-index";
-import {
-  collectGraphRelatedHit,
-  computeGraphBoost,
-  type GraphBoostContext,
-  loadGraphBoostContext,
-} from "../graph/graph-boost";
-import { isProposedQuality, type StashEntry, type StashEntryScope } from "../passes/metadata";
+import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "../graph/graph-boost";
+import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
 import { resolveProjectContext } from "../walk/project-context";
-import { parseRefPrefixQuery } from "./fts-query";
+import { parseRefPrefixQuery, sanitizeFtsQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
+import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
@@ -90,15 +83,22 @@ export function buildLocalAction(
   return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
 }
 
-function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
-  if (source?.wikiName) {
-    return makeAssetRef(entry.type as AkmAssetType, entry.name);
-  }
-  return makeAssetRef(entry.type as AkmAssetType, refName, source?.registryId);
+function resolveSearchHitRef(entry: IndexDocument, refName: string, source?: SearchSource): string {
+  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the hit's
+  // user-facing ref (short conceptId in the primary bundle, `bundle//conceptId`
+  // for a slug-clean non-default source). `displayRef` prefers the row's stored
+  // conceptId and derives `stashDir/name` (== the old `stashDir/name` body) when it
+  // is absent, so this is a pure ref-spelling change over the old output.
+  return displayRef({
+    type: entry.type,
+    name: refName,
+    conceptId: entry.conceptId,
+    bundleId: source?.registryId ?? undefined,
+  });
 }
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {
-  return source?.wikiName ? null : (source?.registryId ?? null);
+  return source?.registryId ?? null;
 }
 
 /**
@@ -243,7 +243,7 @@ export async function searchLocal(input: {
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs } = await searchDatabase(
+    const { hits, embedMs, rankMs, usedSemantic } = await searchDatabase(
       db,
       query,
       searchType,
@@ -270,7 +270,9 @@ export async function searchLocal(input: {
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
-      mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
+      // Report the mode the search ACTUALLY used, carried explicitly from the
+      // vector scorer — not inferred from elapsed embedding milliseconds.
+      mode: usedSemantic ? "semantic" : "keyword",
     };
   } finally {
     closeDatabase(db);
@@ -300,6 +302,8 @@ async function searchDatabase(
   hits: SourceSearchHit[];
   embedMs?: number;
   rankMs?: number;
+  /** True only when the embedding/vector search actually executed for ranking. */
+  usedSemantic: boolean;
 }> {
   const hasSearchableTokens = query.length > 0 && sanitizeFtsQuery(query).length > 0;
 
@@ -317,47 +321,49 @@ async function searchDatabase(
   // `--type` flag expresses stronger intent and wins. The PARSED type is
   // itself explicit intent, so `defaultExcludeTypes` does not apply — a bare
   // `session:` enumerates sessions exactly like `--type session` does.
-  const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, getAssetTypes()) : null;
+  const refPrefix = searchType === "any" ? parseRefPrefixQuery(query, placementTypes()) : null;
+  // Shared args for the two browse paths below; browse never runs semantic
+  // ranking, so both return usedSemantic: false.
+  const browseArgs = {
+    db,
+    query,
+    limit,
+    stashDir,
+    allSourceDirs,
+    sources,
+    config,
+    rendererRegistry,
+    filters,
+    includeProposed,
+    beliefFilter,
+    restrictToSources,
+  };
   if (refPrefix) {
-    return enumerateEntries({
-      db,
-      query,
-      typeFilter: refPrefix.type,
-      excludeTypes: [],
-      namePrefix: refPrefix.namePrefix,
-      limit,
-      stashDir,
-      allSourceDirs,
-      sources,
-      config,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-    });
+    // Browse path (ref-prefix enumeration).
+    return {
+      ...(await enumerateEntries({
+        ...browseArgs,
+        typeFilter: refPrefix.type,
+        excludeTypes: [],
+        namePrefix: refPrefix.namePrefix,
+      })),
+      usedSemantic: false,
+    };
   }
 
   // Empty queries — including ones that sanitize down to no searchable FTS
   // tokens such as "." — should enumerate matching entries instead of
   // returning an empty result set from FTS.
   if (!hasSearchableTokens) {
-    return enumerateEntries({
-      db,
-      query,
-      typeFilter: searchType === "any" ? undefined : searchType,
-      excludeTypes: defaultExcludes,
-      limit,
-      stashDir,
-      allSourceDirs,
-      sources,
-      config,
-      rendererRegistry,
-      filters,
-      includeProposed,
-      beliefFilter,
-      restrictToSources,
-    });
+    // Browse path (empty/unsearchable query).
+    return {
+      ...(await enumerateEntries({
+        ...browseArgs,
+        typeFilter: searchType === "any" ? undefined : searchType,
+        excludeTypes: defaultExcludes,
+      })),
+      usedSemantic: false,
+    };
   }
 
   // Start the async embedding request without awaiting, then run FTS
@@ -368,6 +374,12 @@ async function searchDatabase(
   const ftsResults = searchFts(db, query, limit * 3, typeFilter, defaultExcludes);
   const embeddingScores = await embeddingPromise;
   const embedMs = Date.now() - tEmbed0;
+  // The vector scorer returns a (possibly empty) Map when the embedding + vector
+  // search actually executed, or null when semantic was not runnable (disabled,
+  // no embeddings, or the embed call threw). This is the AUTHORITATIVE "semantic
+  // mode was used" signal — carried out to telemetry instead of guessing from
+  // elapsed milliseconds (which timed the concurrent FTS work too).
+  const usedSemantic = embeddingScores !== null;
 
   const tRank0 = Date.now();
 
@@ -400,7 +412,6 @@ async function searchDatabase(
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
   // so that sort order and displayed scores are always consistent).
-  //
   // Ranking philosophy: the goal is to surface the MOST USEFUL result for the
   // user's intent. An exact name match is the strongest signal. Actionable
   // asset types (skills, commands, agents) are more useful than passive
@@ -439,10 +450,7 @@ async function searchDatabase(
   // query here would be pure overhead. The boost > 1.0 sub-gate then skips the
   // query when the configured boost is a no-op (1.5^count when boost==1 is 1).
   const positiveFeedbackCounts = shouldQueryPositiveFeedbackCounts(utilityDecayRaw)
-    ? getPositiveFeedbackCountsByIds(
-        db,
-        scored.map((item) => item.id),
-      )
+    ? getPositiveFeedbackCountsByIds(scored.map((item) => item.id))
     : undefined;
 
   // Resolve per-project scope key for scoped utility scoring.
@@ -500,40 +508,33 @@ async function searchDatabase(
   preFilter.sort((a, b) => displayScore(b.score) - displayScore(a.score) || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
-  // Multiple .stash.json entries can map to the same file (e.g. entries without
+  // Multiple legacy-sidecar entries can map to the same file (e.g. entries without
   // a filename field all collapse to files[0]). Showing the same path/ref
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
-  // Source filter: when the caller narrowed `sources` via `--source <name>`,
-  // drop hits whose filePath does not live under any of the requested
-  // sources. The FTS/vector index spans every configured source, so without
-  // this filter a narrowed --source request would still leak results from
-  // other sources that happened to match the query text.
-  const sourceFiltered = restrictToSources
-    ? deduped.filter((item) => findSourceForPath(item.filePath, sources) !== undefined)
-    : deduped;
-
-  // Scope filter: drop hits whose stored scope does not satisfy every supplied
-  // key. Applied AFTER ranking — filtering narrows the result set without
-  // touching the single FTS5+boosts scoring pipeline.
-  const scopeFiltered = filters
-    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
-    : sourceFiltered;
-
-  // Proposed-quality filter (v1 spec §4.2): exclude entries with
-  // `quality: "proposed"` unless the caller passed `--include-proposed`.
-  // Applied AFTER ranking for the same reason as scope filtering.
-  const qualityFiltered = includeProposed
-    ? scopeFiltered
-    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
-  const beliefFiltered = qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, beliefFilter));
+  // Source → scope → proposed-quality → derived-twin belief inheritance →
+  // belief: the post-candidate filter chain shared with enumerateEntries (see
+  // applyEntryFilters). Applied AFTER ranking so filtering narrows the result
+  // set without touching the single FTS5+boosts scoring pipeline. The twin
+  // inheritance inside the chain re-runs here as an idempotent no-op — it
+  // already ran on the full candidate pool before ranking (:460) to feed the
+  // belief-state ranker.
+  const beliefFiltered = applyEntryFilters(deduped, {
+    db,
+    sources,
+    restrictToSources,
+    filters,
+    includeProposed,
+    beliefFilter,
+  });
 
   const rankMs = Date.now() - tRank0;
 
   const selected = beliefFiltered.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
+    selected.map((ranked) => {
+      const { entry, filePath, score, rankingMode, utilityBoosted } = ranked;
       // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
       // exceed 1.0 (this was a pre-existing breach that #207's graph boost
       // — up to ~1.05 additive contribution — made detectable); clamp here
@@ -552,13 +553,14 @@ async function searchDatabase(
         config,
         utilityBoosted,
         graphContext,
+        attributionSource: ranked,
         rendererRegistry,
         db,
       });
     }),
   );
 
-  return { embedMs, rankMs, hits };
+  return { embedMs, rankMs, hits, usedSemantic };
 }
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
@@ -568,8 +570,8 @@ async function searchDatabase(
  * empty/unsearchable queries and SPEC-4 ref-prefix queries (`<type>:` /
  * `<type>:<prefix>/`). Applies the same post-ranking filters as the scored
  * path (source narrowing, scope, proposed-quality, belief) before the limit
- * slice. Hits carry the fixed browse score 1 in insertion order — this is a
- * deterministic listing, not a relevance ranking.
+ * slice. Hits carry the fixed browse score 1 in type-then-name order — this is
+ * a deterministic listing, not a relevance ranking.
  */
 async function enumerateEntries(opts: {
   db: Database;
@@ -599,6 +601,16 @@ async function enumerateEntries(opts: {
 }): Promise<{ hits: SourceSearchHit[] }> {
   const { db, query, sources, config, rendererRegistry, filters, beliefFilter } = opts;
   const allEntries = getAllEntries(db, opts.typeFilter, opts.excludeTypes);
+  // Explicit listing order: type, then name, then filePath. The underlying
+  // SELECT carries no ORDER BY, so its row order tracks the query plan and the
+  // index-insertion (file-walk) order — both machine-dependent. A browse
+  // listing must not change order across hosts or SQLite versions.
+  allEntries.sort(
+    (a, b) =>
+      a.entry.type.localeCompare(b.entry.type) ||
+      a.entry.name.localeCompare(b.entry.name) ||
+      a.filePath.localeCompare(b.filePath),
+  );
   // SPEC-4: narrow to the requested subtree. `startsWith` on the full
   // slash-retaining prefix is exact — "projecta/" cannot match a sibling
   // "projectalpha/…" scope.
@@ -612,29 +624,21 @@ async function enumerateEntries(opts: {
     seenFilePaths.add(ie.filePath);
     return true;
   });
-  // Source filter: when the caller narrowed `sources` via `--source <name>`,
-  // drop entries whose filePath does not live under any of the requested
-  // sources. The FTS index spans every configured source, so without this
-  // filter a narrowed --source request would still leak results.
-  const sourceFiltered = opts.restrictToSources
-    ? uniqueEntries.filter((ie) => findSourceForPath(ie.filePath, sources) !== undefined)
-    : uniqueEntries;
-  // Scope filter: drop entries whose stored scope does not satisfy every
-  // supplied scope key. Filtering happens BEFORE the limit slice so a
-  // restrictive filter still returns up to `limit` results.
-  const scopeFiltered = filters
-    ? sourceFiltered.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
-    : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude entries with
-  // `quality: "proposed"` unless the caller explicitly opts in.
-  const qualityFiltered = opts.includeProposed
-    ? scopeFiltered
-    : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-  // 03-R3: derived twins inherit their base's demoting belief state here too,
-  // so the belief FILTER (and the reported hit state) stays consistent on the
-  // enumerate/browse path — not only on the FTS-scored path.
-  inheritDerivedTwinBeliefStates(db, qualityFiltered);
-  const beliefFiltered = qualityFiltered.filter((ie) => matchBeliefFilter(ie.entry.beliefState, beliefFilter));
+  // Source → scope → proposed-quality → derived-twin belief inheritance →
+  // belief: the post-candidate filter chain shared with searchDatabase's
+  // scored path (see applyEntryFilters). Filtering happens BEFORE the limit
+  // slice so a restrictive filter still returns up to `limit` results. On this
+  // path the twin inheritance is the ONLY place it runs (there is no ranking
+  // pass), keeping the belief filter and reported hit state consistent with
+  // the scored path.
+  const beliefFiltered = applyEntryFilters(uniqueEntries, {
+    db,
+    sources,
+    restrictToSources: opts.restrictToSources,
+    filters,
+    includeProposed: opts.includeProposed,
+    beliefFilter,
+  });
   const selected = beliefFiltered.slice(0, opts.limit);
   const hits = await Promise.all(
     selected.map((ie) =>
@@ -657,6 +661,66 @@ async function enumerateEntries(opts: {
 }
 
 /**
+ * Post-candidate filter chain shared by BOTH search paths — the scored path
+ * (`searchDatabase`) and the browse path (`enumerateEntries`). Applies, in this
+ * exact order: source-narrowing → scope → proposed-quality → derived-twin
+ * belief inheritance → belief filter. Extracting the chain removes the two
+ * paths' formerly-duplicated filter sequences so the predicates, their order,
+ * and the twin-inheritance placement can never drift apart (plan §4.3).
+ *
+ * What this does NOT unify — and deliberately leaves divergent — is CANDIDATE-
+ * POOL construction, which is inherent search-vs-browse semantics: the scored
+ * path's pool is `searchFts`/vector matches for the query's own tokens (FTS
+ * indexes description/tags/searchHints/aliases, not raw body prose), while the
+ * enumerate path's pool is `getAllEntries` for the type, independent of query
+ * text. A derived twin sharing no indexed token with the query is therefore an
+ * enumerate-path candidate but never a scored-path candidate — see
+ * tests/fixtures/goldens/filter-behavior/scored-vs-enumerate.json, which pins
+ * that (retained) divergence.
+ *
+ * `inheritDerivedTwinBeliefStates` is idempotent, so running it here is safe on
+ * the scored path, which must ALSO call it before ranking (the belief-state
+ * ranker demotes inherited states): by the time this chain runs, those twins
+ * already carry a state and the call here is a no-op for them. The enumerate
+ * path never ranks, so this is the only place it inherits.
+ */
+function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
+  items: T[],
+  opts: {
+    db: Database;
+    sources: SearchSource[];
+    restrictToSources: boolean;
+    filters?: StashEntryScope;
+    includeProposed: boolean;
+    beliefFilter: BeliefFilterMode;
+  },
+): T[] {
+  const { filters } = opts;
+  // Source filter: when the caller narrowed `sources` via `--source <name>`,
+  // drop entries whose filePath does not live under any requested source. The
+  // FTS/enumerate index spans every configured source, so without this filter a
+  // narrowed --source request would still leak results from other sources.
+  const sourceFiltered = opts.restrictToSources
+    ? items.filter((item) => findSourceForPath(item.filePath, opts.sources) !== undefined)
+    : items;
+  // Scope filter: drop entries whose stored scope does not satisfy every
+  // supplied key.
+  const scopeFiltered = filters
+    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
+    : sourceFiltered;
+  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
+  // entries unless the caller opts in.
+  const qualityFiltered = opts.includeProposed
+    ? scopeFiltered
+    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+  // 03-R3: derived twins inherit their base's demoting belief state BEFORE the
+  // belief filter, so the filter (and the reported hit state) stays consistent
+  // across both paths.
+  inheritDerivedTwinBeliefStates(opts.db, qualityFiltered);
+  return qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, opts.beliefFilter));
+}
+
+/**
  * 03-R3: let each `.derived` twin inherit its base memory's demoting belief
  * state for this ranking pass, so a stale flag-free twin is demoted like its
  * corrected base. The base carries the flag (a contradicted base takes a real
@@ -667,7 +731,7 @@ async function enumerateEntries(opts: {
  * improve run, erasing it. Only twins with no state of their own inherit; an
  * explicit twin state always wins. Reuses the (03) belief-state ranker + filter.
  */
-function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number; entry: StashEntry }>): void {
+function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number; entry: IndexDocument }>): void {
   const DEMOTING = new Set(["contradicted", "superseded", "deprecated", "archived"]);
   const twins = items.filter(
     (it) =>
@@ -684,7 +748,7 @@ function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number;
     const baseBelief = baseBeliefByTwinId.get(t.id);
     // Only inherit DEMOTIONS — never let a base's active/asserted state lift a twin.
     if (baseBelief && DEMOTING.has(baseBelief)) {
-      t.entry.beliefState = baseBelief as StashEntry["beliefState"];
+      t.entry.beliefState = baseBelief as IndexDocument["beliefState"];
     }
   }
 }
@@ -743,7 +807,7 @@ async function tryVecScores(
 // ── Hit building ────────────────────────────────────────────────────────────
 
 export async function buildDbHit(input: {
-  entry: StashEntry;
+  entry: IndexDocument;
   path: string;
   score: number;
   query: string;
@@ -754,6 +818,7 @@ export async function buildDbHit(input: {
   config?: AkmConfig;
   utilityBoosted?: boolean;
   graphContext?: GraphBoostContext | null;
+  attributionSource?: object;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
   /**
@@ -779,7 +844,7 @@ export async function buildDbHit(input: {
   // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
-  const graphBoost = input.graphContext ? computeGraphBoost(input.graphContext, input.path) : 0;
+  const graphBoost = getSearchHitAttribution(input.attributionSource ?? {})?.graphExtraction?.boost ?? 0;
 
   const whyMatched = buildWhyMatched(
     input.entry,
@@ -824,6 +889,13 @@ export async function buildDbHit(input: {
     ...(graphHit ? { graph: { entities: graphHit.entities, relations: graphHit.relations } } : {}),
   };
 
+  if (input.attributionSource) copySearchHitAttribution(input.attributionSource, hit);
+
+  if (input.entry.derivedFrom) {
+    attachSearchHitAttribution(hit, {
+      memoryInference: { exposure: "direct" },
+    });
+  }
   await enrichSearchHit(hit, {
     type: input.entry.type,
     stashDir: entryStashDir,
@@ -835,7 +907,7 @@ export async function buildDbHit(input: {
 }
 
 export function buildWhyMatched(
-  entry: StashEntry,
+  entry: IndexDocument,
   query: string,
   // "hybrid" ranking mode
   rankingMode: "hybrid" | "semantic" | "fts",

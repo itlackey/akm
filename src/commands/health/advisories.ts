@@ -37,7 +37,7 @@ export function collectImproveAdvisories(
   // rich in-session signal is no longer deferrable.
   const proxyInvertedEvents = readEvents({ since, type: "outcome_proxy_inverted" }, { dbPath: stateDbPath }).events;
   if (proxyInvertedEvents.length > 0) {
-    const lastEvent = proxyInvertedEvents[proxyInvertedEvents.length - 1];
+    const lastEvent = proxyInvertedEvents[proxyInvertedEvents.length - 1]!;
     const correlation =
       typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
     advisories.push({
@@ -58,7 +58,7 @@ export function collectImproveAdvisories(
   // is as much a failure as an inverted one — it just fails silently.
   const proxyDeadEvents = readEvents({ since, type: "outcome_proxy_dead" }, { dbPath: stateDbPath, db }).events;
   if (proxyDeadEvents.length > 0) {
-    const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1];
+    const lastEvent = proxyDeadEvents[proxyDeadEvents.length - 1]!;
     const correlation =
       typeof lastEvent.metadata?.correlation === "number" ? lastEvent.metadata.correlation.toFixed(3) : "unknown";
     advisories.push({
@@ -101,7 +101,7 @@ export function collectImproveAdvisories(
       message:
         `Enrichment lanes minted ${minting.minted} NEW asset(s) vs ${minting.updated} update(s) ` +
         `(${Math.round(minting.share * 100)}% minted, threshold ${Math.round(ENRICHMENT_MINTED_WARN_SHARE * 100)}%). ` +
-        "Enrichment-classed lanes (proactive/high-salience/high-retrieval/signal-delta) are ratified to edit " +
+        "Enrichment-classed lanes (proactive/high-salience/signal-delta) are ratified to edit " +
         "existing assets only — new-asset generation belongs to the signal-gated minting lanes.",
     });
   }
@@ -125,7 +125,7 @@ export function collectImproveAdvisories(
   // R5 collapse/churn detector: surface any collapse_detector_alert events
   // in the health window, plus the latest cycle row's headline numbers so
   // the operator can act without opening the DB. `unknown` when the detector
-  // has never produced a cycle row (no consolidate/recombine work yet).
+  // has never produced a cycle row (no consolidate work yet).
   try {
     // Reuse the already-open state.db handle (readEvents supports a
     // borrowed connection) — no extra open/migrate/close per health call.
@@ -151,7 +151,7 @@ export function collectImproveAdvisories(
         confidence: collapseKinds.length > 0 ? "high" : "medium",
         message:
           `R5 detector fired ${collapseAlertEvents.length} alert(s) in window (kinds: ${kinds.join(", ")}). ` +
-          `${cycleSummary} See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
+          `${cycleSummary} See docs/architecture/specs/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
       });
     } else if (latestCycle) {
       advisories.push({
@@ -169,7 +169,7 @@ export function collectImproveAdvisories(
         confidence: "high",
         message:
           "No detector cycle rows yet — the collapse/churn detector runs only on improve cycles " +
-          "where consolidate/recombine did work (synthesis lanes may be idle).",
+          "where consolidate did work.",
       });
     }
   } catch {

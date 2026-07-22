@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-07-validation-fail-no-trigger",
   "assetType": "memory",
-  "assetRef": "memory:probe-07-bare-bullet-list",
+  "assetRef": "memories/probe-07-bare-bullet-list",
   "asset": {
     "frontmatter": {
       "description": "Bullet list of unrelated observations that share no trigger condition.",

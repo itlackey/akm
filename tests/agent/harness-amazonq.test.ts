@@ -15,11 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
-import {
-  AMAZONQ_PLATFORM,
-  AMAZONQ_RESUME_FLAG,
-  amazonqBuilder,
-} from "../../src/integrations/harnesses/amazonq/agent-builder";
+import { AMAZONQ_PLATFORM, amazonqBuilder } from "../../src/integrations/harnesses/amazonq/agent-builder";
 import {
   amazonqResultExtractor,
   stripTerminalFraming,
@@ -60,10 +56,9 @@ describe("amazonqBuilder — plain prompt", () => {
     expect(cmd.argv).toEqual(["q", "chat", "--no-interactive", "--trust-all-tools", "--", "do work"]);
   });
 
-  test("platform id is 'amazonq'; resume flag constant is '--resume' (matrix; bare flag, no id)", () => {
+  test("platform id is 'amazonq' (matrix)", () => {
     expect(amazonqBuilder.platform).toBe("amazonq");
     expect(AMAZONQ_PLATFORM).toBe("amazonq");
-    expect(AMAZONQ_RESUME_FLAG).toBe("--resume");
   });
 
   test("profile.args are preserved after the chat subcommand", () => {

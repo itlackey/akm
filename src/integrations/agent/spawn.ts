@@ -19,10 +19,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { spawn as runtimeSpawn } from "../../runtime";
+import {
+  runManagedSubprocess,
+  type SpawnedSubprocess,
+  type SpawnFn,
+  type StreamReadResult,
+} from "../../core/subprocess";
 import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
+
+// The managed-subprocess primitive owns spawn/timeout/abort/capture; these
+// types are its vocabulary. Re-exported so existing importers of this module
+// (and its test fakes) keep resolving them here unchanged.
+export type { SpawnedSubprocess, SpawnFn } from "../../core/subprocess";
 
 /** Stable failure-reason vocabulary. Wider strings are not allowed.
  *
@@ -65,60 +75,6 @@ export type AgentFailureReason =
   // workflow scheduler's budget preemption). Distinct from "timeout" so
   // callers can tell a budget/user abort from a wall-clock expiry.
   | "aborted";
-
-/** Minimum subprocess surface we need. The runtime spawn returns this shape. */
-export interface SpawnedSubprocess {
-  exitCode: number | null;
-  exited: Promise<number>;
-  stdout?: ReadableStream<Uint8Array> | null;
-  stderr?: ReadableStream<Uint8Array> | null;
-  stdin?: WritableStream<Uint8Array> | null;
-  /** PID of the spawned process. Present on real Bun subprocesses; may be absent on test fakes. */
-  pid?: number;
-  kill(signal?: number | string): void;
-}
-
-/**
- * Function signature compatible with the runtime spawn. Tests inject a fake
- * implementation so the spawn wrapper can be exercised deterministically
- * without poking at real binaries.
- */
-export type SpawnFn = (
-  cmd: string[],
-  options: {
-    stdin?: "inherit" | "pipe" | "ignore";
-    stdout?: "inherit" | "pipe" | "ignore";
-    stderr?: "inherit" | "pipe" | "ignore";
-    env?: Record<string, string>;
-    cwd?: string;
-    detached?: boolean;
-  },
-) => SpawnedSubprocess;
-
-/**
- * Kill the process group of `proc` with `signal`, falling back to
- * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes).
- *
- * Passing a negative PID to `process.kill` targets the entire process
- * group, so opencode's child processes (the .opencode binary, etc.) are
- * reaped alongside the node wrapper. The fallback keeps test fakes working
- * without modification.
- */
-function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
-  if (typeof proc.pid === "number") {
-    try {
-      process.kill(-proc.pid, signal);
-      return;
-    } catch {
-      // Process may have already exited; fall through to direct kill.
-    }
-  }
-  try {
-    proc.kill(signal);
-  } catch {
-    /* ignore */
-  }
-}
 
 /**
  * Per-call options for {@link runAgent}. All fields are optional. Caller
@@ -267,14 +223,6 @@ function pathCandidatesForCurrentPlatform(home: string): string[] {
   ];
 }
 
-function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
-  if (options.spawn) return options.spawn;
-  // Default to the runtime-boundary spawn, which delegates to the native
-  // subprocess API on each runtime. Tests inject `options.spawn` to avoid
-  // poking real binaries.
-  return runtimeSpawn as unknown as SpawnFn;
-}
-
 /**
  * Build the child env. Starts empty and copies through:
  *   • Every name in `profile.envPassthrough`.
@@ -304,85 +252,6 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
     for (const [k, v] of Object.entries(options.env)) env[k] = v;
   }
   return env;
-}
-
-interface StreamReadResult {
-  text: string;
-  timedOut: boolean;
-  error?: unknown;
-}
-
-const STREAM_READ_TIMEOUT = Symbol("stream-read-timeout");
-
-async function readStream(
-  stream: ReadableStream<Uint8Array> | null | undefined,
-  opts?: {
-    timeoutMs?: number;
-    setTimeoutFn?: typeof setTimeout;
-    clearTimeoutFn?: typeof clearTimeout;
-  },
-): Promise<StreamReadResult> {
-  if (!stream) return { text: "", timedOut: false };
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  if (!opts?.timeoutMs) {
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        text += decoder.decode(chunk.value, { stream: true });
-      }
-      text += decoder.decode();
-      return { text, timedOut: false };
-    } catch (error) {
-      return { text, timedOut: false, error };
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  // Race the stream read against a timeout so a process that is killed via
-  // SIGTERM/SIGKILL but whose pipe endpoints stay open (e.g. background
-  // threads still holding the fd) cannot block the caller indefinitely.
-  // On timeout we return whatever was decoded before the pipe stopped draining.
-  const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
-  const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
-  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
-  const timeoutPromise = new Promise<typeof STREAM_READ_TIMEOUT>((resolve) => {
-    timer = setTimeoutImpl(() => {
-      timer = undefined;
-      resolve(STREAM_READ_TIMEOUT);
-    }, opts.timeoutMs);
-    if (typeof timer !== "number") timer.unref?.();
-  });
-  try {
-    while (true) {
-      const chunk = await Promise.race([reader.read(), timeoutPromise]);
-      if (chunk === STREAM_READ_TIMEOUT) {
-        void reader.cancel().catch(() => {});
-        return { text, timedOut: true };
-      }
-      if (chunk.done) break;
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-    text += decoder.decode();
-    return { text, timedOut: false };
-  } catch (error) {
-    return { text, timedOut: false, error };
-  } finally {
-    if (timer !== undefined) {
-      clearTimeoutImpl(timer);
-    }
-    try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
-    }
-  }
 }
 
 function streamFailureMessage(
@@ -475,154 +344,45 @@ export async function runAgent(
     };
   }
 
-  let proc: SpawnedSubprocess;
-  try {
-    const spawnFn = resolveSpawnFn(options);
-    proc = spawnFn(finalArgv, {
-      stdin: stdioMode === "captured" ? (options.stdin !== undefined ? "pipe" : "ignore") : "inherit",
-      stdout: stdioMode === "captured" ? "pipe" : "inherit",
-      stderr: stdioMode === "captured" ? "pipe" : "inherit",
-      env,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
-      // Spawn in its own process group so killGroup(-pid, signal) reaches all
-      // descendants (e.g. the .opencode binary that opencode's node wrapper forks).
-      // Only applied in captured mode — interactive mode inherits the parent
-      // terminal's process group intentionally.
-      ...(stdioMode === "captured" ? { detached: true } : {}),
-    });
-  } catch (err) {
-    const durationMs = Date.now() - start;
-    return {
-      ok: false,
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      durationMs,
-      reason: "spawn_failed",
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-  emitSpawnEvent("spawn_start", {
-    profile: profile.name,
-    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+  // Spawn/timeout/abort/capture are owned by the managed-subprocess primitive
+  // (src/core/subprocess.ts): process-GROUP spawn (detached in captured mode),
+  // the SIGTERM→SIGKILL kill ladder on timeout/abort, bounded output capture,
+  // and the optional stdin payload. runAgent keeps its agent-specific surface —
+  // the onEvent observability seam, the failure taxonomy, and JSON parsing.
+  //
+  // `onSpawn` fires spawn_start once the child is live (never for a pre-spawn
+  // abort or a synchronous spawn failure), and captures the proc so spawn_exit
+  // can carry the same pid.
+  let spawnedProc: SpawnedSubprocess | undefined;
+  const result = await runManagedSubprocess(finalArgv, {
+    capture: stdioMode === "captured",
+    env,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+    timeoutMs,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.spawn ? { spawnFn: options.spawn } : {}),
+    setTimeoutFn: setTimeoutImpl,
+    clearTimeoutFn: clearTimeoutImpl,
+    onSpawn: (proc) => {
+      spawnedProc = proc;
+      emitSpawnEvent("spawn_start", {
+        profile: profile.name,
+        ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+      });
+    },
   });
 
-  // Hard timeout. We prefer SIGTERM, then SIGKILL if SIGTERM is ignored,
-  // but the subprocess only exposes a single .kill() — one signal is enough
-  // for the structured-failure contract.
-  //
-  // BUG-M3: only flag `timedOut` when the child has not already exited. A
-  // timer firing in the same microtask as `proc.exited` resolving could
-  // otherwise label a clean exit as a timeout.
-  //
-  // When timeoutMs is null the kill timer is skipped entirely — the task runs
-  // until the process exits naturally. Intended for long-running local-model
-  // tasks where wall-clock time is unpredictable.
-  let timedOut = false;
-  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
-  if (timeoutMs !== null) {
-    timer = setTimeoutImpl(() => {
-      if (!proc || proc.exitCode !== null) return;
-      timedOut = true;
-      killGroup(proc, "SIGTERM");
-      // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-      const sigkillTimer = setTimeoutImpl(() => {
-        if (!proc || proc.exitCode !== null) return;
-        killGroup(proc, "SIGKILL");
-      }, 5000);
-      if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
-    }, timeoutMs);
-  }
+  const pidField = spawnedProc && typeof spawnedProc.pid === "number" ? { pid: spawnedProc.pid } : {};
+  const durationMs = Date.now() - start;
 
-  // Cooperative cancel: same SIGTERM→SIGKILL discipline as the timeout, but
-  // flagged separately so the result carries `reason: "aborted"`.
-  let aborted = false;
-  const abortSignal = options.signal;
-  const onAbort = () => {
-    if (!proc || proc.exitCode !== null) return;
-    aborted = true;
-    killGroup(proc, "SIGTERM");
-    const sigkillTimer = setTimeoutImpl(() => {
-      if (!proc || proc.exitCode !== null) return;
-      killGroup(proc, "SIGKILL");
-    }, 5000);
-    if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
-  };
-  if (abortSignal) {
-    // A signal that aborted between the pre-spawn check and here is handled
-    // by calling the listener directly.
-    if (abortSignal.aborted) onAbort();
-    else abortSignal.addEventListener("abort", onAbort, { once: true });
-  }
-
-  // Stream-drain timeout: the overall wall-clock budget plus a 2 s grace
-  // period. When a process is killed via SIGTERM/SIGKILL (from our timeout
-  // handler or from outside) some runtimes keep the pipe write-end open in
-  // background threads, which would cause `Response.text()` to block forever.
-  // Capping stream draining ensures the caller never hangs past the wall
-  // budget regardless of subprocess pipe behaviour.
-  // When there is no kill timer, allow up to 30 s for streams to drain.
-  const streamDrainTimeoutMs = timeoutMs !== null ? timeoutMs + 2_000 : 30_000;
-  const stdoutPromise =
-    stdioMode === "captured"
-      ? readStream(proc.stdout ?? null, {
-          timeoutMs: streamDrainTimeoutMs,
-          setTimeoutFn: setTimeoutImpl,
-          clearTimeoutFn: clearTimeoutImpl,
-        })
-      : Promise.resolve({ text: "", timedOut: false });
-  const stderrPromise =
-    stdioMode === "captured"
-      ? readStream(proc.stderr ?? null, {
-          timeoutMs: streamDrainTimeoutMs,
-          setTimeoutFn: setTimeoutImpl,
-          clearTimeoutFn: clearTimeoutImpl,
-        })
-      : Promise.resolve({ text: "", timedOut: false });
-
-  // Optional stdin payload (captured mode only).
-  //
-  // BUG-H1: race the stdin write/close against `proc.exited` and the
-  // timeout timer. If the child never drains stdin, an unraced
-  // `await writer.write()` would block forever and prevent `runAgent`
-  // from ever returning.
-  if (options.stdin !== undefined && stdioMode === "captured" && proc.stdin) {
-    const stdinPayload = options.stdin;
-    const stdinStream = proc.stdin;
-    const stdinDone = (async () => {
-      try {
-        const writer = stdinStream.getWriter();
-        const bytes = new TextEncoder().encode(stdinPayload);
-        await writer.write(bytes);
-        await writer.close();
-      } catch {
-        // Best-effort: ignore stdin write failures, the child will get EOF.
-      }
-    })();
-    // Resolve as soon as either the write completes or the child exits.
-    // We don't await the result — only that one of the two has settled —
-    // so a stuck writer cannot keep us pinned past the timeout.
-    await Promise.race([stdinDone, proc.exited.catch(() => undefined)]);
-  }
-
-  let exitCode: number | null = null;
-  try {
-    exitCode = await proc.exited;
-  } catch (err) {
-    if (timer !== undefined) clearTimeoutImpl(timer);
-    abortSignal?.removeEventListener("abort", onAbort);
-    // BUG-H2: drain stream readers before the early return so they don't
-    // surface as unhandled rejections after the function resolves.
-    // The streams already carry a built-in drain timeout so this allSettled
-    // will not block indefinitely.
-    await Promise.allSettled([stdoutPromise, stderrPromise]);
-    const durationMs = Date.now() - start;
-    emitSpawnEvent("spawn_exit", {
-      profile: profile.name,
-      ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
-      exitCode: null,
-      status: "spawn_failed",
-    });
+  // Spawn/exit failure. A synchronous spawn throw never reached a live child
+  // (no spawn_start fired, so no spawn_exit either); a rejected proc.exited did
+  // (spawn_start already fired, so it emits a spawn_exit with status spawn_failed).
+  if (result.spawnError) {
+    if (spawnedProc) {
+      emitSpawnEvent("spawn_exit", { profile: profile.name, ...pidField, exitCode: null, status: "spawn_failed" });
+    }
     return {
       ok: false,
       exitCode: null,
@@ -630,22 +390,17 @@ export async function runAgent(
       stderr: "",
       durationMs,
       reason: "spawn_failed",
-      error: err instanceof Error ? err.message : String(err),
+      error: result.spawnError.message,
     };
   }
-  clearTimeoutImpl(timer);
-  abortSignal?.removeEventListener("abort", onAbort);
+
+  const { exitCode, timedOut, aborted, stdout, stderr } = result;
   emitSpawnEvent("spawn_exit", {
     profile: profile.name,
-    ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
+    ...pidField,
     exitCode,
     status: aborted ? "aborted" : timedOut ? "timeout" : exitCode !== 0 ? "non_zero_exit" : "ok",
   });
-
-  const [stdoutRead, stderrRead] = await Promise.all([stdoutPromise, stderrPromise]);
-  const stdout = stdoutRead.text;
-  const stderr = stderrRead.text;
-  const durationMs = Date.now() - start;
 
   if (aborted) {
     return {
@@ -671,7 +426,7 @@ export async function runAgent(
     };
   }
 
-  const captureFailure = streamFailureMessage(profile.name, stdoutRead, stderrRead);
+  const captureFailure = streamFailureMessage(profile.name, result.stdoutRead, result.stderrRead);
   if (captureFailure) {
     return {
       ok: false,

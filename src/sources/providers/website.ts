@@ -8,7 +8,7 @@ import {
   getWebsiteCachePaths,
   shouldAllowPrivateWebsiteUrlForTests,
   validateWebsiteUrl,
-} from "../website-ingest";
+} from "../snapshot-fetchers/website-ingest";
 
 /**
  * Website source provider — thin adapter over the shared website ingest module.

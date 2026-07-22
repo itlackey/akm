@@ -38,7 +38,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     const out = buildMemoryFrontmatter({
       description: "VPN required for staging deploys",
       tags: ["ops", "networking"],
-      source: "skill:deploy",
+      source: "skills/deploy",
       observed_at: "2026-04-24",
       expires: "2026-07-23",
       subjective: false,
@@ -50,7 +50,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     const parsed = yamlParse(inner) as Record<string, unknown>;
     expect(parsed.description).toBe("VPN required for staging deploys");
     expect(parsed.tags).toEqual(["ops", "networking"]);
-    expect(parsed.source).toBe("skill:deploy");
+    expect(parsed.source).toBe("skills/deploy");
     expect(parsed.observed_at).toBe("2026-04-24");
     expect(parsed.expires).toBe("2026-07-23");
     expect(parsed.subjective).toBeUndefined();

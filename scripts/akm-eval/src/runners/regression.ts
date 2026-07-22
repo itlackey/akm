@@ -19,7 +19,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  assertMatchingSuiteFingerprints,
   loadCaseResults,
+  loadEvalRunResult,
   resolveRunDir,
   type RunLocation,
 } from "../sources/eval-runs";
@@ -178,6 +180,8 @@ export async function runRegressionCase(c: EvalCase, ctx: EvalContext): Promise<
 
   let previous: EvalCaseResult[];
   try {
+    const previousEnvelope = loadEvalRunResult(location.dir);
+    assertMatchingSuiteFingerprints(previousEnvelope.inputs.suiteFingerprint, ctx.suiteFingerprint);
     previous = loadCaseResults(location.dir);
   } catch (err) {
     return {

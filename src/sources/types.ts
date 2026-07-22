@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { InstalledStashEntry, InstallKind, KitSource } from "../registry/types";
+import type { InstalledBundle, InstallKind, KitSource } from "../registry/types";
 
 export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
@@ -193,14 +193,12 @@ export interface AddResponse {
         path: string;
         name?: string;
         stashRoot: string;
-        wiki?: string;
       }
     | {
         type: "website";
         url: string;
         name?: string;
         stashRoot: string;
-        wiki?: string;
       };
   config: {
     sourceCount: number;
@@ -215,7 +213,7 @@ export interface AddResponse {
   };
 }
 
-export interface SourceInstallStatus extends InstalledStashEntry {
+export interface SourceInstallStatus extends InstalledBundle {
   extractedDir: string;
 }
 
@@ -229,7 +227,6 @@ export type SourceKind = "filesystem" | "git" | "npm" | "website" | "managed" | 
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
-  wiki?: string;
   path?: string;
   ref?: string;
   provider?: string;

@@ -2,12 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { RendererRegistry } from "../../core/asset/asset-registry";
+import { displayRef } from "../../core/asset/resolve-ref";
+import type { RendererRegistry } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { getDerivedForParent } from "../db/db";
+import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getRenderer } from "../walk/file-context";
+import { attachSearchHitAttribution } from "./search-attribution";
 
 export interface SearchHitContext {
   type: string;
@@ -69,16 +70,23 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     // it untouched also avoids `<parent>.derived.derived` chains.
     if (hit.name.toLowerCase().endsWith(".derived")) return;
 
-    // Parent ref shape: `memory:<name>`. Re-build from the entry's name
-    // so we don't depend on whatever wiki/registry prefix `hit.ref` carries.
-    const parentRef = makeAssetRef("memory", hit.name);
-    const derived = getDerivedForParent(ctx.db, parentRef);
+    // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
+    // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
+    // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
+    // column now stores this same conceptId grammar (Group-C item 2 flip — the
+    // metadata producer + this consumer move together).
+    const parentRef = `memories/${hit.name}`;
+    const derived = getDerivedForParent(ctx.db, parentRef, ctx.stashDir);
     if (!derived) return;
 
     // Swap description / searchHints / tags from the derived child.
     // The parent ref itself is preserved — only the surface text is swapped.
+    const surfaceFields: Array<"description" | "tags"> = [];
+    let surfaceDescription: string | undefined;
     if (typeof derived.entry.description === "string" && derived.entry.description.length > 0) {
       hit.description = derived.entry.description;
+      surfaceDescription = derived.entry.description;
+      surfaceFields.push("description");
     }
     if (Array.isArray(derived.entry.searchHints) && derived.entry.searchHints.length > 0) {
       // We don't have a `searchHints` field on SourceSearchHit today — it's
@@ -88,51 +96,31 @@ export const derivedMemoryEnricher: SearchHitEnricher = {
     }
     if (Array.isArray(derived.entry.tags) && derived.entry.tags.length > 0) {
       hit.tags = derived.entry.tags;
+      surfaceFields.push("tags");
     }
-    hit.expandTo = makeAssetRef("memory", derived.entry.name);
+    // F4b output-spelling flip: `expandTo` is a user-facing `akm show <ref>`
+    // target, so emit the 0.9.0 short conceptId grammar (`memories/<name>`).
+    hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
+    const childRef = getItemRefById(ctx.db, derived.id);
+    if (childRef && surfaceFields.length > 0) {
+      attachSearchHitAttribution(hit, {
+        memoryInference: {
+          exposure: "surface",
+          childRef,
+          surfaceFields,
+          ...(surfaceDescription ? { surfaceDescription } : {}),
+        },
+      });
+    }
   },
 };
 
-/**
- * Registry of additional enrichers — populated by
- * {@link registerSearchHitEnricher} and consumed in addition to
- * {@link defaultSearchHitEnrichers} when `enrichSearchHit` is invoked
- * without an explicit enricher list.
- *
- * Kept module-local so callers must use `registerSearchHitEnricher` rather
- * than mutating the array directly.
- */
-const additionalEnrichers: SearchHitEnricher[] = [];
-
 export const defaultSearchHitEnrichers: SearchHitEnricher[] = [rendererSearchHitEnricher, derivedMemoryEnricher];
-
-/**
- * Register an additional enricher to be applied alongside the defaults.
- *
- * Idempotent on `name`: subsequent calls with the same name replace the
- * previously-registered enricher (so tests can re-register cleanly without
- * stacking duplicates).
- */
-export function registerSearchHitEnricher(enricher: SearchHitEnricher): void {
-  const existingIndex = additionalEnrichers.findIndex((e) => e.name === enricher.name);
-  if (existingIndex >= 0) {
-    additionalEnrichers[existingIndex] = enricher;
-  } else {
-    additionalEnrichers.push(enricher);
-  }
-}
-
-/**
- * Test-only: clear the registered-enrichers list. Not part of the public API.
- */
-export function _resetRegisteredSearchHitEnrichers(): void {
-  additionalEnrichers.length = 0;
-}
 
 export async function enrichSearchHit(
   hit: SourceSearchHit,
   ctx: SearchHitContext,
-  enrichers: SearchHitEnricher[] = [...defaultSearchHitEnrichers, ...additionalEnrichers],
+  enrichers: SearchHitEnricher[] = defaultSearchHitEnrichers,
 ): Promise<void> {
   for (const enricher of enrichers) {
     if (!enricher.appliesTo(ctx)) continue;

@@ -9,6 +9,8 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
+import { stashDirFor } from "../../core/asset/asset-placement";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { Database, SqlValue } from "../../storage/database";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -16,13 +18,20 @@ import type { Database, SqlValue } from "../../storage/database";
 /**
  * Provenance of a usage event. `"user"` = interactive/direct invocation
  * (including agent sessions acting for the user); `"improve"` = the improve
- * pipeline's own retrievals (reflect/distill agents); `"task"` = the task
- * runner (scheduled/cron work). Non-`"user"` sources are machine demand and
- * are excluded from retrieval-derived ranking signals (`getRetrievalCounts`,
- * utility bumps) so pipeline traffic cannot inflate them (meta-review 05
- * DRIFT-6). Propagated across process boundaries via `AKM_EVENT_SOURCE`.
+ * pipeline's own retrievals; `"task"` = scheduled work; `"audit"` = eval or
+ * measurement traffic; `"unknown"` = unattributed legacy/extension traffic.
+ * Machine and unattributed sources are excluded from demand and utility.
  */
-export type UsageEventSource = "user" | "improve" | "task";
+export type UsageEventSource = "user" | "improve" | "task" | "audit" | "unknown";
+
+const USAGE_EVENT_SOURCES = new Set<UsageEventSource>(["user", "improve", "task", "audit", "unknown"]);
+
+/** Resolve subprocess provenance without treating an invalid value as user demand. */
+export function resolveUsageEventSource(env: Record<string, string | undefined> = process.env): UsageEventSource {
+  const raw = env.AKM_EVENT_SOURCE;
+  if (raw === undefined || raw === "") return "user";
+  return USAGE_EVENT_SOURCES.has(raw as UsageEventSource) ? (raw as UsageEventSource) : "unknown";
+}
 
 export interface UsageEvent {
   event_type: string;
@@ -31,7 +40,7 @@ export interface UsageEvent {
   entry_ref?: string;
   signal?: string;
   metadata?: string;
-  /** Event source (see {@link UsageEventSource}). Defaults to `"user"` when omitted. */
+  /** Event source (see {@link UsageEventSource}). Omitted events are unattributed. */
   source?: UsageEventSource;
 }
 
@@ -99,11 +108,36 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
       event.entry_ref ?? null,
       event.signal ?? null,
       event.metadata ?? null,
-      event.source ?? "user",
+      event.source ?? "unknown",
     );
   } catch {
     /* fire-and-forget: silently ignore errors */
   }
+}
+
+/**
+ * Bare-form candidates a bare `entry_ref` filter matches a stored row under.
+ * The durable `usage_events.entry_ref` column straddles the F5 ref-grammar flip:
+ * F4c-indexed rows carry the new-grammar conceptId (`memories/alpha`) while
+ * transitional / not-yet-re-keyed rows still carry the legacy `type:name`
+ * (`memory:alpha`). Both name the SAME asset, so a bare filter in EITHER grammar
+ * must bridge to the other spelling — otherwise a history/telemetry query misses
+ * half the asset's own events across the flip boundary. (Fully-qualified filters
+ * apply this bridge under a fixed origin — see getUsageEvents.)
+ */
+function usageEventBareCandidates(ref: string): string[] {
+  const trimmed = ref.trim();
+  const out = new Set<string>([trimmed]);
+  // New-grammar conceptId (`memories/alpha`) → its legacy `type:name` sibling.
+  const legacy = typeNameFromConceptId(trimmed);
+  if (legacy) out.add(`${legacy.type}:${legacy.name}`);
+  // Legacy `type:name` (`memory:alpha`) → its new-grammar `stashDir/name` sibling.
+  const colon = trimmed.indexOf(":");
+  if (colon > 0) {
+    const dir = stashDirFor(trimmed.slice(0, colon));
+    if (dir) out.add(`${dir}/${trimmed.slice(colon + 1)}`);
+  }
+  return [...out];
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -121,16 +155,37 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
   }
   if (filters?.entry_ref) {
     if (filters.entry_ref.includes("//")) {
-      conditions.push("entry_ref = ?");
-      params.push(filters.entry_ref);
+      // Fully-qualified filter (`bundle//conceptId` or legacy `origin//type:name`)
+      // — the user named a specific bundle/origin, so match that origin exactly,
+      // but bridge the bare tail across the F5 grammar flip (see
+      // usageEventBareCandidates) so a `stash//memories/alpha` filter also matches
+      // an un-re-keyed `stash//memory:alpha` row (and vice versa).
+      const boundary = filters.entry_ref.indexOf("//");
+      const origin = filters.entry_ref.slice(0, boundary);
+      const bareTail = filters.entry_ref.slice(boundary + 2);
+      const quals = usageEventBareCandidates(bareTail).map((bare) => `${origin}//${bare}`);
+      conditions.push(`entry_ref IN (${quals.map(() => "?").join(", ")})`);
+      params.push(...quals);
     } else {
-      conditions.push("(entry_ref = ? OR substr(entry_ref, -length(?) - 2) = '//' || ?)");
-      params.push(filters.entry_ref, filters.entry_ref, filters.entry_ref);
+      // Bare filter — match the stored bare form (everything after the first
+      // `//`, or the whole value when un-qualified) against the conceptId the
+      // filter normalizes to.
+      const candidates = usageEventBareCandidates(filters.entry_ref);
+      const placeholders = candidates.map(() => "?").join(", ");
+      conditions.push(
+        `(CASE WHEN instr(entry_ref, '//') > 0 THEN substr(entry_ref, instr(entry_ref, '//') + 2) ELSE entry_ref END) ` +
+          `IN (${placeholders})`,
+      );
+      params.push(...candidates);
     }
   }
   if (filters?.source) {
-    conditions.push("source = ?");
-    params.push(filters.source);
+    if (filters.source === "unknown") {
+      conditions.push("(source = 'unknown' OR source IS NULL OR source = '')");
+    } else {
+      conditions.push("source = ?");
+      params.push(filters.source);
+    }
   }
   if (filters?.since) {
     conditions.push("created_at >= ?");
@@ -142,7 +197,8 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
                FROM usage_events ${where}
                ORDER BY id ASC`;
 
-  return db.prepare(sql).all(...(params as SqlValue[])) as UsageEventRow[];
+  const rows = db.prepare(sql).all(...(params as SqlValue[])) as Array<UsageEventRow & { source: string | null }>;
+  return rows.map((row) => ({ ...row, source: row.source || "unknown" }));
 }
 
 /**
@@ -160,7 +216,7 @@ export function countFeedbackSignals(db: Database, entryId: number): { pos: numb
          SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
          SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
        FROM usage_events
-       WHERE event_type = 'feedback' AND entry_id = ?`,
+       WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
     )
     .get(entryId) as { pos: number | null; neg: number | null } | undefined;
   return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };

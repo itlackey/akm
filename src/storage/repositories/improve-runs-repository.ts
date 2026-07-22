@@ -3,12 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `improve_runs` table (per-run audit ledger) and
- * the `improve_gate_thresholds` per-phase auto-tune store (migration 012).
+ * Repository for the state.db `improve_runs` table (per-run audit ledger).
  * Extracted verbatim from core/state-db.ts — queries and the pure
  * `computeImproveRunMetrics` aggregation unchanged, only relocated behind the
  * repository boundary. Re-exported by core/state-db.ts so existing importers
  * resolve.
+ *
+ * The `improve_gate_thresholds` per-phase auto-tune store (migration 012)
+ * lost its readers with the 0.9.0 confidence-gate deletion; the table itself
+ * remains (migrations are append-only).
  *
  * @module improve-runs-repository
  */
@@ -16,33 +19,6 @@
 import type { ImproveResultEnvelope } from "../../core/improve-result";
 import { classifyImproveAction } from "../../core/improve-types";
 import type { Database } from "../database";
-
-// ── Per-phase gate threshold store (Migration 012) ───────────────────────────
-
-/**
- * Read the persisted auto-tuned threshold for a gate phase.
- *
- * Returns `undefined` when no row exists yet (first run, or the phase has
- * never been tuned). The caller falls back to the global `options.autoAccept`
- * in that case.
- */
-export function getPhaseThreshold(db: Database, phase: string): number | undefined {
-  const row = db.prepare("SELECT threshold FROM improve_gate_thresholds WHERE phase = ?").get(phase) as
-    | { threshold: number }
-    | undefined;
-  return row?.threshold;
-}
-
-/**
- * Persist the auto-tuned threshold for a gate phase.
- * Uses INSERT OR REPLACE so the call is idempotent (upsert semantics).
- */
-export function persistPhaseThreshold(db: Database, phase: string, threshold: number): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO improve_gate_thresholds (phase, threshold, updated_at)
-     VALUES (?, ?, ?)`,
-  ).run(phase, Math.round(threshold), Date.now());
-}
 
 // ── improve_runs table helpers ───────────────────────────────────────────────
 

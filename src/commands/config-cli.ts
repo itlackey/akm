@@ -57,7 +57,9 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  return redactConfigValue({ ...DEFAULT_CONFIG, ...config, sources: config.sources ?? [] }) as Record<string, unknown>;
+  // 0.9.0 (spec §10.1): sources live in `bundles` (spread from config); the
+  // retired top-level `sources[]` array is no longer surfaced.
+  return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
 function redactConfigValue(value: unknown): unknown {
@@ -105,8 +107,9 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
         registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
     );
     if (idx >= 0) {
-      const wasEnabled = registries[idx].enabled !== false;
-      registries[idx].enabled = enabled;
+      const target = registries[idx]!;
+      const wasEnabled = target.enabled !== false;
+      target.enabled = enabled;
       changed = wasEnabled !== enabled;
       return { ...config, registries };
     }

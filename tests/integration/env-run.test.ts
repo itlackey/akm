@@ -63,7 +63,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\nBAR=baz\n", "utf8");
 
     const { stdout, stderr, status } = spawnCli(
-      ["env", "run", "env:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
       { AKM_STASH_DIR: stashDir },
     );
 
@@ -79,7 +79,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "secrets", "my_api_token"), "s3cr3t", "utf8");
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secret:my_api_token}\n", "utf8");
 
-    const { stdout, status } = spawnCli(["env", "run", "env:prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
+    const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
       AKM_STASH_DIR: stashDir,
     });
 
@@ -96,7 +96,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secret:a}:${secret:b}\nKEEP=${HOME}\n", "utf8");
 
     const { stdout, status } = spawnCli(
-      ["env", "run", "env:prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
       { AKM_STASH_DIR: stashDir },
     );
 
@@ -114,7 +114,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "EDITOR=/evil\nFOO=ok\n", "utf8");
 
     const { stdout, stderr, status } = spawnCli(
-      ["env", "run", "env:danger", "--", "bash", "-lc", "printf '%s' \"$FOO\""],
+      ["env", "run", "env/danger", "--", "bash", "-lc", "printf '%s' \"$FOO\""],
       { AKM_STASH_DIR: stashDir },
     );
 
@@ -129,7 +129,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\nBAR=bar\nBAZ=baz\n", "utf8");
 
     const { stdout, status } = spawnCli(
-      ["env", "run", "env:prod", "--only", "FOO,BAZ", "--", "bash", "-lc", 'printf \'%s|%s|%s\' "$FOO" "$BAR" "$BAZ"'],
+      ["env", "run", "env/prod", "--only", "FOO,BAZ", "--", "bash", "-lc", 'printf \'%s|%s|%s\' "$FOO" "$BAR" "$BAZ"'],
       { AKM_STASH_DIR: stashDir },
     );
 
@@ -144,7 +144,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\nBAR=bar\n", "utf8");
 
     const { stdout, status } = spawnCli(
-      ["env", "run", "env:prod", "--except", "BAR", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$BAR"'],
+      ["env", "run", "env/prod", "--except", "BAR", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$BAR"'],
       { AKM_STASH_DIR: stashDir },
     );
 
@@ -158,7 +158,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\n", "utf8");
 
     const { stdout, status } = spawnCli(
-      ["env", "run", "env:prod", "--clean", "--", "bash", "-lc", 'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"'],
+      ["env", "run", "env/prod", "--clean", "--", "bash", "-lc", 'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"'],
       { AKM_STASH_DIR: stashDir, PARENT_ONLY: "sentinel" },
     );
 
@@ -175,7 +175,7 @@ describe("env run", () => {
       [
         "env",
         "run",
-        "env:prod",
+        "env/prod",
         "--clean",
         "--inherit",
         "PARENT_ONLY",
@@ -202,7 +202,7 @@ describe("secret run", () => {
       [
         "secret",
         "run",
-        "secret:token",
+        "secrets/token",
         "API_TOKEN",
         "--clean",
         "--",

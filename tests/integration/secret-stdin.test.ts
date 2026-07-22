@@ -51,7 +51,7 @@ describe("secret set (stdin)", () => {
   test("reads the value from stdin and stores it", () => {
     const stashDir = makeStash();
     const { stderr, status } = spawnCli(
-      ["secret", "set", "secret:demo"],
+      ["secret", "set", "secrets/demo"],
       { AKM_STASH_DIR: stashDir },
       "tok-from-stdin",
     );
@@ -63,7 +63,7 @@ describe("secret set (stdin)", () => {
 
   test("strips a single trailing newline from the stdin value", () => {
     const stashDir = makeStash();
-    spawnCli(["secret", "set", "secret:demo"], { AKM_STASH_DIR: stashDir }, "tok\n");
+    spawnCli(["secret", "set", "secrets/demo"], { AKM_STASH_DIR: stashDir }, "tok\n");
     expect(fs.readFileSync(path.join(stashDir, "secrets", "demo"), "utf8")).toBe("tok");
   });
 });

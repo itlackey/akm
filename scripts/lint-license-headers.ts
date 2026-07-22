@@ -51,11 +51,7 @@ function collectTs(dir: string): string[] {
       // Exclusions: skip dist, schemas
       if (entry.name === "dist" || entry.name === "schemas") continue;
       results.push(...collectTs(full));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".ts") &&
-      !entry.name.endsWith(".d.ts")
-    ) {
+    } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
       results.push(full);
     }
   }

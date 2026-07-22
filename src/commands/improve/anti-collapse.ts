@@ -23,7 +23,7 @@ export const DEFAULT_RANDOM_CLUSTER_FRACTION = 0.05;
 
 export interface AntiCollapseConfig {
   /**
-   * DEFAULT ON since R5 (docs/design/improve-collapse-churn-detector-design.md
+   * DEFAULT ON since R5 (docs/architecture/specs/improve-collapse-churn-detector-design.md
    * §4.1, owner-approved): the generation guard, lexical-diversity check, and
    * random-cluster injection are deterministic, cheap, and (except the narrow
    * two-participants-both-over-generation refusal) advisory. Set `false` to

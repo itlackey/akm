@@ -1,0 +1,181 @@
+{
+  "accept": {
+    "asset-published": {
+      "acceptedContentHashPresent": true,
+      "assetContentMatchesProposal": true,
+      "backupContentMatchesOriginal": true,
+      "journalPhasesObserved": [
+        "asset-published"
+      ],
+      "ok": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    },
+    "event-persisted": {
+      "acceptedContentHashPresent": true,
+      "assetContentMatchesProposal": true,
+      "backupContentMatchesOriginal": true,
+      "journalPhasesObserved": [
+        "event-persisted"
+      ],
+      "ok": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    },
+    "index-finalized": {
+      "acceptedContentHashPresent": true,
+      "assetContentMatchesProposal": true,
+      "backupContentMatchesOriginal": true,
+      "journalPhasesObserved": [
+        "index-finalized"
+      ],
+      "ok": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    },
+    "prepared": {
+      "acceptedContentHashPresent": true,
+      "assetContentMatchesProposal": true,
+      "backupContentMatchesOriginal": true,
+      "journalPhasesObserved": [
+        "prepared"
+      ],
+      "ok": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    },
+    "proposal-persisted": {
+      "acceptedContentHashPresent": true,
+      "assetContentMatchesProposal": true,
+      "backupContentMatchesOriginal": true,
+      "journalPhasesObserved": [
+        "proposal-persisted"
+      ],
+      "ok": true,
+      "promotedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "accepted"
+    }
+  },
+  "capturedAtHead": "90640d4103ab4024ab0bf8b0705bd54d847c9a4a",
+  "notes": [
+    "Crash windows only (brief §3.4) — parameterizes the existing, unmodified tests/integration/_helpers/proposal-crash-runner.ts subprocess harness.",
+    "journalPhasesObserved is informational only (brief §3.2 rule 4): the single phase name the runner was told to hold at, never journal bytes/paths. Re-captured at Chunk 6 (WI-6.5): the proposal journals now ride the unified FileChange transaction engine (src/core/fs-txn.ts) — phase vocabulary and every recovery outcome preserved through the swap.",
+    "'prepared' rolls back (no partial state survives); every later phase rolls forward via recoverProposalTransactions (repository.ts:1430) so all listed phases converge on the same final accepted/reverted/rejected outcome with exactly-one event.",
+    "The ordering scenario pins that akmProposalReject (proposal.ts:175) calls recoverProposalTransactionsForStash BEFORE its own pending-status check, so a crashed-but-recoverable accept is rolled forward first and the reject then correctly fails as 'not pending' rather than racing the interrupted accept."
+  ],
+  "reject": {
+    "prepared": {
+      "journalPhasesObserved": [
+        "prepared"
+      ],
+      "rejectedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "rejected"
+    },
+    "reject-event-persisted": {
+      "journalPhasesObserved": [
+        "reject-event-persisted"
+      ],
+      "rejectedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "rejected"
+    },
+    "reject-state-persisted": {
+      "journalPhasesObserved": [
+        "reject-state-persisted"
+      ],
+      "rejectedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "rejected"
+    }
+  },
+  "rejectRecoversPendingAccept": {
+    "assetContentMatchesAccepted": true,
+    "recoveredAcceptStatus": "accepted",
+    "rejectThrewNotPending": true
+  },
+  "revert": {
+    "asset-published": {
+      "journalPhasesObserved": [
+        "asset-published"
+      ],
+      "ok": true,
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    },
+    "event-persisted": {
+      "journalPhasesObserved": [
+        "event-persisted"
+      ],
+      "ok": true,
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    },
+    "index-finalized": {
+      "journalPhasesObserved": [
+        "index-finalized"
+      ],
+      "ok": true,
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    },
+    "prepared": {
+      "journalPhasesObserved": [
+        "prepared"
+      ],
+      "ok": true,
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    },
+    "proposal-persisted": {
+      "journalPhasesObserved": [
+        "proposal-persisted"
+      ],
+      "ok": true,
+      "restoredByteIdentical": true,
+      "revertedEvent": {
+        "distinctIdempotencyKeyCount": 1,
+        "matchingCount": 1
+      },
+      "status": "reverted"
+    }
+  },
+  "scenario": "proposal accept/revert/reject SIGKILL crash recovery outcomes (WI-03, R3, integration scope)"
+}

@@ -1,0 +1,69 @@
+{
+  "scenario": "The FIELD-OMISSION redaction surface for each dotenv file: env renders KEY NAMES ONLY (no values/comments/content); secret renders NAME/PATH/ACTION ONLY (no content, no keys). This is the §C.2 redaction pin. Mirrors renderer/all-types.json's env/secret byRelPath entries. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "The dotenv ADAPTER is not built, but the env-file/secret-file RENDERERS are coded (src/output/renderers.ts) — the redaction below is code-grounded and is ported as adapter-keyed presentation (behavior-preserving, spec §2/plan §7.3).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (renderer implementations 'env-keys-only', 'secret-name-only'; redaction keyed on the ADAPTER, never the type), §6 (env 'key NAMES only, values never indexed'; secret 'filename only'), §7 (dotenv 'metadata-only'); normative akm-format-neutral-bundle-workspace-spec.md §21.2 'Sensitivity exception' (dotenv/secret components MUST present only key names / file name and MUST NOT read or print the body). [Task ref: '§C.2/redaction'.]",
+  "realWorldSource": [
+    "akm env-file / secret-file renderers (src/output/renderers.ts) — the exact action strings + field sets reproduced here; matches the frozen renderer/all-types.json env + secret entries",
+    "dotenv security guidance — https://www.dotenv.org/docs/security/env"
+  ],
+  "notes": [
+    "SPECIFICATION golden and THE PRIMARY REDACTION ORACLE. presentationFor('env') → renderer 'env-file'; presentationFor('secret') → renderer 'secret-file'. The redaction is keyed on the ADAPTER/type-family, NEVER on the open `type` value — a frontmatter `type:` cannot opt out (normative §21.2).",
+    "env-file: rendered fields = {type, name, path, action, keys}. `keys` is the KEY-NAME array; VALUES, COMMENTS, and raw CONTENT are OMITTED. There is deliberately no `content`/`template`/`prompt` field.",
+    "secret-file: rendered fields = {type, name, path, action}. NO `content`, NO `keys`, NO values — the entire file is the secret and nothing is emitted. Even secrets/ci.env (a .env with KEY=VALUE lines) renders name-only, because type=secret (dir gate) selects the secret-file renderer — a STRONGER redaction than an env/ file.",
+    "The `action` strings are the exact static templates the env-file/secret-file renderers emit (literal `<ref>`/`<command>`/`<VAR>` placeholders, matching the frozen all-types golden). The shorter src/core/type-presentation.ts action variants are noted per entry but the redaction-bearing renderer action is the load-bearing one here."
+  ],
+  "byRelPath": {
+    "env/app.env": {
+      "type": "env",
+      "ref": "sample-dotenv//env/app",
+      "label": "Env",
+      "renderer": "env-file",
+      "action": "Environment — key names only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
+      "redaction": {
+        "renderedFields": ["type", "name", "path", "action", "keys"],
+        "keys": ["FIXTURE_GREETING", "LOG_LEVEL"],
+        "omittedFields": ["values", "comments", "content", "template", "prompt"]
+      }
+    },
+    "env/dangerous.env": {
+      "type": "env",
+      "ref": "sample-dotenv//env/dangerous",
+      "label": "Env",
+      "renderer": "env-file",
+      "action": "Environment — key names only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
+      "redaction": {
+        "renderedFields": ["type", "name", "path", "action", "keys"],
+        "keys": ["PATH", "NODE_OPTIONS", "APP_TOKEN"],
+        "omittedFields": ["values", "comments", "content"],
+        "note": "even the dangerous keys are surfaced by NAME only; their VALUES are never emitted."
+      }
+    },
+    "secrets/deploy-key": {
+      "type": "secret",
+      "ref": "sample-dotenv//secrets/deploy-key",
+      "label": "Secret",
+      "renderer": "secret-file",
+      "action": "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm secret path <ref>` for the file path, or `akm secret run <ref> <VAR> -- <command>` to run with the value injected into $VAR.",
+      "redaction": {
+        "renderedFields": ["type", "name", "path", "action"],
+        "keys": null,
+        "omittedFields": ["content", "keys", "values"]
+      }
+    },
+    "secrets/ci.env": {
+      "type": "secret",
+      "ref": "sample-dotenv//secrets/ci.env",
+      "label": "Secret",
+      "renderer": "secret-file",
+      "action": "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm secret path <ref>` for the file path, or `akm secret run <ref> <VAR> -- <command>` to run with the value injected into $VAR.",
+      "redaction": {
+        "renderedFields": ["type", "name", "path", "action"],
+        "keys": null,
+        "omittedFields": ["content", "keys", "values"],
+        "note": "STRONGER than env: this is a .env file with KEY=VALUE lines, but type=secret (secrets/ dir gate) selects secret-file, so NOT EVEN the key names are emitted."
+      }
+    }
+  }
+}

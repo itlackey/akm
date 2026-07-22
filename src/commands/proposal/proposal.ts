@@ -27,6 +27,7 @@ import {
   type Proposal,
   type ProposalsContext,
   promoteProposal,
+  proposalContent,
   recoverProposalTransactionsForStash,
   rejectProposalDurably,
   resolveProposalId,
@@ -306,4 +307,67 @@ export async function akmProposalRevert(options: ProposalRevertOptions): Promise
     assetPath: result.assetPath,
     proposal: result.proposal,
   };
+}
+
+// ── bulk adjudication (F-6 / #393) ──────────────────────────────────────────
+
+export interface BulkAdjudicateOptions {
+  stashDir?: string;
+  /** Which way to adjudicate every matching pending proposal. */
+  action: "accept" | "reject";
+  /** Match proposals whose `source` equals this generator (required). */
+  generator: string;
+  /** Skip proposals whose payload content exceeds this many lines. */
+  maxDiffLines?: number;
+  /** Only adjudicate proposals older than this many milliseconds. */
+  olderThanMs?: number;
+  /** Record matches without mutating anything. */
+  dryRun?: boolean;
+  /** accept-only: forwarded to `akmProposalAccept`. */
+  target?: string;
+  /** reject-only: forwarded to `akmProposalReject`. */
+  reason?: string;
+}
+
+export interface BulkAdjudicateResult {
+  /** Number of proposals adjudicated (or matched, under dryRun). */
+  count: number;
+  /** Per-proposal outcomes: accept/reject envelopes, or dry-run records. */
+  results: Array<
+    ProposalAcceptResult | ProposalRejectResult | { id: string; ref: string; source: string; dryRun: true }
+  >;
+}
+
+/**
+ * Bulk accept/reject every pending proposal from one generator, applying the
+ * shared `--max-diff-lines` / `--older-than` filters. Consolidates the two
+ * near-identical loops that lived in `proposal-cli.ts` (Chunk 6 WI-6.6);
+ * behavior is verbatim — same filter order, same per-item envelopes, same
+ * dry-run record shape. The destructive-confirmation prompt stays CLI-side.
+ */
+export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
+  const stashDir = resolveStash(options.stashDir);
+  const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
+    if (p.source !== options.generator) return false;
+    if (options.maxDiffLines !== undefined) {
+      const lines = proposalContent(p).split("\n").length;
+      if (lines > options.maxDiffLines) return false;
+    }
+    if (options.olderThanMs !== undefined) {
+      const age = Date.now() - new Date(p.createdAt).getTime();
+      if (age < options.olderThanMs) return false;
+    }
+    return true;
+  });
+  const results: BulkAdjudicateResult["results"] = [];
+  for (const proposal of pending) {
+    if (options.dryRun) {
+      results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+    } else if (options.action === "accept") {
+      results.push(await akmProposalAccept({ id: proposal.id, target: options.target }));
+    } else {
+      results.push(await akmProposalReject({ id: proposal.id, reason: options.reason }));
+    }
+  }
+  return { count: results.length, results };
 }

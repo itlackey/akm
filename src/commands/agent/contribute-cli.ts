@@ -30,6 +30,7 @@ import { EXIT_CODES, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
 import { akmLint } from "../lint/index";
 import { akmPropose } from "../proposal/propose";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -46,13 +47,13 @@ export const agentCommand = defineCommand({
     "agent-ref": {
       type: "positional",
       description:
-        "Optional agent asset ref (e.g. agent:code-reviewer). Loads system prompt, model, and tool policy from the stash asset.",
+        "Optional agent asset ref (e.g. agents/code-reviewer). Loads system prompt, model, and tool policy from the stash asset.",
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },
     engine: { type: "string", description: "Agent engine to use (default: defaults.engine)" },
-    command: { type: "string", description: "Load prompt from a command: asset" },
-    workflow: { type: "string", description: "Load prompt from a workflow: asset" },
+    command: { type: "string", description: "Load prompt from a command asset" },
+    workflow: { type: "string", description: "Load prompt from a workflow asset" },
     model: {
       type: "string",
       description:
@@ -80,7 +81,7 @@ export const agentCommand = defineCommand({
 
       if (agentRef) {
         const { akmShowUnified } = await import("../read/show.js");
-        const asset = await akmShowUnified({ ref: agentRef, detail: "full" });
+        const asset = await akmShowUnified({ ref: agentRef, detail: "full", eventSource: resolveUsageEventSource() });
         systemPrompt = typeof asset.content === "string" ? asset.content : undefined;
         assetModel = typeof asset.modelHint === "string" ? asset.modelHint : undefined;
         assetTools = asset.toolPolicy;

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+import { appendEvent, type EventsContext } from "../../core/events";
 import {
   createLockPayload,
   type LockOwnership,
@@ -29,6 +29,7 @@ export function tryAcquireImproveLock(
   lockPath: string,
   staleAfterMs: number,
   skipIfLocked: boolean | undefined,
+  eventsCtx?: EventsContext,
 ): ImproveLockAcquisition {
   let recoveryEvent: Parameters<typeof appendEvent>[0] | undefined;
   const acquire = () =>
@@ -42,7 +43,11 @@ export function tryAcquireImproveLock(
   }
   if (recoveryEvent) {
     try {
-      appendEvent(recoveryEvent);
+      // R25: lock acquisition runs BEFORE akmImprove opens its long-lived
+      // handle, so the caller passes the C2 boundary-pinned dbPath ctx — the
+      // rare stale-recovery event lands in the RIGHT state.db (correctness,
+      // not the handle fast path; no handle exists yet at lock time).
+      appendEvent(recoveryEvent, eventsCtx);
     } catch {
       /* event emission is best-effort; never block lock recovery */
     }

@@ -5,7 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderRunsDetailMd, renderWindowCompareMd } from "../src/commands/health/md-report";
 import type { DeltaEntry, ImproveHealthMetrics, ImproveRunSummary, WindowResult } from "../src/commands/health/types";
-import { summarizeCalibration } from "../src/commands/improve/calibration";
 
 /** A fully-zeroed ImproveHealthMetrics sufficient for the MD renderers. */
 function zeroImprove(): ImproveHealthMetrics {
@@ -36,7 +35,6 @@ function zeroImprove(): ImproveHealthMetrics {
       error: 0,
     },
     autoAccept: { promoted: 0, validationFailed: 0 },
-    calibration: summarizeCalibration([]),
     reflectsWithErrorContext: 0,
     coverageGapCount: 0,
     evalCasesWritten: 0,
@@ -124,7 +122,6 @@ function zeroImprove(): ImproveHealthMetrics {
     perfTelemetry: {
       dedupPoolSize: 0,
       llmPoolSize: 0,
-      judgedCacheSkipped: 0,
       embedMs: 0,
       embedCacheHits: 0,
       embedCacheMisses: 0,
@@ -173,8 +170,8 @@ describe("renderRunsDetailMd", () => {
   test("keeps ok boolean and exposes decoder status in a separate column", () => {
     const out = renderRunsDetailMd([makeRun({ ok: false, resultStatus: "normalized" })]);
     const [header, row] = out.split("\n");
-    const headers = header.trim().split(/\s{2,}/);
-    const cells = row.trim().split(/\s{2,}/);
+    const headers = header!.trim().split(/\s{2,}/);
+    const cells = row!.trim().split(/\s{2,}/);
 
     expect(headers).toEqual([
       "ts",
@@ -240,7 +237,7 @@ describe("renderRunsDetailMd", () => {
     expect(data).toContain("7/3/4"); // mem inference
     expect(data).toContain("2/10/6"); // graph
     // padded columns keep the header/data aligned to equal visual width
-    expect(lines[0].length).toBe(lines[1].length);
+    expect(lines[0]!.length).toBe(lines[1]!.length);
   });
 
   test("empty runs -> header only", () => {

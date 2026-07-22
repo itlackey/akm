@@ -29,7 +29,28 @@ import {
   akmProposalReject,
   akmProposalRevert,
   akmProposalShow,
+  bulkAdjudicateProposals,
 } from "./proposal";
+
+/**
+ * Parse + validate the shared bulk-adjudication filter flags
+ * (`--max-diff-lines`, `--older-than`). Extracted from the two verbatim
+ * copies that lived in the accept and reject bulk branches (WI-6.6).
+ */
+function parseBulkFilterFlags(args: Record<string, unknown>): { maxDiffLines?: number; olderThanMs?: number } {
+  const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
+  if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
+    throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
+  }
+  const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
+  if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
+    throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
+  }
+  return {
+    maxDiffLines: rawMaxDiff,
+    olderThanMs: rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined,
+  };
+}
 
 function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | "reverted" | undefined {
   if (raw === undefined) return undefined;
@@ -51,7 +72,7 @@ const proposalListCommand = defineJsonCommand({
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
     },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId, e.g. knowledge/guide.md)" },
     type: { type: "string", description: "Filter by asset type" },
   },
   run({ args }) {
@@ -117,40 +138,16 @@ const proposalAcceptCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("./repository");
-      const stashDir = resolveStashDir();
-      const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
-      if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
-        throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
-      }
-      const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
-      if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
-        throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
-      }
-      const maxDiffLines = rawMaxDiff;
-      const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
-      const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-        if (p.source !== generator) return false;
-        if (maxDiffLines !== undefined) {
-          const lines = (p.payload.content ?? "").split("\n").length;
-          if (lines > maxDiffLines) return false;
-        }
-        if (olderThanMs !== undefined) {
-          const age = Date.now() - new Date(p.createdAt).getTime();
-          if (age < olderThanMs) return false;
-        }
-        return true;
+      const { maxDiffLines, olderThanMs } = parseBulkFilterFlags(args);
+      const { count, results } = await bulkAdjudicateProposals({
+        action: "accept",
+        generator,
+        maxDiffLines,
+        olderThanMs,
+        dryRun: args["dry-run"] as boolean,
+        target: args.target as string | undefined,
       });
-      const results = [];
-      for (const proposal of pending) {
-        if (args["dry-run"]) {
-          results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
-        } else {
-          const result = await akmProposalAccept({ id: proposal.id, target: args.target as string | undefined });
-          results.push(result);
-        }
-      }
-      output("proposal-accept-batch", { accepted: results.length, results, dryRun: args["dry-run"] as boolean });
+      output("proposal-accept-batch", { accepted: count, results, dryRun: args["dry-run"] as boolean });
       return;
     }
     if (!args.id) {
@@ -221,40 +218,16 @@ const proposalRejectCommand = defineJsonCommand({
         process.stderr.write("Aborted.\n");
         return;
       }
-      const { listProposals } = await import("./repository");
-      const stashDir = resolveStashDir();
-      const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
-      if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
-        throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
-      }
-      const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
-      if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
-        throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
-      }
-      const maxDiffLines = rawMaxDiff;
-      const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
-      const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
-        if (p.source !== generator) return false;
-        if (maxDiffLines !== undefined) {
-          const lines = (p.payload.content ?? "").split("\n").length;
-          if (lines > maxDiffLines) return false;
-        }
-        if (olderThanMs !== undefined) {
-          const age = Date.now() - new Date(p.createdAt).getTime();
-          if (age < olderThanMs) return false;
-        }
-        return true;
+      const { maxDiffLines, olderThanMs } = parseBulkFilterFlags(args);
+      const { count, results } = await bulkAdjudicateProposals({
+        action: "reject",
+        generator,
+        maxDiffLines,
+        olderThanMs,
+        dryRun: args["dry-run"] as boolean,
+        reason: String(args.reason),
       });
-      const results = [];
-      for (const proposal of pending) {
-        if (args["dry-run"]) {
-          results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
-        } else {
-          const result = await akmProposalReject({ id: proposal.id, reason: String(args.reason) });
-          results.push(result);
-        }
-      }
-      output("proposal-reject-batch", { rejected: results.length, results, dryRun: args["dry-run"] as boolean });
+      output("proposal-reject-batch", { rejected: count, results, dryRun: args["dry-run"] as boolean });
       return;
     }
     if (!args.id) {
@@ -521,7 +494,7 @@ export const proposalCommand = defineGroupCommand({
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
     },
-    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId, e.g. knowledge/guide.md)" },
     type: { type: "string", description: "Filter by asset type" },
   },
   subCommands: {

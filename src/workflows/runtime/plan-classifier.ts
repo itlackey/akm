@@ -165,9 +165,12 @@ export function assertWorkflowSpineMatchesPlan(
   for (let index = 0; index < expected.length; index++) {
     const actual = rows[index];
     const planned = expected[index];
+    // The length check above (corruptSpine returns `never`) guarantees both are
+    // present; the guard narrows them and preserves the "missing row" message.
+    if (!actual || !planned) {
+      corruptSpine(run.id, `step row ${index} differs from the frozen plan (missing row)`);
+    }
     if (
-      !actual ||
-      !planned ||
       actual.step_id !== planned.stepId ||
       actual.step_title !== planned.stepTitle ||
       actual.instructions !== planned.instructions ||
@@ -181,7 +184,7 @@ export function assertWorkflowSpineMatchesPlan(
         actual.completion_json !== planned.completionJson ? "completion_json" : "",
         actual.sequence_index !== planned.sequenceIndex ? "sequence_index" : "",
       ].filter(Boolean);
-      corruptSpine(run.id, `step row ${index} differs from the frozen plan (${fields.join(", ") || "missing row"})`);
+      corruptSpine(run.id, `step row ${index} differs from the frozen plan (${fields.join(", ")})`);
     }
   }
   if (run.current_step_id !== null && !expected.some((step) => step.stepId === run.current_step_id))

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-08-validation-fail-malformed-source",
   "assetType": "memory",
-  "assetRef": "memory:probe-08-half-fenced-snippet",
+  "assetRef": "memories/probe-08-half-fenced-snippet",
   "asset": {
     "frontmatter": {
       "description": "Captured half of a chat transcript with embedded code fences that often trip downstream content validators.",

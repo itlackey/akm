@@ -23,20 +23,25 @@
  * have no schema counterpart.
  */
 import type { z } from "zod";
-// VALID_HARNESS_IDS now derives from the unified HARNESS_REGISTRY (#562), which
-// is the single source of truth replacing the previously-disconnected
-// registries. config ← harnesses is the only import direction (harnesses/ is a
-// dependency-graph leaf), so there is no cycle.
-import { HARNESS_BY_ID, VALID_HARNESS_IDS } from "../../integrations/harnesses";
+// VALID_HARNESS_IDS / HARNESS_AGENT_DISPATCH_IDS derive from the dependency-free
+// harnesses/ids.ts leaf (WI-9.8 KILL 3), NOT the full HARNESS_REGISTRY barrel
+// (`../../integrations/harnesses`) — that barrel transitively pulls in every
+// harness's agent-builder and the agent runtime, which is what fused config
+// into the same import-cycle SCC as `integrations/agent/*`. `harnesses/index.ts`
+// asserts at construction time that its registry matches this leaf, so the two
+// cannot silently drift (see `tests/harnesses-registry.test.ts` for the
+// value-level pin). config ← harnesses/ids is the only import direction (the
+// leaf imports nothing), so there is no cycle.
+import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses/ids";
 
 /**
- * Canonical list of valid agent harness / platform ids. Re-exported from the
- * unified harness registry (#562) so the Zod `AgentPlatformSchema` enum, the
- * agent-engine platform union, and setup's `DetectedHarness` union all
- * derive from one place and cannot drift. Add a harness in
- * `src/integrations/harnesses/index.ts`.
+ * Canonical list of valid agent harness / platform ids. Derived from the
+ * dependency-free harness-id leaf (#562/WI-9.8) so the Zod `AgentPlatformSchema`
+ * enum, the agent-engine platform union, and setup's `DetectedHarness` union
+ * all derive from one place and cannot drift. Add a harness in
+ * `src/integrations/harnesses/index.ts` (and its `ids.ts` mirror entry).
  */
-export { HARNESS_BY_ID, VALID_HARNESS_IDS };
+export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
@@ -56,23 +61,29 @@ export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfig
 /**
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
- * which process each knob applies to and its default (e.g.
- * `dedup`/`judgedCache`/`minPoolSize` = consolidate;
- * `minNewSessions`/`indexSessions`/`triage` = extract; `fullScan`/`topN` =
- * graphExtraction; `minClusterSize`/`relatednessSource` = recombine;
- * `minRecurrence`/`emitAs` = procedural).
+ * which process each knob applies to and its default (e.g. `minPoolSize` =
+ * consolidate; `minNewSessions`/`indexSessions`/`triage` = extract;
+ * `fullScan`/`topN` = graphExtraction).
  */
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
 /**
  * A named improve strategy (`improve.strategies.<name>`). Holds the per-process
- * `processes` map plus profile-level knobs (`autoAccept`, `limit`, `maxCycles`,
- * `symmetricValence`, `sync`). See config-schema.ts for per-field docs.
+ * `processes` map plus profile-level knobs (`limit`, `symmetricValence`,
+ * `sync`). See config-schema.ts for per-field docs.
  */
 export type ImproveProfileConfig = z.infer<typeof import("./config-schema").ImproveProfileConfigSchema>;
 
 /** A configured registry for stash discovery (`registries[]`). */
 export type RegistryConfigEntry = z.infer<typeof import("./config-schema").RegistryConfigEntrySchema>;
+
+/**
+ * A single `bundles.<slug>` entry (0.9.0 config-shape cutover, spec §10.1 /
+ * D-R5). Carries one source descriptor (`path` | `git` | `website` | `npm`),
+ * optional `writable`, an optional preserved `registryId` source locator, and an
+ * optional single-entry `components` map. See config-schema.ts for the shape.
+ */
+export type BundleConfigEntry = z.infer<typeof import("./config-schema").BundleConfigEntrySchema>;
 
 /**
  * SourceSpec — discriminated union describing *where* a stash comes from.
@@ -111,8 +122,6 @@ export interface ConfiguredSource {
   primary?: boolean;
   /** Pass-through provider-specific options. */
   options?: Record<string, unknown>;
-  /** If set, .md files in this stash are indexed as wiki pages under this name. */
-  wikiName?: string;
 }
 
 /**

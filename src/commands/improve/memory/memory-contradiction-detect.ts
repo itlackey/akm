@@ -39,11 +39,12 @@ import fs from "node:fs";
 import path from "node:path";
 import contradictionJudgeTemplate from "../../../assets/prompts/contradiction-judge.md" with { type: "text" };
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
-import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
-import { getDefaultLlmConfig, type ImproveProfileConfig } from "../../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../../core/config/config";
+import { getDefaultLlmConfig } from "../../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../../llm/client";
-import { tryLlmFeature } from "../../../llm/feature-gate";
+import { callStructured } from "../../../llm/structured-call";
+import { isDerivedMemory, memoryIdentityRef, resolveParentRef } from "./derived-ref";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -117,40 +118,16 @@ function* walkMarkdownFilesLocal(root: string): Generator<string> {
   }
 }
 
+// Build the derived memory's own belief-edge IDENTITY ref from its file path.
+// Emits through the shared {@link memoryIdentityRef} so this — the former THIRD
+// hand-rolled copy of the identity-channel spelling — no longer diverges from
+// memory-improve's `refArray` (ref-grammar decision D-R3 identity-channel
+// exception, documented at `memoryIdentityRef`).
 function toMemoryRef(memoriesDir: string, filePath: string): string | undefined {
   const rel = path.relative(memoriesDir, filePath);
   if (!rel || rel.startsWith("..")) return undefined;
   const name = rel.replace(/\\/g, "/").replace(/\.md$/i, "");
-  return `memory:${name}`;
-}
-
-function isDerivedMemory(filePath: string, frontmatter: Record<string, unknown>): boolean {
-  // Name-based guard (M-2): the .derived suffix is structural and immutable.
-  const base = path.basename(filePath, ".md");
-  if (base.endsWith(".derived")) return true;
-  // Frontmatter-based guard: inferred: true marks explicit child memories.
-  return frontmatter.inferred === true;
-}
-
-function resolveParentRef(
-  filePath: string,
-  frontmatter: Record<string, unknown>,
-  memoriesRootDir?: string,
-): string | undefined {
-  // Prefer the explicit source: frontmatter.
-  const source = frontmatter.source;
-  if (typeof source === "string" && source.startsWith("memory:")) return source;
-  // Fall back to deriving parent from the file name (strip .derived suffix).
-  const base = path.basename(filePath, ".md");
-  if (base.endsWith(".derived")) {
-    const parentName = base.slice(0, -".derived".length);
-    // Use the stash memories root so nested paths (e.g. memories/nested/foo.derived.md)
-    // resolve to the correct relative ref (memory:nested/foo, not memory:foo).
-    const rootDir = memoriesRootDir ?? path.dirname(filePath);
-    const rel = path.relative(rootDir, path.join(path.dirname(filePath), parentName));
-    return `memory:${rel.replace(/\\/g, "/")}`;
-  }
-  return undefined;
+  return memoryIdentityRef(name);
 }
 
 // ── Edge writing ─────────────────────────────────────────────────────────────
@@ -252,11 +229,17 @@ export async function detectAndWriteContradictions(
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    if (!isDerivedMemory(filePath, parsed.data)) continue;
-    const parentRef = resolveParentRef(filePath, parsed.data, memoriesDir);
-    if (!parentRef) continue;
     const ref = toMemoryRef(memoriesDir, filePath);
     if (!ref) continue;
+    // Key the shared derived-ref helpers on the memory NAME (stash-relative, no
+    // extension) — the same key the consumer uses — so producer and consumer
+    // resolve the identical parent (R12). This intentionally widens the producer
+    // to honour `derivedFrom` and normalised `source:` values it previously
+    // dropped (pinned by derived-ref.test.ts).
+    const name = ref.slice("memory:".length);
+    if (!isDerivedMemory(name, parsed.data)) continue;
+    const parentRef = resolveParentRef(name, parsed.data);
+    if (!parentRef) continue;
 
     const entry: DerivedMemoryEntry = {
       filePath,
@@ -309,18 +292,23 @@ export async function detectAndWriteContradictions(
         if (loserCB.includes(winnerRef)) continue;
 
         const prompt = buildContradictionJudgePrompt(a, b);
-        const judgeResult = await tryLlmFeature(
-          "memory_contradiction_detection",
-          config,
-          async () => {
-            return chat(contradictionLlm, [
-              { role: "system", content: "Return only valid JSON. No prose." },
-              { role: "user", content: prompt },
-            ]);
-          },
-          null, // Fallback: null means "skip" — gate disabled or LLM call failed.
-          { enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false },
-        );
+        const judgeResult = await callStructured<string | null>({
+          feature: "memory_contradiction_detection",
+          akmConfig: config,
+          // Resolver-less key: the strategy decision IS the gate (default-off).
+          enabled: strategy?.processes?.consolidate?.contradictionDetection?.enabled ?? false,
+          config: contradictionLlm,
+          messages: [
+            { role: "system", content: "Return only valid JSON. No prose." },
+            { role: "user", content: prompt },
+          ],
+          request: { chat },
+          parse: (raw) => raw ?? null,
+          // A transport throw used to escape the gated fn into the gate's
+          // catch and take the null fallback ("skip"); onError reproduces it.
+          onError: () => null,
+          fallback: null, // null means "skip" — gate disabled or LLM call failed.
+        });
 
         totalPairsChecked++;
         result.pairsChecked++;

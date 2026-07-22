@@ -16,7 +16,7 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { AgentDispatchRequest } from "../../integrations/agent/builders";
@@ -67,7 +67,7 @@ export interface AkmAgentDispatchResult {
 function fillPlaceholders(template: string, args: string[]): string {
   return template.replace(/\{\{(\d+)\}\}/g, (match, idx) => {
     const i = Number.parseInt(idx, 10);
-    return i < args.length ? args[i] : match;
+    return i < args.length ? args[i]! : match;
   });
 }
 
@@ -79,9 +79,9 @@ function fillPlaceholders(template: string, args: string[]): string {
  * Throws `NotFoundError` when the ref cannot be resolved.
  */
 async function resolveAssetBody(ref: string): Promise<string> {
-  let parsed: ReturnType<typeof parseAssetRef>;
+  let parsed: ReturnType<typeof parseRefInput>;
   try {
-    parsed = parseAssetRef(ref);
+    parsed = parseRefInput(ref);
   } catch (err) {
     throw new UsageError(
       `Invalid asset ref "${ref}": ${err instanceof Error ? err.message : String(err)}`,

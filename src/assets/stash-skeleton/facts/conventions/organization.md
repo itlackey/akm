@@ -1,7 +1,7 @@
 ---
 category: convention
 description: Where to place an asset in the stash — the one path partition axis, chosen by asset type, so refs stay stable and slug search (akm search "<slug>" --type <type>) co-locates related assets.
-when_to_use: Surfaced to authoring agents when they create or move any non-wiki asset and must decide its subdirectory/name.
+when_to_use: Surfaced to authoring agents when they create or move any asset and must decide its subdirectory/name.
 ---
 
 <!--
@@ -14,7 +14,7 @@ when_to_use: Surfaced to authoring agents when they create or move any non-wiki 
 # Stash organization conventions
 
 A file's path under its type directory **becomes part of its ref**
-(`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`).
+(`knowledge/auth/oauth-refresh-races.md` → `knowledge/auth/oauth-refresh-races`).
 That ref is an address other assets cite, and its segments are search terms —
 `akm search "projectA" --type memory` reconstructs a project's memories. The
 path is therefore the one facet you **cannot express twice and cannot change
@@ -39,18 +39,16 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   `git remote`/package.json spell it) — ranking auto-boosts assets whose name
   or tags match the current repo. Client/team slugs get no such boost; just
   reuse the existing spelling.
-  - `memory:projectA/auth-token-refresh`
-  - `lesson:clientX/migration-rollback-gotcha`
-  - `secret:clientX/api-key`
+  - `memories/projectA/auth-token-refresh`
+  - `lessons/clientX/migration-rollback-gotcha`
+  - `secrets/clientX/api-key`
 - **Reuse-born types → stable domain from a short vocabulary.**
-  `knowledge`, `skill`, `wiki`, `fact`, `script`. These are meant to be reused
+  `knowledge`, `skill`, `fact`, `script`. These are meant to be reused
   across projects, so co-locate them by subject — any project retrieves them
-  with `akm search "<domain>" --type <type>`. For a wiki the domain names the
-  wiki itself (`wikis/auth/`); inside it, its `schema.md` and wiki lint govern
-  layout, not these rules.
-  - `knowledge:auth/oauth-refresh-races`
-  - `skill:testing/flaky-test-triage`
-  - `fact:policies/pii-handling`
+  with `akm search "<domain>" --type <type>`.
+  - `knowledge/auth/oauth-refresh-races`
+  - `skills/testing/flaky-test-triage`
+  - `facts/policies/pii-handling`
 - **Global-by-nature types → type root or a tool slug.**
   `command`, `agent`, `workflow`, and stash-wide `env`. Scoping these to a
   project rarely improves precision and only adds rename risk. `env` defaults
@@ -78,13 +76,13 @@ cross-project reuse.
   author, `wip`/`done`. Each one changes and forces a ref-breaking rename. They
   belong in frontmatter tags.
 - **Flat fallback beats an invented folder.** If no domain fits a reuse-type
-  asset, write it at the type root (`knowledge:http-retry-basics`) rather than
+  asset, write it at the type root (`knowledge/http-retry-basics`) rather than
   coining a one-off domain. An unneeded folder is pure rename liability; propose
   a vocabulary addition instead of fragmenting the tree.
 - **Reuse an existing slug before minting a new one.** Before coining a new
   project/client/domain slug, `akm search` for the existing spelling
   (`acme` vs `acme-corp`) so the prefix does not fragment. Keep the domain
-  vocabulary in `fact:conventions/domains`.
+  vocabulary in `facts/conventions/domains`.
 - **Off-axis facets go in `tags:`, not a bare field.** The indexed FTS fields are
   name, description, tags, hints, and content (headings only — body prose is
   not indexed by default; the opt-in `index.indexBodyOpening` flag adds just
@@ -115,7 +113,7 @@ cross-project reuse.
   xref-fixing operation: grep the stash for the old ref string and fix every
   inbound reference in the same pass.
 - When a project-scoped note turns out to be domain-general, **append, don't
-  promote**: write a new `knowledge:<domain>/…` asset that xrefs the originating
+  promote**: write a new `knowledge/<domain>/…` asset that xrefs the originating
   memory. Never rename the memory up a rung — that breaks its ref. The atomic
   note still serves factoid recall; the new synthesis serves reuse; the xref
   bridges them.

@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { AkmAssetType } from "../../core/common";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { acquireMaintenanceActivitySync } from "../../core/maintenance-barrier";
 import { getStateDbPath } from "../../core/state-db";
 import { type Database, openDatabase } from "../../storage/database";
-import { type DbSearchResult, getUtilityScoresByIds } from "../db/db";
+import type { DbSearchResult } from "../../storage/repositories/index-entry-types";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import type { GraphBoostContext } from "../graph/graph-boost";
-import type { StashEntry } from "../passes/metadata";
+import type { IndexDocument } from "../passes/metadata";
 import type { ProjectContext } from "../walk/project-context";
 import {
   applyBeliefStateScoreCeiling,
@@ -20,24 +20,13 @@ import {
   defaultRankingContributors,
   defaultUtilityRankingContributors,
 } from "./ranking-contributors";
+import type { RankedEntryInput } from "./ranking-types";
 
-export interface RankedEntryInput {
-  id: number;
-  entry: StashEntry;
-  filePath: string;
-  score: number;
-  rankingMode: "hybrid" | "semantic" | "fts";
-  utilityBoosted?: boolean;
-  /**
-   * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's
-   * ceiling clamped this item: the score BEFORE the clamp. The semantic-only
-   * `minScore` floor in db-search checks this instead of the clamped score,
-   * so a ceiling that sits below the floor (e.g. archived 0.15 < default
-   * minScore 0.2) demotes the hit to last place instead of silently DROPPING
-   * a result that would otherwise have listed.
-   */
-  preCeilingScore?: number;
-}
+// Re-exported so existing `import type { RankedEntryInput } from
+// "./indexer/search/ranking"` sites are unaffected by the KILL 2 sever (type
+// moved to ranking-types.ts to break the ranking.ts ↔ ranking-contributors.ts
+// import cycle).
+export type { RankedEntryInput };
 
 export interface RankEntriesOptions {
   db: Database;
@@ -101,10 +90,22 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
     const dbPath = getStateDbPath();
     if (!fs.existsSync(dbPath)) return result; // improve loop has never run here
     const releaseActivity = acquireMaintenanceActivitySync("state-db");
-    const idByRef = new Map<string, number>();
+    // Fold both durable salience spellings into the single `IN` query, keyed
+    // back to the entry id (Chunk-8 WI-8.5c — the legacy `type:name` arm is
+    // retired):
+    //   • the fully-qualified `item_ref` (`<bundle>//<conceptId>`) — what the
+    //     improve writer keys salience by when the planner resolved provenance;
+    //   • the bare conceptId — the write-key fallback for entries with no
+    //     resolved `item_ref` (`item_ref` NULL is the bare form of the same key).
+    // Output is keyed by id, so a fully-qualified match wins over the bare-conceptId
+    // match for the same asset id.
+    const idByRef = new Map<string, { id: number; isNew: boolean }>();
     try {
       for (const item of items) {
-        idByRef.set(makeAssetRef(item.entry.type as AkmAssetType, item.entry.name), item.id);
+        // Bare-conceptId arm (the item_ref-absent write-key fallback).
+        idByRef.set(conceptIdFromTypeName(item.entry.type, item.entry.name), { id: item.id, isNew: false });
+        // Fully-qualified `item_ref` arm (skipped for NULL-provenance rows).
+        if (item.itemRef) idByRef.set(item.itemRef, { id: item.id, isNew: true });
       }
       const stateDb = openDatabase(dbPath, { readonly: true });
       try {
@@ -115,6 +116,7 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
         }
         const refs = [...idByRef.keys()];
         const CHUNK = 500;
+        const newHits = new Set<number>();
         for (let i = 0; i < refs.length; i += CHUNK) {
           const chunk = refs.slice(i, i + CHUNK);
           const placeholders = chunk.map(() => "?").join(",");
@@ -122,8 +124,16 @@ export function loadSalienceRankScores(items: RankedEntryInput[]): Map<number, n
             .prepare(`SELECT asset_ref, rank_score FROM asset_salience WHERE asset_ref IN (${placeholders})`)
             .all(...chunk) as Array<{ asset_ref: string; rank_score: number }>;
           for (const row of rows) {
-            const id = idByRef.get(row.asset_ref);
-            if (id !== undefined) result.set(id, row.rank_score);
+            const target = idByRef.get(row.asset_ref);
+            if (!target) continue;
+            // New-grammar match wins over a stale legacy row for the same id;
+            // a legacy match applies only when no new row has claimed the id.
+            if (target.isNew) {
+              result.set(target.id, row.rank_score);
+              newHits.add(target.id);
+            } else if (!newHits.has(target.id)) {
+              result.set(target.id, row.rank_score);
+            }
           }
         }
       } finally {
@@ -142,8 +152,8 @@ export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { sco
   const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
   if (results.length === 0) return ftsScoreMap;
 
-  const bestBm25 = results[0].bm25Score;
-  const worstBm25 = results[results.length - 1].bm25Score;
+  const bestBm25 = results[0]!.bm25Score;
+  const worstBm25 = results[results.length - 1]!.bm25Score;
   const range = bestBm25 - worstBm25;
 
   for (const result of results) {
@@ -158,7 +168,7 @@ export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { sco
 export function combineSearchScores(options: {
   ftsScoreMap: Map<number, { score: number; result: DbSearchResult }>;
   embedScoreMap: Map<number, number>;
-  getEntryById: (id: number) => { entry: StashEntry; filePath: string } | undefined;
+  getEntryById: (id: number) => { entry: IndexDocument; filePath: string; itemRef?: string | null } | undefined;
   typeFilter?: string;
   /**
    * #627 — types excluded from the default (untyped 'any') path. The FTS and
@@ -187,6 +197,7 @@ export function combineSearchScores(options: {
       filePath: result.filePath,
       score: combinedScore,
       rankingMode: embedScore !== undefined ? "hybrid" : "fts",
+      itemRef: result.itemRef,
     });
   }
 
@@ -203,6 +214,7 @@ export function combineSearchScores(options: {
       filePath: found.filePath,
       score: cosine * VEC_WEIGHT,
       rankingMode: "semantic",
+      itemRef: found.itemRef,
     });
   }
 

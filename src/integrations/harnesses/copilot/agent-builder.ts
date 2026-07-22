@@ -13,9 +13,8 @@
  *   copilot -p "<prompt>" --allow-all-tools
  *
  * with `--output-format json` for structured output, `--model <m>` for model
- * selection, and `--resume <id>` for resume (resume is registry-side —
- * `AkmHarness.resume` — not built here because `AgentDispatchRequest` carries
- * no session id).
+ * selection, and `--resume <id>` for resume (not built here because
+ * `AgentDispatchRequest` carries no session id).
  *
  * Platform-specific mapping decisions (all localized here, per the adapter
  * contract):

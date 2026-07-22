@@ -4,30 +4,35 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isBundleSlug } from "../../core/asset/asset-ref";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
-import type { SourceConfigEntry, SourceSpec } from "../../core/config/config";
-import { getSources, loadConfig, mutateConfig } from "../../core/config/config";
+import type { AkmConfig, BundleConfigEntry, SourceConfigEntry, SourceSpec } from "../../core/config/config";
+import {
+  bundleEntryToSourceEntry,
+  getSources,
+  installedSourceDescriptor,
+  loadConfig,
+  mutateConfig,
+} from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
-import { upsertLockEntry } from "../../integrations/lockfile";
+import { deriveBundleId } from "../../indexer/installations";
+import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
-import type { InstalledStashEntry } from "../../registry/types";
+import type { InstalledBundle } from "../../registry/types";
 import { detectStashRoot } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
-import type { AddResponse } from "../../sources/types";
 import {
   ensureWebsiteMirror,
   shouldAllowPrivateWebsiteUrlForTests,
   validateWebsiteInputUrl,
-} from "../../sources/website-ingest";
-import { ensureWikiNameAvailable, validateWikiName } from "../../wiki/wiki";
-
-const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
+} from "../../sources/snapshot-fetchers/website-ingest";
+import type { AddResponse } from "../../sources/types";
+import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
 
 export async function akmAdd(input: {
   ref: string;
   name?: string;
-  overrideType?: string;
   options?: Record<string, unknown>;
   writable?: boolean;
 }): Promise<AddResponse> {
@@ -38,97 +43,49 @@ export async function akmAdd(input: {
         "Examples: `akm add @scope/stash`, `akm add github:owner/repo`, `akm add ./local/path`",
     );
 
-  // Validate and resolve wiki name when --type wiki is used
-  let wikiName: string | undefined;
-  if (input.overrideType) {
-    if (!VALID_OVERRIDE_TYPES.has(input.overrideType)) {
-      throw new UsageError(
-        `Invalid --type value: "${input.overrideType}". Supported types: ${[...VALID_OVERRIDE_TYPES].join(", ")}`,
-      );
-    }
-    if (input.overrideType === "wiki") {
-      const derived = input.name ?? deriveWikiNameFromRef(ref);
-      validateWikiName(derived);
-      wikiName = derived;
-    }
-  }
-
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteSource(ref, stashDir, input.name ?? wikiName, input.options, wikiName);
+    return addWebsiteSource(ref, stashDir, input.name, input.options);
   }
 
   // Detect local directory refs and route them to stashes[] instead of installed[]
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      return addLocalSource(ref, parsed.sourcePath, stashDir, wikiName, input.name);
+      return addLocalSource(ref, parsed.sourcePath, stashDir, input.name);
     }
   } catch {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.writable, wikiName);
-}
-
-export async function registerWikiSource(input: {
-  ref: string;
-  name?: string;
-  options?: Record<string, unknown>;
-  writable?: boolean;
-}): Promise<AddResponse> {
-  const stashDir = resolveStashDir();
-  const name = input.name ?? deriveWikiNameFromRef(input.ref);
-  validateWikiName(name);
-  ensureWikiNameAvailable(stashDir, name);
-  return akmAdd({
-    ref: input.ref,
-    name,
-    overrideType: "wiki",
-    options: input.options,
-    writable: input.writable,
-  });
+  return addRegistryStash(ref, stashDir, input.writable);
 }
 
 /**
- * Add a local directory as a filesystem stash source.
- * Creates a stashes[] entry instead of an installed[] entry.
+ * Add a local directory as a filesystem bundle (spec §10.1) — replaces the
+ * retired `sources[]` filesystem entry.
  */
 async function addLocalSource(
   ref: string,
   sourcePath: string,
   stashDir: string,
-  wikiName?: string,
   explicitName?: string,
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  // Derive the canonical name: explicit --name wins, then wiki name, then readable path.
-  const derivedName = explicitName ?? wikiName ?? toReadableId(resolvedPath);
-  let persistedEntry: SourceConfigEntry | undefined;
+  let bundleKey = explicitName ?? toReadableId(resolvedPath);
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    const index = sources.findIndex(
-      (source) => source.type === "filesystem" && source.path && path.resolve(source.path) === resolvedPath,
-    );
-    if (index < 0) {
-      persistedEntry = {
-        type: "filesystem",
-        path: resolvedPath,
-        name: derivedName,
-        ...(wikiName ? { wikiName } : {}),
-      };
-      sources.push(persistedEntry);
-      return { ...config, sources };
+    const existing = bundleKeyForPath(config, resolvedPath);
+    if (existing) {
+      // Already configured — the bundle key is the stable identity; leave it.
+      bundleKey = existing;
+      return config;
     }
-    const existing = { ...sources[index] };
-    if (explicitName) existing.name = explicitName;
-    if (wikiName) existing.wikiName = wikiName;
-    persistedEntry = existing;
-    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
-    sources[index] = existing;
-    return { ...config, sources };
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
+    bundles[bundleKey] = { path: resolvedPath };
+    return { ...config, bundles };
   });
 
   const index = await akmIndex({ stashDir });
@@ -137,17 +94,16 @@ async function addLocalSource(
   return {
     schemaVersion: 1,
     stashDir,
-    ref: wikiName ?? ref,
+    ref,
     sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
-      name: persistedEntry?.name ?? toReadableId(resolvedPath),
+      name: bundleKey,
       stashRoot: resolvedPath,
-      ...(persistedEntry?.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -164,32 +120,24 @@ async function addWebsiteSource(
   stashDir: string,
   name?: string,
   options?: Record<string, unknown>,
-  wikiName?: string,
 ): Promise<AddResponse> {
   const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
   const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
+  const maxPages = typeof options?.maxPages === "number" ? (options.maxPages as number) : undefined;
   let entry: SourceConfigEntry | undefined;
   mutateConfig((config) => {
-    const sources = [...getSources(config)];
-    const index = sources.findIndex((source) => source.type === "website" && source.url === normalizedUrl);
-    if (index < 0) {
-      entry = {
-        type: "website",
-        url: normalizedUrl,
-        name: name ?? toWebsiteName(normalizedUrl),
-        ...(options && Object.keys(options).length > 0 ? { options } : {}),
-        ...(wikiName ? { wikiName } : {}),
-      };
-      sources.push(entry);
-      return { ...config, sources };
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    const existingKey = bundleKeyForUrl(config, normalizedUrl);
+    const key = existingKey ?? nextBundleKey(bundles, name ?? toWebsiteName(normalizedUrl), normalizedUrl);
+    const website = { url: normalizedUrl, ...(maxPages !== undefined ? { maxPages } : {}) };
+    const nextBundle: BundleConfigEntry = { ...(existingKey ? bundles[key] : {}), website };
+    if (JSON.stringify(bundles[key]) === JSON.stringify(nextBundle)) {
+      entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
+      return config;
     }
-    const existing = { ...sources[index] };
-    if (options && Object.keys(options).length > 0) existing.options = { ...existing.options, ...options };
-    if (wikiName) existing.wikiName = wikiName;
-    entry = existing;
-    if (JSON.stringify(existing) === JSON.stringify(sources[index])) return config;
-    sources[index] = existing;
-    return { ...config, sources };
+    bundles[key] = nextBundle;
+    entry = bundleEntryToSourceEntry(key, nextBundle) as SourceConfigEntry;
+    return { ...config, bundles };
   });
 
   const cachePaths = await ensureWebsiteMirror(entry as SourceConfigEntry, {
@@ -202,17 +150,16 @@ async function addWebsiteSource(
   return {
     schemaVersion: 1,
     stashDir,
-    ref: wikiName ?? ref,
+    ref,
     sourceAdded: {
       type: "website",
       url: normalizedUrl,
       name: entry?.name,
       stashRoot: cachePaths.stashDir,
-      ...(entry?.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -228,12 +175,7 @@ async function addWebsiteSource(
  * Install a stash from a registry (npm, github, git) by dispatching to the
  * matching syncable provider and persisting the lock entry.
  */
-async function addRegistryStash(
-  ref: string,
-  stashDir: string,
-  writable?: boolean,
-  wikiName?: string,
-): Promise<AddResponse> {
+async function addRegistryStash(ref: string, stashDir: string, writable?: boolean): Promise<AddResponse> {
   const parsedRef = parseRegistryRef(ref);
   if (writable === true && parsedRef.source !== "git") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
@@ -241,8 +183,7 @@ async function addRegistryStash(
 
   const synced = await syncFromRef(ref, { writable });
 
-  const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === synced.id);
-  const updatedConfig = upsertInstalledRegistryEntry({
+  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry({
     id: synced.id,
     source: synced.source,
     ref: synced.ref,
@@ -253,22 +194,28 @@ async function addRegistryStash(
     cacheDir: synced.cacheDir,
     installedAt: synced.syncedAt,
     writable: synced.writable,
-    ...(wikiName ? { wikiName } : {}),
   });
 
+  // The prior materialized root (if this is a re-install) — read BEFORE the lock
+  // upsert overwrites it, so a moved cache root can be cleaned afterwards.
+  const priorLocalRoot = readLockfile().find((e) => e.id === bundleId)?.localRoot;
+
   await upsertLockEntry({
-    id: synced.id,
+    id: bundleId,
     source: synced.source,
     ref: synced.ref,
     resolvedVersion: synced.resolvedVersion,
     resolvedRevision: synced.resolvedRevision,
     integrity: synced.integrity,
+    // §10.2 resolved lock state the install flow has on hand.
+    localRoot: synced.contentDir,
+    installedAt: synced.syncedAt,
   });
 
-  // Clean up old cache directory on re-install
-  if (replaced && replaced.cacheDir !== synced.cacheDir) {
+  // Clean up the old materialized root on re-install (moved cache).
+  if (priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
-      fs.rmSync(replaced.cacheDir, { recursive: true, force: true });
+      fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup only.
     }
@@ -294,7 +241,7 @@ async function addRegistryStash(
     },
     config: {
       sourceCount: getSources(updatedConfig).length,
-      installedKitCount: updatedConfig.installed?.length ?? 0,
+      installedKitCount: readLockfile().length,
     },
     index: {
       mode: index.mode,
@@ -306,30 +253,77 @@ async function addRegistryStash(
   };
 }
 
-/** Persist or replace an installed stash entry in the user config. */
-export function upsertInstalledRegistryEntry(entry: InstalledStashEntry) {
-  return mutateConfig((current) => {
-    const withoutExisting = (current.installed ?? []).filter((item) => item.id !== entry.id);
-    return { ...current, installed: [...withoutExisting, normalizeInstalledEntry(entry)] };
+/**
+ * Persist or replace a registry-installed source as a 0.9.0 `bundles` entry
+ * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
+ * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
+ * the resolved cache root belongs exclusively in the lock (written by callers
+ * via {@link upsertLockEntry} with the returned `bundleId`). Returns the config
+ * plus the derived bundle id so the caller keys its lock entry identically.
+ */
+export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: AkmConfig; bundleId: string } {
+  let bundleId = entry.id;
+  const config = mutateConfig((current) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
+    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot);
+    const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
+    bundles[bundleId] = {
+      ...descriptor,
+      ...(entry.writable === true ? { writable: true } : {}),
+      ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
+    };
+    return { ...current, bundles };
   }).config;
+  return { config, bundleId };
 }
 
-/** Remove an installed stash entry from the user config. */
-export function removeInstalledRegistryEntry(id: string) {
-  return mutateConfig((current) => {
-    const currentInstalled = current.installed ?? [];
-    const nextInstalled = currentInstalled.filter((item) => item.id !== id);
-    if (nextInstalled.length === currentInstalled.length) return current;
-    return { ...current, installed: nextInstalled.length > 0 ? nextInstalled : undefined };
+/**
+ * Remove a registry-installed source: delete its `bundles` entry and its lock
+ * entry (spec §10.2). Matches the bundle by preserved `registryId` or by a
+ * slug-legal install id used verbatim as the key. Idempotent.
+ */
+export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfig> {
+  let removedKey: string | undefined;
+  const config = mutateConfig((current) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
+    const key = findInstalledBundleKey(bundles, id);
+    if (!key) return current;
+    removedKey = key;
+    delete bundles[key];
+    return { ...current, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
   }).config;
+  if (removedKey) await removeLockEntry(removedKey);
+  return config;
 }
 
-function normalizeInstalledEntry(entry: InstalledStashEntry): InstalledStashEntry {
-  return {
-    ...entry,
-    stashRoot: path.resolve(entry.stashRoot),
-    cacheDir: path.resolve(entry.cacheDir),
-  };
+/**
+ * The bundle key that maps to a registry install id, or `undefined` when no
+ * bundle currently represents it. A non-slug-legal install id (e.g.
+ * `github:owner/repo`) is preserved verbatim on the bundle's `registryId`; a
+ * slug-legal id is used directly as the key.
+ */
+function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, installId: string): string | undefined {
+  for (const [key, bundle] of Object.entries(bundles)) {
+    if (bundle.registryId === installId) return key;
+  }
+  if (isBundleSlug(installId) && installId in bundles) return installId;
+  return undefined;
+}
+
+/**
+ * The stable bundle key for a registry install: reuse the existing bundle for
+ * this install id (so re-installs keep the same key), otherwise derive a
+ * batch-unique key via the shared {@link deriveBundleId} (D-R5), unique against
+ * the currently-configured bundle keys.
+ */
+function resolveInstalledBundleKey(
+  bundles: Record<string, BundleConfigEntry>,
+  installId: string,
+  stashRoot: string,
+): string {
+  const existing = findInstalledBundleKey(bundles, installId);
+  if (existing) return existing;
+  return deriveBundleId(installId, path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {
@@ -363,46 +357,6 @@ function toWebsiteName(siteUrl: string): string {
   } catch {
     return siteUrl;
   }
-}
-
-/**
- * Derive a wiki name from a ref string when --name is not provided.
- * Lowercases and slugifies the most meaningful identifier segment.
- */
-export function deriveWikiNameFromRef(ref: string): string {
-  let candidate = ref;
-
-  // github:owner/repo or github:owner/repo@ref
-  if (/^github:/i.test(ref)) {
-    const repoPath = ref.replace(/^github:/i, "").split("@")[0];
-    candidate = repoPath.split("/").pop() ?? repoPath;
-  }
-  // npm:pkg or @scope/pkg
-  else if (/^npm:/i.test(ref) || ref.startsWith("@")) {
-    candidate = ref
-      .replace(/^npm:/i, "")
-      .replace(/^@[^/]+\//, "")
-      .split("@")[0];
-  }
-  // git URLs or HTTPS git URLs
-  else if (/^(git:|https?:\/\/)/.test(ref)) {
-    try {
-      candidate = new URL(ref).pathname.split("/").pop() ?? candidate;
-    } catch {
-      candidate = ref.split("/").pop() ?? ref;
-    }
-    candidate = candidate.replace(/\.git$/, "");
-  }
-  // Local paths
-  else {
-    candidate = path.basename(ref.replace(/\/+$/, ""));
-  }
-
-  return candidate
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
 }
 
 // Re-export SourceSpec (the discriminated union from #123) so existing

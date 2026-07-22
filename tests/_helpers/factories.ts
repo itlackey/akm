@@ -43,6 +43,15 @@ export function quietQualityGateConfig(): AkmConfig {
 }
 
 /**
+ * The single-entry `FileChange[]` a payload-shaped proposal fixture carries
+ * (WI-6.2 envelope): one `update` whose `after` IS the payload content, with
+ * the legacy empty-`path` sentinel (tests don't resolve mint-time paths).
+ */
+export function payloadChanges(content: string): Proposal["changes"] {
+  return [{ path: "", after: content, op: "update" }];
+}
+
+/**
  * A pending `reflect`-sourced proposal for `ref` with a fixed timestamp and a
  * `# proposal` body. The id is `proposal-<ref>` with non-alphanumerics slugged.
  */
@@ -55,6 +64,7 @@ export function makeProposal(ref: string): Proposal {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     payload: { content: "# proposal" },
+    changes: payloadChanges("# proposal"),
   };
 }
 
@@ -75,12 +85,16 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
 }
 
 /**
- * A minimal single-filesystem-source config pointing at `stashDir`.
+ * A minimal single-bundle config pointing at `stashDir` (#37: the old
+ * `stashDir`/`sources`/`installed` trio is hard-rejected by the 0.9.0 schema;
+ * the primary bundle keeps the historical "stash" key so `defaultWriteTarget`
+ * and `--source stash` pins keep resolving).
  */
 export function makeConfig(stashDir: string): AkmConfig {
+  const bundles = { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"];
   return {
-    stashDir,
-    sources: [{ type: "filesystem", name: "stash", path: stashDir, writable: true }],
+    bundles,
+    defaultBundle: "stash",
     defaultWriteTarget: "stash",
   } as AkmConfig;
 }

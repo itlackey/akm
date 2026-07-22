@@ -5,15 +5,16 @@
 /**
  * Shared SQLite migration engine.
  *
- * state.db (`src/core/state-db.ts`) and workflow.db (`src/workflows/db.ts`)
- * both evolve their schema through an identical, idempotent, transaction-per-
- * migration runner backed by a `schema_migrations` ledger. The two runners
- * were byte-identical except for ONE line: workflow.db must back-fill a
- * `schema_migrations` row for pre-versioning databases before evaluating the
- * migration list (see `bootstrapPreVersioningDb` in workflows/db.ts).
+ * state.db (`src/core/state-db.ts`) evolves its schema through this idempotent,
+ * transaction-per-migration runner backed by a `schema_migrations` ledger. The
+ * migrator's frozen pre-cutover workflow-schema roll
+ * (`src/migrate/legacy/workflow-migrations-bodies.ts`, driven by
+ * `config-migrate.ts`) reuses the SAME runner. The `bootstrap` hook — a one-line
+ * pre-versioning back-fill — is now unused by live callers (the pre-cutover
+ * workflow.db that once needed it fails closed at migrate time).
  *
- * This module factors that runner out once. Each DB module supplies only its
- * own `MIGRATIONS` array; workflow.db additionally passes a `bootstrap` hook.
+ * This module factors that runner out once. Each caller supplies only its own
+ * `MIGRATIONS` array (plus, historically, an optional `bootstrap` hook).
  *
  * Migration-safety contract:
  *   - `id` is permanent and must never be reused.
@@ -72,6 +73,19 @@ export interface MigrationLedgerState {
   detail?: string;
 }
 
+/**
+ * A released migration's IDENTITY without its `up` body: the stable `id` plus
+ * the pre-computed {@link migrationChecksum}. This is what a ledger inspection
+ * actually needs — the `up` body is only used to derive the checksum. A frozen
+ * copy of a since-deleted migration array (e.g. the pre-cutover workflow.db
+ * ledger, `src/migrate/legacy/workflow-migrations-frozen.ts`) is expressed as
+ * `SealedMigration[]` so backups stay verifiable without the live bodies.
+ */
+export interface SealedMigration {
+  id: string;
+  checksum: string;
+}
+
 export function migrationChecksum(migration: Migration): string {
   return crypto.createHash("sha256").update(migration.id).update("\0").update(migration.up).digest("hex");
 }
@@ -86,8 +100,14 @@ function ledgerHasChecksum(db: Database): boolean {
   );
 }
 
-export function inspectMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
-  const registryIds = migrations.map((migration) => migration.id);
+/**
+ * Core ledger inspection against the expected ordered `{ id, checksum }`
+ * registry. Both {@link inspectMigrationLedger} (bodies → checksums) and
+ * {@link inspectSealedMigrationLedger} (frozen pre-computed checksums) route
+ * here so the two entry points can never diverge.
+ */
+function inspectLedgerAgainst(db: Database, expected: readonly SealedMigration[]): MigrationLedgerState {
+  const registryIds = expected.map((entry) => entry.id);
   if (new Set(registryIds).size !== registryIds.length) {
     return {
       status: "inconsistent",
@@ -107,12 +127,12 @@ export function inspectMigrationLedger(db: Database, migrations: readonly Migrat
   const checksums = rows.map((row) => row.checksum ?? null);
 
   for (let index = 0; index < rows.length; index += 1) {
-    const expected = migrations[index];
-    const row = rows[index];
-    if (!expected) {
+    const entry = expected[index];
+    const row = rows[index]!;
+    if (!entry) {
       return { status: "newer", migrationIds, checksums, detail: `unknown migration ID ${row.id}` };
     }
-    if (row.id !== expected.id) {
+    if (row.id !== entry.id) {
       const knownLater = registryIds.includes(row.id);
       return {
         status: knownLater ? "inconsistent" : "newer",
@@ -123,8 +143,7 @@ export function inspectMigrationLedger(db: Database, migrations: readonly Migrat
           : `unknown migration ID ${row.id}`,
       };
     }
-    const expectedChecksum = migrationChecksum(expected);
-    if (row.checksum && row.checksum !== expectedChecksum) {
+    if (row.checksum && row.checksum !== entry.checksum) {
       return {
         status: "inconsistent",
         migrationIds,
@@ -145,10 +164,27 @@ export function inspectMigrationLedger(db: Database, migrations: readonly Migrat
   }
 
   return {
-    status: rows.length === migrations.length ? "current" : "old",
+    status: rows.length === expected.length ? "current" : "old",
     migrationIds,
     checksums,
   };
+}
+
+export function inspectMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
+  return inspectLedgerAgainst(
+    db,
+    migrations.map((migration) => ({ id: migration.id, checksum: migrationChecksum(migration) })),
+  );
+}
+
+/**
+ * Ledger inspection against a FROZEN `{ id, checksum }` copy of a migration
+ * array whose live source is gone (plan §3.3 item 1). Behaviourally identical
+ * to {@link inspectMigrationLedger} — the checksums are simply pre-computed
+ * rather than derived from `up` bodies.
+ */
+export function inspectSealedMigrationLedger(db: Database, sealed: readonly SealedMigration[]): MigrationLedgerState {
+  return inspectLedgerAgainst(db, sealed);
 }
 
 export function assertMigrationLedger(db: Database, migrations: readonly Migration[]): MigrationLedgerState {
@@ -213,7 +249,7 @@ export function runMigrations(db: Database, migrations: readonly Migration[], op
   db.transaction(() => {
     const update = db.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = ? AND checksum IS NULL");
     for (let index = 0; index < ledger.migrationIds.length; index += 1) {
-      update.run(migrationChecksum(migrations[index]), ledger.migrationIds[index]);
+      update.run(migrationChecksum(migrations[index]!), ledger.migrationIds[index]!);
     }
     if (opts?.generationMarker) {
       db.exec(`

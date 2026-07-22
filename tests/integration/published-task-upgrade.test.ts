@@ -57,7 +57,7 @@ interface TaskHistoryRow {
 }
 
 function run(argv: string[], env: NodeJS.ProcessEnv, timeout = 120_000): RunResult {
-  const result = spawnSync(argv[0], argv.slice(1), {
+  const result = spawnSync(argv[0]!, argv.slice(1), {
     cwd: REPO_ROOT,
     env,
     encoding: "utf8",
@@ -93,13 +93,13 @@ function cronBody(crontab: string, id: string): string {
   const end = lines.indexOf(`# akm:task ${id} END`);
   expect(begin).toBeGreaterThanOrEqual(0);
   expect(end).toBe(begin + 2);
-  return lines[begin + 1];
+  return lines[begin + 1]!;
 }
 
 function commandFromCronBody(body: string, id: string): string {
   const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
   if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1];
+  return match[1]!;
 }
 
 function generatedCronCommand(crontab: string, id: string): string {
@@ -118,8 +118,8 @@ function readLatestHistory(currentCli: string, id: string, env: NodeJS.ProcessEn
   expectSuccess(history, `read ${id} task history`);
   const parsed = JSON.parse(history.stdout) as { rows: TaskHistoryRow[] };
   expect(parsed.rows).toHaveLength(1);
-  expect(parsed.rows[0].id).toBe(id);
-  return parsed.rows[0];
+  expect(parsed.rows[0]!.id).toBe(id);
+  return parsed.rows[0]!;
 }
 
 function executableDir(name: string): string {
@@ -268,6 +268,8 @@ test.skipIf(!ENABLED)(
         "# Workflow: Published Upgrade Noop\n\n## Step: Only\nStep ID: only\n\n### Instructions\nStart this deterministic local workflow without external access.\n",
       );
 
+      // Migration input must use the grammar accepted by published 0.8.14.
+      // Do not codemod this literal; post-migration assertions below use the 0.9 grammar.
       const oldAdds = [
         ["upgrade-prompt", "--prompt", "Review the published upgrade", "--profile", "legacy-agent"],
         ["upgrade-workflow", "--workflow", "workflow:upgrade-noop", "--params", '{"source":"published"}'],
@@ -277,7 +279,7 @@ test.skipIf(!ENABLED)(
         ["upgrade-global-improve", "--command", "akm --no-quiet --verbose=false improve --profile frequent"],
       ];
       for (const [id, ...args] of oldAdds) {
-        const add = run([process.execPath, oldCli, "tasks", "add", id, "--schedule", "@daily", ...args], oldEnv);
+        const add = run([process.execPath, oldCli, "tasks", "add", id!, "--schedule", "@daily", ...args], oldEnv);
         expectSuccess(add, `published 0.8.14 tasks add ${id}`);
       }
 
@@ -315,6 +317,13 @@ test.skipIf(!ENABLED)(
       );
       expect(originalTasks.get("backup")).toContain("command: akm db backups\nenabled: true");
       for (const definition of originalTasks.values()) expect(definition).not.toMatch(/^version:/m);
+      const migratedTasks = new Map(originalTasks);
+      const legacyWorkflowTask = originalTasks.get("upgrade-workflow");
+      if (!legacyWorkflowTask) throw new Error("Missing published upgrade-workflow task snapshot");
+      migratedTasks.set(
+        "upgrade-workflow",
+        legacyWorkflowTask.replace("workflow: workflow:upgrade-noop", "workflow: workflows/upgrade-noop"),
+      );
 
       const oldRun = run([process.execPath, oldCli, "tasks", "run", "upgrade-command"], oldEnv);
       expectSuccess(oldRun, "published 0.8.14 task run before migration");
@@ -325,7 +334,7 @@ test.skipIf(!ENABLED)(
       expectSuccess(oldHistoryResult, "published 0.8.14 task history before migration");
       const oldHistory = (JSON.parse(oldHistoryResult.stdout) as { rows: TaskHistoryRow[] }).rows[0];
       expect(oldHistory).toMatchObject({ id: "upgrade-command", status: "completed", detail: { exitCode: 0 } });
-      const oldHistoryLog = fs.readFileSync(oldHistory.log, "utf8");
+      const oldHistoryLog = fs.readFileSync(oldHistory!.log, "utf8");
       expect(oldHistoryLog).toContain("0.8.14");
 
       const oldDataDir = path.join(dataHome, "akm");
@@ -406,17 +415,40 @@ test.skipIf(!ENABLED)(
       expect(manifest.complete).toBe(true);
       expect(manifest.artifacts["config.json"]).toMatchObject({ status: "old", present: true });
       expect(manifest.artifacts["state.db"]).toMatchObject({ status: "old", present: true });
-      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toMatchObject(preparedConfig);
-      expectTasksUnchanged(stashDir, originalTasks);
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toMatchObject({
+        configVersion: preparedConfig.configVersion,
+        bundles: { stash: { path: stashDir, writable: true } },
+        defaultBundle: "stash",
+        semanticSearchMode: preparedConfig.semanticSearchMode,
+        engines: preparedConfig.engines,
+        defaults: preparedConfig.defaults,
+      });
+      expectTasksUnchanged(stashDir, migratedTasks);
+
+      // Repair path for installations that already ran an earlier 0.9 RC: the
+      // config/state cutover is current, but the persisted 0.8 task target was
+      // not rewritten by that RC. Status must still advertise work and apply
+      // must run the journaled task-only phase without replaying the DB cutover.
+      fs.writeFileSync(path.join(stashDir, "tasks", "upgrade-workflow.yml"), legacyWorkflowTask);
+      const repairStatus = run([currentCli, "migrate", "status"], currentEnv);
+      expectSuccess(repairStatus, "packed 0.9 current-RC repair status");
+      expect(JSON.parse(repairStatus.stdout)).toMatchObject({
+        status: "ready",
+        artifacts: { config: { status: "current" }, state: { status: "current" }, workflow: { status: "missing" } },
+      });
+      const repairApply = run([currentCli, "migrate", "apply"], currentEnv);
+      expectSuccess(repairApply, "packed 0.9 current-RC task repair apply");
+      expectTasksUnchanged(stashDir, migratedTasks);
+
       expect(fs.readFileSync(path.join(legacyBackupPath, "backup.meta.json"), "utf8")).toBe(legacyBackupMetadata);
       expect(fs.readFileSync(path.join(legacyBackupPath, "state.db"))).toEqual(legacyBackupState);
 
       const migratedOldHistory = readLatestHistory(currentCli, "upgrade-command", currentEnv);
       expect(migratedOldHistory).toMatchObject({
-        id: oldHistory.id,
-        status: oldHistory.status,
-        startedAt: oldHistory.startedAt,
-        finishedAt: oldHistory.finishedAt,
+        id: oldHistory!.id,
+        status: oldHistory!.status,
+        startedAt: oldHistory!.startedAt,
+        finishedAt: oldHistory!.finishedAt,
         detail: { exitCode: 0 },
         // Published 0.8.14 persisted command runs as prompt rows. The migration
         // preserves that durable row but cannot infer the lost target kind.
@@ -436,14 +468,14 @@ test.skipIf(!ENABLED)(
         unchanged: string[];
         skipped: Array<{ id: string; reason: string }>;
       };
-      expect(syncJson.skipped).toHaveLength(1);
+      expect(syncJson.skipped, JSON.stringify(syncJson.skipped, null, 2)).toHaveLength(1);
       expect(syncJson.skipped[0]).toMatchObject({ id: "backup" });
       expect(syncJson.skipped[0]?.reason).toContain("akm db backups");
       expect(syncJson.skipped[0]?.reason).toContain("akm backup create");
       expect(new Set([...syncJson.installed, ...syncJson.updated, ...syncJson.unchanged])).toEqual(
         new Set(SAFE_SYNC_TASK_IDS),
       );
-      expectTasksUnchanged(stashDir, originalTasks);
+      expectTasksUnchanged(stashDir, migratedTasks);
 
       const shown = new Map<string, { enabled: boolean; target: Record<string, unknown> }>();
       for (const id of TASK_IDS) {
@@ -457,7 +489,7 @@ test.skipIf(!ENABLED)(
       });
       expect(shown.get("upgrade-workflow")).toMatchObject({
         enabled: true,
-        target: { kind: "workflow", ref: "workflow:upgrade-noop", params: { source: "published" } },
+        target: { kind: "workflow", ref: "workflows/upgrade-noop", params: { source: "published" } },
       });
       expect(shown.get("upgrade-command")).toMatchObject({
         enabled: true,
@@ -543,7 +575,7 @@ test.skipIf(!ENABLED)(
       const workflowHistory = readLatestHistory(currentCli, "upgrade-workflow", currentEnv);
       expect(workflowHistory).toMatchObject({
         status: "active",
-        target: { kind: "workflow", ref: "workflow:upgrade-noop" },
+        target: { kind: "workflow", ref: "workflows/upgrade-noop" },
       });
       expect(workflowHistory.detail?.runId).toBeTruthy();
       expect(fs.readFileSync(workflowHistory.log, "utf8")).toContain(
@@ -576,7 +608,7 @@ test.skipIf(!ENABLED)(
         target: { kind: "command" },
       });
       expect(fs.readFileSync(scheduledDisabledHistory.log, "utf8")).toContain('task "upgrade-disabled" is disabled');
-      expectTasksUnchanged(stashDir, originalTasks);
+      expectTasksUnchanged(stashDir, migratedTasks);
       expect(fs.readFileSync(path.join(legacyBackupPath, "backup.meta.json"), "utf8")).toBe(legacyBackupMetadata);
       expect(fs.readFileSync(path.join(legacyBackupPath, "state.db"))).toEqual(legacyBackupState);
     } finally {

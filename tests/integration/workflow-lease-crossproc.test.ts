@@ -80,7 +80,7 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
   test("one process drives while a second is refused naming the holder; a SIGKILLed winner's run is reclaimed and its completed units are reused", async () => {
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
-    const started = await startWorkflowRun("workflow:lease-xproc", params);
+    const started = await startWorkflowRun("workflows/lease-xproc", params);
     expect(started.run.planIrVersion).toBe(3);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);
@@ -101,12 +101,12 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
       async () => {
         const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "review"));
         const done = new Set(rows.filter((r) => r.status === "completed").map((r) => r.unit_id));
-        return done.has(ua) && done.has(ub) && holdStartExists(markerDir, uc);
+        return done.has(ua!) && done.has(ub!) && holdStartExists(markerDir, uc!);
       },
       { label: "winner completes a,b and holds c" },
     );
-    expect(dispatchCount(markerDir, ua)).toBe(1);
-    expect(dispatchCount(markerDir, ub)).toBe(1);
+    expect(dispatchCount(markerDir, ua!)).toBe(1);
+    expect(dispatchCount(markerDir, ub!)).toBe(1);
 
     const holder = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
     expect(holder?.engine_lease_holder).toBeTruthy();
@@ -125,8 +125,8 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
     // The loser never reached the dispatcher — no marker line carries its pid.
     expect(allDispatchPids(markerDir).has(loser.pid)).toBe(false);
     // Still exactly one dispatch of a,b (the loser added nothing).
-    expect(dispatchCount(markerDir, ua)).toBe(1);
-    expect(dispatchCount(markerDir, ub)).toBe(1);
+    expect(dispatchCount(markerDir, ua!)).toBe(1);
+    expect(dispatchCount(markerDir, ub!)).toBe(1);
 
     // ── Crash: SIGKILL the winner mid-hold. No finally runs → the lease is
     //    orphaned live. Simulate the TTL lapsing so the run is reclaimable.
@@ -146,19 +146,19 @@ describe.skipIf(!BUN)("multi-process run lease (single driver + crash reclaim)",
 
     const status = await getWorkflowStatus(runId);
     expect(status.run.status).toBe("completed");
-    expect(status.workflow.steps[0].evidence?.output).toHaveLength(4);
+    expect(status.workflow.steps[0]!.evidence?.output).toHaveLength(4);
 
     // No duplicate side effects: the completed units were dispatched ONCE
     // (winner only); the interrupted unit twice (winner + fresh); the
     // never-started unit once (fresh only).
-    expect(dispatchCount(markerDir, ua)).toBe(1);
-    expect(dispatchCount(markerDir, ub)).toBe(1);
-    expect(dispatchCount(markerDir, uc)).toBe(2);
-    expect(dispatchCount(markerDir, ud)).toBe(1);
+    expect(dispatchCount(markerDir, ua!)).toBe(1);
+    expect(dispatchCount(markerDir, ub!)).toBe(1);
+    expect(dispatchCount(markerDir, uc!)).toBe(2);
+    expect(dispatchCount(markerDir, ud!)).toBe(1);
     // a,b were the winner's; d was the fresh process's; c has one of each.
-    expect(dispatchPids(markerDir, ua)).toEqual([winner.pid]);
-    expect(dispatchPids(markerDir, ud)).toEqual([fresh.pid]);
-    expect(new Set(dispatchPids(markerDir, uc))).toEqual(new Set([winner.pid, fresh.pid]));
+    expect(dispatchPids(markerDir, ua!)).toEqual([winner.pid]);
+    expect(dispatchPids(markerDir, ud!)).toEqual([fresh.pid]);
+    expect(new Set(dispatchPids(markerDir, uc!))).toEqual(new Set([winner.pid, fresh.pid]));
 
     // The lease is released after the fresh process exits cleanly.
     const finalRow = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));

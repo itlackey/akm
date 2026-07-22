@@ -173,7 +173,7 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
       undefined,
       envDirs,
     );
@@ -205,7 +205,7 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=json", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=json", "--detail=full"],
       undefined,
       envDirs,
     );
@@ -244,16 +244,17 @@ describe("output baseline", () => {
 
     const output = runCli(
       stashDir,
-      ["show", "knowledge:guide.md", "--format=text", "--detail=full"],
+      ["show", "knowledge/guide.md", "--format=text", "--detail=full"],
       undefined,
       envDirs,
     );
 
     expect(output).toContain("related: 1");
-    // Schema v2: listRelatedPathsForFile populates `ref` via entries.entry_key,
-    // and formatRelatedLabel prefers it over basename. Output is now canonical
-    // ref form (`memory:incident`) instead of `incident.md`.
-    expect(output).toContain("  - memory: memory:incident");
+    // listRelatedPathsForFile populates `ref` from the canonical durable identity
+    // (entries.concept_id / the item_ref tail), and formatRelatedLabel prefers it
+    // over basename. Output is the conceptId ref form (`memories/incident`)
+    // instead of `incident.md`.
+    expect(output).toContain("  - memory: memories/incident");
     expect(output).toContain("    shared: Guide");
     expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
   });
@@ -265,7 +266,7 @@ describe("output baseline", () => {
           {
             type: "knowledge",
             name: "guide",
-            action: "akm show knowledge:guide -> read reference material",
+            action: "akm show knowledge/guide -> read reference material",
             score: 1,
             graph: {
               entities: [

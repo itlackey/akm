@@ -14,9 +14,11 @@ import path from "node:path";
 import * as p from "../cli/clack";
 import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
-import { closeDatabase, isVecAvailable, openIndexDatabase } from "../indexer/db/db";
+import { runManagedSubprocess } from "../core/subprocess";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
-import { getDirname, spawn } from "../runtime";
+import { getDirname } from "../runtime";
+import { closeDatabase, openIndexDatabase } from "../storage/repositories/index-connection";
+import { isVecAvailable } from "../storage/repositories/index-vec-repository";
 
 // Approximate first-download sizes used in the setup note.
 // LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
@@ -57,15 +59,15 @@ export async function prepareSemanticSearchAssets(
       spin.start("Installing @huggingface/transformers...");
       try {
         const pkgRoot = path.resolve(getDirname(import.meta.url), "../..");
-        const proc = spawn(["bun", "add", "@huggingface/transformers"], {
+        // Bounded (10 min) so a stalled `bun add` can't hang setup forever.
+        const result = await runManagedSubprocess(["bun", "add", "@huggingface/transformers"], {
+          capture: true,
           cwd: pkgRoot,
-          stdout: "pipe",
-          stderr: "pipe",
+          timeoutMs: 10 * 60_000,
         });
-        await proc.exited;
-        if (proc.exitCode !== 0) {
-          const stderr = await new Response(proc.stderr).text();
-          throw new Error(stderr || `exit code ${proc.exitCode}`);
+        if (result.spawnError) throw result.spawnError;
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr || `exit code ${result.exitCode}`);
         }
         spin.stop("@huggingface/transformers installed.");
       } catch (err) {

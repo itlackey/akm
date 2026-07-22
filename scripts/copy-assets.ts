@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { chmodSync, statSync } from "node:fs";
 // Build-time asset step:
 //   1. Mirror src/assets/ → dist/assets/ after tsc.
 //      All runtime assets (profiles, task templates, backend templates,
@@ -11,12 +12,11 @@
 //      modules, so this keeps runtime-compatible paths intact.
 //   3. Copy schema artifacts (`schemas/**`) so published packages expose
 //      contract artifacts in `dist/schemas` for source-less deploys.
-//   4. Bundle scripts/migrate-storage.ts + scripts/migrations/*.ts into
-//      dist/scripts/ so globally-installed users (npm / prebuilt binary)
-//      can run them without `../src/...` import paths breaking (#469).
+//   4. Bundle scripts/migrate-storage.ts into dist/scripts/ so
+//      globally-installed users (npm / prebuilt binary) can run it without
+//      `../src/...` import paths breaking (#469).
 import { mkdir } from "node:fs/promises";
-import { chmodSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 
 const assetGlob = new Bun.Glob("src/assets/**/*");
 for await (const src of assetGlob.scan(".")) {
@@ -45,19 +45,6 @@ for await (const src of schemaGlob.scan(".")) {
   await Bun.write(dest, Bun.file(src));
 }
 
-// Soft check: the vendored ECharts payload backs `akm health --format html`
-// in self-contained (inline) mode. Missing it is non-fatal — the report can
-// still be generated with AKM_ECHARTS=cdn — but warn loudly so a broken
-// checkout doesn't silently ship a build without offline reports (#582).
-try {
-  statSync("src/assets/templates/html/vendor/echarts.min.js");
-} catch {
-  console.warn(
-    "copy-assets: WARNING — src/assets/templates/html/vendor/echarts.min.js is missing; " +
-      "`akm health --format html` will only work with AKM_ECHARTS=cdn.",
-  );
-}
-
 // 5. Copy the published launchers plus the Node-runtime entry wrapper and
 //    text-import loader hook into dist/. The shell launchers keep the npm/bun
 //    global-install contract runtime-agnostic: prefer Bun when present, fall
@@ -76,11 +63,7 @@ for (const src of runtimeFiles) {
   chmodSync(dest, 0o755);
 }
 
-const migrationEntrypoints = [
-  "scripts/migrate-storage.ts",
-  "scripts/migrations/import-fs-improve-runs-to-db.ts",
-  "scripts/migrations/v16-to-v17.ts",
-];
+const migrationEntrypoints = ["scripts/migrate-storage.ts"];
 
 for (const entry of migrationEntrypoints) {
   try {
@@ -94,7 +77,7 @@ for (const entry of migrationEntrypoints) {
     entrypoints: [entry],
     target: "node",
     outdir: dirname(outfile),
-    naming: outfile.split("/").pop()!,
+    naming: basename(outfile),
     minify: false,
     // Bun.build preserves the source file's shebang; no banner needed.
   });

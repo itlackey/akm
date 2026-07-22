@@ -258,7 +258,7 @@ describe("GitSourceProvider", () => {
     saveConfig({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: stashUrl, name: "context-hub" }],
+      bundles: { "context-hub": { git: stashUrl } },
     });
     resetConfigCache();
 
@@ -347,7 +347,7 @@ describe("saveGitStash named stash resolution", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: stashUrl, name: "itlackey/akm-stash" }],
+      bundles: { "akm-stash": { git: stashUrl, registryId: "itlackey/akm-stash" } },
     });
     resetConfigCache();
 
@@ -368,7 +368,7 @@ describe("saveGitStash named stash resolution", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: stashUrl }],
+      bundles: { "akm-stash": { git: stashUrl } },
     });
     resetConfigCache();
 
@@ -389,7 +389,7 @@ describe("saveGitStash named stash resolution", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      sources: [{ type: "git", url: stashUrl }],
+      bundles: { "akm-stash": { git: stashUrl } },
     });
     resetConfigCache();
 

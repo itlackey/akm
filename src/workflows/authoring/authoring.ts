@@ -5,9 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/asset/asset-spec";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { UsageError } from "../../core/errors";
+import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import { compileWorkflowProgram } from "../ir/compile";
 import { parseWorkflow } from "../parser";
@@ -99,7 +99,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const normalizedName = normalizeWorkflowName(input.name);
   // The write target is DEFINITIVE — the canonical name plus the chosen format's
   // extension (`.yaml`/`.yml` for a program, `.md` for markdown). We deliberately
-  // do NOT go through `resolveAssetPathFromName`, which PROBES existing files and
+  // do NOT go through `assetPathForName`, which PROBES existing files and
   // would redirect a markdown create onto an existing `foo.yaml` (writing
   // markdown into a `.yaml`). Computing the target directly makes a markdown
   // create always write `.md`, so the finding-C cross-extension check below sees
@@ -109,10 +109,10 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
   }
-  // Codex round-3 finding C: a `workflow:<name>` ref is canonical across every
+  // Codex round-3 finding C: a `workflows/<name>` ref is canonical across every
   // recognized extension (`.md`/`.yaml`/`.yml`) and resolves `.md` BEFORE
   // `.yaml`. So creating `foo.yaml` while `foo.md` exists would return the ref
-  // `workflow:foo` that still starts the OLD markdown workflow — a silently
+  // `workflows/foo` that still starts the OLD markdown workflow — a silently
   // shadowed asset. Reject creation when ANY recognized extension already holds
   // the same canonical name, naming the existing file. A same-extension collision
   // (the target path itself exists) keeps the classic `--force` overwrite escape;
@@ -125,7 +125,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   if (conflicting !== undefined) {
     throw new UsageError(
       `Workflow "${normalizedName}" already exists as ${path.relative(stashDir, conflicting)} — the ` +
-        `\`workflow:${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
+        `\`workflows/${normalizedName}\` ref resolves to that file, so creating this one would shadow it. ` +
         `Remove or rename the existing file first, or create the workflow under a different name.`,
       "RESOURCE_ALREADY_EXISTS",
     );
@@ -167,7 +167,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   fs.writeFileSync(assetPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
 
   return {
-    ref: `workflow:${normalizedName}`,
+    ref: `workflows/${normalizedName}`,
     path: assetPath,
     stashDir,
   };
@@ -198,7 +198,7 @@ function readWorkflowSource(source: string, stashDir: string): string {
 
 function normalizeWorkflowName(name: string): string {
   // Strip any recognized workflow extension (.md/.yaml/.yml) so the canonical
-  // name — and thus the `workflow:<name>` ref — is extension-free regardless of
+  // name — and thus the `workflows/<name>` ref — is extension-free regardless of
   // how the user spelled it. The chosen format is recovered from the raw suffix
   // by the caller (createWorkflowAsset).
   const normalized = canonicalizeWorkflowName(
@@ -246,7 +246,7 @@ export function formatWorkflowErrors(path: string, errors: WorkflowError[]): str
 }
 
 /**
- * Validate a workflow by ref (`workflow:<name>`) or filesystem path.
+ * Validate a workflow filesystem path.
  *
  * Returns the parse result plus the source-relative path used. Throws
  * `UsageError` only when the target cannot be located on disk; parse
@@ -257,11 +257,6 @@ export function validateWorkflowSource(target: string): {
   path: string;
   parse: ReturnType<typeof parseWorkflow>;
 } {
-  if (target.startsWith("workflow:")) {
-    throw new UsageError(
-      `validateWorkflowSource expects a filesystem path; resolve refs to paths in the caller before invoking.`,
-    );
-  }
   const resolved = path.resolve(target);
   if (!fs.existsSync(resolved)) {
     throw new UsageError(`Workflow file not found: "${target}".`);

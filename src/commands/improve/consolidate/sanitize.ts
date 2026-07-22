@@ -46,7 +46,7 @@ function recoverMalformedFrontmatter(raw: string): string | null {
   // Skip the opening `---` line (index 0).
   let insertAt = -1;
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i]!;
     // A blank line marks the end of the frontmatter block in many YAML variants.
     if (line.trim() === "") {
       insertAt = i;
@@ -120,7 +120,7 @@ export function sanitizeMergedContent(
     } else {
       const trimmed = raw.trim();
       const leadingMatch = trimmed.match(/^```(?:markdown|md|yaml|yml)?\s*\r?\n([\s\S]*)$/i);
-      const inner = leadingMatch ? leadingMatch[1].trim() : null;
+      const inner = leadingMatch ? leadingMatch[1]!.trim() : null;
       if (!inner?.startsWith("---")) {
         return { ok: false, reason: "UNBALANCED_CODE_FENCE" };
       }
@@ -168,7 +168,7 @@ export function sanitizeMergedContent(
   // cleanly. Only reject if both parsers fail to extract any data.
   let parsedFm: unknown;
   try {
-    parsedFm = yamlParse(match[1]);
+    parsedFm = yamlParse(match[1]!);
   } catch (e) {
     const fallback = parseFrontmatter(`---\n${match[1]}\n---\n${match[2]}`);
     if (fallback.frontmatter !== null && Object.keys(fallback.data).length > 0) {
@@ -196,7 +196,7 @@ export function sanitizeMergedContent(
     return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
   }
 
-  const cleaned = assembleAssetFromString(serialized, match[2]);
+  const cleaned = assembleAssetFromString(serialized, match[2]!);
   return { ok: true, result: { content: cleaned, frontmatter: fm } };
 }
 

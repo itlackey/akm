@@ -156,7 +156,7 @@ function collectSuppressedKeys(vaultPath: string): Set<string> {
     if (trimmed === "") continue;
     const keyMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
     if (keyMatch && prevNonEmpty.toLowerCase() === SUPPRESSION_COMMENT) {
-      suppressed.add(keyMatch[1]);
+      suppressed.add(keyMatch[1]!);
     }
     prevNonEmpty = trimmed;
   }

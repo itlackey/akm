@@ -14,7 +14,7 @@
  *
  * # Architectural seams
  *
- *   - **Single bounded in-tree LLM call.** Wrapped in {@link tryLlmFeature}
+ *   - **Single bounded in-tree LLM call.** Routed through `callStructured`
  *     under the `distill` gate (v1 spec §14; 0.8.0 unified the orchestration
  *     and LLM-call gates under `processes.distill.enabled`). The wrapper
  *     enforces a hard timeout (default 600s / 10 min — overridable via
@@ -51,35 +51,36 @@
 import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { assembleAsset, assembleAssetFromString } from "../../core/asset/asset-serialize";
+import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
-import { getDefaultLlmConfig, getImproveProcessConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
-import { appendEvent, readEvents } from "../../core/events";
-import type { EligibilitySource } from "../../core/improve-types";
+import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
+import { appendEvent, type EventsContext, readEvents } from "../../core/events";
+import type { AkmDistillResult, EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warnVerbose } from "../../core/warn";
-import { closeDatabase, getAllEntries, openIndexDatabase } from "../../indexer/db/db";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { getDefaultLlmConfig } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection, resolveImproveProcessRunner } from "../../integrations/agent/runner";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../../llm/client";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import { callStructured } from "../../llm/structured-call";
+import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import {
-  createProposal,
   isProposalSkipped,
   listProposals,
   type Proposal,
   type ProposalsContext,
+  proposalContent,
 } from "../proposal/repository";
-import { stripFrontmatterBody as stripBodyForFidelity } from "./dedup";
+import { stripFrontmatterBody as stripBodyForFidelity } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
   autoSwapDescriptionWhenToUse,
@@ -98,7 +99,10 @@ import { buildClsContext, checkDistillFidelity } from "./distill-guards";
 import { deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { emitProposal } from "./proposal-envelope";
+import { createRunContext, type RunContext, resolveRunStashDir } from "./run-context";
 import { computeSalience, upsertAssetSalience } from "./salience";
+import { MAX_REJECTED_PROPOSALS } from "./shared";
 import { bareImproveRef, durableImproveRef } from "./source-identity";
 
 // Re-exported for `reflect.ts`, which applies the same LLM-as-judge gate to
@@ -107,32 +111,13 @@ export { runLessonQualityJudge };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-/**
- * Outcome reported on every `distill` invocation. Mirrors the metadata stored
- * on the corresponding `distill_invoked` event so observers can read either
- * the command result or the events stream and see the same picture.
- *
- *   - `queued`           — LLM returned valid lesson content; proposal created.
- *   - `skipped`          — Feature gate disabled OR LLM call failed/timed out.
- *                          No proposal. Exit 0.
- *   - `validation_failed`— LLM returned content but it failed lesson lint.
- *                          No proposal. Exit non-zero (UsageError).
- */
-/**
- * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
- * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
- * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
- * The review-needed band converts uncertain cases into explicit human review
- * requests rather than opaque auto-decisions.
- */
-export type DistillOutcome =
-  | "queued"
-  | "skipped"
-  | "config_disabled"
-  | "llm_failed"
-  | "validation_failed"
-  | "quality_rejected"
-  | "review_needed";
+// DistillOutcome / AkmDistillResult moved DOWN to core/improve-types.ts
+// (WI-9.8 KILL 2 — the §10.7 layering inversion: core/improve-types.ts
+// imported AkmDistillResult UP from this module, and distill/promote-memory.ts
+// + distill/quality-gate.ts each imported it back from here too, forming a
+// sub-cycle). Re-exported here verbatim so existing import sites
+// (`from "./distill"`) are unchanged.
+export type { AkmDistillResult, DistillOutcome } from "../../core/improve-types";
 
 /**
  * Asset-ref types that `akm distill` structurally refuses as inputs.
@@ -198,6 +183,13 @@ export interface AkmDistillOptions {
   /** Override the proposals clock / id generator (test seam). */
   ctx?: ProposalsContext;
   /**
+   * Events context carrying the improve run's long-lived state.db handle (or
+   * the C2 boundary-pinned path) so distill's event emits take appendEvent's
+   * fast path instead of a per-event open/migrate/close (R25). Populated by
+   * the improve loop; standalone CLI distill leaves it unset.
+   */
+  eventsCtx?: EventsContext;
+  /**
    * Test seam — read events through this function instead of the global
    * events.jsonl. Defaults to {@link readEvents}.
    */
@@ -241,7 +233,7 @@ export interface AkmDistillOptions {
    */
   fetchSimilarLessonsFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   /**
-   * Attribution tagging: which eligibility lane (`signal-delta`, `high-retrieval`,
+   * Attribution tagging: which eligibility lane (`signal-delta`, `high-salience`,
    * `proactive`, `scope`) selected this asset for the current improve run. Set by
    * `akm improve`'s loop from the partitioned {@link ImproveEligibleRef}. Recorded
    * in `distill_invoked` event metadata and persisted on the created proposal so
@@ -253,71 +245,22 @@ export interface AkmDistillOptions {
   sourceName?: string;
   /** Read pre-source-qualification feedback only for the historical local stash. */
   legacyBareState?: boolean;
-}
-
-export interface AkmDistillResult {
-  schemaVersion: 1;
-  ok: boolean;
-  outcome: DistillOutcome;
-  /** Original input ref (verbatim). */
-  inputRef: string;
   /**
-   * Historical field name kept for compatibility. Carries the queued proposal
-   * ref, which may now be a `knowledge:` ref when memory promotion fires.
+   * Chunk-5 flip F5e — the input asset's durable `item_ref`
+   * (`<bundle>//<conceptId>`), resolved from the index entry at planning time
+   * (`ImproveEligibleRef.itemRef`). When present, distill keys its
+   * `asset_salience` write by it — matching the preparation-stage salience
+   * writer — instead of the pre-flip source-qualified `type:name`. Unset for a
+   * NULL-provenance ref or a direct `akm distill` invocation.
    */
-  lessonRef: string;
-  /** Explicit queued proposal ref. Mirrors `lessonRef`. */
-  proposalRef?: string;
-  /** Type of proposal the invocation targeted or queued. */
-  proposalKind?: "lesson" | "knowledge";
-  /** Proposal id when `outcome === "queued"`. */
-  proposalId?: string;
-  /** Human-readable hint surfaced when the call was skipped. */
-  message?: string;
-  /** Validation findings when `outcome === "validation_failed"`. */
-  findings?: { kind: string; field: string; message: string }[];
-  /** The full proposal object when `outcome === "queued"`. */
-  proposal?: Proposal;
-  /**
-   * Diagnostic — number of feedback events filtered out by
-   * `excludeFeedbackFromRefs` (#267). Always present when the option was
-   * supplied, even when the count is 0. Callers (e.g. `bench evolve`) use
-   * this to surface filter-applied notes in their `warnings[]`.
-   */
-  filteredFeedbackCount?: number;
-  /**
-   * True when `excludeFeedbackFromRefs` reduced the feedback set to empty
-   * AND there were originally events for the target ref. Lets callers
-   * distinguish "no feedback was ever recorded" from "we suppressed all
-   * recorded feedback" — the LLM-input contract is identical (no feedback
-   * shown) but the operator-visible meaning differs.
-   */
-  feedbackFullyFiltered?: boolean;
-  /**
-   * Judge score (1–5 float) when `outcome === "quality_rejected"`.
-   * Present as -1 when the judge could not run (no LLM / timeout / parse
-   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
-   * not minted.
-   */
-  score?: number;
-  /**
-   * One-sentence reason from the LLM judge when `outcome === "quality_rejected"`.
-   */
-  reason?: string;
-  /**
-   * Count of description ↔ when_to_use auto-swaps performed during this
-   * distill run (0 or 1 today; reserved as a counter so callers and health
-   * dashboards can track how often the swap-normalization guard triggers).
-   * Only present when at least one swap was applied.
-   */
-  descriptionSwapped?: number;
+  itemRef?: string;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
 
 /** Derive the proposed lesson ref from the input ref. See module docblock. */
 export function deriveLessonRef(inputRef: string): string {
-  const parsed = parseAssetRef(inputRef);
+  const parsed = parseRefInput(inputRef);
   // Strip origin: a feedback signal recorded against `team//skill:deploy`
   // distils into the same lesson namespace as `skill:deploy`. The proposal
   // id (a UUID) keeps the queue entries distinct, so collisions are not a
@@ -336,7 +279,7 @@ export function deriveLessonRef(inputRef: string): string {
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `lesson:${safeScope ? `${safeScope}/` : ""}${safe}-lesson`;
+  return `lessons/${safeScope ? `${safeScope}/` : ""}${safe}-lesson`;
 }
 
 // ── Content quality validators ──────────────────────────────────────────────
@@ -489,13 +432,7 @@ export function assembleStructuredDistillMarkdown(
     if (sources.length > 0) fm.xrefs = sources;
   }
 
-  const fmLines = Object.entries(fm)
-    .map(([k, v]) => {
-      if (Array.isArray(v)) return `${k}: [${v.map((s) => JSON.stringify(s)).join(", ")}]`;
-      return `${k}: ${JSON.stringify(v)}`;
-    })
-    .join("\n");
-  return assembleAssetFromString(fmLines, body);
+  return assembleAssetFromString(serializeFrontmatterQuoted(fm), body);
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
@@ -677,82 +614,40 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
  * `distill_invoked` event (with `outcome` in the metadata) regardless of the
  * branch taken — so observers can count invocations cheaply.
  */
-export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
-  const inputRef = options.ref.trim();
-  if (!inputRef) {
-    throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
-  }
-  // Validate the ref shape up front so a typo never reaches the LLM.
-  const parsedInputRef = parseAssetRef(inputRef);
-  const durableInputRef = durableImproveRef(inputRef, options.sourceName);
-  const targetKind = options.proposalKind ?? "lesson";
-
-  // Attribution tagging: spread into every distill_invoked event's metadata so
-  // the lane that selected this asset is recorded uniformly across all outcome
-  // branches. Empty object when no lane was supplied (direct `akm distill`).
-  const eligMeta: { eligibilitySource?: EligibilitySource } = options.eligibilitySource
-    ? { eligibilitySource: options.eligibilitySource }
-    : {};
-
-  // Recursive-distillation guard. Distill produces *lessons* from non-lesson
-  // sources (memory, skill, knowledge, etc.). Calling distill on an existing
-  // lesson would derive `lesson:lesson-<name>-lesson-lesson` (double `-lesson`
-  // suffix) and route a "lesson of a lesson" through the proposal queue —
-  // observed in 323 reviewed archived proposals as the recursive-ref defect.
-  // Refuse the input here so the improve loop (or other callers) get a clean
-  // skipped outcome instead of producing nonsense refs.
-  //
-  // The refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
-  // the improve planner can skip these refs before queuing distill attempts;
-  // this runtime check stays as a defensive backstop for direct callers.
-  if (isDistillRefusedInputType(parsedInputRef.type)) {
-    // 08-F2: env/secret are a secret-material refusal (never read the bytes);
-    // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
-    const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
-    const skippedRef = isSecretInput ? inputRef : `lesson:${parsedInputRef.name}`;
-    const message = isSecretInput
-      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
-      : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: skippedRef,
-        message,
-        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
-        ...eligMeta,
-      },
-    });
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      lessonRef: skippedRef,
-      message,
-    };
-  }
-
-  const config = options.config ?? loadConfig();
-  options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
-  const stash = options.stashDir ?? resolveStashDir();
-  const chat = options.chat ?? chatCompletion;
-  const distillLlm = Object.hasOwn(options, "llmConfig")
-    ? (options.llmConfig ?? undefined)
-    : (() => {
-        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
-        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
-      })();
-  const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
-  const readEventsImpl = options.readEventsFn ?? readEvents;
-  // R1 opt-out must flow into every computeSalience call this command makes so
-  // distill-written rank_score rows use the same weights as preparation's.
-  const outcomeWeightEnabled = config.improve?.salience?.outcomeWeightEnabled !== false;
-  // D-4 / #390: similar-lessons retrieval seam (test-injectable).
-  const fetchSimilarLessonsFn =
-    options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
-
+/**
+ * Best-effort load of the distill INPUT asset plus the #608 encoding-time
+ * salience scoring: read the source, build the once-per-invocation bigram ref
+ * vocabulary, then score the asset (novelty×0.40 + magnitude×0.35 +
+ * predictionError×0.25) and mirror the result to both the asset frontmatter and
+ * `state.db :: asset_salience`. Every write is best-effort. Extracted verbatim
+ * from `akmDistill`; returns the (possibly salience-stamped) content plus the
+ * ref vocabulary the caller reuses when scoring the distilled OUTPUT (G4).
+ */
+async function loadAndScoreInputSalience(args: {
+  inputRef: string;
+  durableInputRef: string;
+  /**
+   * Chunk-5 flip F5e — the durable `asset_salience` WRITE key for the input
+   * asset: its `item_ref` when resolved, else `durableInputRef` (the pre-flip
+   * source-qualified `type:name`). Matches the preparation-stage salience writer.
+   */
+  salienceWriteKey: string;
+  stash: string;
+  config: AkmConfig;
+  outcomeWeightEnabled: boolean;
+  lookup: (ref: string) => Promise<string | null>;
+  /**
+   * WI-9.10: this invocation's fresh asset memo (D6). The salience stamp
+   * below reads the source asset then, when the frontmatter delta is
+   * non-empty, writes the stamped bytes back to the SAME path and keeps
+   * using the in-memory copy — the exact read/rewrite-in-place shape the
+   * D6 memo exists for (run-context.ts's docblock cites this site).
+   * `ctx.writeAsset` refreshes the memo so a later `ctx.readAsset` of this
+   * path (none exists yet in this invocation) would see the stamped bytes.
+   */
+  ctx: RunContext;
+}): Promise<{ assetContent: string | null; existingRefVocabulary: Set<string> }> {
+  const { inputRef, durableInputRef, salienceWriteKey, stash, config, outcomeWeightEnabled, lookup, ctx } = args;
   // Best-effort load: when the asset is not yet indexed we still proceed —
   // the LLM is asked to distil from "available signal" (feedback alone).
   let assetContent: string | null = null;
@@ -761,7 +656,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     const filePath = await lookup(durableInputRef);
     if (filePath && fs.existsSync(filePath)) {
       assetFilePath = filePath;
-      assetContent = fs.readFileSync(filePath, "utf8");
+      assetContent = ctx.readAsset(filePath);
     }
   } catch {
     assetContent = null;
@@ -792,7 +687,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   if (assetContent && assetFilePath) {
     try {
-      const parsedRef = parseAssetRef(inputRef);
+      const parsedRef = parseRefInput(inputRef);
       // G4: predictionError decays with revision count — the prior hardcoded
       // `revisionCount: 0` made it a dead constant 1.0. Use the number of
       // proposals ever raised against this ref as the revision proxy.
@@ -813,7 +708,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       // 1. Write salience to the source asset frontmatter (idempotent).
       const updatedContent = writeSalienceToFrontmatter(assetContent, salienceResult.score, salienceResult);
       if (updatedContent !== assetContent) {
-        fs.writeFileSync(assetFilePath, updatedContent, "utf8");
+        ctx.writeAsset(assetFilePath, updatedContent);
         assetContent = updatedContent;
       }
 
@@ -827,7 +722,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             encodingSalience: salienceResult.score,
             outcomeWeightEnabled,
           });
-          upsertAssetSalience(stateDb, durableInputRef, vector);
+          upsertAssetSalience(stateDb, salienceWriteKey, vector);
         });
       } catch {
         // State DB unavailable — frontmatter mirror is the only persistence.
@@ -837,29 +732,149 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     }
   }
 
-  const { events: unfilteredEvents } = readEventsImpl({
-    ...(!options.legacyBareState ? { ref: durableInputRef } : {}),
-    type: "feedback",
-    excludeTags: options.excludeTags,
-    includeTags: options.includeTags,
-  });
-  const events = options.legacyBareState
-    ? unfilteredEvents.filter((event) => event.ref === durableInputRef || event.ref === bareImproveRef(inputRef))
-    : unfilteredEvents;
+  return { assetContent, existingRefVocabulary };
+}
 
-  // #267 — feedback exclusion. Filter events whose `ref` matches the
-  // exclusion list BEFORE the prompt is built. The original event stream
-  // is never mutated; only the `feedback` slice that reaches the LLM is
-  // affected. The exclusion set is normalised through `parseAssetRef` →
-  // re-serialised so callers can pass canonical or origin-prefixed refs
-  // and the comparison still works against the event payload's `ref`.
-  const exclusionList = options.excludeFeedbackFromRefs ?? [];
-  const exclusionSet = new Set(exclusionList.map((ref) => ref.trim()).filter((ref) => ref.length > 0));
-  const originalEventCount = events.length;
-  const filteredEvents =
-    exclusionSet.size > 0 ? events.filter((e) => !(e.ref !== undefined && exclusionSet.has(e.ref))) : events;
-  const filteredFeedbackCount = originalEventCount - filteredEvents.length;
-  const feedbackFullyFiltered = exclusionSet.size > 0 && originalEventCount > 0 && filteredEvents.length === 0;
+/**
+ * Recursive-distillation + secret-material input guard. Distill produces
+ * *lessons* from non-lesson sources; a lesson input would derive a recursive
+ * `lesson:lesson-<name>` ref (the 323-archived-proposals defect) and
+ * env/secret inputs must never be read or sent to the LLM. Emits the
+ * `distill_invoked(skipped)` event and returns the terminal skipped result,
+ * or `null` when the input type is allowed. Extracted verbatim from
+ * `akmDistill` (R25/R31 — the events-ctx threading pushed it over the bar).
+ */
+function refuseDisallowedDistillInput(args: {
+  options: AkmDistillOptions;
+  parsedInputRef: ReturnType<typeof parseRefInput>;
+  inputRef: string;
+  durableInputRef: string;
+  eligMeta: { eligibilitySource?: EligibilitySource };
+}): AkmDistillResult | null {
+  const { options, parsedInputRef, inputRef, durableInputRef, eligMeta } = args;
+  if (!isDistillRefusedInputType(parsedInputRef.type)) return null;
+  // 08-F2: env/secret are a secret-material refusal (never read the bytes);
+  // lesson is the recursive-form refusal. Both skip BEFORE any readFileSync.
+  const isSecretInput = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
+  const skippedRef = isSecretInput ? inputRef : conceptIdFromTypeName("lesson", parsedInputRef.name);
+  const message = isSecretInput
+    ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+    : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      // Chunk-5 flip F5f — key on item_ref when the planner resolved one, else
+      // the pre-flip source-qualified durable ref (dormant: item_ref NULL today).
+      ref: options.itemRef ?? durableInputRef,
+      metadata: {
+        outcome: "skipped" as const,
+        lessonRef: skippedRef,
+        message,
+        skipReason: isSecretInput ? "refused_secret_input" : "recursive_lesson_input",
+        ...eligMeta,
+      },
+    },
+    options.eventsCtx,
+  );
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "skipped",
+    inputRef,
+    lessonRef: skippedRef,
+    message,
+  };
+}
+
+export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
+  const inputRef = options.ref.trim();
+  if (!inputRef) {
+    throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
+  }
+  // Validate the ref shape up front so a typo never reaches the LLM.
+  const parsedInputRef = parseRefInput(inputRef);
+  const durableInputRef = durableImproveRef(inputRef, options.sourceName);
+  // Chunk-5 flip F5e — the input asset's durable salience write key: item_ref
+  // when the planner resolved one, else the pre-flip source-qualified spelling.
+  const salienceWriteKey = options.itemRef ?? durableInputRef;
+  const targetKind = options.proposalKind ?? "lesson";
+
+  // Attribution tagging: spread into every distill_invoked event's metadata so
+  // the lane that selected this asset is recorded uniformly across all outcome
+  // branches. Empty object when no lane was supplied (direct `akm distill`).
+  const eligMeta: { eligibilitySource?: EligibilitySource } = options.eligibilitySource
+    ? { eligibilitySource: options.eligibilitySource }
+    : {};
+
+  // Recursive-distillation guard (see refuseDisallowedDistillInput). The
+  // refused-type set is exported as {@link DISTILL_REFUSED_INPUT_TYPES} so
+  // the improve planner can skip these refs before queuing distill attempts;
+  // this runtime check stays as a defensive backstop for direct callers.
+  const refused = refuseDisallowedDistillInput({ options, parsedInputRef, inputRef, durableInputRef, eligMeta });
+  if (refused) return refused;
+
+  const config = options.config ?? loadConfig();
+  options = { ...options, improveProfile: options.improveProfile ?? resolveImproveStrategy(undefined, config).config };
+  const stash = resolveRunStashDir(options.stashDir);
+  const chat = options.chat ?? chatCompletion;
+  const distillLlm = Object.hasOwn(options, "llmConfig")
+    ? (options.llmConfig ?? undefined)
+    : (() => {
+        const runner = resolveImproveProcessRunner(options.improveProfile, "distill", config);
+        return runner ? materializeLlmRunnerConnection(runner) : getDefaultLlmConfig(config);
+      })();
+  const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
+  const readEventsImpl = options.readEventsFn ?? readEvents;
+  // R1 opt-out must flow into every computeSalience call this command makes so
+  // distill-written rank_score rows use the same weights as preparation's.
+  const outcomeWeightEnabled = config.improve?.salience?.outcomeWeightEnabled !== false;
+  // D-4 / #390: similar-lessons retrieval seam (test-injectable).
+  const fetchSimilarLessonsFn =
+    options.fetchSimilarLessonsFn ?? ((query, n) => fetchTopSimilarLessons(query, n, options.stashDir));
+
+  // WI-9.10: construct this invocation's RunContext from values already
+  // resolved above — no second config load, no new db handle. distill has no
+  // `dryRun` option (only the best-effort salience stamp below writes a
+  // source asset, routed through `ctx.writeAsset`); `sourceRun` has no
+  // existing run-level convention here (unlike extract/consolidate, distill
+  // simply forwards `options.sourceRun` verbatim wherever it is set — see
+  // the `promoteMemoryToKnowledge` call below), so this is a fresh,
+  // independent token following the same `<verb>-<ms>` shape.
+  const ctx = createRunContext({
+    stashDir: stash,
+    config,
+    eventsCtx: options.eventsCtx ?? {},
+    // Not yet wired into any proposal call site this stage (mirrors
+    // buildImproveRunContext's proposalsCtx comment in improve.ts).
+    proposalsCtx: options.ctx ?? {},
+    chat,
+    getLlmConfig: () => distillLlm ?? null,
+    sourceRun: options.sourceRun ?? `distill-${Date.now()}`,
+    dryRun: false,
+    signal: options.signal,
+  });
+  // D6: a fresh, per-invocation memo. loadAndScoreInputSalience below is the
+  // genuine content-read + write-back consumer (run-context.ts's D6 seam
+  // docblock cites this exact site).
+  const assetCtx = ctx.withFreshAssetMemo();
+
+  const { assetContent, existingRefVocabulary } = await loadAndScoreInputSalience({
+    inputRef,
+    durableInputRef,
+    salienceWriteKey,
+    stash,
+    config,
+    outcomeWeightEnabled,
+    lookup,
+    ctx: assetCtx,
+  });
+
+  const { filteredEvents, exclusionSet, filteredFeedbackCount, feedbackFullyFiltered } = readDistillFeedback({
+    readEventsImpl,
+    options,
+    durableInputRef,
+    inputRef,
+  });
   const feedback = filteredEvents.slice(-20).map((e) => ({
     ts: e.ts,
     eventType: e.eventType,
@@ -876,6 +891,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     targetKind,
     inputRef,
     durableInputRef,
+    ...(options.itemRef ? { itemRef: options.itemRef } : {}),
     sourceName: options.sourceName,
     assetContent,
     filteredEvents,
@@ -893,6 +909,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     eligibilitySource: options.eligibilitySource,
     sourceRun: options.sourceRun,
     proposalsCtx: options.ctx,
+    eventsCtx: options.eventsCtx,
     exclusionSetSize: exclusionSet.size,
     filteredFeedbackCount,
     feedbackFullyFiltered,
@@ -903,159 +920,316 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const effectiveLessonRef =
     effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
 
-  // Inject last 1–3 rejected proposals for this ref as Reflexion-style
-  // verbal-RL context so the LLM avoids regenerating refused proposals.
-  const MAX_REJECTED_PROPOSALS = 3;
-  const rejectedForRef = listProposals(stash, { ref: inputRef, status: "rejected", includeArchive: true })
-    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
-    .slice(0, MAX_REJECTED_PROPOSALS)
-    .map((p) => ({
-      reason: p.review?.reason ?? "no reason given",
-      contentPreview: p.payload.content.slice(0, 500),
-    }));
-
-  // WS-3b CLS interleaving (step 9).
-  // When cls.enabled, inject embedding-retrieved adjacent lessons/knowledge
-  // into the distill prompt so the LLM avoids overwriting prior generalizations
-  // (catastrophic interference). DEFAULT OFF.
-  const clsConfig =
-    (getImproveProcessConfig(config, "distill", options.improveProfile)?.cls as
-      | { enabled?: boolean; adjacentCount?: number }
-      | undefined) ?? {};
-  let clsContext = "";
-  if (clsConfig.enabled) {
-    try {
-      const adjacentCount = clsConfig.adjacentCount ?? 3;
-      // Use the asset content or input ref as the query for adjacent retrieval.
-      const clsQuery = assetContent ? assetContent.slice(0, 500) : inputRef;
-      const adjacentItems = await fetchSimilarLessonsFn(clsQuery, adjacentCount);
-      clsContext = buildClsContext(adjacentItems, clsConfig);
-    } catch {
-      // Fail open — CLS is supplemental, never required.
-    }
-  }
-
-  // Distill output is a lesson/knowledge (non-wiki) → stash authoring
-  // standards. Resolved once for this single call.
-  const standardsContext = resolveStandardsContext(effectiveLessonRef, stash);
-  const baseUserPrompt = buildDistillPrompt({
+  const messages = await buildDistillMessages({
+    options,
+    stash,
     inputRef,
     assetContent,
     feedback,
-    proposalKind: effectiveProposalKind,
-    ...(rejectedForRef.length > 0 ? { rejectedProposals: rejectedForRef } : {}),
-    ...(standardsContext.trim() ? { standardsContext } : {}),
+    effectiveProposalKind,
+    effectiveLessonRef,
+    fetchSimilarLessonsFn,
   });
-  const userPrompt = clsContext ? `${baseUserPrompt}${clsContext}` : baseUserPrompt;
-  const messages: ChatMessage[] = [
-    { role: "system", content: effectiveProposalKind === "knowledge" ? KNOWLEDGE_SYSTEM_PROMPT : LESSON_SYSTEM_PROMPT },
-    { role: "user", content: userPrompt },
-  ];
 
-  // Single bounded LLM call. The wrapper handles the gate-check, 600s
-  // (10 min) default timeout, and error fallback (returning `null`).
-  //
-  // Capture the fallback reason so we can distinguish "config gate is off"
-  // (no LLM was called — operator action required) from "LLM call was made
-  // but returned no usable output" (transport/timeout/empty — observability).
-  // The previous conflated message ("disabled or the LLM call failed") gave
-  // operators no signal to act on; a 108-run audit found 100% of skipped
-  // outcomes were actually the config-gate-off branch.
-  //
-  // responseSchema lift (PR 1, asset-writers-investigation §5): on the
-  // production path (no test `chat` seam) we pass the lesson/knowledge JSON
-  // schema to `chatCompletion`. Providers with `supportsJsonSchema: true`
-  // return a typed JSON object the post-call code re-assembles into markdown,
-  // bypassing the four shape-level rejection codes the validator log catches.
-  // The test seam keeps its two-arg signature, so injected fakes still pin
-  // markdown responses verbatim and the existing assertion suite is unchanged.
-  const distillSchema =
-    effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
-  let fallbackReason: "disabled" | "timeout" | "error" | undefined;
-  const raw = await tryLlmFeature(
-    "distill",
+  const { raw, fallbackReason } = await runDistillLlmCall({
     config,
-    async () => {
-      if (!distillLlm) {
-        // No LLM connection configured — treat as gate-disabled. Throwing
-        // here lets `tryLlmFeature` route us through the "error" fallback,
-        // which is the same graceful skipped path.
-        throw new ConfigError(
-          "No LLM engine configured. Set defaults.llmEngine or improve.strategies.<name>.processes.distill.engine.",
-          "LLM_NOT_CONFIGURED",
+    options,
+    distillLlm,
+    messages,
+    effectiveProposalKind,
+  });
+
+  if (raw === null || raw.trim() === "") {
+    return distillEmptyResponseResult({
+      fallbackReason,
+      inputRef,
+      durableInputRef,
+      ...(options.itemRef ? { itemRef: options.itemRef } : {}),
+      effectiveLessonRef,
+      effectiveProposalKind,
+      exclusionSet,
+      filteredFeedbackCount,
+      feedbackFullyFiltered,
+      eligMeta,
+      eventsCtx: options.eventsCtx,
+    });
+  }
+
+  const { content, descriptionSwapped } = assembleAndValidateDistillContent({
+    raw,
+    effectiveProposalKind,
+    inputRef,
+    durableInputRef,
+    ...(options.itemRef ? { itemRef: options.itemRef } : {}),
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    eligMeta,
+    eventsCtx: options.eventsCtx,
+  });
+
+  const gate = await applyDistillQualityGate({
+    config,
+    options,
+    content,
+    assetContent,
+    chat,
+    distillLlm,
+    fetchSimilarLessonsFn,
+    stash,
+    inputRef,
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+  });
+  if ("rejection" in gate) return gate.rejection;
+  const lessonJudgeConfidence = gate.confidence;
+
+  return emitDistillLessonProposal({
+    content,
+    options,
+    distillLlm,
+    assetContent,
+    inputRef,
+    durableInputRef,
+    effectiveLessonRef,
+    effectiveProposalKind,
+    stash,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+    lessonJudgeConfidence,
+    existingRefVocabulary,
+    outcomeWeightEnabled,
+    descriptionSwapped,
+    eligMeta,
+  });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * The distill-propose pass: the optional WS-3b distill→source fidelity check
+ * (routes contradictions to human review), provenance xref round-trip, proposal
+ * creation, and the queued/skipped `distill_invoked` emit + output salience
+ * scoring (G4). Extracted verbatim from `akmDistill`; every outcome shape and
+ * event is byte-identical.
+ */
+async function emitDistillLessonProposal(args: {
+  content: string;
+  options: AkmDistillOptions;
+  distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
+  assetContent: string | null;
+  inputRef: string;
+  durableInputRef: string;
+  effectiveLessonRef: string;
+  effectiveProposalKind: "lesson" | "knowledge";
+  stash: string;
+  exclusionSet: Set<string>;
+  filteredFeedbackCount: number;
+  feedbackFullyFiltered: boolean;
+  lessonJudgeConfidence: number | undefined;
+  existingRefVocabulary: Set<string>;
+  outcomeWeightEnabled: boolean;
+  descriptionSwapped: number;
+  eligMeta: { eligibilitySource?: EligibilitySource };
+}): Promise<AkmDistillResult> {
+  const {
+    options,
+    distillLlm,
+    assetContent,
+    inputRef,
+    durableInputRef,
+    effectiveLessonRef,
+    effectiveProposalKind,
+    stash,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+    lessonJudgeConfidence,
+    existingRefVocabulary,
+    outcomeWeightEnabled,
+    descriptionSwapped,
+    eligMeta,
+  } = args;
+  let content = args.content;
+
+  // WS-3b: Distill→source fidelity check (step 10).
+  // When fidelityCheck.enabled, check the distill proposal against its cited
+  // source memories. A contradiction flag routes to human review (not auto-accept).
+  // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
+  const fidelityConfig =
+    (getImproveProcessConfig("distill", options.improveProfile)?.fidelityCheck as { enabled?: boolean } | undefined) ??
+    {};
+  if (fidelityConfig.enabled && assetContent) {
+    try {
+      const proposalBody = stripBodyForFidelity(content);
+      const sourceBodies = [stripBodyForFidelity(assetContent)];
+      const fidelityResult = checkDistillFidelity(proposalBody, sourceBodies, fidelityConfig);
+      if (fidelityResult.contradictionDetected) {
+        // Route to human review by writing a quality rejection with reviewNeeded=true.
+        return writeQualityRejection(
+          stash,
+          inputRef,
+          effectiveLessonRef,
+          content,
+          2.0, // below auto-accept threshold, signals review needed
+          fidelityResult.reason ?? "Proposal may contradict cited source memories.",
+          {
+            reviewNeeded: true,
+            fidelityContradiction: true,
+            ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+          },
+          options.eligibilitySource,
+          options.eventsCtx,
         );
       }
-      // Production path: pass the JSON schema so providers that honour
-      // `response_format: json_schema` enforce shape upstream. Providers that
-      // ignore the option fall through to the prompt-contract markdown path.
-      if (options.chat === undefined) {
-        return chatCompletion(distillLlm, messages, { responseSchema: distillSchema });
-      }
-      // Test seam: preserve the two-arg signature so existing fake `chat`
-      // functions (which return markdown strings) continue to work.
-      return chat(distillLlm, messages, options.signal ? { signal: options.signal } : undefined);
-    },
-    null as string | null,
+    } catch {
+      // Fail open — fidelity check is supplemental.
+    }
+  }
+
+  // Round-trip the parsed frontmatter so the proposal carries it as a
+  // structured payload alongside the raw content (matches the shape used by
+  // other proposal sources).
+  //
+  // Serialize canonical provenance into the content that promotion writes.
+  const parsed = parseFrontmatter(content);
+  const existingXrefs = Array.isArray(parsed.data.xrefs) ? parsed.data.xrefs.map(String) : [];
+  const frontmatterWithXrefs: Record<string, unknown> = {
+    ...parsed.data,
+    xrefs: [...new Set([...existingXrefs, durableInputRef])],
+  };
+  delete frontmatterWithXrefs.sources;
+  content = assembleAsset(frontmatterWithXrefs, parsed.content);
+  const proposalResult2 = emitProposal(
+    { stashDir: stash, proposalsCtx: options.ctx },
     {
-      enabled: resolveProcessEnabled(
-        "distill",
-        options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
-      ),
-      onFallback: (evt) => {
-        fallbackReason = evt.reason;
-        // Log the fallback reason; the caller (raw === null path) handles
-        // emitting the distill_invoked event so we don't double-emit here.
-        warnVerbose(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+      ref: effectiveLessonRef,
+      // §23.6 fingerprint model-id term (WI-6.4). Uses the RESOLVED connection
+      // (profile/config fallback included), not the raw option — a standalone
+      // `akm distill` run must fingerprint under the model that actually
+      // generated the content, matching the promote-memory branch.
+      ...(distillLlm?.model ? { modelId: distillLlm.model } : {}),
+      source: "distill",
+      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+      payload: {
+        content,
+        frontmatter: frontmatterWithXrefs,
       },
+      ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
+      // Attribution tagging: persist the eligibility lane on the proposal.
+      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
     },
   );
 
-  if (raw === null || raw.trim() === "") {
-    // Distinguish "config gate disabled" from "LLM call failed". For the
-    // config-disabled branch, we ALSO suppress the `distill_invoked` event
-    // because no LLM work was actually invoked — emitting the event causes
-    // the planner to accumulate phantom invocations that drown out real
-    // signal.
-    if (fallbackReason === "disabled") {
-      return {
-        schemaVersion: 1,
-        ok: true,
-        outcome: "config_disabled",
-        inputRef,
-        lessonRef: effectiveLessonRef,
-        proposalRef: effectiveLessonRef,
-        proposalKind: effectiveProposalKind,
-        message: "distill is disabled in config; enable processes.distill.enabled to activate.",
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-      };
-    }
-    // LLM was actually invoked but produced nothing usable (transport error,
-    // timeout, or empty/whitespace response). Emit the event so the failure
-    // is observable.
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "llm_failed" as const,
-        lessonRef: effectiveLessonRef,
-        proposalKind: effectiveProposalKind,
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        ...eligMeta,
+  if (isProposalSkipped(proposalResult2)) {
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+        ref: options.itemRef ?? durableInputRef,
+        metadata: {
+          outcome: "skipped" as const,
+          lessonRef: effectiveLessonRef,
+          message: proposalResult2.message,
+          skipReason: proposalResult2.reason,
+          ...eligMeta,
+        },
       },
-    });
+      options.eventsCtx,
+    );
     return {
       schemaVersion: 1,
       ok: true,
-      outcome: "llm_failed",
+      outcome: "skipped",
       inputRef,
       lessonRef: effectiveLessonRef,
-      proposalRef: effectiveLessonRef,
-      proposalKind: effectiveProposalKind,
-      message: "LLM call returned no usable output (timeout, empty, or error).",
-      ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+      message: proposalResult2.message,
     };
   }
 
+  const proposal2: Proposal = proposalResult2;
+  // G4: content-score the distilled OUTPUT so it carries a real encoding
+  // salience (encoding_source='content') from creation — lessons never get
+  // another chance (they are refused as distill inputs).
+  persistOutputEncodingSalience(
+    durableImproveRef(effectiveLessonRef, options.sourceName),
+    content,
+    existingRefVocabulary,
+    outcomeWeightEnabled,
+  );
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+      ref: options.itemRef ?? durableInputRef,
+      metadata: {
+        outcome: "queued" as const,
+        lessonRef: effectiveLessonRef,
+        proposalRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        proposalId: proposal2.id,
+        // R3: judge verdicts are longitudinally queryable, not just a one-shot
+        // proposal.confidence write (normalized 1–5 score / 5).
+        ...(lessonJudgeConfidence !== undefined ? { judgeConfidence: lessonJudgeConfidence } : {}),
+        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
+        ...eligMeta,
+      },
+    },
+    options.eventsCtx,
+  );
+
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "queued",
+    inputRef,
+    lessonRef: effectiveLessonRef,
+    proposalRef: effectiveLessonRef,
+    proposalKind: effectiveProposalKind,
+    proposalId: proposal2.id,
+    proposal: proposal2,
+    ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+    ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
+  };
+}
+
+/**
+ * Turn the raw LLM response into validated proposal content: prefer the
+ * structured-JSON assembly, else strip markdown fences; run the lesson-only
+ * auto-repair chain (frontmatter repair, description↔when_to_use swap, truncation
+ * repair); then lint/validate, emitting `distill_invoked(validation_failed)` and
+ * throwing a `UsageError` on any finding. Extracted verbatim from `akmDistill`.
+ */
+function assembleAndValidateDistillContent(args: {
+  raw: string;
+  effectiveProposalKind: "lesson" | "knowledge";
+  inputRef: string;
+  durableInputRef: string;
+  /** Chunk-5 flip F5f — item_ref for the distill_invoked event key (dormant today). */
+  itemRef?: string;
+  effectiveLessonRef: string;
+  exclusionSet: Set<string>;
+  filteredFeedbackCount: number;
+  eligMeta: { eligibilitySource?: EligibilitySource };
+  eventsCtx?: EventsContext;
+}): { content: string; descriptionSwapped: number } {
+  const {
+    raw,
+    effectiveProposalKind,
+    inputRef,
+    durableInputRef,
+    itemRef,
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    eligMeta,
+    eventsCtx,
+  } = args;
   // Structured-output path: when the provider honoured the JSON schema, `raw`
   // is a JSON object string (not a markdown blob). Try to parse it and assemble
   // the canonical `---\nfm\n---\n\nbody` form before falling through to the
@@ -1109,18 +1283,22 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   if (findings.length > 0) {
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "validation_failed" as const,
-        lessonRef: effectiveLessonRef,
-        proposalKind: effectiveProposalKind,
-        findingKinds: findings.map((f) => f.kind),
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        ...eligMeta,
+    appendEvent(
+      {
+        eventType: "distill_invoked",
+        // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+        ref: itemRef ?? durableInputRef,
+        metadata: {
+          outcome: "validation_failed" as const,
+          lessonRef: effectiveLessonRef,
+          proposalKind: effectiveProposalKind,
+          findingKinds: findings.map((f) => f.kind),
+          ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+          ...eligMeta,
+        },
       },
-    });
+      eventsCtx,
+    );
     const message = findings.map((f) => f.message).join("\n");
     throw new UsageError(
       `Distilled ${effectiveProposalKind} failed validation:\n${message}`,
@@ -1131,23 +1309,210 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     );
   }
 
-  // LLM-as-judge quality gate (P2-B). Only active when the feature flag is
-  // explicitly enabled. Fail-CLOSED (07 P0-2): an unjudgeable proposal (no LLM
-  // / timeout / parse failure) is rejected, not passed through.
-  // D-5 / #388: Three-band system — review_needed band queues a proposal
-  // with review_needed outcome rather than auto-rejecting.
-  let lessonJudgeConfidence: number | undefined;
-  if (options.improveProfile?.processes?.distill?.qualityGate?.enabled ?? true) {
-    // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
-    const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
-    const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat, {
-      ...(similarLessons.length > 0 ? { similarLessons } : {}),
-      ...(distillLlm ? { llmConfig: distillLlm } : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
-    if (!judgeResult.pass) {
-      if (judgeResult.reviewNeeded) {
-        return writeQualityRejection(
+  return { content, descriptionSwapped };
+}
+
+/**
+ * The single bounded distill LLM call: gate-checked via `callStructured`
+ * (R26 migration off the raw `chatCompletion` scaffold), passing the
+ * lesson/knowledge JSON schema on the production path and keeping the
+ * injected test fake schema-blind. Returns the raw response (or `null`) and
+ * the fallback reason.
+ */
+async function runDistillLlmCall(args: {
+  config: AkmConfig;
+  options: AkmDistillOptions;
+  distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
+  messages: ChatMessage[];
+  effectiveProposalKind: "lesson" | "knowledge";
+}): Promise<{ raw: string | null; fallbackReason: "disabled" | "timeout" | "error" | undefined }> {
+  const { config, options, distillLlm, messages, effectiveProposalKind } = args;
+  const distillSchema =
+    effectiveProposalKind === "knowledge" ? DISTILL_KNOWLEDGE_JSON_SCHEMA : DISTILL_LESSON_JSON_SCHEMA;
+  let fallbackReason: "disabled" | "timeout" | "error" | undefined;
+  const enabled = resolveProcessEnabled(
+    "distill",
+    options.improveProfile ?? resolveImproveStrategy(undefined, config).config,
+  );
+  const recordFallback = (feature: string, reason: "disabled" | "timeout" | "error") => {
+    fallbackReason = reason;
+    // Log the fallback reason; the caller (raw === null path) handles
+    // emitting the distill_invoked event so we don't double-emit here.
+    warnVerbose(`[akm] LLM fallback for ${feature}: ${reason}`);
+  };
+  if (enabled && !distillLlm) {
+    // No LLM connection configured. At HEAD this threw a ConfigError inside
+    // the gated fn and tryLlmFeature routed it through the "error" fallback;
+    // reproduce that terminal state directly (the gate-disabled case above
+    // still dominates: when disabled, callStructured takes the "disabled"
+    // fallback before any LLM lookup, exactly as before).
+    recordFallback("distill", "error");
+    return { raw: null, fallbackReason };
+  }
+  const raw = await callStructured<string | null>({
+    feature: "distill",
+    akmConfig: config,
+    enabled,
+    // Safe: when the gate is open, distillLlm is defined (guard above); when
+    // it is closed, the transport never runs and config is never read.
+    config: distillLlm as import("../../core/config/config").LlmProfileConfig,
+    messages,
+    request:
+      options.chat === undefined
+        ? // Production path: pass the JSON schema so providers that honour
+          // `response_format: json_schema` enforce shape upstream. Providers
+          // that ignore the option fall through to the prompt-contract
+          // markdown path.
+          { responseSchema: distillSchema }
+        : // Test seam: keep the injected fake as the transport; fakes never
+          // see the schema (they return markdown strings).
+          { chat: options.chat, ...(options.signal ? { signal: options.signal } : {}) },
+    parse: (raw) => raw ?? null,
+    onError: (_cls, err) => {
+      // At HEAD a transport throw escaped to tryLlmFeature's catch, which
+      // fired onFallback("error"); reproduce that observable state.
+      void err;
+      recordFallback("distill", "error");
+      return null;
+    },
+    fallback: null,
+    onFallback: (evt) => recordFallback(evt.feature, evt.reason),
+  });
+  return { raw, fallbackReason };
+}
+
+/**
+ * Build the terminal result for an empty/failed distill LLM response,
+ * distinguishing the config-gate-off branch (event suppressed) from a real
+ * transport/timeout/empty failure (emits `distill_invoked(llm_failed)`).
+ * Extracted verbatim from `akmDistill`.
+ */
+function distillEmptyResponseResult(args: {
+  fallbackReason: "disabled" | "timeout" | "error" | undefined;
+  inputRef: string;
+  durableInputRef: string;
+  /** Chunk-5 flip F5f — item_ref for the distill_invoked event key (dormant today). */
+  itemRef?: string;
+  effectiveLessonRef: string;
+  effectiveProposalKind: "lesson" | "knowledge";
+  exclusionSet: Set<string>;
+  filteredFeedbackCount: number;
+  feedbackFullyFiltered: boolean;
+  eligMeta: { eligibilitySource?: EligibilitySource };
+  eventsCtx?: EventsContext;
+}): AkmDistillResult {
+  const {
+    fallbackReason,
+    inputRef,
+    durableInputRef,
+    itemRef,
+    effectiveLessonRef,
+    effectiveProposalKind,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+    eligMeta,
+    eventsCtx,
+  } = args;
+  // Distinguish "config gate disabled" from "LLM call failed". For the
+  // config-disabled branch, we ALSO suppress the `distill_invoked` event
+  // because no LLM work was actually invoked — emitting the event causes
+  // the planner to accumulate phantom invocations that drown out real
+  // signal.
+  if (fallbackReason === "disabled") {
+    return {
+      schemaVersion: 1,
+      ok: true,
+      outcome: "config_disabled",
+      inputRef,
+      lessonRef: effectiveLessonRef,
+      proposalRef: effectiveLessonRef,
+      proposalKind: effectiveProposalKind,
+      message: "distill is disabled in config; enable processes.distill.enabled to activate.",
+      ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+    };
+  }
+  // LLM was actually invoked but produced nothing usable (transport error,
+  // timeout, or empty/whitespace response). Emit the event so the failure
+  // is observable.
+  appendEvent(
+    {
+      eventType: "distill_invoked",
+      // Chunk-5 flip F5f — item_ref when resolved, else durable (dormant today).
+      ref: itemRef ?? durableInputRef,
+      metadata: {
+        outcome: "llm_failed" as const,
+        lessonRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        ...eligMeta,
+      },
+    },
+    eventsCtx,
+  );
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "llm_failed",
+    inputRef,
+    lessonRef: effectiveLessonRef,
+    proposalRef: effectiveLessonRef,
+    proposalKind: effectiveProposalKind,
+    message: "LLM call returned no usable output (timeout, empty, or error).",
+    ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+  };
+}
+
+/**
+ * The P2-B LLM-as-judge quality gate (fail-CLOSED; D-5/#388 three-band). Returns
+ * a terminal rejection result when the judge rejects (or routes to review), or
+ * the normalized [0,1] confidence to carry onto the proposal. Extracted verbatim
+ * from `akmDistill`.
+ */
+async function applyDistillQualityGate(args: {
+  config: AkmConfig;
+  options: AkmDistillOptions;
+  content: string;
+  assetContent: string | null;
+  chat: typeof chatCompletion;
+  distillLlm: import("../../core/config/config").LlmConnectionConfig | undefined;
+  fetchSimilarLessonsFn: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  stash: string;
+  inputRef: string;
+  effectiveLessonRef: string;
+  exclusionSet: Set<string>;
+  filteredFeedbackCount: number;
+  feedbackFullyFiltered: boolean;
+}): Promise<{ rejection: AkmDistillResult } | { confidence: number | undefined }> {
+  const {
+    config,
+    options,
+    content,
+    assetContent,
+    chat,
+    distillLlm,
+    fetchSimilarLessonsFn,
+    stash,
+    inputRef,
+    effectiveLessonRef,
+    exclusionSet,
+    filteredFeedbackCount,
+    feedbackFullyFiltered,
+  } = args;
+  if (!(options.improveProfile?.processes?.distill?.qualityGate?.enabled ?? true)) {
+    return { confidence: undefined };
+  }
+  // D-4 / #390: retrieve top-3 similar lessons for dedup check in judge.
+  const similarLessons = await fetchSimilarLessonsFn(content.slice(0, 500), 3);
+  const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat, {
+    ...(similarLessons.length > 0 ? { similarLessons } : {}),
+    ...(distillLlm ? { llmConfig: distillLlm } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (!judgeResult.pass) {
+    if (judgeResult.reviewNeeded) {
+      return {
+        rejection: writeQualityRejection(
           stash,
           inputRef,
           effectiveLessonRef,
@@ -1159,9 +1524,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
             ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
           },
           options.eligibilitySource,
-        );
-      }
-      return writeQualityRejection(
+          options.eventsCtx,
+        ),
+      };
+    }
+    return {
+      rejection: writeQualityRejection(
         stash,
         inputRef,
         effectiveLessonRef,
@@ -1170,148 +1538,135 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         judgeResult.reason,
         exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
         options.eligibilitySource,
-      );
-    }
-    // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict
-    // reaches here (07 P0-2: the judge now fails CLOSED on no-LLM / timeout /
-    // parse failure, so those return pass:false and never fall through to
-    // this line). A defensive score>0 guard keeps confidence undefined for any
-    // non-positive score the auto-accept gate should treat as unscored.
-    if (judgeResult.score > 0) lessonJudgeConfidence = judgeResult.score / 5;
-  }
-
-  // WS-3b: Distill→source fidelity check (step 10).
-  // When fidelityCheck.enabled, check the distill proposal against its cited
-  // source memories. A contradiction flag routes to human review (not auto-accept).
-  // DEFAULT OFF. Fail-open: any error is treated as no-contradiction.
-  const fidelityConfig =
-    (getImproveProcessConfig(config, "distill", options.improveProfile)?.fidelityCheck as
-      | { enabled?: boolean }
-      | undefined) ?? {};
-  if (fidelityConfig.enabled && assetContent) {
-    try {
-      const proposalBody = stripBodyForFidelity(content);
-      const sourceBodies = [stripBodyForFidelity(assetContent)];
-      const fidelityResult = checkDistillFidelity(proposalBody, sourceBodies, fidelityConfig);
-      if (fidelityResult.contradictionDetected) {
-        // Route to human review by writing a quality rejection with reviewNeeded=true.
-        return writeQualityRejection(
-          stash,
-          inputRef,
-          effectiveLessonRef,
-          content,
-          2.0, // below auto-accept threshold, signals review needed
-          fidelityResult.reason ?? "Proposal may contradict cited source memories.",
-          {
-            reviewNeeded: true,
-            fidelityContradiction: true,
-            ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-          },
-          options.eligibilitySource,
-        );
-      }
-    } catch {
-      // Fail open — fidelity check is supplemental.
-    }
-  }
-
-  // Round-trip the parsed frontmatter so the proposal carries it as a
-  // structured payload alongside the raw content (matches the shape used by
-  // other proposal sources).
-  //
-  // Serialize canonical provenance into the content that promotion writes.
-  const parsed = parseFrontmatter(content);
-  const existingXrefs = Array.isArray(parsed.data.xrefs) ? parsed.data.xrefs.map(String) : [];
-  const frontmatterWithXrefs: Record<string, unknown> = {
-    ...parsed.data,
-    xrefs: [...new Set([...existingXrefs, durableInputRef])],
-  };
-  delete frontmatterWithXrefs.sources;
-  content = assembleAsset(frontmatterWithXrefs, parsed.content);
-  const proposalResult2 = createProposal(
-    stash,
-    {
-      ref: effectiveLessonRef,
-      source: "distill",
-      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-      payload: {
-        content,
-        frontmatter: frontmatterWithXrefs,
-      },
-      ...(lessonJudgeConfidence !== undefined ? { confidence: lessonJudgeConfidence } : {}),
-      // Attribution tagging: persist the eligibility lane on the proposal.
-      ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-    },
-    options.ctx,
-  );
-
-  if (isProposalSkipped(proposalResult2)) {
-    appendEvent({
-      eventType: "distill_invoked",
-      ref: durableInputRef,
-      metadata: {
-        outcome: "skipped" as const,
-        lessonRef: effectiveLessonRef,
-        message: proposalResult2.message,
-        skipReason: proposalResult2.reason,
-        ...eligMeta,
-      },
-    });
-    return {
-      schemaVersion: 1,
-      ok: true,
-      outcome: "skipped",
-      inputRef,
-      lessonRef: effectiveLessonRef,
-      message: proposalResult2.message,
+        options.eventsCtx,
+      ),
     };
   }
-
-  const proposal2: Proposal = proposalResult2;
-  // G4: content-score the distilled OUTPUT so it carries a real encoding
-  // salience (encoding_source='content') from creation — lessons never get
-  // another chance (they are refused as distill inputs).
-  persistOutputEncodingSalience(
-    durableImproveRef(effectiveLessonRef, options.sourceName),
-    content,
-    existingRefVocabulary,
-    outcomeWeightEnabled,
-  );
-  appendEvent({
-    eventType: "distill_invoked",
-    ref: durableInputRef,
-    metadata: {
-      outcome: "queued" as const,
-      lessonRef: effectiveLessonRef,
-      proposalRef: effectiveLessonRef,
-      proposalKind: effectiveProposalKind,
-      proposalId: proposal2.id,
-      // R3: judge verdicts are longitudinally queryable, not just a one-shot
-      // proposal.confidence write (normalized 1–5 score / 5).
-      ...(lessonJudgeConfidence !== undefined ? { judgeConfidence: lessonJudgeConfidence } : {}),
-      ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
-      ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
-      ...eligMeta,
-    },
-  });
-
-  return {
-    schemaVersion: 1,
-    ok: true,
-    outcome: "queued",
-    inputRef,
-    lessonRef: effectiveLessonRef,
-    proposalRef: effectiveLessonRef,
-    proposalKind: effectiveProposalKind,
-    proposalId: proposal2.id,
-    proposal: proposal2,
-    ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-    ...(descriptionSwapped > 0 ? { descriptionSwapped } : {}),
-  };
+  // Normalize 1-5 judge score to [0, 1]. Only a real passing verdict
+  // reaches here (07 P0-2: the judge now fails CLOSED on no-LLM / timeout /
+  // parse failure, so those return pass:false and never fall through to
+  // this line). A defensive score>0 guard keeps confidence undefined for any
+  // non-positive score the auto-accept gate should treat as unscored.
+  return { confidence: judgeResult.score > 0 ? judgeResult.score / 5 : undefined };
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * Read the target ref's `feedback` events and apply the #267 exclusion filter.
+ * Returns the filtered events plus the exclusion tallies the outcome branches
+ * carry. Extracted verbatim from `akmDistill`.
+ */
+function readDistillFeedback(args: {
+  readEventsImpl: typeof readEvents;
+  options: AkmDistillOptions;
+  durableInputRef: string;
+  inputRef: string;
+}): {
+  filteredEvents: ReturnType<typeof readEvents>["events"];
+  exclusionSet: Set<string>;
+  filteredFeedbackCount: number;
+  feedbackFullyFiltered: boolean;
+} {
+  const { readEventsImpl, options, durableInputRef, inputRef } = args;
+  const { events: unfilteredEvents } = readEventsImpl({
+    ...(!options.legacyBareState ? { ref: durableInputRef } : {}),
+    type: "feedback",
+    excludeTags: options.excludeTags,
+    includeTags: options.includeTags,
+  });
+  const events = options.legacyBareState
+    ? unfilteredEvents.filter((event) => event.ref === durableInputRef || event.ref === bareImproveRef(inputRef))
+    : unfilteredEvents;
+
+  // #267 — feedback exclusion. Filter events whose `ref` matches the
+  // exclusion list BEFORE the prompt is built. The original event stream
+  // is never mutated; only the `feedback` slice that reaches the LLM is
+  // affected. The exclusion set is normalised through the durable/bare ref
+  // helpers so callers can pass canonical or origin-prefixed refs and the
+  // comparison still works against the event payload's `ref`.
+  const exclusionList = options.excludeFeedbackFromRefs ?? [];
+  const exclusionSet = new Set(exclusionList.map((ref) => ref.trim()).filter((ref) => ref.length > 0));
+  const originalEventCount = events.length;
+  const filteredEvents =
+    exclusionSet.size > 0 ? events.filter((e) => !(e.ref !== undefined && exclusionSet.has(e.ref))) : events;
+  const filteredFeedbackCount = originalEventCount - filteredEvents.length;
+  const feedbackFullyFiltered = exclusionSet.size > 0 && originalEventCount > 0 && filteredEvents.length === 0;
+  return { filteredEvents, exclusionSet, filteredFeedbackCount, feedbackFullyFiltered };
+}
+
+/**
+ * Build the distill chat messages: inject the last 1–3 rejected proposals
+ * (Reflexion verbal-RL), the optional WS-3b CLS adjacent-context, and the stash
+ * authoring standards, then assemble the system+user prompt. Extracted verbatim
+ * from `akmDistill`.
+ */
+async function buildDistillMessages(args: {
+  options: AkmDistillOptions;
+  stash: string;
+  inputRef: string;
+  assetContent: string | null;
+  feedback: Parameters<typeof buildDistillPrompt>[0]["feedback"];
+  effectiveProposalKind: "lesson" | "knowledge";
+  effectiveLessonRef: string;
+  fetchSimilarLessonsFn: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+}): Promise<ChatMessage[]> {
+  const {
+    options,
+    stash,
+    inputRef,
+    assetContent,
+    feedback,
+    effectiveProposalKind,
+    effectiveLessonRef,
+    fetchSimilarLessonsFn,
+  } = args;
+  // Inject last 1–3 rejected proposals for this ref as Reflexion-style
+  // verbal-RL context so the LLM avoids regenerating refused proposals.
+  const rejectedForRef = listProposals(stash, { ref: inputRef, status: "rejected", includeArchive: true })
+    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
+    .slice(0, MAX_REJECTED_PROPOSALS)
+    .map((p) => ({
+      reason: p.review?.reason ?? "no reason given",
+      contentPreview: proposalContent(p).slice(0, 500),
+    }));
+
+  // WS-3b CLS interleaving (step 9).
+  // When cls.enabled, inject embedding-retrieved adjacent lessons/knowledge
+  // into the distill prompt so the LLM avoids overwriting prior generalizations
+  // (catastrophic interference). DEFAULT OFF.
+  const clsConfig =
+    (getImproveProcessConfig("distill", options.improveProfile)?.cls as
+      | { enabled?: boolean; adjacentCount?: number }
+      | undefined) ?? {};
+  let clsContext = "";
+  if (clsConfig.enabled) {
+    try {
+      const adjacentCount = clsConfig.adjacentCount ?? 3;
+      // Use the asset content or input ref as the query for adjacent retrieval.
+      const clsQuery = assetContent ? assetContent.slice(0, 500) : inputRef;
+      const adjacentItems = await fetchSimilarLessonsFn(clsQuery, adjacentCount);
+      clsContext = buildClsContext(adjacentItems, clsConfig);
+    } catch {
+      // Fail open — CLS is supplemental, never required.
+    }
+  }
+
+  // Distill output is a lesson/knowledge (non-wiki) → stash authoring
+  // standards. Resolved once for this single call.
+  const standardsContext = resolveStandardsContext(effectiveLessonRef, stash);
+  const baseUserPrompt = buildDistillPrompt({
+    inputRef,
+    assetContent,
+    feedback,
+    proposalKind: effectiveProposalKind,
+    ...(rejectedForRef.length > 0 ? { rejectedProposals: rejectedForRef } : {}),
+    ...(standardsContext.trim() ? { standardsContext } : {}),
+  });
+  const userPrompt = clsContext ? `${baseUserPrompt}${clsContext}` : baseUserPrompt;
+  return [
+    { role: "system", content: effectiveProposalKind === "knowledge" ? KNOWLEDGE_SYSTEM_PROMPT : LESSON_SYSTEM_PROMPT },
+    { role: "user", content: userPrompt },
+  ];
+}
 
 async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
   return resolveAssetPath(ref, {

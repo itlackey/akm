@@ -2,9 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { ConsolidateResult } from "../commands/improve/consolidate";
-import type { AkmDistillResult } from "../commands/improve/distill";
-import type { AkmExtractResult } from "../commands/improve/extract";
+import type { ConsolidateOperation } from "../commands/improve/consolidate/types";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefStateTransition,
@@ -13,61 +11,22 @@ import type {
   MemoryPruneCandidate,
   RelativeDateCandidate,
 } from "../commands/improve/memory/memory-improve";
-import type { AkmReflectResult } from "../commands/improve/reflect";
+import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { DeadUrl } from "../commands/url-checker";
 import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
+import type { AgentFailureReason } from "../integrations/agent/spawn";
 import { assertNever } from "./assert";
 
-/**
- * Which eligibility lane selected an asset for an improve run (attribution
- * tagging). Recorded on `reflect_invoked` / `distill_invoked` / `promoted`
- * state.db events and persisted on the proposal record so downstream
- * accept / reject / revert / retrieval outcomes can be sliced by lane — i.e.
- * "does the PROACTIVE lane produce value vs the reactive lanes?".
- *
- *   - `"signal-delta"`   — asset had fresh feedback since its last proposal
- *                          (the reactive feedback-signal lane).
- *   - `"high-retrieval"` — P0-A fallback: zero-feedback but frequently
- *                          retrieved (the reactive retrieval-spike lane).
- *   - `"proactive"`      — Layer-2 proactiveMaintenance scheduled selector.
- *   - `"scope"`              — explicit `--scope <ref>` bypass (user intent wins).
- *   - `"forgetting-safety"` — WS-1 protective consolidation: asset fell from
- *                             top-200 to below position 500 in the stash-wide
- *                             salience ranking (scenario B rank-change report).
- *                             Force-included for one consolidation pass regardless
- *                             of cooldown / signal-delta status so it is not
- *                             silently dropped from the candidate pool.
- *   - `"replay"`             — #610 bounded replay budget: a top-salience ref
- *                              revisited even with zero reactive signal and
- *                              regardless of cooldown. The WEAKEST lane — it never
- *                              relabels a ref another lane already chose, and its
- *                              selection is strictly ADDITIVE on top of `--limit`
- *                              (never steals fresh work). Converged refs
- *                              (consecutive_no_ops >= dampener threshold) are skipped.
- *   - `"unknown"`            — origin lane could not be determined. NOT a silent
- *                              alias for `signal-delta`; only used when the lane
- *                              genuinely cannot be attributed.
- *
- * Precedence when a ref qualifies via multiple lanes (prefer the most specific
- * reactive signal): `scope` > `signal-delta` > `high-retrieval` > `proactive` >
- * `high-salience` > `forgetting-safety` > `replay`. Replay is weakest so it never
- * relabels a ref another lane already chose.
- * A ref with real feedback is attributed to feedback even if it was also due
- * for proactive maintenance.
- */
-export type EligibilitySource =
-  | "signal-delta"
-  | "high-retrieval"
-  | "high-salience"
-  | "proactive"
-  | "scope"
-  | "forgetting-safety"
-  | "replay"
-  | "exploration"
-  | "recombine"
-  | "procedural"
-  | "unknown";
+// EligibilitySource moved to commands/proposal/proposal-types.ts (WI-9.8 KILL
+// 1): it is a zero-dependency string union that commands/proposal/repository.ts's
+// `Proposal.eligibilitySource` field also needs, and repository.ts importing
+// it FROM this file (which itself imports UP from commands/improve/* above —
+// the §10.7 layering inversion KILL 2 fixes) dragged the whole
+// repository↔validators knot back into the still-cyclic improve-types SCC.
+// Re-exported here so every existing `from "core/improve-types"` import site
+// (ImproveEligibleRef below + the improve/* consumers) is unchanged.
+export type { EligibilitySource } from "../commands/proposal/proposal-types";
 
 export interface ImproveEligibleRef {
   ref: string;
@@ -79,6 +38,16 @@ export interface ImproveEligibleRef {
    * bypass `collectEligibleRefs`; consumers fall back to the async lookup.
    */
   filePath?: string;
+  /**
+   * Chunk-5 flip F5d (Step 4): the durable fully-qualified `<bundle>//<concept-id>`
+   * stored spelling (`entries.item_ref`), DERIVED FROM THE RESOLVED INDEX ENTRY at
+   * planning time (D-R3 — "derived from a resolved entry, never from raw input").
+   * The durable-state writers (salience/outcome) key by this when present and fall
+   * back to the pre-flip `type:name` grammar for NULL-`item_ref` (pre-flip /
+   * write-back) rows. Unset when the planner could not resolve provenance for the
+   * ref (e.g. an unindexed scope-ref target).
+   */
+  itemRef?: string;
   /**
    * The eligibility lane that selected this ref for the current run. Stamped at
    * partition time in `runImprovePreparationStage` and threaded through to the
@@ -158,6 +127,306 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
       return assertNever(mode);
   }
 }
+
+// ── Verb result types (moved DOWN from commands/improve/*, WI-9.8 KILL 2) ───
+//
+// ConsolidateResult / AkmDistillResult / AkmExtractResult / AkmReflectResult
+// used to live in their respective verb modules (consolidate.ts / distill.ts
+// / extract.ts / reflect.ts), which this file imported UP from — the §10.7
+// layering inversion: core/ is supposed to sit BELOW commands/, but this file
+// depended on the very command modules that depend on it, and each verb
+// module's own (heavy) transitive imports could route back here, gluing the
+// whole improve command family into one import-cycle SCC. Moving the result
+// shapes down here (verbatim) fixes the direction; each verb module now
+// imports its own result type FROM here and re-exports it so existing import
+// sites (`from "./consolidate"`, `from "./distill"`, etc.) are unchanged.
+
+/** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
+export type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
+
+export interface ConsolidateResult {
+  schemaVersion: 1;
+  ok: boolean;
+  shape: "consolidate-result";
+  dryRun: boolean;
+  previewOnly: boolean;
+  target: string;
+  processed: number;
+  merged: number;
+  deleted: number;
+  promoted: string[];
+  /** Number of contradiction edges written (C-3 / #382). */
+  contradicted: number;
+  /**
+   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
+   * (provenance shrank or specificity retention below the configured floor).
+   * The merges still proceeded in v1; the count feeds the collapse detector's
+   * cycle metrics and the health advisory.
+   */
+  mergeFloorViolations?: number;
+  /**
+   * Number of LLM chunks that failed (HTTP error, empty/invalid plan, etc.)
+   * during this run. Counterpart to {@link processed}, which counts INPUT
+   * memories — `failedChunks` is the visibility signal for silent LLM
+   * failures so they surface in `akm health` instead of being absorbed into
+   * a misleadingly healthy `processed` count.
+   *
+   * Backstory: 2026-05-26 incident — 21/21 runs reported `processed: 118` /
+   * `merged: 0` / `deleted: 0` while every chunk was actually being rejected
+   * with `n_keep > n_ctx`. The "OK + warnings" envelope hid the fact that
+   * the pass was a no-op. See
+   * `/tmp/akm-health-investigations/consolidation-no-op.md`.
+   */
+  failedChunks?: number;
+  /** Total chunks attempted this run; lets callers compute a failure rate. */
+  totalChunks?: number;
+  /**
+   * Memories the LLM saw inside a chunk but proposed no op for. Per chunk:
+   * `chunk.length − unique(ops.targetRefs)`. Pre-2026-05-26 this was a pure
+   * silent drop — 66% of consolidate memories had no warning, event, or
+   * counter. Without it, no consolidate prompt tuning is possible.
+   * See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
+   */
+  judgedNoAction?: number;
+  /**
+   * Structured per-op skip reasons emitted at every deterministic post-LLM
+   * rejection site. Replaces the regex-on-`warnings[]` smell with a typed
+   * histogram input. Codes intentionally use snake_case; see
+   * `ConsolidateSkipReason` in health.ts for the vocabulary.
+   */
+  skipReasons?: Array<{
+    ref: string;
+    skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
+  }>;
+  /**
+   * Secondary memories absorbed into successful merge operations. 2026-05-26
+   * accounting-leak fix: `merged` is an OP-LEVEL counter (1 per merge op), but
+   * each successful merge actions `1 + secondaries.length` memories. Without
+   * `mergedSecondaries`, those secondaries are excluded from `judgedNoAction`
+   * (their refs land in the chunk's `targetRefs`) and never accounted for
+   * elsewhere, producing the small "processed − actioned − noAction − skips
+   * = N missing" gap observed in the 2026-05-27 02:07 run (11 unaccounted)
+   * and prior runs. Required for the invariant
+   * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
+   *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
+   */
+  mergedSecondaries?: number;
+  /**
+   * Memories belonging to chunks whose LLM call failed (HTTP error / empty
+   * response / invalid plan / consolidation-aborted by failure-rate threshold).
+   * 2026-05-26 accounting-leak fix: these memories never reach the per-chunk
+   * `judgedNoAction` computation (it lives after the success-path continue
+   * guards) and never enter `skipReasons` either, so they were a pure silent
+   * drop on every `failedChunks > 0` run. Required for the accounting
+   * invariant.
+   */
+  failedChunkMemories?: number;
+  planned?: ConsolidateOperation[];
+  warnings: string[];
+  durationMs: number;
+  /**
+   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
+   * these are health VIEWS of the pipeline, not truth sources. Omitted on the
+   * early-exit paths (no memories, all judged-unchanged) to keep the envelope
+   * tidy.
+   */
+  perfTelemetry?: ConsolidatePerfTelemetry;
+}
+
+/**
+ * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
+ * All fields are optional so existing callers that spread ConsolidateResult
+ * can adopt the shape incrementally.
+ */
+export interface ConsolidatePerfTelemetry {
+  /**
+   * Pool size BEFORE incremental/limit narrowing.
+   * Measures the raw candidate set loaded from disk this run.
+   */
+  dedupPoolSize?: number;
+  /**
+   * Pool size AFTER incremental and limit filtering — the memories actually
+   * sent to the LLM for a fresh judgment.
+   */
+  llmPoolSize?: number;
+  /**
+   * Wall-clock milliseconds spent in the embedding stage (cluster
+   * reordering). Extracted from timing around embedBatch calls so the LLM
+   * wall-clock accounts only for LLM calls.
+   */
+  embedMs?: number;
+  /**
+   * Number of body-embedding cache hits (content_hash found in body_embeddings).
+   * Healthy incremental run: >95% hits once the cache is warm.
+   */
+  embedCacheHits?: number;
+  /**
+   * Number of body-embedding cache misses (content_hash not found; embedBatch
+   * was called). High misses signal a cold cache or high corpus churn.
+   */
+  embedCacheMisses?: number;
+  /**
+   * Fraction of the run budget consumed by consolidation alone:
+   * `consolidation.durationMs / budgetMs`. Values >1.0 mean this consolidation
+   * pass alone exceeded the caller's declared budget — a SIGTERM risk signal.
+   */
+  estimatedBudgetFractionUsed?: number;
+}
+
+/**
+ * Outcome reported on every `distill` invocation. Mirrors the metadata stored
+ * on the corresponding `distill_invoked` event so observers can read either
+ * the command result or the events stream and see the same picture.
+ *
+ *   - `queued`           — LLM returned valid lesson content; proposal created.
+ *   - `skipped`          — Feature gate disabled OR LLM call failed/timed out.
+ *                          No proposal. Exit 0.
+ *   - `validation_failed`— LLM returned content but it failed lesson lint.
+ *                          No proposal. Exit non-zero (UsageError).
+ */
+/**
+ * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
+ * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
+ * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
+ * The review-needed band converts uncertain cases into explicit human review
+ * requests rather than opaque auto-decisions.
+ */
+export type DistillOutcome =
+  | "queued"
+  | "skipped"
+  | "config_disabled"
+  | "llm_failed"
+  | "validation_failed"
+  | "quality_rejected"
+  | "review_needed";
+
+export interface AkmDistillResult {
+  schemaVersion: 1;
+  ok: boolean;
+  outcome: DistillOutcome;
+  /** Original input ref (verbatim). */
+  inputRef: string;
+  /**
+   * Historical field name kept for compatibility. Carries the queued proposal
+   * ref, which may now be a `knowledge:` ref when memory promotion fires.
+   */
+  lessonRef: string;
+  /** Explicit queued proposal ref. Mirrors `lessonRef`. */
+  proposalRef?: string;
+  /** Type of proposal the invocation targeted or queued. */
+  proposalKind?: "lesson" | "knowledge";
+  /** Proposal id when `outcome === "queued"`. */
+  proposalId?: string;
+  /** Human-readable hint surfaced when the call was skipped. */
+  message?: string;
+  /** Validation findings when `outcome === "validation_failed"`. */
+  findings?: { kind: string; field: string; message: string }[];
+  /** The full proposal object when `outcome === "queued"`. */
+  proposal?: Proposal;
+  /**
+   * Diagnostic — number of feedback events filtered out by
+   * `excludeFeedbackFromRefs` (#267). Always present when the option was
+   * supplied, even when the count is 0. Callers (e.g. `bench evolve`) use
+   * this to surface filter-applied notes in their `warnings[]`.
+   */
+  filteredFeedbackCount?: number;
+  /**
+   * True when `excludeFeedbackFromRefs` reduced the feedback set to empty
+   * AND there were originally events for the target ref. Lets callers
+   * distinguish "no feedback was ever recorded" from "we suppressed all
+   * recorded feedback" — the LLM-input contract is identical (no feedback
+   * shown) but the operator-visible meaning differs.
+   */
+  feedbackFullyFiltered?: boolean;
+  /**
+   * Judge score (1–5 float) when `outcome === "quality_rejected"`.
+   * Present as -1 when the judge could not run (no LLM / timeout / parse
+   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
+   * not minted.
+   */
+  score?: number;
+  /**
+   * One-sentence reason from the LLM judge when `outcome === "quality_rejected"`.
+   */
+  reason?: string;
+  /**
+   * Count of description ↔ when_to_use auto-swaps performed during this
+   * distill run (0 or 1 today; reserved as a counter so callers and health
+   * dashboards can track how often the swap-normalization guard triggers).
+   * Only present when at least one swap was applied.
+   */
+  descriptionSwapped?: number;
+}
+
+export interface ExtractedSessionResult {
+  sessionId: string;
+  harness: string;
+  candidateCount: number;
+  proposalIds: string[];
+  /** When candidates was empty, the LLM's explanation. */
+  rationaleIfEmpty?: string;
+  /** Pre-filter stats for the session. */
+  preFilter: { inputCount: number; outputCount: number; truncatedCount: number };
+  warnings: string[];
+  skipped?: boolean;
+  skipReason?:
+    | "read_failed"
+    | "llm_unavailable"
+    | "exception"
+    | "already_extracted"
+    | "too_short"
+    | "triaged_out"
+    | "locked_concurrent";
+  /** #561 — canonical ref of the session asset written for this session, when indexing is enabled and a summary was produced. */
+  sessionAssetRef?: string;
+  /** #561 — log_path recorded in the session asset frontmatter (durable correlation key). */
+  sessionLogPath?: string;
+  /**
+   * #602 — sha256 (hex) of the normalized session content computed at process
+   * time. Undefined only when the session failed to read (read_failed) before a
+   * hash could be computed; the caller persists `contentHash ?? null` so such
+   * rows stay eligible for retry.
+   */
+  contentHash?: string;
+}
+
+export interface AkmExtractResult {
+  schemaVersion: 1;
+  ok: boolean;
+  shape: "extract-result";
+  dryRun: boolean;
+  type: string;
+  sessionsProcessed: number;
+  sessionsSkipped: number;
+  candidatesCreated: number;
+  proposals: string[];
+  sessions: ExtractedSessionResult[];
+  warnings: string[];
+  durationMs: number;
+}
+
+export interface AkmReflectFailure {
+  schemaVersion: 2;
+  ok: false;
+  reason: AgentFailureReason;
+  error: string;
+  ref?: string;
+  engine?: string;
+  exitCode: number | null;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface AkmReflectSuccess {
+  schemaVersion: 2;
+  ok: true;
+  proposal: Proposal;
+  ref: string;
+  engine: string;
+  durationMs: number;
+}
+
+export type AkmReflectResult = AkmReflectSuccess | AkmReflectFailure;
 
 export interface ImproveActionResult {
   ref: string;
@@ -250,55 +519,6 @@ export interface ImproveMemoryCleanupResult {
   warnings?: string[];
 }
 
-/**
- * #609 — outcome of the recombine / synthesize pass. Emitted on
- * {@link AkmImproveResult.recombination} when the (opt-in) pass runs.
- */
-export interface RecombineResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of relatedness clusters that reached the LLM induction step. */
-  clustersFormed: number;
-  /** Number of `type: hypothesis` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /**
-   * #625 — number of generalizations promoted to a `type: lesson` proposal this
-   * run because their confirmation count reached `confirmThreshold`. Promotion
-   * goes through the SAME proposal queue + quality gate (never a direct stash
-   * write); a promoted run emits a lesson proposal INSTEAD of the hypothesis one.
-   */
-  lessonsPromoted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
-/**
- * #615 — outcome of the procedural-compilation pass. Emitted on
- * {@link AkmImproveResult.proceduralCompilation} when the (opt-in) pass runs.
- */
-export interface ProceduralCompilationResult {
-  schemaVersion: 1;
-  /** False when the run aborted early (e.g. budget signal already fired). */
-  ok: boolean;
-  /** Number of indexed entries scanned for an `orderedActions` sequence. */
-  sequencesScanned: number;
-  /** Number of recurring-sequence clusters that reached the LLM compilation step. */
-  clustersFormed: number;
-  /** Number of `type: workflow` proposals queued through the normal queue. */
-  proposalsEmitted: number;
-  /** Number of clusters whose LLM returned a justified null (no proposal). */
-  nullsReturned: number;
-  /** Wall-clock duration of the pass in milliseconds. */
-  durationMs: number;
-  /** Non-fatal warnings accumulated during the pass. */
-  warnings: string[];
-}
-
 export interface AkmImproveResult {
   schemaVersion: 2;
   ok: boolean;
@@ -320,14 +540,6 @@ export interface AkmImproveResult {
     derived: number;
   };
   memoryCleanup?: ImproveMemoryCleanupResult;
-  /**
-   * #616 — number of prep->loop->post-loop cycles executed this run (>=1).
-   * Omitted-or-1 for the default single-pass run; >1 when multi-cycle phasing
-   * ran additional cycles. The loop stops at maxCycles OR at the first
-   * fixed-point cycle (zero gate-accepted proposals) OR when remainingBudgetMs
-   * is exhausted.
-   */
-  cyclesRun?: number;
   plannedRefs: ImproveEligibleRef[];
   /**
    * Refs the planner considered but excluded because every per-ref pass on
@@ -365,7 +577,7 @@ export interface AkmImproveResult {
   consolidation?: ConsolidateResult;
   /**
    * Session-extract pass results (one entry per available harness). Present
-   * when the selected strategy's `processes.extract.enabled` is true (default)
+   * when the selected strategy's `processes.extract.enabled` is explicitly true
    * and at least one harness reports `isAvailable() === true`.
    */
   extract?: AkmExtractResult[];
@@ -412,17 +624,14 @@ export interface AkmImproveResult {
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals auto-promoted by the unified gate across all phases
-   * (reflect, extract, distill, consolidate). Populated by summing the
-   * `.promoted.length` from every `runAutoAcceptGate` call in the run.
-   * Omitted when zero to keep the envelope tidy.
+   * Total proposals auto-promoted by the (deleted, 0.9.0) improve confidence
+   * gate across all phases. Always 0/omitted for new runs; kept on the
+   * envelope allow-list because historical improve_runs rows carry counts.
    */
   gateAutoAcceptedCount?: number;
   /**
-   * Total proposals that hit the auto-accept gate but failed validation
-   * (e.g. truncated description, invalid frontmatter). These are logged as
-   * warnings and skipped — they remain in the proposal queue for manual review.
-   * Omitted when zero.
+   * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
+   * validation. Always 0/omitted for new runs; kept for historical rows.
    */
   gateAutoAcceptFailedCount?: number;
   /**
@@ -442,21 +651,9 @@ export interface AkmImproveResult {
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number };
   /**
-   * #609 — recombine / synthesize pass outcome. Present only when the opt-in
-   * `recombine` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  recombination?: RecombineResult;
-  /**
-   * #615 — procedural-compilation pass outcome. Present only when the opt-in
-   * `procedural` process is enabled and the run was whole-stash / type scope;
-   * omitted entirely otherwise to keep the envelope tidy.
-   */
-  proceduralCompilation?: ProceduralCompilationResult;
-  /**
    * R5 — the collapse/churn detector's cycle snapshot (mirrors one
    * improve_cycle_metrics row), present when this run qualified (consolidate
-   * processed work or recombine formed clusters) and the detector is enabled.
+   * processed work) and the detector is enabled.
    */
   cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**

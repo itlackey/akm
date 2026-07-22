@@ -1,0 +1,28 @@
+{
+  "scenario": "agent-skills adapter placeNew(component, conceptId) → on-disk relative path for a skill. Mirrors placement/all-types.json's byType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (placeNew), §6 (skill row: item = the dir), §4.5 (name == parent dir name).",
+  "realWorldSource": [
+    "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — a skill is a directory containing SKILL.md; the folder name is the skill name"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no agent-skills adapter exists yet. A skill places to <name>/SKILL.md; the conceptId IS the package directory name, and the §4.5 hard rule (name == parent dir name) makes placement a stable round-trip against recognition.",
+    "There is exactly one emitted type (skill), so byType has a single entry — this is the narrowest adapter in the set."
+  ],
+  "byType": {
+    "skill": {
+      "conceptId": "invoice-parsing",
+      "assetPath": "invoice-parsing/SKILL.md",
+      "name": "invoice-parsing"
+    }
+  },
+  "edgeCases": {
+    "nestedResourcePlacementIsInsideThePackage": {
+      "conceptId": "invoice-parsing",
+      "resourceRelPath": "invoice-parsing/reference/SCHEMA.md",
+      "note": "Bundled resources place UNDER the skill package directory; they are not separately placed concepts."
+    }
+  }
+}

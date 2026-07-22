@@ -10,13 +10,14 @@
  * the engine behind `akm proposal drain` and (later) the `triage` improve
  * pre-pass.
  *
- * Design (see docs/archive/proposal-triage-implementation-plan.md):
+ * Design:
  *   - Reuses `listProposals` (no source filter — generator filtering is
  *     in-memory) and the `akmProposalAccept` / `akmProposalReject` wrappers from
  *     `proposal.ts` so the standard `promoted` / `rejected` events are emitted.
- *     It deliberately does NOT use `runAutoAcceptGate`, which is confidence-gated.
+ *     Deterministic by design — never confidence-gated (the improve confidence
+ *     gate that once ran alongside this engine died in 0.9.0).
  *   - Backlog-only: `excludeIds` removes this-run's fresh proposals so triage
- *     never re-adjudicates the per-run auto-accept gate's decisions (decision #2).
+ *     never re-adjudicates a current run's output (decision #2).
  *   - Hard guardrails enforced in code: a `maxAccepts` ceiling checked *before*
  *     the promote loop (remainder → `skippedByCap`); `maxDiffLines` defers large
  *     accepts; `applyMode: "queue"` (the safe default) never promotes (stage
@@ -32,15 +33,15 @@
  *     never silently looks like full success.
  *
  * The promote / reject functions and the runner dispatch are injectable
- * (mirrors `improve-auto-accept.ts` and reflect's dual test seams) so tests can
- * run the full engine without touching the filesystem or spawning a process.
+ * (mirrors reflect's dual test seams) so tests can run the full engine without
+ * touching the filesystem or spawning a process.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../../core/asset/asset-spec";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import type { EventsContext } from "../../core/events";
 import { appendEvent } from "../../core/events";
@@ -50,7 +51,13 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import { executeRunner, type RunnerSeams } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, chatCompletion, stripJsonFences } from "../../llm/client";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { listProposals, type Proposal, type ProposalGateDecision, recordGateDecision } from "./repository";
+import {
+  listProposals,
+  type Proposal,
+  type ProposalGateDecision,
+  proposalContent,
+  recordGateDecision,
+} from "./repository";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,7 +160,7 @@ export interface DrainResult {
   staged: string[];
 }
 
-// Injectable test seams (mirrors improve-auto-accept.ts's promoteFn override).
+// Injectable test seams (promoteFn/rejectFn overrides, mirroring reflect's).
 export type PromoteFn = typeof akmProposalAccept;
 export type RejectFn = (
   options: Parameters<typeof akmProposalReject>[0],
@@ -201,7 +208,7 @@ export function contentLineCount(content: string): number {
 
 /** An empty / near-empty diff has no meaningful body content. */
 export function isEmptyDiff(proposal: Proposal): boolean {
-  const content = proposal.payload.content ?? "";
+  const content = proposalContent(proposal);
   if (content.trim().length === 0) return true;
   return contentBodyLineCount(content) === 0;
 }
@@ -219,7 +226,7 @@ export function classifyProposal(
   | { verdict: "reject"; reason: string; gate: DrainGateContext }
   | { verdict: "defer"; reason: DrainDeferReason; gate: DrainGateContext }
   | null {
-  const content = proposal.payload.content ?? "";
+  const content = proposalContent(proposal);
 
   // Empty / near-empty diffs reject first (the reject-empty floor).
   if (policy.rejectEmpty && isEmptyDiff(proposal)) {
@@ -229,7 +236,7 @@ export function classifyProposal(
   const rule = policy.accept.find((r) => {
     if (r.generator !== proposal.source) return false;
     if (r.requireType !== undefined) {
-      const fm = parseFrontmatter(proposal.payload.content ?? "").data;
+      const fm = parseFrontmatter(proposalContent(proposal)).data;
       if (typeof fm.type !== "string" || fm.type !== r.requireType) return false;
     }
     return true;
@@ -280,11 +287,11 @@ function deferReasonForSource(source: string): DrainDeferReason {
 /** Read the live on-disk content of a proposal's target asset, if it exists. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const parsed = parseAssetRef(ref);
-    const typeDir = TYPE_DIRS[parsed.type];
+    const parsed = parseRefInput(ref);
+    const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return undefined;
     const typeRoot = path.join(stashDir, typeDir);
-    const assetPath = resolveAssetPathFromName(parsed.type, typeRoot, parsed.name);
+    const assetPath = assetPathForName(parsed.type, typeRoot, parsed.name);
     if (!fs.existsSync(assetPath)) return undefined;
     return fs.readFileSync(assetPath, "utf8");
   } catch {
@@ -313,7 +320,7 @@ export function buildJudgmentPrompt(
   reason: DrainDeferReason,
   ctx: { liveAsset: string | undefined; siblings: Proposal[] },
 ): string {
-  const proposed = proposal.payload.content ?? "";
+  const proposed = proposalContent(proposal);
   const sections: string[] = [
     "You are adjudicating a pending knowledge-base proposal that the deterministic",
     "triage pass could not resolve. Decide whether to accept, reject, or defer it.",
@@ -337,7 +344,7 @@ export function buildJudgmentPrompt(
   if (ctx.siblings.length > 0) {
     sections.push("", "## Other pending proposals for the same ref (dedup context)");
     for (const sib of ctx.siblings) {
-      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", sib.payload.content ?? "", "```");
+      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", proposalContent(sib), "```");
     }
   }
 

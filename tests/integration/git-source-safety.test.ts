@@ -15,8 +15,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../src/core/asset/asset-ref";
 import { commitWriteTargetBoundary, writeAssetToSource } from "../../src/core/write-source";
+import { parseAssetRef } from "../../src/migrate/legacy-ref-grammar";
 import { saveGitStash } from "../../src/sources/providers/git";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 

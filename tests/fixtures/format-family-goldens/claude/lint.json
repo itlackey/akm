@@ -1,0 +1,43 @@
+{
+  "scenario": "claude adapter validate(component, changes, ctx) → Diagnostic[] for every recognized file in tests/fixtures/bundles/claude/. Mirrors lint/all-types.json's perType shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §6 (per-type validation column: command/agent `missing-name-or-type`; skill `missing-skill-md` + Agent Skills contract §4.5), §2/§5.1 (validate returns Diagnostic[] {file, issue, detail, fixed}). Per-adapter strictness: 'claude allows Claude Code's documented extension fields' (spec §6 skill row).",
+  "realWorldSource": [
+    "https://code.claude.com/docs/en/claude-directory — command/agent frontmatter (argument-hint, allowed-tools, tools, model) are Claude Code extension fields the claude adapter tolerates",
+    "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — SKILL.md required fields name + description"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no claude adapter exists yet. Diagnostic shape is src/core/adapter/types.ts Diagnostic ({file, issue, detail, fixed}); the only skill check implemented in code today is `missing-skill-md` (src/commands/lint/skill-linter.ts + src/core/adapter/adapters/akm-lint.ts skillDirectoryDiagnostics). The Agent Skills field checks (name charset/length, description length, compatibility ≤500) are SPEC-DEFINED (§4.5), not yet coded — exercised in the agent-skills lint golden, not here.",
+    "Every fixture file is CONFORMANT, so every entry is []. This pins the KEY per-adapter distinction (spec §6 skill row): the `claude` adapter is LENIENT on unknown/extension frontmatter (argument-hint, allowed-tools, tools, model all pass), whereas `agent-skills` ERRORS on unknown frontmatter (skills-ref behavior). The pdf-processing skill has a valid SKILL.md, so `missing-skill-md` does not fire.",
+    "issue-code proposal: `missing-name-or-type` (command/agent) and `missing-skill-md` (skill) are the spec-named codes; the Agent Skills field codes are proposed in the agent-skills lint golden and are OPEN for the adapter author to finalize."
+  ],
+  "perType": {
+    "instruction": {
+      "relPath": "CLAUDE.md",
+      "type": "instruction",
+      "issues": [],
+      "note": "instruction → base validation only (spec §6 instruction row)."
+    },
+    "command": {
+      "relPath": "commands/deploy.md",
+      "type": "command",
+      "issues": [],
+      "note": "conformant: has a body $ARGUMENTS probe hit; argument-hint/allowed-tools are Claude Code extension fields → tolerated (lenient adapter). `missing-name-or-type` would fire only if neither a name nor a command-shaped signal were present."
+    },
+    "agent": {
+      "relPath": "agents/reviewer.md",
+      "type": "agent",
+      "issues": [],
+      "note": "conformant: name + description present; tools/model are extension fields → tolerated."
+    },
+    "skill": {
+      "relPath": "skills/pdf-processing/SKILL.md",
+      "type": "skill",
+      "issues": [],
+      "lintDirectoryIssues": [],
+      "note": "SKILL.md present → no `missing-skill-md`. name 'pdf-processing' (charset OK, == dir name) and description (< 1024) satisfy the Agent Skills hard rules. allowed-tools is tolerated by the lenient claude adapter (would be an `allowed-tools portability` SOFT warning under agent-skills strictness, not an error)."
+    }
+  }
+}

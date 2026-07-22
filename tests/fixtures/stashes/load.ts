@@ -6,7 +6,7 @@
  * fixture into a fresh tmp dir, sets `AKM_STASH_DIR`, runs `akm index`, and
  * returns the materialised path plus a cleanup function.
  *
- * See docs/technical/benchmark.md §5.5 for the contract.
+ * See the 2026-05 benchmark methodology §5.5 for the contract.
  */
 
 import { createHash } from "node:crypto";

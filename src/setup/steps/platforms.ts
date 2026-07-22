@@ -13,8 +13,10 @@ import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProf
 import { detectAgentPlatforms } from "../detect";
 import { type AgentEngineSelection, readAgentEngineSelection } from "../engine-config";
 import { prompt } from "../prompt";
+import type { SetupDraftConfig } from "../steps";
 
-export async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry[]> {
+// The just-computed source list is threaded in as the draft's scratch `sources`.
+export async function stepAgentPlatforms(current: SetupDraftConfig): Promise<SourceConfigEntry[]> {
   const platforms = detectAgentPlatforms();
 
   if (platforms.length === 0) {

@@ -70,6 +70,7 @@ import {
 import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
+import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
 import type { SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
 
@@ -293,7 +294,7 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
   const timeoutMs = frozenInvocation.timeoutMs;
 
   const units: StepWorkUnit[] = items.map((item, index) => {
-    const unitId = unitIds[index];
+    const unitId = unitIds[index]!;
     // Gate loops (>= 2) journal under `<unitId>~l<loop>` so loop 1's rows are
     // never clobbered; the content-derived identity (and the prompt's
     // {{UNIT_ID}}) stays the base id.
@@ -576,7 +577,7 @@ export function buildEvidence(
   if (reducer === "vote") {
     evidence.output = null;
   } else {
-    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]);
+    evidence.output = isFanOut ? units.map(unitOutputValue) : unitOutputValue(units[0]!);
   }
 
   if (reducer === "vote") {
@@ -592,11 +593,11 @@ export function buildEvidence(
     const ranked = [...counts.values()].sort((a, b) => b.count - a.count);
     if (ranked.length === 0) {
       evidence.voteError = "Vote reducer had no successful unit results to count.";
-    } else if (ranked.length > 1 && ranked[0].count === ranked[1].count) {
-      evidence.voteError = `Vote reducer tied at ${ranked[0].count} vote(s) — no majority.`;
+    } else if (ranked.length > 1 && ranked[0]!.count === ranked[1]!.count) {
+      evidence.voteError = `Vote reducer tied at ${ranked[0]!.count} vote(s) — no majority.`;
     } else {
-      evidence.vote = { winner: ranked[0].value, votes: ranked[0].count, total: units.length };
-      evidence.output = ranked[0].value;
+      evidence.vote = { winner: ranked[0]!.value, votes: ranked[0]!.count, total: units.length };
+      evidence.output = ranked[0]!.value;
     }
   }
 
@@ -858,15 +859,8 @@ function sortKeys(value: unknown): unknown {
 // engine's (redesign addendum R3, task item 2). `native-executor.test.ts`
 // asserts the round-trip identity.
 
-/**
- * `phase` marker stamped on gate-evaluation unit rows. Step ids cannot contain
- * dots (`PROGRAM_STEP_ID_PATTERN`), so a step can never be NAMED `x.gate` and
- * the synthetic `<stepId>.gate` node id is collision-free against user step
- * ids. The phase column is nonetheless the discriminator we key on — an
- * explicit marker, not a `node_id` suffix match, so recovery stays robust even
- * if the id scheme evolves. Dispatch rows always journal `phase: null`.
- */
-export const GATE_EVALUATION_PHASE = "gate";
+// GATE_EVALUATION_PHASE moved to ../runtime/unit-phases.ts (leaf) so
+// unit-checkin can key on it without closing the exec ↔ runtime cycle.
 
 /** The unit id of a step's gate-evaluation row for a given 1-based loop. */
 export function gateUnitId(stepId: string, loop: number): string {

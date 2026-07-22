@@ -23,7 +23,7 @@ import {
   summarizeImproveRuns,
 } from "./improve-metrics";
 import { readLlmUsageAggregate } from "./llm-usage";
-import { computeDegradationMetrics, computeDenominatorFixedCoverage, readCalibration } from "./metrics";
+import { computeDegradationMetrics, computeDenominatorFixedCoverage } from "./metrics";
 import { buildPerRunSummaries } from "./task-runs";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -228,7 +228,6 @@ export function buildWindowMetrics(
   const perRunSummaries = buildPerRunSummaries(db, since, until);
   const wallTimes = perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
   improveSummary.wallTime = computeWallTimeStats(wallTimes, improveSummary.wallTime.byPhase);
-  improveSummary.calibration = readCalibration(db, since, until);
 
   // WS-5: Compute denominator-fixed coverage from the most recent run's
   // memorySummary (totalAssets = eligible + derived — the fixed denominator).

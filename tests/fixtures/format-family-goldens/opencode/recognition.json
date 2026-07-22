@@ -1,0 +1,82 @@
+{
+  "scenario": "opencode adapter recognize(component, file) for every file in tests/fixtures/bundles/opencode/ — a .opencode tool dir. Derives the open `type` from directory + frontmatter (spec §6/§7), emits IndexDocument, ABSTAINS on runtime config. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future opencode adapter must reproduce (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (opencode adapter row: 'AGENTS.md=instruction; config.json not indexed; OpenCode has first-class skills (.opencode/skills/<name>/SKILL.md) and reads .claude/skills/ — plural commands/agents/ dirs'), §6 (type-derivation conventions, shared with claude).",
+  "realWorldSource": [
+    "https://opencode.ai/docs/commands/ — custom commands in .opencode/commands/*.md; frontmatter description/agent/model; $ARGUMENTS / $1 substitution",
+    "https://opencode.ai/docs/agents/ — custom agents in .opencode/agents/*.md; frontmatter description/mode/model/temperature/tools",
+    "https://opencode.ai/docs/skills/ — OpenCode loads .opencode/skills/*/SKILL.md AND .claude/skills/*/SKILL.md; first-skill-with-a-name wins",
+    "https://opencode.ai/docs/rules/ — AGENTS.md is the project instruction file; if both AGENTS.md and CLAUDE.md exist only AGENTS.md is used"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no opencode adapter exists in src/. Same byRelPath shape and shape-adaptation rationale as the claude recognition golden (recognize() projection, or {recognized:false, reason} for abstentions).",
+    "DIRECTORY PLURALITY — RESOLVED (open question 6, maintainer resolution 2026-07): BOTH forms are accepted. PLURAL commands/agents/skills/ is CANONICAL (spec §7 + OpenCode's canonical layout); SINGULAR command/agent/skill/ is ACCEPTED as a backwards-compat alias. The adapter recognizes files under either spelling as the same type; conceptId reflects the actual on-disk path (e.g. command/legacy under the singular dir). The bundle now includes a singular-dir fixture (command/legacy.md) to exercise the alias directly, alongside the canonical plural dirs.",
+    "type derivation (spec §6/§7): commands/*.md (or singular command/*.md alias) → command; agents/*.md (or agent/*.md) → agent; skills/<name>/SKILL.md (or skill/<name>/SKILL.md) → skill (first-class OpenCode skill; item = the dir); AGENTS.md → instruction.",
+    "RESOLVED (open question 1, maintainer resolution 2026-07): `instruction` is now a first-class KNOWN_TYPE (src/core/recognition-util.ts) with its OWN TYPE_PRESENTATION entry (label 'Instruction', renderer 'knowledge-md' reused — AGENTS.md is markdown read exactly like knowledge; see renderer.json). Recognition already derives type='instruction' for AGENTS.md; the resolution is that this type now renders type-specifically instead of via the generic {label:'Asset'} fallback.",
+    "OpenCode also READS .claude/skills/*/SKILL.md (spec §7). That cross-read is a component-selection/config concern (the same shared SKILL.md codec recognizes those files); it is documented here and in the README but not duplicated as a fixture file to keep the bundle minimal.",
+    "opencode.json (also opencode.jsonc / config.json) is runtime config — NEVER indexed (spec §7)."
+  ],
+  "byRelPath": {
+    "AGENTS.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "instruction",
+      "conceptId": "AGENTS",
+      "ref": "sample-opencode//AGENTS",
+      "name": "AGENTS",
+      "derivation": "root AGENTS.md → instruction (spec §7: 'AGENTS.md=instruction'; §6 instruction row)"
+    },
+    "commands/test.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "command",
+      "conceptId": "commands/test",
+      "ref": "sample-opencode//commands/test",
+      "name": "test",
+      "description": "Run the test suite for the given package and summarize failures.",
+      "derivation": ".md under commands/ + $ARGUMENTS body probe / `agent` frontmatter probe (spec §6 command row)"
+    },
+    "command/legacy.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "command",
+      "conceptId": "command/legacy",
+      "ref": "sample-opencode//command/legacy",
+      "name": "legacy",
+      "description": "Legacy migration command living under the SINGULAR command/ dir — exercises the backwards-compat directory alias.",
+      "derivation": "SINGULAR command/ dir → command via the backwards-compat alias (open question 6 RESOLVED: BOTH plural commands/ and singular command/ are accepted). Same command derivation as commands/test.md (spec §6 command row: .md + $ARGUMENTS body probe / `agent` frontmatter); the only difference is the singular dir name, which the conceptId preserves (command/legacy)."
+    },
+    "agents/explorer.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "agent",
+      "conceptId": "agents/explorer",
+      "ref": "sample-opencode//agents/explorer",
+      "name": "explorer",
+      "description": "Read-only repository explorer. Use to locate code across many files.",
+      "derivation": ".md under agents/ + tools/model frontmatter probe (spec §6 agent row)"
+    },
+    "skills/changelog/SKILL.md": {
+      "recognized": true,
+      "adapterId": "opencode",
+      "component": ".opencode",
+      "type": "skill",
+      "conceptId": "skills/changelog",
+      "ref": "sample-opencode//skills/changelog",
+      "name": "changelog",
+      "description": "Draft and update CHANGELOG entries from a set of merged commits. Use when preparing a release or when the user asks for release notes.",
+      "item": "directory",
+      "derivation": "SKILL.md → skill; item = the parent directory (conceptId = skills/changelog). Shared SKILL.md codec with claude + agent-skills (spec §8)."
+    },
+    "opencode.json": {
+      "recognized": false,
+      "reason": "Runtime config (model/providers/instructions) — NEVER indexed (spec §7: 'config.json not indexed'). Applies equally to opencode.jsonc."
+    }
+  }
+}

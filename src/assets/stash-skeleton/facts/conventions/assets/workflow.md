@@ -45,5 +45,5 @@ Use a workflow when the task requires multiple steps, branching decisions, repea
 ## Placement & linking
 
 - Workflows are usually **global**: keep them at the type root or under a
-  tool/domain slug (`workflow:release-train`). Scoping a workflow to one project
+  tool/domain slug (`workflows/release-train`). Scoping a workflow to one project
   rarely improves retrieval and adds rename risk.

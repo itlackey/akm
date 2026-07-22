@@ -1,0 +1,62 @@
+{
+  "scenario": "dotenv adapter recognize(component, file) for every file in tests/fixtures/bundles/dotenv/. env/*.env → type=env (KEY NAMES only indexed, values never); secrets/* → type=secret (FILENAME only). SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future dotenv adapter must reproduce (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (dotenv adapter row: 'env / metadata-only'), §6 (env row: '.env/*.env under env/ — key NAMES only, values never indexed'; secret row: 'any file under secrets/ minus .lock/.sensitive — filename only'), §1.3 (conceptId: env strips ext, secret keeps natural path).",
+  "realWorldSource": [
+    "dotenv convention (KEY=VALUE per line, # comments) — https://www.dotenv.org/docs/security/env ; grounded in akm's existing env/secret handling (src/output/renderers.ts env-file/secret-file; src/indexer/walk/matchers.ts env/secrets dir gates) and the frozen all-types env/secret fixtures"
+  ],
+  "notes": [
+    "SPECIFICATION golden — no dedicated dotenv adapter module exists (env/secret recognition currently lives in the akm matcher stack). REDACTION IS A HARD CONTRACT (spec §6/§7, normative §21.2): env indexes KEY NAMES ONLY (values never read into the index); secret indexes the FILE NAME ONLY (the whole file is the value). Suppression is keyed on the ADAPTER/component, never on the open `type` (bundle-adapter-spec §2; normative §21.2).",
+    "conceptId: env strips the .env extension (env/app.env → env/app); SECRET keeps its natural path including any extension (secrets/deploy-key → secrets/deploy-key; secrets/ci.env → secrets/ci.env). This mirrors the akm-adapter conceptId derivation (env strips ext, secret keeps natural path).",
+    "A .env file UNDER secrets/ (ci.env) is type=SECRET (dir gate wins), so it is redacted to name-only — MORE redacted than an env/ file, even though it has KEY=VALUE content. This is a deliberate, load-bearing distinction (see renderer.json).",
+    "indexedSurface records what is searchable: env → the key names; secret → the file name only. Values/comments are NEVER part of any indexed field."
+  ],
+  "byRelPath": {
+    "env/app.env": {
+      "recognized": true,
+      "adapterId": "dotenv",
+      "component": "main",
+      "type": "env",
+      "conceptId": "env/app",
+      "ref": "sample-dotenv//env/app",
+      "name": "app",
+      "indexedSurface": { "keys": ["FIXTURE_GREETING", "LOG_LEVEL"], "valuesIndexed": false },
+      "derivation": "*.env under env/ → env (spec §6 env row). Only the key NAMES are indexed."
+    },
+    "env/dangerous.env": {
+      "recognized": true,
+      "adapterId": "dotenv",
+      "component": "main",
+      "type": "env",
+      "conceptId": "env/dangerous",
+      "ref": "sample-dotenv//env/dangerous",
+      "name": "dangerous",
+      "indexedSurface": { "keys": ["PATH", "NODE_OPTIONS", "APP_TOKEN"], "valuesIndexed": false },
+      "derivation": "*.env under env/ → env. Key names indexed; the dangerous-key scan (see lint.json) flags PATH + NODE_OPTIONS. Values never indexed even for dangerous keys."
+    },
+    "secrets/deploy-key": {
+      "recognized": true,
+      "adapterId": "dotenv",
+      "component": "main",
+      "type": "secret",
+      "conceptId": "secrets/deploy-key",
+      "ref": "sample-dotenv//secrets/deploy-key",
+      "name": "deploy-key",
+      "indexedSurface": { "keys": null, "valuesIndexed": false },
+      "derivation": "any file under secrets/ (not .lock/.sensitive) → secret (spec §6 secret row). FILE NAME only; the whole file is the value and is never read into the index."
+    },
+    "secrets/ci.env": {
+      "recognized": true,
+      "adapterId": "dotenv",
+      "component": "main",
+      "type": "secret",
+      "conceptId": "secrets/ci.env",
+      "ref": "sample-dotenv//secrets/ci.env",
+      "name": "ci.env",
+      "indexedSurface": { "keys": null, "valuesIndexed": false },
+      "derivation": "under secrets/ → secret (dir gate wins over the .env suffix). Name-only redaction — NOT key names, even though the file has KEY=VALUE lines. conceptId keeps the natural path (secrets/ci.env)."
+    }
+  }
+}

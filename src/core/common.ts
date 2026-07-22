@@ -5,49 +5,14 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getAssetTypes, TYPE_DIRS } from "./asset/asset-spec";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir } from "./paths";
 
-// ── Types ───────────────────────────────────────────────────────────────────
-
-/**
- * The canonical catalog of built-in asset types.
- *
- * SINGLE SOURCE OF TRUTH: derived from the {@link ASSET_SPECS} registry in
- * `asset-spec.ts` rather than hand-maintained here. Before #490/WS7 this was a
- * hand-written literal array that had DRIFTED from the registry (it omitted
- * `task`, which the registry has always carried). Deriving from the registry
- * kills that drift — see `tests/asset-type-union-source.test.ts` for the
- * intentional-`task`-delta guard.
- *
- * Note: `AkmAssetType` stays a static literal union of the BUILT-IN types
- * (those present at module-eval time). Dynamically `registerAssetType`-d types
- * are accepted at runtime via {@link isAssetType} but are not part of the
- * static union — identical to the pre-WS7 contract.
- */
-export const ASSET_TYPES = Object.freeze([...getAssetTypes()] as [
-  "skill",
-  "command",
-  "agent",
-  "knowledge",
-  "workflow",
-  "script",
-  "memory",
-  "env",
-  "secret",
-  "wiki",
-  "lesson",
-  "task",
-  "session",
-  "fact",
-]);
-export type AkmAssetType = (typeof ASSET_TYPES)[number];
-export const ASSET_TYPE_SET: ReadonlySet<AkmAssetType> = new Set(ASSET_TYPES);
-
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const IS_WINDOWS = process.platform === "win32";
+// Moved to the platform leaf so paths.ts can use it without a common↔paths
+// cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
+export { IS_WINDOWS } from "./platform";
 export const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
 export const MAX_LOCAL_METADATA_BYTES = 1024 * 1024;
 export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
@@ -70,21 +35,6 @@ export function isRemoteUrl(value: string | undefined): boolean {
     value.startsWith("ssh://") ||
     value.startsWith("git://")
   );
-}
-
-// ── Validators ──────────────────────────────────────────────────────────────
-
-/**
- * Returns true if `type` is a known asset type — either a built-in from
- * {@link ASSET_TYPES} or one dynamically registered via `registerAssetType`.
- *
- * The type guard narrows to `AkmAssetType` for all built-in types. Dynamic
- * types (e.g. registered by plugins) are also accepted at runtime, but the
- * type system treats them as `AkmAssetType` via assertion since they are not
- * part of the static union.
- */
-export function isAssetType(type: string): type is AkmAssetType {
-  return Object.hasOwn(TYPE_DIRS, type);
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
@@ -204,8 +154,7 @@ export function resolveStashDir(_options?: { readOnly?: boolean }, env: NodeJS.P
   }
 
   throw new ConfigError(
-    `No stash directory found. Run "akm init" to create one at ${defaultDir}, ` +
-      `or set stashDir in ${getConfigPath()}.`,
+    `No stash directory found. Run "akm init" to create one at ${defaultDir}.`,
     "STASH_DIR_NOT_FOUND",
   );
 }
@@ -233,19 +182,54 @@ function isValidDirectory(dir: string): boolean {
 }
 
 /**
- * Read stashDir directly from config.json without pulling in the full config
- * module, to avoid circular dependencies.
+ * Read the primary stash path directly from config.json without pulling in the
+ * full config module, to avoid circular dependencies.
+ *
+ * Reads ONLY the 0.9.0 `bundles`/`defaultBundle` shape. A config still carrying
+ * the retired `stashDir`/`sources`/`installed` keys (with no usable bundles
+ * path) is an unmigrated config: this refuses it with the same `akm migrate
+ * apply` hint the schema hard-reject uses (config-schema.ts), rather than
+ * silently honouring the retired key — so every `resolveStashDir` caller gets
+ * the coherent migrate posture instead of split-brain success.
  */
 function readStashDirFromConfig(): string | undefined {
   try {
     const configPath = getConfigPath();
     const text = readTextFileWithLimit(configPath, MAX_CONFIG_FILE_BYTES, "Config file");
     const raw = JSON.parse(text);
-    if (typeof raw === "object" && raw !== null && typeof raw.stashDir === "string" && raw.stashDir.trim()) {
-      return raw.stashDir.trim();
+    if (typeof raw !== "object" || raw === null) return undefined;
+    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
+    // `defaultBundle`'s filesystem `path`. Read it directly (no config module
+    // import) so the primary-stash location survives the stashDir → bundles
+    // migration without a runtime rewire.
+    const bundles = raw.bundles;
+    const defaultBundle = raw.defaultBundle;
+    if (
+      bundles &&
+      typeof bundles === "object" &&
+      typeof defaultBundle === "string" &&
+      bundles[defaultBundle] &&
+      typeof bundles[defaultBundle] === "object" &&
+      typeof bundles[defaultBundle].path === "string" &&
+      bundles[defaultBundle].path.trim()
+    ) {
+      return bundles[defaultBundle].path.trim();
     }
-  } catch {
-    // Config doesn't exist or is invalid — fall through
+    // Retired pre-cutover shape with no usable bundles path: refuse with the
+    // migrate hint (matches the schema's hard-reject, config-schema.ts) instead
+    // of silently resolving the old key.
+    for (const key of ["stashDir", "sources", "installed"]) {
+      if (key in raw && raw[key] !== undefined) {
+        throw new ConfigError(
+          `${key} is the retired pre-cutover source shape; run \`akm migrate apply\` to convert it to bundles`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+    }
+  } catch (err) {
+    // A retired-shape refusal must reach the caller; genuine missing/invalid
+    // config (read or JSON-parse failure) falls through to the platform default.
+    if (err instanceof ConfigError) throw err;
   }
   return undefined;
 }
@@ -309,6 +293,25 @@ function normalizeFsPathForComparison(value: string): string {
 /**
  * Fetch with an AbortController timeout.
  * Defaults to 30 seconds if no timeout is specified.
+ *
+ * SCOPE — connection + response-header phase only. `timeoutMs` bounds the time
+ * until `fetch` RESOLVES (i.e. until the status line + headers arrive); the
+ * timer is cleared once the `Response` is returned. It does NOT bound the time
+ * spent streaming the response BODY: a server can dribble body bytes forever
+ * under any per-byte limit. Callers that read the body MUST bound it
+ * themselves — pass `{ bodyTimeoutMs, signal }` to {@link readBodyWithByteCap}
+ * (in-memory reads) or use a capped streaming writer for downloads. That is the
+ * sanctioned "body-deadline mechanism"; a bounded header timeout here plus a
+ * bounded body read there gives a bounded TOTAL window.
+ *
+ * External `signal`: a caller-supplied `AbortSignal` aborts the in-flight
+ * request with the caller's own `reason`. The bridged listener is removed in
+ * `finally`, so once this function returns the caller's signal no longer
+ * governs the returned `Response`'s body stream — pass the SAME `signal` to the
+ * body-read helper so cancellation continues to apply to the body phase with
+ * the caller's reason. (A timeout and an external abort can never overwrite
+ * each other: whichever fires first aborts the controller, and a second
+ * `controller.abort()` is a no-op that preserves the first reason.)
  */
 export async function fetchWithTimeout(
   url: string,
@@ -421,6 +424,90 @@ export class ResponseTooLargeError extends Error {
 }
 
 /**
+ * Thrown by {@link readBodyWithByteCap} / {@link readChunkWithDeadline} (and the
+ * capped disk writer) when streaming a response body exceeds the caller's
+ * overall body-read deadline. Distinct from a connection/header timeout
+ * (`fetchWithTimeout`) — this is the body-phase bound.
+ */
+export class BodyReadTimeoutError extends Error {
+  readonly url: string;
+  readonly timeoutMs: number;
+  constructor(url: string, timeoutMs: number) {
+    super(`Response body read exceeded ${timeoutMs}ms: ${url}`);
+    this.name = "BodyReadTimeoutError";
+    this.url = url;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Body-phase limits paired with {@link fetchWithTimeout} (which bounds only the
+ * connection/header phase). Callers reading an untrusted body pass these so a
+ * server dribbling bytes forever, or a caller cancellation, is bounded.
+ */
+export interface BodyReadLimits {
+  /** Overall wall-clock budget (ms) for streaming the whole body. */
+  bodyTimeoutMs?: number;
+  /** Caller signal; aborting it rejects the in-progress read with its reason. */
+  signal?: AbortSignal;
+}
+
+function bodyAbortError(signal: AbortSignal | undefined, url: string): Error {
+  const reason = signal?.reason;
+  return reason instanceof Error ? reason : new Error(`Response body read aborted: ${url}`);
+}
+
+/**
+ * Read one chunk from `reader`, rejecting if the overall body deadline passes
+ * or `signal` aborts first. `deadlineAt` is an absolute epoch-ms instant (null
+ * = no deadline). Only races the pending `read()` so a stalled body cannot
+ * block forever; the CALLER cancels the reader on rejection. Throws
+ * {@link BodyReadTimeoutError} on deadline, or the signal's reason (or an
+ * AbortError) on external abort.
+ */
+export async function readChunkWithDeadline<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  deadlineAt: number | null,
+  signal: AbortSignal | undefined,
+  url: string,
+  timeoutMs: number,
+): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>> {
+  type ReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>;
+  if (signal?.aborted) throw bodyAbortError(signal, url);
+  const remaining = deadlineAt === null ? null : deadlineAt - Date.now();
+  if (remaining !== null && remaining <= 0) throw new BodyReadTimeoutError(url, timeoutMs);
+  if (remaining === null && !signal) return reader.read();
+  return new Promise<ReadResult>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(bodyAbortError(signal, url));
+    };
+    if (remaining !== null) {
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new BodyReadTimeoutError(url, timeoutMs));
+      }, remaining);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (err) => {
+        cleanup();
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
  * Read a Response body as a UTF-8 string with a byte-count cap.
  *
  * Streams the body so we abort as soon as the cap is exceeded, without
@@ -428,9 +515,16 @@ export class ResponseTooLargeError extends Error {
  * `Content-Length` larger than the cap, we refuse before reading any
  * bytes. `response.body` is consumed and cancelled on cap breach.
  *
- * `maxBytes` defaults to {@link DEFAULT_RESPONSE_BYTE_CAP} (10 MB).
+ * `maxBytes` defaults to {@link DEFAULT_RESPONSE_BYTE_CAP} (10 MB). `limits`
+ * bounds the body PHASE (duration + caller abort) that `fetchWithTimeout` does
+ * not cover; pass the same `signal` you gave `fetchWithTimeout` so caller
+ * cancellation keeps applying while the body streams.
  */
-export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT_RESPONSE_BYTE_CAP): Promise<string> {
+export async function readBodyWithByteCap(
+  response: Response,
+  maxBytes = DEFAULT_RESPONSE_BYTE_CAP,
+  limits?: BodyReadLimits,
+): Promise<string> {
   const url = response.url || "(unknown URL)";
   const contentLengthHeader = response.headers.get("content-length");
   if (contentLengthHeader) {
@@ -455,18 +549,22 @@ export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  const bodyTimeoutMs = limits?.bodyTimeoutMs;
+  const deadlineAt = bodyTimeoutMs != null ? Date.now() + bodyTimeoutMs : null;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunkWithDeadline(reader, deadlineAt, limits?.signal, url, bodyTimeoutMs ?? 0);
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new ResponseTooLargeError(url, maxBytes, total);
-      }
+      if (total > maxBytes) throw new ResponseTooLargeError(url, maxBytes, total);
       chunks.push(value);
     }
+  } catch (err) {
+    // Cancel the underlying stream on ANY failure (cap breach, body-read
+    // timeout, or caller abort) so the socket is released, not just on cap.
+    await reader.cancel().catch(() => undefined);
+    throw err;
   } finally {
     reader.releaseLock?.();
   }
@@ -490,8 +588,9 @@ export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT
 export async function jsonWithByteCap<T = unknown>(
   response: Response,
   maxBytes = DEFAULT_RESPONSE_BYTE_CAP,
+  limits?: BodyReadLimits,
 ): Promise<T> {
-  const text = await readBodyWithByteCap(response, maxBytes);
+  const text = await readBodyWithByteCap(response, maxBytes, limits);
   return JSON.parse(text) as T;
 }
 

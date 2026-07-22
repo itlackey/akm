@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getAssetTypes } from "../core/asset/asset-spec";
+import { placementTypes } from "../core/asset/asset-placement";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
 type AnyCmd = Record<string, any>;
@@ -15,7 +15,7 @@ type AnyCmd = Record<string, any>;
 const FLAG_VALUES: Record<string, string[] | (() => string[])> = {
   "--format": ["json", "text", "yaml", "jsonl"],
   "--detail": ["brief", "normal", "full", "summary"],
-  "--type": () => [...getAssetTypes(), "any"],
+  "--type": () => [...placementTypes(), "any"],
   "--source": ["stash", "registry", "both"],
   "--shell": ["bash"],
 };

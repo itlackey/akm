@@ -3,11 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { randomUUID } from "node:crypto";
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import type {
   WorkflowRunStatus,
@@ -42,7 +41,12 @@ import {
   requireExecutableWorkflowPlan,
 } from "./plan-classifier";
 import { evaluateStaleUnits, type StaleUnit } from "./unit-checkin";
-import { loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
+import {
+  canonicalWorkflowRunRef,
+  loadWorkflowAsset,
+  parseWorkflowRefInput,
+  resolveWorkflowEntryId,
+} from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
   run: WorkflowRunSummary;
@@ -307,7 +311,7 @@ export async function startWorkflowRun(
     }
 
     // #506: arm a file-signal check-in (a timestamp, NOT a background thread —
-    // see docs/technical/workflow-agent-checkin-adr.md) so a stalled run can be
+    // per the workflow-agent check-in ADR) so a stalled run can be
     // re-targeted with a `continue` directive. The agent harness + session id
     // are already resolved above (agentHarness/agentSessionId, from #501).
 
@@ -403,11 +407,11 @@ export async function listWorkflowRuns(input?: { workflowRef?: string; activeOnl
     const scopeKey = getCurrentWorkflowScopeKey();
     let workflowRef: string | undefined;
     if (input?.workflowRef) {
-      const parsed = parseAssetRef(input.workflowRef);
+      const parsed = parseWorkflowRefInput(input.workflowRef);
       if (parsed.type !== "workflow") {
-        throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${input.workflowRef}".`);
+        throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${input.workflowRef}".`);
       }
-      workflowRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+      workflowRef = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
     }
     const rows = repo.listRuns({
       scopeKey,
@@ -730,15 +734,17 @@ async function resolveRunSpecifier(
     return { run: explicitRun, autoStarted: false };
   }
 
-  if (!specifier.includes(":")) {
+  // Run-id vs workflow-ref disambiguation: a run id is a bare token, while a
+  // canonical `workflows/name` ref carries a `/`.
+  if (!specifier.includes(":") && !specifier.includes("/")) {
     throw new NotFoundError(`Workflow run "${specifier}" not found.`, "WORKFLOW_NOT_FOUND");
   }
 
-  const parsed = parseAssetRef(specifier);
+  const parsed = parseWorkflowRefInput(specifier);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
   }
-  const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalizeWorkflowName(parsed.name)}`;
+  const ref = canonicalWorkflowRunRef(parsed.origin, canonicalizeWorkflowName(parsed.name));
   const scopeKey = getCurrentWorkflowScopeKey();
   const active = repo.getActiveRunRowForScope(ref, scopeKey);
   if (active) {

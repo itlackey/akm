@@ -18,10 +18,8 @@
  *     step (runner/model, `fanOut.over` expression, route table).
  */
 
-import { makeAssetRef } from "../core/asset/asset-ref";
+import { displayRef } from "../core/asset/resolve-ref";
 import { UsageError } from "../core/errors";
-import type { StashEntry } from "../indexer/passes/metadata";
-import { registerMetadataContributor } from "../indexer/passes/metadata-contributors";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type { ShowResponse } from "../sources/types";
 import { parseWorkflow } from "./parser";
@@ -33,7 +31,6 @@ import {
   WORKFLOW_PROGRAM_RENDERER_NAME,
 } from "./program/project";
 import type { WorkflowProgram } from "./program/schema";
-import { cacheWorkflowDocument } from "./runtime/document-cache";
 import type { WorkflowDocument } from "./schema";
 
 export { WORKFLOW_PROGRAM_RENDERER_NAME };
@@ -66,7 +63,12 @@ export const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const doc = loadDocument(ctx);
-    const ref = makeAssetRef("workflow", name, ctx.origin);
+    // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
+    // output — its spelling follows the D-R5 display rule (`displayRef`). A
+    // primary/default-bundle workflow renders the SHORT conceptId
+    // (`workflows/<name>`); a named source qualifies it as
+    // (`<bundle>//workflows/<name>`).
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     return {
       type: "workflow",
       name,
@@ -101,7 +103,10 @@ export const workflowProgramRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const program = loadProgram(ctx);
-    const ref = makeAssetRef("workflow", name, ctx.origin);
+    // WI-8.5b (display flip): the `akm workflow next <ref>` action is DISPLAY
+    // output — its spelling follows the D-R5 display rule (`displayRef`), mirroring
+    // workflowMdRenderer above.
+    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin });
     const parameters = projectProgramParameters(program);
     return {
       type: "workflow",
@@ -125,59 +130,3 @@ export const workflowProgramRenderer: AssetRenderer = {
     };
   },
 };
-
-registerMetadataContributor({
-  name: "workflow-document-metadata",
-  appliesTo: ({ rendererName }) => rendererName === "workflow-md",
-  contribute(entry: StashEntry, { renderContext }: { renderContext: RenderContext }) {
-    const doc = loadDocument(renderContext);
-    const hints = new Set<string>(entry.searchHints ?? []);
-    hints.add(doc.title);
-    for (const step of doc.steps) {
-      hints.add(step.title);
-      hints.add(step.id);
-      hints.add(step.instructions.text);
-      for (const criterion of step.completionCriteria ?? []) {
-        hints.add(criterion.text);
-      }
-    }
-    entry.searchHints = Array.from(hints).filter(Boolean);
-    if (doc.parameters?.length) {
-      entry.parameters = doc.parameters.map((p) => ({
-        name: p.name,
-        ...(p.description ? { description: p.description } : {}),
-      }));
-    }
-    cacheWorkflowDocument(entry, doc);
-  },
-});
-
-registerMetadataContributor({
-  name: "workflow-program-metadata",
-  appliesTo: ({ rendererName }) => rendererName === WORKFLOW_PROGRAM_RENDERER_NAME,
-  contribute(entry: StashEntry, { renderContext }: { renderContext: RenderContext }) {
-    // Parse failures throw, which the metadata pass turns into a
-    // skip-with-warning — broken programs never land in the index, mirroring
-    // markdown workflows. No workflow_documents cache row is written: YAML
-    // programs are re-parsed from disk by the runtime loader.
-    const program = loadProgram(renderContext);
-    const hints = new Set<string>(entry.searchHints ?? []);
-    hints.add(program.name);
-    for (const step of program.steps) {
-      hints.add(step.id);
-      if (step.title) hints.add(step.title);
-      hints.add(programStepInstructions(step));
-      for (const criterion of step.gate?.criteria ?? []) {
-        hints.add(criterion);
-      }
-    }
-    entry.searchHints = Array.from(hints).filter(Boolean);
-    if (!entry.description && program.description) {
-      entry.description = program.description;
-    }
-    const parameters = projectProgramParameters(program);
-    if (parameters?.length) {
-      entry.parameters = parameters;
-    }
-  },
-});

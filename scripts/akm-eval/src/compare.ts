@@ -15,6 +15,7 @@ import {
   loadCaseResults,
   loadEvalRunResult,
   resolveRunDir,
+  assertMatchingSuiteFingerprints,
 } from "./sources/eval-runs";
 import { resolveEvalsRoot, resolveStashDir } from "./sources/paths";
 import type { EvalCaseResult, EvalCaseType, EvalRunResult } from "./types";
@@ -118,6 +119,10 @@ export function buildCompareResult(
 ): CompareResult {
   const baselineEnvelope = loadEvalRunResult(baseline.dir);
   const currentEnvelope = loadEvalRunResult(current.dir);
+  assertMatchingSuiteFingerprints(
+    baselineEnvelope.inputs.suiteFingerprint,
+    currentEnvelope.inputs.suiteFingerprint,
+  );
   const baselineResults = loadCaseResults(baseline.dir);
   const currentResults = loadCaseResults(current.dir);
 
@@ -282,6 +287,10 @@ export function compareResultsInMemory(
   current: { runId: string; dir: string; envelope: EvalRunResult; results: EvalCaseResult[] },
   threshold: number,
 ): CompareResult {
+  assertMatchingSuiteFingerprints(
+    baseline.envelope.inputs.suiteFingerprint,
+    current.envelope.inputs.suiteFingerprint,
+  );
   const baselineScores = aggregateScores(baseline.results);
   const currentScores = aggregateScores(current.results);
   const diff = diffCaseResults(baseline.results, current.results, { threshold });

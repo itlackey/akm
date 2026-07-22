@@ -678,7 +678,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     expect(res.ok).toBe(true);
     expect(calls).toHaveLength(1);
     // The immutable environment given to the child contains the binding...
-    expect(calls[0].injectedValue).toBe("reached-the-child");
+    expect(calls[0]!.injectedValue).toBe("reached-the-child");
     // ...without ever mutating process-wide state.
     expect(process.env[ENV_KEY]).toBeUndefined();
   });
@@ -714,11 +714,11 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
 
     await runOpencodeSdk(baseProfile, "p", { env: { [ENV_KEY]: "v2" }, timeoutMs: null });
     expect(calls).toHaveLength(2); // same key, different VALUE → new server
-    expect(calls[1].injectedValue).toBe("v2");
+    expect(calls[1]!.injectedValue).toBe("v2");
 
     await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
     expect(calls).toHaveLength(3); // no bindings → the default server, started separately
-    expect(calls[2].injectedValue).toBeUndefined();
+    expect(calls[2]!.injectedValue).toBeUndefined();
   });
 
   test("concurrent callers with the same bindings share one server start", async () => {

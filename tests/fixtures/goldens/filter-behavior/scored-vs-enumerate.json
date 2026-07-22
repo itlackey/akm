@@ -1,0 +1,740 @@
+{
+  "capturedAtHead": "cd25a769443f4dbe566a418316b67e843ba1dbb9",
+  "combos": {
+    "beliefCurrent": {
+      "description": "includeProposed=false, belief=current, no scope filter -- PINS BOTH the PARITY case (memory:base-memory.derived, an FTS candidate for 'gridlock' on both paths, is INCLUDED on BOTH paths: its own beliefState is undefined, but inheritDerivedTwinBeliefStates mutates it to base-memory's 'contradicted' on BOTH paths before their respective belief filters, so it is actually EXCLUDED on both -- see the golden for the verified byte-for-byte outcome) and the DIVERGENCE case (memory:silent-twin-base.derived, which shares no FTS token with 'gridlock', is NEVER a scored-path candidate under this or any belief filter, but IS an enumerate-path candidate and inherits silent-twin-base's 'contradicted' state, so it is likewise excluded from 'current' there too -- membership under 'current' happens to agree for a different reason than under 'historical'; see that combo for where the divergence becomes visible in SET MEMBERSHIP).",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "current",
+        "filters": null,
+        "includeProposed": false
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "beliefHistorical": {
+      "description": "includeProposed=false, belief=historical, no scope filter -- PINS THE REAL ASYMMETRY: memory:silent-twin-base.derived is INCLUDED on the enumerate path (unconditional candidate, inherits silent-twin-base's 'contradicted' state, which passes 'historical') but ABSENT from the scored path's result set entirely (never an FTS candidate for 'gridlock' -- not merely filtered out, never even considered). memory:base-memory.derived, by contrast, is EXCLUDED from BOTH paths here (a PARITY case: it IS an FTS candidate on the scored path too, so the same inheritance + filter outcome applies).",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 1,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base.derived",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "historical",
+        "filters": null,
+        "includeProposed": false
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 0.28,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 0.25,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 0.2,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 0.15,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "defaults": {
+      "description": "includeProposed=false, belief=all, no scope filter (production default shape)",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 1,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base.derived",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "all",
+        "filters": null,
+        "includeProposed": false
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 0.28,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 0.25,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 0.2,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 0.15,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "includeProposedTrue": {
+      "description": "includeProposed=true, belief=all, no scope filter",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 1,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "proposed-memory",
+            "quality": "proposed",
+            "ref": "memories/proposed-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base.derived",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base.derived",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "all",
+        "filters": null,
+        "includeProposed": true
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "plain-memory",
+            "quality": "generated",
+            "ref": "memories/plain-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "proposed-memory",
+            "quality": "proposed",
+            "ref": "memories/proposed-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "beliefState": "deprecated",
+            "name": "deprecated-memory",
+            "quality": "generated",
+            "ref": "memories/deprecated-memory",
+            "score": 0.28,
+            "type": "memory"
+          },
+          {
+            "beliefState": "superseded",
+            "name": "superseded-memory",
+            "quality": "generated",
+            "ref": "memories/superseded-memory",
+            "score": 0.25,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 0.2,
+            "type": "knowledge"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory.derived",
+            "quality": "generated",
+            "ref": "memories/base-memory.derived",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "base-memory",
+            "quality": "generated",
+            "ref": "memories/base-memory",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "contradicted",
+            "name": "silent-twin-base",
+            "quality": "generated",
+            "ref": "memories/silent-twin-base",
+            "score": 0.2,
+            "type": "memory"
+          },
+          {
+            "beliefState": "archived",
+            "name": "archived-memory",
+            "quality": "generated",
+            "ref": "memories/archived-memory",
+            "score": 0.15,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "scopeAgentReviewerBot": {
+      "description": "includeProposed=false, belief=all, filters={agent: reviewer-bot} -- scope-only narrowing",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "all",
+        "filters": {
+          "agent": "reviewer-bot"
+        },
+        "includeProposed": false
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "asserted",
+            "name": "asserted-memory",
+            "quality": "generated",
+            "ref": "memories/asserted-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "scopeUserAlice": {
+      "description": "includeProposed=false, belief=all, filters={user: alice} -- scope-only narrowing, no asymmetry",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "all",
+        "filters": {
+          "user": "alice"
+        },
+        "includeProposed": false
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "scopeUserAliceIncludeProposed": {
+      "description": "includeProposed=true, belief=all, filters={user: alice} -- scope narrowing plus the proposed-quality opt-in, identical filter code on both paths (isProposedQuality/entryMatchesScope are the SAME functions called from both searchDatabase and enumerateEntries), so no asymmetry expected here.",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "proposed-memory",
+            "quality": "proposed",
+            "ref": "memories/proposed-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      },
+      "params": {
+        "belief": "all",
+        "filters": {
+          "user": "alice"
+        },
+        "includeProposed": true
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "active",
+            "name": "active-memory",
+            "quality": "curated",
+            "ref": "memories/active-memory",
+            "score": 1,
+            "type": "memory"
+          },
+          {
+            "name": "proposed-memory",
+            "quality": "proposed",
+            "ref": "memories/proposed-memory",
+            "score": 1,
+            "type": "memory"
+          }
+        ]
+      }
+    },
+    "scopeUserBobHistoricalIncludeProposed": {
+      "description": "includeProposed=true, belief=historical, filters={user: bob} -- combined scope+belief narrowing onto a single non-memory (knowledge) entry; inheritDerivedTwinBeliefStates only ever touches type==='memory' entries, so this combo is expected to be IDENTICAL across both paths (a contrast case to the two belief combos above).",
+      "enumerate": {
+        "hits": [
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 1,
+            "type": "knowledge"
+          }
+        ]
+      },
+      "params": {
+        "belief": "historical",
+        "filters": {
+          "user": "bob"
+        },
+        "includeProposed": true
+      },
+      "scored": {
+        "hits": [
+          {
+            "beliefState": "contradicted",
+            "name": "contradicted-knowledge",
+            "quality": "curated",
+            "ref": "knowledge/contradicted-knowledge",
+            "score": 0.2,
+            "type": "knowledge"
+          }
+        ]
+      }
+    }
+  },
+  "notes": [
+    "Both paths driven exclusively through the public akmSearch entry point -- searchDatabase/enumerateEntries are module-private in src/indexer/search/db-search.ts and this suite is capture-only (no src/ changes, no new exports). The scored path is reached by a query with searchable FTS tokens ('gridlock', shared by every fixture asset); the enumerate path by an empty query. Both requests in a combo pass identical includeProposed/belief/filters plus disableProjectContext/disableScopedUtility/skipLogging=true so the only variable between the 'scored' and 'enumerate' halves of an entry is which internal path ran.",
+    "CORRECTED FINDING vs anchors.md Section D.1 (verified empirically, see this file's header comment and the ledger): anchors.md characterizes the asymmetry as 'scored path lacks the inheritDerivedTwinBeliefStates call'. Direct testing shows searchDatabase DOES call it (db-search.ts:459, before ranking), and because its filter chain (:513-530) derives from the SAME mutated array via chained .filter() calls, the scored path's own belief filter sees the inherited state too. memory:base-memory.derived (an FTS candidate for 'gridlock' on both paths, since it shares the 'gridlock' tag with its base) is therefore a PARITY case: identical membership on both paths under every belief mode in this golden (see the 'beliefCurrent'/'beliefHistorical' combos).",
+    "RETAINED two-path asymmetry (the REAL mechanism, replacing anchors.md D.1's framing): the divergence is candidate-POOL membership, not filter code. searchDatabase's candidate pool is built from searchFts/vector matches for the query's own tokens; enumerateEntries's candidate pool is getAllEntries for the type, independent of query text. memory:silent-twin-base.derived shares NO indexed token with 'gridlock' (FTS indexes description/tags/searchHints/aliases, not body prose), so it is NEVER a scored-path candidate for this query under ANY belief filter (visible in every combo's 'scored' half below as a total absence) while it is ALWAYS an enumerate-path candidate and reliably inherits silent-twin-base's 'contradicted' state (present under belief=all/historical, absent under belief=current in the 'enumerate' half). Chunk 5's filter-chain unification (the shared applyEntryFilters helper both paths now call) deliberately LEFT this candidate-pool divergence in place — it is inherent search-vs-browse semantics, not duplicated filter code; the shared helper unifies only the source/scope/quality/belief chain, so this golden is byte-identical across the unification.",
+    "The 'scopeUserBobHistoricalIncludeProposed' combo is a deliberate CONTRAST case: scope+quality filtering (entryMatchesScope/isProposedQuality) is literally the same function call on both paths, and the sole matching entry (knowledge:contradicted-knowledge) is not a memory, so it is never eligible for inheritDerivedTwinBeliefStates -- both paths' hit lists are identical here, isolating the divergence above to the derived-twin candidate-pool-construction difference, not a general scored/enumerate split.",
+    "Each hit is projected to {ref, type, name, score, quality?, beliefState?} -- the fields that distinguish filter outcomes. Scored-path scores vary with FTS5 BM25 + ranking boosts; enumerate-path scores are always the fixed browse score 1 (enumerateEntries never scores, db-search.ts:644).",
+    "BEHAVIOR-PARITY oracle (D0b-1/D0b-3, same designation-reuse rationale as this registry's WI-0b.3/WI-0b.4 entries): Chunk 5's filter-path unification (the shared applyEntryFilters helper) reproduced this golden byte-for-byte — the extraction preserved the predicate set, order, and derived-twin inheritance placement, so not a single hit shifted. The only re-baseline in that reviewed change is this prose (future-tense 'must reproduce' framing rewritten to past tense); the combos data is unchanged."
+  ],
+  "scenario": "searchDatabase (scored path, query='gridlock') vs enumerateEntries (enumerate path, query='') result sets across proposed/belief/scope filter combinations, against tests/fixtures/stashes/search-filter/ (WI-0b.5a)"
+}

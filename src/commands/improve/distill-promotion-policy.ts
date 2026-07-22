@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 
 export interface PromotionFeedbackEvent {
   metadata?: Record<string, unknown>;
@@ -91,7 +91,7 @@ interface PromotionFeatures {
   tentativeLanguage: boolean;
 }
 
-interface PromotionModelConfig {
+export interface PromotionModelConfig {
   name: string;
   positiveWeight: number;
   repeatedPositiveWeight: number;
@@ -155,14 +155,14 @@ function deriveDescription(body: string, description: string | undefined): strin
 }
 
 export function deriveKnowledgeRef(inputRef: string): string {
-  const parsed = parseAssetRef(inputRef);
+  const parsed = parseRefInput(inputRef);
   const leaf = parsed.name.split("/").filter(Boolean).at(-1) ?? parsed.name;
   const safe = leaf
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `knowledge:${safe}`;
+  return `knowledge/${safe}`;
 }
 
 function collectPromotionFeatures(input: PromotionPolicyInput): {
@@ -174,7 +174,7 @@ function collectPromotionFeatures(input: PromotionPolicyInput): {
   observedAt?: string;
   source?: string;
 } {
-  const parsed = parseAssetRef(input.inputRef);
+  const parsed = parseRefInput(input.inputRef);
   const blockedBy: string[] = [];
 
   if (parsed.type !== "memory") {
@@ -441,57 +441,6 @@ export function evaluateMemoryPromotionBenchmark(
   };
 }
 
-const CANDIDATE_MODELS: PromotionModelConfig[] = [
-  {
-    name: "balanced-evidence",
-    positiveWeight: 0.8,
-    repeatedPositiveWeight: 0.65,
-    noPositivePenalty: 0.9,
-    singlePositivePenalty: 0.7,
-    negativeWeight: 2.0,
-    curatedWeight: 0.55,
-    confidenceWeight: 0.7,
-    sourceWeight: 0.4,
-    observedAtWeight: 0.4,
-    descriptionWeight: 0.2,
-    tagWeight: 0.15,
-    substantiveBodyWeight: 0.15,
-    tentativePenalty: 1.1,
-  },
-  {
-    name: "strict-feedback",
-    positiveWeight: 0.75,
-    repeatedPositiveWeight: 0.8,
-    noPositivePenalty: 1.1,
-    singlePositivePenalty: 0.9,
-    negativeWeight: 2.25,
-    curatedWeight: 0.45,
-    confidenceWeight: 0.55,
-    sourceWeight: 0.35,
-    observedAtWeight: 0.35,
-    descriptionWeight: 0.15,
-    tagWeight: 0.1,
-    substantiveBodyWeight: 0.1,
-    tentativePenalty: 1.15,
-  },
-  {
-    name: "metadata-friendly",
-    positiveWeight: 0.7,
-    repeatedPositiveWeight: 0.55,
-    noPositivePenalty: 0.75,
-    singlePositivePenalty: 0.55,
-    negativeWeight: 1.85,
-    curatedWeight: 0.75,
-    confidenceWeight: 0.9,
-    sourceWeight: 0.5,
-    observedAtWeight: 0.5,
-    descriptionWeight: 0.25,
-    tagWeight: 0.2,
-    substantiveBodyWeight: 0.2,
-    tentativePenalty: 1.0,
-  },
-];
-
 function thresholdCandidates(): number[] {
   const values: number[] = [];
   for (let value = 2.4; value <= 4.2; value += 0.2) {
@@ -573,13 +522,16 @@ const METADATA_BASELINE: PromotionEvaluationPolicy = {
   },
 };
 
-export function selectPromotionPolicy(corpus: readonly PromotionBenchmarkCase[]): PromotionPolicySelectionResult {
+export function selectPromotionPolicy(
+  corpus: readonly PromotionBenchmarkCase[],
+  candidates: readonly PromotionModelConfig[],
+): PromotionPolicySelectionResult {
   const trainingCases = corpus.filter((testCase) => (testCase.split ?? "train") === "train");
   const heldOutCases = corpus.filter((testCase) => (testCase.split ?? "train") === "heldout");
   let bestPolicy: PromotionEvaluationPolicy | undefined;
   let bestTraining: PromotionBenchmarkResult | undefined;
 
-  for (const model of CANDIDATE_MODELS) {
+  for (const model of candidates) {
     for (const threshold of thresholdCandidates()) {
       const policy: PromotionEvaluationPolicy = {
         name: model.name,
@@ -640,870 +592,50 @@ export function selectPromotionPolicy(corpus: readonly PromotionBenchmarkCase[])
   };
 }
 
-// Frozen module-load selection. The promotion policy's selected model was
+// Frozen grid-search winner. The promotion policy's selected model was
 // historically computed by running `selectPromotionPolicy` over a large
-// hardcoded benchmark corpus at import time (a full grid search on every module
-// load). That corpus and the grid search now live in the bench test
-// (tests/commands/distill/distill-promotion-policy.bench.test.ts), which
-// re-runs `selectPromotionPolicy(DEFAULT_PROMOTION_POLICY_CORPUS)` and asserts
-// deep equality with this constant so the freeze stays honest.
-export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelectionResult = {
-  corpusSize: 21,
-  trainingSize: 14,
-  heldOutSize: 7,
+// hardcoded benchmark corpus at import time (a full grid search on every
+// module load). The corpus AND the candidate-model grid now live test-side
+// (tests/commands/distill/promotion-policy-corpus.ts); the bench test
+// (tests/commands/distill/distill-promotion-policy.bench.test.ts) re-runs
+// `selectPromotionPolicy` over them and asserts the winner still matches this
+// frozen constant, so the freeze stays honest. Production carries only the
+// winning model's FULL weight config — `assessWithWeightedModel` reads all 13
+// weight fields, so a {name,threshold}-only freeze would not be runnable.
+
+/** Narrow frozen-selection shape: the winning model config + its threshold. */
+export interface PromotionPolicySelection {
+  selectedModel: PromotionModelConfig;
+  threshold: number;
+}
+
+export const DEFAULT_PROMOTION_POLICY_SELECTION: PromotionPolicySelection = {
   selectedModel: {
     name: "balanced-evidence",
-    threshold: 3.8,
+    positiveWeight: 0.8,
+    repeatedPositiveWeight: 0.65,
+    noPositivePenalty: 0.9,
+    singlePositivePenalty: 0.7,
+    negativeWeight: 2.0,
+    curatedWeight: 0.55,
+    confidenceWeight: 0.7,
+    sourceWeight: 0.4,
+    observedAtWeight: 0.4,
+    descriptionWeight: 0.2,
+    tagWeight: 0.15,
+    substantiveBodyWeight: 0.15,
+    tentativePenalty: 1.1,
   },
-  training: {
-    total: 14,
-    correct: 13,
-    falsePositives: 1,
-    falseNegatives: 0,
-    accuracy: 0.9285714285714286,
-    precision: 0.8333333333333334,
-    recall: 1,
-    f1: 0.9090909090909091,
-    truePositives: 5,
-    trueNegatives: 8,
-    netOutcomeScore: 11,
-    capturedPromoteValue: 15,
-    preventedFalsePromotionCost: 33,
-    results: [
-      {
-        name: "deploy-vpn-required",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.250000000000001,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:deploy-vpn-required",
-          content:
-            "---\ndescription: VPN required before deploy\ntags:\n  - deploy\n  - ops\nobserved_at: 2026-04-20\nxrefs:\n  - memory:deploy-vpn-required\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "release-smoke-test",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 5.240000000000002,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:release-smoke-test",
-          content:
-            "---\ndescription: Smoke test gates release\nobserved_at: 2026-04-18\nxrefs:\n  - memory:release-smoke-test\n  - skill:release\n---\n\nRun the smoke test before tagging a release candidate.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "3 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "kubernetes-rollout-check",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.250000000000001,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:kubernetes-rollout-check",
-          content:
-            "---\ndescription: Verify rollout status after apply\ntags:\n  - k8s\nobserved_at: 2026-04-15\nxrefs:\n  - memory:kubernetes-rollout-check\n  - skill:k8s\n---\n\nCheck rollout status after kubectl apply before declaring success.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "incident-channel-rule",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 5.450000000000002,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:incident-channel-rule",
-          content:
-            "---\ndescription: Incident bridge stays single-threaded\nobserved_at: 2026-04-12\nxrefs:\n  - memory:incident-channel-rule\n  - skill:incident\n---\n\nKeep one operator narrating decisions in the incident bridge to avoid conflicting instructions.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "3 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "weak-single-signal",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 2.1,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:weak-single-signal",
-          blockedBy: [],
-          positiveSignals: [
-            "1 positive feedback event",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: ["only one reinforcing feedback event"],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "contested-fact",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 2.65,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:contested-fact",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: ["1 negative feedback event"],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "tentative-fact",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 3.0000000000000004,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:tentative-fact",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: ["tentative language"],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "subjective-preference",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 0,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:subjective-preference",
-          blockedBy: ["subjective-memory"],
-          positiveSignals: [],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "feedback-conflict",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.1000000000000005,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:feedback-conflict",
-          content:
-            "---\ndescription: VPN required before deploy\nobserved_at: 2026-04-20\nxrefs:\n  - memory:feedback-conflict\n  - skill:deploy\n---\n\nAlways connect the VPN before starting production deploys.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: false,
-      },
-      {
-        name: "derived-memory",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 3.7,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:derived-memory",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "staging-cutover-order",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.840000000000001,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:staging-cutover-order",
-          content:
-            "---\ndescription: Cut over staging after migrations\ntags:\n  - db\n  - deploy\nobserved_at: 2026-04-10\nxrefs:\n  - memory:staging-cutover-order\n  - skill:database\n---\n\nRun database migrations before shifting staging traffic onto the new release.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "3 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "temporary-token-workaround",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 0,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:temporary-token-workaround",
-          blockedBy: ["expiring-memory"],
-          positiveSignals: [],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "thin-metadata-memory",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 3,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:thin-metadata-memory",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "linked source",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "promoted-quality-memory",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 0,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:promoted-quality-memory",
-          blockedBy: ["proposed-quality"],
-          positiveSignals: [],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-    ],
-  },
-  heldOut: {
-    total: 7,
-    correct: 7,
-    falsePositives: 0,
-    falseNegatives: 0,
-    accuracy: 1,
-    precision: 1,
-    recall: 1,
-    f1: 1,
-    truePositives: 4,
-    trueNegatives: 3,
-    netOutcomeScore: 14,
-    capturedPromoteValue: 14,
-    preventedFalsePromotionCost: 14,
-    results: [
-      {
-        name: "kafka-rebalance-note",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 5.600000000000002,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:kafka-rebalance-note",
-          content:
-            "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "3 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "gha-token-scope",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.04,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:gha-token-scope",
-          content:
-            "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "helm-debug-guess",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 2.7899999999999996,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:helm-debug-guess",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: ["tentative language"],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "terraform-state-location",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 5.600000000000002,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:terraform-state-location",
-          content:
-            "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "3 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "mixed-signal-rollback",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 2.65,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:mixed-signal-rollback",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "curated quality",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "substantive body",
-          ],
-          negativeSignals: ["1 negative feedback event"],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "cache-ttl-fact",
-        expectPromote: true,
-        assessment: {
-          applicable: true,
-          promote: true,
-          score: 4.250000000000001,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:cache-ttl-fact",
-          content:
-            "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
-          blockedBy: [],
-          positiveSignals: [
-            "2 positive feedback events",
-            "repeated reinforcement",
-            "strong confidence",
-            "linked source",
-            "observed_at present",
-            "description present",
-            "tagged memory",
-            "substantive body",
-          ],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-      {
-        name: "personal-shell-alias",
-        expectPromote: false,
-        assessment: {
-          applicable: true,
-          promote: false,
-          score: 0,
-          threshold: 3.8,
-          knowledgeRef: "knowledge:personal-shell-alias",
-          blockedBy: ["subjective-memory"],
-          positiveSignals: [],
-          negativeSignals: [],
-          modelName: "balanced-evidence",
-        },
-        passed: true,
-      },
-    ],
-  },
-  baselines: [
-    {
-      name: "baseline-positive-feedback",
-      heldOut: {
-        total: 7,
-        correct: 5,
-        falsePositives: 2,
-        falseNegatives: 0,
-        accuracy: 0.7142857142857143,
-        precision: 0.6666666666666666,
-        recall: 1,
-        f1: 0.8,
-        truePositives: 4,
-        trueNegatives: 1,
-        netOutcomeScore: 4,
-        capturedPromoteValue: 14,
-        preventedFalsePromotionCost: 4,
-        results: [
-          {
-            name: "kafka-rebalance-note",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 3,
-              threshold: 2,
-              knowledgeRef: "knowledge:kafka-rebalance-note",
-              content:
-                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: true,
-          },
-          {
-            name: "gha-token-scope",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 2,
-              knowledgeRef: "knowledge:gha-token-scope",
-              content:
-                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: true,
-          },
-          {
-            name: "helm-debug-guess",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 2,
-              knowledgeRef: "knowledge:helm-debug-guess",
-              content:
-                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nxrefs:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: false,
-          },
-          {
-            name: "terraform-state-location",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 3,
-              threshold: 2,
-              knowledgeRef: "knowledge:terraform-state-location",
-              content:
-                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: true,
-          },
-          {
-            name: "mixed-signal-rollback",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 2,
-              knowledgeRef: "knowledge:mixed-signal-rollback",
-              content:
-                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nxrefs:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: false,
-          },
-          {
-            name: "cache-ttl-fact",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 2,
-              knowledgeRef: "knowledge:cache-ttl-fact",
-              content:
-                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline positive feedback rule"],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: true,
-          },
-          {
-            name: "personal-shell-alias",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: false,
-              score: 0,
-              threshold: 2,
-              knowledgeRef: "knowledge:personal-shell-alias",
-              blockedBy: ["subjective-memory"],
-              positiveSignals: [],
-              negativeSignals: [],
-              modelName: "baseline-positive-feedback",
-            },
-            passed: true,
-          },
-        ],
-      },
-      noWorseThanSelected: true,
-      strictWin: true,
-      strictWinMetrics: ["f1", "netOutcomeScore", "accuracy"],
-    },
-    {
-      name: "baseline-metadata",
-      heldOut: {
-        total: 7,
-        correct: 5,
-        falsePositives: 2,
-        falseNegatives: 0,
-        accuracy: 0.7142857142857143,
-        precision: 0.6666666666666666,
-        recall: 1,
-        f1: 0.8,
-        truePositives: 4,
-        trueNegatives: 1,
-        netOutcomeScore: 4,
-        capturedPromoteValue: 14,
-        preventedFalsePromotionCost: 4,
-        results: [
-          {
-            name: "kafka-rebalance-note",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:kafka-rebalance-note",
-              content:
-                "---\ndescription: Pause consumers during rebalance\ntags:\n  - kafka\n  - ops\nobserved_at: 2026-04-08\nxrefs:\n  - memory:kafka-rebalance-note\n  - skill:kafka\n---\n\nPause consumers during partition rebalances to avoid duplicate processing while assignments settle.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: true,
-          },
-          {
-            name: "gha-token-scope",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:gha-token-scope",
-              content:
-                "---\ndescription: Minimize GitHub token scopes\ntags:\n  - gha\n  - security\nobserved_at: 2026-04-07\nxrefs:\n  - memory:gha-token-scope\n  - skill:github-actions\n---\n\nUse the narrowest GitHub token scope that still allows the workflow step to succeed.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: true,
-          },
-          {
-            name: "helm-debug-guess",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:helm-debug-guess",
-              content:
-                "---\ndescription: Helm upgrade might need --debug\nobserved_at: 2026-04-05\nxrefs:\n  - memory:helm-debug-guess\n  - skill:helm\n---\n\nIt might help to add --debug to helm upgrade output during failures.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: false,
-          },
-          {
-            name: "terraform-state-location",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:terraform-state-location",
-              content:
-                "---\ndescription: Use remote state locks\ntags:\n  - terraform\nobserved_at: 2026-04-04\nxrefs:\n  - memory:terraform-state-location\n  - skill:terraform\n---\n\nUse remote state with locking enabled before applying shared Terraform stacks.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: true,
-          },
-          {
-            name: "mixed-signal-rollback",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:mixed-signal-rollback",
-              content:
-                "---\ndescription: Rollback the cluster immediately\nobserved_at: 2026-04-03\nxrefs:\n  - memory:mixed-signal-rollback\n  - skill:incident\n---\n\nRollback the cluster immediately after any 5xx spike.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: false,
-          },
-          {
-            name: "cache-ttl-fact",
-            expectPromote: true,
-            assessment: {
-              applicable: true,
-              promote: true,
-              score: 2,
-              threshold: 3,
-              knowledgeRef: "knowledge:cache-ttl-fact",
-              content:
-                "---\ndescription: Cache TTL defaults to five minutes\ntags:\n  - cache\n  - platform\nobserved_at: 2026-04-02\nxrefs:\n  - memory:cache-ttl-fact\n  - skill:platform\n---\n\nThe shared platform cache TTL defaults to five minutes unless the service opts out.\n",
-              blockedBy: [],
-              positiveSignals: ["baseline metadata rule"],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: true,
-          },
-          {
-            name: "personal-shell-alias",
-            expectPromote: false,
-            assessment: {
-              applicable: true,
-              promote: false,
-              score: 0,
-              threshold: 2,
-              knowledgeRef: "knowledge:personal-shell-alias",
-              blockedBy: ["subjective-memory"],
-              positiveSignals: [],
-              negativeSignals: [],
-              modelName: "baseline-metadata",
-            },
-            passed: true,
-          },
-        ],
-      },
-      noWorseThanSelected: true,
-      strictWin: true,
-      strictWinMetrics: ["f1", "netOutcomeScore", "accuracy"],
-    },
-  ],
-  strictlyBeatsBaselines: true,
+  threshold: 3.8,
 };
 
-const SELECTED_MODEL = CANDIDATE_MODELS.find(
-  (model) => model.name === DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name,
-) as PromotionModelConfig;
+const SELECTED_MODEL = DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel;
 
 export const DEFAULT_PROMOTION_POLICY: PromotionEvaluationPolicy = {
-  name: DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.name,
-  threshold: DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.threshold,
-  assess: (input) =>
-    assessWithWeightedModel(input, SELECTED_MODEL, DEFAULT_PROMOTION_POLICY_SELECTION.selectedModel.threshold),
+  name: SELECTED_MODEL.name,
+  threshold: DEFAULT_PROMOTION_POLICY_SELECTION.threshold,
+  assess: (input) => assessWithWeightedModel(input, SELECTED_MODEL, DEFAULT_PROMOTION_POLICY_SELECTION.threshold),
 };
-
-export function getDefaultPromotionPolicySelection(): PromotionPolicySelectionResult {
-  return DEFAULT_PROMOTION_POLICY_SELECTION;
-}
 
 export function assessMemoryKnowledgePromotionCandidate(input: PromotionPolicyInput): MemoryPromotionAssessment {
   return DEFAULT_PROMOTION_POLICY.assess(input);

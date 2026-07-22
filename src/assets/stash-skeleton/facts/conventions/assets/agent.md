@@ -40,5 +40,5 @@ Use an agent when a recurring task benefits from a specialized role, bounded res
 ## Placement & linking
 
 - Agent definitions are usually **global**: keep them at the type root or under a
-  role/domain slug (`agent:reviewer`). Point the agent at the standards and type
+  role/domain slug (`agents/reviewer`). Point the agent at the standards and type
   conventions it must read first via xrefs.

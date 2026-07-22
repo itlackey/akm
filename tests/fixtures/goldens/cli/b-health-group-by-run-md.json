@@ -1,0 +1,4 @@
+{
+  "exitCode": 0,
+  "stdoutScrubbed": "ts                        ok    strategy  legacy_profile  actions  refl_ok/fail/cd/skip  distill_q/llm-fail/qrej/cfg/skip  cons_proc/promo/merge/del  mem_cons/written/skip  graph_f/e/r  orphans  lint_f/fl  result_status\n<TS>  true                            0        0/0/0/0               0/0/0/0/0                         0/0/0/0                    0/0/0                  0/0/0        0        0/0        valid        \n"
+}

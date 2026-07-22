@@ -51,7 +51,7 @@
  * The suite runs WITHOUT --isolate precisely because mock.module reached
  * zero (PR #689); one reintroduced call silently re-opens cross-file
  * poisoning. Use the swap-and-restore seams instead (tests/_helpers/seams.ts;
- * pattern: docs/design/di-seams-plan.md). No allowlist — zero is the invariant.
+ * pattern: docs/architecture/specs/di-seams-plan.md). No allowlist — zero is the invariant.
  *
  * Rule 7 (non-atomic Date.now()): flag ≥2 `new Date(Date.now() …)` timestamp
  * constructions in ONE scope (test/it/describe/hook/function). Reading the wall
@@ -79,13 +79,7 @@ import path from "node:path";
 // ── Configuration ────────────────────────────────────────────────────────────
 
 /** AKM-specific env vars that should be managed via sandbox helpers. */
-const AKM_ENV_VARS: readonly string[] = [
-  "AKM_STASH_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_CACHE_HOME",
-  "HOME",
-];
+const AKM_ENV_VARS: readonly string[] = ["AKM_STASH_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HOME"];
 
 /**
  * Rule 2 exemptions: files that assign AKM/XDG/HOME env vars without going
@@ -99,7 +93,7 @@ const ENV_ASSIGN_ALLOWED = new Set<string>([
   // env precedence — real sandbox temp dirs would defeat the purpose. A
   // module-level saveEnv()/afterEach(restoreEnv) snapshots and restores every
   // env key; tests are synchronous so nothing leaks across a yield point.
-  "tests/paths.test.ts",
+  "tests/integration/paths.test.ts",
 
   // registry-resolve.test.ts: sets AKM_NPM_REGISTRY to literal URLs to test
   // registry URL resolution precedence. beforeEach deletes it, afterEach
@@ -120,13 +114,11 @@ const ALLOWED_FILES = new Set<string>([
   // e2e.test.ts: extremely complex multi-scenario test; full migration is
   // deferred — the env vars are set via per-subprocess env objects, not
   // process.env mutation in the caller process.
-  "tests/e2e.test.ts",
-  "tests/integration/e2e.test.ts",
 
   // workflow-path-escape.test.ts: sets AKM_STASH_DIR per-test for symlink
   // path testing; each test creates a specific stash/symlink pair and the
   // afterEach correctly deletes all env vars. Per-test pattern, not beforeEach.
-  "tests/workflow-path-escape.test.ts",
+  "tests/integration/workflow-path-escape.test.ts",
 
   // tests/_helpers/sandbox.ts itself: defines the helpers.
   "tests/_helpers/sandbox.ts",
@@ -135,42 +127,41 @@ const ALLOWED_FILES = new Set<string>([
   // path to verify --dest works without a working stash. The assignment is a
   // deliberate semantics override inside the test body; beforeEach/afterEach
   // still use the sandbox helper for all other isolation.
-  "tests/source-clone.test.ts",
+  "tests/integration/source-clone.test.ts",
 
   // indexer.test.ts: multi-stash tests set AKM_STASH_DIR = primaryStash
   // inside test bodies to configure cross-stash scenarios. This is intentional
   // test-body logic (not isolation boilerplate); the sandbox handles restore
   // via afterEach. Only the multi-stash describe blocks need per-test overrides.
-  "tests/indexer.test.ts",
 
   // issue-36-repro.test.ts: three tests set AKM_STASH_DIR in test bodies for
   // cross-source and incremental-index tests. These are deliberate per-test
   // overrides; beforeEach/afterEach use the sandbox helper for outer isolation.
-  "tests/issue-36-repro.test.ts",
+  "tests/integration/issue-36-repro.test.ts",
 
   // source.test.ts: ~50 tests each create a dedicated stash with specific file
   // content and set AKM_STASH_DIR so akmSearch/akmIndex/akmShow read that stash.
   // These are per-test content fixtures, not isolation boilerplate; XDG vars are
   // now properly sandboxed via beforeEach/afterEach.
-  "tests/source.test.ts",
+  "tests/integration/source.test.ts",
 
   // search-include-proposed-cli.test.ts: one test creates a custom stash with
   // specific quality-marked skills and sets AKM_STASH_DIR to that stash so the
   // spawned CLI subprocess reads it. Deliberate fixture setup; XDG vars are
   // sandboxed via beforeEach/afterEach.
-  "tests/search-include-proposed-cli.test.ts",
+  "tests/integration/search-include-proposed-cli.test.ts",
 
   // ripgrep.test.ts: one integration test creates a stash with specific script
   // content and sets AKM_STASH_DIR to that stash for the index+search pipeline.
   // All other tests only manipulate PATH (not an AKM env var); XDG vars are
   // sandboxed via beforeEach/afterEach.
-  "tests/ripgrep.test.ts",
+  "tests/integration/ripgrep.test.ts",
 
   // common.test.ts: resolveStashDir tests intentionally set/delete AKM_STASH_DIR
   // to verify the function's env-var lookup precedence (nonexistent path, file vs
   // dir, config.json fallback, default HOME/akm). These are semantic tests of the
   // env var behaviour itself; HOME and XDG_CONFIG_HOME are sandboxed.
-  "tests/common.test.ts",
+  "tests/integration/common.test.ts",
 
   // semantic-search-e2e.test.ts: two nested describe blocks each use beforeAll +
   // beforeEach to set up an isolated embedding environment. The outer gated block
@@ -178,86 +169,80 @@ const ALLOWED_FILES = new Set<string>([
   // sets env vars manually in its own beforeAll/beforeEach because it needs a
   // different stash from the gated block. Full migration would require deep
   // refactoring of the cross-describe env sharing pattern.
-  "tests/semantic-search-e2e.test.ts",
+  "tests/integration/semantic-search-e2e.test.ts",
 
   // wiki.test.ts: a few tests set XDG_CONFIG_HOME or AKM_STASH_DIR in their bodies
   // to configure wiki registration (external sources / config-based detection) or
   // to point searchInWiki at a specific stash. These are deliberate fixture setups;
   // the module-level beforeEach/afterEach now use the sandbox for outer isolation.
-  "tests/wiki.test.ts",
 
   // scoring-pipeline.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() dir so akmIndex and akmSearch read the right fixture stash. Each
   // test creates its own isolated stash with specific content; XDG vars are
   // sandboxed via beforeEach/afterEach.
-  "tests/scoring-pipeline.test.ts",
+  "tests/integration/scoring-pipeline.test.ts",
 
   // commands/search.test.ts: buildTestIndex and several tests set AKM_STASH_DIR
   // to per-test fixture stash dirs so akmIndex and akmSearch read the right content.
   // XDG vars are sandboxed via beforeEach/afterEach.
-  "tests/integration/search.test.ts",
 
   // parallel-search.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() so akmIndex and akmSearch read the right fixture stash.
   // XDG vars are sandboxed via beforeEach/afterEach.
-  "tests/parallel-search.test.ts",
+  "tests/integration/parallel-search.test.ts",
 
   // proposed-quality.test.ts: buildTestIndex sets AKM_STASH_DIR to the per-test
   // tmpStash() dir so akmSearch resolves the indexed content correctly.
   // XDG vars are sandboxed via beforeEach/afterEach.
-  "tests/proposed-quality.test.ts",
+  "tests/integration/proposed-quality.test.ts",
 
   // The following files were not migrated by QW3 (#493) due to API drift
   // between the migration base commit and release/0.8.0. They are grandfathered
   // here; the list is allowed to shrink as follow-up migrations land.
-  "tests/agent/agent-config-loader.test.ts",
-  "tests/belief-state-phase1a.test.ts",
-  "tests/commands/events.test.ts",
-  "tests/commands/graph-cli-negative.test.ts",
-  "tests/commands/graph.test.ts",
-  "tests/commands/graph-update.test.ts",
-  "tests/commands/history.test.ts",
-  "tests/commands/improve-distill-planner-skip-lessons.test.ts",
-  "tests/commands/improve-ensure-index-first.test.ts",
-  "tests/commands/improve-memory.test.ts",
-  "tests/commands/improve-path-exists-guard.test.ts",
-  "tests/commands/improve-reflect-unsupported-type-skip.test.ts",
-  "tests/commands/improve-result-to-file.test.ts",
-  "tests/commands/reflect-response-schema.test.ts",
-  "tests/config-auto-migrate.test.ts",
-  "tests/config-sanitize-secrets.test.ts",
-  "tests/config.test.ts",
-  "tests/commands/consolidate/consolidate-promote-dedup.test.ts",
+  "tests/integration/agent/agent-config-loader.test.ts",
+  "tests/integration/belief-state-phase1a.test.ts",
+  "tests/integration/commands/events.test.ts",
+  "tests/integration/commands/graph-cli-negative.test.ts",
+  "tests/integration/commands/graph.test.ts",
+  "tests/integration/commands/graph-update.test.ts",
+  "tests/integration/commands/history.test.ts",
+  "tests/integration/commands/improve-distill-planner-skip-lessons.test.ts",
+  "tests/integration/commands/improve-ensure-index-first.test.ts",
+  "tests/integration/commands/improve-memory.test.ts",
+  "tests/integration/commands/improve-path-exists-guard.test.ts",
+  "tests/integration/commands/improve-reflect-unsupported-type-skip.test.ts",
+  "tests/integration/commands/improve-result-to-file.test.ts",
+  "tests/integration/commands/reflect-response-schema.test.ts",
+  "tests/integration/config-sanitize-secrets.test.ts",
+  "tests/integration/config.test.ts",
+  "tests/integration/commands/consolidate/consolidate-promote-dedup.test.ts",
   "tests/integration/write-source.test.ts",
-  "tests/commands/distill/distill-cli-flag.test.ts",
-  "tests/commands/distill/distill-response-schema.test.ts",
-  "tests/distill.test.ts",
+  "tests/integration/commands/distill/distill-cli-flag.test.ts",
+  "tests/integration/commands/distill/distill-response-schema.test.ts",
+  "tests/integration/distill.test.ts",
   "tests/integration/graph-extraction-batch.test.ts",
   "tests/integration/graph-extraction.test.ts",
   // tests/health-command.test.ts — migrated to withIsolatedAkmStorage (C2/#499).
-  "tests/commands/improve/improve-dry-run-side-effects.test.ts",
-  "tests/commands/improve/improve-no-hang.test.ts",
-  "tests/index-clean.test.ts",
-  "tests/lessons-coverage.test.ts",
+  "tests/integration/commands/improve/improve-dry-run-side-effects.test.ts",
+  "tests/integration/commands/improve/improve-no-hang.test.ts",
+  "tests/integration/index-clean.test.ts",
+  "tests/integration/lessons-coverage.test.ts",
   "tests/integration/llm-enrichment-cache.test.ts",
-  "tests/commands/reflect/reflect-completed-on-failure.test.ts",
-  "tests/commands/reflect/reflect-pipeline-fixes.test.ts",
+  "tests/integration/commands/reflect/reflect-completed-on-failure.test.ts",
+  "tests/integration/commands/reflect/reflect-pipeline-fixes.test.ts",
   "tests/integration/registry-cli.test.ts",
-  "tests/integration/registry-install.test.ts",
-  "tests/search-source-filter.test.ts",
-  "tests/setup-tmp-stash-guard.test.ts",
+  "tests/integration/search-source-filter.test.ts",
+  "tests/integration/setup-tmp-stash-guard.test.ts",
   "tests/integration/source-qa-fixes.test.ts",
-  "tests/source-source.test.ts",
-  "tests/tasks-legacy-md-warning.test.ts",
-  "tests/test-isolation-no-swallow.test.ts",
+  "tests/integration/source-source.test.ts",
+  "tests/integration/tasks-legacy-md-warning.test.ts",
+  "tests/integration/test-isolation-no-swallow.test.ts",
 
   // The following files were not yet migrated (grandfathered alongside the
   // QW3 batch above). Each uses mkdtempSync + direct process.env assignment;
   // migration is deferred to a follow-up PR.
-  "tests/commands/improve-memory-misc.test.ts",
-  "tests/commands/improve-planner-profile-prefilter.test.ts",
-  "tests/commands/improve/improve-eligibility.test.ts",
-  "tests/integration/indexer.test.ts",
+  "tests/integration/commands/improve-memory-misc.test.ts",
+  "tests/integration/commands/improve/improve-eligibility.test.ts",
 ]);
 
 /**
@@ -289,7 +274,7 @@ const SPAWN_ALLOWED = new Set<string>([]);
  * drained (migrated onto the in-process harness or moved to
  * tests/integration/). SPAWN_ALLOWED is now empty and must stay empty.
  */
-export const ALLOWLIST_RATCHET_BASELINE = 63;
+export const ALLOWLIST_RATCHET_BASELINE = 54;
 
 /** Live size of the combined grandfather allowlist (all rule sets). */
 export function combinedAllowlistSize(): number {
@@ -350,7 +335,7 @@ function findEnvAssignments(src: string): Array<{ envVar: string; line: number }
     // out comparison operators.
     const pattern = new RegExp(`process\\.env(?:\\[["']${envVar}["']\\]|\\.${envVar})\\s*=(?!=)`);
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
       if (pattern.test(l)) found.push({ envVar, line: i + 1 });
     }
@@ -382,7 +367,13 @@ function lintFile(filePath: string): Violation[] {
     if (foundVars.length > 0) {
       const lines = src.split("\n");
       const lineNum = lines.findIndex((l) => l.includes("mkdtempSync")) + 1;
-      violations.push({ file: rel, rule: "mkdtemp-env", detail: `env vars: ${foundVars.join(", ")}`, line: lineNum, envVars: foundVars });
+      violations.push({
+        file: rel,
+        rule: "mkdtemp-env",
+        detail: `env vars: ${foundVars.join(", ")}`,
+        line: lineNum,
+        envVars: foundVars,
+      });
     }
   }
 
@@ -395,7 +386,7 @@ function lintFile(filePath: string): Violation[] {
   if (!rel.startsWith("tests/_helpers/")) {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       // mkdtempSync(...) whose call arguments contain an "akm-test" literal.
       if (/mkdtempSync\s*\([^)]*akm-test[^)]*\)/.test(l)) {
@@ -420,7 +411,7 @@ function lintFile(filePath: string): Violation[] {
         file: rel,
         rule: "unguarded-env",
         detail: `assigns ${vars.join(", ")} without a restoring wrapper (use withEnv/sandbox* or add a justified ENV_ASSIGN_ALLOWED entry)`,
-        line: assigns[0].line,
+        line: assigns[0]!.line,
         envVars: vars,
       });
     }
@@ -437,7 +428,7 @@ function lintFile(filePath: string): Violation[] {
     const spawnCall = /(\b(?:spawnSync|execSync|execFileSync)\s*\(|(?:^|[^.\w])spawn\s*\(|Bun\.spawn(?:Sync)?\s*\()/;
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       if (/\bspyOn\s*\(/.test(l)) continue;
       if (spawnCall.test(l)) {
@@ -458,7 +449,7 @@ function lintFile(filePath: string): Violation[] {
   {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       if (/\bmock\.module\s*\(/.test(l)) {
         violations.push({
@@ -484,7 +475,7 @@ function lintFile(filePath: string): Violation[] {
   {
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue;
       const m = l.match(/expect\(\s*([A-Za-z_$][\w$]*)\s*\)\.toBe(LessThan|GreaterThan)(OrEqual)?\(/);
       if (!m) continue;
@@ -528,13 +519,13 @@ function lintFile(filePath: string): Violation[] {
           file: rel,
           rule: "nonatomic-now",
           detail: `${hits.length} \`new Date(Date.now() …)\` reads in one scope (lines ${hits.join(", ")}) — capture the clock once (\`const now = Date.now()\`) and derive every timestamp from \`now\`, else an exact delta assertion flakes under CI load (#499 class)`,
-          line: hits[0],
+          line: hits[0]!,
         });
       }
       hits = [];
     };
     for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+      const l = lines[i]!;
       if (/^\s*(\/\/|\*)/.test(l)) continue; // skip comment lines
       if (SCOPE_START.test(l)) flush();
       const matches = l.match(NOW_TS);

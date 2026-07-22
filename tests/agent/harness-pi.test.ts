@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
-import { PI_PLATFORM, PI_RESUME_FLAG, piBuilder } from "../../src/integrations/harnesses/pi/agent-builder";
+import { PI_PLATFORM, piBuilder } from "../../src/integrations/harnesses/pi/agent-builder";
 import { piResultExtractor } from "../../src/integrations/harnesses/pi/result-extractor";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -56,10 +56,9 @@ describe("piBuilder — plain prompt", () => {
     expect(cmd.argv).toEqual(["pi", "-p", "--", "do work"]);
   });
 
-  test("platform id is 'pi'; resume flag constant is '--session' (matrix)", () => {
+  test("platform id is 'pi' (matrix)", () => {
     expect(piBuilder.platform).toBe("pi");
     expect(PI_PLATFORM).toBe("pi");
-    expect(PI_RESUME_FLAG).toBe("--session");
   });
 
   test("profile.args are preserved ahead of builder flags", () => {

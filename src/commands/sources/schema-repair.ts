@@ -16,9 +16,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import type { LlmConnectionConfig } from "../../core/config/config";
 import { appendEvent, readEvents } from "../../core/events";
@@ -182,7 +182,7 @@ export async function runSchemaRepairPass(
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
-      const assetType = parseAssetRef(failure.ref).type;
+      const assetType = parseRefInput(failure.ref).type;
       const authoringRules = authoringRulesForType(assetType);
       const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       const llmResponse = await chatFn(llmConfig, [
@@ -222,6 +222,8 @@ export async function runSchemaRepairPass(
       const proposalResult = createProposal(stashDir, {
         ref: failure.ref,
         source: "schema-repair",
+        // §23.6 fingerprint model-id term (WI-6.4).
+        modelId: llmConfig.model,
         payload: {
           content: newContent,
           ...(Object.keys(newFm).length > 0 ? { frontmatter: newFm } : {}),
@@ -263,7 +265,7 @@ export async function runSchemaRepairPass(
 
 function defaultIsLessonCandidate(ref: string): boolean {
   try {
-    const parsed = parseAssetRef(ref);
+    const parsed = parseRefInput(ref);
     return parsed.type === "lesson";
   } catch {
     return false;

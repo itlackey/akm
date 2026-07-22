@@ -28,7 +28,7 @@ function makeTask(schedule: string, id = "ping", enabled = true): TaskDocument {
     id,
     schedule,
     enabled,
-    target: { kind: "workflow", ref: "workflow:noop", params: {} },
+    target: { kind: "workflow", ref: "workflows/noop", params: {} },
     source: { path: `/stash/tasks/${id}.yml` },
   };
 }
@@ -40,17 +40,17 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 function startBoundary(xml: string): string {
   const match = xml.match(/<StartBoundary>([^<]+)<\/StartBoundary>/);
   if (!match) throw new Error("missing StartBoundary");
-  return match[1];
+  return match[1]!;
 }
 
 function startBoundaries(xml: string): string[] {
-  return [...xml.matchAll(/<StartBoundary>([^<]+)<\/StartBoundary>/g)].map((match) => match[1]);
+  return [...xml.matchAll(/<StartBoundary>([^<]+)<\/StartBoundary>/g)].map((match) => match[1]!);
 }
 
 function sourceSignature(xml: string): string {
   const match = xml.match(/<Source>([^<]+)<\/Source>/);
   if (!match) throw new Error("missing Source signature");
-  return match[1];
+  return match[1]!;
 }
 
 describe("buildSchtasksXml", () => {
@@ -354,7 +354,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    const installed = listSync(backend)[0].signature;
+    const installed = listSync(backend)[0]!.signature;
     expect(installed).toBe(backend.expectedSignature?.(disabled));
     expect(installed).not.toBe(backend.expectedSignature?.({ ...disabled, enabled: true }));
   });
@@ -373,7 +373,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
   });
 
   test("installed signatures are available without a Source claim", () => {
@@ -390,7 +390,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
   });
 
   test("queried XML namespace prefixes and formatting do not change the signature", () => {
@@ -407,7 +407,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
   });
 
   test("native materialized schema defaults do not create false drift", () => {
@@ -440,7 +440,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
   });
 
   test("installed signatures detect principal UserId drift", () => {
@@ -457,7 +457,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).not.toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).not.toBe(backend.expectedSignature?.(task));
   });
 
   test("installed signatures detect action, trigger, settings, and principal drift despite an unchanged Source", () => {
@@ -473,11 +473,11 @@ describe("schtasks backend signatures", () => {
       });
     const expected = backendFor(installedXml).expectedSignature?.(task);
 
-    expect(listSync(backendFor(installedXml.replace("&apos;ping&apos;", "&apos;other&apos;")))[0].signature).not.toBe(
+    expect(listSync(backendFor(installedXml.replace("&apos;ping&apos;", "&apos;other&apos;")))[0]!.signature).not.toBe(
       expected,
     );
     expect(
-      listSync(backendFor(installedXml.replace("<Interval>PT5M</Interval>", "<Interval>PT10M</Interval>")))[0]
+      listSync(backendFor(installedXml.replace("<Interval>PT5M</Interval>", "<Interval>PT10M</Interval>")))[0]!
         .signature,
     ).not.toBe(expected);
     expect(
@@ -488,14 +488,14 @@ describe("schtasks backend signatures", () => {
             "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>",
           ),
         ),
-      )[0].signature,
+      )[0]!.signature,
     ).not.toBe(expected);
     expect(
       listSync(
         backendFor(
           installedXml.replace("<RunLevel>LeastPrivilege</RunLevel>", "<RunLevel>HighestAvailable</RunLevel>"),
         ),
-      )[0].signature,
+      )[0]!.signature,
     ).not.toBe(expected);
   });
 
@@ -513,7 +513,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).not.toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).not.toBe(backend.expectedSignature?.(task));
   });
 
   test("signature canonicalization ignores only the dynamic boundary cycle", () => {
@@ -534,7 +534,7 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)[0].signature).toBe(backend.expectedSignature?.(task));
+    expect(listSync(backend)[0]!.signature).toBe(backend.expectedSignature?.(task));
 
     const wrongPhase = installedXml.replace("2031-11-04T22:17:00", "2031-11-04T22:18:00");
     const wrongBackend = SCHTASKS_BACKEND({
@@ -544,7 +544,7 @@ describe("schtasks backend signatures", () => {
       scheduledContext: SCHEDULED_CONTEXT,
       userSid: USER_SID,
     });
-    expect(listSync(wrongBackend)[0].signature).not.toBe(wrongBackend.expectedSignature?.(task));
+    expect(listSync(wrongBackend)[0]!.signature).not.toBe(wrongBackend.expectedSignature?.(task));
   });
 
   test("expected signature changes when the schedule changes", () => {
@@ -751,7 +751,7 @@ describe("schtasks backend transactional install", () => {
         }
         if (operation === "/create") {
           const xmlPath = args[args.indexOf("/XML") + 1];
-          installedXml = files.get(xmlPath);
+          installedXml = files.get(xmlPath!);
           enabled = installedXml?.match(/<Settings>[\s\S]*?<Enabled>(true|false)<\/Enabled>/)?.[1] !== "false";
           if (failNextOperation === "create") {
             failNextOperation = undefined;

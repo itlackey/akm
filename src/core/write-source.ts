@@ -26,15 +26,23 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { lockContentRootFor } from "../integrations/lockfile";
 import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
-import type { AssetRef } from "./asset/asset-ref";
-import { makeAssetRef } from "./asset/asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "./asset/asset-spec";
+import { assetPathForName, stashDirFor } from "./asset/asset-placement";
+import type { AssetRef } from "./asset/resolve-ref";
+import { displayRef } from "./asset/resolve-ref";
 import { isWithin, resolveStashDir } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
+import { sanitizeCommitMessage } from "./git-message";
 import { warn } from "./warn";
+
+// Re-exported so existing `import { sanitizeCommitMessage } from
+// "./core/write-source"` sites are unaffected by the KILL 6 sever (the
+// helper moved to git-message.ts to break the write-source.ts → git.ts →
+// git-stash.ts → write-source.ts 3-file import cycle).
+export { sanitizeCommitMessage };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,14 +73,6 @@ export interface WriteTargetSource {
  */
 const REJECTED_WRITABLE_KINDS: ReadonlySet<string> = new Set(["website", "npm"]);
 
-/**
- * Maximum length of a sanitized git commit message. Git itself imposes no
- * fixed limit, but message strings come from refs and `--message` flags that
- * can be supplied by users or upstream config. A 4096-char clamp keeps audit
- * trails readable and prevents pathological payloads from bloating the log
- * stream a downstream consumer parses.
- */
-const COMMIT_MESSAGE_MAX_LENGTH = 4096;
 const pendingGitPaths = new Map<string, Set<string>>();
 
 function gitTargetKey(source: WriteTargetSource): string {
@@ -97,42 +97,6 @@ function takeGitTargetPaths(source: WriteTargetSource): string[] {
   return [...absolutePaths]
     .map((filePath) => path.relative(repoDir, filePath).replaceAll(path.sep, "/"))
     .filter((filePath) => filePath && filePath !== ".." && !filePath.startsWith("../"));
-}
-
-/**
- * Sanitize a string before passing it as `git commit -m <message>`.
- *
- * Defenses, in order:
- *   1. Strip NUL bytes (`\0`) — git rejects them anyway, but we never want
- *      them in argv.
- *   2. Replace any CR/LF (`\r`, `\n`) and other ASCII control chars with a
- *      single space. This collapses newline-injection attempts that would
- *      otherwise turn a single-line commit subject into a forged trailer
- *      block.
- *   3. Collapse runs of whitespace into a single space and trim.
- *   4. Clamp to {@link COMMIT_MESSAGE_MAX_LENGTH} characters.
- *
- * If the result is empty after sanitization the caller should substitute a
- * default — this helper returns `""` rather than throwing because not every
- * callsite has a sensible "invalid input" exit code, and "empty" is a
- * recoverable signal.
- */
-export function sanitizeCommitMessage(input: string): string {
-  if (typeof input !== "string") return "";
-  // 1. Strip NULs outright.
-  let out = input.replace(/\0/g, "");
-  // 2. Replace CR/LF + other C0 control characters (0x00-0x1F, 0x7F) with a
-  //    space. Tab (0x09) is included intentionally — commit subjects should
-  //    be a single visual line.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitization
-  out = out.replace(/[\x00-\x1F\x7F]/g, " ");
-  // 3. Collapse whitespace runs and trim.
-  out = out.replace(/\s+/g, " ").trim();
-  // 4. Clamp length.
-  if (out.length > COMMIT_MESSAGE_MAX_LENGTH) {
-    out = out.slice(0, COMMIT_MESSAGE_MAX_LENGTH).trimEnd();
-  }
-  return out;
 }
 
 // ── Portability advisory (review 13, D1) ────────────────────────────────────
@@ -242,7 +206,7 @@ export async function writeAssetToSource(
     );
   }
 
-  return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
+  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
 }
 
 /**
@@ -269,7 +233,7 @@ export async function deleteAssetFromSource(
   fs.unlinkSync(filePath);
   recordWriteTargetPath(source, filePath);
 
-  return { path: filePath, ref: makeAssetRef(ref.type, ref.name, ref.origin) };
+  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
 }
 
 /**
@@ -286,8 +250,9 @@ export async function deleteAssetFromSource(
  * caller paths), commits once, and pushes when the target is writable, has a
  * remote, and `push !== false`.
  *
- * The push intent honours a deprecated `options.pushOnCommit` on the source
- * config (mapped onto the batch push gate) when `push` is not explicitly set.
+ * The deprecated `options.pushOnCommit` on the source config is now fully
+ * IGNORED (Decision 6, WI-9.6b): it neither sets nor suppresses `push`. Only a
+ * one-time deprecation warning remains (see {@link warnIfPushOnCommit}).
  */
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
@@ -298,10 +263,7 @@ export function commitWriteTargetBoundary(
 
   warnIfPushOnCommit(target.config);
 
-  // Map the deprecated per-asset `pushOnCommit` intent onto the batch push gate
-  // when the caller did not pass an explicit push toggle. `saveGitStash` still
-  // gates the actual push on writable + remote, so this only ever opts *in*.
-  const push = options?.push ?? (target.config.options?.pushOnCommit === true ? true : undefined);
+  const push = options?.push;
 
   const writable = resolveWritable(target.config);
   const repoDir = target.source.repoPath ?? target.source.path;
@@ -321,8 +283,9 @@ export function commitWriteTargetBoundary(
 /**
  * Emit a one-time deprecation warning the first time a source config carrying
  * `options.pushOnCommit` is encountered. The field still parses (for old
- * configs) but its per-asset push-on-commit behaviour is retired; its intent is
- * now honoured via the batch push gate (writable + remote + push toggle).
+ * configs) but is now FULLY IGNORED (Decision 6, WI-9.6b): it no longer maps
+ * onto the batch push gate in any way (neither opts in nor opts out). The
+ * field will be REMOVED in 0.10.
  */
 let pushOnCommitWarned = false;
 function warnIfPushOnCommit(config: SourceConfigEntry): void {
@@ -331,9 +294,10 @@ function warnIfPushOnCommit(config: SourceConfigEntry): void {
   pushOnCommitWarned = true;
   const label = config.name ? ` on source "${config.name}"` : "";
   process.stderr.write(
-    `warning: \`options.pushOnCommit\`${label} is deprecated (0.9.0) and no longer commits per asset. ` +
-      "akm now commits writes in a single batch at the operation boundary and pushes when the target is " +
-      "writable with a remote. Remove the option or rely on sync push instead.\n",
+    `warning: \`options.pushOnCommit\`${label} is deprecated (0.9.0) and now fully ignored — it no longer ` +
+      "affects push behaviour in any way. akm commits writes in a single batch at the operation boundary and " +
+      "pushes when the target is writable with a remote and push isn't explicitly disabled. Remove the option " +
+      "or rely on sync push instead; it will be REMOVED in 0.10.\n",
   );
 }
 
@@ -488,12 +452,12 @@ function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): v
 }
 
 function resolveAssetFilePath(source: WriteTargetSource, ref: AssetRef): string {
-  const typeDir = TYPE_DIRS[ref.type];
+  const typeDir = stashDirFor(ref.type);
   if (!typeDir) {
     throw new UsageError(`Unknown asset type "${ref.type}". Cannot resolve a write path.`, "INVALID_FLAG_VALUE");
   }
   const typeRoot = path.join(source.path, typeDir);
-  const assetPath = resolveAssetPathFromName(ref.type, typeRoot, ref.name);
+  const assetPath = assetPathForName(ref.type, typeRoot, ref.name);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(
       `Resolved asset path escapes its source: "${ref.name}" in source "${source.name}".`,
@@ -545,13 +509,6 @@ export function formatRefForMessage(ref: AssetRef): string {
  * `git` by the config loader, so this mapping is straightforward.
  */
 function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
-  const repoPath = pathFromConfiguredSource(runtime);
-  if (!repoPath) {
-    throw new ConfigError(
-      `Source "${runtime.name}" has no resolvable on-disk path; writes are unsupported for this entry.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
   // Map the runtime kind to the write helper's `kind` discriminator. Only
   // filesystem and git produce writable sources at v1; any other kind
   // reaching this point is a config-loader bug (assertWritableAllowedForKind
@@ -567,10 +524,26 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   }
   const kind: "filesystem" | "git" = runtime.type;
 
+  // §10.2 lock-first (BEHAVIOR FIX): a managed git bundle's resolved content
+  // root lives in the lock (`localRoot`), NOT the desired config. Resolve there
+  // FIRST — via the SAME shared resolver the indexer READ path uses — so a write
+  // lands in exactly the directory a read walks; git sync/commit then runs
+  // against that same root. When no lock row records a localRoot (a git bundle
+  // migrated from a `sources[]` url), fall back to the derived cache repoDir +
+  // content/-subdir convention — the identical chain the read path applies.
+  const lockRoot = kind === "git" ? lockContentRootFor(runtime.name, runtime.type) : undefined;
+  const repoPath = lockRoot ?? pathFromConfiguredSource(runtime);
+  if (!repoPath) {
+    throw new ConfigError(
+      `Source "${runtime.name}" has no resolvable on-disk path; writes are unsupported for this entry.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   const config: SourceConfigEntry = {
     type: runtime.type,
     name: runtime.name,
-    ...(repoPath !== undefined ? { path: repoPath } : {}),
+    path: repoPath,
     ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
     ...(runtime.options ? { options: runtime.options } : {}),
   };
@@ -580,7 +553,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
     source: {
       kind,
       name: runtime.name,
-      path: kind === "git" ? resolveGitContentRoot(repoPath) : repoPath,
+      path: kind === "git" ? (lockRoot ?? resolveGitContentRoot(repoPath)) : repoPath,
       ...(kind === "git" ? { repoPath } : {}),
     },
     config,

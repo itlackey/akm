@@ -90,7 +90,7 @@ function extractChangelogSection(changelog: string, version: string): string | u
   const pattern = new RegExp(`^## \\[${escapeRegexString(version)}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|\\Z)`, "m");
   const match = changelog.match(pattern);
   if (!match) return undefined;
-  return `## [${version}]\n${match[1].trim()}\n`;
+  return `## [${version}]\n${match[1]!.trim()}\n`;
 }
 
 function escapeRegexString(value: string): string {

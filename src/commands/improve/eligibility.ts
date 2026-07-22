@@ -4,25 +4,25 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AkmAssetType, isAssetType } from "../../core/common";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import type { ImproveEligibleRef } from "../../core/improve-types";
-import {
-  closeDatabase,
-  getAllEntries,
-  getUtilityScoresByIds,
-  openExistingDatabase,
-  openReadonlyExistingDatabase,
-} from "../../indexer/db/db";
 import { getWritableStashDirs, resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
+import {
+  closeDatabase,
+  openExistingDatabase,
+  openReadonlyExistingDatabase,
+} from "../../storage/repositories/index-connection";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
+import { parseMemoryRef } from "./memory/derived-ref";
 import { improveStateReadRefs } from "./source-identity";
 
 // Eligibility / candidate-selection predicates for improve. Free functions
@@ -33,24 +33,35 @@ export function resolveImproveScope(scope: string | undefined): { mode: "all" | 
   const trimmed = scope?.trim();
   if (!trimmed) return { mode: "all" };
   try {
-    parseAssetRef(trimmed);
+    parseRefInput(trimmed);
     return { mode: "ref", value: trimmed };
-  } catch {
-    if (!isAssetType(trimmed)) {
-      throw new UsageError(
-        `Unknown asset type: "${trimmed}". Valid types: memory, knowledge, skill, lesson, workflow, agent, command, script, wiki, env, secret, task.\n` +
-          `If you passed --format to akm improve, that flag is not supported — use it with akm search or akm show instead.`,
-        "INVALID_FLAG_VALUE",
-      );
+  } catch (err) {
+    // Open type token (chunk 1.5, D1.5-1): a bare word with no `type:name`
+    // shape (no colon) is a `--scope <type>` filter attempt, not a ref — ANY
+    // such word is now accepted, including foreign/unknown type strings,
+    // which simply match zero entries downstream (a read-only query filter,
+    // not a data-acceptance gate, so no deny-list is needed here: an
+    // unrecognized type just matches nothing, since nothing is ever indexed
+    // with it). No test pinned the old "Unknown asset type" rejection for
+    // this case (chunk-1.5 anchors §A.5 — 0 hits).
+    //
+    // A colon-shaped value that still fails `parseRefInput` is a genuinely
+    // malformed ref attempt (bad name, path traversal, or a deny-listed
+    // deliberately-removed type like tool/vault, D1.5-6) — that must still
+    // surface as a real error, not be silently absorbed into a type filter
+    // that will never match anything.
+    if (!trimmed.includes(":")) {
+      return { mode: "type", value: trimmed };
     }
-    return { mode: "type", value: trimmed };
+    const message = err instanceof Error ? err.message : String(err);
+    throw new UsageError(`Invalid --scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
   }
 }
 
 /**
  * Dedupe a list of eligible refs by `ref`, preserving first-seen order. Used to
- * merge the three eligibility sources (feedback-signal, P0-A high-retrieval,
- * Layer-2 proactive-maintenance) without admitting a ref into the loop twice.
+ * merge the eligibility sources (feedback-signal, Layer-2 proactive-maintenance,
+ * high-salience) without admitting a ref into the loop twice.
  */
 export function dedupeRefs(refs: ImproveEligibleRef[]): ImproveEligibleRef[] {
   const seen = new Set<string>();
@@ -109,7 +120,7 @@ async function collectEligibleRefsFromIndex(
   readOnly: boolean,
 ): ReturnType<typeof collectEligibleRefs> {
   if (scope.mode === "ref" && scope.value) {
-    const parsed = parseAssetRef(scope.value);
+    const parsed = parseRefInput(scope.value);
     const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
     const filePath = await findAssetFilePath(scope.value, stashDir, writableDirs);
     if (!filePath) {
@@ -166,7 +177,17 @@ async function collectEligibleRefsFromIndex(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+      // Chunk-8 WI-8.5c: the candidate `ref` is the SHORT conceptId
+      // (`<stash-subdir>/<name>`, D-R2) — it now matches the disk lookup,
+      // xrefs, and `displayRef` output spelling. `.itemRef` below stays the
+      // fully-qualified durable key.
+      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
+      // Chunk-5 flip F5d (Step 4): the durable `item_ref` (`<bundle>//<concept-id>`),
+      // reconstructed from the mapper-unlocked provenance columns with ZERO extra
+      // queries (D-R3 — derived from the resolved index entry, never raw input).
+      // `undefined` for a NULL-provenance (pre-flip / write-back) row; the durable
+      // writers then fall back to the legacy `type:name` key.
+      const itemRef = indexed.bundleId && indexed.conceptId ? `${indexed.bundleId}//${indexed.conceptId}` : undefined;
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories are LLM-inferred and intentionally skip reflect
       // (see the synthetic `derived-memory-reflect-skipped` branch in the
@@ -188,6 +209,7 @@ async function collectEligibleRefsFromIndex(
             ref,
             reason: "strategy_filtered_all_passes",
             filePath: indexed.filePath,
+            itemRef,
           });
         } else {
           planned.set(ref, {
@@ -195,6 +217,7 @@ async function collectEligibleRefsFromIndex(
             reason:
               scope.mode === "type" ? "scope-type" : indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type",
             filePath: indexed.filePath,
+            itemRef,
           });
         }
       }
@@ -257,9 +280,14 @@ export function memoryCleanupParentRef(
   stashDir?: string,
 ): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
-  const parsed = parseAssetRef(scope.value);
+  const parsed = parseRefInput(scope.value);
   if (parsed.type !== "memory") return undefined;
-  if (!parsed.name.endsWith(".derived")) return scope.value;
+  // Non-derived parent scope: emit the canonical `memories/<name>` conceptId so
+  // it matches `resolveParentRef`'s output in analyzeMemoryCleanup's parentRef
+  // filter (Group-C item 2 — the reader and every comparison site flipped
+  // together; emitting the raw scope value would re-open the mismatch the
+  // chunk-8 history warns about).
+  if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
 
   const sources = resolveSourceEntries(stashDir);
   for (const source of sources) {
@@ -267,23 +295,23 @@ export function memoryCleanupParentRef(
     if (!fs.existsSync(candidate)) continue;
     const raw = fs.readFileSync(candidate, "utf8");
     const fm = parseFrontmatter(raw).data;
-    const sourceRef = typeof fm.source === "string" ? fm.source : undefined;
-    if (sourceRef) {
-      try {
-        const parent = parseAssetRef(sourceRef.trim());
-        if (parent.type === "memory") return makeAssetRef(parent.type, parent.name);
-      } catch {}
-    }
+    // The `source:` backref (the `derived_from` channel) is read through the
+    // legacy-tolerant parseMemoryRef, whose NORMALISED output is now the 0.9.0
+    // `memories/<name>` conceptId (Group-C item 2). That is exactly what
+    // analyzeMemoryCleanup's parentRef filter compares against — resolveParentRef
+    // emits the same conceptId — so the two sites stay in lockstep.
+    const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
+    if (parent) return parent;
   }
 
-  return makeAssetRef("memory", parsed.name.slice(0, -".derived".length));
+  return conceptIdFromTypeName("memory", parsed.name.slice(0, -".derived".length));
 }
 
 export function isLessonCandidate(ref: string): boolean {
   // Only lesson assets need lesson-schema validation (description + when_to_use).
   // Memories have their own distill path via shouldDistillMemoryRef.
   // All other types go through reflect, not distill.
-  return parseAssetRef(ref).type === "lesson";
+  return parseRefInput(ref).type === "lesson";
 }
 
 /**
@@ -307,13 +335,13 @@ export function isLessonCandidate(ref: string): boolean {
  * `tests/commands/improve-distill-planner-skip-lessons.test.ts`.
  */
 export function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   if (isDistillRefusedInputType(parsed.type)) return false;
   return shouldDistillMemoryRef(ref, stashDir);
 }
 
 export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseRefInput(ref);
   if (parsed.type !== "memory") return false;
   const sources = resolveSourceEntries(stashDir);
   for (const source of sources) {
@@ -351,11 +379,16 @@ export function buildLatestFeedbackTsMap(
   sinceIso: string,
   sourceName?: string,
   includeLegacyBare = false,
+  itemRefByRef?: Map<string, string | undefined>,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
+  // Chunk-5 flip F5e — dual-arm on [item_ref, durable, bare] so an item_ref-
+  // keyed feedback event resolves once the writers emit it. // Chunk-8: [item_ref].
   const refByDurableKey = new Map(
-    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+    refs.flatMap((ref) =>
+      improveStateReadRefs(ref, sourceName, includeLegacyBare, itemRefByRef?.get(ref)).map((key) => [key, ref]),
+    ),
   );
   const { events } = readEvents({ type: "feedback", since: sinceIso });
   for (const e of events) {
@@ -384,11 +417,16 @@ export function buildLatestProposalTsMap(
   source: "reflect" | "distill",
   sourceName?: string,
   includeLegacyBare = false,
+  itemRefByRef?: Map<string, string | undefined>,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
+  // Chunk-5 flip F5e — dual-arm on [item_ref, durable, bare] so an item_ref-
+  // keyed *_invoked event resolves once the writers emit it. // Chunk-8: [item_ref].
   const refByDurableKey = new Map(
-    refs.flatMap((ref) => improveStateReadRefs(ref, sourceName, includeLegacyBare).map((key) => [key, ref])),
+    refs.flatMap((ref) =>
+      improveStateReadRefs(ref, sourceName, includeLegacyBare, itemRefByRef?.get(ref)).map((key) => [key, ref]),
+    ),
   );
   const eventType = source === "reflect" ? "reflect_invoked" : "distill_invoked";
   const { events } = readEvents({ type: eventType });
@@ -415,8 +453,9 @@ export function buildLatestProposalTsMap(
  * exists for this (ref, source) OR `latestFeedback[ref] > lastProposal[ref]`.
  *
  * Refs with no feedback signal at all are ineligible by definition — the
- * high-retrieval fallback path (see `noFeedbackCandidates` later in the
- * planner) handles never-touched-but-frequently-read assets separately.
+ * proactive-maintenance and high-salience fallback lanes (see
+ * `noFeedbackCandidates` later in the planner) handle never-rated assets
+ * separately.
  */
 export function isSignalDeltaEligible(
   ref: string,
@@ -461,7 +500,7 @@ export function shouldAnalyzeMemoryCleanup(
   if (scope.mode === "all") return true;
   if (scope.mode === "type") return scope.value === "memory";
   if (!scope.value) return false;
-  return parseAssetRef(scope.value).type === "memory";
+  return parseRefInput(scope.value).type === "memory";
 }
 
 export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
@@ -474,7 +513,9 @@ export function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number>
     const allDbEntries = getAllEntries(db);
     const idToRef = new Map<number, string>();
     for (const indexed of allDbEntries) {
-      const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+      // Chunk-8 WI-8.5c: correlate on the SHORT conceptId to match the
+      // `ImproveEligibleRef.ref` set built in collectEligibleRefsFromIndex.
+      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     const ids = [...idToRef.keys()];

@@ -13,7 +13,7 @@
  *   "schemaVersion": 1,
  *   "id": "probe-001",
  *   "assetType": "memory" | "skill" | "lesson",
- *   "assetRef": "memory:probe-001",
+ *   "assetRef": "memories/probe-001",
  *   "asset": {
  *     "frontmatter": { ... },
  *     "body": "..."
@@ -270,7 +270,6 @@ export function resolveJudgeCalibrationSandboxConfig(
                 extract: { enabled: false },
                 proactiveMaintenance: { enabled: false },
                 triage: { enabled: false },
-                recombine: { enabled: false },
                 procedural: { enabled: false },
               },
               sync: { enabled: false, push: false },
@@ -299,17 +298,24 @@ function writeJudgeCalibrationSandboxConfig(sandboxRoot: string, config: Record<
 
 /** Resolve where a probe asset's file should live inside the sandboxed stash. */
 function probeAssetPath(stashDir: string, p: ProbeFile): string {
-  const parsed = parseRef(p.assetRef);
-  if (parsed.type === "memory") return path.join(stashDir, "memories", `${parsed.name}.md`);
-  if (parsed.type === "lesson") return path.join(stashDir, "lessons", `${parsed.name}.md`);
-  if (parsed.type === "skill") return path.join(stashDir, "skills", parsed.name, "SKILL.md");
-  throw new Error(`probe asset type not supported: ${parsed.type}`);
+  const { subdir, name } = parseConceptId(p.assetRef);
+  if (subdir === "memories") return path.join(stashDir, "memories", `${name}.md`);
+  if (subdir === "lessons") return path.join(stashDir, "lessons", `${name}.md`);
+  if (subdir === "skills") return path.join(stashDir, "skills", name, "SKILL.md");
+  throw new Error(`probe asset subdir not supported: ${subdir}`);
 }
 
-function parseRef(ref: string): { type: string; name: string } {
-  const m = ref.match(/^([a-z]+):(.+)$/);
-  if (!m) throw new Error(`invalid asset ref: ${ref}`);
-  return { type: m[1], name: m[2] };
+/**
+ * Parse a 0.9.0 conceptId ref (`<subdir>/<name>`, e.g. `memories/probe-01`) into
+ * its placement subdir and per-type name. The legacy `type:name` grammar is dead
+ * (ref-grammar decision D-R2); probe assetRefs are subdir-qualified conceptIds.
+ */
+function parseConceptId(ref: string): { subdir: string; name: string } {
+  const slash = ref.indexOf("/");
+  if (slash <= 0 || slash === ref.length - 1) {
+    throw new Error(`invalid asset ref: ${ref} (expected <subdir>/<name>)`);
+  }
+  return { subdir: ref.slice(0, slash), name: ref.slice(slash + 1) };
 }
 
 /**

@@ -10,15 +10,16 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
+import { getParsedInvocation } from "../cli/invocation";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
-import { getDefaultLlmConfig, loadConfig } from "../core/config/config";
+import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
-import { parseFlagValue } from "../output/context";
+import { getDefaultLlmConfig } from "../integrations/agent/engine-resolution";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
@@ -192,7 +193,7 @@ function detectObservedAt(body: string): string | undefined {
 
   // Normalise the matched phrase: lowercase, collapse internal whitespace,
   // so "last  week" matches the lookup table key.
-  const phrase = relMatch[1].toLowerCase().replace(/\s+/g, " ");
+  const phrase = relMatch[1]!.toLowerCase().replace(/\s+/g, " ");
   const offset = RELATIVE_DATE_OFFSETS[phrase];
   if (!offset) return undefined;
 
@@ -311,7 +312,9 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
 export function resolveRememberContentArg(content: string | undefined): string | undefined {
   if (content === undefined) return undefined;
 
-  const parsedFormat = parseFlagValue(process.argv, "--format");
+  const invocation = getParsedInvocation();
+
+  const parsedFormat = invocation.getFlagValue("--format");
   if (
     parsedFormat !== undefined &&
     content === parsedFormat &&
@@ -320,7 +323,7 @@ export function resolveRememberContentArg(content: string | undefined): string |
     return undefined;
   }
 
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  const parsedDetail = invocation.getFlagValue("--detail");
   if (
     parsedDetail !== undefined &&
     content === parsedDetail &&
@@ -337,7 +340,7 @@ function wasRememberFlagValueConsumedAsContent(
   flagValue: string,
   flagName: "--format" | "--detail",
 ): boolean {
-  const argv = process.argv.slice(2);
+  const argv = getParsedInvocation().userArgs;
   const rememberIndex = argv.indexOf("remember");
   const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
 

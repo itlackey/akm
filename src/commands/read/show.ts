@@ -9,116 +9,53 @@
  *
  *   show(ref) → indexer.lookup(ref) → readFile(entry.filePath)
  *
- * The richer presentation logic (matchers, renderers, wiki-root handling,
- * edit-hints, summary-detail truncation) lives below in this file. The flow:
+ * The richer presentation logic (matchers, renderers, edit-hints,
+ * summary-detail truncation) lives below in this file. The flow:
  *
- *   1. Special-case wiki-root refs (`wiki:<name>` with no page path).
- *   2. Auto-index when stale so the index is current.
- *   3. Ask `indexer.lookup(ref)` for the row in the FTS index.
- *   4. Render the file via the matcher/renderer pipeline.
+ *   1. Auto-index when stale so the index is current.
+ *   2. Ask `indexer.lookup(ref)` for the row in the FTS index.
+ *   3. Render the file via the matcher/renderer pipeline.
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { type CittyArgsDefinitionForScan, findCittyTopLevelCommandIndex } from "../../cli/parse-args";
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
+import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, resolveMetaFilePath } from "../../core/asset/stash-meta";
 import { asNonEmptyString } from "../../core/common";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
-import {
-  closeDatabase,
-  computeBodyHash,
-  findEntryIdByRef,
-  getEntryIdByFilePath,
-  openExistingDatabase,
-} from "../../indexer/db/db";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { hasGraphData } from "../../indexer/db/graph-db";
 import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
 import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
 import { lookup } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
+import { usageEventAttributionMetadata } from "../../indexer/search/search-attribution";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../../indexer/walk/file-context";
+import { buildFileContext, buildRenderContext, getRenderer } from "../../indexer/walk/file-context";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveStorageLocations } from "../../storage/locations";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import {
+  findEntryIdByRef,
+  getEntryById,
+  getEntryIdByFilePath,
+  getItemRefById,
+} from "../../storage/repositories/index-entries-repository";
+import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 // Eagerly import source providers to trigger self-registration.
 import "../../sources/providers/index";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../../sources/types";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
-
-/**
- * Show a wiki root (no page path) — returns the same payload as
- * `akm wiki show <name>`.
- */
-async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
-  const { showWiki } = await import("../../wiki/wiki.js");
-  const result = showWiki(stashDir, wikiName);
-  return {
-    type: "wiki",
-    name: result.ref,
-    path: result.path,
-    ...(result.description ? { description: result.description } : {}),
-    origin: null,
-    editable: false,
-    pages: result.pages,
-    raws: result.raws,
-    ...(result.lastModified ? { lastModified: result.lastModified } : {}),
-    recentLog: result.recentLog,
-  } as unknown as ShowResponse;
-}
-
-async function showWikiRootForSource(
-  stashDir: string,
-  source: { path: string; wikiName?: string },
-  wikiName: string,
-): Promise<ShowResponse> {
-  const { showWikiAtPath } = await import("../../wiki/wiki.js");
-  if (source.wikiName === wikiName) {
-    const result = showWikiAtPath(wikiName, source.path);
-    return {
-      type: "wiki",
-      name: result.ref,
-      path: result.path,
-      ...(result.description ? { description: result.description } : {}),
-      origin: null,
-      editable: false,
-      pages: result.pages,
-      raws: result.raws,
-      ...(result.lastModified ? { lastModified: result.lastModified } : {}),
-      recentLog: result.recentLog,
-    } as unknown as ShowResponse;
-  }
-  return showWikiRoot(stashDir, wikiName);
-}
-
-function resolveRegisteredWikiAssetPath(wikiRoot: string, wikiName: string, assetName: string): string {
-  const pageName = assetName === wikiName ? "" : assetName.slice(wikiName.length + 1);
-  if (!pageName) {
-    throw new NotFoundError(`Wiki page not found: wiki:${assetName}`);
-  }
-  const candidate = path.resolve(wikiRoot, `${pageName}.md`);
-  const resolvedRoot = fs.realpathSync(wikiRoot);
-  if (!candidate.startsWith(resolvedRoot + path.sep)) {
-    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
-  }
-  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
-    throw new NotFoundError(`Stash asset not found for ref: wiki:${assetName}`);
-  }
-  const realTarget = fs.realpathSync(candidate);
-  if (!realTarget.startsWith(resolvedRoot + path.sep)) {
-    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
-  }
-  return realTarget;
-}
 
 /**
  * Unified show: queries the local FTS5 index, then falls back to on-disk
@@ -146,6 +83,8 @@ export async function akmShowUnified(input: {
    * so events can be filtered out of user-facing history.
    */
   eventSource?: UsageEventSource;
+  /** Internal nested reads can render without recording a second user consumption row. */
+  skipLogging?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -157,31 +96,6 @@ export async function akmShowUnified(input: {
   {
     const metaRef = parseMetaRef(ref);
     if (metaRef) return showStashMeta(metaRef);
-  }
-
-  // 0. Wiki-root shortcut: `wiki:<name>` with no page path routes to the
-  //    wiki summary (same payload as `akm wiki show <name>`). Honour
-  //    `parsed.origin` by resolving against the matching stash source(s),
-  //    falling back to the primary stash when no origin is given.
-  {
-    const parsed = parseAssetRef(ref);
-    if (parsed.type === "wiki" && !parsed.name.includes("/")) {
-      const allSources = resolveSourceEntries();
-      const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
-      let lastError: NotFoundError | undefined;
-      for (const source of searchSources) {
-        try {
-          return await showWikiRootForSource(allSources[0]?.path ?? source.path, source, parsed.name);
-        } catch (err) {
-          if (!(err instanceof NotFoundError)) throw err;
-          lastError = err;
-        }
-      }
-      throw (
-        lastError ??
-        new NotFoundError(`Wiki not found: ${parsed.name}. Run \`akm wiki create ${parsed.name}\` to create it.`)
-      );
-    }
   }
 
   // Auto-index when stale so the index is current before lookup.
@@ -198,11 +112,13 @@ export async function akmShowUnified(input: {
     enforceScopeOrThrow(result.path, ref, input.scope);
   }
   // Count prior shows of this ref before logging the current one.
-  const priorShowCount = recentShowCount(ref);
-  logShowEvent(ref, input.eventSource, result.path, result.origin);
-  if (priorShowCount >= 2) {
-    // Agent has shown this same asset 3+ times — inject a loop-break hint.
-    (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
+  if (!input.skipLogging) {
+    const priorShowCount = recentShowCount(ref);
+    logShowEvent(ref, input.eventSource, result.path, result.origin);
+    if (priorShowCount >= 2) {
+      // Agent has shown this same asset 3+ times — inject a loop-break hint.
+      (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
+    }
   }
   return result;
 }
@@ -312,8 +228,10 @@ function logShowEvent(
 ): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm show invocations without relying on stdout scraping.
-  const parsed = parseAssetRef(ref);
-  const eventRef = refToString({ ...parsed, ...(parsed.origin || !origin ? {} : { origin }) });
+  const parsed = parseQualifiedRefInput(ref);
+  // New-grammar display ref: also the lookup key below, which `findEntryIdByRef`
+  // resolves against `item_ref`.
+  const eventRef = displayRef({ type: parsed.type, name: parsed.name, bundleId: parsed.origin ?? origin ?? undefined });
   appendEvent({ eventType: "show", ref: eventRef, metadata: { type: parsed.type, name: parsed.name } });
 
   // Detect if this show is a selection from a recent search result.
@@ -347,12 +265,25 @@ function logShowEvent(
   try {
     withIndexDb(
       (db) => {
-        insertUsageEvent(db, {
-          event_type: "show",
-          entry_ref: eventRef,
-          entry_id: filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef),
-          source: eventSource,
-        });
+        const entryId = filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef);
+        // The DURABLE usage-event key is the resolved entry's fully-qualified
+        // `item_ref`; the new-grammar `eventRef` is the fallback for an
+        // unresolved / not-yet-indexed show. entry_id/item_ref resolve from
+        // index.db (`db`); the usage_events write lands in state.db (WI-8.3).
+        const entryRef = (entryId !== undefined ? getItemRefById(db, entryId) : null) ?? eventRef;
+        const entry = entryId !== undefined ? getEntryById(db, entryId) : undefined;
+        withStateDbTelemetry((stateDb) => {
+          insertUsageEvent(stateDb, {
+            event_type: "show",
+            entry_ref: entryRef,
+            entry_id: entryId,
+            metadata: usageEventAttributionMetadata(
+              entry?.entry.derivedFrom ? { memoryInference: { exposure: "direct" } } : undefined,
+              entryRef,
+            ),
+            source: eventSource,
+          });
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );
@@ -369,7 +300,7 @@ export async function showLocal(input: {
   detail?: ShowDetailLevel;
   stashDir?: string;
 }): Promise<ShowResponse> {
-  const parsed = parseAssetRef(input.ref);
+  const parsed = parseQualifiedRefInput(input.ref);
   const displayType = parsed.type;
   const config = loadConfig();
   const allSources = resolveSourceEntries(input.stashDir);
@@ -377,24 +308,11 @@ export async function showLocal(input: {
 
   const allSourceDirs = searchSources.map((s) => s.path);
 
-  let assetPath: string | undefined;
-  const matchedSource =
-    parsed.type === "wiki" ? searchSources.find((source) => parsed.name.startsWith(`${source.wikiName}/`)) : undefined;
-  let lastError: Error | undefined;
-  if (parsed.type === "wiki" && matchedSource?.wikiName) {
-    try {
-      assetPath = resolveRegisteredWikiAssetPath(matchedSource.path, matchedSource.wikiName, parsed.name);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-    }
-  }
-  if (!assetPath) {
-    const resolvedAssetPath = await resolveAssetPath(parsed, {
-      stashDir: input.stashDir,
-      mode: "index-first",
-    });
-    assetPath = resolvedAssetPath ?? undefined;
-  }
+  const resolvedAssetPath = await resolveAssetPath(parsed, {
+    stashDir: input.stashDir,
+    mode: "index-first",
+  });
+  const assetPath = resolvedAssetPath ?? undefined;
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {
     const installCmd = `akm add ${parsed.origin}`;
@@ -405,16 +323,13 @@ export async function showLocal(input: {
   }
 
   if (!assetPath) {
-    throw (
-      lastError ??
-      new NotFoundError(
-        `Stash asset not found for ref: ${displayType}:${parsed.name}. ` +
-          "Check the name with `akm search` or verify the asset exists in your stash.",
-      )
+    throw new NotFoundError(
+      `Stash asset not found for ref: ${displayType}:${parsed.name}. ` +
+        "Check the name with `akm search` or verify the asset exists in your stash.",
     );
   }
 
-  const source = matchedSource ?? findSourceForPath(assetPath, allSources);
+  const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allSourceDirs[0];
 
   if (!sourceStashDir) {
@@ -425,11 +340,7 @@ export async function showLocal(input: {
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);
-  const forcedWikiMatch =
-    parsed.type === "wiki" && source?.wikiName && parsed.name.startsWith(`${source.wikiName}/`)
-      ? { type: "wiki", specificity: 20, renderer: "wiki-md", meta: {} }
-      : undefined;
-  const match = forcedWikiMatch ?? (await runMatchers(fileCtx));
+  const match = recognizeMatch(fileCtx);
   if (!match) {
     throw new UsageError(
       `Could not display asset "${displayType}:${parsed.name}" — unsupported file type or unrecognized layout`,
@@ -567,7 +478,7 @@ async function maybeExtractGraphInline(
  * renderer graph. Spec §6.2's literal flow.
  */
 export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseQualifiedRefInput(ref);
   const entry = await lookup(parsed);
   if (!entry) {
     throw new NotFoundError(`Asset not found for ref: ${parsed.type}:${parsed.name}`);
@@ -682,7 +593,7 @@ export function normalizeShowArgv(argv: string[]): string[] {
   const showArgs: string[] = [];
 
   for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
+    const arg = rest[i]!;
     if (arg === "--quiet" || arg === "-q" || arg === "--verbose") {
       globalFlags.push(arg);
       continue;
@@ -693,8 +604,9 @@ export function normalizeShowArgv(argv: string[]): string[] {
     }
     if (arg === "--format" || arg === "--detail" || arg === "--shape") {
       globalFlags.push(arg);
-      if (rest[i + 1] !== undefined) {
-        globalFlags.push(rest[i + 1]);
+      const nextArg = rest[i + 1];
+      if (nextArg !== undefined) {
+        globalFlags.push(nextArg);
         i++;
       }
       continue;

@@ -11,8 +11,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { parseConfigValue } from "../../../src/commands/config-cli";
-import { parseAssetRef } from "../../../src/core/asset/asset-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
+import { parseAssetRef } from "../../../src/migrate/legacy-ref-grammar";
 
 // ── #15: parseAssetRef — MISSING_REQUIRED_ARGUMENT code ────────────────────
 
@@ -37,14 +37,27 @@ describe("parseAssetRef error codes (#15)", () => {
     }
   });
 
-  test("ref with invalid type throws UsageError with MISSING_REQUIRED_ARGUMENT", () => {
+  // Chunk 1.5 opened the type token: a foreign/unknown type like "badtype"
+  // no longer throws (it round-trips as ordinary ref data). Only the
+  // deliberately-removed deny-list (`tool`/`vault`, D1.5-6) still does, so
+  // this regression guard is retargeted to one of those instead of being
+  // deleted outright — #15's real contract ("a REJECTED ref throws
+  // UsageError/MISSING_REQUIRED_ARGUMENT", not "any non-canonical type
+  // throws") still holds.
+  test("ref with a deny-listed (deliberately-removed) type throws UsageError with MISSING_REQUIRED_ARGUMENT", () => {
     try {
-      parseAssetRef("badtype:name");
+      parseAssetRef("tool:name");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       expect((err as UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
     }
+  });
+
+  test("ref with a foreign/unknown type is accepted as an open token (chunk 1.5) — does not throw", () => {
+    const ref = parseAssetRef("badtype:name");
+    expect(ref.type).toBe("badtype");
+    expect(ref.name).toBe("name");
   });
 
   test("valid ref parses correctly", () => {
@@ -56,7 +69,8 @@ describe("parseAssetRef error codes (#15)", () => {
   test("MISSING_REQUIRED_ARGUMENT has a hint in errors.ts", () => {
     const err = new UsageError("test", "MISSING_REQUIRED_ARGUMENT");
     expect(err.hint()).toBeDefined();
-    expect(err.hint()).toMatch(/type:name/);
+    // 0.9.0 grammar (D-R3): the hint teaches [bundle//]conceptId, never type:name.
+    expect(err.hint()).toMatch(/\[bundle\/\/\]conceptId/);
   });
 });
 
@@ -151,15 +165,17 @@ describe("config-cli parseConfigValue sources error message (#16)", () => {
     }
   });
 
-  test("invalid array element shows 'sources.0' not 'stashes.0'", () => {
-    // Post-rewrite: Zod uses dotted indexing in error paths (sources.0).
+  test("invalid array element shows dotted zod indexing ('registries.0') — sources key retired (#37)", () => {
+    // Post-rewrite: Zod uses dotted indexing in error paths. The original pin
+    // used `sources`, which the 0.9.0 bundles cutover retired outright; the
+    // surviving `registries` array key exercises the same error-path shape.
     try {
-      parseConfigValue("sources", "[{}]");
+      parseConfigValue("registries", "[{}]");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       const msg = (err as UsageError).message;
-      expect(msg).toContain("sources.0");
+      expect(msg).toContain("registries.0");
       expect(msg).not.toContain("stashes.0");
     }
   });

@@ -162,8 +162,8 @@ describe("tryLlmFeature", () => {
     );
     expect(result).toBe("fallback");
     expect(events).toHaveLength(1);
-    expect(events[0].reason).toBe("error");
-    expect(events[0].error?.message).toBe("boom");
+    expect(events[0]!.reason).toBe("error");
+    expect(events[0]!.error?.message).toBe("boom");
   });
 
   test("returns the fallback on an async rejection", async () => {
@@ -189,8 +189,8 @@ describe("tryLlmFeature", () => {
     );
     expect(result).toBe("fallback");
     expect(events).toHaveLength(1);
-    expect(events[0].reason).toBe("timeout");
-    expect(events[0].error).toBeInstanceOf(LlmFeatureTimeoutError);
+    expect(events[0]!.reason).toBe("timeout");
+    expect(events[0]!.error).toBeInstanceOf(LlmFeatureTimeoutError);
   });
 
   test("returns fn's result when enabled and successful", async () => {
@@ -226,8 +226,8 @@ test("timeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200 ms fn)", a
   );
   expect(result).toBe("fallback-from-gate-timeout");
   expect(events).toHaveLength(1);
-  expect(events[0].reason).toBe("timeout");
-  expect(events[0].error).toBeInstanceOf(LlmFeatureTimeoutError);
+  expect(events[0]!.reason).toBe("timeout");
+  expect(events[0]!.error).toBeInstanceOf(LlmFeatureTimeoutError);
 });
 
 test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls succeed)", async () => {

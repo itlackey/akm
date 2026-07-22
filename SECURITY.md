@@ -31,7 +31,7 @@ shell commands (via scripts, workflows, and agent dispatch), and talks to
 explicitly configured external services (LLM endpoints, git remotes, npm,
 HTTP sources). It does **not** ship telemetry, send data to anyone by
 default, or open network listeners. See
-[`docs/data-and-telemetry.md`](docs/data-and-telemetry.md) for the on-disk
+[`docs/reference/data-and-telemetry.md`](docs/reference/data-and-telemetry.md) for the on-disk
 inventory.
 
 Several akm surfaces execute user-controlled code or data with the full
@@ -43,19 +43,19 @@ bugs, but you should be aware of them:
 Workflow steps run in your shell with your PATH and your environment
 variables — including any secrets you have exported or loaded via
 `akm env run` / `akm secret run`. **Only add workflow sources you trust.** See
-[`docs/features/workflows.md` — "Security: workflow sources are executed
-code"](docs/features/workflows.md#security-workflow-sources-are-executed-code)
+[`docs/reference/workflows.md` — "Security: workflow sources are executed
+code"](docs/reference/workflows.md#security-workflow-sources-are-executed-code)
 for the full discussion.
 
 ### Scripts execute shell commands
 
-`akm show script:<name>` returns a `run:` command line the user (or an
+`akm show scripts/<name>` returns a `run:` command line the user (or an
 integrating agent) then executes. The same trust model applies: scripts you
 install from third-party stashes are third-party code.
 
 ### Agents and commands embed user-authored prompts
 
-`akm show agent:<name>` and `akm show command:<name>` return prompt
+`akm show agents/<name>` and `akm show commands/<name>` return prompt
 templates and system prompts that an LLM will execute. A malicious stash
 maintainer could write a system prompt that instructs the LLM to read
 sensitive files in your working tree and exfiltrate them via the LLM
@@ -70,11 +70,12 @@ files to source control. Normal `akm env` and `akm secret` output never echoes
 values; materialize values only at the command boundary with `akm env run`,
 `akm secret run`, or `akm secret path`.
 
-### Improve / propose / distill send asset content to the configured LLM
+### Improve / propose send asset content to the configured LLM
 
-`akm improve`, `akm propose`, `akm distill`, `akm reflect`, and `akm
-consolidate` can send asset frontmatter and body to the named LLM engine selected
-by the command, strategy, or current defaults. LLM connections live under
+`akm improve` (whose strategies run processes such as reflect, distill, and
+consolidate) and `akm propose` can send asset frontmatter and body to the
+named LLM engine selected by the command, strategy, or current defaults. LLM
+connections live under
 `engines.<name>` in `~/.config/akm/config.json`. If you configure a third-party
 LLM, your asset content goes to that third party. Use a local engine endpoint
 (for example, `http://localhost:11434/v1/chat/completions` via Ollama) for assets
@@ -82,7 +83,7 @@ containing secrets or private notes.
 
 ## Known non-issues
 
-- **The `akm-cli` npm package requires Node.js >= 20.12 as its bootstrap.** A
+- **The `akm-cli` npm package requires Node.js >= 22 as its bootstrap.** A
   working Bun >= 1.0 is preferred for execution when it is also on `PATH`; old,
   unusable, or absent Bun installations fall back to Node.js. Bun does not
   remove the package's Node.js requirement. Standalone binaries are

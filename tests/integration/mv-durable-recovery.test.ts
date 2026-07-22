@@ -5,12 +5,13 @@ import path from "node:path";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
 import { readEvents } from "../../src/core/events";
+import { txnNamespaceDir } from "../../src/core/fs-txn";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { closeDatabase, openExistingDatabase } from "../../src/indexer/db/db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { insertUsageEvent } from "../../src/indexer/usage/usage-events";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { makeConfig } from "../_helpers/factories";
 import {
@@ -71,9 +72,9 @@ describe("mv durable journal crash recovery", () => {
     seed("memories/crash-before-commit.md", "Crash source.\n");
     const citerA = seed("knowledge/crash-a.md", "A memory:crash-before-commit\n");
     const citerB = seed("knowledge/crash-b.md", "B memory:crash-before-commit\n");
-    await crashAt("applying-partial", "memory:crash-before-commit", "crash-before-commit-new");
+    await crashAt("applying-partial", "memories/crash-before-commit", "crash-before-commit-new");
 
-    const retry = await runCliCapture(["mv", "memory:crash-before-commit", "crash-before-commit-new"]);
+    const retry = await runCliCapture(["mv", "memories/crash-before-commit", "crash-before-commit-new"]);
     expect(retry.code).toBe(0);
     expect(fs.readFileSync(citerA, "utf8")).toContain("memory:crash-before-commit-new");
     expect(fs.readFileSync(citerB, "utf8")).toContain("memory:crash-before-commit-new");
@@ -89,21 +90,21 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-after-commit", 0.8, 0, 0, 0.7, 0, Date.now(), "content");
+      .run("stash//memories/crash-after-commit", 0.8, 0, 0, 0.7, 0, Date.now(), "content");
     state.close();
 
-    await crashAt("filesystem-committed", "memory:crash-after-commit", "crash-after-commit-new");
+    await crashAt("filesystem-committed", "memories/crash-after-commit", "crash-after-commit-new");
     expect(fs.existsSync(path.join(storage.stashDir, "memories/crash-after-commit-new.md"))).toBe(true);
 
-    const trigger = await runCliCapture(["mv", "memory:recovery-trigger", "recovery-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/recovery-trigger", "recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();
     const refs = after
-      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'memory:crash-after-commit%'")
+      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'stash//memories/crash-after-commit%'")
       .all() as Array<{ asset_ref: string }>;
     after.close();
-    expect(refs).toEqual([{ asset_ref: "memory:crash-after-commit-new" }]);
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(false);
+    expect(refs).toEqual([{ asset_ref: "stash//memories/crash-after-commit-new" }]);
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 
   test("recovery after the durable state-finalized phase is idempotent", async () => {
@@ -113,48 +114,50 @@ describe("mv durable journal crash recovery", () => {
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-after-state", Date.now(), 9, 1, 0, 2, 1, 0.4, Date.now());
+      .run("stash//memories/crash-after-state", Date.now(), 9, 1, 0, 2, 0.4, Date.now());
     state.close();
 
-    await crashAt("state-finalized", "memory:crash-after-state", "crash-after-state-new");
-    const trigger = await runCliCapture(["mv", "memory:state-recovery-trigger", "state-recovery-trigger-new"]);
+    await crashAt("state-finalized", "memories/crash-after-state", "crash-after-state-new");
+    const trigger = await runCliCapture(["mv", "memories/state-recovery-trigger", "state-recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
 
     const after = openStateDatabase();
     const rows = after
-      .prepare("SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-after-state%'")
+      .prepare(
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-after-state%'",
+      )
       .all() as Array<{ asset_ref: string; retrieval_count: number }>;
     after.close();
-    expect(rows).toEqual([{ asset_ref: "memory:crash-after-state-new", retrieval_count: 9 }]);
-    const events = readEvents({ type: "mv", ref: "memory:crash-after-state-new" }).events;
+    expect(rows).toEqual([{ asset_ref: "stash//memories/crash-after-state-new", retrieval_count: 9 }]);
+    const events = readEvents({ type: "mv", ref: "memories/crash-after-state-new" }).events;
     expect(events).toHaveLength(1);
   });
 
   test("recovery after mv event persistence does not duplicate the event", async () => {
     seed("memories/crash-after-mv-event.md", "Event-finalized source.\n");
     seed("memories/mv-event-recovery-trigger.md", "Trigger.\n");
-    await crashAt("mv-event-persisted", "memory:crash-after-mv-event", "crash-after-mv-event-new");
+    await crashAt("mv-event-persisted", "memories/crash-after-mv-event", "crash-after-mv-event-new");
 
-    const trigger = await runCliCapture(["mv", "memory:mv-event-recovery-trigger", "mv-event-recovery-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/mv-event-recovery-trigger", "mv-event-recovery-trigger-new"]);
     expect(trigger.code).toBe(0);
-    const events = readEvents({ type: "mv", ref: "memory:crash-after-mv-event-new" }).events;
+    const events = readEvents({ type: "mv", ref: "memories/crash-after-mv-event-new" }).events;
     expect(events).toHaveLength(1);
   });
 
   test("refuses forward recovery when the committed target diverged after the crash", async () => {
     seed("memories/crash-divergent.md", "Original committed bytes.\n");
     seed("memories/divergence-trigger.md", "Trigger.\n");
-    await crashAt("filesystem-committed", "memory:crash-divergent", "crash-divergent-new");
+    await crashAt("filesystem-committed", "memories/crash-divergent", "crash-divergent-new");
     const target = path.join(storage.stashDir, "memories", "crash-divergent-new.md");
     fs.writeFileSync(target, "EXTERNAL POST-CRASH EDIT\n", "utf8");
 
-    const trigger = await runCliCapture(["mv", "memory:divergence-trigger", "divergence-trigger-new"]);
+    const trigger = await runCliCapture(["mv", "memories/divergence-trigger", "divergence-trigger-new"]);
     expect(trigger.code).not.toBe(0);
     expect(fs.readFileSync(target, "utf8")).toBe("EXTERNAL POST-CRASH EDIT\n");
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(true);
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(true);
   });
 
   test("proposal promotion finalizes a pending committed move before writing", async () => {
@@ -163,15 +166,15 @@ describe("mv durable journal crash recovery", () => {
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-before-proposal", Date.now(), 4, 1, 0, 1, 0, 0.3, Date.now());
+      .run("stash//memories/crash-before-proposal", Date.now(), 4, 1, 0, 1, 0.3, Date.now());
     state.close();
-    await crashAt("filesystem-committed", "memory:crash-before-proposal", "crash-before-proposal-new");
+    await crashAt("filesystem-committed", "memories/crash-before-proposal", "crash-before-proposal-new");
 
     const proposal = createProposal(storage.stashDir, {
-      ref: "lesson:recovery-trigger-proposal",
+      ref: "lessons/recovery-trigger-proposal",
       source: "propose",
       force: true,
       payload: {
@@ -185,11 +188,11 @@ describe("mv durable journal crash recovery", () => {
     const after = openStateDatabase();
     const row = after
       .prepare(
-        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-before-proposal%'",
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-before-proposal%'",
       )
       .get() as { asset_ref: string; retrieval_count: number };
     after.close();
-    expect(row).toEqual({ asset_ref: "memory:crash-before-proposal-new", retrieval_count: 4 });
+    expect(row).toEqual({ asset_ref: "stash//memories/crash-before-proposal-new", retrieval_count: 4 });
   });
 
   test("recovers SIGKILL after index row re-key but before the durable index phase", async () => {
@@ -203,8 +206,8 @@ describe("mv durable journal crash recovery", () => {
     };
     closeDatabase(db);
 
-    await crashAt("index-rekeyed", "memory:crash-during-index", "crash-during-index-new");
-    const trigger = await runCliCapture(["mv", "memory:index-crash-trigger", "index-crash-trigger-new"]);
+    await crashAt("index-rekeyed", "memories/crash-during-index", "crash-during-index-new");
+    const trigger = await runCliCapture(["mv", "memories/index-crash-trigger", "index-crash-trigger-new"]);
     expect(trigger.stderr).toBe("");
     expect(trigger.code).toBe(0);
     db = openExistingDatabase(getDbPath());
@@ -224,27 +227,38 @@ describe("mv durable journal crash recovery", () => {
       .get() as {
       id: number;
     };
-    insertUsageEvent(db, {
+    closeDatabase(db);
+    // usage_events lives in state.db (Chunk-8 WI-8.3); seed it there.
+    const stateSeed = openStateDatabase();
+    insertUsageEvent(stateSeed, {
       event_type: "show",
       entry_id: before.id,
-      entry_ref: "memory:crash-before-full-index",
+      entry_ref: "stash//memories/crash-before-full-index",
+      source: "user",
     });
-    closeDatabase(db);
+    stateSeed.close();
 
-    await crashAt("filesystem-committed", "memory:crash-before-full-index", "crash-before-full-index-new");
+    await crashAt("filesystem-committed", "memories/crash-before-full-index", "crash-before-full-index-new");
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     db = openExistingDatabase(getDbPath());
     const after = db
       .prepare("SELECT id FROM entries WHERE entry_key LIKE '%:memory:crash-before-full-index-new'")
       .get() as { id: number };
-    const usage = db.prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'").get() as {
+    closeDatabase(db);
+    const stateVerify = openStateDatabase();
+    const usage = stateVerify
+      .prepare("SELECT entry_ref, entry_id FROM usage_events WHERE event_type = 'show'")
+      .get() as {
       entry_ref: string;
       entry_id: number;
     };
-    closeDatabase(db);
-    expect(usage).toEqual({ entry_ref: "memory:crash-before-full-index-new", entry_id: after.id });
-    expect(fs.existsSync(path.join(storage.stashDir, ".akm", "mv-transactions"))).toBe(false);
+    stateVerify.close();
+    // WI-8.5c: the usage-event ref is the fully-qualified item_ref post-cutover;
+    // the move rewrites it to the moved item_ref, then the full index relinks the
+    // entry_id.
+    expect(usage).toEqual({ entry_ref: "stash//memories/crash-before-full-index-new", entry_id: after.id });
+    expect(fs.existsSync(txnNamespaceDir(storage.stashDir))).toBe(false);
   });
 
   test("targeted index recovers a committed move before scanning", async () => {
@@ -256,7 +270,7 @@ describe("mv durable journal crash recovery", () => {
       .get() as { id: number };
     closeDatabase(db);
 
-    await crashAt("filesystem-committed", "memory:crash-before-targeted-index", "crash-before-targeted-index-new");
+    await crashAt("filesystem-committed", "memories/crash-before-targeted-index", "crash-before-targeted-index-new");
     const targetPath = path.join(storage.stashDir, "memories", "crash-before-targeted-index-new.md");
     expect(await indexWrittenAssets(storage.stashDir, [targetPath])).toBe(true);
 
@@ -279,31 +293,31 @@ describe("mv durable journal crash recovery", () => {
          (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-between-state", 0.7, 0, 0, 0.6, 0, now, "content");
+      .run("stash//memories/crash-between-state", 0.7, 0, 0, 0.6, 0, now, "content");
     state
       .prepare(
         `INSERT INTO asset_outcome
-         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, review_pressure, outcome_score, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate, negative_feedback_count, accepted_change_count, outcome_score, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run("memory:crash-between-state", now, 6, 1, 0, 2, 0, 0.5, now);
+      .run("stash//memories/crash-between-state", now, 6, 1, 0, 2, 0.5, now);
     state.close();
 
-    await crashAt("state-asset_salience-rekeyed", "memory:crash-between-state", "crash-between-state-new");
-    const trigger = await runCliCapture(["mv", "memory:state-table-trigger", "state-table-trigger-new"]);
+    await crashAt("state-asset_salience-rekeyed", "memories/crash-between-state", "crash-between-state-new");
+    const trigger = await runCliCapture(["mv", "memories/state-table-trigger", "state-table-trigger-new"]);
     expect(trigger.stderr).toBe("");
     expect(trigger.code).toBe(0);
     const after = openStateDatabase();
     const salience = after
-      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'memory:crash-between-state%'")
+      .prepare("SELECT asset_ref FROM asset_salience WHERE asset_ref LIKE 'stash//memories/crash-between-state%'")
       .get() as { asset_ref: string };
     const outcome = after
       .prepare(
-        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'memory:crash-between-state%'",
+        "SELECT asset_ref, retrieval_count FROM asset_outcome WHERE asset_ref LIKE 'stash//memories/crash-between-state%'",
       )
       .get() as { asset_ref: string; retrieval_count: number };
     after.close();
-    expect(salience.asset_ref).toBe("memory:crash-between-state-new");
-    expect(outcome).toEqual({ asset_ref: "memory:crash-between-state-new", retrieval_count: 6 });
+    expect(salience.asset_ref).toBe("stash//memories/crash-between-state-new");
+    expect(outcome).toEqual({ asset_ref: "stash//memories/crash-between-state-new", retrieval_count: 6 });
   });
 });

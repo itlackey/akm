@@ -55,7 +55,7 @@ function generate(): JsonSchema {
     // zod-to-json-schema (with `name`) returns `{ $ref: "#/definitions/<name>", definitions: { <name>: {...} } }`.
     // We unwrap to the inner schema object.
     const definitions = partial.definitions as Record<string, unknown> | undefined;
-    if (definitions && definitions[name]) {
+    if (definitions?.[name]) {
       defs[name] = definitions[name];
     } else {
       defs[name] = partial;
@@ -99,9 +99,7 @@ function main(): void {
   if (checkMode) {
     const { upToDate } = checkSchemaDrift();
     if (!upToDate) {
-      console.error(
-        `schemas/akm-config.json is stale. Run \`bun scripts/gen-config-schema.ts\` to regenerate.`,
-      );
+      console.error(`schemas/akm-config.json is stale. Run \`bun scripts/gen-config-schema.ts\` to regenerate.`);
       process.exit(1);
     }
     console.log("schemas/akm-config.json is up to date.");

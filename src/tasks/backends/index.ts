@@ -15,40 +15,16 @@
  */
 
 import type { ScheduleBackend } from "../schedule";
-import type { TaskDocument } from "../schema";
 import { CRON_BACKEND, type CronBackendOptions } from "./cron";
 import { LAUNCHD_BACKEND, type LaunchdBackendOptions } from "./launchd";
 import { SCHTASKS_BACKEND, type SchtasksBackendOptions } from "./schtasks";
+import type { InstalledTaskRef, TaskBackend } from "./types";
 
-export interface InstalledTaskRef {
-  id: string;
-  /**
-   * Opaque, backend-specific fingerprint of the *currently installed* entry
-   * (e.g. the cron line incl. enabled/disabled state). `tasks sync` compares
-   * it against {@link TaskBackend.expectedSignature} to detect schedule drift
-   * on tasks that already exist in the scheduler. Undefined when the backend
-   * cannot cheaply read its installed form — sync then reinstalls to be safe.
-   */
-  signature?: string;
-}
-
-export interface TaskBackend {
-  /** Stable name surfaced by `tasks doctor`. */
-  readonly name: ScheduleBackend;
-  /** Replace a native definition transactionally; rejection must leave the prior definition active. */
-  install(task: TaskDocument): Promise<void> | void;
-  uninstall(id: string): Promise<void> | void;
-  setEnabled(id: string, enabled: boolean): Promise<void> | void;
-  list(): Promise<InstalledTaskRef[]> | InstalledTaskRef[];
-  /**
-   * The signature the task *should* have once installed, derived from its
-   * current on-disk definition. Compared against {@link InstalledTaskRef.signature}
-   * during `tasks sync` so a changed schedule (or enabled state) is reinstalled
-   * instead of being silently reported "unchanged". Optional — backends that
-   * omit it fall back to always-reinstall during sync.
-   */
-  expectedSignature?(task: TaskDocument): string;
-}
+// Re-exported so existing `import { type InstalledTaskRef, type TaskBackend }
+// from "./tasks/backends"` sites are unaffected by the KILL 7 sever (types
+// moved to types.ts to break the index.ts ↔ {cron,launchd,schtasks}.ts import
+// cycle).
+export type { InstalledTaskRef, TaskBackend };
 
 export interface SelectBackendOptions {
   platform?: NodeJS.Platform;
@@ -57,22 +33,13 @@ export interface SelectBackendOptions {
   schtasks?: SchtasksBackendOptions;
 }
 
-// ── Test seam ────────────────────────────────────────────────────────────────
-// Swap-and-restore overrides. Inert in production; only tests call the setter
-// (via tests/_helpers/seams.ts). See docs/design/di-seams-plan.md.
-interface BackendsOverridesForTests {
-  selectBackend?: typeof selectBackend;
-  backendNameForPlatform?: typeof backendNameForPlatform;
-}
-let backendsOverrides: BackendsOverridesForTests | undefined;
-
-/** TEST-ONLY. Swap backend selection; pass undefined to restore the real implementations. */
-export function _setBackendsForTests(fakes?: BackendsOverridesForTests): void {
-  backendsOverrides = fakes;
-}
-
+// WI-9.10e: the former `_setBackendsForTests` module-mutation seam was retired.
+// Tests inject a fake `TaskBackend` directly via the `deps.backend` parameter
+// the `akm tasks` mutation entries already accept (the backend carries its own
+// `name`), so no module-level override binding is needed. `selectBackend`'s
+// `options.platform` covers the platform-steering the seam's second override
+// used to provide.
 export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
-  if (backendsOverrides?.selectBackend) return backendsOverrides.selectBackend(options);
   const platform = options.platform ?? process.platform;
   switch (platform) {
     case "win32":
@@ -85,7 +52,6 @@ export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
 }
 
 export function backendNameForPlatform(platform: NodeJS.Platform = process.platform): ScheduleBackend {
-  if (backendsOverrides?.backendNameForPlatform) return backendsOverrides.backendNameForPlatform(platform);
   if (platform === "win32") return "schtasks";
   if (platform === "darwin") return "launchd";
   return "cron";

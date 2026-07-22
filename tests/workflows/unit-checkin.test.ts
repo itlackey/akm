@@ -48,8 +48,8 @@ describe("evaluateStaleUnits", () => {
     const rows = [unitRow({ unit_id: "a", last_checkin_at: iso(UNIT_STALE_MS + 1_000) })];
     const stale = evaluateStaleUnits(rows, NOW);
     expect(stale).toHaveLength(1);
-    expect(stale[0].unitId).toBe("a");
-    expect(stale[0].idleMs).toBeGreaterThanOrEqual(UNIT_STALE_MS);
+    expect(stale[0]!.unitId).toBe("a");
+    expect(stale[0]!.idleMs).toBeGreaterThanOrEqual(UNIT_STALE_MS);
   });
 
   test("a fresh heartbeat inside the window is NOT stale", () => {
@@ -61,7 +61,7 @@ describe("evaluateStaleUnits", () => {
     const rows = [unitRow({ unit_id: "a", started_at: iso(UNIT_STALE_MS + 5_000), last_checkin_at: null })];
     const stale = evaluateStaleUnits(rows, NOW);
     expect(stale).toHaveLength(1);
-    expect(stale[0].lastSeenAt).toBe(iso(UNIT_STALE_MS + 5_000));
+    expect(stale[0]!.lastSeenAt).toBe(iso(UNIT_STALE_MS + 5_000));
   });
 
   test("a heartbeat advances the window past an old claim (started_at ignored when a heartbeat exists)", () => {
@@ -86,6 +86,6 @@ describe("evaluateStaleUnits", () => {
     const rows = [unitRow({ unit_id: "a", started_at: null, last_checkin_at: null })];
     const stale = evaluateStaleUnits(rows, NOW);
     expect(stale).toHaveLength(1);
-    expect(stale[0].idleMs).toBe(Number.POSITIVE_INFINITY);
+    expect(stale[0]!.idleMs).toBe(Number.POSITIVE_INFINITY);
   });
 });

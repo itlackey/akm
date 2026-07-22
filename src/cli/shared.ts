@@ -12,12 +12,15 @@
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
 import { assertNever } from "../core/assert";
-import { AkmError } from "../core/errors";
+import { AkmError, UsageError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
-import { DEFAULT_TEMPLATE, deliverRendered, escapeHtml, renderHtml, resolveTemplatePath } from "../output/html-render";
+import { deliverRendered } from "../output/html-render";
 import { shapeForCommand } from "../output/shapes";
 import { formatPlain, outputJsonl } from "../output/text";
+import { parseAllFlagValues } from "./invocation";
 import { hasSubcommand } from "./parse-args";
+
+export { parseAllFlagValues };
 
 // ── Exit codes ───────────────────────────────────────────────────────────────
 /**
@@ -202,40 +205,17 @@ export function output(command: string, result: unknown): void {
       // pipelines never get an empty stdout.
       deliverRendered(JSON.stringify(shaped, null, 2), mode.outputPath);
       return;
-    case "html": {
-      // Generic fallback: render the JSON envelope inside the dark-mode
-      // default template. Commands with a bespoke HTML template (`akm health`)
-      // intercept before reaching output(), same as the `md` intercept.
-      const html = renderHtml(resolveTemplatePath(DEFAULT_TEMPLATE), {
-        "%%COMMAND%%": escapeHtml(command),
-        "%%CONTENT_JSON%%": escapeHtml(JSON.stringify(shaped, null, 2)),
-        "%%GENERATED_AT%%": new Date().toISOString(),
-      });
-      deliverRendered(html, mode.outputPath);
-      return;
-    }
+    case "html":
+      // `akm health` intercepts `mode.format === "html"` before reaching
+      // output() (cli.ts, same as the `md` intercept) and renders its own
+      // bespoke template. Every other command has no HTML surface — the
+      // generic JSON-in-<pre> fallback template was removed (chunk-9 WI-9.4c
+      // / Decision 4); `html` stays a valid --format value (OUTPUT_FORMATS),
+      // it just only resolves for health.
+      throw new UsageError("html output is only available for `akm health`", "INVALID_FLAG_VALUE");
   }
 }
 
-/**
- * Collect all occurrences of a repeatable flag from process.argv.
- * Citty's StringArgDef only exposes the last value when a flag is repeated,
- * so for repeatable CLI args (like `--tag foo --tag bar`) we read argv directly.
- * Supports both `--flag value` and `--flag=value` forms.
- */
-export function parseAllFlagValues(flag: string): string[] {
-  const values: string[] = [];
-  for (let i = 0; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    if (arg === flag && i + 1 < process.argv.length) {
-      values.push(process.argv[i + 1] as string);
-      // BUG-M4: skip the value index so `--tag --tag` (literal `--tag`
-      // value) does not double-count the second `--tag` as a separate
-      // flag occurrence.
-      i++;
-    } else if (arg.startsWith(`${flag}=`)) {
-      values.push(arg.slice(flag.length + 1));
-    }
-  }
-  return values;
-}
+// parseAllFlagValues moved to ./invocation (chunk-9 WI-9.9 argv-normalization
+// fold); re-exported above so every existing importer of this module is
+// unaffected.

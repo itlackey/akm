@@ -4,10 +4,79 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.9.0] - 2026-07-20
+
+0.9.0 is the format-neutral **bundle / adapter** refactor: it replaces the flat
+asset-type registry with per-format adapters, adopts one canonical ref grammar,
+and consolidates the durable databases and config. This section supersedes the
+earlier `0.9.0-rc.1` / `0.9.0-beta.*` development entries below.
+
+### Breaking changes & migration
+
+- **Installed non-akm bundles reclassify on your next `akm index`.** The
+  indexer now dispatches each installed bundle's *detected* adapter (Claude
+  tool dirs, LLM wikis, website snapshots, agent-skills packs, …) instead of
+  recognizing everything with the akm-stash adapter. Entries in such bundles
+  change type and ref spelling to the owning adapter's own scheme the first
+  time you reindex. No action needed — the index is a regenerable cache and
+  rebuilds itself — but searches/saved refs into those bundles may resolve to
+  the new spellings afterwards.
+- **Ref grammar cutover — `type:name` → `[bundle//]conceptId`.** Every ref is
+  now a subdir-qualified concept id inside its bundle (`skills/code-review`,
+  `memories/vpn-note`, `env/prod`), optionally prefixed with a `bundle//`
+  installation slug and suffixed with `#fragment`. Durable state stores the
+  fully-qualified `bundle//conceptId`; the short bundle-omitted form is accepted
+  input only (resolved against `defaultBundle`, then installation-priority
+  order). The pre-0.9.0 `[origin//]type:name` grammar is removed — there is no
+  compatibility parser; the frozen migrator in `src/migrate/legacy/` is the only
+  place it survives.
+- **Explicit, journaled, crash-resumable cutover (`akm migrate apply`).** The
+  migrator re-keys all durable state to the new spelling, folds the former
+  `workflow.db` into `state.db` (four databases down to three: `state.db` /
+  `index.db` / a separate `logs.db`), and migrates config from the flat
+  `stashDir` / `sources` / `installed` / `wikiName` keys to `bundles` /
+  `defaultBundle`. A verified, installation-scoped **backup manifest v3**
+  (covering the pre-rescue `index.db`) is taken before any ledger is sealed;
+  expected orphans are quarantined, integrity failures fail closed, and the
+  whole cutover resumes idempotently after a crash. Normal commands refuse an
+  un-migrated or divergent durable schema rather than migrating as a side effect.
+  The retired `stashDir` / `sources` / `installed` keys are **hard-rejected** by
+  the 0.9.0 config schema whenever present (the error names `akm migrate apply`);
+  registry-installed bundles keep only their desired locator (`git`/`npm` +
+  `registryId`) in config, with resolved cache state living exclusively in the
+  lockfile.
+- **`index.md` / `log.md` are reserved structural files.** Per the Open
+  Knowledge Format, `index.md` (directory listing) and `log.md` (update history)
+  are never indexed as concepts and are never valid write / `mv` targets at any
+  bundle depth. Existing stash files with those names are excluded from the
+  index (and renamed by the content migration when they hold a real concept).
+- **`vault` asset type removed.** Use `env` (a whole `.env` group; key names
+  surfaced, values never) and `secret` (a single sensitive value), addressed as
+  `env/<name>` and `secrets/<name>`. `akm-migrate-storage` still performs the
+  non-destructive `vaults/` → `env/` copy for older stashes.
+- **0.8-era CLI aliases removed.** The flat proposal verbs (`akm proposals`,
+  `akm accept`, `akm reject`, `akm diff`, `akm revert`, `akm show proposal`),
+  `akm save`, top-level `akm enable` / `akm disable`, `akm events`,
+  `--detail summary|agent`, `--for-agent`, `--note`, and `--source` (on
+  accept/reject/history) are gone — use the canonical spellings documented in
+  `STABILITY.md`.
+
+See `docs/migration/v0.8-to-v0.9.md` and
+`docs/migration/release-notes/0.9.0.md` for the full upgrade procedure.
 
 ### Added
 
+- **Local downstream value attribution for memory inference and graph
+  extraction.** Private search-hit sidecars now write versioned, source-qualified
+  per-entry `usage_events.metadata` for emitted MI direct/surface value and the
+  active graph contributor's positive applied/capped contribution. Current plain
+  traffic is marked as control, brief/replaced MI surfaces and graph ablations do
+  not claim attribution, and nested curate reads avoid duplicate show rows. The
+  read-only `akm-eval-attribution-rollup` separates user-only exposure,
+  selection/show consumption, current controls, and historical unattributed rows
+  without emitting bodies, query text, or provenance content. Graph contribution
+  is an input attribution signal, not a causal claim that rank changed. No table,
+  migration, dashboard, or health schema was added.
 - **Explicit, crash-resumable 0.9 migration coordination.** `akm migrate
   status` classifies config, `state.db`, and `workflow.db` independently;
   `akm migrate apply [--config <prepared>]` creates a verified,
@@ -165,7 +234,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exceeding it warns on stderr but still writes. Additionally, a type-root
   write (no `--path`, flat name) into a stash carrying convention facts now
   returns an additive `hint` output key pointing at the stash's placement
-  conventions (`fact:conventions/organization` when that fact exists), so CLI
+  conventions (`facts/conventions/organization` when that fact exists), so CLI
   writers see the conventions that LLM flows already receive by injection.
 - **`--supersedes <ref>` on `akm remember` and `akm import` — atomic
   correction + demotion of the superseded asset.** The stash conventions'
@@ -195,9 +264,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parser. On a git write target the demotion is ordered before the
   batch-at-boundary commit, so the correction and the demoted old asset land
   in one commit.
-- **Ref-prefix search queries — `akm search "<type>:<prefix>/"` now enumerates
+- **Ref-prefix search queries — `akm search "<subdir>/<prefix>/"` now enumerates
   that subtree.** A query shaped like a ref prefix (trailing slash required:
-  `memory:projectA/`; a bare `memory:` lists the whole type) translates to a
+  `memories/projectA/`; a bare `memories/` lists the whole type) translates to a
   typed index enumeration narrowed to entry names under the prefix, instead of
   degenerating into the AND-token FTS query its sanitized form used to produce
   (`"memory projectA"` — noise, since `entry_type` is not an FTS column). The
@@ -207,15 +276,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   composes with `--limit`, `--belief`, `--filter`, and named `--source`
   narrowing exactly like the existing empty-query enumeration — hits carry the
   fixed browse score `1` in deterministic listing order, not a relevance
-  ranking. The parsed type is explicit intent: a bare `session:` enumerates
+  ranking. The parsed type is explicit intent: a bare `sessions/` enumerates
   sessions just like `--type session` (the default session exclusion is an
   untyped-path policy), while an explicit `--type` flag always wins over the
   type parsed from the query (the branch fires only on untyped searches). A
-  full ref without the trailing slash (`memory:projectA/auth-tip`) stays an
+  full ref without the trailing slash (`memories/projectA/auth-tip`) stays an
   ordinary keyword search — resolving a single ref is `akm show`'s job.
   **Stable-surface note:** `akm search` is Stable; this changes results for a
   query shape that previously returned noise or nothing. A user literally
-  keyword-searching for the string `memory:x/` loses the old fuzzy token
+  keyword-searching for the string `memories/x/` loses the old fuzzy token
   behavior — accepted as negligible.
 - **The `category:` frontmatter key is now captured into the index** as
   `entry.category` (entry_json only — no schema migration). The key already
@@ -223,8 +292,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fact linter, but the indexer never captured it, so no category-keyed search
   or ranking policy was implementable. Captured for all markdown asset types
   alongside `beliefState` (trimmed; blank/non-string values ignored; no
-  default invented), and whitelisted through the `.stash.json` entry
-  round-trip. Search results and ranking are unchanged — this is capture
+  default invented), captured directly onto the index entry. Search results
+  and ranking are unchanged — this is capture
   only (a unit test pins that `category` never enters the FTS search
   fields). **Requires a reindex to take effect** for existing entries. The
   companion rank-time demotion of `category: convention` facts on untyped
@@ -301,6 +370,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Improve-stage extraction and proactive maintenance now ship opt-in.** The
+  built-in `default` and `frequent` strategies resolve extract off, while
+  `default` and `reflect-distill` resolve `proactiveMaintenance` off. The
+  dedicated `proactive-maintenance` strategy remains enabled. Built-ins such as
+  `thorough` that omit these fields inherit the new `default` off values; user
+  overrides are merged last, so explicit `enabled: true` values still win.
+  Standalone extraction remains independent of the improve-stage toggle but
+  still requires `--type <harness>` or `--auto`. The bundled, unselected
+  `core/extract` task now uses `akm extract --auto`; existing scheduled tasks
+  with invalid bare `akm extract` commands must be updated explicitly.
+- **Indexing dispatches each bundle's detected adapter.** The indexer's per-
+  directory scan now resolves the component's adapter (`adapterForId`) and runs
+  THAT adapter's `recognize`, instead of always using the `akm` adapter. A
+  component whose adapter id is unknown is skipped with a warning. Adapter-owned
+  filtering moves the AKM-stash sensitive/infra exclusions (env/secret
+  `.sensitive`-marker skips, the legacy `vaults/` skip, wiki infra files) out of
+  the core scan and into the `akm` adapter's own recognition, so each adapter
+  owns its bundle's filtering. **Reindex note:** any non-`akm` bundle that was
+  previously probed as one adapter id but still recognized by `akm` will
+  re-index under its own adapter on the next `akm index` — the index is a
+  regenerable cache, so no migration is required.
 - **Improve target identity is now end-to-end and source-qualified.** Explicit
   targets govern reads, generated proposals, triage promotion, consolidation,
   retrieval signals, cooldowns, and replay state. Duplicate bare refs in other
@@ -313,7 +403,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Directory (scope/domain) tokens now always merge into `tags` at index
   time**, even when an asset sets explicit `tags:` frontmatter. Previously
   explicit tags suppressed all path-derived tags, so a nested asset like
-  `memory:projectA/auth-tip` with `tags: [auth]` silently lost the exact
+  `memories/projectA/auth-tip` with `tags: [auth]` silently lost the exact
   tag-match ranking boost for its scope token unless the author restated it.
   The merged tokens come from the canonical ref subpath
   (`extractDirTagsFromName`), which also fixes the flat-walk indexing path
@@ -375,7 +465,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keys (`name`, `updated` were missing); removed the documented-but-nonexistent
   `akm workflow step` alias from `docs/features/workflows.md`.
 
-## [0.9.0] — 2026-06-30
+## [0.9.0-rc.1] - 2026-06-30
 
 ### Fixed
 
@@ -514,7 +604,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   convention, or `.meta/index.md` files. Seeding stays absent-only and never
   overwrites a user-edited file. (#646)
 
-## [0.9.0-beta.36] — 2026-06-22
+## [0.9.0-beta.36] - 2026-06-22
 
 ### Added
 
@@ -549,7 +639,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Corrected a prompt/validator drift where the distill system prompt asked for an
   80–200 char description while the gate enforced 20–400. (#645)
 
-## [0.9.0-beta.35] — 2026-06-21
+## [0.9.0-beta.35] - 2026-06-21
 
 ### Fixed
 
@@ -577,7 +667,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   LLM call per processed session (the session summary); set it to `false` to halve
   per-session extract cost. Unchanged/skipped sessions still cost zero.
 
-## [0.9.0-beta.34] — 2026-06-21
+## [0.9.0-beta.34] - 2026-06-21
 
 ### Fixed
 
@@ -592,7 +682,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and falls back to the JSON layout. Verified end-to-end through the plugin's
   `session.idle` hook.
 
-## [0.9.0-beta.33] — 2026-06-21
+## [0.9.0-beta.33] - 2026-06-21
 
 ### Fixed
 
@@ -608,7 +698,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already-extracted session with zero LLM calls) and only `--force` re-extracts. This
   makes a session-end hook firing `extract --session-id <id>` precise AND idempotent.
 
-## [0.9.0-beta.32] — 2026-06-21
+## [0.9.0-beta.32] - 2026-06-21
 
 ### Added
 
@@ -634,7 +724,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with freshly-read timestamp maps INSIDE the lock (`filterProactiveDue`), dropping
   refs a concurrent run already reflected.
 
-## [0.9.0-beta.31] — 2026-06-20
+## [0.9.0-beta.31] - 2026-06-20
 
 ### Changed
 
@@ -647,7 +737,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   On the live stash this turns the recombine cluster set from generic 66–171-member
   buckets into tight topical clusters (`auth`, `architecture`, `patterns`, …).
 
-## [0.9.0-beta.30] — 2026-06-20
+## [0.9.0-beta.30] - 2026-06-20
 
 ### Changed / Fixed
 
@@ -666,7 +756,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   membership-overlap (≥ 0.7) and reuses its stable ref, so the streak accumulates
   through membership drift. First/non-overlapping induction is unchanged.
 
-## [0.9.0-beta.29] — 2026-06-20
+## [0.9.0-beta.29] - 2026-06-20
 
 ### Reverted
 
@@ -674,7 +764,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm fact` CLI shipped in beta.28 was reverted pending rework. Phase 1 (#629, the
   `fact` asset type itself) remains in place.
 
-## [0.9.0-beta.27] — 2026-06-20
+## [0.9.0-beta.27] - 2026-06-20
 
 All new behavior is **opt-in / default-preserving** — default runs are byte-identical.
 
@@ -720,7 +810,7 @@ All new behavior is **opt-in / default-preserving** — default runs are byte-id
   hang/timeout** (the busy-spin can rarely fire even at `--parallel=1`) and never
   on a real test failure, so genuine red tests still fail fast and are never masked.
 
-## [0.9.0-beta.26] — 2026-06-20
+## [0.9.0-beta.26] - 2026-06-20
 
 ### Added
 
@@ -737,7 +827,7 @@ All new behavior is **opt-in / default-preserving** — default runs are byte-id
   Azure Container Apps). New docs section "Hosting AKM databases on a network share
   (NFS/SMB)" in `docs/configuration.md`.
 
-## [0.9.0-beta.25] — 2026-06-19
+## [0.9.0-beta.25] - 2026-06-19
 
 Completes the recombine / extract-efficiency / graph thread. All new improve
 passes are **opt-in (default off)**, so default behavior is unchanged.
@@ -775,20 +865,20 @@ passes are **opt-in (default off)**, so default behavior is unchanged.
   sandbox dirs left by force-killed workers — eliminating the tmpfs accumulation
   that caused intermittent `EEXIST: epoll_ctl` test flakes.
 
-## [0.9.0-beta.20] — 2026-06-18
+## [0.9.0-beta.20] - 2026-06-18
 
 ### Fixed
 
 - **`akm update --all` no longer fails for writable `github:` entries stored as `source:"git"`**. `updateRegistryEntry` was using `synced.source` (re-derived from the ref scheme as `"github"`) instead of the existing `entry.source`, causing the config validator to reject `writable:true` on every update cycle.
 
-## [0.9.0-beta.19] — 2026-06-17
+## [0.9.0-beta.19] - 2026-06-17
 
 ### Fixed
 
 - **`akm feedback` now completes in ~0.3s** (was 3+ minutes). Root cause: the command was calling `ensureIndex` with `mode: "blocking"` inside `withIndexWriterLease`, triggering a full reindex on every feedback call. Fix: removed the `ensureIndex` call entirely (feedback only needs the index to exist, not be current — a stale index is fine for ref lookup); removed the application-level writer lock (SQLite WAL + `busy_timeout=30s` handles concurrent access with `akm improve`); added a fast DB-exists guard with a clear error for first-time users.
 - **`akm health --format html` now completes in ~11s** (was ~18s). Root cause: `akmHealth()` was called twice — once for the main result and once to get `deltas`. Fix: merged into a single call passing both `groupBy: "run"` and `windowCompare` together.
 
-## [0.9.0-beta.18] — 2026-06-17
+## [0.9.0-beta.18] - 2026-06-17
 
 ### Changed
 
@@ -1240,7 +1330,7 @@ proposal and log storage, `--format html` output, and per-stage LLM telemetry.
 
 ### Added
 
-- **Cross-runtime: akm now runs on Node.js >= 20.12 in addition to Bun** (#560,
+- **Cross-runtime: akm now runs on Node.js >= 22 in addition to Bun** (#560,
   #465). A two-file runtime boundary (`src/storage/database.ts` owns SQLite via
   `bun:sqlite` on Bun / `better-sqlite3` on Node; `src/runtime.ts` owns every
   `Bun.*` API) contains all runtime-specific code, enforced by a lint guard so it

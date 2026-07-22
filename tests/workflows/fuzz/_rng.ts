@@ -61,7 +61,7 @@ export class Rng {
 
   /** Pick one element (caller guarantees a non-empty array). */
   pick<T>(items: readonly T[]): T {
-    return items[this.int(items.length)];
+    return items[this.int(items.length)]!;
   }
 
   /** A fresh Fisher-Yates shuffle (does not mutate the input). */
@@ -69,7 +69,7 @@ export class Rng {
     const copy = [...items];
     for (let i = copy.length - 1; i > 0; i--) {
       const j = this.int(i + 1);
-      [copy[i], copy[j]] = [copy[j], copy[i]];
+      [copy[i], copy[j]] = [copy[j]!, copy[i]!];
     }
     return copy;
   }

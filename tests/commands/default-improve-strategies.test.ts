@@ -13,7 +13,6 @@ import { describe, expect, test } from "bun:test";
 import profileCatchup from "../../src/assets/improve-strategies/catchup.json";
 import profileConsolidate from "../../src/assets/improve-strategies/consolidate.json";
 import profileFrequent from "../../src/assets/improve-strategies/frequent.json";
-import profileSynthesize from "../../src/assets/improve-strategies/synthesize.json";
 import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
@@ -28,10 +27,8 @@ const BUILTIN_STRATEGIES = [
   "frequent",
   "consolidate",
   "catchup",
-  "synthesize",
   "reflect-distill",
   "proactive-maintenance",
-  "recombine-only",
 ] as const;
 
 describe("default improve strategies (#552)", () => {
@@ -40,13 +37,16 @@ describe("default improve strategies (#552)", () => {
       expect(resolveImproveStrategy(name, MINIMAL_CONFIG)).toMatchSnapshot(name);
     }
   });
-  test("default profile ships the sustaining proactiveMaintenance lane ON", () => {
-    // Intentional default (deep-tuning 2026-06-29): on a mature stash, reflect is
-    // signal-delta-gated to ~0 actionable, so proactiveMaintenance is the lane
-    // that keeps the nightly default-profile cron producing. This pins that the
-    // default profile resolves it ON (other built-ins inherit the OFF code default).
-    const p = resolveImproveStrategy("default", MINIMAL_CONFIG).config;
-    expect(p.processes?.proactiveMaintenance?.enabled).toBe(true);
+  test("proactive maintenance is opt-in", () => {
+    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled).toBe(
+      false,
+    );
+    expect(
+      resolveImproveStrategy("reflect-distill", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
+    ).toBe(false);
+    expect(
+      resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
+    ).toBe(true);
   });
 
   test("frequent: validates against the live schema", () => {
@@ -61,7 +61,7 @@ describe("default improve strategies (#552)", () => {
     expect(() => ImproveProfileConfigSchema.parse(profileCatchup)).not.toThrow();
   });
 
-  test("frequent resolves with extract + inference on, consolidate/distill off", () => {
+  test("frequent resolves with inference on and improve-stage extract/consolidate/distill off", () => {
     const p = resolveImproveStrategy("frequent", MINIMAL_CONFIG).config;
     expect(p.description).toContain("Frequent");
     expect(p.processes?.reflect?.enabled).toBe(true);
@@ -69,9 +69,13 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.consolidate?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(true);
     expect(p.processes?.graphExtraction?.enabled).toBe(true);
-    expect(p.processes?.extract?.enabled).toBe(true);
+    expect(p.processes?.extract?.enabled).toBe(false);
     expect(p.processes?.triage?.enabled).toBe(false);
     expect(p.sync?.push).toBe(true);
+  });
+
+  test("default resolves with improve-stage extract off", () => {
+    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.extract?.enabled).toBe(false);
   });
 
   test("consolidate resolves to consolidation-only with maxChunkSize 25 and minPoolSize 500", () => {
@@ -116,29 +120,10 @@ describe("default improve strategies (#552)", () => {
     expect(JSON.stringify(profileCatchup)).toContain("minPoolSize");
   });
 
-  test("synthesize: validates against the live schema", () => {
-    expect(() => ImproveProfileConfigSchema.parse(profileSynthesize)).not.toThrow();
-  });
-
-  test("synthesize resolves to recombine ON, procedural OFF (held until cross-project scoping), all generative/extract passes OFF", () => {
-    const p = resolveImproveStrategy("synthesize", MINIMAL_CONFIG).config;
-    expect(p.processes?.recombine?.enabled).toBe(true);
-    // #615 procedural is held OFF everywhere — it over-fits one-off sequences (0% accept, deep-tuning analysis 2026-06-29).
-    expect(p.processes?.procedural?.enabled).toBe(false);
-    expect(p.processes?.reflect?.enabled).toBe(false);
-    expect(p.processes?.distill?.enabled).toBe(false);
-    expect(p.processes?.consolidate?.enabled).toBe(false);
-    expect(p.processes?.memoryInference?.enabled).toBe(false);
-    expect(p.processes?.graphExtraction?.enabled).toBe(false);
-    expect(p.processes?.extract?.enabled).toBe(false);
-    expect(p.sync?.push).toBe(true);
-  });
-
   test("minNewSessions (#554) lives only on the frequent profile's extract process", () => {
-    // #554 added `minNewSessions: 3` to frequent.json's extract process — the
-    // only profile that opts into the extract candidate-pool gate. The in-code
-    // default is 0 (disabled), so consolidate/catchup (which don't run extract)
-    // must NOT carry the key; existing behaviour is preserved everywhere else.
+    // `frequent` keeps its tuned candidate-pool gate for users who explicitly
+    // enable its extract stage. The shipped stage is off; the in-code
+    // minNewSessions default remains 0 (disabled) everywhere else.
     expect(profileFrequent.processes?.extract?.minNewSessions).toBe(3);
     for (const raw of [profileConsolidate, profileCatchup]) {
       expect(JSON.stringify(raw)).not.toContain("minNewSessions");

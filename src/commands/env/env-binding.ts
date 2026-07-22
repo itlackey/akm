@@ -20,9 +20,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAssetPathFromName } from "../../core/asset/asset-spec";
+import { decideDangerousEnvInjection } from "../../core/activation-policy";
+import { assetPathForName } from "../../core/asset/asset-placement";
 import { isWithin } from "../../core/common";
-import { makeEnvRef, resolveEnvPath } from "../../core/env-secret-ref";
+import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isDangerousEnvKey } from "../lint/env-key-rules";
@@ -84,7 +85,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   // SAME stash. A missing secret is a hard error — inject NOTHING.
   const secretsRoot = path.join(source.path, "secrets");
   const resolveSecret = (secretName: string): string | undefined => {
-    const secretPath = resolveAssetPathFromName("secret", secretsRoot, secretName);
+    const secretPath = assetPathForName("secret", secretsRoot, secretName);
     // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
     if (!isWithin(secretPath, secretsRoot)) {
       throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
@@ -96,28 +97,31 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
   if (missing.length > 0) {
     throw new NotFoundError(
-      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => `secret:${n}`).join(", ")}. Nothing was injected.`,
+      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => makeSecretRef(n)).join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set secret:${missing[0]}\`.`,
+      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0]!)}\`.`,
     );
   }
   envValues = substituted;
   const keys = Object.keys(envValues);
 
-  // Scan injected keys for known process-hijacking variables. Block for
-  // third-party-sourced stashes (origin has a registryId); warn for the
-  // operator's own first-party stash, where they own the file.
+  // Scan injected keys for known process-hijacking variables. The workspace
+  // activation policy decides block (third-party, registryId set) vs. warn
+  // (first-party stash, where the operator owns the file).
   const dangerous = keys.filter(isDangerousEnvKey);
   if (dangerous.length > 0) {
     const detail = `Env "${envRef}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
-    if (source.registryId) {
+    const decision = decideDangerousEnvInjection({ dangerousKeys: dangerous, thirdParty: Boolean(source.registryId) });
+    if (decision === "block") {
       throw new UsageError(
         `Refusing to inject env from a third-party stash. ${detail}\n` +
           `       Review the file, then copy the values into a first-party env if you trust them.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    warn(`${detail} Injecting anyway (first-party stash).`);
+    if (decision === "warn") {
+      warn(`${detail} Injecting anyway (first-party stash).`);
+    }
   }
 
   // Audit trail: keys only, never values.

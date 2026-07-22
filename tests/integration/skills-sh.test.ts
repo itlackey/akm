@@ -151,16 +151,16 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10 });
-      expect(result.hits[0].ref).toBe("vercel-labs/agent-skills");
-      expect(result.hits[1].ref).toBe("some-org/web-skills");
-      expect(result.hits[2].ref).toBe("solo-dev/my-skills");
+      expect(result.hits[0]!.ref).toBe("vercel-labs/agent-skills");
+      expect(result.hits[1]!.ref).toBe("some-org/web-skills");
+      expect(result.hits[2]!.ref).toBe("solo-dev/my-skills");
     });
 
     test("hit homepage derives from config URL", async () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10 });
-      expect(result.hits[0].homepage).toBe(`${srv.url}/vercel-labs/agent-skills/react-best-practices`);
+      expect(result.hits[0]!.homepage).toBe(`${srv.url}/vercel-labs/agent-skills/react-best-practices`);
     });
 
     test("registryName is set from config", async () => {
@@ -176,8 +176,8 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10 });
-      expect(result.hits[0].metadata?.installs).toBe("22475");
-      expect(result.hits[0].metadata?.author).toBe("vercel-labs");
+      expect(result.hits[0]!.metadata?.installs).toBe("22475");
+      expect(result.hits[0]!.metadata?.author).toBe("vercel-labs");
     });
 
     test("registryName defaults to skills.sh when config has no name", async () => {
@@ -272,7 +272,7 @@ describe("SkillsShProvider", () => {
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toHaveLength(1);
-      expect(result.hits[0].title).toBe("valid");
+      expect(result.hits[0]!.title).toBe("valid");
     });
   });
 
@@ -292,7 +292,7 @@ describe("SkillsShProvider", () => {
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10 });
       // vercel-labs has 22475 installs (highest)
-      expect(result.hits[0].score).toBe(1);
+      expect(result.hits[0]!.score).toBe(1);
     });
   });
 
@@ -317,7 +317,7 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits?.[0].action).toBe("akm add github:vercel-labs/agent-skills");
+      expect(result.assetHits![0]!.action).toBe("akm add github:vercel-labs/agent-skills");
     });
 
     test("no asset hits when includeAssets is false", async () => {
@@ -343,7 +343,7 @@ describe("SkillsShProvider", () => {
       // Second call — should use cache
       const result2 = await provider.search({ query: "react", limit: 10 });
       expect(result2.hits).toHaveLength(3);
-      expect(result2.hits[0].id).toBe(result1.hits[0].id);
+      expect(result2.hits[0]!.id).toBe(result1.hits[0]!.id);
     });
   });
 });

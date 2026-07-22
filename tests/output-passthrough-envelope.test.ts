@@ -17,7 +17,7 @@ import { shapeForCommand } from "../src/output/shapes";
 
 describe("passthrough envelope stamping (#484)", () => {
   it("adds schemaVersion + shape to curate responses", () => {
-    const result = { query: "q", summary: "Selected 1", items: [{ source: "stash", ref: "skill:foo" }] };
+    const result = { query: "q", summary: "Selected 1", items: [{ source: "stash", ref: "skills/foo" }] };
     const shaped = shapeForCommand("curate", result, "normal") as Record<string, unknown>;
     expect(shaped.shape).toBe("curate");
     expect(shaped.schemaVersion).toBe(1);
@@ -25,7 +25,7 @@ describe("passthrough envelope stamping (#484)", () => {
   });
 
   it("adds schemaVersion + shape to clone (passthrough)", () => {
-    const shaped = shapeForCommand("clone", { ref: "skill:foo", cloned: true }, "normal") as Record<string, unknown>;
+    const shaped = shapeForCommand("clone", { ref: "skills/foo", cloned: true }, "normal") as Record<string, unknown>;
     expect(shaped.shape).toBe("clone");
     expect(shaped.schemaVersion).toBe(1);
   });
@@ -46,11 +46,11 @@ describe("passthrough envelope stamping (#484)", () => {
     // with the envelope stamp.
     const envs = shaped.envs as Array<Record<string, unknown>>;
     expect(envs[0]).not.toHaveProperty("path");
-    expect(envs[0].name).toBe("v1");
+    expect(envs[0]!.name).toBe("v1");
   });
 
   it("adds schemaVersion + shape to env-create (passthrough)", () => {
-    const created = shapeForCommand("env-create", { ref: "env:x", created: true }, "normal") as Record<string, unknown>;
+    const created = shapeForCommand("env-create", { ref: "env/x", created: true }, "normal") as Record<string, unknown>;
     expect(created.shape).toBe("env-create");
     expect(created.schemaVersion).toBe(1);
   });

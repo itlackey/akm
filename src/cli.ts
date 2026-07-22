@@ -3,25 +3,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 20.12
+// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22
 // (#465, #560), then its launcher prefers a working Bun >= 1.0 when available.
 // The runtime boundary (src/runtime.ts, src/storage/database.ts) supports both.
 // Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 20.12: `@clack/core` (prompts) imports
+// the supported entry. The hard floor is Node 22 (Node 20 support dropped 2026-07; `@clack/core` imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
-    const [major = 0, minor = 0, patch = 0] = (process.versions.node ?? "0")
-      .split(".")
-      .map((part) => Number.parseInt(part, 10) || 0);
-    const nodeOk = major > 20 || (major === 20 && (minor > 12 || (minor === 12 && patch >= 0)));
+    const [major = 0] = (process.versions.node ?? "0").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const nodeOk = major >= 22;
     if (!nodeOk) {
       console.error(
-        "\n  ERROR: the akm-cli npm package requires Node.js >= 20.12.\n" +
+        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Bun >= 1.0 is optional for execution; it does not replace the Node.js bootstrap.\n" +
           "  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\n" +
@@ -75,10 +73,17 @@ process.on("uncaughtException", (err) => {
 import fs from "node:fs";
 import path from "node:path";
 import { type ArgsDef, defineCommand, runMain } from "citty";
-import { findCittyTopLevelCommand, findCittyTopLevelCommandIndex } from "./cli/parse-args";
-import { EXIT_CODES, emitJsonError, output, parseAllFlagValues, runWithJsonErrors } from "./cli/shared";
+import {
+  findCittyTopLevelCommand,
+  findCittyTopLevelCommandIndex,
+  parseAllFlagValues,
+  resolveHelpMigrateVersionArg,
+  setParsedInvocation,
+} from "./cli/invocation";
+import { EXIT_CODES, emitJsonError, output, runWithJsonErrors } from "./cli/shared";
 import { agentCommand, lintCommand, proposeCommand } from "./commands/agent/contribute-cli";
 import { backupCommand } from "./commands/backup-cli";
+import { bundleCommand } from "./commands/bundle/bundle-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
 import { envCommand } from "./commands/env/env-cli";
@@ -112,7 +117,6 @@ import {
 } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand, initCommand } from "./commands/sources/stash-cli";
 import { tasksCommand } from "./commands/tasks/tasks-cli";
-import { wikiCommand } from "./commands/wiki-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { bestEffort } from "./core/best-effort";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
@@ -122,7 +126,7 @@ import { getCacheDir, getConfigPath, getDbPath } from "./core/paths";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
-import { getHyphenatedBoolean, getOutputMode, initOutputMode, parseFlagValue } from "./output/context";
+import { getHyphenatedBoolean, getOutputMode, initOutputMode } from "./output/context";
 import { deliverRendered, renderHtml, resolveTemplatePath } from "./output/html-render";
 import { pkgVersion } from "./version";
 
@@ -135,54 +139,9 @@ function applyEarlyStderrFlags(argv: string[]): void {
   }
 }
 
-function resolveHelpMigrateVersionArg(version: string | undefined): string | undefined {
-  if (version === undefined) return undefined;
-
-  const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (
-    parsedFormat !== undefined &&
-    version === parsedFormat &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedFormat, "--format")
-  ) {
-    return undefined;
-  }
-
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (
-    parsedDetail !== undefined &&
-    version === parsedDetail &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedDetail, "--detail")
-  ) {
-    return undefined;
-  }
-
-  return version;
-}
-
-function wasHelpMigrateFlagValueConsumedAsVersion(
-  version: string,
-  flagValue: string,
-  flagName: "--format" | "--detail",
-): boolean {
-  const argv = process.argv.slice(2);
-  const helpIndex = argv.indexOf("help");
-  const tokens = helpIndex >= 0 ? argv.slice(helpIndex + 1) : argv;
-  const migrateIndex = tokens.indexOf("migrate");
-  const relevant = migrateIndex >= 0 ? tokens.slice(migrateIndex + 1) : tokens;
-
-  let flagIndex = -1;
-  for (let i = 0; i < relevant.length; i += 1) {
-    const token = relevant[i];
-    if (token === flagName || token === `${flagName}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
-  }
-
-  if (flagIndex === -1) return false;
-  if (relevant.slice(0, flagIndex).includes(version)) return false;
-  return relevant[flagIndex] === flagName ? relevant[flagIndex + 1] === version : true;
-}
+// resolveHelpMigrateVersionArg moved to ./cli/invocation (chunk-9 WI-9.9
+// argv-normalization fold — it re-scanned process.argv, same as
+// findCittyTopLevelCommand and parseAllFlagValues below).
 
 /**
  * Stderr-only human-friendly hint after a non-interactive `setup` invocation.
@@ -556,6 +515,7 @@ export const main = defineCommand({
     health: healthCommand,
     info: infoCommand,
     graph: graphCommand,
+    bundle: bundleCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
@@ -589,7 +549,6 @@ export const main = defineCommand({
     completions: completionsCommand,
     env: envCommand,
     secret: secretCommand,
-    wiki: wikiCommand,
     tasks: tasksCommand,
   },
 });
@@ -642,6 +601,11 @@ if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
   // citty reads process.argv directly and does not accept a custom argv array,
   // so we must replace process.argv with the normalized version before runMain.
   process.argv = normalizeShowArgv(process.argv);
+  // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
+  // place argv is parsed for the whole process (plan §10.7 / chunk-9 WI-9.9).
+  // Every out-of-cli.ts command module reads argv state through
+  // `getParsedInvocation()` from here on instead of re-scanning process.argv.
+  setParsedInvocation(process.argv);
   // Resolve output mode once at startup from the (normalized) argv and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are

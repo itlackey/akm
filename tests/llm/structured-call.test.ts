@@ -196,4 +196,123 @@ describe("callStructured contract", () => {
     });
     expect(forwarded).toBe(onRetryAttempt);
   });
+
+  test("(8) enabled:true opens a gate whose feature key has no config resolver", async () => {
+    // `distill` has no FEATURE_LOCATION resolver: without the enabled override
+    // the gate is hard-closed. The override is how improve-owned features
+    // (distill/consolidation/contradiction) migrate onto the seam.
+    let chatRan = false;
+    const result = await callStructured<string>({
+      feature: "distill",
+      akmConfig: GATED,
+      enabled: true,
+      config: PROFILE,
+      messages: MESSAGES,
+      request: {
+        chat: async () => {
+          chatRan = true;
+          return "raw";
+        },
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    expect(chatRan).toBe(true);
+    expect(result).toBe("raw");
+  });
+
+  test("(9) resolver-less feature WITHOUT enabled override -> gate closed, fallback + onFallback('disabled')", async () => {
+    let chatRan = false;
+    const reasons: string[] = [];
+    const result = await callStructured<string>({
+      feature: "distill",
+      akmConfig: GATED,
+      config: PROFILE,
+      messages: MESSAGES,
+      request: {
+        chat: async () => {
+          chatRan = true;
+          return "raw";
+        },
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+      onFallback: (evt) => {
+        reasons.push(evt.reason);
+      },
+    });
+    expect(chatRan).toBe(false);
+    expect(result).toBe("FB");
+    expect(reasons).toEqual(["disabled"]);
+  });
+
+  test("(10) maxTokens and enableThinking are forwarded into the chat call options", async () => {
+    let seenMaxTokens: number | undefined;
+    let seenEnableThinking: boolean | undefined;
+    await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      config: PROFILE,
+      messages: MESSAGES,
+      request: {
+        maxTokens: 1234,
+        enableThinking: false,
+        chat: async (_config, _messages, options) => {
+          seenMaxTokens = options?.maxTokens;
+          seenEnableThinking = options?.enableThinking;
+          return "ok";
+        },
+      },
+      parse: () => "PARSED",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    expect(seenMaxTokens).toBe(1234);
+    expect(seenEnableThinking).toBe(false);
+  });
+
+  test("(11) timeoutMs key-presence is preserved: absent stays absent, explicit undefined stays present", async () => {
+    // Tri-state contract (see CallStructuredRequest doc): absent key = default
+    // timeout downstream; present-but-undefined = explicitly disabled. The
+    // seam must not materialize keys the caller never set.
+    let absentCaseOptions: Record<string, unknown> | undefined;
+    await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      config: PROFILE,
+      messages: MESSAGES,
+      request: {
+        chat: async (_config, _messages, options) => {
+          absentCaseOptions = options as Record<string, unknown> | undefined;
+          return "ok";
+        },
+      },
+      parse: () => "PARSED",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    expect(absentCaseOptions !== undefined && Object.hasOwn(absentCaseOptions, "timeoutMs")).toBe(false);
+
+    let presentCaseOptions: Record<string, unknown> | undefined;
+    await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      config: PROFILE,
+      messages: MESSAGES,
+      request: {
+        timeoutMs: undefined,
+        chat: async (_config, _messages, options) => {
+          presentCaseOptions = options as Record<string, unknown> | undefined;
+          return "ok";
+        },
+      },
+      parse: () => "PARSED",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    expect(presentCaseOptions !== undefined && Object.hasOwn(presentCaseOptions, "timeoutMs")).toBe(true);
+    expect(presentCaseOptions?.timeoutMs).toBeUndefined();
+  });
 });

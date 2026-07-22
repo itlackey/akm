@@ -17,10 +17,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
-import { parseAssetRef } from "../../src/core/asset/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { closeDatabase, getMeta, openIndexDatabase, searchVec } from "../../src/indexer/db/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
+import { parseAssetRef } from "../../src/migrate/legacy-ref-grammar";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { searchVec } from "../../src/storage/repositories/index-vec-repository";
 import "../../src/sources/providers/index";
 import {
   type Cleanup,
@@ -115,8 +117,9 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     const fileBody = fs.readFileSync(indexed.filePath, "utf8");
     expect(fileBody).toBe(skillBody);
 
-    // akmShow returns the same path in its rendered response.
-    const shown = await akmShowUnified({ ref });
+    // akmShow returns the same path in its rendered response (new-grammar input;
+    // the legacy `ref` above feeds the parseAssetRef lookup arm of the parity).
+    const shown = await akmShowUnified({ ref: "skills/parity-skill" });
     expect(shown.path).toBe(indexed.filePath);
   });
 
@@ -133,8 +136,8 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     expect(local?.filePath).toBe(bare?.filePath);
 
     // Show parity for both ref forms.
-    const shownBare = await akmShowUnified({ ref: "skill:origin-skill" });
-    const shownLocal = await akmShowUnified({ ref: "local//skill:origin-skill" });
+    const shownBare = await akmShowUnified({ ref: "skills/origin-skill" });
+    const shownLocal = await akmShowUnified({ ref: "local//skills/origin-skill" });
     expect(shownBare.path).toBe(shownLocal.path);
     expect(shownBare.path).toBe(bare?.filePath as string);
   });
@@ -158,7 +161,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     try {
       await akmIndex({ stashDir, full: true });
       await lookup(parseAssetRef("skill:embed-skill"));
-      await akmShowUnified({ ref: "skill:embed-skill" });
+      await akmShowUnified({ ref: "skills/embed-skill" });
 
       const db = openIndexDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), {
         embeddingDim: 4,

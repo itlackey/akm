@@ -45,7 +45,14 @@ export type ConfigErrorCode =
   // when a test sets AKM_STASH_DIR but forgets to also point
   // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
   // at temp directories. See src/core/paths.ts.
-  | "TEST_ISOLATION_MISSING";
+  | "TEST_ISOLATION_MISSING"
+  // The host platform/architecture has no supported build for a requested
+  // binary operation (e.g. `akm upgrade` on an unreleased platform target).
+  | "UNSUPPORTED_PLATFORM"
+  // `akm upgrade` refused: the environment blocks the upgrade (version
+  // contract, filesystem permissions, or leftover upgrade state). The error
+  // message carries the specific remediation.
+  | "UPGRADE_BLOCKED";
 
 /** Stable, machine-readable codes for UsageError. */
 export type UsageErrorCode =
@@ -109,7 +116,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   MISSING_OR_AMBIGUOUS_TARGET: "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg` (not both).",
   TARGET_NOT_UPDATABLE: "Run `akm list` to view your sources, then retry with one of those values.",
   MISSING_REQUIRED_ARGUMENT:
-    "Refs use the form type:name, e.g. `akm show skill:deploy` or `akm show knowledge:guide.md`.",
+    "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`.",
 };
 
 /** Default hint for each NotFoundError code. */

@@ -39,7 +39,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { concurrentMap } from "../../core/concurrent";
 import { type AkmConfig, getIndexPassConfig, loadConfig, resolveBatchSize } from "../../core/config/config";
@@ -50,105 +50,29 @@ import type { GraphExtractionReason, GraphExtractionStatus, GraphRelation } from
 import * as graphExtract from "../../llm/graph-extract";
 import { resolveIndexPassLLM } from "../../llm/index-passes";
 import type { Database } from "../../storage/database";
+import type { LlmCacheEntry } from "../../storage/repositories/index-entry-types";
 import {
   computeBodyHash,
   getLlmCacheEntriesByRefs,
   getLlmCacheEntry,
-  type LlmCacheEntry,
   upsertLlmCacheEntry,
-} from "../db/db";
+} from "../../storage/repositories/index-llm-cache-repository";
+import { GRAPH_SCHEMA_VERSION } from "../../storage/repositories/index-schema";
 import { drainExtractionQueue, loadStoredGraphSnapshot, replaceStoredGraph } from "../db/graph-db";
-import { GRAPH_SCHEMA_VERSION } from "../db/schema";
 import type { EnrichmentPassContext } from "../passes/pass-context";
 import { walkMarkdownFiles } from "../walk/walker";
 import { deduplicateGraph } from "./graph-dedup";
+import type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry } from "./graph-types";
+
+// Re-exported so existing `import type { GraphFileNode, ... } from
+// "./indexer/graph/graph-extraction"` sites (graph-boost.ts, commands/graph/
+// graph.ts) are unaffected by the KILL 5 sever (types moved to graph-types.ts
+// to break the graph-db.ts ↔ graph-extraction.ts import cycle — the store
+// must not import from the orchestrator).
+export type { GraphExtractionTelemetry, GraphFile, GraphFileNode, GraphQualityTelemetry };
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
 export const GRAPH_FILE_SCHEMA_VERSION = GRAPH_SCHEMA_VERSION;
-
-/** One node in the graph — corresponds to a single asset file. */
-export interface GraphFileNode {
-  /** Absolute path on disk. */
-  path: string;
-  /** Asset type (`memory` or `knowledge`). */
-  type: string;
-  /** SHA-256 hash of the parsed markdown body used for staleness checks. */
-  bodyHash?: string;
-  /** Entities surfaced by the LLM for this file. */
-  entities: string[];
-  /** Relations the LLM surfaced from this file's body. */
-  relations: GraphRelation[];
-  /** Optional extraction confidence score in [0,1]. */
-  confidence?: number;
-  /** Extraction outcome for this file. */
-  status?: GraphExtractionStatus;
-  /** Empty/failure reason for this file. */
-  reason?: GraphExtractionReason;
-  /** Run id that most recently updated this file. */
-  extractionRunId?: string;
-}
-
-export interface GraphExtractionTelemetry {
-  extractorId?: string;
-  extractionRunId?: string;
-  model?: string;
-  promptVersion?: string;
-  batchSize?: number;
-  cacheHits: number;
-  cacheMisses: number;
-  truncationCount: number;
-  failureCount: number;
-  /**
-   * Asset extractions where the provider returned an HTML body (e.g. LM Studio
-   * serving its web UI) instead of JSON. Tracked distinctly from
-   * `failureCount` so a provider-load failure is observable in health output
-   * rather than folded into the generic failure count (#497).
-   */
-  htmlErrorCount?: number;
-  /** Count of single bounded retries triggered for transient LLM failures. */
-  retryAttempts: number;
-  /**
-   * Batch graph-extraction calls whose response was not a JSON array even
-   * after the one stricter-reprompt retry — each one cost a wasted batch call
-   * plus a per-asset fallback. Surfaced so a rising batch-fallback rate is
-   * observable instead of silent (#635).
-   */
-  nonArrayBatchFailures?: number;
-}
-
-/** Persisted graph shape loaded from SQLite. */
-export interface GraphFile {
-  schemaVersion: number;
-  /** ISO-8601 timestamp of the last refresh. */
-  generatedAt: string;
-  /** Stash root the file was extracted from (canonicalised). */
-  stashRoot: string;
-  /** Per-file extraction results. */
-  files: GraphFileNode[];
-  /** Deduplicated entity list across all files (schema v2+). Canonical casing, first-seen order. */
-  entities?: string[];
-  /** Deduplicated relation list across all files (schema v2+). Dangling relations excluded. */
-  relations?: GraphRelation[];
-  /** Graph quality telemetry emitted by the extraction pass. */
-  quality?: GraphQualityTelemetry;
-  /** Durable latest-run extraction telemetry. */
-  telemetry?: GraphExtractionTelemetry;
-}
-
-export interface GraphQualityTelemetry {
-  /** Eligible files considered by extraction. */
-  consideredFiles: number;
-  /** Files with at least one extracted entity. */
-  extractedFiles: number;
-  /** Unique deduplicated entity count in the graph. */
-  entityCount: number;
-  /** Unique deduplicated relation count in the graph. */
-  relationCount: number;
-  /** Fraction of eligible files that produced at least one entity. */
-  extractionCoverage: number;
-  /** Undirected graph density over unique entities/relations. */
-  density: number;
-}
 
 /** Telemetry — useful for tests and progress events. */
 export interface GraphExtractionResult {
@@ -269,7 +193,6 @@ const SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES = new Set([
   "workflow",
   "lesson",
   "task",
-  "wiki",
 ]);
 
 type GraphCacheShape = {
@@ -941,7 +864,7 @@ function inferGraphTypeForPath(stashRoot: string, absPath: string): string | und
   const firstSeg = rel.split(path.sep)[0];
   if (!firstSeg) return undefined;
   for (const type of SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES) {
-    if (TYPE_DIRS[type] === firstSeg) return type;
+    if (stashDirFor(type) === firstSeg) return type;
   }
   return undefined;
 }
@@ -1156,7 +1079,7 @@ export function collectEligibleFiles(
   for (const rawType of includeTypes) {
     const type = rawType.trim().toLowerCase();
     if (!SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES.has(type)) continue;
-    const stashDir = TYPE_DIRS[type];
+    const stashDir = stashDirFor(type);
     if (!stashDir) continue;
     const dir = path.join(stashRoot, stashDir);
     if (!fs.existsSync(dir)) continue;

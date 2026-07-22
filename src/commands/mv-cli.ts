@@ -26,7 +26,6 @@
  *     before anything is keyed off them) — lint-resolver FALLBACK spellings
  *     are rejected with the canonical ref named (see
  *     {@link resolveMoveSourcePath});
- *   - wiki refs are rejected (wikis have their own xref + lint system);
  *   - a memory's `.derived.md` twin moves together and keeps its
  *     `entry_key === <base entry_key> + ".derived"` coupling; a twin ref
  *     cannot be moved alone, and target names ending `.derived` are rejected
@@ -34,7 +33,7 @@
  *
  * Ordering: the complete mutation holds the index-writer lease. After validation,
  * citer replacements are staged beside durable byte-for-byte backups and a small
- * phase journal under `.akm/mv-transactions/`. Publication uses same-filesystem
+ * phase journal under `getDataDir()/txn/`. Publication uses same-filesystem
  * renames; any synchronous failure restores every citer and asset rename. A later
  * invocation rolls back an interrupted prepared/applying journal before planning
  * another move. Derived index state remains fail-open and heals on a full index.
@@ -42,23 +41,40 @@
  * until the next graph pass — acceptable, the graph is a derived cache.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defineJsonCommand, output } from "../cli/shared";
-import { parseAssetRef, refToString } from "../core/asset/asset-ref";
-import { deriveCanonicalAssetNameFromStashRoot, TYPE_DIRS } from "../core/asset/asset-spec";
-import { type AkmAssetType, isWithin, resolveStashDir, toPosix } from "../core/common";
-import { loadConfig } from "../core/config/config";
+import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../core/asset/asset-placement";
+import { conceptIdFromTypeName, displayRef, isFullRefInput, parseRefInput } from "../core/asset/resolve-ref";
+import { isWithin, resolveStashDir, toPosix } from "../core/common";
+import { type AkmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
+import {
+  _setTxnMutationHookForTests,
+  advanceTxn,
+  beginTxn,
+  cleanupTxn,
+  fsyncTxnFile,
+  type JournaledFileChange,
+  mintTxnId,
+  recoverTxnsForRoot,
+  registerTxnKind,
+  type Txn,
+  type TxnJournal,
+  txnDirFor,
+  txnMutationHook,
+} from "../core/fs-txn";
 import { getDbPath } from "../core/paths";
 import { getStateDbPath, openStateDatabase } from "../core/state-db";
 import { warnVerbose } from "../core/warn";
-import { closeDatabase, openExistingDatabase, rebuildFts, rekeyEntryInPlace } from "../indexer/db/db";
 import { withAssetMutationLease } from "../indexer/index-writer-lock";
 import { indexWrittenAssets, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { insertEventOnce } from "../storage/repositories/events-repository";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { rekeyEntryInPlace } from "../storage/repositories/index-entries-repository";
+import { rebuildFts } from "../storage/repositories/index-fts-repository";
 import { shouldReadLegacyBareImproveState } from "./improve/source-identity";
 import {
   REF_BOUNDARY_PREFIX_CLASS_SRC,
@@ -74,7 +90,6 @@ import {
  * layout is one flat `.md` file per name (the `markdownSpec` family), so a
  * rename is a single-file move and inbound refs are rewritable by complete-ref
  * matching. Deliberately excluded:
- *   - `wiki` — wikis carry their own xref + lint system (`akm wiki lint`);
  *   - `skill` — the canonical layout is a multi-file `skills/<name>/SKILL.md`
  *     directory (a directory rename, out of v1 scope);
  *   - `script` — unresolvable by the slug resolver (contract-pinned);
@@ -105,28 +120,68 @@ const MV_SUPPORTED_TYPES: readonly string[] = ["memory", "knowledge", "command",
 const REF_PREFIX_SRC = `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})`;
 const REF_SUFFIX_SRC = `(?!${REF_SLUG_CHAR_CLASS_SRC})`;
 
+/**
+ * Parse `akm mv`'s target argument. The target may be a bare name
+ * ("projectA/new-note") or a full new-grammar ref. Parsing the bare form
+ * through the same ref grammar gives it identical name validation (traversal,
+ * null bytes, absolute paths). A bare name's leading segment maps to no asset
+ * type (`isFullRefInput` is false), so it is qualified with the source type's
+ * conceptId prefix; a full new-grammar ref (`memories/x`) is parsed as-is.
+ */
+function parseMoveTarget(targetArg: string, sourceType: string): ReturnType<typeof parseRefInput> {
+  return parseRefInput(isFullRefInput(targetArg) ? targetArg : conceptIdFromTypeName(sourceType, targetArg));
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** One deterministic rewrite pattern and the ref spelling its matches become. */
+interface RewritePattern {
+  re: RegExp;
+  /** Replacement ref (`prefix` + this + `derivedTail`). Legacy `type:name` OR conceptId. */
+  to: string;
 }
 
 /**
  * Build the rewrite patterns for one old ref: the canonical spelling plus
  * the DETERMINISTIC alias spellings the resolver stack accepts for the same
  * asset — the `.md`-suffixed form (`markdownSpec.toAssetPath` accepts both)
- * and the `local//`-prefixed form (`makeAssetRef`/`parseAssetRef` round-trip
- * it). All alias spellings rewrite to the NEW CANONICAL ref. When the source
- * is a base memory, the optional `.derived` tail also rewrites explicit twin
- * refs (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file
- * moves together, so its ref must too. The tail group is empty-capturing
- * otherwise so the replacer's group indices stay stable.
+ * and the `local//`-prefixed form (the legacy ref grammar round-trips
+ * it). All spellings of ONE grammar rewrite to that grammar's NEW ref (legacy
+ * spellings → `toRef`, conceptId spellings → `toConcept`) so a rewritten ref
+ * keeps the grammar it was authored in. When the source is a base memory, the
+ * optional `.derived` tail also rewrites explicit twin refs
+ * (`memory:a/note.derived` → `memory:a/new.derived`) — the twin file moves
+ * together, so its ref must too. The tail group is empty-capturing otherwise so
+ * the replacer's group indices stay stable.
+ *
+ * 0.9.0 flip (F4c M1): the conceptId spellings (`memories/a/note`, short form —
+ * the durable/output grammar) are recognized ALONGSIDE the legacy `type:name`
+ * ones so a rename does not strand the flipped conceptId-spelled xrefs the
+ * output emitter now writes into frontmatter. Fully-qualified `bundle//conceptId`
+ * needs no arm here: a local primary-bundle asset (the only thing `akm mv`
+ * renames) is always emitted SHORT.
  */
-function buildRewritePatterns(fromRef: string, includeDerivedTail: boolean): RegExp[] {
+function buildRewritePatterns(
+  fromRef: string,
+  toRef: string,
+  fromConcept: string,
+  toConcept: string,
+  includeDerivedTail: boolean,
+): RewritePattern[] {
   const tail = includeDerivedTail ? "(\\.derived)?" : "()";
-  const core = escapeRegExp(fromRef);
+  const legacyCore = escapeRegExp(fromRef);
+  const conceptCore = escapeRegExp(fromConcept);
   return [
-    new RegExp(`${REF_PREFIX_SRC}${core}${tail}${REF_SUFFIX_SRC}`, "gm"),
-    new RegExp(`${REF_PREFIX_SRC}${core}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"),
-    new RegExp(`${REF_PREFIX_SRC}local//${core}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"),
+    // Chunk-8: legacy `type:name` spellings (canonical / `.md` / `local//`) — inert
+    // for new-grammar content, kept until the state.db re-key.
+    { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    { re: new RegExp(`${REF_PREFIX_SRC}${legacyCore}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    { re: new RegExp(`${REF_PREFIX_SRC}local//${legacyCore}${tail}(?:\\.md)?${REF_SUFFIX_SRC}`, "gm"), to: toRef },
+    // 0.9.0 conceptId spellings (short form: `<stash-subdir>/<name>` [± `.md`]).
+    { re: new RegExp(`${REF_PREFIX_SRC}${conceptCore}${tail}${REF_SUFFIX_SRC}`, "gm"), to: toConcept },
+    { re: new RegExp(`${REF_PREFIX_SRC}${conceptCore}${tail}\\.md${REF_SUFFIX_SRC}`, "gm"), to: toConcept },
   ];
 }
 
@@ -139,10 +194,10 @@ function buildRewritePatterns(fromRef: string, includeDerivedTail: boolean): Reg
  * resolver and rewriting the ones that point at the moved file's old path.
  */
 interface RewriteContext {
-  patterns: RegExp[];
+  patterns: RewritePattern[];
   /** Matches `<type>:<slug>` tokens, optionally `local//`-prefixed. */
   aliasScan: RegExp;
-  type: AkmAssetType;
+  type: string;
   toRef: string;
   /** Root the moved file lives in (alias tokens are resolved against it). */
   scanRoot: string;
@@ -151,7 +206,7 @@ interface RewriteContext {
 }
 
 function buildRewriteContext(opts: {
-  type: AkmAssetType;
+  type: string;
   fromRef: string;
   toRef: string;
   isBaseMemory: boolean;
@@ -159,8 +214,11 @@ function buildRewriteContext(opts: {
   oldPath: string;
   twinOldPath: string | null;
 }): RewriteContext {
+  // 0.9.0 conceptId spellings of the same asset (`<stash-subdir>/<name>`).
+  const fromConcept = conceptIdFromTypeName(opts.type, opts.fromRef.slice(opts.type.length + 1));
+  const toConcept = conceptIdFromTypeName(opts.type, opts.toRef.slice(opts.type.length + 1));
   return {
-    patterns: buildRewritePatterns(opts.fromRef, opts.isBaseMemory),
+    patterns: buildRewritePatterns(opts.fromRef, opts.toRef, fromConcept, toConcept, opts.isBaseMemory),
     aliasScan: new RegExp(
       `(^|${REF_BOUNDARY_PREFIX_CLASS_SRC})((?:local//)?${escapeRegExp(opts.type)}:${REF_SLUG_CHAR_CLASS_SRC}+)`,
       "gm",
@@ -191,10 +249,10 @@ function buildRewriteContext(opts: {
 function rewriteRefs(content: string, ctx: RewriteContext): { content: string; count: number } {
   let count = 0;
   let next = content;
-  for (const pattern of ctx.patterns) {
-    next = next.replace(pattern, (_match, prefix: string, derivedTail: string | undefined) => {
+  for (const { re, to } of ctx.patterns) {
+    next = next.replace(re, (_match, prefix: string, derivedTail: string | undefined) => {
       count += 1;
-      return `${prefix}${ctx.toRef}${derivedTail ?? ""}`;
+      return `${prefix}${to}${derivedTail ?? ""}`;
     });
   }
   /**
@@ -266,8 +324,8 @@ function rewriteRefs(content: string, ctx: RewriteContext): { content: string; c
  * (lint/index.ts).
  */
 function collectCiterFiles(root: string): string[] {
-  const tasksRoot = path.join(root, TYPE_DIRS.task ?? "tasks");
-  const workflowsRoot = path.join(root, TYPE_DIRS.workflow ?? "workflows");
+  const tasksRoot = path.join(root, stashDirFor("task") ?? "tasks");
+  const workflowsRoot = path.join(root, stashDirFor("workflow") ?? "workflows");
   const results: string[] = [];
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -306,17 +364,12 @@ interface CiterRewritePlan {
   originalHash: string;
 }
 
-interface MoveJournal {
-  version: 1;
-  phase:
-    | "prepared"
-    | "applying"
-    | "filesystem-committed"
-    | "index-finalized"
-    | "state-finalized"
-    | "event-finalized"
-    | "committed";
-  transactionId: string;
+/**
+ * Kind-owned payload of an `mv` transaction, riding the unified fs-txn
+ * engine (WI-6.3). The envelope carries kind/phase/transactionId/root
+ * (= the stash)/changes/decidedAt.
+ */
+interface MvTxnPayload {
   sourceName: string;
   sourceRoot: string;
   includeLegacyBare: boolean;
@@ -346,17 +399,22 @@ interface MoveJournal {
   }>;
 }
 
-interface MoveTransaction {
-  journal: MoveJournal;
-  journalPath: string;
-  transactionDir: string;
-}
+type MvTxn = Txn<MvTxnPayload>;
 
-let mvMutationHookForTests: ((point: string) => void) | undefined;
+const MV_TXN_KIND = "mv";
+const MV_TXN_PHASES = [
+  "prepared",
+  "applying",
+  "filesystem-committed",
+  "index-finalized",
+  "state-finalized",
+  "event-finalized",
+  "committed",
+] as const;
 
 /** TEST-ONLY crash-window hook used by subprocess recovery tests. */
 export function _setMvMutationHookForTests(hook?: (point: string) => void): void {
-  mvMutationHookForTests = hook;
+  _setTxnMutationHookForTests(hook);
 }
 
 function hashContent(content: string | Buffer): string {
@@ -367,38 +425,8 @@ function hashFile(filePath: string): string {
   return hashContent(fs.readFileSync(filePath));
 }
 
-function fsyncFile(filePath: string): void {
-  const fd = fs.openSync(filePath, "r");
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function fsyncDirectory(dirPath: string): void {
-  try {
-    fsyncFile(dirPath);
-  } catch {
-    // Some platforms do not permit opening directories; file fsync still applies.
-  }
-}
-
-function writeMoveJournal(journalPath: string, journal: MoveJournal): void {
-  const tempPath = `${journalPath}.tmp`;
-  fs.writeFileSync(tempPath, `${JSON.stringify(journal, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  fsyncFile(tempPath);
-  fs.renameSync(tempPath, journalPath);
-  fsyncDirectory(path.dirname(journalPath));
-}
-
-function setMoveJournalPhase(transaction: MoveTransaction, phase: MoveJournal["phase"]): void {
-  const next = { ...transaction.journal, phase };
-  writeMoveJournal(transaction.journalPath, next);
-  transaction.journal.phase = phase;
-}
-
-function rollbackMoveJournal(journal: MoveJournal): void {
+function rollbackMoveJournal(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
   const restoreRename = (
     oldPath: string | null,
     newPath: string | null,
@@ -424,9 +452,9 @@ function rollbackMoveJournal(journal: MoveJournal): void {
   };
 
   // Undo asset publication before restoring self-citing files at their old paths.
-  restoreRename(journal.oldPath, journal.newPath, journal.sourceOriginalHash, journal.expectedNewHash);
-  restoreRename(journal.twinOldPath, journal.twinNewPath, journal.twinOriginalHash, journal.expectedTwinNewHash);
-  for (const [index, citer] of journal.citers.entries()) {
+  restoreRename(p.oldPath, p.newPath, p.sourceOriginalHash, p.expectedNewHash);
+  restoreRename(p.twinOldPath, p.twinNewPath, p.twinOriginalHash, p.expectedTwinNewHash);
+  for (const [index, citer] of p.citers.entries()) {
     if (!fs.existsSync(citer.backupPath)) {
       throw new Error(`cannot restore ${citer.absPath}: backup is missing`);
     }
@@ -450,94 +478,55 @@ function rollbackMoveJournal(journal: MoveJournal): void {
   }
 }
 
-function validateCommittedMove(journal: MoveJournal): void {
-  if (fs.existsSync(journal.oldPath) || !fs.existsSync(journal.newPath)) {
-    throw new Error(`Cannot finalize move: expected only committed target ${journal.newPath}.`);
+function validateCommittedMove(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
+  if (fs.existsSync(p.oldPath) || !fs.existsSync(p.newPath)) {
+    throw new Error(`Cannot finalize move: expected only committed target ${p.newPath}.`);
   }
-  if (hashFile(journal.newPath) !== journal.expectedNewHash) {
-    throw new Error(`Cannot finalize move: committed target ${journal.newPath} diverged.`);
+  if (hashFile(p.newPath) !== p.expectedNewHash) {
+    throw new Error(`Cannot finalize move: committed target ${p.newPath} diverged.`);
   }
-  if (journal.twinNewPath) {
-    if (journal.twinOldPath && fs.existsSync(journal.twinOldPath)) {
-      throw new Error(`Cannot finalize move: old twin ${journal.twinOldPath} still exists.`);
+  if (p.twinNewPath) {
+    if (p.twinOldPath && fs.existsSync(p.twinOldPath)) {
+      throw new Error(`Cannot finalize move: old twin ${p.twinOldPath} still exists.`);
     }
-    if (!fs.existsSync(journal.twinNewPath) || hashFile(journal.twinNewPath) !== journal.expectedTwinNewHash) {
-      throw new Error(`Cannot finalize move: committed twin ${journal.twinNewPath} diverged.`);
+    if (!fs.existsSync(p.twinNewPath) || hashFile(p.twinNewPath) !== p.expectedTwinNewHash) {
+      throw new Error(`Cannot finalize move: committed twin ${p.twinNewPath} diverged.`);
     }
   }
-  for (const citer of journal.citers) {
-    if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+  for (const citer of p.citers) {
+    if (citer.absPath === p.oldPath || citer.absPath === p.twinOldPath) continue;
     if (!fs.existsSync(citer.absPath) || hashFile(citer.absPath) !== citer.replacementHash) {
       throw new Error(`Cannot finalize move: citer ${citer.absPath} diverged.`);
     }
   }
 }
 
-function cleanupMoveTransaction(transactionDir: string): string | null {
-  try {
-    fs.rmSync(transactionDir, { recursive: true, force: true });
-    const root = path.dirname(transactionDir);
-    try {
-      fs.rmdirSync(root);
-    } catch {
-      // Other transactions may still exist.
-    }
-    return null;
-  } catch (error) {
-    const warning = `move committed but journal cleanup failed at ${transactionDir}: ${error instanceof Error ? error.message : String(error)}`;
-    warnVerbose(`akm mv: ${warning}`);
-    return warning;
+/**
+ * Kind-level safety fence for an `mv` journal (the engine fences root binding
+ * and the uniform changes[] separately).
+ */
+function fenceMvTxnJournal(journal: TxnJournal<MvTxnPayload>, txnDir: string, root: string): void {
+  const p = journal.payload;
+  const stashPaths = [p.oldPath, p.newPath, p.twinOldPath, p.twinNewPath]
+    .concat(p.citers.map((citer) => citer.absPath))
+    .filter((candidate): candidate is string => candidate !== null);
+  const transactionPaths = p.citers.flatMap((citer) => [citer.backupPath, citer.stagedPath, citer.ownedPath]);
+  if (
+    stashPaths.some((candidate) => !isWithin(candidate, root)) ||
+    transactionPaths.some((candidate) => !isWithin(candidate, txnDir))
+  ) {
+    throw new Error(`Refusing unsafe move recovery journal at ${path.join(txnDir, "journal.json")}.`);
   }
 }
 
+/**
+ * Recover every interrupted `mv` transaction for `stashDir` (rolls back
+ * pre-commit journals, rolls committed ones forward). A thin wrapper over the
+ * unified engine's root recovery, kept exported for mv's own pre-flight.
+ */
 export async function recoverInterruptedMoveTransactions(stashDir: string): Promise<void> {
-  const root = path.join(stashDir, ".akm", "mv-transactions");
-  if (!fs.existsSync(root)) return;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const transactionDir = path.join(root, entry.name);
-    const journalPath = path.join(transactionDir, "journal.json");
-    if (!fs.existsSync(journalPath)) {
-      cleanupMoveTransaction(transactionDir);
-      continue;
-    }
-    let journal: MoveJournal;
-    try {
-      journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as MoveJournal;
-    } catch (error) {
-      throw new Error(
-        `Cannot recover interrupted move journal at ${journalPath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (journal.version !== 1) throw new Error(`Unsupported move journal version at ${journalPath}.`);
-    const stashPaths = [journal.oldPath, journal.newPath, journal.twinOldPath, journal.twinNewPath]
-      .concat(journal.citers.map((citer) => citer.absPath))
-      .filter((candidate): candidate is string => candidate !== null);
-    const transactionPaths = journal.citers.flatMap((citer) => [citer.backupPath, citer.stagedPath, citer.ownedPath]);
-    if (
-      ![
-        "prepared",
-        "applying",
-        "filesystem-committed",
-        "index-finalized",
-        "state-finalized",
-        "event-finalized",
-        "committed",
-      ].includes(journal.phase) ||
-      stashPaths.some((candidate) => !isWithin(candidate, stashDir)) ||
-      transactionPaths.some((candidate) => !isWithin(candidate, transactionDir))
-    ) {
-      throw new Error(`Refusing unsafe move recovery journal at ${journalPath}.`);
-    }
-    const transaction = { journal, journalPath, transactionDir };
-    if (journal.phase === "prepared" || journal.phase === "applying") {
-      rollbackMoveJournal(journal);
-    } else if (journal.phase !== "committed") {
-      validateCommittedMove(journal);
-      await finalizeMoveTransaction(transaction);
-    }
-    cleanupMoveTransaction(transactionDir);
-  }
+  await recoverTxnsForRoot(stashDir, (journal) => journal.kind === MV_TXN_KIND);
 }
 
 function applyMoveFilesystem(opts: {
@@ -558,14 +547,15 @@ function applyMoveFilesystem(opts: {
   includeLegacyBare: boolean;
   eventMetadata: Record<string, unknown>;
   plans: CiterRewritePlan[];
-}): MoveTransaction {
-  const transactionRoot = path.join(opts.stashDir, ".akm", "mv-transactions");
-  fs.mkdirSync(transactionRoot, { recursive: true, mode: 0o700 });
-  const transactionId = randomUUID();
-  const transactionDir = path.join(transactionRoot, transactionId);
-  fs.mkdirSync(transactionDir, { mode: 0o700 });
+}): MvTxn {
+  // Mint the id first: the payload embeds sidecar paths under the transaction
+  // dir, and the `prepared` journal must be written exactly once with its
+  // final contents (crash runners intercept the first rename per phase).
+  const transactionId = mintTxnId();
+  const transactionDir = txnDirFor(opts.stashDir, transactionId);
+  fs.mkdirSync(transactionDir, { recursive: true, mode: 0o700 });
   const journalPath = path.join(transactionDir, "journal.json");
-  let journal: MoveJournal | undefined;
+  let txn: MvTxn | undefined;
 
   try {
     const citers = opts.plans.map((plan, index) => {
@@ -579,8 +569,8 @@ function applyMoveFilesystem(opts: {
       fs.copyFileSync(plan.absPath, backupPath);
       fs.chmodSync(backupPath, mode);
       fs.writeFileSync(stagedPath, plan.content, { encoding: "utf8", mode });
-      fsyncFile(backupPath);
-      fsyncFile(stagedPath);
+      fsyncTxnFile(backupPath);
+      fsyncTxnFile(stagedPath);
       return {
         absPath: plan.absPath,
         backupPath,
@@ -599,10 +589,7 @@ function applyMoveFilesystem(opts: {
     const sourceCiter = citers.find((citer) => citer.absPath === opts.oldPath);
     const twinCiter = citers.find((citer) => citer.absPath === opts.twinOldPath);
 
-    journal = {
-      version: 1,
-      phase: "prepared",
-      transactionId,
+    const payload: MvTxnPayload = {
       sourceName: opts.sourceName,
       sourceRoot: opts.sourceRoot,
       includeLegacyBare: opts.includeLegacyBare,
@@ -623,9 +610,35 @@ function applyMoveFilesystem(opts: {
       toRef: opts.toRef,
       citers,
     };
-    writeMoveJournal(journalPath, journal);
-    const transaction = { journal, journalPath, transactionDir };
-    setMoveJournalPhase(transaction, "applying");
+    const expectedNewHash = payload.expectedNewHash;
+    txn = beginTxn<MvTxnPayload>({
+      kind: MV_TXN_KIND,
+      root: opts.stashDir,
+      transactionId,
+      changes: [
+        { path: opts.newPath, op: "create", beforeHash: null, afterHash: expectedNewHash },
+        { path: opts.oldPath, op: "delete", beforeHash: opts.sourceOriginalHash, afterHash: null },
+        ...(opts.twinOldPath && opts.twinNewPath
+          ? ([
+              { path: opts.twinNewPath, op: "create", beforeHash: null, afterHash: payload.expectedTwinNewHash },
+              { path: opts.twinOldPath, op: "delete", beforeHash: opts.twinOriginalHash, afterHash: null },
+            ] as JournaledFileChange[])
+          : []),
+        ...citers
+          .filter((citer) => citer.absPath !== opts.oldPath && citer.absPath !== opts.twinOldPath)
+          .map(
+            (citer): JournaledFileChange => ({
+              path: citer.absPath,
+              op: "update",
+              beforeHash: citer.originalHash,
+              afterHash: citer.replacementHash,
+            }),
+          ),
+      ],
+      payload,
+      decidedAt: payload.eventTs,
+    });
+    advanceTxn(txn, "applying");
 
     for (const citer of citers) {
       fs.renameSync(citer.absPath, citer.ownedPath);
@@ -641,23 +654,23 @@ function applyMoveFilesystem(opts: {
         throw error;
       }
     }
-    if (hashFile(opts.oldPath) !== journal.expectedNewHash) throw new Error(`source ${opts.oldPath} diverged`);
+    if (hashFile(opts.oldPath) !== payload.expectedNewHash) throw new Error(`source ${opts.oldPath} diverged`);
     fs.linkSync(opts.oldPath, opts.newPath);
     fs.unlinkSync(opts.oldPath);
     if (opts.twinOldPath && opts.twinNewPath) {
-      if (hashFile(opts.twinOldPath) !== journal.expectedTwinNewHash)
+      if (hashFile(opts.twinOldPath) !== payload.expectedTwinNewHash)
         throw new Error(`twin ${opts.twinOldPath} diverged`);
       fs.linkSync(opts.twinOldPath, opts.twinNewPath);
       fs.unlinkSync(opts.twinOldPath);
     }
 
-    setMoveJournalPhase(transaction, "filesystem-committed");
-    return transaction;
+    advanceTxn(txn, "filesystem-committed");
+    return txn;
   } catch (error) {
-    if (journal) {
+    if (txn) {
       try {
-        rollbackMoveJournal(journal);
-        cleanupMoveTransaction(transactionDir);
+        rollbackMoveJournal(txn.journal);
+        cleanupTxn(transactionDir);
       } catch (rollbackError) {
         throw new Error(
           `Move failed (${error instanceof Error ? error.message : String(error)}) and rollback failed ` +
@@ -666,7 +679,7 @@ function applyMoveFilesystem(opts: {
         );
       }
     } else {
-      cleanupMoveTransaction(transactionDir);
+      cleanupTxn(transactionDir);
     }
     throw error;
   }
@@ -737,12 +750,7 @@ export function deriveOnDiskCasedRelPath(root: string, relPath: string): string 
  *   - throws `UsageError` (exit 2) — the ref resolves ONLY via a fallback
  *     spelling; the message names the canonical ref when one is derivable.
  */
-function resolveMoveSourcePath(
-  stashDir: string,
-  relPath: string,
-  refType: AkmAssetType,
-  refName: string,
-): string | null {
+function resolveMoveSourcePath(stashDir: string, relPath: string, refType: string, refName: string): string | null {
   const resolved = resolveRefPathInStash(relPath, refType, refName, stashDir);
   if (!resolved) return null;
   if (resolved.endsWith(".derived.md") && !refName.endsWith(".derived")) return null;
@@ -765,7 +773,7 @@ function resolveMoveSourcePath(
   }
 
   // Fallback hit — reject, steering to the canonical spelling when it exists.
-  const typedRef = refToString({ type: refType, name: refName });
+  const typedRef = `${refType}:${refName}`;
   const canonicalName = deriveCanonicalAssetNameFromStashRoot(refType, stashDir, onDiskResolved);
   const canonicalRelPath = canonicalName ? refToRelPath(refType, canonicalName) : null;
   if (
@@ -774,7 +782,7 @@ function resolveMoveSourcePath(
     canonicalRelPath &&
     path.resolve(stashDir, canonicalRelPath) === path.resolve(onDiskResolved)
   ) {
-    const canonicalRef = refToString({ type: refType, name: canonicalName });
+    const canonicalRef = `${refType}:${canonicalName}`;
     throw new UsageError(
       `"${typedRef}" resolves only through a fallback spelling — the asset's canonical ref is ${canonicalRef}. ` +
         "akm mv needs the canonical spelling so the citer rewrite and the index re-key target the same ref — nothing moved.",
@@ -783,7 +791,7 @@ function resolveMoveSourcePath(
     );
   }
   throw new UsageError(
-    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, onDiskResolved))}, outside the ${TYPE_DIRS[refType]}/ ` +
+    `"${typedRef}" resolves to ${toPosix(path.relative(stashDir, onDiskResolved))}, outside the ${stashDirFor(refType)}/ ` +
       "type root — akm mv renames within a type directory only; nothing moved.",
     "INVALID_FLAG_VALUE",
   );
@@ -883,7 +891,7 @@ function rekeyIndexForMove(opts: {
       if (rekeyed !== null || twinRekeyed !== null) {
         rebuildFts(db, { incremental: true });
       }
-      mvMutationHookForTests?.("index-rekeyed");
+      txnMutationHook("index-rekeyed");
     } finally {
       closeDatabase(db);
     }
@@ -908,8 +916,8 @@ function rekeyIndexForMove(opts: {
 /**
  * Re-key the state.db `asset_salience` / `asset_outcome` rows after a rename.
  *
- * Both tables are keyed by `asset_ref` TEXT (the bare `makeAssetRef`
- * `type:name` form — NOT entry_id; see core/state/migrations.ts 009/010), so
+ * Both tables are keyed by `asset_ref` TEXT (the bare legacy `type:name`
+ * form — NOT entry_id; see core/state/migrations.ts 009/010), so
  * the salience boost `loadSalienceRankScores` applies at search time and the
  * outcome-loop history would otherwise strand on the old ref until the next
  * improve run re-mints a type-weight stub row — losing a distill-written
@@ -931,24 +939,25 @@ function rekeyStateDbForMove(
   includeTwin: boolean,
   sourceName: string,
   sourceRoot: string,
-  includeLegacyBare: boolean,
 ): { complete: boolean; warning: string | null } {
   const statePath = getStateDbPath();
   try {
     if (!fs.existsSync(statePath)) return { complete: true, warning: null };
     if (!sourceName || !sourceRoot) return { complete: false, warning: "move source identity is unavailable" };
-    const origins = new Set([sourceName]);
-    if (sourceName === "stash" && includeLegacyBare) origins.add("local");
-    const pairs: Array<[string, string]> = [...origins].map((origin) => [
-      `${origin}//${fromRef}`,
-      `${origin}//${toRef}`,
-    ]);
-    if (includeLegacyBare) pairs.push([fromRef, toRef]);
-    if (includeTwin) {
-      for (const origin of origins) {
-        pairs.push([`${origin}//${fromRef}.derived`, `${origin}//${toRef}.derived`]);
-      }
-      if (includeLegacyBare) pairs.push([`${fromRef}.derived`, `${toRef}.derived`]);
+    // WI-8.5d deviation #2: post-cutover EVERY durable `asset_salience` /
+    // `asset_outcome` row is item_ref-spelled (`<bundle>//<conceptId>`), so the
+    // mv re-key handles ONLY that grammar (and its `.derived` twin). The legacy
+    // `type:name` / `origin//type:name` pairs are retired — the one-time state.db
+    // cutover already migrated every pre-0.9 row onto its item_ref. `type` is
+    // shared across a move; the conceptId is the D-R2 `<stash-subdir>/<name>`
+    // spelling; `sourceName` is the source's bundle id (primary stash → "stash").
+    const moveType = fromRef.includes(":") ? fromRef.slice(0, fromRef.indexOf(":")) : "";
+    const pairs: Array<[string, string]> = [];
+    if (moveType) {
+      const fromConcept = conceptIdFromTypeName(moveType, fromRef.slice(moveType.length + 1));
+      const toConcept = conceptIdFromTypeName(moveType, toRef.slice(moveType.length + 1));
+      pairs.push([`${sourceName}//${fromConcept}`, `${sourceName}//${toConcept}`]);
+      if (includeTwin) pairs.push([`${sourceName}//${fromConcept}.derived`, `${sourceName}//${toConcept}.derived`]);
     }
     const db = openStateDatabase();
     const tableFailures: string[] = [];
@@ -964,7 +973,7 @@ function rekeyStateDbForMove(
               db.prepare(`UPDATE ${table} SET asset_ref = ? WHERE asset_ref = ?`).run(newRef, oldRef);
             }
           })();
-          mvMutationHookForTests?.(`state-${table}-rekeyed`);
+          txnMutationHook(`state-${table}-rekeyed`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           // The ONLY swallowable failure: the table is missing on an older
@@ -996,16 +1005,22 @@ function rekeyStateDbForMove(
   }
 }
 
-function persistMoveEvent(journal: MoveJournal): void {
+function persistMoveEvent(journal: TxnJournal<MvTxnPayload>): void {
+  const p = journal.payload;
   const db = openStateDatabase();
   try {
     db.transaction(() => {
       insertEventOnce(db, {
         eventType: "mv",
-        ts: journal.eventTs,
-        ref: journal.toRef,
+        ts: p.eventTs,
+        // F4b/F5 display flip: the durable mv-event ref (surfaced by `akm
+        // events`/`akm history`) carries the USER-FACING new-grammar conceptId,
+        // derived from the internal legacy `toRef` via displayRef. Internal
+        // re-keys (index entry_key, usage_events, state.db salience/outcome) keep
+        // the legacy `type:name` spelling — see rekeyIndexForMove/rekeyStateForMove.
+        ref: displayRef({ type: p.type, name: p.newName }),
         metadata: {
-          ...journal.eventMetadata,
+          ...p.eventMetadata,
           mutationTransactionId: journal.transactionId,
         },
         idempotencyKey: journal.transactionId,
@@ -1017,66 +1032,81 @@ function persistMoveEvent(journal: MoveJournal): void {
   }
 }
 
-async function finalizeMoveTransaction(transaction: MoveTransaction): Promise<{
+async function finalizeMoveTransaction(txn: MvTxn): Promise<{
   utilityPreserved: boolean;
   warnings: string[];
 }> {
-  const { journal } = transaction;
+  const { journal } = txn;
+  const p = journal.payload;
   validateCommittedMove(journal);
   const warnings: string[] = [];
   let utilityPreserved = true;
+  // The journal envelope's root IS the stash the move mutates.
+  const stashDir = journal.root;
   if (journal.phase === "filesystem-committed") {
     const indexResult = rekeyIndexForMove({
-      stashDir: path.dirname(path.dirname(path.dirname(transaction.transactionDir))),
-      type: journal.type,
-      oldName: journal.oldName,
-      newName: journal.newName,
-      oldPath: journal.oldPath,
-      newPath: journal.newPath,
-      fromRef: journal.fromRef,
-      toRef: journal.toRef,
-      twinOldPath: journal.twinOldPath,
-      twinNewPath: journal.twinNewPath,
-      sourceName: journal.sourceName,
-      sourceRoot: journal.sourceRoot,
-      includeLegacyBare: journal.includeLegacyBare,
+      stashDir,
+      type: p.type,
+      oldName: p.oldName,
+      newName: p.newName,
+      oldPath: p.oldPath,
+      newPath: p.newPath,
+      fromRef: p.fromRef,
+      toRef: p.toRef,
+      twinOldPath: p.twinOldPath,
+      twinNewPath: p.twinNewPath,
+      sourceName: p.sourceName,
+      sourceRoot: p.sourceRoot,
+      includeLegacyBare: p.includeLegacyBare,
     });
     utilityPreserved = indexResult.preserved;
     if (indexResult.warning) warnings.push(indexResult.warning);
     if (!indexResult.complete) throw new Error(indexResult.warning ?? "move index re-key did not complete");
-    const touched = new Set<string>([journal.newPath]);
-    if (journal.twinNewPath) touched.add(journal.twinNewPath);
-    for (const citer of journal.citers) {
-      if (citer.absPath === journal.oldPath || citer.absPath === journal.twinOldPath) continue;
+    const touched = new Set<string>([p.newPath]);
+    if (p.twinNewPath) touched.add(p.twinNewPath);
+    for (const citer of p.citers) {
+      if (citer.absPath === p.oldPath || citer.absPath === p.twinOldPath) continue;
       touched.add(citer.absPath);
     }
-    const stashDir = path.dirname(path.dirname(path.dirname(transaction.transactionDir)));
     if (!(await indexWrittenAssets(stashDir, [...touched], { recoverMoves: false }))) {
       utilityPreserved = false;
       warnings.push("write-path index refresh failed; the derived index will heal on the next full index");
     }
-    setMoveJournalPhase(transaction, "index-finalized");
+    advanceTxn(txn, "index-finalized");
   }
   if (journal.phase === "index-finalized") {
-    const stateResult = rekeyStateDbForMove(
-      journal.fromRef,
-      journal.toRef,
-      journal.twinNewPath !== null,
-      journal.sourceName,
-      journal.sourceRoot,
-      journal.includeLegacyBare,
-    );
+    const stateResult = rekeyStateDbForMove(p.fromRef, p.toRef, p.twinNewPath !== null, p.sourceName, p.sourceRoot);
     if (stateResult.warning) warnings.push(stateResult.warning);
     if (!stateResult.complete) throw new Error(stateResult.warning ?? "move state finalization did not complete");
-    setMoveJournalPhase(transaction, "state-finalized");
+    advanceTxn(txn, "state-finalized");
   }
   if (journal.phase === "state-finalized") {
     persistMoveEvent(journal);
-    mvMutationHookForTests?.("mv-event-persisted");
-    setMoveJournalPhase(transaction, "event-finalized");
+    txnMutationHook("mv-event-persisted");
+    advanceTxn(txn, "event-finalized");
   }
-  if (journal.phase === "event-finalized") setMoveJournalPhase(transaction, "committed");
+  if (journal.phase === "event-finalized") advanceTxn(txn, "committed");
   return { utilityPreserved, warnings };
+}
+
+/**
+ * Resolve the move's durable source identity: the primary stash's bundle id
+ * (`registryId ?? "stash"`) and whether the improve loop's legacy-bare state is
+ * still readable for this source (`shouldReadLegacyBareImproveState`, shared with
+ * the improve pipeline). Extracted from `run` so the command handler stays under
+ * the fn-size ratchet.
+ */
+function resolveMoveSourceIdentity(
+  configuredSources: ReturnType<typeof resolveSourceEntries>,
+  stashDir: string,
+  config: AkmConfig,
+): { durableSourceName: string; includeLegacyBare: boolean } {
+  const primarySource = configuredSources.find((entry) => path.resolve(entry.path) === path.resolve(stashDir));
+  const durableSourceName = primarySource?.registryId ?? "stash";
+  return {
+    durableSourceName,
+    includeLegacyBare: shouldReadLegacyBareImproveState(durableSourceName, stashDir, config),
+  };
 }
 
 // ── Command ───────────────────────────────────────────────────────────────────
@@ -1095,7 +1125,7 @@ export const mvCommand = defineJsonCommand({
       "never written; their citing files are reported in `readOnlyCiters` as manual follow-ups. Operates on the " +
       "primary writable stash only. The source ref (and the target name) may carry the .md-suffixed alias " +
       "spelling — both are canonicalized — but resolver-fallback source spellings are rejected, naming the " +
-      "canonical ref. Wiki refs are not supported (use `akm wiki lint` after a manual wiki rename); workflow " +
+      "canonical ref. Workflow " +
       "refs cannot be MOVED in v1 (workflows may be .yaml programs — rename the file manually and verify with " +
       "`akm lint`), though workflow files ARE rewritten as citers.",
   },
@@ -1129,17 +1159,10 @@ export const mvCommand = defineJsonCommand({
 
     await withAssetMutationLease("mv", async () => {
       // ── Validation (everything before any write; a failure moves nothing) ──
-      const source = parseAssetRef(refArg);
+      const source = parseRefInput(refArg);
       if (source.origin && source.origin !== "local") {
         throw new UsageError(
           `akm mv operates on the primary writable stash only — the origin prefix "${source.origin}//" is not supported.`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
-      if (source.type === "wiki") {
-        throw new UsageError(
-          "akm mv does not support wiki refs — wiki pages have their own xref + lint system. " +
-            "Rename the page manually, fix citations in the same pass, and verify with `akm wiki lint <name>`.",
           "INVALID_FLAG_VALUE",
         );
       }
@@ -1163,19 +1186,16 @@ export const mvCommand = defineJsonCommand({
       // no independent asset may squat on the suffix. The `.md`-suffixed alias
       // spelling of a twin ref names the same file, so it is caught here too.
       if (source.type === "memory" && /\.derived(\.md)?$/.test(source.name)) {
-        const baseRef = refToString({ type: "memory", name: source.name.replace(/\.derived(\.md)?$/, "") });
+        const baseRef = `memory:${source.name.replace(/\.derived(\.md)?$/, "")}`;
         throw new UsageError(
-          `"${refToString({ type: source.type, name: source.name })}" names a .derived.md distilled twin — a twin ` +
+          `"${`${source.type}:${source.name}`}" names a .derived.md distilled twin — a twin ` +
             "cannot be moved on its own without breaking its belief-inheritance coupling to the base memory. " +
             `Rename the base ref instead (akm mv ${baseRef} <new-name>); the twin moves with it.`,
           "INVALID_FLAG_VALUE",
         );
       }
 
-      // The target may be a bare name ("projectA/new-note") or a ref-shaped
-      // spelling. Parsing the bare form through the same ref grammar gives it
-      // identical name validation (traversal, null bytes, absolute paths).
-      const target = parseAssetRef(targetArg.includes(":") ? targetArg : `${source.type}:${targetArg}`);
+      const target = parseMoveTarget(targetArg, source.type);
       if (target.origin) {
         throw new UsageError(
           `The target must be a name within the ${source.type} type — origin prefixes are not supported.`,
@@ -1184,7 +1204,7 @@ export const mvCommand = defineJsonCommand({
       }
       if (target.type !== source.type) {
         throw new UsageError(
-          `Cross-type move is not supported: "${refToString({ type: source.type, name: source.name })}" is a ` +
+          `Cross-type move is not supported: "${`${source.type}:${source.name}`}" is a ` +
             `${source.type}: asset but the target names the ${target.type}: type. akm mv renames within one asset type.`,
           "INVALID_FLAG_VALUE",
         );
@@ -1203,7 +1223,7 @@ export const mvCommand = defineJsonCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      // Reject empty path segments: `path.posix.normalize` (parseAssetRef's
+      // Reject empty path segments: `path.posix.normalize` (the ref parser's
       // name normalization) PRESERVES a trailing slash — "bar/" (and "bar\",
       // normalized to it) sails through the traversal checks, and the file
       // would land at e.g. memories/bar/.md: a dot-prefixed file the index
@@ -1226,16 +1246,14 @@ export const mvCommand = defineJsonCommand({
           "INVALID_FLAG_VALUE",
         );
       }
-      const toRef = refToString({ type: source.type, name: newName });
+      const toRef = `${source.type}:${newName}`;
 
       const stashDir = resolveStashDir();
       const config = loadConfig();
       const configuredSources = resolveSourceEntries(stashDir, config);
-      const primarySource = configuredSources.find((entry) => path.resolve(entry.path) === path.resolve(stashDir));
-      const durableSourceName = primarySource?.registryId ?? "stash";
-      const includeLegacyBare = shouldReadLegacyBareImproveState(durableSourceName, stashDir, config);
+      const { durableSourceName, includeLegacyBare } = resolveMoveSourceIdentity(configuredSources, stashDir, config);
       await recoverInterruptedMoveTransactions(stashDir);
-      const typeDir = TYPE_DIRS[source.type];
+      const typeDir = stashDirFor(source.type) as string;
       const typeRoot = path.join(stashDir, typeDir);
 
       const oldRelPath = refToRelPath(source.type, source.name);
@@ -1251,7 +1269,7 @@ export const mvCommand = defineJsonCommand({
       const oldPath = resolveMoveSourcePath(stashDir, oldRelPath, source.type, source.name);
       if (!oldPath) {
         throw new UsageError(
-          `Cannot resolve ${refToString({ type: source.type, name: source.name })} in the writable stash at ` +
+          `Cannot resolve ${`${source.type}:${source.name}`} in the writable stash at ` +
             `${stashDir} — nothing moved.`,
           "MISSING_REQUIRED_ARGUMENT",
           "akm mv renames assets in the primary writable stash only. Check the ref with `akm show <ref>` or `akm search`.",
@@ -1264,10 +1282,10 @@ export const mvCommand = defineJsonCommand({
       // the CANONICAL extensionless name derived from the resolved path, or the
       // real rows (keyed by the canonical spelling) are silently missed.
       const sourceName = deriveCanonicalAssetNameFromStashRoot(source.type, stashDir, oldPath) ?? source.name;
-      const fromRef = refToString({ type: source.type, name: sourceName });
+      const fromRef = `${source.type}:${sourceName}`;
 
       const newPath = path.join(stashDir, newRelPath);
-      // Defense-in-depth: parseAssetRef already rejects `../` traversal, but the
+      // Defense-in-depth: the ref parser already rejects `../` traversal, but the
       // computed target must land inside the type root regardless.
       if (!isWithin(newPath, typeRoot)) {
         throw new UsageError(
@@ -1394,13 +1412,16 @@ export const mvCommand = defineJsonCommand({
       // Filesystem commit is irreversible. Any finalization error leaves the
       // journal for the next mutation to finish forward; it never rolls back.
       const finalized = await finalizeMoveTransaction(transaction);
-      const cleanupWarning = cleanupMoveTransaction(transaction.transactionDir);
+      const cleanupWarning = cleanupTxn(transaction.dir);
       const warnings = [...finalized.warnings, ...(cleanupWarning ? [cleanupWarning] : [])];
 
       output("mv", {
         ok: true,
-        from: fromRef,
-        to: toRef,
+        // F4b/F5 display flip: the JSON envelope echoes the USER-FACING
+        // new-grammar conceptId (displayRef); `fromRef`/`toRef` stay legacy
+        // `type:name` internally for the citer-rewrite patterns + durable re-keys.
+        from: displayRef({ type: source.type, name: sourceName }),
+        to: displayRef({ type: source.type, name: newName }),
         rewrote: plans.map((plan) => ({ file: plan.relPath, count: plan.count })),
         readOnlyCiters,
         utilityPreserved: finalized.utilityPreserved,
@@ -1409,5 +1430,23 @@ export const mvCommand = defineJsonCommand({
         ...(warnings.length > 0 ? { warnings } : {}),
       });
     });
+  },
+});
+
+// Register the mv transaction kind with the unified engine: rollback for
+// pre-commit journals (prepared/applying), roll-forward finalize from
+// filesystem-committed onward. Any recovery entry point that touches this
+// stash root (mv pre-flight, proposal repository, indexer, write-path
+// indexer) finishes or rolls back interrupted moves through this handler.
+registerTxnKind<MvTxnPayload>(MV_TXN_KIND, {
+  phases: MV_TXN_PHASES,
+  commitPhase: "filesystem-committed",
+  validate: (journal, txnDir, root) => fenceMvTxnJournal(journal, txnDir, root),
+  rollback: (txn) => {
+    rollbackMoveJournal(txn.journal);
+  },
+  finalize: async (txn) => {
+    validateCommittedMove(txn.journal);
+    await finalizeMoveTransaction(txn);
   },
 });

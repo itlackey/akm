@@ -25,6 +25,12 @@
 
 import type { AgentCommandBuilder, AgentResultExtractor } from "../agent/builder-shared";
 import type { SessionLogHarness } from "../session-logs/types";
+import type { HarnessCapabilities } from "./shared";
+
+// `HarnessCapabilities` lives in `./shared` (a cycle-free dependency sink —
+// see that module's doc comment) and is re-exported here so this file stays
+// the interface home for existing import sites.
+export type { HarnessCapabilities } from "./shared";
 
 /**
  * Which of the three workflow-engine execution patterns this harness uses
@@ -51,61 +57,12 @@ export type HarnessExecutionPattern = "in-harness" | "local-runner" | "cloud-del
 export type HarnessStructuredOutput = "native-schema" | "native-json" | "none";
 
 /**
- * How to resume a previous harness session from the CLI. Absent when the
- * harness has no flag-shaped resume (no session model, or resume is
- * programmatic via an SDK session id).
+ * Fields every harness descriptor carries regardless of its `sessionLogs`
+ * capability. Split out of `AkmHarness` so the capability-discriminated
+ * `sessionLogProvider` field (see {@link AkmHarness}) can be added per-branch
+ * without repeating the rest of the descriptor twice.
  */
-export interface HarnessResumeSupport {
-  /** The CLI resume flag (e.g. `--resume`). */
-  readonly flag: string;
-  /**
-   * Whether {@link flag} takes the harness-native session id as its argument
-   * (`--resume <id>`). `false` = a bare flag resuming implicit local state
-   * (e.g. Amazon Q's `--resume` replays the working directory's previous
-   * conversation). Consumers building argv MUST check this before appending
-   * a session id after the flag.
-   */
-  readonly takesSessionId: boolean;
-}
-
-/**
- * Capability flags describing which of akm's six integration surfaces a
- * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
- * relevant flag instead of maintaining its own list.
- */
-export interface HarnessCapabilities {
-  /** Has readable native session logs (`akm extract`, session-logs index). */
-  readonly sessionLogs: boolean;
-  /** Can be spawned as an agent CLI / SDK (`akm propose`, reflect, tasks). */
-  readonly agentDispatch: boolean;
-  /** Participates in PATH/env detection during `akm setup`. */
-  readonly detection: boolean;
-  /** Can import an existing harness LLM/config into akm config. */
-  readonly configImport: boolean;
-  /** Reports a runtime identity string for workflow run attribution. */
-  readonly runtimeIdentity: boolean;
-}
-
-/**
- * A single harness's identity + capability membership.
- *
- * `id` is the canonical, persisted identifier (what new config writes use).
- * `aliases` are alternate identifiers that MUST keep round-tripping for
- * already-persisted configs and session logs — see the Claude Code split
- * below.
- *
- * ## id normalization bridge ('claude' vs 'claude-code')
- *
- * Claude Code has historically been persisted under two different id strings:
- *   - `'claude'`      — agent runner, agent profiles, Zod config schema
- *   - `'claude-code'` — session-logs provider name, runtime identity string
- *
- * The canonical id is `'claude'`; `'claude-code'` is registered as an alias so
- * that BOTH directions resolve to the same harness. `normalizeHarnessId()` and
- * `denormalizeRuntimeIdentity()` in `./index.ts` implement the bridge. Existing
- * user config and session-log discovery keep working unchanged.
- */
-export interface AkmHarness {
+interface AkmHarnessCommon {
   /** Canonical, persisted id (the value new config writes). */
   readonly id: string;
   /** Human-readable display name. */
@@ -131,11 +88,12 @@ export interface AkmHarness {
    * trap that listed Continue/Codeium/Cursor/Codex CLI). `detectAgentPlatforms`
    * derives its candidate list from `SESSION_LOG_HARNESSES` that declare this
    * field, so the registry is the single source of which harnesses are real
-   * stash sources. Absent ⇒ not offered during setup.
+   * stash sources. Absent ⇒ not offered during setup. NOTE: this field is
+   * NOT tied to `capabilities.sessionLogs` by the type system — a harness
+   * declaring both is a registry-level convention, pinned by
+   * `tests/harnesses-registry.test.ts`, not a compile-time invariant.
    */
   readonly setupDetectionDir?: string;
-  /** Capability membership — which subsystems include this harness. */
-  readonly capabilities: HarnessCapabilities;
 
   /**
    * The harness-owned agent command builder, when dispatch goes through the
@@ -163,13 +121,6 @@ export interface AkmHarness {
    * seam change); required on registry entries, pinned by tests.
    */
   readonly structuredOutput?: HarnessStructuredOutput;
-
-  /**
-   * CLI resume support: the flag that replays a harness-native session id.
-   * Absent ⇒ resume is programmatic (SDK) or unsupported; akm's
-   * `workflow_run_units` remains the durable source of truth either way.
-   */
-  readonly resume?: HarnessResumeSupport;
 
   /**
    * Env vars that carry this harness's *session id* when a process runs under
@@ -203,22 +154,108 @@ export interface AkmHarness {
    * contract" step 3). Absent ⇒ the engine uses the raw stdout as text.
    */
   readonly resultExtractor?: AgentResultExtractor;
+}
 
+/**
+ * A harness that declares `capabilities.sessionLogs: true`. Its
+ * `sessionLogProvider` factory is REQUIRED — a harness cannot claim the
+ * capability without supplying the provider that backs it. This is the
+ * compile-time replacement for the load-time throw formerly in
+ * `src/integrations/session-logs/index.ts` (WI-9.7, H1): omitting
+ * `sessionLogProvider` while `sessionLogs: true` is now a type error at the
+ * `HARNESS_REGISTRY` declaration, not a thrown error at import time.
+ */
+export interface SessionLogCapableHarness extends AkmHarnessCommon {
+  readonly capabilities: Extract<HarnessCapabilities, { sessionLogs: true }>;
   /**
-   * Factory for this harness's session-log provider, required when
-   * `capabilities.sessionLogs` is true. The session-logs index
+   * Factory for this harness's session-log provider. The session-logs index
    * (`src/integrations/session-logs/index.ts`) DERIVES its provider array
    * from this field, so the provider list cannot drift from the registry.
    */
-  readonly sessionLogProvider?: () => SessionLogHarness;
+  readonly sessionLogProvider: () => SessionLogHarness;
+}
+
+/**
+ * A harness that declares `capabilities.sessionLogs: false`. It carries no
+ * `sessionLogProvider` — the field is typed `undefined`-only so a harness
+ * cannot silently carry a provider nobody derives from (the mirror of
+ * {@link SessionLogCapableHarness}'s requirement).
+ */
+export interface NonSessionLogHarness extends AkmHarnessCommon {
+  readonly capabilities: Extract<HarnessCapabilities, { sessionLogs: false }>;
+  readonly sessionLogProvider?: undefined;
+}
+
+/**
+ * A single harness's identity + capability membership.
+ *
+ * `id` is the canonical, persisted identifier (what new config writes use).
+ * `aliases` are alternate identifiers that MUST keep round-tripping for
+ * already-persisted configs and session logs — see the Claude Code split
+ * below.
+ *
+ * Discriminated on `capabilities.sessionLogs` (WI-9.7, H1): the union forces
+ * `sessionLogProvider` to be present exactly when `sessionLogs` is `true`, so
+ * the pairing is a compile error to get wrong rather than a load-time throw.
+ * See {@link SessionLogCapableHarness} / {@link NonSessionLogHarness}.
+ *
+ * ## id normalization bridge ('claude' vs 'claude-code')
+ *
+ * Claude Code has historically been persisted under two different id strings:
+ *   - `'claude'`      — agent runner, agent profiles, Zod config schema
+ *   - `'claude-code'` — session-logs provider name, runtime identity string
+ *
+ * The canonical id is `'claude'`; `'claude-code'` is registered as an alias so
+ * that BOTH directions resolve to the same harness. `normalizeHarnessId()` and
+ * `denormalizeRuntimeIdentity()` in `./index.ts` implement the bridge. Existing
+ * user config and session-log discovery keep working unchanged.
+ */
+export type AkmHarness = SessionLogCapableHarness | NonSessionLogHarness;
+
+/**
+ * Type-guard narrowing a harness to {@link SessionLogCapableHarness}.
+ *
+ * `Array.prototype.filter`'s type-predicate overload requires the predicate's
+ * inferred type to extend the array's element type — a plain
+ * `(h: AkmHarness) => h is SessionLogCapableHarness` predicate fails that
+ * constraint against `HARNESS_REGISTRY`'s element type (the union of the ten
+ * concrete harness classes, each with literal `id`s narrower than
+ * `SessionLogCapableHarness`'s `id: string`), so `.filter` would silently fall
+ * back to its non-narrowing overload. Generic over the input `H` and
+ * intersecting it into the predicate (`H & SessionLogCapableHarness`) keeps
+ * the result always a subtype of `H`, so the constraint holds regardless of
+ * what concrete harness type(s) `H` resolves to — this is what lets
+ * `HARNESS_REGISTRY.filter(isSessionLogHarness)` (in `./index.ts`) actually
+ * narrow to a type where `sessionLogProvider` is known-present, retiring the
+ * load-time throw that used to guard this in `session-logs/index.ts`.
+ */
+export function isSessionLogHarness<H extends AkmHarness>(h: H): h is H & SessionLogCapableHarness {
+  return h.capabilities.sessionLogs;
 }
 
 /**
  * Shared base for harness descriptors (#566).
  *
  * Provides shared optional descriptor fields for concrete harnesses.
+ *
+ * Deliberately implements {@link AkmHarnessCommon}, NOT the discriminated
+ * `AkmHarness` union (WI-9.7, H1): `AkmHarnessCommon` excludes `capabilities`
+ * and `sessionLogProvider`, the two fields whose pairing the union enforces.
+ * A base class shared by both branches cannot itself satisfy either specific
+ * union member — `capabilities` stays declared `abstract` at the (widened)
+ * `HarnessCapabilities` union type here, and each subclass narrows it to a
+ * literal `sessionLogs: true`/`false` variant via `caps({...})`.
+ * `sessionLogProvider` is intentionally NOT declared here at all (not even
+ * optional): the 8 non-session-log subclasses simply never declare it, which
+ * satisfies `NonSessionLogHarness`'s `sessionLogProvider?: undefined` (an
+ * absent optional property satisfies an `undefined`-typed optional); had this
+ * class declared it as `sessionLogProvider?: () => SessionLogHarness`
+ * instead, every non-session-log subclass would inherit that (function |
+ * undefined) type and fail to satisfy `NonSessionLogHarness` at the
+ * `HARNESS_REGISTRY` `satisfies` check. The two session-log subclasses
+ * (Claude, OpenCode) declare their own required `sessionLogProvider`.
  */
-export abstract class BaseHarness implements AkmHarness {
+export abstract class BaseHarness implements AkmHarnessCommon {
   abstract readonly id: string;
   abstract readonly displayName: string;
   abstract readonly aliases: readonly string[];
@@ -228,9 +265,7 @@ export abstract class BaseHarness implements AkmHarness {
   readonly agentBuilder?: AgentCommandBuilder;
   readonly pattern?: HarnessExecutionPattern;
   readonly structuredOutput?: HarnessStructuredOutput;
-  readonly resume?: HarnessResumeSupport;
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];
   readonly resultExtractor?: AgentResultExtractor;
-  readonly sessionLogProvider?: () => SessionLogHarness;
 }

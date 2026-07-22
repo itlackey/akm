@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Agent Task Loop
 
@@ -11,12 +11,12 @@ For any task, follow this loop:
 4. `akm feedback <ref> --positive` — record success
 
 For workflow tasks:
-1. `akm workflow next workflow:<name>` — get current step instructions
+1. `akm workflow next workflows/<name>` — get current step instructions
 2. Do the step work in your workspace
 3. `akm workflow complete <run-id> --step <step-id>` — mark done, get next step
 
 Workflow runs are scoped to your current project/worktree/directory. Ref-based
-commands like `workflow next workflow:<name>`, `workflow status workflow:<name>`,
+commands like `workflow next workflows/<name>`, `workflow status workflows/<name>`,
 and `workflow list` operate within the current scope only.
 
 ## Quick Reference
@@ -31,20 +31,17 @@ akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm remember "note" --target my-stash         # Route write to a named writable stash source
-akm remember "note" --xref knowledge:auth-flow # Cite provenance in frontmatter xrefs (repeatable)
-akm remember "fix" --supersedes memory:old-note # Write a correction AND demote the superseded asset
+akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)
+akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm import ./doc.md --target my-stash         # Route import to a named writable stash source
-akm wiki list                                 # List available wikis
-akm wiki ingest <name>                        # Dispatch an agent to run the ingest workflow (uses defaults.engine or --engine)
-akm wiki stash <name> ./paper.md --target my-stash # Route wiki stash write to a named source
-akm proposal diff skill:akm-dream             # Diff proposal by ref, UUID, or 8-char prefix
+akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
-akm proposal reject skill:my-skill --reason "..."  # Reject by ref
+akm proposal reject skills/my-skill --reason "..."  # Reject by ref
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm mv memory:old-note new-note               # Rename an asset: inbound refs rewritten, ranking history preserved
+akm mv memories/old-note new-note             # Rename an asset: inbound refs rewritten, ranking history preserved
 akm sync                                      # Commit (and push if writable remote) changes in the primary stash (--no-push to commit only)
 akm improve --no-sync                         # Run improve without the end-of-run auto-commit
 akm improve --no-push                         # Auto-commit but skip push for this run
@@ -64,7 +61,6 @@ akm registry search "<query>"                 # Search all registries
 | memory | Recalled context (read the content for background information) |
 | env | A `.env` file of related CONFIGURATION (many vars; sensitive or not — all protected); key names only. Inject with `akm env run <ref> -- <cmd>` (the agent-safe path — values stay on disk). |
 | secret | A single sensitive value for AUTHENTICATION (token, key, cert); name only. Use `akm secret path` / `akm secret run`. |
-| wiki | A page in a multi-wiki knowledge base. For any wiki task, start with `akm wiki list`. To ingest sources, run `akm wiki ingest <name>` — it dispatches the configured agent engine to execute the ingest workflow against the wiki's `raw/` directory. Run `akm wiki -h` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.

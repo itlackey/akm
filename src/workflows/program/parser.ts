@@ -24,10 +24,8 @@
  * obviously malformed templates fail at lint time.
  */
 
-import { createRequire } from "node:module";
 import { isMap, isScalar, LineCounter, parseDocument } from "yaml";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
-import type { LlmInvocationOverrides } from "../../integrations/agent/engine-resolution";
 import {
   jsonBytes,
   utf8Bytes,
@@ -41,6 +39,7 @@ import {
   WORKFLOW_MAX_STEPS,
 } from "../resource-limits";
 import type { SourceRef, WorkflowError } from "../schema";
+import { parseTemplate } from "./expressions";
 import {
   PROGRAM_ISOLATION_KINDS,
   PROGRAM_ON_ERROR,
@@ -63,6 +62,14 @@ import {
   type WorkflowProgram,
   type WorkflowProgramParseResult,
 } from "./schema";
+
+// LlmInvocationOverrides referenced via an inline `import("...")` TYPE QUERY
+// (WI-9.8 KILL 3) rather than a top-level `import type` — this file is
+// reached from `output/renderers.ts` (via `workflows/renderer.ts`), and a
+// top-level import of the agent-runtime here would route the renderers hub
+// back into the agent-runtime / harness-barrel cluster KILL 3 severs. Same
+// rationale as `./schema.ts`'s identical query.
+type LlmInvocationOverrides = import("../../integrations/agent/engine-resolution").LlmInvocationOverrides;
 
 const TOP_LEVEL_KEYS = ["version", "name", "description", "params", "defaults", "budget", "steps"];
 const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
@@ -776,7 +783,7 @@ function parseTimeoutField(ctx: Ctx, raw: unknown, path: Path, label: string): n
     ctx.err(path, `${label} has an invalid timeout "${raw}". ${TIMEOUT_HINT}.`);
     return undefined;
   }
-  const n = Number.parseInt(match[1], 10);
+  const n = Number.parseInt(match[1]!, 10);
   const unit = match[2] ?? "ms";
   const timeoutMs = unit === "m" ? n * 60_000 : unit === "s" ? n * 1_000 : n;
   if (timeoutMs <= 0) {
@@ -918,65 +925,10 @@ function checkTemplates(ctx: Ctx, text: string, path: Path, label: string): void
     idx = close + 2;
   }
 
-  const checker = loadExpressionChecker();
-  if (checker) {
-    const message = checker(text);
-    if (message !== null) ctx.err(path, `${label}: ${message}`);
+  const result = parseTemplate(text);
+  if (!result.ok && result.errors.length > 0) {
+    ctx.err(path, `${label}: ${result.errors[0]!.message}`);
   }
-  // TODO(R1): when ./expressions is absent (parallel task not landed yet)
-  // only the unterminated check above runs; the compiler task enforces the
-  // closed expression grammar fully.
-}
-
-type ExpressionChecker = (text: string) => string | null;
-
-let cachedExpressionChecker: ExpressionChecker | null | undefined;
-
-/** Test seam: force a re-probe of ./expressions (e.g. after mocking). */
-export function resetExpressionCheckerForTests(): void {
-  cachedExpressionChecker = undefined;
-}
-
-function loadExpressionChecker(): ExpressionChecker | null {
-  if (cachedExpressionChecker !== undefined) return cachedExpressionChecker;
-  cachedExpressionChecker = null;
-  let candidate: ((text: string) => unknown) | undefined;
-  try {
-    const requireModule = createRequire(import.meta.url);
-    // Non-literal specifier keeps tsc from resolving the module at compile
-    // time — it may not exist yet (written by a parallel task).
-    const specifier = "./expressions";
-    const mod = requireModule(specifier) as Record<string, unknown>;
-    candidate = [mod.parseTemplate, mod.compileTemplate, mod.parseTemplateString, mod.tokenizeTemplate].find(
-      (fn): fn is (text: string) => unknown => typeof fn === "function",
-    );
-  } catch {
-    return cachedExpressionChecker; // module not present — skip the pass
-  }
-  if (!candidate) return cachedExpressionChecker;
-  const parseTemplate = candidate;
-  cachedExpressionChecker = (text) => {
-    try {
-      const result = parseTemplate(text);
-      if (isPlainRecord(result) && result.ok === false) {
-        const errs = result.errors;
-        if (Array.isArray(errs) && errs.length > 0) {
-          const first: unknown = errs[0];
-          if (typeof first === "string") return first;
-          if (isPlainRecord(first) && typeof first.message === "string") return first.message;
-        }
-        if (typeof result.error === "string") return result.error;
-        return `malformed \${{ … }} expression`;
-      }
-      return null;
-    } catch {
-      // A throw here is as likely an API-signature mismatch with the
-      // parallel expressions task as a real template error — never turn it
-      // into a false lint failure. The compiler task enforces the grammar.
-      return null;
-    }
-  };
-  return cachedExpressionChecker;
 }
 
 // ---------------------------------------------------------------------------

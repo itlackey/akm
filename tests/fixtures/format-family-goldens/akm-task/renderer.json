@@ -1,0 +1,30 @@
+{
+  "scenario": "presentationFor('task') — renderer + action for each task. Mirrors renderer/all-types.json's byRelPath shape. SPECIFICATION golden.",
+  "specificationGolden": true,
+  "capturedAtHead": null,
+  "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 / §3.4; src/core/type-presentation.ts TYPE_PRESENTATION['task'] (renderer 'task-yaml').",
+  "realWorldSource": [
+    "AKM-native; mirrors the frozen renderer/all-types.json task entry"
+  ],
+  "notes": [
+    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm tasks show <id> -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule` (the code strips a leading `task:` from the ref; under the new ref grammar there is no `task:` prefix, so the full ref appears)."
+  ],
+  "byRelPath": {
+    "nightly-index.yml": {
+      "type": "task",
+      "ref": "sample-akm-task//nightly-index",
+      "label": "Task",
+      "renderer": "task-yaml",
+      "action": "akm tasks show sample-akm-task//nightly-index -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule"
+    },
+    "two-targets.yml": {
+      "type": "task",
+      "ref": "sample-akm-task//two-targets",
+      "label": "Task",
+      "renderer": "task-yaml",
+      "action": "akm tasks show sample-akm-task//two-targets -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule",
+      "note": "renders normally despite being invalid; presentation keys on type=task, not on validity."
+    }
+  }
+}

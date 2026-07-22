@@ -13,9 +13,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { HarnessId } from "../core/config/config";
+import { runManagedSubprocess } from "../core/subprocess";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { SESSION_LOG_HARNESSES } from "../integrations/harnesses";
-import { spawn } from "../runtime";
 import { detectHarnessConfigs, type HarnessLLMConfig } from "./harness-config-import";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -80,14 +80,12 @@ export async function detectOllama(): Promise<OllamaDetectionResult> {
     // HTTP failed — try CLI fallback
   }
 
-  // CLI fallback
+  // CLI fallback — bounded (10 s) so a wedged `ollama` can't hang detection.
   try {
-    const proc = spawn(["ollama", "list"], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout: text, exitCode } = await runManagedSubprocess(["ollama", "list"], {
+      capture: true,
+      timeoutMs: 10_000,
     });
-    const text = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
 
     if (exitCode === 0 && text.trim()) {
       const lines = text.trim().split("\n").slice(1); // skip header

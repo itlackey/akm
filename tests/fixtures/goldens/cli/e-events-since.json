@@ -1,0 +1,10 @@
+{
+  "durationShorthand": {
+    "code": "INVALID_FLAG_VALUE",
+    "exitCode": 2
+  },
+  "offsetCursor": {
+    "exitCode": 0,
+    "stdoutKeys": ["events", "nextOffset", "sinceOffset", "totalCount"]
+  }
+}

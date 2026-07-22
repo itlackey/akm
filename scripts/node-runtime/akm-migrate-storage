@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 if (!process.versions.bun) {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  if (major < 20 || (major === 20 && minor < 12)) {
-    console.error("The akm-cli npm package requires Node.js >= 20.12 to bootstrap.");
+  if (major < 22) {
+    console.error("The akm-cli npm package requires Node.js >= 22 to bootstrap.");
     process.exit(1);
   }
 }

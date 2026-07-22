@@ -73,7 +73,7 @@ describe("parseFrontmatter — |‑block scalar support", () => {
 
   it("assembleAsset → parseFrontmatter round-trip (idempotency contract)", () => {
     const fm: Record<string, unknown> = {
-      ref: "lesson:test-lesson",
+      ref: "lessons/test-lesson",
       description: "A lesson that\nspans multiple lines.",
       tags: ["ops"],
     };

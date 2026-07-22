@@ -3,11 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import { parseAssetRef } from "../../core/asset/asset-ref";
-import { canonicalizeWorkflowName } from "../../core/asset/asset-spec";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getDbPath } from "../../core/paths";
+import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -47,17 +48,29 @@ export type WorkflowAsset = {
 };
 
 /**
- * Resolve a `workflow:<name>` ref to a fully-projected {@link WorkflowAsset}.
- *
- * Prefers the parsed document cached in `index.db` (fast path) and falls back to
- * reading + parsing the source file from disk. Pure loading/parsing concern —
- * extracted from the run repository so run orchestration no longer owns asset
- * resolution.
+ * The canonical durable `workflow_runs.workflow_ref` run-key:
+ * `[origin//]workflows/<canonical-name>` (normative §11.4 — the chunk-8
+ * cutover re-keys pre-existing legacy rows onto this spelling; every mint
+ * site MUST build the key through this one helper).
+ */
+export function canonicalWorkflowRunRef(origin: string | undefined, canonicalName: string): string {
+  return `${origin ? `${origin}//` : ""}workflows/${canonicalName}`;
+}
+
+/** Parse a workflow ref using the canonical `[bundle//]workflows/<name>` grammar. */
+export function parseWorkflowRefInput(ref: string): AssetRef {
+  return parseRefInput(ref.trim());
+}
+
+/**
+ * Resolve a workflow ref to a fully-projected {@link WorkflowAsset}. Prefers the
+ * parsed document cached in `index.db` (fast path) and falls back to reading +
+ * parsing the source file from disk.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const parsed = parseAssetRef(ref);
+  const parsed = parseWorkflowRefInput(ref);
   if (parsed.type !== "workflow") {
-    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${ref}".`);
+    throw new UsageError(`Expected a workflow ref (workflows/<name>), got "${ref}".`);
   }
 
   const config = loadConfig();
@@ -77,17 +90,17 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   }
 
   if (!assetPath) {
-    throw new NotFoundError(`Workflow not found for ref: workflow:${parsed.name}`);
+    throw new NotFoundError(`Workflow not found for ref: workflows/${parsed.name}`);
   }
 
-  const resolvedSourcePath = sourcePath ?? config.stashDir ?? assetPath;
-  // Canonicalize the stored ref: `workflow:foo.yaml` and `workflow:foo`
+  const resolvedSourcePath = sourcePath ?? resolveStashDir() ?? assetPath;
+  // Canonicalize the stored ref: `workflows/foo.yaml` and `workflows/foo`
   // resolve to the same file, so they MUST share one run identity. The raw
   // `parsed.name` (with any extension) is what drives file resolution above;
   // only the persisted/queried ref is collapsed (matches the index entry key,
   // which is keyed by the extension-stripped canonical name).
   const canonicalName = canonicalizeWorkflowName(parsed.name);
-  const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${canonicalName}`;
+  const fullRef = canonicalWorkflowRunRef(parsed.origin, canonicalName);
 
   // Format detection by extension: `.yaml`/`.yml` is a YAML workflow program
   // (redesign addendum, R1); everything else is the markdown document format.
@@ -108,7 +121,7 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
 export function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseWorkflowRefInput(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db
@@ -145,7 +158,7 @@ function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
 function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): WorkflowDocument | null {
   if (!fs.existsSync(getDbPath())) return null;
 
-  const parsed = parseAssetRef(ref);
+  const parsed = parseWorkflowRefInput(ref);
   const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
   return withIndexDb((db) => {
     const row = db

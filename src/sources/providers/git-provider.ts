@@ -5,16 +5,18 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
+import { withFreshnessCache } from "../freshness";
 import type { SourceProvider } from "../provider";
 import { registerSourceProvider } from "../provider-factory";
 import { cloneRepo, runGit, syncRegistryGitRef } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
-import { isExpired, sanitizeString } from "./provider-utils";
+import { sanitizeString } from "./provider-utils";
 
 /** Cache TTL before refreshing the mirrored repo (12 hours). */
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -111,36 +113,25 @@ export async function ensureGitMirror(
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
   const writable = options?.writable === true;
-  const force = options?.force === true;
 
-  // Check if cache is fresh
-  let mtime = 0;
-  try {
-    mtime = fs.statSync(cachePaths.indexPath).mtimeMs;
-  } catch {
-    /* no cached index */
-  }
-
-  if (!force && mtime && !isExpired(mtime, CACHE_TTL_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
-    return;
-  }
-
-  try {
-    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
-      // Writable repo already cloned — pull instead of re-clone to preserve local changes
-      pullRepo(cachePaths.repoDir);
-    } else {
-      cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
-    }
-    // Touch index file to track freshness
-    fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
-  } catch (err) {
-    if (mtime && !isExpired(mtime, CACHE_STALE_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
-      return;
-    }
-    throw err;
-  }
+  await withFreshnessCache({
+    markerPath: cachePaths.indexPath,
+    ttlMs: CACHE_TTL_MS,
+    staleMs: CACHE_STALE_MS,
+    force: options?.force === true,
+    isUsable: () => !requireRepoDir || hasExtractedRepo(cachePaths.repoDir),
+    refresh: async () => {
+      fs.mkdirSync(cachePaths.rootDir, { recursive: true });
+      if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
+        // Writable repo already cloned — pull instead of re-clone to preserve local changes
+        pullRepo(cachePaths.repoDir);
+      } else {
+        cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
+      }
+      // Touch index file to track freshness
+      fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
+    },
+  });
 }
 
 /**
@@ -195,7 +186,13 @@ function hasExtractedRepo(repoDir: string): boolean {
 
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
-    return Object.values(TYPE_DIRS).some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
+    // WI-3.1: the "any type dir present" test is now sourced from the `akm`
+    // adapter's directoryList() — behavior-identical to the placement
+    // stash-subdir names, with `stashDirNames()` kept live as the fallback. The
+    // content/ subdir check above is preserved verbatim.
+    const ownedDirs =
+      akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
+    return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;
   }
@@ -234,7 +231,7 @@ export function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
     }
 
     const owner = sanitizeString(segments[0]);
-    const repo = sanitizeString(segments[1].replace(/\.git$/i, ""));
+    const repo = sanitizeString(segments[1]!.replace(/\.git$/i, ""));
 
     if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
       throw new ConfigError(`Unsupported repository URL: "${rawUrl}"`);

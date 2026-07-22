@@ -14,23 +14,13 @@
  * config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { aiderBuilder } from "./agent-builder";
 import { aiderResultExtractor } from "./result-extractor";
 
 export { AIDER_PLATFORM, aiderBuilder } from "./agent-builder";
 export { aiderResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * Aider.
@@ -49,7 +39,7 @@ export class AiderHarness extends BaseHarness {
   // No structured-output mode at all (the matrix's "none — parse output"):
   // akm injects the schema into the prompt and extracts embedded JSON.
   readonly structuredOutput = "none" as const;
-  // No `resume`: Aider persists context in chat-history files
+  // No flag-shaped resume: Aider persists context in chat-history files
   // (`.aider.chat.history.md`), not session ids — the plan's named example of
   // a harness with no session model. akm's `workflow_run_units` remains the
   // durable resume source of truth.

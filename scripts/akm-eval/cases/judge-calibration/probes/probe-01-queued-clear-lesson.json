@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-01-queued-clear-lesson",
   "assetType": "memory",
-  "assetRef": "memory:probe-01-deploy-secret-rotation",
+  "assetRef": "memories/probe-01-deploy-secret-rotation",
   "asset": {
     "frontmatter": {
       "description": "After a staging deploy silently dropped retry credentials, the team added a regression test in tests/deploy-secret-rotation.test.ts so the failure cannot recur.",

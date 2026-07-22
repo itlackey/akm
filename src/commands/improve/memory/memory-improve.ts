@@ -4,10 +4,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeAssetRef, parseAssetRef } from "../../../core/asset/asset-ref";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
+import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { DERIVED_SUFFIX } from "../../../core/recognition-util";
+import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
@@ -122,8 +124,6 @@ interface FamilyContradictionResolution {
   transitions: MemoryBeliefStateTransition[];
 }
 
-const DERIVED_SUFFIX = ".derived";
-
 export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOptions = {}): MemoryCleanupPlan {
   const records = collectDerivedMemories(stashDir, options.parentRef);
   const byRef = new Map(records.map((record) => [record.ref, record]));
@@ -212,6 +212,7 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
     for (const duplicates of byFingerprint.values()) {
       if (duplicates.length < 2) continue;
       const [survivor, ...rest] = sortRecordsForSurvival(duplicates);
+      if (survivor === undefined) continue;
       for (const duplicate of rest) {
         planPrune(duplicate, "duplicate-derived", survivor.ref);
       }
@@ -237,7 +238,7 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
         parentRef,
         signal,
         refs: ordered.map((record) => record.ref),
-        suggestedSurvivorRef: ordered[0].ref,
+        suggestedSurvivorRef: ordered[0]!.ref,
       });
     }
   }
@@ -461,7 +462,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
 
     const outgoing = outgoingComponents.get(index);
     if (!outgoing || outgoing.size === 0) {
-      const refs = [...components[index]].sort();
+      const refs = [...components[index]!].sort();
       reachableSinkRefsMemo.set(index, refs);
       return refs;
     }
@@ -488,7 +489,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
         ref: record.ref,
         parentRef: record.parentRef,
         reason: "contradicted-derived",
-        contradictedByRef: currentRefs[0],
+        contradictedByRef: currentRefs[0]!,
         contradictedByRefs: currentRefs,
         currentBeliefRefs: currentRefs,
       });
@@ -512,7 +513,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
       continue;
     }
 
-    const componentRefs = [...components[componentIndex]].sort();
+    const componentRefs = [...components[componentIndex]!].sort();
     const peerCurrentRefs = componentRefs.filter((ref) => ref !== record.ref);
     // `deprecated` is a frozen historical state — never refresh to active.
     // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
@@ -589,7 +590,7 @@ function stronglyConnectedComponents(
 
   const componentIndexByRef = new Map<string, number>();
   for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
-    for (const ref of components[componentIndex]) {
+    for (const ref of components[componentIndex]!) {
       componentIndexByRef.set(ref, componentIndex);
     }
   }
@@ -746,7 +747,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
     const signalKey = normalizeSignal(firstNonEmpty([title, description, searchHints[0]]));
 
     records.push({
-      ref: makeAssetRef("memory", name),
+      ref: `memory:${name}`,
       name,
       filePath,
       parentRef,
@@ -755,7 +756,12 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
       tags,
       searchHints,
       body,
-      canonicalName: name === `${parentRef.slice("memory:".length)}${DERIVED_SUFFIX}`,
+      // parentRef is the 0.9.0 `memories/<name>` conceptId (Group-C item 2), so
+      // the canonical-child test compares the minted conceptId of the suffix-
+      // stripped name against it rather than slicing a fixed `memory:` prefix.
+      canonicalName:
+        name.endsWith(DERIVED_SUFFIX) &&
+        parentRef === conceptIdFromTypeName("memory", name.slice(0, -DERIVED_SUFFIX.length)),
       signalScore: computeSignalScore(title, description, tags, searchHints, body),
       fingerprint: buildFingerprint(title, description, tags, searchHints, body),
       ...(signalKey ? { signalKey } : {}),
@@ -813,48 +819,27 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
   return "active";
 }
 
-function isDerivedMemory(name: string, frontmatter: Record<string, unknown>): boolean {
-  return frontmatter.inferred === true || name.endsWith(DERIVED_SUFFIX);
-}
-
-function resolveParentRef(name: string, frontmatter: Record<string, unknown>): string | undefined {
-  const fromSource = parseMemoryRef(asNonEmptyString(frontmatter.source));
-  if (fromSource) return fromSource;
-
-  const derivedFrom = asNonEmptyString(frontmatter.derivedFrom);
-  if (derivedFrom) return makeAssetRef("memory", derivedFrom);
-
-  if (name.endsWith(DERIVED_SUFFIX)) {
-    return makeAssetRef("memory", name.slice(0, -DERIVED_SUFFIX.length));
-  }
-
-  return undefined;
-}
-
+// Belief-edge refs (contradictedBy / supersededBy / currentBeliefRefs) are the
+// IDENTITY channel: they are compared against a derived memory's own
+// `memory:<name>` ref (resolveFamilyContradictions' familyRefSet,
+// firstExistingRef's byRef map), so they stay in `memory:<name>` grammar. This
+// is deliberately NOT the `memories/<name>` derived_from conceptId — Group-C
+// item 2 flipped only that channel. We parse the tolerant bare name and format
+// it back into identity grammar so both grammars on disk resolve to the ref
+// record.ref carries.
 function refArray(value: unknown): string[] {
   if (typeof value === "string") {
-    const parsed = parseMemoryRef(value);
-    return parsed ? [parsed] : [];
+    const name = parseMemoryName(value);
+    return name === undefined ? [] : [memoryIdentityRef(name)];
   }
   if (!Array.isArray(value)) return [];
   const refs = new Set<string>();
   for (const item of value) {
     if (typeof item !== "string") continue;
-    const parsed = parseMemoryRef(item);
-    if (parsed) refs.add(parsed);
+    const name = parseMemoryName(item);
+    if (name !== undefined) refs.add(memoryIdentityRef(name));
   }
   return [...refs].sort();
-}
-
-function parseMemoryRef(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = parseAssetRef(value.trim());
-    if (parsed.type !== "memory") return undefined;
-    return makeAssetRef(parsed.type, parsed.name);
-  } catch {
-    return undefined;
-  }
 }
 
 function buildFingerprint(

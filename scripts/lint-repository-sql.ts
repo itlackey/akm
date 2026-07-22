@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * lint-repository-sql.ts  (X4 — architecture-refactor-plan)
+ * lint-repository-sql.ts  (X4)
  *
  * Architectural fitness function for the "repository owns the SQL" boundary.
  *
@@ -63,7 +63,8 @@ const RULES: readonly Rule[] = [
   },
   {
     id: "db-open-call",
-    pattern: /\b(?:openExistingDatabase|openIndexDatabase|openStateDatabase|openManagedDatabase)\s*\(|\bnew\s+Database\s*\(/,
+    pattern:
+      /\b(?:openExistingDatabase|openIndexDatabase|openStateDatabase|openManagedDatabase)\s*\(|\bnew\s+Database\s*\(/,
     message:
       "opens a database directly — registry/workflow-runtime code must query through a repository in src/storage/repositories/**",
   },
@@ -172,7 +173,13 @@ export function lintContent(rel: string, raw: string): Violation[] {
     for (const rule of RULES) {
       const subject = rule.keepStrings ? withStrings[i] : noStrings[i];
       if (subject !== undefined && rule.pattern.test(subject)) {
-        violations.push({ file: rel, line: i + 1, ruleId: rule.id, message: rule.message, snippet: rawLines[i].trim() });
+        violations.push({
+          file: rel,
+          line: i + 1,
+          ruleId: rule.id,
+          message: rule.message,
+          snippet: rawLines[i]!.trim(),
+        });
       }
     }
   }

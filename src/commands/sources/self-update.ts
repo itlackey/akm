@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, IS_WINDOWS, ResponseTooLargeError, readBodyWithByteCap } from "../../core/common";
+import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
@@ -18,6 +19,10 @@ const NODE_MODULES_SEGMENT = "/node_modules/";
 const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
 const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 const MIGRATION_CONTRACT_VERSION = "0.9.0-rc.0";
+const MIGRATION_CONTRACT_BLOCKED_MESSAGE =
+  "AKM 0.8 does not implement the migrate command or the --migration-config upgrade contract, so self-update cannot safely cross into 0.9. " +
+  "Prepare the 0.9 config and an independent backup, install or stage the 0.9 binary manually, then use the new binary to run: " +
+  "akm migrate apply --config <prepared-0.9.json>. See docs/migration/v0.8-to-v0.9.md.";
 const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
 
@@ -147,7 +152,7 @@ export function getAkmBinaryName(): string {
   if (platform === "darwin" && arch === "arm64") return "akm-darwin-arm64";
   if (platform === "win32" && arch === "x64") return "akm-windows-x64.exe";
 
-  throw new Error(`Unsupported platform for binary upgrade: ${platform}/${arch}`);
+  throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
 export async function checkForUpdate(currentVersion: string): Promise<UpgradeCheckResponse> {
@@ -199,11 +204,7 @@ export async function performUpgrade(
     semverOrder(currentVersion, MIGRATION_CONTRACT_VERSION) < 0 &&
     semverOrder(latestVersion, MIGRATION_CONTRACT_VERSION) >= 0
   ) {
-    throw new Error(
-      "AKM 0.8 does not implement the migrate command or the --migration-config upgrade contract, so self-update cannot safely cross into 0.9. " +
-        "Prepare the 0.9 config and an independent backup, install or stage the 0.9 binary manually, then use the new binary to run: " +
-        "akm migrate apply --config <prepared-0.9.json>. See docs/migration/v0.8-to-v0.9.md.",
-    );
+    throw new ConfigError(MIGRATION_CONTRACT_BLOCKED_MESSAGE, "UPGRADE_BLOCKED");
   }
 
   const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
@@ -287,10 +288,11 @@ export async function performUpgrade(
     removeFileBestEffort(stagedPath);
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM") {
-      throw new Error(
+      throw new ConfigError(
         `Permission denied writing to ${execDir}.\n` +
           `${IS_WINDOWS ? "Try running as Administrator." : "Run: sudo akm upgrade"}\n` +
           `Or re-run the install script: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`,
+        "UPGRADE_BLOCKED",
       );
     }
     throw err;
@@ -368,7 +370,7 @@ export async function performUpgrade(
 
   if (fs.existsSync(backupPath)) {
     removeFileBestEffort(stagedPath);
-    throw new Error(`Refusing to overwrite retained previous binary at ${backupPath}.`);
+    throw new ConfigError(`Refusing to overwrite retained previous binary at ${backupPath}.`, "UPGRADE_BLOCKED");
   }
 
   try {

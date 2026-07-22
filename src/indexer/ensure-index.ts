@@ -15,7 +15,7 @@
  * populated index exists. The previous design — a staleness walk plus a
  * detached background reindex per read — made every read on an actively
  * written stash spawn a writer that the read's own telemetry then queued
- * behind (see docs/design/read-path-reindex-contention-findings.md).
+ * behind (the 2026-07 read-path reindex-contention findings).
  *
  * `mode: "blocking"` (improve) still checks staleness and rebuilds inline,
  * because its planning logic needs a current `entries` table in-process.
@@ -23,10 +23,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_SPECS, type AssetSpec, TYPE_DIRS } from "../core/asset/asset-spec";
+import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { closeDatabase, getEntryCount, getIndexedFilePaths, getMeta, openExistingDatabase } from "./db/db";
+import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { getEntryCount, getIndexedFilePaths } from "../storage/repositories/index-entries-repository";
+import { getMeta } from "../storage/repositories/index-meta-repository";
+import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
@@ -86,8 +89,8 @@ function hasNewerIndexableFiles(stashDir: string, builtAt: string | undefined, i
   const builtAtMs = builtAt ? new Date(builtAt).getTime() : Number.NaN;
   const builtAtUsable = Number.isFinite(builtAtMs);
 
-  for (const [type, spec] of Object.entries(ASSET_SPECS)) {
-    const typeRoot = path.join(stashDir, TYPE_DIRS[type] ?? spec.stashDir);
+  for (const spec of placementSpecList()) {
+    const typeRoot = path.join(stashDir, spec.stashDir);
     const files = getIndexableFiles(typeRoot, spec);
     for (const file of files) {
       if (!indexedPaths.has(file)) return true;
@@ -173,13 +176,20 @@ function indexCanServeStash(stashDir: string): boolean {
   }
 }
 
-async function runInlineReindex(stashDir: string, signal?: AbortSignal): Promise<boolean> {
+async function runInlineReindex(
+  stashDir: string,
+  options: { signal?: AbortSignal; hydrateSources?: boolean } = {},
+): Promise<boolean> {
   try {
     const { akmIndex } = await import("./indexer.js");
-    await akmIndex({ stashDir, signal });
+    await akmIndex({
+      stashDir,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.hydrateSources === false ? { hydrateSources: false } : {}),
+    });
     return true;
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (options.signal?.aborted) throw error;
     warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
     return false;
   }
@@ -201,10 +211,21 @@ async function runInlineReindex(stashDir: string, signal?: AbortSignal): Promise
  * A rebuild attempt that fails (throws) resolves to `false`.
  */
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
+  // §11.5: warn (once) if the configured bundle ids drifted from the persisted
+  // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
+  warnOnBundleRenameDrift();
   if (options.mode === "blocking") {
+    // Blocking callers (improve's planning preflight) are a sanctioned
+    // materialization point — hydrate cache-backed sources as usual.
     if (!isIndexStale(stashDir)) return false;
-    return runInlineReindex(stashDir, options.signal);
+    return runInlineReindex(stashDir, { ...(options.signal ? { signal: options.signal } : {}) });
   }
+  // Background = the READ path (`show` auto-index): query time must never clone/
+  // pull/fetch (spec §14.3 / D11). Build from already-materialized content only;
+  // absent source caches are skipped with a warning, not fetched.
   if (indexCanServeStash(stashDir)) return false;
-  return runInlineReindex(stashDir, options.signal);
+  return runInlineReindex(stashDir, {
+    ...(options.signal ? { signal: options.signal } : {}),
+    hydrateSources: false,
+  });
 }

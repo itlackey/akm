@@ -1,9 +1,13 @@
 import path from "node:path";
-import { closeDatabase, openIndexDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db/db";
 import { deleteStoredGraph, loadStoredGraphSnapshot, replaceStoredGraph } from "../../src/indexer/db/graph-db";
 import type { GraphFile } from "../../src/indexer/graph/graph-extraction";
+import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 
 /**
  * Seed a stored graph snapshot, also creating the minimal `entries` rows
@@ -20,6 +24,14 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
       const dirPath = path.dirname(file.path);
       const entry = { name, type: file.type, filename: path.basename(file.path) };
       try {
+        // Seed the durable bundle-adapter identity (item_ref/concept_id/bundle_id)
+        // that the graph-boost related-ref reader now resolves from — mirroring
+        // the real indexer so seeded rows are not NULL-provenance stragglers.
+        const provenance = deriveEntryProvenance(
+          { bundleId: "local", componentId: "local", adapterId: "akm" },
+          file.type,
+          name,
+        );
         upsertEntry(
           db,
           `${graph.stashRoot}:${file.type}:${name}`,
@@ -28,6 +40,7 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
           graph.stashRoot,
           entry as Parameters<typeof upsertEntry>[5],
           buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
+          provenance,
         );
       } catch {
         /* entry may already exist with a different key — fall through */
@@ -65,11 +78,10 @@ export function seedStoredGraph(graph: GraphFile, dbPath: string): void {
 
 /**
  * Insert raw `graph_files` + `graph_file_entities` rows linking an already-indexed
- * asset (by its `file_path`) to a set of graph entities, so `getEntitiesByEntryIds`
- * (entries ⋈ graph_files ⋈ graph_file_entities on stash_root/file_path/body_hash)
- * returns them. `entity_norm` is lowercased to mirror real extraction
- * (graph-dedup.ts). Used to drive entity-based recombine clustering and related
- * graph lookups in tests without running real extraction.
+ * asset (by its `file_path`) to a set of graph entities (entries ⋈ graph_files ⋈
+ * graph_file_entities on stash_root/file_path/body_hash). `entity_norm` is
+ * lowercased to mirror real extraction (graph-dedup.ts). Used to drive
+ * entity-based graph lookups in tests without running real extraction.
  */
 export function insertGraphEntities(
   db: Database,

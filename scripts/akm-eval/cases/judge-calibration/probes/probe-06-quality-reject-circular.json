@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "probe-06-quality-reject-circular",
   "assetType": "memory",
-  "assetRef": "memory:probe-06-circular-restate",
+  "assetRef": "memories/probe-06-circular-restate",
   "asset": {
     "frontmatter": {
       "description": "When working with the deploy script, work with the deploy script.",

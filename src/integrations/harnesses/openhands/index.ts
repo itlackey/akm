@@ -14,23 +14,13 @@
  * reader or config importer yet.
  */
 
-import { BaseHarness, type HarnessCapabilities } from "../types";
+import { caps } from "../shared";
+import { BaseHarness } from "../types";
 import { openhandsBuilder } from "./agent-builder";
 import { openhandsResultExtractor } from "./result-extractor";
 
 export { OPENHANDS_MODEL_ENV, OPENHANDS_PLATFORM, openhandsBuilder } from "./agent-builder";
 export { openhandsResultExtractor } from "./result-extractor";
-
-function caps(c: Partial<HarnessCapabilities>): HarnessCapabilities {
-  return {
-    sessionLogs: false,
-    agentDispatch: false,
-    detection: false,
-    configImport: false,
-    runtimeIdentity: false,
-    ...c,
-  };
-}
 
 /**
  * OpenHands CLI.
@@ -49,7 +39,7 @@ export class OpenhandsHarness extends BaseHarness {
   // `--json` emits a documented JSONL event stream akm parses, then validates
   // against the node schema ⇒ native-json tier.
   readonly structuredOutput = "native-json" as const;
-  // No `resume`: per the matrix OpenHands resumes from workspace state, not a
+  // No flag-shaped resume: per the matrix OpenHands resumes from workspace state, not a
   // session-id flag. The extractor still captures a conversation id
   // opportunistically; akm's `workflow_run_units` remains the durable source
   // of truth.

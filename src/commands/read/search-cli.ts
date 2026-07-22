@@ -7,35 +7,25 @@
  * from src/cli.ts (WS6) so the God Module shrinks; the `main.subCommands.search`,
  * `.curate`, and `.show` keys and every command's args/output shape are
  * byte-identical. The three commands form a clean cluster: they share the
- * private `resolveEventSource()` helper and the `parseScopeFilterFlags`
+ * usage-event provenance and the `parseScopeFilterFlags`
  * search-source parsers. Handlers whose body is a plain
  * `runWithJsonErrors(async () => { … })` are migrated to `defineJsonCommand`,
  * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
  * form.
  */
 
+import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
-import { parseAssetRef } from "../../core/asset/asset-ref";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
-import type { UsageEventSource } from "../../indexer/usage/usage-events";
-import { getHyphenatedBoolean, getOutputMode, parseFlagValue } from "../../output/context";
+import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
+import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import type { KnowledgeView, ShowDetailLevel } from "../../sources/types";
 import { akmCurate } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
-
-// AKM_EVENT_SOURCE attributes a query to a `user` invocation, the internal
-// `improve` loop, or the `task` runner so the event log can distinguish
-// genuine demand from machine traffic; any other value is treated as unset.
-function resolveEventSource(): UsageEventSource | undefined {
-  const raw = process.env.AKM_EVENT_SOURCE;
-  if (raw === "improve") return "improve";
-  if (raw === "task") return "task";
-  if (raw === "user") return "user";
-  return undefined;
-}
 
 export const searchCommand = defineJsonCommand({
   meta: { name: "search", description: "Search the stash" },
@@ -50,7 +40,7 @@ export const searchCommand = defineJsonCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, wiki, lesson, or any). Use workflow to find step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, lesson, or any). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -105,6 +95,7 @@ export const searchCommand = defineJsonCommand({
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const noProjectContext = getHyphenatedBoolean(args, "no-project-context");
     const includeSessions = args["include-sessions"];
+    const outputMode = getOutputMode();
     const result = await akmSearch({
       query,
       type,
@@ -116,7 +107,8 @@ export const searchCommand = defineJsonCommand({
       includeSessions,
       disableProjectContext: noProjectContext,
       disableScopedUtility: noProjectContext,
-      eventSource: resolveEventSource(),
+      eventSource: resolveUsageEventSource(),
+      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });
     output("search", result);
   },
@@ -132,7 +124,7 @@ export const curateCommand = defineJsonCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, wiki, lesson, or any). Use workflow to curate step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, env, secret, lesson, or any). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -155,7 +147,15 @@ export const curateCommand = defineJsonCommand({
     const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
     const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
     const source = parseSearchSource(args.source ?? "stash");
-    const curated = await akmCurate({ query: args.query, type, limit, source, eventSource: resolveEventSource() });
+    const outputMode = getOutputMode();
+    const curated = await akmCurate({
+      query: args.query,
+      type,
+      limit,
+      source,
+      eventSource: resolveUsageEventSource(),
+      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+    });
     output("curate", curated);
   },
 });
@@ -164,13 +164,13 @@ export const showCommand = defineJsonCommand({
   meta: {
     name: "show",
     description:
-      "Show a stash asset by ref (e.g. akm show knowledge:guide.md toc, akm show knowledge:guide.md section 'Auth')",
+      "Show a stash asset by ref (e.g. akm show knowledge/guide.md toc, akm show knowledge/guide.md section 'Auth')",
   },
   args: {
     ref: {
       type: "positional",
       description:
-        'Asset ref ([origin//]type:name) optionally followed by a view mode. View modes: `toc` (table of contents), `section "Heading"` (extract one section), `lines <start> <end>` (line range), `frontmatter` (YAML metadata only), `full` (raw file). Example: `akm show knowledge:guide.md section "Auth"`.',
+        'Asset ref ([bundle//]conceptId) optionally followed by a view mode. View modes: `toc` (table of contents), `section "Heading"` (extract one section), `lines <start> <end>` (line range), `frontmatter` (YAML metadata only), `full` (raw file). Example: `akm show knowledge/guide.md section "Auth"`.',
       required: true,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
@@ -185,17 +185,18 @@ export const showCommand = defineJsonCommand({
   async run({ args }) {
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
     // not a typed asset ref — skip ref validation and let akmShowUnified
-    // direct-read it. (`parseAssetRef` would reject the non-type `meta`.)
-    if (!parseMetaRef(args.ref)) parseAssetRef(args.ref);
-    // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
+    // direct-read it. (the ref parser would reject the non-type `meta`.)
+    if (!parseMetaRef(args.ref)) parseRefInput(args.ref);
+    // The knowledge-view positional syntax (`akm show knowledge/foo section "Auth"`)
     // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
     // by `normalizeShowArgv` before citty parses argv. We read those values
-    // directly via `parseFlagValue` so the flags don't surface as user-facing
-    // options in `akm show --help`.
-    const akmView = parseFlagValue(process.argv, "--akmView");
-    const akmHeading = parseFlagValue(process.argv, "--akmHeading");
-    const akmStart = parseFlagValue(process.argv, "--akmStart");
-    const akmEnd = parseFlagValue(process.argv, "--akmEnd");
+    // directly via `getParsedInvocation()` so the flags don't surface as
+    // user-facing options in `akm show --help`.
+    const invocation = getParsedInvocation();
+    const akmView = invocation.getFlagValue("--akmView");
+    const akmHeading = invocation.getFlagValue("--akmHeading");
+    const akmStart = invocation.getFlagValue("--akmStart");
+    const akmEnd = invocation.getFlagValue("--akmEnd");
     let view: KnowledgeView | undefined;
     if (akmView) {
       switch (akmView) {
@@ -219,7 +220,7 @@ export const showCommand = defineJsonCommand({
       }
     }
     const cliShape = getOutputMode().shape;
-    const explicitDetail = parseFlagValue(process.argv, "--detail");
+    const explicitDetail = invocation.getFlagValue("--detail");
     // `--shape summary` selects the compact metadata projection for show
     // (the legacy `--detail summary` spelling still maps here via the
     // back-compat path in resolveOutputMode). `--detail brief` forces the
@@ -235,7 +236,7 @@ export const showCommand = defineJsonCommand({
       view,
       detail: showDetail,
       scope,
-      eventSource: resolveEventSource(),
+      eventSource: resolveUsageEventSource(),
     });
     output("show", result);
   },

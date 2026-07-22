@@ -4,7 +4,7 @@
 
 /**
  * R5 — Longitudinal collapse/churn detector
- * (docs/design/improve-collapse-churn-detector-design.md).
+ * (docs/architecture/specs/improve-collapse-churn-detector-design.md).
  *
  * Detects the two measured failure modes of LLM-consolidated memory stores:
  *
@@ -17,7 +17,7 @@
  * Hard invariants: deterministic only (FTS BM25 + hashing — never an LLM,
  * never an embedding model); bounded storage (< 2 KB per qualifying cycle,
  * 365-day retention); fail-open (an error warns and skips, never breaks an
- * improve run); runs only on cycles where consolidate/recombine did work.
+ * improve run); runs only on cycles where consolidate did work.
  *
  * Observe-only in v1: alerts land in `improve_cycle_metrics.alerts_json`, the
  * events log (`collapse_detector_alert`), and the `akm health` advisory —
@@ -27,20 +27,12 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { AkmAssetType } from "../../core/common";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import {
-  closeDatabase,
-  type DbIndexedEntry,
-  getAllEntries,
-  openExistingDatabase,
-  searchFts,
-} from "../../indexer/db/db";
 import type { Database as IndexDatabase, Database as StateDatabase } from "../../storage/database";
 import {
   type CanaryQueryRow,
@@ -53,6 +45,10 @@ import {
   listActiveCanarySetIds,
   queryRecentCycleMetrics,
 } from "../../storage/repositories/canaries-repository";
+import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import type { DbIndexedEntry } from "../../storage/repositories/index-entry-types";
+import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { computeBigramDiversity, DEFAULT_MAX_GENERATION } from "./anti-collapse";
 import { getAllRankScores } from "./salience";
 
@@ -115,12 +111,13 @@ function buildMintList(
 ): Array<{ anchorRef: string; query: string }> {
   const canaryCount = cfg.canaryCount ?? DEFAULT_CANARY_COUNT;
   const rankScores = getAllRankScores(stateDb);
-  // NOTE: entryKey is stash-prefixed ("<stashDir>:type:name"); asset_salience
-  // and the canary scoring both key on the bare "type:name" ref.
+  // Chunk-8 WI-8.5c: the canary anchor + salience correlation both key on the
+  // SHORT conceptId (`<stash-subdir>/<name>`, D-R2) — the same spelling the
+  // improve candidate refs and content xrefs now carry (post WI-8.5a).
   const candidates = entries
     .filter((e) => LEARNING_TYPES.has(e.entry.type))
     .map((e) => {
-      const ref = makeAssetRef(e.entry.type as AkmAssetType, e.entry.name);
+      const ref = conceptIdFromTypeName(e.entry.type, e.entry.name);
       return { e, ref, score: rankScores.get(ref) ?? 0 };
     })
     .sort((a, b) => b.score - a.score || (a.ref < b.ref ? -1 : 1));
@@ -176,7 +173,7 @@ export function ensureCanarySet(
 ): { canarySetId: string; canaries: CanaryQueryRow[] } | null {
   const existing = getActiveCanaries(stateDb);
   if (existing.length > 0) {
-    return { canarySetId: existing[0].canary_set_id, canaries: existing };
+    return { canarySetId: existing[0]!.canary_set_id, canaries: existing };
   }
 
   const minted = buildMintList(stateDb, preloadedEntries ?? getAllEntries(indexDb), cfg);
@@ -248,8 +245,11 @@ export function normHash(text: string): string {
 function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
   const results = searchFts(indexDb, canary.query, k);
   for (let i = 0; i < Math.min(results.length, k); i++) {
-    const r = results[i];
-    const ref = makeAssetRef(r.entry.type as AkmAssetType, r.entry.name);
+    const r = results[i]!;
+    // Chunk-8 WI-8.5c: match the stored anchor (SHORT conceptId) and the
+    // canonical `xrefs` provenance (also conceptIds post WI-8.5a) on the
+    // conceptId spelling.
+    const ref = conceptIdFromTypeName(r.entry.type, r.entry.name);
     if (ref === canary.anchor_ref) return i;
     if (r.entry.xrefs?.includes(canary.anchor_ref) || r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
   }
@@ -267,7 +267,7 @@ export function computeCycleMetrics(
   indexDb: IndexDatabase,
   args: {
     runId: string;
-    pass: "consolidate" | "recombine" | "both";
+    pass: "consolidate";
     acceptedActions: number;
     mergeFloorViolations: number;
     cfg: CollapseDetectorConfig;
@@ -326,7 +326,7 @@ export function computeCycleMetrics(
   let diversitySum = 0;
   let diversityCount = 0;
   for (let i = 0; i < learningTexts.length; i += step) {
-    diversitySum += computeBigramDiversity(learningTexts[i].text);
+    diversitySum += computeBigramDiversity(learningTexts[i]!.text);
     diversityCount++;
   }
 
@@ -353,9 +353,10 @@ export function computeCycleMetrics(
 // ── Alert evaluation (pure) ───────────────────────────────────────────────────
 
 function median(values: number[]): number {
+  if (values.length === 0) return Number.NaN;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 /**
@@ -385,6 +386,9 @@ export function evaluateCollapseAlerts(
   const W = cfg.windowCycles ?? DEFAULT_WINDOW_CYCLES;
   const hist = history.slice(-W);
   if (hist.length < W) return alerts; // no baseline yet
+  // Window is non-empty here: `windowCycles` is schema-bounded to ≥2 (default 5),
+  // so `hist.length >= W >= 2`. `windowStart` is the oldest row in the window.
+  const windowStart = hist[0]!;
 
   const recallDrop = cfg.recallDropThreshold ?? DEFAULT_RECALL_DROP_THRESHOLD;
   const entropyDrop = cfg.entropyDropThreshold ?? DEFAULT_ENTROPY_DROP_THRESHOLD;
@@ -403,14 +407,14 @@ export function evaluateCollapseAlerts(
 
   // COLLAPSE 2 — monotonic distinct-content-ratio decline over the window.
   const series = [...hist.map((h) => h.distinct_content_ratio), current.distinct_content_ratio];
-  const monotonicNonIncreasing = series.every((v, i) => i === 0 || v <= series[i - 1]);
-  const totalDecline = hist[0].distinct_content_ratio - current.distinct_content_ratio;
+  const monotonicNonIncreasing = series.every((v, i) => i === 0 || v <= series[i - 1]!);
+  const totalDecline = windowStart.distinct_content_ratio - current.distinct_content_ratio;
   if (monotonicNonIncreasing && totalDecline >= entropyDrop) {
     alerts.push({
       kind: "collapse-entropy",
       detail: `distinct-content ratio declined monotonically by ${totalDecline.toFixed(3)} (≥${entropyDrop}) over ${W} cycles — store content is converging`,
       metrics: {
-        windowStart: hist[0].distinct_content_ratio,
+        windowStart: windowStart.distinct_content_ratio,
         current: current.distinct_content_ratio,
         decline: totalDecline,
       },
@@ -419,10 +423,10 @@ export function evaluateCollapseAlerts(
 
   // COLLAPSE 3 — store shrinking BECAUSE of re-merging (not deletion hygiene).
   const maxStore = Math.max(...hist.map((h) => h.store_total));
-  if (current.store_total < 0.8 * maxStore && current.over_generation_count > hist[0].over_generation_count) {
+  if (current.store_total < 0.8 * maxStore && current.over_generation_count > windowStart.over_generation_count) {
     alerts.push({
       kind: "collapse-shrink",
-      detail: `store shrank >20% (${current.store_total} vs window max ${maxStore}) while over-generation count rose (${hist[0].over_generation_count} → ${current.over_generation_count})`,
+      detail: `store shrank >20% (${current.store_total} vs window max ${maxStore}) while over-generation count rose (${windowStart.over_generation_count} → ${current.over_generation_count})`,
       metrics: {
         storeTotal: current.store_total,
         windowMax: maxStore,
@@ -443,7 +447,7 @@ export function evaluateCollapseAlerts(
     alerts.push({
       kind: "churn",
       detail: `${acceptedSum} accepted actions over ${W} cycles with flat canary score and flat entropy — write volume with no retrieval-visible effect`,
-      metrics: { acceptedSum, ndcgDelta: current.mean_ndcg - hist[0].mean_ndcg },
+      metrics: { acceptedSum, ndcgDelta: current.mean_ndcg - windowStart.mean_ndcg },
     });
   }
 
@@ -461,7 +465,7 @@ export function evaluateCollapseAlerts(
  */
 export function runCollapseDetector(args: {
   runId: string;
-  pass: "consolidate" | "recombine" | "both";
+  pass: "consolidate";
   acceptedActions: number;
   mergeFloorViolations: number;
   config: AkmConfig;
@@ -480,7 +484,7 @@ export function runCollapseDetector(args: {
       const db = indexDb;
       // Over-generation threshold mirrors the guard actually in effect —
       // reading the same config key keeps the two aligned when tuned.
-      const antiCollapse = getImproveProcessConfig(args.config, "consolidate", args.improveProfile)?.antiCollapse as
+      const antiCollapse = getImproveProcessConfig("consolidate", args.improveProfile)?.antiCollapse as
         | { maxGeneration?: number }
         | undefined;
       const maxGeneration = antiCollapse?.maxGeneration ?? DEFAULT_MAX_GENERATION;

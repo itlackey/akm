@@ -20,11 +20,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { AkmConfig } from "../../src/core/config/config";
-import { closeDatabase, computeBodyHash, openIndexDatabase, upsertEntry } from "../../src/indexer/db/db";
 import * as graphDb from "../../src/indexer/db/graph-db";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import type { Database } from "../../src/storage/database";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { computeBodyHash } from "../../src/storage/repositories/index-llm-cache-repository";
 import { makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "../_helpers/sandbox";
 
 // ── Deferred (not-yet-exported) P3 accessors ─────────────────────────────────

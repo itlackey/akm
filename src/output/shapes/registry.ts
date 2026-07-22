@@ -10,6 +10,7 @@
  * the main shapes module.
  */
 
+import { createCommandRegistry } from "../command-registry";
 import type { DetailLevel, ShapeMode } from "../context";
 
 /**
@@ -36,7 +37,7 @@ export interface OutputShapeEntry {
   handler: OutputShapeHandler;
 }
 
-const OUTPUT_SHAPE_REGISTRY = new Map<string, OutputShapeHandler>();
+const OUTPUT_SHAPE_REGISTRY = createCommandRegistry<OutputShapeHandler>();
 
 /**
  * Register an output shape handler for a command name.
@@ -49,7 +50,7 @@ const OUTPUT_SHAPE_REGISTRY = new Map<string, OutputShapeHandler>();
  * ```
  */
 export function registerOutputShape(command: string, handler: OutputShapeHandler): void {
-  OUTPUT_SHAPE_REGISTRY.set(command, handler);
+  OUTPUT_SHAPE_REGISTRY.register(command, handler);
 }
 
 /**
@@ -60,16 +61,14 @@ export function registerOutputShape(command: string, handler: OutputShapeHandler
  * with no reliance on module import order.
  */
 export function registerOutputShapes(entries: Iterable<OutputShapeEntry>): void {
-  for (const { command, handler } of entries) {
-    OUTPUT_SHAPE_REGISTRY.set(command, handler);
-  }
+  OUTPUT_SHAPE_REGISTRY.registerAll(entries);
 }
 
 /**
  * Remove a previously-registered output shape. Test-only utility.
  */
 export function deregisterOutputShape(command: string): void {
-  OUTPUT_SHAPE_REGISTRY.delete(command);
+  OUTPUT_SHAPE_REGISTRY.deregister(command);
 }
 
 /**

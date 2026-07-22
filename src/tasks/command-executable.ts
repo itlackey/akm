@@ -25,7 +25,7 @@ function findEnvCommandIndex(command: readonly string[]): number | undefined {
   let index = 1;
 
   while (index < command.length) {
-    const part = command[index];
+    const part = command[index]!;
     if (part === "--") {
       index += 1;
       break;
@@ -38,7 +38,7 @@ function findEnvCommandIndex(command: readonly string[]): number | undefined {
     index += operandCount + 1;
   }
 
-  while (index < command.length && isEnvironmentAssignment(command[index])) index += 1;
+  while (index < command.length && isEnvironmentAssignment(command[index]!)) index += 1;
   return index < command.length ? index : undefined;
 }
 

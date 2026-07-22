@@ -24,7 +24,7 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 ```
 
-**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 20.12):**
+**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 22):**
 
 ```sh
 npm install -g akm-cli
@@ -47,7 +47,7 @@ binaries are runtime-free.
 akm setup                         # Guided setup: configure, initialize, and index
 akm add github:owner/repo         # Add a stash from GitHub
 akm search "deploy"               # Find assets across all sources
-akm show script:deploy.sh         # View details and run command
+akm show scripts/deploy.sh        # View details and run command
 ```
 
 ## Why akm?
@@ -92,11 +92,11 @@ Manage stashes with `akm list`, `akm update --all`, and `akm remove`.
 
 Full docs, CLI reference, and guides are available on [GitHub](https://github.com/itlackey/akm):
 
-- [Getting Started](https://github.com/itlackey/akm/blob/main/docs/getting-started.md)
-- [CLI Reference](https://github.com/itlackey/akm/blob/main/docs/cli.md)
-- [Configuration](https://github.com/itlackey/akm/blob/main/docs/configuration.md)
-- [Stash Maker's Guide](https://github.com/itlackey/akm/blob/main/docs/stash-makers.md)
-- [Registry](https://github.com/itlackey/akm/blob/main/docs/registry.md)
+- [Getting Started](https://github.com/itlackey/akm/blob/main/docs/guides/getting-started.md)
+- [CLI Reference](https://github.com/itlackey/akm/blob/main/docs/reference/cli.md)
+- [Configuration](https://github.com/itlackey/akm/blob/main/docs/reference/configuration.md)
+- [Stash Maker's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/stash-makers.md)
+- [Registry](https://github.com/itlackey/akm/blob/main/docs/reference/registry.md)
 
 ## License
 

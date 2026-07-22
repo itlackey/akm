@@ -1,4 +1,7 @@
-import type { PromotionBenchmarkCase } from "../../../src/commands/improve/distill-promotion-policy";
+import type {
+  PromotionBenchmarkCase,
+  PromotionModelConfig,
+} from "../../../src/commands/improve/distill-promotion-policy";
 import { assembleAssetFromString } from "../../../src/core/asset/asset-serialize";
 
 // Benchmark corpus for the memory-promotion policy. This used to live in
@@ -7,6 +10,61 @@ import { assembleAssetFromString } from "../../../src/core/asset/asset-serialize
 // DEFAULT_PROMOTION_POLICY_SELECTION; this corpus stays here as test-only data
 // so the grid search never ships in the production bundle. The bench test
 // re-runs selectPromotionPolicy over it to keep the frozen constant honest.
+
+// The candidate-model grid the historical import-time search ranged over.
+// Moved here (verbatim) with the corpus when production was trimmed to carry
+// only the frozen winner: the recompute must keep searching ALL candidates or
+// the bench's "the winner still wins" assertion degenerates into a tautology.
+export const CANDIDATE_MODELS: readonly PromotionModelConfig[] = [
+  {
+    name: "balanced-evidence",
+    positiveWeight: 0.8,
+    repeatedPositiveWeight: 0.65,
+    noPositivePenalty: 0.9,
+    singlePositivePenalty: 0.7,
+    negativeWeight: 2.0,
+    curatedWeight: 0.55,
+    confidenceWeight: 0.7,
+    sourceWeight: 0.4,
+    observedAtWeight: 0.4,
+    descriptionWeight: 0.2,
+    tagWeight: 0.15,
+    substantiveBodyWeight: 0.15,
+    tentativePenalty: 1.1,
+  },
+  {
+    name: "strict-feedback",
+    positiveWeight: 0.75,
+    repeatedPositiveWeight: 0.8,
+    noPositivePenalty: 1.1,
+    singlePositivePenalty: 0.9,
+    negativeWeight: 2.25,
+    curatedWeight: 0.45,
+    confidenceWeight: 0.55,
+    sourceWeight: 0.35,
+    observedAtWeight: 0.35,
+    descriptionWeight: 0.15,
+    tagWeight: 0.1,
+    substantiveBodyWeight: 0.1,
+    tentativePenalty: 1.15,
+  },
+  {
+    name: "metadata-friendly",
+    positiveWeight: 0.7,
+    repeatedPositiveWeight: 0.55,
+    noPositivePenalty: 0.75,
+    singlePositivePenalty: 0.55,
+    negativeWeight: 1.85,
+    curatedWeight: 0.75,
+    confidenceWeight: 0.9,
+    sourceWeight: 0.5,
+    observedAtWeight: 0.5,
+    descriptionWeight: 0.25,
+    tagWeight: 0.2,
+    substantiveBodyWeight: 0.2,
+    tentativePenalty: 1.0,
+  },
+];
 
 function memoryContent(frontmatter: string[], body: string): string {
   return assembleAssetFromString(frontmatter.join("\n"), body);
@@ -26,7 +84,7 @@ function benchmarkCase(
     expectPromote,
     split,
     input: {
-      inputRef: `memory:${name}`,
+      inputRef: `memories/${name}`,
       assetContent: memoryContent(frontmatter, body),
       feedbackEvents: feedbackSignals.map((signal) => ({ metadata: { signal } })),
     },

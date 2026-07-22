@@ -4,10 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isSourceWriteActivated } from "../../core/activation-policy";
+import { displayRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig } from "../../core/config/config";
+import { bundlesToSourceEntries, getSources, loadConfig } from "../../core/config/config";
 import { resolveGitContentRoot } from "../../core/write-source";
+import { lockContentRootFor, readLockfile } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -25,12 +28,12 @@ export interface SearchSource {
   path: string;
   /** For installed sources, the installed stash id */
   registryId?: string;
-  /** If set, all .md files in this source are indexed as wiki pages under this wiki name */
-  wikiName?: string;
   /**
    * Whether this source accepts writes. The primary stash is always writable.
    * Filesystem/git sources with `writable: true` in config are also writable.
    * Registry-cached sources (installed without writable: true) are read-only.
+   * The write-activation decision itself lives in the workspace activation
+   * policy — see `isSourceWriteActivated` in `core/activation-policy.ts`.
    */
   writable?: boolean;
 }
@@ -60,7 +63,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   const sources: SearchSource[] = [{ path: stashDir, writable: true }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
-  const addSource = (dir: string, registryId?: string, wikiName?: string, writable?: boolean) => {
+  const addSource = (dir: string, registryId?: string, writable?: boolean) => {
     const resolved = path.resolve(dir);
     if (seen.has(resolved)) {
       // Already in the source list — typically the primary stash injected at
@@ -72,7 +75,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       const existing = sources.find((s) => s.path === resolved);
       if (existing) {
         if (registryId && !existing.registryId) existing.registryId = registryId;
-        if (wikiName && !existing.wikiName) existing.wikiName = wikiName;
         if (writable && !existing.writable) existing.writable = true;
       }
       return;
@@ -85,38 +87,22 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       sources.push({
         path: resolved,
         ...(registryId ? { registryId } : {}),
-        ...(wikiName ? { wikiName } : {}),
         ...(writable ? { writable: true } : {}),
       });
     }
   };
 
-  // (1) + (2) Single pass over declared stashes — primary first if present,
-  // then the rest in declared order. The primary's directory is already
-  // injected as `sources[0]` above, so we only need to dedupe the source set.
-  const stashes = getSources(config);
-  const primaryIdx = stashes.findIndex((entry) => entry.primary === true);
-  const ordered: SourceConfigEntry[] = [];
-  if (primaryIdx >= 0) {
-    ordered.push(stashes[primaryIdx]);
-    stashes.forEach((entry, i) => {
-      if (i !== primaryIdx) ordered.push(entry);
-    });
-  } else {
-    ordered.push(...stashes);
-  }
-
-  for (const entry of ordered) {
+  // 0.9.0 shape (spec §10.1 / D-R5): resolve from `bundles` + `defaultBundle`.
+  // `bundlesToSourceEntries` returns the source list ordered defaultBundle-first
+  // (already injected as the primary via `resolveStashDir` above), then map
+  // insertion order — folding the retired sources[]/installed[] roles into one
+  // list. Each entry's `name` is its bundle key, so the addSource `registryId`
+  // == the bundle id. A config with no bundles yields just the primary stash.
+  for (const entry of bundlesToSourceEntries(config) ?? []) {
     if (entry.enabled === false) continue;
     const dir = resolveEntryContentDir(entry);
     if (dir == null) continue;
-    addSource(dir, entry.name, entry.wikiName, entry.writable === true);
-  }
-
-  // (3) Installed stashes (registry-managed). Always last.
-  // Only installed entries explicitly marked writable: true are considered writable.
-  for (const entry of config.installed ?? []) {
-    addSource(entry.stashRoot, entry.id, entry.wikiName, entry.writable === true);
+    addSource(dir, entry.name, entry.writable === true);
   }
 
   return sources;
@@ -138,7 +124,19 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * That convention is part of the akm content layout, not a provider concern,
  * so it stays here.
  */
-function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
+export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
+  // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
+  // carries only the source LOCATOR, not the materialized cache root — the
+  // resolved root lives in the lock (`localRoot`). Resolve from there first via
+  // the SHARED lock-first resolver (the same one write-source consults, so reads
+  // and writes agree on where content is); the localRoot is the already-walkable
+  // content root (installed sources are extracted to their content dir), so no
+  // content/-subdir step is applied. Fall back to the provider path logic when no
+  // lock entry exists (e.g. a git bundle migrated from a `sources[]` url, whose
+  // provider re-derives the mirror path).
+  const localRoot = lockContentRootFor(entry.name, entry.type);
+  if (localRoot != null) return localRoot;
+
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return undefined;
 
@@ -193,7 +191,7 @@ export function resolveAllStashDirs(overrideStashDir?: string): string[] {
  */
 export function getWritableStashDirs(overrideStashDir?: string, existingConfig?: AkmConfig): string[] {
   return resolveSourceEntries(overrideStashDir, existingConfig)
-    .filter((s) => s.writable === true)
+    .filter((s) => isSourceWriteActivated(s))
     .map((s) => s.path);
 }
 
@@ -234,29 +232,32 @@ export function getPrimarySource(sources: SearchSource[]): SearchSource | undefi
 /**
  * Determine whether a file is safe to edit in place.
  *
- * The only files that are NOT editable are those inside a cache directory
- * managed by the package manager (`installed[].cacheDir`). These
- * will be overwritten by `akm update` without warning.
- *
- * Everything else — working stash, additional stashes, local project dirs — is
- * the user's domain to manage.
+ * 0.9.0 (spec §10.2 / Decision D): the files that are NOT editable are those
+ * under a bundle's materialized cache root (the lock's `localRoot`) whose bundle
+ * is not explicitly `writable` — `akm update` overwrites them without warning.
+ * The read-only decision is re-expressed via bundle `writable` + lock `localRoot`
+ * (replacing the retired `installed[].cacheDir` scan); a writable git/filesystem
+ * bundle stays editable, and a source with no lock entry (a plain filesystem
+ * bundle / local project dir) is the user's domain to manage.
  */
 export function isEditable(filePath: string, config?: AkmConfig): boolean {
   const cfg = config ?? loadConfig();
   const resolved = path.resolve(filePath);
-  const cacheManaged = cfg.installed ?? [];
   const isWin = process.platform === "win32";
+  const bundles = cfg.bundles ?? {};
 
-  for (const entry of cacheManaged) {
-    // Local sources reference original paths — always editable
-    if (entry.source === "local") continue;
-    const cacheRoot = path.resolve(entry.cacheDir);
-    if (isWin) {
-      // Windows paths are case-insensitive — normalize both sides
-      if (resolved.toLowerCase().startsWith(cacheRoot.toLowerCase() + path.sep)) return false;
-    } else {
-      if (resolved.startsWith(cacheRoot + path.sep)) return false;
-    }
+  const startsWithin = (root: string): boolean => {
+    const base = path.resolve(root);
+    return isWin
+      ? resolved.toLowerCase().startsWith(base.toLowerCase() + path.sep)
+      : resolved.startsWith(base + path.sep);
+  };
+
+  for (const lock of readLockfile()) {
+    if (!lock.localRoot) continue;
+    // The lock is keyed by bundle id, so writability comes from that bundle.
+    const writable = bundles[lock.id]?.writable === true;
+    if (!writable && startsWithin(lock.localRoot)) return false;
   }
 
   return true;
@@ -268,7 +269,8 @@ export function isEditable(filePath: string, config?: AkmConfig): boolean {
  * unconditionally returns the hint string.
  */
 export function buildEditHint(_filePath: string, assetType: string, assetName: string, origin?: string): string {
-  const ref = origin ? `${origin}//${assetType}:${assetName}` : `${assetType}:${assetName}`;
+  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the clone hint.
+  const ref = displayRef({ type: assetType, name: assetName, bundleId: origin });
   return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${ref}`;
 }
 
@@ -305,15 +307,36 @@ function isValidDirectory(dir: string): boolean {
  * directories exist on disk. Must be called (async) before
  * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
+ *
+ * `materialize` (default `true`) is the query-time safety valve (spec §14.3 /
+ * D11): the sanctioned materialization callers (`akm index`, source
+ * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
+ * fetch as needed. A READ command's inline auto-index passes `materialize:
+ * false` — network is FORBIDDEN at query time, so instead of `sync()` we only
+ * check whether each cache-backed source is already materialized: a present
+ * cache is served as-is (last-known-good; no TTL pull either), while an absent
+ * or partially-staged cache makes that source UNAVAILABLE for the read and is
+ * skipped with one warning naming the remedy. The rest of the command still
+ * resolves.
  */
-export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
+export async function ensureSourceCaches(
+  config?: AkmConfig,
+  options?: { force?: boolean; materialize?: boolean },
+): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
+  const materialize = options?.materialize !== false;
   // Polymorphic refresh: walk every enabled source through its registered
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
-  // resolveEntryContentDir.
+  // resolveEntryContentDir. NEW shape reads `bundles`; old shape reads sources[].
+  //
+  // DISTINCTION (deliberately NOT lock-first): refresh derives the PROVIDER's
+  // own cache path to git-pull/re-materialize INTO — that derived path is where
+  // content ENDS UP; the lock's `localRoot` merely records the result. So this
+  // path correctly uses the provider, not the shared `lockContentRootFor`
+  // resolver that reads/writes use to agree on where content already IS.
   for (const entry of getSources(cfg)) {
     if (entry.enabled === false) continue;
     const factory = resolveSourceProviderFactory(entry.type);
@@ -332,6 +355,14 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
     }
 
     if (!provider.sync) continue;
+
+    if (!materialize) {
+      // READ path: never clone/pull/fetch. Serve an already-materialized cache
+      // as last-known-good; skip an absent/partial one with a single warning.
+      warnIfSourceUnavailableForRead(entry, provider.name);
+      continue;
+    }
+
     try {
       await provider.sync({ force });
     } catch (err) {
@@ -340,4 +371,39 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
       );
     }
   }
+}
+
+/**
+ * True when `dir` holds already-materialized content: it exists, is a
+ * directory, and is non-empty. A non-existent path or an empty leftover /
+ * partial staging dir reads as NOT materialized so the read skips it rather
+ * than walking a hollow cache.
+ */
+function isMaterializedDir(dir: string): boolean {
+  try {
+    if (!fs.statSync(dir).isDirectory()) return false;
+    return fs.readdirSync(dir).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * On a read-path auto-index, warn (once per source) that a cache-backed source
+ * is not materialized locally and is being skipped — naming the remedy. Uses
+ * the SAME lock-first content-root resolution the walker uses, so an installed
+ * source whose content lives at its lock `localRoot` counts as materialized.
+ */
+function warnIfSourceUnavailableForRead(entry: SourceConfigEntry, providerName: string): void {
+  let dir: string | undefined;
+  try {
+    dir = resolveEntryContentDir(entry);
+  } catch {
+    dir = undefined;
+  }
+  if (dir && isMaterializedDir(dir)) return;
+  warn(
+    `Warning: source "${providerName}" is not materialized locally; skipping it for this read. ` +
+      "Run `akm index` (or `akm source update`) to fetch it.",
+  );
 }

@@ -1,0 +1,38 @@
+{
+  "capturedAtHead": "6dc0354cd0ad5638ea06904bad5720f24b8eca54",
+  "cases": {
+    "abortIncomplete": {
+      "backupDirStillExists": true,
+      "code": "INVALID_CONFIG_FILE",
+      "isConfigError": true,
+      "journalStillExists": true,
+      "messageContainsBackupHint": true,
+      "messageContainsIncompleteDetected": true,
+      "threw": true
+    },
+    "abortUnreadable": {
+      "code": "INVALID_CONFIG_FILE",
+      "isConfigError": true,
+      "journalStillExists": true,
+      "messageContainsUnreadable": true,
+      "threw": true
+    },
+    "cleanIncomplete": {
+      "backupDirRemoved": true,
+      "journalRemoved": true,
+      "ok": true,
+      "processed": 0
+    },
+    "completedSwept": {
+      "deleted": 1,
+      "namespaceCleanAfterRun": true,
+      "ok": true,
+      "staleCommittedLeftoverSwept": true
+    }
+  },
+  "notes": [
+    "Re-captured at WI-6.3e (unified fs-txn engine). Recovery stays a run-entry decision: abort (default) refuses the run with the same ConfigError guidance; clean removes the stale transaction dir (journal + backups together -- the legacy scheme's two backup-timestamp derivations collapsed with the timestamped backup dirs). The legacy characterization surprise (a completed-but-never-cleaned journal's backup dir leaking forever) is GONE: committed leftovers are swept whole at the run-entry check.",
+    "No ref literals appear anywhere in this fixture: every case here reports only booleans, counts, and the ConfigError code string -- no ref-grammar re-baseline caveat applies."
+  ],
+  "scenario": "consolidate journal recovery-mode matrix: checkForIncompleteJournal (WI-06, R5)"
+}

@@ -16,18 +16,26 @@
  */
 
 import fs from "node:fs";
-import { parseAssetRef, refToString } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import { getIndexPassConfig, loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { computeBodyHash } from "../../indexer/db/db";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
+import {
+  type AttributionProjection,
+  copySearchHitAttribution,
+  getSearchHitAttribution,
+  usageEventAttributionMetadata,
+} from "../../indexer/search/search-attribution";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { truncateDescription } from "../../output/shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -90,6 +98,8 @@ export interface CurateOptions {
    * recorded as user demand (was previously hardcoded to "user").
    */
   eventSource?: UsageEventSource;
+  /** Internal projection used only to decide whether derived surface content was emitted. */
+  attributionProjection?: AttributionProjection;
 }
 
 const CURATE_FALLBACK_FILTER_WORDS = new Set([
@@ -148,7 +158,12 @@ const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
  * Never blocks the caller; errors are silently ignored.
  */
-function logCurateEvent(query: string, result: CurateResponse, eventSource: UsageEventSource = "user"): void {
+function logCurateEvent(
+  query: string,
+  result: CurateResponse,
+  eventSource: UsageEventSource = "user",
+  attributionProjection: AttributionProjection = "full",
+): void {
   const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
   appendEvent({
     eventType: "curate",
@@ -158,26 +173,39 @@ function logCurateEvent(query: string, result: CurateResponse, eventSource: Usag
   try {
     withIndexDb(
       (db) => {
-        insertUsageEvent(db, {
-          event_type: "curate",
-          query,
-          metadata: JSON.stringify({
-            itemCount: result.items.length,
-            itemRefs,
-          }),
-          source: eventSource,
-        });
-        for (const item of result.items) {
-          if (!("ref" in item) || typeof item.ref !== "string") continue;
-          const parsed = parseAssetRef(item.ref);
-          const itemOrigin = "origin" in item && typeof item.origin === "string" ? item.origin : undefined;
-          insertUsageEvent(db, {
+        // Resolve each curated item's DURABLE fully-qualified `item_ref` (D-R3)
+        // + entry_id from index.db (`db`); the usage_events writes land in
+        // state.db (Chunk-8 WI-8.3).
+        const perItem = result.items
+          .filter((item): item is typeof item & { ref: string } => "ref" in item && typeof item.ref === "string")
+          .map((item) => {
+            const entryId = findEntryIdByRef(db, item.ref);
+            const itemRef = entryId !== undefined ? getItemRefById(db, entryId) : null;
+            // Post-flip the resolved row carries `item_ref`; fall back to the
+            // item's own (new-grammar) ref for an unresolved straggler.
+            return { entryRef: itemRef ?? item.ref, entryId, item };
+          });
+        withStateDbTelemetry((stateDb) => {
+          insertUsageEvent(stateDb, {
             event_type: "curate",
             query,
-            entry_ref: refToString({ ...parsed, ...(parsed.origin || !itemOrigin ? {} : { origin: itemOrigin }) }),
+            metadata: JSON.stringify({
+              itemCount: result.items.length,
+              itemRefs,
+            }),
             source: eventSource,
           });
-        }
+          for (const { entryRef, entryId, item } of perItem) {
+            insertUsageEvent(stateDb, {
+              event_type: "curate",
+              query,
+              entry_ref: entryRef,
+              entry_id: entryId,
+              metadata: usageEventAttributionMetadata(getSearchHitAttribution(item), entryRef, attributionProjection),
+              source: eventSource,
+            });
+          }
+        }, TELEMETRY_BUSY_TIMEOUT_MS);
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );
@@ -205,8 +233,8 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
       source,
     }));
-  const result = await curateSearchResults(options.query, searchResponse, limit, options.type);
-  logCurateEvent(options.query, result, options.eventSource);
+  const result = await curateSearchResults(options.query, searchResponse, limit, options.type, options.eventSource);
+  logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   return result;
 }
 
@@ -215,6 +243,7 @@ export async function curateSearchResults(
   result: SearchResponse,
   limit: number,
   selectedType?: string,
+  eventSource?: UsageEventSource,
 ): Promise<CurateResponse> {
   const stashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
@@ -238,7 +267,9 @@ export async function curateSearchResults(
     ...(await Promise.all(
       selectedStashHits
         .slice(0, limit)
-        .map((hit) => enrichCuratedStashHit(query, hit, supportRefsByRef.get(hit.ref) ?? [], selectedRefs)),
+        .map((hit) =>
+          enrichCuratedStashHit(query, hit, supportRefsByRef.get(hit.ref) ?? [], selectedRefs, eventSource),
+        ),
     )),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
   ].slice(0, limit);
@@ -256,10 +287,11 @@ async function enrichCuratedStashHit(
   hit: SourceSearchHit,
   supportRefs: CurateSupportRef[],
   selectedRefs: Set<string>,
+  eventSource?: UsageEventSource,
 ): Promise<CuratedStashItem> {
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref });
+    shown = await akmShowUnified({ ref: hit.ref, eventSource, skipLogging: true });
   } catch {
     shown = undefined;
   }
@@ -273,7 +305,7 @@ async function enrichCuratedStashHit(
   const preview = buildCuratedPreview(shown, hit);
   const mergedSupportRefs = mergeCurateSupportRefs(supportRefs, shown?.related?.hits, selectedRefs, hit.ref);
 
-  return {
+  const item: CuratedStashItem = {
     source: "stash",
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
@@ -288,6 +320,8 @@ async function enrichCuratedStashHit(
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
+  copySearchHitAttribution(hit, item, item.description);
+  return item;
 }
 
 /**
@@ -378,7 +412,9 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   if (items.length === 0) {
     return `No curated assets were selected for "${query}".`;
   }
-  const labels = items.map((item) => `${item.type}:${item.name}`);
+  // F4b: emit the flipped conceptId ref for stash items (registry items have no
+  // ref — keep their `registry:<name>` label).
+  const labels = items.map((item) => ("ref" in item ? item.ref : `${item.type}:${item.name}`));
   return `Selected ${items.length} curated result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
 }
 
@@ -557,7 +593,10 @@ function computeCurateTypeNudge(type: string, intent: CurateIntent): number {
 
 function getCurateFamily(ref: string): CurateFamily | undefined {
   try {
-    const parsed = parseAssetRef(ref);
+    // F4b: `ref` is a search-hit ref in the 0.9.0 conceptId grammar — parse via
+    // the new-grammar `parseRefInput` so skill/reference family grouping still
+    // recognizes it.
+    const parsed = parseRefInput(ref);
     if (parsed.type === "skill") {
       return { key: parsed.name, role: "root" };
     }
@@ -565,9 +604,9 @@ function getCurateFamily(ref: string): CurateFamily | undefined {
     const match = /^skills\/(.+?)\/references\/(.+)$/.exec(parsed.name);
     if (!match) return undefined;
     return {
-      key: match[1],
+      key: match[1]!,
       role: "reference",
-      topicTokens: match[2]
+      topicTokens: match[2]!
         .split(/[^a-z0-9]+/i)
         .map((token) => token.trim().toLowerCase())
         .filter(Boolean),
@@ -724,7 +763,7 @@ function preferBroadRootRepresentative(
   if (!match) return { selected, supportRefsByRef };
 
   const lower = query.toLowerCase();
-  const topicTokens = match[2].split(/[^a-z0-9]+/i).filter(Boolean);
+  const topicTokens = match[2]!.split(/[^a-z0-9]+/i).filter(Boolean);
   const wantsReference =
     CURATE_REFERENCE_QUERY_RE.test(lower) ||
     topicTokens.some((token) => token.length >= 3 && lower.includes(token.toLowerCase()));

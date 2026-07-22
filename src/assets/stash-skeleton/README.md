@@ -18,7 +18,6 @@ consistency and reducing repeated context-setting.
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
 | `facts/` | Facts | Durable stash-level context; the house conventions in `facts/conventions/` are auto-surfaced to authoring agents |
-| `wikis/` | Wikis | Agent-maintained knowledge bases (see `akm wiki`) |
 | `scripts/` | Scripts | Executable helpers agents and humans can run |
 | `env/`, `secrets/` | Env & Secrets | Configuration groups and single credentials; values are never content-indexed |
 
@@ -28,22 +27,22 @@ on the next `akm index` run (or when the background improve pipeline picks them 
 ## How to organize assets
 
 A file's path under its type directory becomes part of its ref
-(`knowledge/auth/oauth-refresh-races.md` → `knowledge:auth/oauth-refresh-races`),
+(`knowledge/auth/oauth-refresh-races.md` → `knowledge/auth/oauth-refresh-races`),
 and its segments are search terms: `akm search "auth" --type knowledge` narrows
 to that subtree. Retrieval is search, not folder-browse, so pick subdirectories
 deliberately. The house rules live in three convention facts under
 `facts/conventions/` and are surfaced to agents automatically when they author
 assets:
 
-- **`fact:conventions/organization`** — the single path axis, chosen by asset
+- **`facts/conventions/organization`** — the single path axis, chosen by asset
   type. **Scope-born** types (`memory`, `lesson`, `task`, `env`, `secret`) go
   under the current **project/client** slug; **reuse-born** types (`knowledge`,
-  `skill`, `wiki`, `fact`, `script`) go under a stable **domain**; global types
+  `skill`, `fact`, `script`) go under a stable **domain**; global types
   stay at the type root.
-- **`fact:conventions/backlinks`** — how to cross-link: a provenance xref
+- **`facts/conventions/backlinks`** — how to cross-link: a provenance xref
   whenever an asset derives from another, sparse real associative links,
   corrections as new assets, canonical entity naming.
-- **`fact:conventions/domains`** — the (editable) domain vocabulary for
+- **`facts/conventions/domains`** — the (editable) domain vocabulary for
   reuse-born assets, plus canonical entity spellings.
 
 Per-type nuances live in `facts/conventions/assets/<type>.md`. All of these are
@@ -63,11 +62,11 @@ akm search "<query>"
 akm search "<query>" --type skill
 akm search "<query>" --type knowledge
 
-# Show a specific asset by ref
-akm show skill:<name>
-akm show knowledge:<name>
-akm show memory:<name>
-akm show command:<name>
+# Show a specific asset by ref ([bundle//]conceptId)
+akm show skills/<name>
+akm show knowledge/<name>
+akm show memories/<name>
+akm show commands/<name>
 
 # List available assets by type
 akm list --type skill

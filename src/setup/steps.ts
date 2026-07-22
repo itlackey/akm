@@ -18,8 +18,26 @@
  * why mutable accumulation is preferred over immutable returns.
  */
 
-import type { AkmConfig } from "../core/config/config";
+import type { AkmConfig, SourceConfigEntry } from "../core/config/config";
 import { deepMergeConfig } from "../core/config/deep-merge";
+import type { InstalledBundle } from "../registry/types";
+
+/**
+ * The setup wizard's in-progress config accumulator.
+ *
+ * 0.9.0 (spec §10.1): the persisted config shape has NO `stashDir`/`sources[]`/
+ * `installed[]` — every source is a `bundles.<slug>` entry. But the wizard's
+ * steps still work naturally with the flat "primary path + source list"
+ * scratch model, so the accumulator carries those retired keys as transient
+ * scratch fields; `setup.ts`'s `finalizeSetupDraft` folds them into `bundles` +
+ * `defaultBundle` (via the shared migrator mapping — Decision E) at the single
+ * persist boundary, so nothing half-migrated is ever validated or written.
+ */
+export type SetupDraftConfig = AkmConfig & {
+  stashDir?: string;
+  sources?: SourceConfigEntry[];
+  installed?: InstalledBundle[];
+};
 
 /**
  * Context handed to each `SetupStep.run()`. Steps read the in-progress
@@ -30,7 +48,7 @@ export interface SetupContext {
    * The current accumulated config. Always reflects every prior step's
    * `apply()` calls. Treated as read-only by callers.
    */
-  readonly config: Readonly<AkmConfig>;
+  readonly config: Readonly<SetupDraftConfig>;
 
   /**
    * `true` when running in `akm init` mode (or any other unattended
@@ -40,7 +58,7 @@ export interface SetupContext {
   readonly nonInteractive: boolean;
 
   /** Merge a partial delta into the accumulated config. */
-  apply(delta: Partial<AkmConfig>): void;
+  apply(delta: Partial<SetupDraftConfig>): void;
 }
 
 /**
@@ -65,14 +83,14 @@ export interface SetupStep<TResult = void> {
  * latest snapshot via `ctx.config`.
  */
 export function createSetupContext(initial: AkmConfig, options: { nonInteractive: boolean }): SetupContext {
-  let acc: AkmConfig = deepMergeConfig({}, initial) as AkmConfig;
+  let acc: SetupDraftConfig = deepMergeConfig({}, initial) as SetupDraftConfig;
   return {
     get config() {
       return acc;
     },
     nonInteractive: options.nonInteractive,
     apply(delta) {
-      acc = deepMergeConfig(acc, delta) as AkmConfig;
+      acc = deepMergeConfig(acc, delta) as SetupDraftConfig;
     },
   };
 }
@@ -82,7 +100,7 @@ export function createSetupContext(initial: AkmConfig, options: { nonInteractive
  * skipped when `ctx.nonInteractive` is true. Returns the final accumulated
  * config so callers can persist it without re-reading the context.
  */
-export async function runSetupSteps(steps: SetupStep[], ctx: SetupContext): Promise<AkmConfig> {
+export async function runSetupSteps(steps: SetupStep[], ctx: SetupContext): Promise<SetupDraftConfig> {
   for (const step of steps) {
     if (ctx.nonInteractive && !step.nonInteractive) continue;
     await step.run(ctx);

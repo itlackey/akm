@@ -77,7 +77,7 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
   test("claude profile produces a queued proposal via akm reflect", async () => {
     const stash = makeStashDir();
     const result = await akmReflect({
-      ref: "lesson:real-profile-tip",
+      ref: "lessons/real-profile-tip",
       stashDir: stash,
       config: {
         configVersion: "0.9.0",

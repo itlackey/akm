@@ -15,13 +15,13 @@ import {
   writeConfigAtomic,
 } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
+import { bundlesToSourceEntries } from "./config-sources";
 import type {
   AkmConfig,
   ImproveProcessConfig,
   ImproveProfileConfig,
   IndexConfig,
   IndexPassConfig,
-  LlmConnectionConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
@@ -29,7 +29,13 @@ import { deepMergeConfig } from "./deep-merge";
 
 export { stripJsonComments } from "./config-io";
 
-import { materializeLlmConnection, resolveLlmEngineUse } from "../../integrations/agent/engine-resolution";
+// requireLlmConfig / getDefaultLlmConfig moved to
+// integrations/agent/engine-resolution.ts (WI-9.8 KILL 3, D.3 edge A) — they
+// called that module's materializeLlmConnection/resolveLlmEngineUse, and that
+// module imported LlmConnectionConfig back from this file, closing a 2-file
+// cycle that also fused config.ts into the harness/agent-runtime SCC. This
+// file can no longer re-export them (a re-export is still a graph edge to
+// engine-resolution.ts) — import them from there directly.
 import { getConfigPath } from "../paths";
 import { warn } from "../warn";
 
@@ -37,6 +43,7 @@ import { warn } from "../warn";
 // move (the runtime values live here; the types are documentation-only).
 export type {
   AkmConfig,
+  BundleConfigEntry,
   ConfiguredSource,
   EmbeddingConnectionConfig,
   EngineConfig,
@@ -216,26 +223,21 @@ export function parseAndValidateConfigText(text: string, sourcePath?: string): A
   return finalResult.data;
 }
 
+/**
+ * The configured stash sources as an ordered {@link SourceConfigEntry} list.
+ *
+ * 0.9.0 (spec §10.1): the retired `stashDir`/`sources[]`/`installed[]` trio is
+ * gone — every source is a `bundles.<slug>` entry. This derives the unified
+ * source list from `bundles` (defaultBundle first, then map order), so callers
+ * that iterated `sources[]` keep working over the new shape. Returns `[]` when
+ * no bundles are configured.
+ */
 export function getSources(config: AkmConfig): SourceConfigEntry[] {
-  return config.sources ?? [];
+  return bundlesToSourceEntries(config) ?? [];
 }
 
 export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[] {
   return config.registries ?? DEFAULT_CONFIG.registries ?? [];
-}
-
-/** Resolve and materialize the configured default LLM engine at dispatch time. */
-export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
-  return materializeLlmConnection(resolveLlmEngineUse(config, []));
-}
-
-/**
- * Like {@link requireLlmConfig} but returns `undefined` instead of throwing
- * when no LLM is configured. Use in code paths where the LLM is optional.
- */
-export function getDefaultLlmConfig(config: AkmConfig): LlmConnectionConfig | undefined {
-  const resolved = resolveLlmEngineUse(config, [], { optional: true });
-  return resolved ? materializeLlmConnection(resolved) : undefined;
 }
 
 type NamedKeys<T> = keyof {
@@ -248,7 +250,6 @@ export type ImproveProcessName = NamedKeys<NonNullable<ImproveProfileConfig["pro
  * default strategy; callers must pass their already selected strategy.
  */
 export function getImproveProcessConfig(
-  _config: AkmConfig,
   processName: ImproveProcessName,
   selected?: ImproveProfileConfig,
 ): ImproveProcessConfig | undefined {
@@ -263,20 +264,9 @@ export function loadConfig(): AkmConfig {
   return loadUserConfig();
 }
 
-let saveConfigOverride: ((config: AkmConfig) => void) | undefined;
-
-/** TEST-ONLY. Swap the implementation of `saveConfig`; pass undefined to restore. */
-export function _setSaveConfigForTests(fake?: (config: AkmConfig) => void): void {
-  saveConfigOverride = fake;
-}
-
 export function saveConfig(config: AkmConfig): void {
   // Every lifecycle write produces the only config version this binary can load.
   const currentConfig = { ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
-  if (saveConfigOverride) {
-    saveConfigOverride(currentConfig);
-    return;
-  }
   saveConfigReal(currentConfig);
 }
 
@@ -420,7 +410,7 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
 
   if (stripped.length > 0) {
     warn(
-      `Config sanitizer dropped API key(s) before writing to disk:\n  - ${stripped.join("\n  - ")}\n\nakm does not persist API keys to config.json. Set the listed environment variables to provide them at runtime, or use \`\${VAR}\` references in your config to defer lookup. See docs/data-and-telemetry.md.`,
+      `Config sanitizer dropped API key(s) before writing to disk:\n  - ${stripped.join("\n  - ")}\n\nakm does not persist API keys to config.json. Set the listed environment variables to provide them at runtime, or use \`\${VAR}\` references in your config to defer lookup. See docs/reference/data-and-telemetry.md.`,
     );
   }
 
@@ -482,7 +472,14 @@ export function getIndexPassConfig(config: IndexConfig | undefined, passName: st
 }
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
-export { parseSourceSpec, resolveConfiguredSources } from "./config-sources";
+export {
+  bundleEntryToSourceEntry,
+  bundlesToSourceEntries,
+  installedSourceDescriptor,
+  parseSourceSpec,
+  primaryBundlePath,
+  resolveConfiguredSources,
+} from "./config-sources";
 
 /**
  * Merge a partial user-config override onto a base config. Used by

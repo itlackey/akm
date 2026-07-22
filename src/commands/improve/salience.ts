@@ -48,10 +48,10 @@
  */
 
 import path from "node:path";
-import { makeAssetRef } from "../../core/asset/asset-ref";
-import type { AkmAssetType } from "../../core/common";
-import { getAllEntries, getUtilityScoresByIds } from "../../indexer/db/db";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { Database, Database as IndexDatabase } from "../../storage/database";
+import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { WARM_START_CAP } from "./outcome-loop";
 
 // ── One day in ms ─────────────────────────────────────────────────────────────
@@ -344,7 +344,7 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // When `outcomeWeightEnabled` is true/absent (DEFAULT ON since the G2
   // saturation cap landed): use WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60)
   // so the prediction-error outcome signal actually shapes rankScore — this
-  // is the R1 loop-closure from docs/design/improve-self-learning-analysis.md.
+  // is the R1 loop-closure.
   //
   // When `outcomeWeightEnabled` is explicitly false (operator opt-out via
   // `improve.salience.outcomeWeightEnabled: false`): fall back to the WS-1
@@ -647,7 +647,10 @@ export function getLastUseMsByRef(indexDb: IndexDatabase, refs: string[], stashD
   const idToRef = new Map<number, string>();
   for (const indexed of allEntries) {
     if (selectedRoot && path.resolve(indexed.stashDir) !== selectedRoot) continue;
-    const ref = makeAssetRef(indexed.entry.type as AkmAssetType, indexed.entry.name);
+    // In-memory correlation key, NOT a durable write: it must match the caller's
+    // `refs` (the `ImproveEligibleRef.ref`, now the SHORT conceptId — Chunk-8
+    // WI-8.5c flipped the candidate-ref spelling to match the display flip).
+    const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
     if (refSet.has(ref)) idToRef.set(indexed.id, ref);
   }
 

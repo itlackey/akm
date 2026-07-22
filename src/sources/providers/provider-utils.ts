@@ -5,13 +5,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TYPE_DIRS } from "../../core/asset/asset-spec";
+import { getAdapters } from "../../core/adapter/registry";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { fetchWithRetry } from "../../core/common";
 import type { SourceSpec } from "../../core/config/config";
-import { writeResponseToFile } from "../../runtime";
+import { writeResponseToFileCapped } from "../../runtime";
 import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
-const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
+const REGISTRY_STASH_DIR_NAMES = new Set<string>(stashDirNames());
 
 /** Strip terminal control characters from untrusted strings. */
 export function sanitizeString(value: unknown, maxLength = 255): string {
@@ -26,19 +27,42 @@ export function isExpired(mtimeMs: number, ttlMs: number): boolean {
 }
 
 /**
+ * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
+ * `root` — the spec §1.2 ordered probe reduced to "is this the root of a bundle
+ * of some format family?". A probe that throws (unreadable dir, race) does not
+ * claim the root.
+ */
+function looksLikeAnyBundleRoot(root: string): boolean {
+  for (const adapter of getAdapters()) {
+    try {
+      if (adapter.looksLikeRoot?.(root) === true) return true;
+    } catch {
+      // a throwing probe does not claim the root — try the next adapter
+    }
+  }
+  return false;
+}
+
+/**
  * Find the directory inside `extractedDir` that should be treated as the
- * stash root. Looks for a `.stash` marker, then well-known type dirs, then
- * BFS for the shallowest such candidate.
+ * bundle/stash root. Probes the top-level dir via the ordered §1.2 registry
+ * probe; if nothing claims it, BFS for the shallowest nested candidate.
  */
 export function detectStashRoot(extractedDir: string): string {
   const root = path.resolve(extractedDir);
 
-  const rootDotStash = path.join(root, ".stash");
-  if (isDirectory(rootDotStash)) {
-    return root;
-  }
-
-  if (hasStashDirs(root)) {
+  // WI-3.1 → wired to the static registry: the top-level root check now routes
+  // through the ordered §1.2 `looksLikeRoot` probe over ALL built-in adapters
+  // (`registry.getAdapters()`), not the single hardcoded `akm` probe. This is
+  // BEHAVIOR-IDENTICAL for akm roots — `akm.looksLikeRoot` reproduces the former
+  // `.stash`-marker + immediate-stash-subdir (`hasStashDirs`) checks VERBATIM
+  // (akm-adapter.looksLikeRoot) and `akm` is in the probe set — so those two
+  // local checks are now subsumed and were removed. It additionally recognizes
+  // NON-akm bundle roots (okf root index / llm-wiki / `.claude` / …) at the top
+  // level, which the single-adapter probe missed but the old final `return root`
+  // fallback also happened to yield. The shallowest-BFS nested-layout discovery
+  // is unchanged.
+  if (looksLikeAnyBundleRoot(root)) {
     return root;
   }
 
@@ -96,8 +120,10 @@ export async function downloadArchive(url: string, destination: string): Promise
   if (!response.ok) {
     throw new Error(`Failed to download archive (${response.status}) from ${url}`);
   }
-  // Stream response to disk instead of buffering the entire archive in memory.
-  await writeResponseToFile(destination, response);
+  // Stream to disk with an explicit byte cap + body-read deadline: the fetch
+  // timeout above bounds only the connection/header phase, so an unbounded or
+  // dribbling body could otherwise fill the disk or hang the install forever.
+  await writeResponseToFileCapped(destination, response);
 }
 
 /** SHA-256 of a file, returned as `sha256:<hex>`. */
@@ -137,12 +163,6 @@ export function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
-}
-
-function hasStashDirs(dirPath: string): boolean {
-  if (!isDirectory(dirPath)) return false;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  return entries.some((entry) => entry.isDirectory() && REGISTRY_STASH_DIR_NAMES.has(entry.name));
 }
 
 function countStashDirs(dirPath: string): number {

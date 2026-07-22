@@ -10,63 +10,18 @@
  */
 
 import { UsageError } from "../core/errors";
+import { warn } from "../core/warn";
 
-// ── Subcommand detection ─────────────────────────────────────────────────────
-
-export interface CittyArgDefinitionForScan {
-  readonly type?: string;
-  readonly alias?: string | readonly string[];
-}
-
-export type CittyArgsDefinitionForScan = Record<string, CittyArgDefinitionForScan>;
-
-function cittyComparableName(name: string): string {
-  return name.replace(/[-_]+([a-zA-Z0-9])/g, (_match, char: string) => char.toUpperCase());
-}
-
-function toAliasArray(alias: CittyArgDefinitionForScan["alias"]): readonly string[] {
-  if (Array.isArray(alias)) return alias;
-  return typeof alias === "string" ? [alias] : [];
-}
-
-function isCittyValueFlag(flag: string, argsDef: CittyArgsDefinitionForScan): boolean {
-  const name = flag.replace(/^-{1,2}/, "");
-  const normalized = cittyComparableName(name);
-  for (const [key, def] of Object.entries(argsDef)) {
-    if (def.type !== "string" && def.type !== "enum") continue;
-    if (normalized === cittyComparableName(key)) return true;
-    if (toAliasArray(def.alias).includes(name)) return true;
-  }
-  return false;
-}
-
-/**
- * Match citty's top-level subcommand scan (`findSubCommandIndex`).
- *
- * Citty does not assume `rawArgs[0]` is the command: global string flags may
- * appear first and consume the following token. The CLI startup guard uses this
- * to classify the requested command before any command handler can run.
- */
-export function findCittyTopLevelCommandIndex(rawArgs: readonly string[], argsDef: CittyArgsDefinitionForScan): number {
-  for (let i = 0; i < rawArgs.length; i += 1) {
-    const arg = rawArgs[i];
-    if (arg === "--") return -1;
-    if (arg.startsWith("-")) {
-      if (!arg.includes("=") && isCittyValueFlag(arg, argsDef)) i += 1;
-      continue;
-    }
-    return i;
-  }
-  return -1;
-}
-
-export function findCittyTopLevelCommand(
-  rawArgs: readonly string[],
-  argsDef: CittyArgsDefinitionForScan,
-): string | undefined {
-  const index = findCittyTopLevelCommandIndex(rawArgs, argsDef);
-  return index >= 0 ? rawArgs[index] : undefined;
-}
+// findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
+// ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
+// internal imports, so it relocated cleanly); re-exported here so existing
+// importers (tests/tasks-embedded.test.ts, commands/read/show.ts) are unaffected.
+export {
+  type CittyArgDefinitionForScan,
+  type CittyArgsDefinitionForScan,
+  findCittyTopLevelCommand,
+  findCittyTopLevelCommandIndex,
+} from "./invocation";
 
 /**
  * Return true when `args._[0]` is a member of `validSet`.
@@ -127,52 +82,28 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
   return parseInt(trimmed, 10);
 }
 
-// ── Auto-accept flag parsing ─────────────────────────────────────────────────
+// ── Auto-accept flag parsing (deprecated) ───────────────────────────────────
 
 /**
- * Parse the value of `akm improve --auto-accept` into a confidence threshold.
+ * DEPRECATED (0.9.0): `akm improve --auto-accept` is accepted but ignored.
  *
- * Semantics (see docs/migration/v0.7-to-v0.8.md):
- * - `undefined` (flag absent) → `undefined` (default-OFF; pre-prod flip)
- * - `""` (bare `--auto-accept`, no value) → `undefined` (treated as flag absent)
- * - `"false"` (case-insensitive) → `undefined` (explicit disable)
- * - `"safe"` (case-insensitive) → `90` (permanent back-compat alias)
- * - integer string `"0".."100"` → that integer
- * - anything else → throws `UsageError("INVALID_FLAG_VALUE")`
+ * The confidence gate the flag configured was deleted in 0.9.0 — proposals
+ * now queue for review (`akm proposal` / the drain engine) instead of being
+ * auto-promoted by threshold. The flag warns-and-ignores for one minor
+ * because installed crontabs embed the old command line; a hard parse error
+ * would make scheduled background runs fail invisibly after upgrade. Hard
+ * removal in 0.10.
  *
- * Citty's `type: "string"` resolves bare flags to `""` and an absent flag to
- * `undefined`. Both forms now disable auto-accept; users must pass an explicit
- * threshold (`--auto-accept=N` or `--auto-accept=safe`) to opt in. This is a
- * deliberate flip from the earlier 0.8.0-RC behaviour, which defaulted to ON
- * at threshold 90 and surprised users who didn't expect Phase B operations to
- * apply without confirmation.
- *
- * Until proposals expose per-operation confidence scores, any non-`undefined`
- * threshold causes the consolidate path to auto-accept the whole batch
- * (legacy "safe" behaviour). The threshold value is preserved for the eventual
- * per-operation comparison; see the TODO in `consolidate.ts`.
+ * - `undefined` (flag absent) → silent no-op.
+ * - Any present value (bare flag, `safe`, `false`, a number, garbage) →
+ *   one deprecation warning on stderr; never throws.
  */
-export function parseAutoAcceptFlag(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  if (trimmed === "") return undefined;
-  const lower = trimmed.toLowerCase();
-  if (lower === "false") return undefined;
-  if (lower === "safe") return 90;
-  if (!/^\d+$/.test(trimmed)) {
-    throw new UsageError(
-      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const parsed = parseInt(trimmed, 10);
-  if (parsed < 0 || parsed > 100) {
-    throw new UsageError(
-      `Invalid --auto-accept value: "${raw}". Must be an integer 0-100, 'safe', or 'false'.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return parsed;
+export function parseAutoAcceptFlag(raw: string | undefined): void {
+  if (raw === undefined) return;
+  warn(
+    "[improve] --auto-accept is deprecated and ignored (the 0.9.0 confidence gate was removed; " +
+      "proposals queue for review via `akm proposal` or the drain engine). The flag will be removed in 0.10.",
+  );
 }
 
 // ── String flag parsing ──────────────────────────────────────────────────────
