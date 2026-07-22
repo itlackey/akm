@@ -100,10 +100,10 @@ working stash is automatically recognized. The `scripts/` directory is not
 required -- it just increases classification confidence. See
 [concepts.md](concepts.md) for how classification works.
 
-Prefer inline metadata over `.stash.json` sidecars: `.stash.json` support was
-removed in v0.8.0. Markdown assets should use frontmatter, and scripts should
-use structured header comments such as a short leading description, `@param`,
-and execution hints like `@run` / `@setup` / `@cwd` when needed.
+Assets use inline metadata, not `.stash.json` sidecars. Markdown assets should
+use frontmatter, and scripts should use structured header comments such as a
+short leading description, `@param`, and execution hints like `@run` /
+`@setup` / `@cwd` when needed.
 
 ## Index
 
@@ -152,8 +152,7 @@ the asset. For scripts, this includes a `run` command plus optional `cwd`
 and `setup`. For agents, a `prompt` payload. For knowledge, navigable
 `content` with view modes.
 
-See [technical/show-response.md](technical/show-response.md) for the full per-type field
-reference.
+See [cli.md](cli.md#show) for the full per-type field reference.
 
 ## Add Sources
 

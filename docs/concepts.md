@@ -47,11 +47,12 @@ every source's directory. There is no per-source fan-out at search time.
 
 The two terms come up often:
 
-- **Source** is the configuration concept (`sources[]` in your config file).
-  It's any directory akm has been told to index. Configured via `akm add`.
+- **Source** is the configuration concept (an entry in the `bundles` map in
+  your config file). It's any directory akm has been told to index.
+  Configured via `akm add`.
 - **Working stash** is the special source created by `akm setup` — the
   default destination for `akm remember`, `akm import`, and other writes.
-  Tracked as `stashDir` in config and registered automatically as a
+  Named by `defaultBundle` in config and registered automatically as a
   `filesystem` source.
 
 If you don't pick a write destination explicitly with `--target` or
@@ -100,7 +101,7 @@ There are thirteen asset types:
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
-| **fact** | A durable stash-level fact | Mostly-static semantic knowledge — personal/team/project details, coding conventions / "constitution", and stash-meta (naming conventions, active projects). `category` scopes it; `pinned: true` marks always-injected core context (see [design note](design/fact-asset-type.md)) |
+| **fact** | A durable stash-level fact | Mostly-static semantic knowledge — personal/team/project details, coding conventions / "constitution", and stash-meta (naming conventions, active projects). `category` scopes it; `pinned: true` marks always-injected core context |
 | **task** | A scheduled or on-demand automation task | Stored under `tasks/` |
 | **session** | An indexed session summary | Machine-placed under `sessions/<harness>/<id>.md`; excluded from untyped search by default |
 
@@ -229,14 +230,15 @@ knowledge/clientX/api-guide.md   →  knowledge/clientX/api-guide
 This works for **any** asset type. The subpath segments become part of the
 conceptId, so `akm search "projectA" --type memory` narrows results to
 that subtree, and `akm show memories/projectA/auth-tip` resolves the full ref.
-There is also a **ref-prefix query syntax**: `akm search "memories/projectA/"`
+There is also a **ref-prefix query syntax**: `akm search "memory:projectA/"`
 enumerates exactly that subtree (recursive, `/`-boundary exact — a
 sibling `projectAlpha/` scope does not leak), and a bare `akm search
-"memories/"` lists the whole subdir. Ref-prefix hits are a deterministic listing
-with the fixed browse score `1`, not a relevance ranking. A full ref without
-the trailing slash (`memories/projectA/auth-tip`) stays an ordinary keyword
-search — resolving a single ref is `akm show`'s job — and an explicit
-`--type` flag always wins over the type parsed from the query.
+"memory:"` lists every memory. Ref-prefix hits are a deterministic listing
+with the fixed browse score `1`, not a relevance ranking. A full ref
+(`memories/projectA/auth-tip`) stays an ordinary keyword search — resolving a
+single ref is `akm show`'s job — and an explicit `--type` flag always wins
+over the type parsed from the query. See [cli.md](cli.md#search) for the
+full ref-prefix query rules.
 
 **Recommendation:** use physical subdirectories now to organize multi-project
 or multi-team stashes. They sort cleanly on disk and require no configuration.
@@ -255,8 +257,7 @@ limits, no-volatile-facets, off-axis facets as tags, and how to cross-link for
 retrieval — ship as the `facts/conventions/organization`,
 `facts/conventions/backlinks`, and `facts/conventions/domains` convention facts
 in the stash skeleton, and are surfaced to agents automatically at authoring
-time. See
-[design/stash-organization-conventions.md](design/stash-organization-conventions.md).
+time.
 
 Future iterations (no committed dates):
 
@@ -283,8 +284,8 @@ override the upstream copy in subsequent searches.
 
 ## Metadata
 
-`.stash.json` support was removed in v0.8.0. Prefer metadata that lives with
-the asset itself: frontmatter for markdown assets, and structured comments for
+Metadata lives with the asset itself, not in a separate `.stash.json`
+sidecar: frontmatter for markdown assets, and structured comments for
 scripts. The indexer derives metadata from filenames, code comments,
 frontmatter, and package.json.
 
@@ -294,9 +295,8 @@ See [technical/filesystem.md](technical/filesystem.md) for the full field refere
 
 A stash may carry an optional `.meta/` directory at its root holding
 human-authored orientation for the stash *as a whole* — purpose, key assets,
-conventions, maintainer. This is distinct from per-asset metadata (which still
-lives with each asset) and from the removed `.stash.json` sidecar (which
-enumerated per-asset entries): `.meta/` never describes individual assets, only
+conventions, maintainer. This is distinct from per-asset metadata, which
+still lives with each asset: `.meta/` never describes individual assets, only
 the stash itself.
 
 ```text
@@ -344,7 +344,7 @@ this precedence:
 
 1. `--target <name>` flag (must name a writable source)
 2. The root-level `defaultWriteTarget` field in config
-3. The working stash (`stashDir` from `akm setup`)
+3. The working stash created by `akm setup` (named by `defaultBundle`)
 
 If none are configured, write commands raise a `ConfigError` pointing at
 `akm setup`.
@@ -386,11 +386,9 @@ akm uses XDG-compliant directories backed by **three** databases:
 | `~/akm` (the `defaultBundle` path) | Your writable working stash |
 
 Events, proposals, task history, and workflow run state all live in `state.db` —
-not in flat files or in the search index. `workflow.db` no longer exists: its
-run/step/unit tables were merged into `state.db` at the 0.9.0 cutover, and
-`usage_events` was rescued from `index.db` into `state.db` so the index is truly
-regenerable. The search index (`index.db`) is derived from the bundle directories
-and is rebuildable with `akm index`.
+not in flat files or in the search index. The search index (`index.db`) is
+fully derived from the bundle directories, so it is truly regenerable and
+rebuildable with `akm index`.
 
 ## Glossary
 

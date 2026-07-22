@@ -12,11 +12,11 @@
 - If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/technical/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
 - Supported source providers are locked to `filesystem`, `git`, `website`, and `npm`. Do not add `context-hub`; do not reintroduce `openviking`.
 - `SourceProvider` is exactly `{ name, kind, path, sync? }`. All providers materialize files to local disk.
-- Asset refs are `[bundle//]conceptId[#fragment]`, where `conceptId` is subdir-qualified within its bundle (e.g. `skills/code-review`, `memories/vpn-note`, `knowledge/api-guide`, `env/prod`). Durable state stores the fully-qualified `bundle//conceptId`; the short bundle-omitted form is input sugar resolved against `defaultBundle`, then the remaining bundles in installation-priority order. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing. The pre-0.9.0 `[origin//]type:name` grammar is gone (the frozen migrator in `src/migrate/legacy/` is the only place it survives).
+- Asset refs are `[bundle//]conceptId[#fragment]`, where `conceptId` is subdir-qualified within its bundle (e.g. `skills/code-review`, `memories/vpn-note`, `knowledge/api-guide`, `env/prod`). Durable state stores the fully-qualified `bundle//conceptId`; the short bundle-omitted form is input sugar resolved against `defaultBundle`, then the remaining bundles in installation-priority order. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing. The old `[origin//]type:name` grammar is gone (the frozen migrator in `src/migrate/legacy/` is the only place it survives).
 - `show` is local-index only: resolve through the FTS index, then read from disk. No per-provider `show` exists.
 - Registry results are opt-in, stay separate from normal stash hits, and live in `registryHits`, never `hits`.
 - All write-target branching by `source.kind` belongs in `src/core/write-source.ts`.
-- Write-target resolution order is `--target` -> `defaultWriteTarget` -> `stashDir`; there is no fallback to the first writable source.
+- Write-target resolution order is `--target` -> `defaultWriteTarget` -> working stash (`defaultBundle`); there is no fallback to the first writable source.
 - `writable` defaults to `true` on `filesystem` and `false` on `git` / `website` / `npm`; `writable: true` on `website` or `npm` is rejected at config load.
 
 ## Tests
@@ -35,7 +35,6 @@
   - A tripwire **throws** if any test leaks an `AKM_*` / `XDG_*` / `HOME` env var that wasn't there at preload time, leaves `process.cwd()` changed, or leaves `globalThis.fetch` replaced.
 - Helpers live in `tests/_helpers/sandbox.ts`: `sandboxStashDir()`, `sandboxHome()`, `sandboxXdgConfigHome()`, `sandboxXdgDataHome()`, `writeSandboxConfig(partial)`, and `withMockedFetch(fn, mock)`. Use them rather than mutating env / fetch by hand.
 - New test files should not mutate `process.env.HOME =`, `process.chdir(...)`, or `globalThis.fetch =` directly. The lint rule `bun scripts/lint-tests-isolation.ts` (wired into `bun run lint`) flags new occurrences; existing offenders are allow-listed. Use `withMockedFetch` for fetch swaps and restore cwd in a `finally` block when chdir is unavoidable.
-- Background: the harness was added on `feat/test-isolation-harness` because the per-file save/restore pattern kept regressing — `tests/wiki.test.ts` was reading the developer's real `~/.config/akm/config.json` despite the file's own env-isolation boilerplate. The design lives at `knowledge/projects/akm/test-harness-redesign`.
 
 ## CLI Contract
 - Failures render to `stderr` as `{ok:false, error, code}`. Exit codes are `2` for usage, `78` for config, and `1` for general errors.

@@ -23,22 +23,15 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   bundles in installation-priority order. Durable state always stores the
   fully-qualified `bundle//conceptId`; the short (bundle-omitted) form is
   accepted input only, at the CLI, the programmatic surface, and inside bundle
-  content (where it resolves against the containing bundle). The pre-0.9.0
-  `<type>:<name>` grammar is **removed** in 0.9.0 — the one-time migrator
-  re-keys all durable state to the new spelling; see the 0.9.0 migration note in
-  the CHANGELOG.
+  content (where it resolves against the containing bundle). The older
+  `<type>:<name>` grammar is no longer accepted.
 - **Read commands** — `akm search`, `akm show`, `akm list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm env list`,
-  `akm secret list`, `akm proposal list` (list filters). The flat `akm proposals`
-  spelling and `akm show proposal <id>` were removed in 0.9.0 (use
-  `akm proposal list` / `akm proposal show <id>`).
+  `akm secret list`, `akm proposal list` (list filters).
 - **Write commands core surface** — `akm add`, `akm update`, `akm remove`,
   `akm clone`, `akm import`, `akm sync`, `akm index`, `akm setup`,
   `akm remember`, `akm feedback`, `akm config set`, `akm config unset`,
-  `akm config enable`, `akm config disable`. The 0.8-era deprecated aliases
-  were removed in 0.9.0: `akm save` (use `akm sync`), the top-level
-  `akm enable` / `akm disable` (use `akm config enable` / `akm config disable`),
-  and `--note` on `akm feedback` (use `--reason`).
+  `akm config enable`, `akm config disable`.
 - **Output contracts** — JSON output shape (the top-level keys, error
   envelope `{ok: false, error, hint}`), and the exit-code table below.
   `--detail` is verbosity only (`brief|normal|full`); `--shape`
@@ -56,11 +49,9 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
 - **On-disk storage** — durable workspace state (events, proposals, history,
   workflow runs, salience) lives in `state.db`; the search index (`index.db`)
   is a fully **regenerable** cache rebuilt by `akm index`; high-volume logs stay
-  in a separate `logs.db`. 0.9.0 folded the former `workflow.db` into `state.db`
-  (three databases, down from four) and retired the `.stash.json` metadata
-  sidecars in favor of file-local frontmatter plus the index. Treat the on-disk
-  schema as internal (use `akm` commands, not direct SQL); the one-time 0.9.0
-  cutover is covered by the migration note.
+  in a separate `logs.db`. Asset metadata lives as file-local frontmatter plus
+  the index (there is no separate metadata sidecar). Treat the on-disk schema
+  as internal (use `akm` commands, not direct SQL).
 
 ## Evolving
 
@@ -70,36 +61,29 @@ proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
 - **Improvement loop** — `akm improve`, `akm propose`, and the proposal noun
-  group `akm proposal {list,show,diff,accept,reject,revert}`. The flat verbs
-  `akm proposals`, `akm show proposal`, `akm accept`, `akm reject`, `akm diff`,
-  and `akm revert` were removed in 0.9.0 — use the noun group. Output JSON keys
-  are stable; CLI flags (`--auto-accept`, `--strategy`, `--task`, `--generator`)
-  may add options or tighten validation across releases. On
-  `accept`/`reject`/`history`, `--source` was removed in 0.9.0 (use
-  `--generator`).
+  group `akm proposal {list,show,diff,accept,reject,revert}`. Output JSON keys
+  are stable; CLI flags (`--strategy`, `--task`, `--generator`) may add options
+  or tighten validation across releases. `--auto-accept` is deprecated and
+  ignored (proposals always queue for review).
 - **Tasks** — `akm tasks` subcommand surface (singular `akm task` is an
   additive alias); strict version-2 YAML for scheduled tasks. Prompt tasks use
   named engines and task history metadata is versioned. Schema additions in
   patch releases; removals only at minor.
-- **Events / log** — `akm log` is the primary event-stream surface in 0.9.0
-  (the 0.8 `akm events` spelling was removed; `akm history` is a different,
-  asset-scoped surface).
+- **Events / log** — `akm log` is the primary event-stream surface (`akm
+  history` is a different, asset-scoped surface).
 - **Lessons** — `akm lessons` subcommand surface (singular `akm lesson` is an
   additive alias).
-- **Bundles & the workspace model** — 0.9.0 replaces the flat asset-type
-  registry with a **bundle / adapter** model. Installed sources are *bundles*;
-  each is recognized by a built-in *adapter* (native Agent Skills, Claude and
-  OpenCode commands/agents, knowledge, YAML workflows, tasks, env/secret files,
-  scripts, OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
-  `defaultBundle` (replacing the flat `stashDir` / `sources` / `installed` /
-  `wikiName` keys). The adapter set, bundle-recognition rules, and the `bundles`
-  config shape are new in 0.9.0 and may still shift within the 0.9.x line.
+- **Bundles & the workspace model** — installed sources are *bundles*; each is
+  recognized by a built-in *adapter* (native Agent Skills, Claude and OpenCode
+  commands/agents, knowledge, YAML workflows, tasks, env/secret files, scripts,
+  OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
+  `defaultBundle`. The adapter set, bundle-recognition rules, and the
+  `bundles` config shape may still shift.
 - **LLM Wiki bundles** — the Karpathy-style LLM wiki is a first-class built-in
   bundle format (the `llm-wiki` adapter owns `schema.md` / `index.md` /
-  `log.md` / `raw/` / `pages/` and its ingest flow). The former `wiki` *asset
-  type* and `wiki:` refs were removed in 0.9.0; wiki pages are addressed as
-  ordinary concepts inside their bundle. Adapter behavior and page conventions
-  are still iterating.
+  `log.md` / `raw/` / `pages/` and its ingest flow); wiki pages are addressed
+  as ordinary concepts inside their bundle. Adapter behavior and page
+  conventions are still iterating.
 - **Agent dispatch** — `akm agent` subcommand. The supported set of
   agent CLI backends (claude, opencode, codex, gemini, aider) will grow.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
@@ -114,24 +98,21 @@ for scripted use.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
 - **`--shape agent` and `--shape summary`** — the output-projection axis
-  (`--shape human|agent|summary`) is new in 0.8. `summary` is implemented
-  only on `akm show`; `agent` is implemented on `search`, `show`, and
-  `curate`. Coverage will expand. The legacy spellings `--detail summary`,
-  `--detail agent`, and `--for-agent` were removed in 0.9.0. `--detail` is now
-  verbosity only (`brief|normal|full`).
+  (`--shape human|agent|summary`). `summary` is implemented only on
+  `akm show`; `agent` is implemented on `search`, `show`, and `curate`.
+  Coverage will expand. `--detail` is verbosity only (`brief|normal|full`).
 - **Protected env & secret values** — `env` (a whole `.env` group; key names
   are surfaced for discoverability, values never are) and `secret` (a single
-  sensitive value) replace the removed `vault` type. Values are never written
-  to stdout, the index, or structured output; the safe injection path is
-  `akm env run <name> -- <command>` (or `akm secret run <name> <VAR> -- …`).
+  sensitive value). Values are never written to stdout, the index, or
+  structured output; the safe injection path is `akm env run <name> --
+  <command>` (or `akm secret run <name> <VAR> -- …`).
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
 - **`akm mv`** — rename an asset within its type directory in the primary
   writable stash, with inbound-ref rewrite across the stash's markdown files
   and an in-place index re-key that preserves the asset's accumulated
-  usage-ranking history. New verb (an Experimental-tier additive entry on the
-  v1 §9.4 command surface): the JSON output shape
+  usage-ranking history. The JSON output shape
   (`from`/`to`/`rewrote`/`readOnlyCiters`/`utilityPreserved`), the supported
   asset-type set, and the validation rules may change while the rename flow
   matures.
@@ -139,20 +120,18 @@ for scripted use.
   are written as YAML programs (`workflows/*.yaml`, `version: 2`, validated
   against `schemas/akm-workflow.json`) with `${{ … }}` expressions, per-step
   fan-out, routing, frozen per-run plans, and an explicit failure policy,
-  executed engine-driven by `akm workflow run`. The R2 engine rework adds
-  journaled replay with content-derived unit identity (input divergence is a
-  hard error), single-driver run leases, typed step artifacts,
-  artifact-judged gates with bounded `max_loops` and required gates
-  (`gate.required`, or the run-wide `akm workflow run --require-gates`, which
-  BLOCK for a human instead of failing open when no judge is available), run
-  budget ceilings (`budget.max_tokens`/`max_units`), the engine concurrency
-  cap knob (`workflow.maxConcurrency` config; unset =
-  `min(16, max(1, cores − 2))`, explicit values clamped to `[1, 64]`),
-  `akm workflow watch`
-  (NDJSON event tail, `--stream`), and `isolation: worktree`. The R3 rework
-  adds a
-  **harness-neutral driver protocol** so any agent session (Claude Code,
-  opencode, Codex, a human at a shell) can drive a run instead of the native
+  executed engine-driven by `akm workflow run`. The engine provides journaled
+  replay with content-derived unit identity (input divergence is a hard
+  error), single-driver run leases, typed step artifacts, artifact-judged
+  gates with bounded `max_loops` and required gates (`gate.required`, or the
+  run-wide `akm workflow run --require-gates`, which BLOCK for a human
+  instead of failing open when no judge is available), run budget ceilings
+  (`budget.max_tokens`/`max_units`), the engine concurrency cap knob
+  (`workflow.maxConcurrency` config; unset = `min(16, max(1, cores − 2))`,
+  explicit values clamped to `[1, 64]`), `akm workflow watch` (NDJSON event
+  tail, `--stream`), and `isolation: worktree`. A
+  **harness-neutral driver protocol** lets any agent session (Claude Code,
+  opencode, Codex, a human at a shell) drive a run instead of the native
   engine: **`akm workflow brief <run>`** (read-only; takes no lease and
   mutates nothing) emits the active step's expected work-list — per-unit
   resolved instructions, output schema, env binding NAMES only, timeout,
@@ -174,23 +153,9 @@ for scripted use.
   engine lease exists), and the two surfaces produce identical unit graphs.
   The YAML format, its schema, the `run`/`watch`/`brief`/`report` flags, and
   all JSON output shapes (including `workflow-brief`/`workflow-report`) may
-  all change while the orchestration engine matures. (This format replaced
-  the never-released P1 markdown orchestration subsections.) Classic
+  all change while the orchestration engine matures. Classic
   **linear markdown workflows are unchanged and stable**, as is the workflow
   CLI contract (`start`/`next`/`complete`/`status`/`list`).
-
-## Landed in 0.9.0 (were previously on the horizon)
-
-- **Bun/Node cross-runtime support** (issue #465) — the npm package requires
-  Node.js >= 22 as its bootstrap and prefers a working Bun >= 1.0 for execution
-  when both are available. Old, unusable, or absent Bun installations fall back
-  to Node.js. Standalone binaries are runtime-free. The CLI surface does not
-  change; the install instructions do.
-- **Storage layout consolidation** — landed as the three-database model
-  (`state.db` / `index.db` / separate `logs.db`), the `[bundle//]conceptId` ref
-  cutover, and the `bundles` / `defaultBundle` config migration. The one-time
-  cutover is journaled and crash-resumable via `akm migrate apply`; see the
-  0.9.0 migration note in the CHANGELOG.
 
 ## On the horizon
 

@@ -95,8 +95,8 @@ them.
 
 ## Using refs in prompts
 
-Assets are identified by `type:name` refs. An agent that knows a ref can load
-it immediately without searching.
+Assets are identified by `[bundle//]conceptId` refs. An agent that knows a
+ref can load it immediately without searching.
 
 ```sh
 # Common ref formats:
@@ -131,7 +131,7 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 
 ## akm agent — dispatching with a stash agent asset
 
-`akm agent` can embody a stash agent asset (type `agent:`) to apply that
+`akm agent` can embody a stash agent asset (`agents/<name>`) to apply that
 agent's system prompt, model, and tool policy to any task. Select the named
 agent engine with `--engine` and pass the asset ref positionally.
 

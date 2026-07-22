@@ -181,7 +181,7 @@ driver at a time** (the run lease arbitrates), and both surfaces produce
 byte-identical unit graphs.
 
 YAML programs live in your stash under `workflows/` with a `.yaml` or `.yml`
-extension and are addressed with the same `workflow:<name>` refs. Print a
+extension and are addressed with the same `workflows/<name>` refs. Print a
 starter with **`akm workflow template --yaml`**, and lint with
 `akm workflow validate <path|workflows/ref>` — validation is backed by the
 published JSON Schema at `schemas/akm-workflow.json`.
@@ -676,7 +676,7 @@ are the engine's:
   observability but, being outside the taxonomy, it can **never** trigger a
   workflow's `retry.on`. An absent reason defaults to `reported_failure`.
 
-Because both surfaces share one implementation, the R4 conformance suite runs
+Because both surfaces share one implementation, the conformance suite runs
 every golden program twice — engine-driven, then brief/report-driven — and
 asserts the two unit graphs are identical.
 
@@ -847,7 +847,7 @@ $ akm config get workflow.maxConcurrency
 8
 ```
 
-This cap governs the **native** engine only. The R3 brief/report driver surface
+This cap governs the **native** engine only. The brief/report driver surface
 (`akm workflow brief` / `report`) does **not** consult it — an external driver
 session owns its own parallelism; the engine caps only the units it dispatches
 itself.
@@ -867,9 +867,9 @@ The consequence is that **you should treat workflow sources the same way you
 treat package dependencies**:
 
 - **Only add workflow sources you trust.** `akm add github:<some-user>/stash`
-  followed by `akm workflow next workflow:<their-thing>` is functionally
+  followed by `akm workflow next workflows/<their-thing>` is functionally
   equivalent to piping a stranger's bash script into your shell. Read the
-  workflow file first (`akm show workflow:<name>`) before running it.
+  workflow file first (`akm show workflows/<name>`) before running it.
 - **Audit before run** for any workflow that touches secrets, deploys to
   production, or writes outside the project tree. Workflow steps can read
   any environment variable visible to the akm process — including secrets

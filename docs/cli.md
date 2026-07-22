@@ -1,18 +1,13 @@
 # CLI Reference
 
 The CLI is called `akm` (Agent Knowledge Management). Commands default to structured
-JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
-brief|normal|full|summary` when you want a different presentation. Errors
-include `error` and `hint` fields.
+JSON at `--detail brief`. Use `--format json|jsonl|text|yaml`, `--detail
+brief|normal|full`, and `--shape human|agent|summary` when you want a
+different presentation. Errors include `error` and `hint` fields.
 
-> **Status legend.** Every command on this page runs today on the
-> current pre-release build. Commands shipped in 0.8.0 — `health`, `agent`,
-> `improve`, `propose`, `proposal`, and the `feedback --reason`
-> extension — carry an **Available since 0.8.0** marker so you can tell at
-> a glance which surface arrived in that release. This page is authoritative for
-> the current CLI. The historical v1 planning spec is archived at
-> [`docs/archive/v1-architecture-spec.md`](archive/v1-architecture-spec.md) and
-> is not a live CLI contract.
+This page is authoritative for the current CLI. For per-release behavior
+changes, see [`CHANGELOG.md`](../CHANGELOG.md) and
+[`docs/migration/`](migration/).
 
 ## Global Flags
 
@@ -104,13 +99,13 @@ akm init --dir ~/scratch-stash --set-default  # Scaffold AND make it the default
 ```
 
 **`--dir <path>`** scaffolds (and backfills) the target directory. By design it
-does **not** change your configured default stash unless you ask: `init` writes
-`stashDir` to `config.json` only when (a) no `--dir` is given, (b) no default is
-configured yet (first-time bootstrap), or (c) you pass **`--set-default`**. When
-a `--dir` is given and a default already exists without `--set-default`, your
-default stash pointer is left untouched and `init` prints a note telling you so.
-This prevents `akm init --dir /tmp/throwaway` from silently hijacking your real
-default stash.
+does **not** change your configured default stash unless you ask: `init`
+updates the primary `bundles` entry and `defaultBundle` in `config.json` only
+when (a) no `--dir` is given, (b) no default is configured yet (first-time
+bootstrap), or (c) you pass **`--set-default`**. When a `--dir` is given and a
+default already exists without `--set-default`, your default stash pointer is
+left untouched and `init` prints a note telling you so. This prevents `akm
+init --dir /tmp/throwaway` from silently hijacking your real default stash.
 
 ### setup
 
@@ -205,7 +200,6 @@ Use `akm info` to verify that semantic search is working after setup.
 
 ### health
 
-**Status: Available since 0.8.0.**
 Check akm runtime health, durable state, and recent improve-loop telemetry.
 
 ```sh
@@ -311,10 +305,7 @@ Common flags:
 If no graph artifact exists yet, run the flow that refreshes graph extraction for your stash.
 
 Graph data is automatically re-extracted on the first `akm improve` cycle after
-a `DB_VERSION` upgrade. In v0.8.0 the graph schema was redesigned (entry-id
-primary key with FK cascade to `entries(id)`); upgrading from a 0.7.x install
-drops the graph tables and repopulates them on next improve. See
-[docs/migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+a `DB_VERSION` upgrade.
 
 Search ranking can optionally use graph-derived confidence-weighted boosts.
 Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
@@ -330,11 +321,11 @@ akm search "deploy" --type script --limit 10
 akm search "lint" --source registry
 akm search "docker" --source both --detail full
 
-# Multi-tenant scope filtering (0.7.0+):
+# Multi-tenant scope filtering:
 akm search "deploy" --filter user=alice
 akm search "deploy" --filter user=alice --filter agent=claude
 
-# Include proposal-queue entries (v1 spec §4.2):
+# Include proposal-queue entries:
 akm search "deploy" --include-proposed
 
 # Ref-prefix enumeration — list a typed subtree instead of keyword-matching:
@@ -397,14 +388,14 @@ detail level (and per `--shape`) is authoritative in `src/output/shapes.ts`
 | `--shape summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
 | `--shape agent` | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
-The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
-surface an optional `warnings: string[]` field on hits when a provider has
-non-fatal issues to report; the field is omitted otherwise. Per spec §4.2,
-populating `warnings` does not affect ranking.
+There is no registry `curated` boolean. Renderers surface an optional
+`warnings: string[]` field on hits when a provider has non-fatal issues to
+report; the field is omitted otherwise. Populating `warnings` does not affect
+ranking.
 
 > **Score ranges differ between local and registry hits.** Local
-> `SearchHit.score` is the locked v1 contract value in `[0, 1]`, higher = better
-> (CLAUDE.md and v1-architecture-spec §4). Registry `RegistrySearchHit.score`
+> `SearchHit.score` is a fixed contract value in `[0, 1]`, higher = better.
+> Registry `RegistrySearchHit.score`
 > is registry-native: provider-defined and may exceed `1` (the bundled
 > `static-index` provider can emit values up to ~1.85 from `scoreStash()`).
 > Use registry scores only for ranking within a single registry — do **not**
@@ -457,13 +448,13 @@ akm show knowledge/guide section "Authentication"
 akm show knowledge/guide lines 10 30
 akm show knowledge/guide frontmatter
 
-# Stash .meta/ orientation docs (0.8.2+) — direct-read, not indexed:
+# Stash .meta/ orientation docs — direct-read, not indexed:
 akm show meta                       # working stash's .meta/index.md
 akm show meta:about                 # working stash's .meta/about.md
 akm show local//meta                # the primary stash explicitly
 akm show github:owner/repo//meta    # an installed stash's .meta/index.md
 
-# Multi-tenant scope filtering (0.7.0+):
+# Multi-tenant scope filtering:
 akm show memories/retro --scope user=alice
 akm show memories/retro --scope user=alice --scope agent=claude
 ```
@@ -736,12 +727,11 @@ config so subsequent re-indexes use the same limits.
 
 See [registry.md](registry.md) for the full install flow for managed sources.
 
-> **0.6.0 note:** the pre-0.6.0 `akm add context-hub` convenience alias and
-> the `akm enable context-hub` / `akm disable context-hub` commands were
-> removed. Add it explicitly as a git stash:
-> `akm add github:andrewyng/context-hub --name context-hub`. The legacy
-> stash *type* string `"context-hub"` in existing configs still normalizes
-> to `"git"` at load time, so you don't need to edit your config files.
+> **Note:** there is no `akm add context-hub` convenience alias or `akm
+> enable`/`disable context-hub` command — add it explicitly as a git stash:
+> `akm add github:andrewyng/context-hub --name context-hub`. A stash *type*
+> string of `"context-hub"` in an existing config still normalizes to
+> `"git"` at load time, so you don't need to edit your config files.
 
 ### list
 
@@ -795,7 +785,7 @@ Upgrade `akm` itself to the latest release. Standalone binaries are downloaded,
 checksummed, and staged before replacement; npm, Bun, and pnpm global installs
 use their package manager.
 
-For contract-capable 0.9+ releases, upgrade treats migration and indexing as
+For contract-capable releases, upgrade treats migration and indexing as
 separate steps. It runs migration preflight before installation, migration apply
 after installation, and rebuilds the derived index only after migration
 succeeds. Standalone upgrades retain the previous binary until migration apply
@@ -803,14 +793,13 @@ completes. If apply fails, the new binary stays installed and the previous binar
 remains beside it for operator recovery; the executable is never rolled back
 independently of durable state.
 
-The 0.8 binary has neither `migrate` nor `--migration-config`, and cannot enforce
-guards implemented in a release that is not installed yet. Do not use 0.8
-self-update for this boundary. Prepare the 0.9 config, take an independent
-filesystem backup, install or stage the new binary manually, then run the new
-binary's `akm migrate apply --config <prepared>` command. See [the 0.8-to-0.9
-guide](migration/v0.8-to-v0.9.md).
+A binary that predates the `migrate` command and `--migration-config` cannot
+enforce guards implemented in a release that is not installed yet, so
+self-update cannot safely cross that boundary; install or stage the new
+binary manually instead and run its `akm migrate apply` command. See
+[docs/migration/](migration/) for version-specific upgrade guides.
 
-For 0.9+ future upgrades, the old/current binary's preflight inspects only its
+For contract-capable upgrades, the old/current binary's preflight inspects only its
 current artifact state and never parses the future prepared config. The prepared
 config is then checked by the staged standalone binary's `migrate status` before
 replacement and passed to the newly installed binary's apply command. A failed
@@ -824,7 +813,7 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 akm upgrade              # Download and replace the running binary
 akm upgrade --check      # Check for updates without installing
 akm upgrade --force      # Force upgrade even if already on latest
-akm upgrade --migration-config ./prepared-future.json  # Contract-capable 0.9+ only
+akm upgrade --migration-config ./prepared-config.json  # Contract-capable releases only
 ```
 
 | Flag | Description |
@@ -833,7 +822,7 @@ akm upgrade --migration-config ./prepared-future.json  # Contract-capable 0.9+ o
 | `--force` | Force upgrade even if on latest version |
 | `--skip-checksum` | Skip checksum verification during upgrade (not recommended) |
 | `--skip-post-upgrade` | Skip only the post-migration index rebuild; migration preflight and apply still run |
-| `--migration-config` | On 0.9+ upgrades, operator-prepared config passed only to the new binary's migration apply; not an 0.8-to-0.9 path |
+| `--migration-config` | On contract-capable upgrades, operator-prepared config passed only to the new binary's migration apply; not a path for crossing from a pre-`migrate` binary |
 
 ### clone
 
@@ -965,8 +954,7 @@ Listed as **Experimental** in `STABILITY.md`.
 Stage and commit local changes in a git-backed stash. If the stash has a
 remote configured and is marked `writable: true`, the commit is also pushed.
 
-> **Renamed in 0.8.0; the `akm save` alias was removed in 0.9.0.** Use `akm
-> sync` — it connotes the commit+push behaviour better than `save`.
+> **Note:** there is no `akm save` command — use `akm sync`.
 
 ```sh
 akm sync                            # Sync primary stash (auto timestamp message)
@@ -1001,14 +989,14 @@ value also looks like a format token.
 
 **Primary stash writable config:**
 
-To make the primary stash push on sync, set `writable: true` at the root of
-your config file (`~/.config/akm/config.json` or the path shown by
+To make the primary stash push on sync, set `writable: true` on its `bundles`
+entry in your config file (`~/.config/akm/config.json` or the path shown by
 `akm config path`):
 
 ```json
 {
-  "stashDir": "~/akm",
-  "writable": true
+  "bundles": { "primary": { "path": "~/akm", "writable": true } },
+  "defaultBundle": "primary"
 }
 ```
 
@@ -1031,18 +1019,19 @@ akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 Record a memory. This writes a markdown file into `memories/` in the configured
 write target and returns the resulting ref.
 
-**Write target resolution:** the destination is the working stash (`stashDir`)
-unless `defaultWriteTarget` is set in config, which overrides it to a named
-source. An explicit `--target <name>` flag overrides both. The full order is
-`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
-[Configuration](configuration.md#defaultwritetarget) for details.
+**Write target resolution:** the destination is the working stash
+(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
+overrides it to a named source. An explicit `--target <name>` flag overrides
+both. The full order is `--target` → `defaultWriteTarget` → working stash →
+`ConfigError`. See [Configuration](configuration.md#defaultwritetarget) for
+details.
 
 ```sh
 akm remember "Deployment needs VPN access"
 akm remember --name release-retro < notes.md
 akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secrets
 
-# With structured frontmatter (0.6.0+):
+# With structured frontmatter:
 akm remember "VPN required for staging deploys" \
   --tag ops --tag networking \
   --expires 90d \
@@ -1054,7 +1043,7 @@ akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
 # Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
 akm remember "Long meeting notes..." --enrich
 
-# Multi-tenant / multi-agent scope (0.7.0+):
+# Multi-tenant / multi-agent scope:
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
 
@@ -1068,7 +1057,7 @@ akm remember "The token rotation quirk applies to staging too" \
 akm remember "Staging now uses the new gateway endpoint" \
   --name new-endpoint --supersedes memories/projectA/old-endpoint
 
-# Route the write to a specific writable stash (0.8.0+):
+# Route the write to a specific writable stash:
 akm remember "Deployment needs VPN access" --target team-stash
 ```
 
@@ -1138,11 +1127,12 @@ Import a knowledge document. This writes a markdown file into `knowledge/` in
 the configured write target and returns the resulting ref. The source may be a
 file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
-**Write target resolution:** the destination is the working stash (`stashDir`)
-unless `defaultWriteTarget` is set in config, which overrides it to a named
-source. An explicit `--target <name>` flag overrides both. The full order is
-`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
-[Configuration](configuration.md#defaultwritetarget) for details.
+**Write target resolution:** the destination is the working stash
+(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
+overrides it to a named source. An explicit `--target <name>` flag overrides
+both. The full order is `--target` → `defaultWriteTarget` → working stash →
+`ConfigError`. See [Configuration](configuration.md#defaultwritetarget) for
+details.
 
 ```sh
 akm import ./docs/auth-flow.md
@@ -1156,12 +1146,8 @@ akm import ./notes/oauth-quirks.md --xref knowledge/auth/vendor-x-token-api
 # Import a corrected doc AND demote the one it replaces (in one step):
 akm import ./notes/modern-guide.md --supersedes knowledge/legacy-guide
 
-# Route the write to a specific writable stash (0.8.0+):
+# Route the write to a specific writable stash:
 akm import ./docs/auth-flow.md --target team-stash
-
-# Save into a wiki directory instead of knowledge/ (0.8.0+):
-akm import ./docs/auth-flow.md --wiki architecture
-akm import https://example.com/docs/auth --wiki research
 ```
 
 | Flag | Description |
@@ -1171,7 +1157,6 @@ akm import https://example.com/docs/auth --wiki research
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
-| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
 not register a persistent website source. The default knowledge name comes from
@@ -1221,7 +1206,6 @@ coverage` to find tags that don't yet have a crystallized lesson.
 
 ### lessons
 
-**Status: Available since 0.8.0.**
 Lesson-asset tooling. Currently exposes a single subcommand for tag-coverage
 analysis.
 
@@ -1256,7 +1240,7 @@ Use it for audit trails, lifecycle inspection, and debugging utility-score
 shifts without re-deriving an audit log from raw SQL.
 
 `history` is the *per-asset state-change* view. It complements the realtime
-events stream proposed in [#204](https://github.com/itlackey/akm/issues/204):
+events stream (`akm log`, [#204](https://github.com/itlackey/akm/issues/204)):
 events emit at the moment a mutation happens; `history` is the durable replay
 of what was recorded for an asset (or for the whole stash).
 
@@ -1271,7 +1255,7 @@ akm history --format text                      # Human-readable trail
 
 | Flag | Description |
 | --- | --- |
-| `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
+| `--ref` | Filter to a single asset ref (`[bundle//]conceptId`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
 | `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
@@ -1315,8 +1299,7 @@ Append-only realtime events stream (#204). Every mutating CLI verb appends
 an event row to `<dataDir>/state.db`; `akm log list` reads it and
 `akm log tail` follows it via polling.
 
-> **Renamed in 0.9.0.** `log` is the primary spelling; the old `akm events`
-> command was removed (it was a `log` alias during the 0.8 window).
+> **Note:** there is no `akm events` command — use `akm log`.
 
 ```sh
 akm log list                                      # All events, oldest first
@@ -1346,7 +1329,7 @@ for `log` when you care about *the raw, resumable mutation stream*.
 | --- | --- |
 | `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<id>` for a durable row-id cursor that survives across processes. |
 | `--type` | Filter by event type. Common values include `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `propose_invoked`, `reflect_invoked`, `distill_invoked`, `select`, and `improve_skipped`. |
-| `--ref` | Filter by asset ref (`[origin//]type:name`). |
+| `--ref` | Filter by asset ref (`[bundle//]conceptId`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
 | `--max-duration-ms` | (`tail` only) Stop after this many ms. |
@@ -1445,15 +1428,15 @@ akm registry search "docker" --limit 5
 
 ### migrate
 
-Inspect or apply config, `state.db`, and `workflow.db` migration as one
+Inspect or apply config and durable database (`state.db`) migration as one
 installation lifecycle. Status and dry-run are read-only and exit nonzero when
 newer, inconsistent, corrupt, or unresolved config state blocks apply.
 
 ```sh
 akm migrate status
-akm migrate status --config ./prepared-0.9.json
-akm migrate apply --config ./prepared-0.9.json --dry-run
-akm migrate apply --config ./prepared-0.9.json
+akm migrate status --config ./prepared-config.json
+akm migrate apply --config ./prepared-config.json --dry-run
+akm migrate apply --config ./prepared-config.json
 ```
 
 `--config` is required when the active config is legacy or absent. When the
@@ -1528,6 +1511,8 @@ data:
 together, protected whether or not any are sensitive. `secret` is primarily for
 a single sensitive value used for authentication.** Reach for `env` to load a
 service's config; reach for `secret` when one value *is* an auth credential.
+
+> **Note:** there is no `akm vault` command — use `env` or `secret`.
 
 ### env
 
@@ -1676,14 +1661,6 @@ generated file can never execute it. `export` **never prints values to stdout**
 > For most uses prefer `akm env run` (no file, no cleanup). `export` exists for
 > the case where a tool must `source` a file or you need a generated env script.
 
-### vault (removed)
-
-> **Removed in 0.9.0 — use [`env`](#env) or [`secret`](#secret).** The `akm vault`
-> verb no longer exists, and a `vault/` ref is now an unknown-subdir error
-> that points at `env/` (whole `.env` config) and `secrets/` (a single value).
-> `akm-migrate-storage` still copies a legacy `vaults/` directory to `env/` for
-> upgraders (see the [0.8 → 0.9 migration guide](migration/v0.8-to-v0.9.md)).
-
 ### secret
 
 Manage **secrets** — a single sensitive value used on its own for
@@ -1785,108 +1762,24 @@ A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
 **and** from indexing entirely (parallel to env files). The secret remains usable
 via `secret path` / `secret run`.
 
-### wiki
+### Wikis (no dedicated command)
 
-Manage multiple markdown wikis following the Karpathy LLM-wiki pattern.
-Each wiki lives at `<stashDir>/wikis/<name>/` and contains `schema.md`
-(the per-wiki rulebook), `index.md` (a regenerable catalog), `log.md`
-(append-only activity log), a `raw/` directory of immutable ingested
-sources, and any number of agent-authored pages. See
-[wikis.md](wikis.md) for the full guide.
-
-Design principle: **akm surfaces, the agent writes.** akm owns lifecycle,
-raw-slug generation, structural lint, and index regeneration. Page edits
-use the agent's native `Read` / `Write` / `Edit` tools. No LLM calls are
-made anywhere in the wiki surface.
+An LLM wiki (the Karpathy pattern — `schema.md` rulebook, agent-authored
+`pages/`, immutable `raw/` sources) is a **bundle format**, not a command
+family. There is no `akm wiki` verb; a bundle whose root holds `schema.md`
+plus `pages/` is recognized automatically at install time, and its pages are
+indexed and addressed like any other asset:
 
 ```sh
-akm wiki create research
-akm wiki list
-akm wiki show research
-echo "# Attention Is All You Need" | akm wiki stash research - --as attention
-akm wiki pages research
-akm wiki search research "attention"
-akm wiki lint research
-akm wiki ingest research               # dispatches defaults.engine to run the ingest workflow
-akm wiki ingest research --engine claude --model sonnet  # explicit overrides
-akm wiki remove research -y            # preserves raw/ by default
-akm wiki remove research -y --with-sources
+akm add github:team/research-wiki        # install a wiki bundle (or a local dir)
+akm search "attention"                   # pages rank alongside all other assets
+akm show research-wiki//pages/attention  # read a page by bundle//conceptId ref
 ```
 
-Subcommands:
-
-| Subcommand | Description |
-| --- | --- |
-| `create <name>` | Scaffold `wikis/<name>/` with empty `schema.md`, `index.md`, `log.md`, and `raw/` |
-| `register <name> <path-or-repo>` | Register an existing directory or repo as a first-class wiki without copying it |
-| `list` | List wikis with page and raw counts plus last-modified timestamps |
-| `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
-| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Prompts before deleting; pass `-y`/`--yes` to skip the prompt (required in non-interactive shells). External wikis are unregistered without deleting source files |
-| `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
-| `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
-| `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
-| `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
-| `ingest <name>` | Dispatch the configured agent engine (`--engine` or `config.defaults.engine`) to execute the ingest workflow end-to-end. Requires an accessible agent engine. Flags: `--engine <name>`, `--model <model>`, `--timeout-ms <ms>` |
-
-Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
-only; must start with a lowercase letter or digit.
-
-`akm add --type wiki --name <name> <path-or-repo>` is a shortcut to
-`akm wiki register <name> <path-or-repo>`.
-
-**Side effect:** `akm index` regenerates each wiki's `index.md` as part of
-its normal stash walk — there is no separate `reindex` verb.
-
-**Search/index scope:** stash-wide `akm search --type wiki` and `akm wiki search`
-index and return wiki pages only. Files under `raw/` plus the wiki root
-infrastructure files `schema.md`, `index.md`, and `log.md` are intentionally
-excluded from the search index and search results.
-
-**Not provided:** no `page-create`, `page-append`, `xref`, `log-append`,
-`reindex`, or `migrate` verb. Those are the agent's job using its native
-file tools against paths surfaced by `show` and `pages`.
-
-#### wiki lint
-
-```sh
-akm wiki lint research
-```
-
-Runs deterministic structural checks and exits 1 when findings exist, 0 when
-the wiki is clean. Output is always JSON with a `findings` array.
-
-Finding kinds:
-
-| Kind | Description |
-| --- | --- |
-| `orphan` | A page not linked from `index.md` |
-| `broken-xref` | An internal link that points to a non-existent page |
-| `missing-description` | A page without a frontmatter `description` field |
-| `uncited-raw` | A file in `raw/` not referenced by any page |
-| `stale-index` | `index.md` is out of date and needs to be regenerated |
-| `broken-source` | A `sources:` entry in a page's frontmatter points to a raw file that does not exist |
-
-#### wiki stash
-
-```sh
-akm wiki stash research ./paper.md
-akm wiki stash research ./paper.md --as my-paper
-akm wiki stash research ./paper.md --target my-stash  # Route write to a named writable stash source
-echo "..." | akm wiki stash research -
-akm wiki stash research https://example.com/papers/attention
-```
-
-Copies a file, URL snapshot, or stdin payload into `wikis/<name>/raw/<slug>.md`.
-Never overwrites an existing raw file.
-
-When `--as <slug>` is passed and the slug already exists, the command errors
-with a `UsageError` — it does not silently rename the slug. Without `--as`,
-auto-increment applies: if `paper` exists, the next attempt uses `paper-1`,
-then `paper-2`, and so on.
-
-URL sources fetch only the exact page you pass and convert it to markdown
-before writing under `raw/`. They do not register a persistent website source
-or crawl linked pages.
+Writing pages, ingesting raw sources, and maintaining `index.md`/`log.md` are
+the agent's job, using its native `Read`/`Write`/`Edit` tools guided by
+`schema.md` — akm's job is recognition, indexing, and search. See
+[wikis.md](wikis.md) for the full format.
 
 ### completions
 
@@ -1919,14 +1812,12 @@ source <(akm completions)
 
 ---
 
-## Improvement Flow (0.8.0+)
+## Improvement Flow
 
-These commands define the v0.8.0 self-improvement surface. This is a hard
-break from the older `reflect` / `proposal` / `distill` public UX.
+These commands define the self-improvement and agent-dispatch surface.
 
 ### agent
 
-**Status: Available since 0.8.0.**
 Dispatch a configured agent engine, optionally embodying a stash agent asset.
 
 ```sh
@@ -1939,8 +1830,8 @@ akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [-
 | `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
 | `--prompt <text>` | Task prompt to pass to the agent |
 | `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
-| `--command <ref>` | Load prompt from a `command:` asset |
-| `--workflow <ref>` | Load prompt from a `workflow:` asset |
+| `--command <ref>` | Load prompt from a `commands/<name>` asset |
+| `--workflow <ref>` | Load prompt from a `workflows/<name>` asset |
 | `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
 
 When `<agent-ref>` is provided, akm loads the stash agent asset and extracts
@@ -1957,7 +1848,7 @@ Agent engines may set `bin`, `args`, `workspace`, `model`, `timeoutMs`, and
 
 Without any `--prompt`, `<agent-ref>`, or `--model`, the agent is launched
 interactively (no injected prompt, no platform-specific flags beyond the
-engine's base args) — the same behaviour as before 0.8.0.
+engine's base args).
 
 Configure agent engines under `engines.<name>` with `kind: "agent"` and a
 registered harness `platform` (see [Configuration](configuration.md)). AKM
@@ -1965,7 +1856,7 @@ lowers the selected engine to the spawn or embedded SDK runner with captured or
 interactive stdio, hard timeout, and structured failure reasons.
 
 ```sh
-# Interactive launch (unchanged from pre-0.8.0):
+# Interactive launch:
 akm agent --engine opencode
 
 # Dispatch with a prompt only:
@@ -1987,7 +1878,6 @@ parse_error`.
 
 ### improve
 
-**Status: Available since 0.8.0.**
 Improve existing assets and write the results to the proposal queue.
 
 ```sh
@@ -2002,7 +1892,7 @@ akm improve workflows/release-checklist --task "reduce duplication"
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, stash, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--target` | Override the write target used later by `accept` |
-| `--auto-accept[=<value>]` | **Deprecated (0.9.0) and ignored.** The confidence gate was removed; proposals always queue for review — adjudicate them with `akm proposal` or the drain engine. The flag still parses (with a warning) so existing scheduled tasks keep working; it is removed in 0.10. |
+| `--auto-accept[=<value>]` | **Deprecated and ignored.** There is no confidence gate; proposals always queue for review — adjudicate them with `akm proposal` or the drain engine. The flag still parses (with a warning) so existing scheduled tasks keep working. |
 | `--limit <n>` | Maximum number of assets to process |
 | `--timeout-ms <ms>` | Wall-clock budget for the run |
 | `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
@@ -2012,7 +1902,7 @@ akm improve workflows/release-checklist --task "reduce duplication"
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
-flow that used to be split across multiple commands.
+flow.
 
 The maintenance pass run by `improve` also expires stale proposals: any pending
 proposal older than `improve.archiveRetentionDays` (default 30) is moved to the
@@ -2021,8 +1911,8 @@ archive with the reason `expired: no action within retention window` and a
 expiration entirely. The total expired count surfaces in the improve result as
 `proposalsExpired`.
 
-`improve` never promotes proposals on its own — the confidence gate was removed
-in 0.9.0. Every generated proposal lands in the queue with a `pending` status
+`improve` never promotes proposals on its own — there is no confidence gate.
+Every generated proposal lands in the queue with a `pending` status
 and is adjudicated later with `akm proposal accept` / `akm proposal reject` or
 the drain engine. Reflect still emits a `confidence` score (0..1) in its JSON
 response schema; it is recorded on the proposal for triage and ranking, but no
@@ -2039,7 +1929,6 @@ the evidence is otherwise comparable.
 
 ### propose
 
-**Status: Available since 0.8.0.**
 Generate a brand-new asset proposal from a description. Output is always a
 proposal — never a direct write.
 
@@ -2065,14 +1954,11 @@ to a positive integer (milliseconds) to apply a task-specific limit.
 
 ### proposal
 
-**Status: Version-2 schema in 0.9.0.**
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 `list`, `show`, `diff`, `accept`, `reject`, `revert`. Bare `akm proposal`
-behaves as `akm proposal list`.
-
-The flat verbs `akm proposals`, `akm show proposal <id>`, `akm accept`,
-`akm reject`, `akm diff`, and `akm revert` were **removed in 0.9.0**. Use the
-`akm proposal <verb>` forms.
+behaves as `akm proposal list`. There are no flat-verb spellings (`akm
+proposals`, `akm accept`, `akm reject`, `akm diff`, `akm revert`) — use the
+`akm proposal <verb>` form.
 
 #### proposal list
 
@@ -2092,7 +1978,7 @@ akm proposal list --ref skills/deploy
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
 reflect/propose runs. It is recorded for triage and ranking only — there is no
-auto-promotion (the confidence gate was removed in 0.9.0); proposals are
+confidence gate or auto-promotion; proposals are
 adjudicated with `akm proposal accept` / `reject`. Once accepted, a proposal
 that overwrote an existing asset also carries a `backup` field pointing to the
 captured prior content, which `akm proposal revert` uses.
@@ -2180,20 +2066,16 @@ requires `--reason`.
 
 ### feedback (`--reason`)
 
-**Status: Available since 0.8.0.**
 `akm feedback` accepts an optional `--reason <text>` flag whose value is
 forwarded into feedback metadata and consumed by improve/distill proposal
-prompts. Scripts without `--reason` behave as before (though negative feedback
-requires a reason by default).
+prompts. Negative feedback requires a reason by default.
 
 ### tasks
 
-**Status: Available since 0.8.0.**
 `akm tasks` is the scheduling surface for workflows, agent prompts, and
 shell commands. It manages on-disk task definitions under
 `<stash>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
-(cron / launchd / schtasks). Task `.md` files from 0.7.x are not discovered
-— see the migration guide for the conversion path.
+(cron / launchd / schtasks). Only version-2 task YAML is discovered.
 
 ```sh
 akm tasks list                              # List all tasks in the stash

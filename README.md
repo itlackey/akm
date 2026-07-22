@@ -156,7 +156,7 @@ akm clone workflows/ship-release --dest ./project/.claude
 
 ## The improvement loop
 
-akm tracks which assets agents actually use (`select` events) and what agents think of them (`akm feedback`). Running `akm improve` processes that signal to generate proposals — suggested edits, promotions, or deprecations. Review with `akm proposal list`, then `akm proposal accept` or `akm proposal reject`. Accepted changes write back to your writable sources. Distilled lessons surface via `akm improve --distill`.
+akm tracks which assets agents actually use (`select` events) and what agents think of them (`akm feedback`). Running `akm improve` processes that signal to generate proposals — suggested edits, promotions, or deprecations. Review with `akm proposal list`, then `akm proposal accept` or `akm proposal reject`. Accepted changes write back to your writable sources. Distilled lessons surface automatically as part of `akm improve` (via the `distill` process in the active strategy).
 
 ## Tell your agent about akm
 
@@ -206,7 +206,7 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 | [Stash Maker's Guide](docs/stash-makers.md) | Build, publish, and share your own stashes |
 | [Registry](docs/registry.md) | Registries, the index format, and private registry setup |
 | [Wikis](docs/wikis.md) | Multi-wiki knowledge bases |
-| [Release Notes — 0.8.0](docs/migration/release-notes/0.8.0.md) | Latest release notes and migration guide |
+| [Release Notes — 0.9.0](docs/migration/release-notes/0.9.0.md) | Latest release notes and migration guide |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |

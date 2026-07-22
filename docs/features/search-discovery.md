@@ -41,7 +41,7 @@ akm search "docker" --source both --detail full
 | `--type` | Narrow to one asset type: `skill`, `script`, `workflow`, `knowledge`, etc. |
 | `--limit` | Maximum hits returned (default 20) |
 | `--source` | `stash` (default), `registry`, or `both` |
-| `--detail` | `agent` gives `ref` + score without the full payload — use this from agents |
+| `--shape agent` | Trims the result to `ref` + score without the full payload — use this from agents |
 
 The `ref` field (e.g. `scripts/deploy.sh`) is only present at `--detail full`
 or `--shape agent`. Pass that ref directly to `akm show`.
@@ -97,8 +97,9 @@ akm show knowledge/api-guide section "Authentication"
 akm show knowledge/api-guide lines 10 30
 ```
 
-The ref format is `type:name` (or `origin//type:name` for assets from a
-specific source). Get refs from `akm search --shape agent` or `akm curate`.
+The ref format is `[bundle//]conceptId` (the `bundle//` prefix narrows lookup
+to a specific installed bundle). Get refs from `akm search --shape agent` or
+`akm curate`.
 
 **Example: curate assets before starting a task, then load the best one**
 

@@ -18,7 +18,7 @@ akm feedback agents/reviewer --negative
 akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
 akm feedback skills/planner --negative --reason "Doesn't account for merge conflicts"
 
-# With a structured reason slug (0.8.0+, consumed by improve/distill prompts):
+# With a structured reason slug (consumed by improve/distill prompts):
 akm feedback skills/planner --negative --reason "incomplete-edge-cases"
 ```
 
@@ -30,7 +30,7 @@ the current local index.
 ```sh
 akm feedback skills/deploy --negative \
   --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
-  --reason "missing-safeguard"
+  --failure-mode dangerous
 ```
 
 ## akm history / akm log
@@ -66,9 +66,10 @@ akm log list --since 7d --type select --format text
 ## akm improve
 
 `akm improve` is the main entry point for the self-improvement pass. It reads
-feedback signals and usage patterns, then runs reflect, distill, and
-consolidate phases to generate proposals. It also refreshes graph extraction
-and runs memory inference after consolidation.
+feedback signals and usage patterns, then runs whichever processes the active
+strategy enables — reflect, distill, consolidate, memory inference, graph
+extraction, and proactive maintenance — to generate proposals. Generated
+proposals always queue for review; there is no auto-accept threshold.
 
 ```sh
 akm improve                           # Full stash pass
@@ -77,8 +78,6 @@ akm improve skills/code-review         # One asset
 akm improve --task "reduce duplication"
 akm improve --dry-run                 # Show planned refs without generating proposals
 akm improve --limit 10                # Cap assets processed
-akm improve --auto-accept=false       # Disable auto-accept (prompt on HTTP path)
-akm improve --auto-accept=90          # Explicit threshold (also the default when flag is absent)
 ```
 
 Selection defaults to assets with recent feedback signals first, with a
@@ -94,12 +93,13 @@ akm proposal list            # review what was generated
 
 **End-of-run auto-sync:** For git-backed stashes (detected by a `.git`
 directory), `akm improve` automatically commits all changes as a single batch
-at the end of the run — the same operation as `akm sync`. The `default` and
-`thorough` strategies also push if the stash is writable. The `quick` and
-`memory-focus` strategies skip sync entirely (lightweight passes should not
-auto-commit). Use `--no-sync` to disable for any single run, or `--no-push`
-to commit without pushing. Strategy sync behavior can be configured via the
-`sync` block under `improve.strategies.<name>` in your config.
+at the end of the run — the same operation as `akm sync` — and pushes if the
+stash is writable, per the active strategy's `sync` setting. The
+`reflect-distill` and `proactive-maintenance` strategies skip sync entirely
+(an interrupted run would otherwise leave an uncommitted backlog). Use
+`--no-sync` to disable for any single run, or `--no-push` to commit without
+pushing. Strategy sync behavior can be configured via the `sync` block under
+`improve.strategies.<name>` in your config.
 
 ## akm proposal (list, show, diff, accept, reject, revert)
 
@@ -163,5 +163,5 @@ akm proposal accept deployment-gotchas
 - [Search & Discovery](search-discovery.md) — feedback improves ranking over time
 - [Knowledge Management](knowledge-management.md) — capturing memories and docs
 - [Agent Integration](agent-integration.md) — wiring feedback into agent workflows
-- [CLI Reference](../cli.md) — full flag documentation for `feedback`, `history`, `events`, `improve`, `proposal`, `propose`
+- [CLI Reference](../cli.md) — full flag documentation for `feedback`, `history`, `log`, `improve`, `proposal`, `propose`
 - [Concepts](../concepts.md) — how utility scores affect search ranking

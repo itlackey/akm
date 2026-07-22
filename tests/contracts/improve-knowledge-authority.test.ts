@@ -4,7 +4,7 @@ import { CLI_DOC_PATH, extractSection, readDoc } from "./contract-helpers";
 describe("issue #315 docs contract — knowledge authority over memories", () => {
   test("cli docs describe knowledge as outranking memory and derived memory when evidence is comparable", () => {
     const cli = readDoc(CLI_DOC_PATH);
-    const section = extractSection(cli, "## Improvement Flow (0.8.0+)");
+    const section = extractSection(cli, "## Improvement Flow");
 
     expect(section).not.toBe("");
     expect(section).toMatch(/higher-authority\s+destination/i);

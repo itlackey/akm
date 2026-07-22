@@ -1,7 +1,7 @@
 # Wiki Snapshot Fetchers
 
-`akm wiki stash <url>` and every other URL-based knowledge read path now pass
-through a pluggable fetcher seam before the built-in website scraper.
+`akm import <url>` and every other URL-based knowledge read path pass through
+a pluggable fetcher seam before the built-in website scraper.
 
 akm currently ships one built-in fetcher: `youtube-transcript`, which extracts
 the video description and transcript when captions are available.
@@ -26,7 +26,7 @@ Drop fetcher modules into:
 ```
 
 `<stashDir>` is the active stash for the current operation. When a command has a
-resolved write target (for example `akm wiki stash --target ...`), akm loads
+resolved write target (for example `akm import --target ...`), akm loads
 fetchers from that target stash before falling back to the built-in website
 scraper.
 
@@ -101,7 +101,7 @@ export default {
 
 ## Notes
 
-- The fetcher seam is shared by `akm wiki stash <url>` and other URL-based
+- The fetcher seam is shared by `akm import <url>` and other URL-based
   knowledge reads that use `fetchWebsiteMarkdownSnapshot()`.
 - The built-in website scraper remains the default path when no custom fetcher
   matches.

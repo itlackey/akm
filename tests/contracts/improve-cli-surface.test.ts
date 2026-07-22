@@ -9,17 +9,16 @@ describe("current improvement CLI documentation contract", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
   test("documents each active improvement command family", () => {
-    const section = extractSection(cli, "## Improvement Flow (0.8.0+)");
+    const section = extractSection(cli, "## Improvement Flow");
     expect(section).not.toBe("");
     for (const cmd of IMPROVEMENT_COMMANDS) {
       expect(section).toContain(`### ${cmd}`);
     }
   });
 
-  test("treats the CLI reference as current authority and the v1 plan as archived", () => {
+  test("treats the CLI reference as current authority with no archived-spec framing", () => {
     expect(cli).toMatch(/This page is authoritative for\s*(?:>\s*)?the current CLI/);
-    expect(cli).toContain("docs/archive/v1-architecture-spec.md");
-    expect(cli).toMatch(/is not a live CLI contract/);
+    expect(cli).not.toContain("docs/archive/");
     expect(cli).not.toContain("§9.4");
   });
 

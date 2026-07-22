@@ -71,10 +71,10 @@ akm show knowledge/postmortem-2026-05
 
 ## LLM wikis
 
-As of 0.9.0, an LLM wiki (the Karpathy pattern — raw immutable sources in
-`raw/`, agent-authored pages under `pages/`, a `schema.md` rulebook) is a
-**bundle format**, not an akm asset type; the `akm wiki` command family was
-removed. A bundle whose root holds `schema.md` plus `pages/` is recognized
+An LLM wiki (the Karpathy pattern — raw immutable sources in `raw/`,
+agent-authored pages under `pages/`, a `schema.md` rulebook) is a **bundle
+format**, not an akm asset type; there is no `akm wiki` command family. A
+bundle whose root holds `schema.md` plus `pages/` is recognized
 automatically at install time, and its pages are indexed like any other
 content:
 
@@ -95,14 +95,14 @@ wholesale), and `akm secret` manages a single standalone sensitive value. The
 core security guarantee: **values never appear in akm's structured output**.
 Only key names are shown — comment text is never surfaced either, since
 comments can contain commented-out credentials. Values reach processes through
-`akm env run` / `akm secret run`, never through akm's JSON output. (The old
-`akm vault` verb was removed in 0.9.0.)
+`akm env run` / `akm secret run`, never through akm's JSON output. (There is
+no `akm vault` command — use `env`/`secret`.)
 
 ```sh
 akm env create prod                       # create an empty .env group
 akm env create prod --from-file ./.env    # or ingest an existing .env
 
-# akm no longer edits entries — edit the file with your own editor:
+# akm does not edit entries — edit the file with your own editor:
 $EDITOR "$(akm env path env/prod --quiet)"
 
 akm env list
@@ -159,7 +159,7 @@ Manager, 1Password Secrets Automation) in production infrastructure.
 
 ### Key-name hygiene
 
-Key names are visible metadata — `akm env list` and `akm show env:<name>` show
+Key names are visible metadata — `akm env list` and `akm show env/<name>` show
 them. Avoid encoding sensitive context in key names (e.g. prefer `DATABASE_URL`
 over `PROD_POSTGRES_MASTER_PASSWORD`).
 
@@ -167,7 +167,7 @@ over `PROD_POSTGRES_MASTER_PASSWORD`).
 
 `akm env run` injects the whole `.env` into the child process environment for
 its entire lifetime and they are visible to all subprocesses the child spawns.
-Prefer a `secret` (or `akm secret run secret:<name> VAR -- cmd`) when the
+Prefer a `secret` (or `akm secret run secrets/<name> VAR -- cmd`) when the
 command only needs one value. Avoid `env run` for long-lived daemon or server
 processes.
 

@@ -109,7 +109,7 @@ akm clone workflows/ship-release --dest ./project/.claude
 
 `akm sync` stages, commits, and optionally pushes your writable stash. It is
 the complement to `akm add`: once you have made changes locally, `sync` persists
-them to git. (`akm save`, the pre-0.8 spelling, was removed in 0.9.0.)
+them to git. (There is no `akm save` command — use `akm sync`.)
 
 ```sh
 akm sync                          # Primary stash, auto timestamp message
@@ -120,12 +120,12 @@ akm sync my-skills -m "Update"   # Named writable git source
 Push behavior depends on configuration: if the stash is a git repo with a
 remote and `writable: true`, sync also pushes. Otherwise it commits only.
 
-> **0.9.0:** writes that land on a writable git source via `--target` (e.g.
-> `akm remember --target my-skills`, proposal accept/revert, consolidate) are
-> committed automatically in a single batch at the end of the operation — one
-> complete commit (staging `.akm/` + assets together), pushed under the same
-> `writable + remote` gate as `akm sync`. The legacy per-asset `options.pushOnCommit`
-> knob is deprecated; remove it and rely on `writable: true` + push instead.
+Writes that land on a writable git source via `--target` (e.g.
+`akm remember --target my-skills`, proposal accept/revert, consolidate) are
+committed automatically in a single batch at the end of the operation — one
+complete commit (staging `.akm/` + assets together), pushed under the same
+`writable + remote` gate as `akm sync`. The per-asset `options.pushOnCommit`
+knob is deprecated; rely on `writable: true` + push instead.
 
 **Example: publish your own stash**
 
@@ -162,6 +162,6 @@ akm index
 - [Search & Discovery](search-discovery.md) — querying the index after sources are connected
 - [Knowledge Management](knowledge-management.md) — writing your own assets
 - [Agent Integration](agent-integration.md) — using refs across sources in prompts
-- [CLI Reference](../cli.md) — full flag documentation for `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
+- [CLI Reference](../cli.md) — full flag documentation for `add`, `list`, `update`, `remove`, `clone`, `sync`, `registry`
 - [Registry](../registry.md) — registry index format and private registry setup
 - [Stash Maker's Guide](../stash-makers.md) — build and publish your own stash
