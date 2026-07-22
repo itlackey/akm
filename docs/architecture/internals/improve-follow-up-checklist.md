@@ -5,12 +5,12 @@ Issues #720 and #721 are complete and closed. The current release-candidate
 worktree passes `bun run check` with 2,824 unit tests and 4,767 integration
 tests. `./tests/release-check.sh --skip-docker` also passes, including 7,591
 tests in the final unsharded suite and the published 0.8.14 upgrade gate. The
-worktree has not been committed, retained as a durable package candidate, or
-deployed.
+close-out was committed and pushed as `e7a6f4a3`; it has not been retained as a
+durable package candidate or deployed.
 
 ## Release Candidate
 
-- [ ] Review and commit the current worktree as one or more coherent changesets.
+- [x] Review and commit the current worktree as one coherent changeset (`e7a6f4a3`).
 - [x] Run the required pre-commit formatter: `bunx biome check --write src/ tests/`.
 - [x] Build the package with `bun run build` and verify that `dist/tests` is absent.
 - [ ] Pack the exact candidate that will be deployed.
