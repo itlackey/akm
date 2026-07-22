@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests for the `initIndexer()` composition root (audit M1/M2,
- * `docs/technical/code-health-brittleness-audit.md`).
+ * Tests for the `initIndexer()` composition root (findings M1/M2 of the
+ * 2026-06 code-health brittleness audit).
  *
  * `initIndexer()` replaces the ad-hoc lazy `builtinsPromise` gate that
  * previously lived in `walk/file-context.ts`. These tests prove that a single

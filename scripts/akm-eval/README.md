@@ -2,7 +2,7 @@
 
 Read-only-by-default, deterministic measurement of `akm` over the existing
 run envelopes, events table, and proposal queue. Implements all eight
-phases of `docs/archive/akm-eval-implementation-plan.md`.
+phases of the (since-retired) akm-eval implementation plan.
 
 Mirrors `scripts/improve-stats/`: shell entry points under `bin/`,
 TypeScript runners under `src/`, no `akm` subcommand integration.
@@ -431,5 +431,4 @@ scripts/akm-eval/
 ## See also
 
 - `docs/akm-eval.md` — operator guide.
-- `docs/archive/akm-eval-implementation-plan.md` — the full plan.
 - `scripts/improve-stats/` — the toolkit pattern this one mirrors.

@@ -37,7 +37,6 @@ Before touching code, anchor the work in the documented rules.
    inspect:
 
    - `docs/technical/functional-contract-patterns.md`
-   - `docs/technical/implementation-plan-functional-contract-refactor.md`
    - any docs passed in `{{ context_docs }}`
 
 3. Write `{{ workspace_dir }}/rules.md` summarising:

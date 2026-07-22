@@ -56,9 +56,5 @@ Stash:
 Repo:
 
 - `docs/akm-eval.md` — the existing eval entry point.
-- `docs/technical/curate-performance-evals.md` — perf-side eval work.
-- `tests/curate-golden-eval.test.ts` — the CI guard as it exists.
-- `docs/design/improve-beta50-monitoring.md` — what improve telemetry is available to build learning-quality metrics from.
-- `docs/design/improve-pipeline-deep-tuning-analysis.md` — where the churn-rewarding metric problem was dissected.
 
 Live (read-only): `state.db` improve_runs/llm_usage tables for baseline numbers (`skippedCount IS NOT NULL` discriminator), `akm stats`.

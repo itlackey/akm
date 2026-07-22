@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Unit tests for standards PROMPT INJECTION (standards plan,
- * docs/archive/standards-wiki-schema-PLAN.md).
+ * Unit tests for standards PROMPT INJECTION.
  *
  * The resolvers/dispatch are tested in standards-resolvers.test.ts and
  * standards-dispatch.test.ts. THIS file proves that every LLM prompt that

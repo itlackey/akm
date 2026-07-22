@@ -56,7 +56,5 @@ Stash:
 
 Repo:
 
-- `docs/design/improve-neuroscience-alignment-survey.md` and `docs/design/improve-vs-brain-analysis.md` — the neuroscience-modeling bet, stated in full so it can be attacked.
-- `docs/design/improve-pipeline-deep-tuning-analysis.md` — evidence the pipeline needs heavy tuning to be net-positive (ammunition against bet #1).
 - `docs/roadmap.md` and `docs/technical/v1-architecture-spec.md` — the bets baked into the roadmap.
 - `docs/concepts.md` — the substrate bet (local SQLite + hybrid search) stated plainly.

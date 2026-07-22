@@ -56,10 +56,6 @@ Stash:
 
 Repo:
 
-- `docs/design/self-improvement-learning-memory-reference-index.md` — the newest index of the whole learning/memory design space; start here.
-- `docs/design/improve-salience-working-reference.md` — salience decay/reinforcement formulas (the current retention rules).
-- `docs/design/improve-bitemporal-invalidation-design.md` — the designed-but-check-if-shipped contradiction-invalidation mechanism.
-- `docs/design/improve-vs-brain-analysis.md` — the cognitive model gaps (outcome loop, forgetting) this review should quantify.
 - `docs/data-and-telemetry.md`, `docs/technical/storage-locations.md` — what is stored where, and which growth is telemetry.
 
 Live (read-only): `~/.local/share/akm/index.db` and `state.db`, `akm stats`.

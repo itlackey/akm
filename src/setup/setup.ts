@@ -89,8 +89,8 @@ import { stepDefaultImproveTasks, stepScheduledTasks } from "./steps/tasks";
  * silently). Mirrors the `assertInitSandbox` check in commands/init.ts, but
  * fires under all runtimes (not just `bun test`) because `akm setup --dir
  * /tmp/X` is a documented isolation pattern that has been observed to
- * silently clobber the host config — see
- * `docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md`.
+ * silently clobber the host config (the 2026-05-23 setup-clobbers-user-config
+ * incident).
  *
  * Escape hatch: set `AKM_FORCE_SETUP_TMP_STASH=1` to override. When the
  * escape hatch is on, `applyStashIsolationToEnv` below also pre-sets

@@ -1716,7 +1716,7 @@ function selectHighSalienceLane(args: {
   // earn retrieval/feedback signal via the other lanes. This PRESERVES #608's
   // intent — distilled assets (the lane's real targets) keep their real content
   // score and still qualify — while cutting the type-stub waste. See §5 F1 of
-  // docs/design/improve-salience-working-reference.md and #608/#644.
+  // #608/#644.
   const highSalienceRefs: ImproveEligibleRef[] = [];
   const salienceCfg = (options.config ?? loadConfig()).improve?.salience;
   const salienceThreshold = salienceCfg?.salienceThreshold ?? 0.75;
@@ -2237,7 +2237,7 @@ function persistSalienceAndReportRanks(args: {
   //    stash-wide), but it is the most faithful comparison possible at cutover and
   //    allows the top-200→below-500 forgetting guard to fire if the formula change
   //    dramatically reorders the candidate pool.
-  //    See docs/archive/improve-reconciliation-plan.md §WS-1 step 7 — the stash-wide
+  //    WS-1 step 7 — the stash-wide
   //    ordering was unreconstructable (no prior state.db snapshot), so this candidate-
   //    pool partial reconstruction is the documented resolution for the first-run case.
   //    Emit `improve_salience_first_run` to mark the cutover moment and include the
@@ -2295,7 +2295,7 @@ function persistSalienceAndReportRanks(args: {
           // Limitation: this covers only the current-run candidate pool, not the full
           // stash. The stash-wide ordering was never persisted (asset_salience is a new
           // WS-1 table), so this is the most faithful comparison possible at cutover.
-          // See docs/archive/improve-reconciliation-plan.md §WS-1 step 7.
+          // WS-1 step 7.
           const reconstructedOldScores = new Map<string, number>();
           for (const ref of salienceMap.keys()) {
             const utility = utilityMap.get(ref) ?? 0;
@@ -2324,7 +2324,7 @@ function persistSalienceAndReportRanks(args: {
               ref: undefined,
               metadata: {
                 candidateCount: salienceMap.size,
-                note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); see improve-reconciliation-plan.md §WS-1 step 7",
+                note: "first WS-1 salience run — partial reconstruction of old combinedEligibilityScore ordering for candidate pool (stash-wide ordering not available); WS-1 step 7",
                 forgettingCandidates: firstRunReport.forgettingCandidates.length,
                 topDrops: firstRunReport.forgettingCandidates.slice(0, 10).map((e) => ({
                   ref: e.ref,

@@ -54,6 +54,5 @@ Repo:
 - `docs/README.md`, `docs/concepts.md`, `docs/roadmap.md` — the claimed goal.
 - `docs/technical/akm-core-principles.md` — the stated principles to test the code against.
 - `docs/technical/architecture.md` — subsystem map.
-- `docs/design/improve-salience-working-reference.md` — end-to-end improve/salience reference; read before judging that subsystem.
 
 Live (read-only): `akm stats`, `akm health`, `crontab -l` for what actually runs.

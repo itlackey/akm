@@ -7,7 +7,7 @@ import path from "node:path";
 import { getDirname } from "../../runtime";
 
 const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/CHANGELOG.md";
-const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md";
+const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.8-to-v0.9.md";
 
 /**
  * Directory containing per-version release notes. Resolved relative to

@@ -1,4 +1,4 @@
-// Regression tests for docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md.
+// Regression tests for the 2026-05-23 setup-clobbers-user-config incident.
 //
 // Two layers of defense, both tested here:
 //   1. assertSetupSandbox (in src/setup/setup.ts): refuses `akm setup --dir

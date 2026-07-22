@@ -93,8 +93,8 @@ describe("getConfigPath", () => {
     // Defense against CI environments where AKM_STASH_DIR is inherited
     // from outer test isolation: if it points at a transient path,
     // getConfigDir's isolation rule fires and overrides the HOME-based
-    // fallback this test is verifying. See
-    // docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md.
+    // fallback this test is verifying (the 2026-05-23
+    // setup-clobbers-user-config incident).
     delete process.env.AKM_STASH_DIR;
     process.env.HOME = home;
 

@@ -51,9 +51,6 @@ Stash:
 
 Repo:
 
-- `docs/design/improve-salience-working-reference.md` — the full value chain in one doc.
-- `docs/design/improve-pipeline-deep-tuning-analysis.md` — the heaviest recent effort; test whether it was aimed at the constraint.
-- `docs/technical/akm-production-readiness-findings.md` — the production-blocking constraints already surfaced.
 - `docs/roadmap.md` — where planned effort is about to go (aim it at the constraint or not).
 
 Live (read-only): `akm stats`, feedback/recall counts in `index.db`, proposal backlog age, session logs.

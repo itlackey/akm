@@ -101,7 +101,7 @@ When you tag a new release:
    tests enforce.
 2. Keep the note self-contained — automatic migrations, manual actions,
    publisher changes, breaking CLI/flag moves. Link to the longform guide
-   (e.g. `docs/migration/v0.5-to-v0.6.md`) in the last paragraph if one
+   (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
    exists.
 3. Extend the `for ... of` list in `tests/migration-help.test.ts`
    (`"every bundled release-notes file is surfaced by the loader"`) so the
@@ -126,8 +126,8 @@ files at runtime from the release-notes directory.
 
 ## Reporting Issues
 
-If you find a bug or have a feature idea, please open an issue on GitHub. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+If you find a bug or have a feature idea, please open an issue on GitHub. For security vulnerabilities, see [SECURITY.md](../SECURITY.md).
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MPL-2.0](LICENSE) license.
+By contributing, you agree that your contributions will be licensed under the [MPL-2.0](../LICENSE) license.

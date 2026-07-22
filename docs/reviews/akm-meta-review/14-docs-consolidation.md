@@ -51,9 +51,6 @@ Stash:
 
 Repo:
 
-- `docs/design/self-improvement-learning-memory-reference-index.md` — the newest index; the consolidation should extend THIS, not compete with it.
-- `docs/design/improve-salience-working-reference.md` — the doc that already tries to be the canonical improve/salience map; measure everything else against it.
 - `docs/README.md` — the current docs entry point.
 - `docs/technical/architecture.md` vs. `docs/technical/v1-architecture-spec.md` — a likely current-vs-aspirational pair to reconcile.
 - `docs/design/` and `docs/technical/` full listings — the raw scatter (note the many `improve-*` design docs and `d1/d2/d3/r5-design` docs that may be shipped or superseded).
-- `docs/archive/` — where superseded docs should already be going.

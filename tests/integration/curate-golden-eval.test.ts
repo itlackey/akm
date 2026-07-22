@@ -15,7 +15,7 @@
  * crude (but fixed) semantics — they are NOT comparable to production. Their
  * value is (a) a reproducible floor that fails on a real ranking regression
  * and (b) a number diffable between akm source versions. See
- * docs/technical/curate-performance-evals.md.
+ * the curate performance-eval methodology (2026-06).
  */
 
 import { describe, expect, test } from "bun:test";

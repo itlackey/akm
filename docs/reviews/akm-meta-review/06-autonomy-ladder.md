@@ -51,10 +51,7 @@ Stash:
 
 Repo:
 
-- `docs/technical/proposal-storage.md` — the queue mechanics.
 - `docs/technical/improve-workflow.md` — the intended human-in-the-loop flow.
-- `docs/design/improve-optimal-default-config.md` — what each knob was set to and why.
-- `docs/design/improve-proactive-maintenance.md` — the most autonomous lane; audit first.
 - `docs/configuration.md`, `docs/configuration-agent-profiles.md` — profile system the cron actually loads.
 
 Live (read-only): `akm proposal list` / pending-proposal count, `crontab -l` + cron profile flags, `~/.config/akm/config.json`, improve run history in `state.db`.

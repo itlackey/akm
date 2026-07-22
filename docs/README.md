@@ -30,7 +30,6 @@
 - [Roadmap](roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
 - [v0.8 -> v0.9 migration guide](migration/v0.8-to-v0.9.md) -- Current-cycle breaking changes
 - [Release notes (latest: 0.9.0)](migration/release-notes/0.9.0.md) -- Per-release notes; see the [release-notes index](migration/release-notes/README.md) for every version
-- [v0.5 -> v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting
 
 ## Reference
 
@@ -58,15 +57,12 @@
 - [Indexer Vertical Slice Refactor Plan](analysis/indexer-vertical-slice-refactor-plan.md)
 - [Indexer Refactor Review (Expert Options)](analysis/indexer-refactor-expert-options.md)
 
-## Design (unshipped work)
+## Design
 
-- [Self-Improvement, Self-Learning & Memory Reference Index](design/self-improvement-learning-memory-reference-index.md) -- Master index for every unshipped improve/self-learning/memory design doc, with a subsystem-to-doc status table
+- [Bundle & Adapter Spec (0.9.0)](design/akm-0.9.0-bundle-adapter-spec.md) -- Normative spec for bundles, adapters, and stash recognition
+- [Architecture Decision History](design/akm-architecture-decision-history.md) -- ADR-style record of the major architecture rulings
 
-Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` header (pre-existing docs are grandfathered until next touched). When a design ships, the shipping PR moves it to `docs/archive/` in the same PR.
-
-## Archive
-
-- [Archive](archive/README.md) -- Design and implementation plans whose work has already shipped, retained as ADR-style records
+Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` header (pre-existing docs are grandfathered until next touched). When a design ships, the shipping PR deletes its doc in the same PR -- history lives in git.
 
 ## Internals (technical/)
 
@@ -78,7 +74,6 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 - [Improve Workflow](technical/improve-workflow.md) -- `akm improve` command surface and pipeline reference
 - [Health Advisories](technical/health-advisories.md) -- `akm health` advisory-to-action map for operators
 - [Fresh-Host Rebuild Runbook](technical/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
-- [Ranking Ablation & Saturation Analysis](technical/ranking-ablation-and-saturation-analysis.md) -- Reproducible contributor-ablation measurement and the score-saturation trap
 - [Functional Contract Patterns](technical/functional-contract-patterns.md) -- Quick reference for contributor pipelines and small process contracts
 - [Test Coverage Guide](technical/test-coverage-guide.md) -- High-value testing areas
 - [Testing Workflow](technical/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation
@@ -100,4 +95,4 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 
 ---
 
-New docs, in five lines: keep one current-truth doc per subsystem, don't fork a second one. Unshipped designs live in `docs/design/` with a mandatory `Status` / `Supersedes` / `Date` header. The PR that ships the design moves its doc to `docs/archive/` in that same PR. Cite code by symbol and memories by search-terms -- not line numbers or exact refs, both rot. Nothing in `docs/` may reference `.plans/` (it's scratch -- promote the content or drop the link); no new improve-analysis docs until the 30-clean-day gate.
+New docs, in five lines: keep one current-truth doc per subsystem, don't fork a second one. Unshipped designs live in `docs/design/` with a mandatory `Status` / `Supersedes` / `Date` header. The PR that ships the design deletes its doc in that same PR (history lives in git). Cite code by symbol and memories by search-terms -- not line numbers or exact refs, both rot. Nothing in `docs/` may reference `.plans/` (it's scratch -- promote the content or drop the link); no new improve-analysis docs until the 30-clean-day gate.

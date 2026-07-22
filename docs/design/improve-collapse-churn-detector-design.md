@@ -1,7 +1,7 @@
 # R5 — Longitudinal Collapse/Churn Detector for `akm improve`
 
 > **Status:** Design, ready to implement (2026-07-02). Implements R5 / closes G7 from
-> [improve-self-learning-analysis.md](improve-self-learning-analysis.md) §4-G7/§5-R5/§6.3.
+> the 2026-06 improve self-learning analysis (§4-G7/§5-R5/§6.3, since pruned; see git history).
 > Deliberately deferred off `feat/improve-self-learning-wiring`; this document is the
 > implementation spec for a follow-up branch.
 >

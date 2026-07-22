@@ -7,7 +7,6 @@ import {
   activeMarkdownDocs,
   CONFIG_DOC_PATH,
   extractSection,
-  PR_714_REPRO_PATH,
   readDoc,
   retiredExecutionExamples,
 } from "./contract-helpers";
@@ -115,22 +114,5 @@ describe("current engine and strategy configuration contract", () => {
     ].join("\n");
     expect(retiredExecutionExamples(example)).toEqual([]);
     expect(retiredExecutionExamples(extractSection(docs, "## Retired Configuration"))).toEqual([]);
-  });
-
-  test("PR 714 repro embeds valid engine configs and YAML v2 workflows", () => {
-    const repro = readDoc(PR_714_REPRO_PATH);
-    const configs = [...repro.matchAll(/config\.json" <<'EOF'\n([\s\S]*?)\nEOF/g)].map((match) =>
-      JSON.parse(match[1]!),
-    );
-    const workflows = [...repro.matchAll(/workflows\/[^"\n]+\.yaml" <<'EOF'\n([\s\S]*?)\nEOF/g)].map(
-      (match) => match[1],
-    );
-
-    expect(configs).toHaveLength(2);
-    expect(workflows).toHaveLength(7);
-    for (const config of configs) expect(AkmConfigSchema.safeParse(config).success).toBe(true);
-    for (const [index, workflow] of workflows.entries()) {
-      expect(parseWorkflowProgram(workflow!, { path: `pr-714-repro-${index}.yaml` }).ok).toBe(true);
-    }
   });
 });

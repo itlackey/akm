@@ -318,7 +318,7 @@ timestamp (`checkin_armed_at`), *not* a background thread. On the next
 (`src/workflows/runtime/checkin.ts`) compares `now` against
 `max(updated_at, checkin_armed_at)`; past a 90s stall window it surfaces a strong
 `continue` directive **through the normal command output**. The ADR
-(`docs/technical/workflow-agent-checkin-adr.md`) explicitly rejects the
+(the workflow-agent check-in ADR) explicitly rejects the
 background-thread alternative (#501): "No daemon in a CLI… the command loop is
 already the heartbeat."
 

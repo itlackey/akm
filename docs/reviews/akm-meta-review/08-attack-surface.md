@@ -60,7 +60,6 @@ Repo:
 - `docs/technical/storage-locations.md` and `docs/technical/filesystem.md` — where everything lives on disk.
 - `docs/data-and-telemetry.md` — what's stored and what leaves the machine.
 - `docs/technical/logs-audit.md` — prior audit of what logs contain (leak candidates).
-- `docs/technical/akm-production-readiness-findings.md` — production-hardening findings, incl. storage integrity.
 - Env/secret asset handling code (grep for the env/secret read paths) and the plugin/hook install code.
 
 Live (read-only, values-redacted): `akm health`, `akm env list` / `akm secret list` (names only), `~/.config/akm/config.json`, `crontab -l`.

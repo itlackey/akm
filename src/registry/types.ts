@@ -106,7 +106,7 @@ export interface RegistrySearchHit {
    * and may exceed `1` (e.g. `scoreStash()` in `providers/static-index.ts` can
    * emit values up to ~1.85). Use only for ranking within a single registry;
    * do not cross-compare with `SearchHit.score` or scores from other
-   * registries. See docs/cli.md and v1-architecture-spec §4.
+   * registries. See docs/cli.md.
    */
   score?: number;
   metadata?: Record<string, string>;

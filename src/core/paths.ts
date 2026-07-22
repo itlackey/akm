@@ -37,7 +37,7 @@ function isUnderBunTest(env: NodeJS.ProcessEnv): boolean {
  * decide whether `AKM_STASH_DIR=$tmpdir` should also isolate config +
  * cache writes (so a test harness's `akm setup --yes --dir .` cannot
  * silently clobber the user's `~/.config/akm/config.json`). See
- * `docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md`
+ * the 2026-05-23 setup-clobbers-user-config incident
  * for the incident that motivated this.
  *
  * Both `/var/folders/*` and `/private/var/folders/*` are matched because
@@ -96,7 +96,7 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
   // isolation pattern
   //   AKM_DATA_DIR=/tmp/x AKM_STASH_DIR=/tmp/x akm setup --yes --dir .
   // from silently clobbering the host config. See
-  // docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md for the incident.
+  // the 2026-05-23 setup-clobbers-user-config incident.
   // Daily users with a persistent AKM_STASH_DIR=~/my-stash are unaffected.
   const stashOverride = env.AKM_STASH_DIR?.trim();
   if (stashOverride && isTransientStashPath(stashOverride)) {

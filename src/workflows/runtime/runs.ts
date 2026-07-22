@@ -311,7 +311,7 @@ export async function startWorkflowRun(
     }
 
     // #506: arm a file-signal check-in (a timestamp, NOT a background thread —
-    // see docs/technical/workflow-agent-checkin-adr.md) so a stalled run can be
+    // per the workflow-agent check-in ADR) so a stalled run can be
     // re-targeted with a `continue` directive. The agent harness + session id
     // are already resolved above (agentHarness/agentSessionId, from #501).
 

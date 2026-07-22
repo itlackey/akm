@@ -56,8 +56,5 @@ Stash:
 
 Repo:
 
-- `docs/design/improve-bitemporal-invalidation-design.md` — the contradiction-invalidation design; this review is its acceptance test.
-- `docs/design/improve-beta50-monitoring.md` — what improve currently writes about its own runs (telemetry-noise candidates).
-- `docs/technical/proposal-storage.md` — how to route dispositions through the queue correctly.
 
 Live (read-only): `~/.local/share/akm/index.db` (memory/lesson rows and their recall stats), recent session logs under the agent CLI's data dir, `crontab -l`.

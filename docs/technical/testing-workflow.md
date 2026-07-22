@@ -203,7 +203,7 @@ scripts/akm-eval/bin/akm-eval-curate-bench \
   --akm "bun /path/to/baseline/src/cli.ts" --compare "bun src/cli.ts" --fail-on-regression
 ```
 
-See `docs/technical/curate-performance-evals.md` and `docs/akm-eval.md`.
+See `docs/akm-eval.md`.
 
 ## Recommended Workflow
 

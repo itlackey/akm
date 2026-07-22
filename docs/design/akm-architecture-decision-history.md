@@ -312,7 +312,6 @@ The current implementation was reviewed for all areas coupled to the proposed ar
 - events, health, migrations, and output shaping;
 - bundle-local runtime state leaks.
 
-The repository's own July 2026 review describes a mature codebase with concentrated structural mass rather than generally poor code. See [`docs/reviews/code-quality-review-2026-07.md`](https://github.com/itlackey/akm/blob/ddc0a1b417efc820ad73d76bfcbef65c9f87b243/docs/reviews/code-quality-review-2026-07.md).
 
 ### 4.12 Final corrections: adapters, websites, portable runtime exports, and memory
 
@@ -2009,7 +2008,6 @@ The current terms are precise and should be used unless implementation proves a 
 
 - [AKM PR #718](https://github.com/itlackey/akm/pull/718) — Original OKF integration proposal that initiated the review.
 - [AKM repository](https://github.com/itlackey/akm) — Current implementation analyzed for refs, asset types, indexing, improve, proposals, sources, workflows, tasks, security, and storage.
-- [Current code-quality review](https://github.com/itlackey/akm/blob/ddc0a1b417efc820ad73d76bfcbef65c9f87b243/docs/reviews/code-quality-review-2026-07.md) — Provided repository scale and concentrated structural-debt context.
 - [Current `SourceProvider` contract](https://github.com/itlackey/akm/blob/ddc0a1b417efc820ad73d76bfcbef65c9f87b243/src/sources/provider.ts) — Demonstrated a useful narrow materializer seam.
 - [Current consolidation implementation](https://github.com/itlackey/akm/blob/ddc0a1b417efc820ad73d76bfcbef65c9f87b243/src/commands/improve/consolidate.ts) — Provided existing merge/delete/promote/contradict behavior, pressure triggers, journals, and safety mechanisms to preserve or improve.
 - [Current task schema](https://github.com/itlackey/akm/blob/ddc0a1b417efc820ad73d76bfcbef65c9f87b243/src/tasks/schema.ts) — Demonstrated that task definitions are already portable and should move behind an adapter rather than disappear.

@@ -46,6 +46,10 @@ release; breaking changes will be called out explicitly in the CHANGELOG.
   | `78` | Configuration error |
 - **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
   / `AKM_INSTALL_DIR` environment override.
+- **Runtime** — the npm package requires Node.js >= 22 as its bootstrap and
+  prefers a working Bun >= 1.0 for execution when both are available; old,
+  unusable, or absent Bun installations fall back to Node.js. Standalone
+  binaries are runtime-free.
 - **On-disk storage** — durable workspace state (events, proposals, history,
   workflow runs, salience) lives in `state.db`; the search index (`index.db`)
   is a fully **regenerable** cache rebuilt by `akm index`; high-volume logs stay

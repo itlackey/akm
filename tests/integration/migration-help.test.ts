@@ -9,15 +9,15 @@ const RELEASE_NOTES_DIR = path.join(PROJECT_ROOT, "docs", "migration", "release-
 
 describe("migration help", () => {
   test("renders bundled migration guidance when changelog is unavailable", () => {
-    const result = renderMigrationHelp("0.5.0", undefined);
-    expect(result).toContain("Migration notes for akm v0.5.0");
-    expect(result).toContain("akm wiki");
+    const result = renderMigrationHelp("0.9.0", undefined);
+    expect(result).toContain("Migration notes for akm v0.9.0");
+    expect(result).toContain("Key operator-facing changes:");
   });
 
   test("normalizes v-prefixed prerelease versions to the stable release notes", () => {
-    const result = renderMigrationHelp("v0.5.0-rc1");
-    expect(result).toContain("Migration notes for akm v0.5.0");
-    expect(result).toContain("## [0.5.0]");
+    const result = renderMigrationHelp("v0.9.0-rc1");
+    expect(result).toContain("Migration notes for akm v0.9.0");
+    expect(result).toContain("## [0.9.0]");
   });
 
   test("supports latest alias when changelog text is available", () => {
@@ -32,13 +32,6 @@ describe("migration help", () => {
     expect(result).toContain(`## [${latest}]`);
   });
 
-  test("prefers bundled prerelease note over stable changelog section", () => {
-    const result = renderMigrationHelp("0.9.0-beta.60");
-    expect(result).toContain("Migration notes for akm v0.9.0-beta.60");
-    expect(result).not.toContain("## [0.9.0]");
-    expect(result).toContain("Full changelog: https://github.com/itlackey/akm/blob/main/CHANGELOG.md");
-  });
-
   test("ensures published static files exist in the repo", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8")) as {
       files?: string[];
@@ -48,7 +41,6 @@ describe("migration help", () => {
     // CHANGELOG.md and LICENSE are auto-published by npm from the package root
     // and intentionally NOT listed in files[] to avoid duplicate shipment.
     expect(staticFiles).toContain("docs/migration/release-notes");
-    expect(staticFiles).toContain("docs/migration/v0.7-to-v0.8.md");
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);
     }
@@ -59,9 +51,9 @@ describe("migration help", () => {
   test("every bundled release-notes file is surfaced by the loader", () => {
     const bundled = listBundledReleaseVersions();
     expect(bundled.length).toBeGreaterThan(0);
-    // Sanity: every known prior release has a note. Adding a new file to
-    // docs/migration/release-notes/ should be all it takes to extend this.
-    for (const version of ["0.0.13", "0.1.0", "0.2.0", "0.3.0", "0.5.0", "0.6.0", "0.7.5", "0.9.0"]) {
+    // Sanity: the corpus ships only the current release's note — prior
+    // versions were pruned (fetch them from the matching release tag).
+    for (const version of ["0.9.0"]) {
       expect(bundled).toContain(version);
       const result = renderMigrationHelp(version, undefined);
       expect(result).toContain(`Migration notes for akm v${version}`);
@@ -80,7 +72,7 @@ describe("migration help", () => {
     expect(result).toContain("9.9.9");
     // Fallback lists the bundled versions so users can pick one that exists.
     expect(result).toContain("Available bundled notes:");
-    expect(result).toContain("0.6.0");
+    expect(result).toContain("0.9.0");
   });
 
   test("rejects unsafe version components (path traversal guard)", () => {

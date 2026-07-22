@@ -344,7 +344,7 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   // When `outcomeWeightEnabled` is true/absent (DEFAULT ON since the G2
   // saturation cap landed): use WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60)
   // so the prediction-error outcome signal actually shapes rankScore — this
-  // is the R1 loop-closure from docs/design/improve-self-learning-analysis.md.
+  // is the R1 loop-closure.
   //
   // When `outcomeWeightEnabled` is explicitly false (operator opt-out via
   // `improve.salience.outcomeWeightEnabled: false`): fall back to the WS-1

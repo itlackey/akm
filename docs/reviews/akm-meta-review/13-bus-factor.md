@@ -58,5 +58,4 @@ Repo:
 - `docs/getting-started.md` and `docs/local-development.md` — what a fresh setup documents vs. what it assumes.
 - `docs/technical/storage-locations.md` — the AKM_*_DIR / HOME / XDG assumptions.
 - `docs/technical/manual-testing-checklist.md` — operational verification steps that may only be in the owner's head.
-- `docs/technical/incidents/` — prior incidents that reveal single-host fragility.
 - `docs/data-and-telemetry.md` — the accumulation processes with no alarm.

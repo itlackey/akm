@@ -59,7 +59,7 @@ const UTILITY_WEIGHT = 0.5;
 const UTILITY_MAX_BOOST = 1.5;
 
 /**
- * R2 (docs/design/improve-self-learning-analysis.md) — weight of the improve
+ * R2 — weight of the improve
  * loop's `asset_salience.rank_score` in user-facing ranking. Bounded well
  * below the utility boost so the composed signal refines, never dominates,
  * lexical/semantic relevance. rank_score ∈ [0,1] → boost ∈ [1, 1.2].
@@ -545,11 +545,10 @@ export const defaultUtilityRankingContributors: UtilityRankingContributor[] = [
  * `name`s). A no-op — returns the input list unchanged (same reference) — when
  * the env value is unset/empty, so production ranking is never affected unless
  * the operator opts in. Its sole purpose is per-contributor ablation for the
- * curate ablation harness (see `docs/technical/ranking-ablation-and-saturation-analysis.md`
- * and `scripts/akm-eval/`): run the same fixture with and without a contributor
+ * curate ablation harness (`scripts/akm-eval/`): run the same fixture with and without a contributor
  * and diff the ranked results to measure whether that contributor is load-bearing.
  *
- * NOTE (see the analysis doc): a contributor's ablation delta is only observable
+ * NOTE (from the 2026-06 ablation analysis): a contributor's ablation delta is only observable
  * in the UNSATURATED score regime — once entries saturate at the `displayScore`
  * ceiling their contributor deltas are absorbed and ablation reads Δ=0.
  */

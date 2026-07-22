@@ -185,7 +185,7 @@ akm config unset semanticSearchMode
 | Indexing time | Seconds to minutes depending on stash size |
 
 If the host is too constrained for local embeddings, configure a remote
-embedding endpoint instead (see [configuration.md](configuration.md)).
+embedding endpoint instead (see [configuration.md](../configuration.md)).
 
 ## 5. Add Sources
 

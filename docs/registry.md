@@ -139,7 +139,7 @@ relevant, the registry enforces tag-based filtering:
 > `akm-stash` keyword / topic. The pre-0.6.0 `akm-kit` and `agentikit`
 > keywords/topics are **not** honored as fallbacks. Publishers migrating
 > from 0.5.x must add the new tag — see the
-> [migration guide](migration/v0.5-to-v0.6.md) for the step-by-step
+> [migration guide](https://github.com/itlackey/akm/blob/v0.6.0/docs/migration/v0.5-to-v0.6.md) for the step-by-step
 > publisher checklist.
 
 If you are publishing a stash, add these tags so it can be discovered:
@@ -436,7 +436,7 @@ Each asset entry supports:
 The 0.6.0 release dropped support for the legacy v1 / v2 indexes;
 publishers must regenerate `index.json` with `akm registry build-index`
 or the [akm-registry](https://github.com/itlackey/akm-registry) tooling
-(see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md)). akm
+(see the [v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/v0.6.0/docs/migration/v0.5-to-v0.6.md)). akm
 treats unknown fields inside a v3 entry as forward-compatible.
 
 ## Cache Layout

@@ -412,8 +412,8 @@
       "consumers": [
         "tests/commands/goldens-cli-output.test.ts"
       ],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate <version>` scrubbed text output — static bundled release-notes prose (docs/migration/release-notes), not derived from any fixture/sandbox ref, so unaffected by Chunk 5's ref-grammar codemod. Chunk 9 oracle; no production ref literals.",
-      "sha256": "efc26b5d2f066f0d588565dc80dbdb772f68ac3b7abb792457634d2cdb16f321"
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family D `help migrate <version>` scrubbed text output. Re-baselined 2026-07-21 by the docs prune: bundled release notes for pre-0.9 versions were removed, so `help migrate 0.6.0` now renders the CHANGELOG-section fallback instead of the bundled note. Not derived from any fixture/sandbox ref; no production ref literals.",
+      "sha256": "48d748f84586889c58127e44331b2e50bdd92dcc9373e882ab90b09a12f5bc85"
     },
     {
       "path": "tests/fixtures/goldens/cli/d-help.json",

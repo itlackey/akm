@@ -56,8 +56,4 @@ Stash:
 
 Repo:
 
-- `docs/design/improve-salience-working-reference.md` — salience formulas, proposal lifecycle, footgun list. The primary map.
-- `docs/design/improve-pipeline-deep-tuning-analysis.md` — where the tuning knobs are and what they were set to compensate for.
-- `docs/design/improve-optimal-default-config.md` — the current hand-tuned defaults.
-- `docs/technical/v1-architecture-spec.md` — the intended 1.0 shape these heuristics must fit (or be cut from).
 - `docs/technical/search.md` / `docs/technical/indexing.md` — the ranking/indexing heuristics on the read path.

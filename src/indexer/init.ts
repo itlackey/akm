@@ -8,7 +8,7 @@
  * Historically a lazy gate (`ensureBuiltinsRegistered` in `walk/file-context.ts`)
  * registered the built-in renderer set on first use. That implicit,
  * order-dependent wiring is the M1/M2 finding in
- * `docs/technical/code-health-brittleness-audit.md`.
+ * the 2026-06 code-health brittleness audit.
  *
  * `initIndexer()` folds the renderer registration into a single deterministic,
  * idempotent entry point. It registers, exactly once:

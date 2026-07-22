@@ -6,7 +6,7 @@
  * Agent check-in: a no-background-thread "continue" nudge for stalled workflow
  * runs (#506).
  *
- * The design decision (see docs/technical/workflow-agent-checkin-adr.md)
+ * The design decision (the workflow-agent check-in ADR)
  * reconciles #506 (file/command-loop signal) with #501 (background thread) in
  * favour of the former. There is intentionally NO timer or resident process
  * here. Arming a check-in writes a timestamp (`checkin_armed_at`) on the run

@@ -329,7 +329,7 @@ akm show scripts/deploy.sh
    `agentikit` topics are **not** honored as fallbacks. If you are migrating
    a 0.5.x stash, add the new topic (and remove the old ones once your
    audience has moved). See the
-   [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) for the full
+   [v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/v0.6.0/docs/migration/v0.5-to-v0.6.md) for the full
    publisher checklist.
 
 3. Others can now install it:

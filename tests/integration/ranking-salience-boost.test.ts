@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R2 (docs/design/improve-self-learning-analysis.md) — the improve loop's
+ * R2 — the improve loop's
  * `asset_salience.rank_score` composes into user-facing ranking as a bounded
  * multiplicative boost, loaded fail-open from state.db.
  */

@@ -128,7 +128,7 @@ describe("getConfigDir", () => {
     expect(result).toBe("/override/config");
   });
 
-  // Regression: docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md. When the user (or a
+  // Regression: the 2026-05-23 setup-clobbers-user-config incident. When the user (or a
   // test harness) sets AKM_STASH_DIR to a transient path, config writes
   // must NOT target the user's host ~/.config/akm — they must route into
   // the stash so saveConfig() can never silently clobber the host.
@@ -228,7 +228,7 @@ describe("getCacheDir", () => {
     expect(result).toBe("/override/cache");
   });
 
-  // Regression: docs/technical/incidents/2026-05-23-setup-clobbers-user-config.md companion fix. When
+  // Regression: the 2026-05-23 setup-clobbers-user-config incident companion fix. When
   // AKM_STASH_DIR is transient, cache (which holds config-backups/) must
   // also isolate into the stash so saveConfig backup writes do not
   // pollute the user's host ~/.cache/akm/config-backups/.

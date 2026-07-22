@@ -17,8 +17,7 @@ This page documents Phases 1–7 (read-only deterministic runner, paired
 mode, compare/trend/collect, regression diffing, memory-safety +
 workflow-compliance suites, judge-calibration probe, graph A/B ablation,
 deterministic replay, and optional LLM judging with guardrails). See
-`docs/archive/akm-eval-implementation-plan.md` for the full eight-phase
-plan and `scripts/akm-eval/README.md` for the operator quick-start.
+`scripts/akm-eval/README.md` for the operator quick-start.
 
 ## Quick start
 
@@ -61,8 +60,7 @@ care about.
 > leapfrog" bug lived), and it scores set-membership (recall), not rank — so a
 > junk hit ranked above a good hit still scores 1.0. For rank-aware, hybrid-path
 > curate measurement that is reproducible across versions, use the deterministic
-> **curate benchmark**: `scripts/akm-eval/bin/akm-eval-curate-bench` (see
-> `docs/technical/curate-performance-evals.md`).
+> **curate benchmark**: `scripts/akm-eval/bin/akm-eval-curate-bench`.
 
 ### Proposal quality
 
@@ -439,8 +437,7 @@ under a suite dir as a case.
 > mined from a personal live `index.db` — PII-ish and non-reproducible on
 > another machine — so it is a local, on-demand *trend* tool, not a portable
 > benchmark. For a reproducible cross-version corpus benchmark, use the frozen,
-> synthetic, deterministic curate benchmark instead (`akm-eval-curate-bench`;
-> `docs/technical/curate-performance-evals.md`). Regenerate the local suite with
+> synthetic, deterministic curate benchmark instead (`akm-eval-curate-bench`). Regenerate the local suite with
 > the command above whenever you want a fresh trend snapshot.
 
 This suite is the **corpus-quality benchmark**: its aggregate score, tracked
@@ -523,7 +520,7 @@ real PASS/FAIL. Override the compared runs with `--baseline-run <id>` /
 
 ## Status
 
-All eight phases of `docs/archive/akm-eval-implementation-plan.md` are
+All eight phases of the original implementation plan are
 implemented and CI-gated via `.github/workflows/akm-eval-smoke.yml` (Phase 8).
 The smoke suite + deterministic replay + memory-regression suite run on every
 PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
@@ -532,10 +529,4 @@ PR touching `scripts/akm-eval/`, `src/`, or `docs/example-stash/`.
 
 - [`scripts/akm-eval/README.md`](../scripts/akm-eval/README.md) —
   operator quick-start.
-- [`docs/archive/akm-eval-implementation-plan.md`](archive/akm-eval-implementation-plan.md) —
-  the full eight-phase plan.
-- `akm health` (0.8.0+) — built-in per-improve-run + window analysis
-  ([health-command-enhancements.md](archive/health-command-enhancements.md), archived — shipped 0.8.0).
-- [`docs/archive/improve-pipeline-analysis-0.8.0.md`](archive/improve-pipeline-analysis-0.8.0.md) —
-  the roadmap this toolkit implements R10 of (and Phases 2–6 implement
-  R1, R3, R5, R8).
+- `akm health` (0.8.0+) — built-in per-improve-run + window analysis.

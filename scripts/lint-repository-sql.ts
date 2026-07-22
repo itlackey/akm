@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * lint-repository-sql.ts  (X4 — architecture-refactor-plan)
+ * lint-repository-sql.ts  (X4)
  *
  * Architectural fitness function for the "repository owns the SQL" boundary.
  *

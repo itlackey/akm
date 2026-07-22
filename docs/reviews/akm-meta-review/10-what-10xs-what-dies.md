@@ -53,7 +53,6 @@ Stash:
 
 Repo:
 
-- `docs/technical/v1-architecture-spec.md` — the 1.0 shape to reconcile against (and cut from).
 - `docs/roadmap.md` — what's currently planned; flag the DIES items.
 - `docs/technical/akm-core-principles.md` — the principles that should define the wedge.
 - `docs/technical/search.md` / `docs/technical/indexing.md` — the ranking/retrieval subsystems most exposed to "native retrieval kills this."

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLI_DOC_PATH, extractSection, IMPROVE_AUTOSYNC_PATH, readDoc } from "./contract-helpers";
+import { CLI_DOC_PATH, extractSection, readDoc } from "./contract-helpers";
 
 // Pins the current documented improvement command surface.
 
@@ -20,13 +20,6 @@ describe("current improvement CLI documentation contract", () => {
     expect(cli).toMatch(/This page is authoritative for\s*(?:>\s*)?the current CLI/);
     expect(cli).not.toContain("docs/archive/");
     expect(cli).not.toContain("§9.4");
-  });
-
-  test("documents auto-sync under the current improve strategy config path", () => {
-    const autosync = readDoc(IMPROVE_AUTOSYNC_PATH);
-    expect(autosync).toContain("improve.strategies.<name>.sync.enabled");
-    expect(autosync).not.toContain("profiles.improve.<name>.sync.enabled");
-    expect(autosync).not.toContain("resolveImproveProfile");
   });
 
   test("agent and propose select named engines while improve selects a strategy", () => {
