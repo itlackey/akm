@@ -1,0 +1,252 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "ref": "team//memories/project-a/auth-a",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/auth-a",
+      "tags": ["auth", "common", "20260722", "the"],
+      "entities": ["guardian", "/srv/private/auth.ts", "session_checkpoint"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/one"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 1200
+    },
+    {
+      "id": 2,
+      "ref": "team//memories/project-b/auth-b",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-b/auth-b",
+      "tags": ["auth", "common", "isolated", "20260722", "the"],
+      "entities": ["guardian", "ABC-123", "session_checkpoint"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/two"], "evidenceSources": [] },
+      "project": "project-b",
+      "fileSize": 1600
+    },
+    {
+      "id": 3,
+      "ref": "team//memories/project-c/auth-c",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-c/auth-c",
+      "tags": ["auth", "common", "isolated", "20260722", "the"],
+      "entities": ["guardian", "session_checkpoint"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/three"], "evidenceSources": [] },
+      "project": "project-c",
+      "fileSize": 2000
+    },
+    {
+      "id": 4,
+      "ref": "team//memories/project-a/auth-d",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/auth-d",
+      "tags": ["auth", "isolated"],
+      "entities": ["release"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/one"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 800
+    },
+    {
+      "id": 5,
+      "ref": "team//memories/project-a/claude-session-20260722-deadbeef",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/claude-session-20260722-deadbeef",
+      "tags": ["auth", "isolated"],
+      "entities": ["guardian"],
+      "provenance": {
+        "xrefs": [],
+        "sources": [],
+        "sourceRefs": ["sessions/opencode/telemetry"],
+        "evidenceSources": []
+      },
+      "project": "project-a",
+      "fileSize": 9000
+    },
+    {
+      "id": 6,
+      "ref": "team//memories/project-a/session-checkpoint-lint-skips",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/session-checkpoint-lint-skips",
+      "tags": ["lint"],
+      "entities": ["linter"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/four"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 700
+    },
+    {
+      "id": 7,
+      "ref": "team//memories/project-a/auth-a.derived",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/auth-a.derived",
+      "tags": ["auth", "isolated"],
+      "entities": ["guardian"],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["memories/project-a/auth-a"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 600
+    },
+    {
+      "id": 8,
+      "ref": "team//memories/project-a/broad-a",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/broad-a",
+      "tags": ["broad"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/broad"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 400
+    },
+    {
+      "id": 9,
+      "ref": "team//memories/project-a/broad-b",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/broad-b",
+      "tags": ["broad"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/broad"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 400
+    },
+    {
+      "id": 10,
+      "ref": "team//memories/project-a/broad-c",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/broad-c",
+      "tags": ["broad"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/broad"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 400
+    },
+    {
+      "id": 11,
+      "ref": "team//memories/project-a/broad-d",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/broad-d",
+      "tags": ["broad"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/broad"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 400
+    },
+    {
+      "id": 12,
+      "ref": "team//memories/project-a/broad-e",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/broad-e",
+      "tags": ["broad"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/broad"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 400
+    },
+    {
+      "id": 13,
+      "ref": "team//memories/project-a/tiny-a",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/tiny-a",
+      "tags": ["tiny"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/tiny-a"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 300
+    },
+    {
+      "id": 14,
+      "ref": "team//memories/project-a/tiny-b",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-a",
+      "name": "project-a/tiny-b",
+      "tags": ["tiny"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/tiny-b"], "evidenceSources": [] },
+      "project": "project-a",
+      "fileSize": 300
+    },
+    {
+      "id": 15,
+      "ref": "team//memories/project-x/foreign-a",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-b",
+      "name": "project-x/foreign-a",
+      "tags": ["isolated"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/foreign"], "evidenceSources": [] },
+      "project": "project-x",
+      "fileSize": 500
+    },
+    {
+      "id": 16,
+      "ref": "team//memories/project-x/foreign-b",
+      "bundle": "team",
+      "sourceRoot": "/fixture/team-b",
+      "name": "project-x/foreign-b",
+      "tags": ["isolated"],
+      "entities": [],
+      "provenance": { "xrefs": [], "sources": [], "sourceRefs": ["sessions/opencode/foreign"], "evidenceSources": [] },
+      "project": "project-x",
+      "fileSize": 500
+    },
+    {
+      "id": 17,
+      "ref": "community//memories/project-z/community-a",
+      "bundle": "community",
+      "sourceRoot": "/fixture/community",
+      "name": "project-z/community-a",
+      "tags": ["isolated"],
+      "entities": [],
+      "provenance": {
+        "xrefs": [],
+        "sources": [],
+        "sourceRefs": ["sessions/opencode/community"],
+        "evidenceSources": []
+      },
+      "project": "project-z",
+      "fileSize": 500
+    },
+    {
+      "id": 18,
+      "ref": "community//memories/project-z/community-b",
+      "bundle": "community",
+      "sourceRoot": "/fixture/community",
+      "name": "project-z/community-b",
+      "tags": ["isolated"],
+      "entities": [],
+      "provenance": {
+        "xrefs": [],
+        "sources": [],
+        "sourceRefs": ["sessions/opencode/community"],
+        "evidenceSources": []
+      },
+      "project": "project-z",
+      "fileSize": 500
+    },
+    {
+      "id": 19,
+      "ref": "community//memories/project-z/community-c",
+      "bundle": "community",
+      "sourceRoot": "/fixture/community",
+      "name": "project-z/community-c",
+      "tags": ["isolated"],
+      "entities": [],
+      "provenance": {
+        "xrefs": [],
+        "sources": [],
+        "sourceRefs": ["sessions/opencode/community"],
+        "evidenceSources": []
+      },
+      "project": "project-z",
+      "fileSize": 500
+    }
+  ]
+}

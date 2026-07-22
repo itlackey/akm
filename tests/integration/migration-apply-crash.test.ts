@@ -119,7 +119,7 @@ function seed(options?: { failingWorkflow?: boolean }): string {
 describe("cross-artifact migration apply crash recovery", () => {
   // Chunk 8, WI-8.2: "cutover" is the three-DB merge phase, inserted after
   // workflow-applied. A SIGKILL right after it advances resumes cleanly through
-  // config → committed. After the cutover, workflow.db is DELETED (its rows are
+  // config → pilot → committed. After the cutover, workflow.db is DELETED (its rows are
   // merged into state.db), so the post-apply workflow artifact status is
   // "missing" — the intended terminal state, not a failure.
   //
@@ -128,7 +128,7 @@ describe("cross-artifact migration apply crash recovery", () => {
   // deleted), NOT the live array. The CRASH_AFTER="workflow" case pins that a
   // journal at phase "workflow-applied" resumes forward into cutover-applied →
   // committed (workflow ends "missing") — the required journal backward-read.
-  for (const phase of ["state", "workflow", "cutover", "config"] as const) {
+  for (const phase of ["state", "workflow", "cutover", "config", "pilot"] as const) {
     test(`resumes after SIGKILL between ${phase} and the next apply step`, async () => {
       const prepared = seed();
       const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
@@ -237,4 +237,27 @@ describe("cross-artifact migration apply crash recovery", () => {
     expect(fs.readFileSync(getStateDbPathInDataDir())).toEqual(before);
     expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(true);
   });
+
+  test("fails closed when the persisted cutover ref map is missing on resume", async () => {
+    const prepared = seed();
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env, AKM_TEST_MIGRATION_CRASH_AFTER: "cutover" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const journal = JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")) as { operationId: string };
+    const mapPath = path.join(
+      path.dirname(getMigrationApplyJournalPath()),
+      `cutover-refmap-${journal.operationId}.json`,
+    );
+    expect(fs.existsSync(mapPath)).toBe(true);
+    fs.rmSync(mapPath);
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code).not.toBe(0);
+    expect(resumed.stderr).toMatch(/cutover ref map|ref map|recovery/i);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(true);
+  }, 20_000);
 });

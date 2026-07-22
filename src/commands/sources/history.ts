@@ -23,7 +23,7 @@ import { UsageError } from "../../core/errors";
 import { type EventsContext, readEvents } from "../../core/events";
 import { openStateDatabase } from "../../core/state-db";
 import { isoToSqlite, parseSinceToIso } from "../../core/time";
-import { getUsageEvents, type UsageEventRow } from "../../indexer/usage/usage-events";
+import { getUsageEvents, type UsageEventRow, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type { Database } from "../../storage/database";
 import { listProposals } from "../proposal/repository";
 
@@ -87,10 +87,9 @@ export interface HistoryOptions {
   ref?: string;
   since?: string;
   /**
-   * Filter by event source: "user" for direct CLI invocations, "improve" for
-   * operations triggered by `akm improve`.
+   * Filter by event source. `unknown` includes nullable historical rows.
    */
-  source?: "user" | "improve";
+  source?: UsageEventSource;
   /**
    * When true, proposal lifecycle events (`promoted`, `rejected`) from the
    * `events.jsonl` stream are merged into the history output alongside usage

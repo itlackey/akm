@@ -16,11 +16,12 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { createProposal } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { getMigrationApplyJournalPath } from "../../src/core/migration-backup";
 import { getMigrationOperationRoot } from "../../src/core/migration-operation";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
@@ -29,6 +30,7 @@ import { type ContentMigrationReport, runContentMigration } from "../../src/migr
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json";
 import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
+import { migratePilotTreatmentFiles } from "../../src/migrate/legacy/three-db-cutover";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
@@ -115,14 +117,14 @@ function seedOldIndexDb(): void {
        entry_ref TEXT,
        signal TEXT,
        metadata TEXT,
-       source TEXT NOT NULL DEFAULT 'user',
        created_at TEXT NOT NULL DEFAULT (datetime('now'))
      );`,
   );
   const insEntry = idx.prepare("INSERT INTO entries (entry_key, item_ref, entry_type, stash_dir) VALUES (?, ?, ?, ?)");
   insEntry.run(RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF, "skill", stashRoot);
   insEntry.run(RC_TRAIN_LIVE_REFS.memory, MEMORY_ITEM_REF, "memory", stashRoot);
-  const insUsage = idx.prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, 'user')");
+  // Pre-provenance schema: these rows must migrate as unattributed, never user.
+  const insUsage = idx.prepare("INSERT INTO usage_events (event_type, entry_ref) VALUES (?, ?)");
   insUsage.run("show", RC_TRAIN_LIVE_REFS.skill); // legacy → re-keyed to SKILL_ITEM_REF
   insUsage.run("show", SKILL_ITEM_REF); // already bundle grammar → carried as-is
   insUsage.run("feedback", USAGE_EVENT_ORPHAN_REF); // orphan legacy → kept + audited
@@ -171,6 +173,9 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
     expect(fs.existsSync(workflowDbPath)).toBe(true);
     seedWorkflowRun();
     seedOldIndexDb();
+    const treatmentFile = path.join(getDataDir(), "stash", ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+    fs.writeFileSync(treatmentFile, `# pilot\n${RC_TRAIN_LIVE_REFS.skill}\n${MEMORY_ITEM_REF}\n`);
     const prepared = writeConfigs();
 
     const applied = await runCliCapture(["migrate", "apply", "--config", prepared]);
@@ -225,12 +230,15 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
       // usage_events rescued into state.db and residual legacy ref re-keyed.
       const usageRefs = refsIn(db, "usage_events", "entry_ref");
       expect(usageRefs.filter((r) => r === SKILL_ITEM_REF).length).toBe(2); // legacy re-keyed + bundle carried
+      const usageSources = db.query("SELECT DISTINCT source FROM usage_events").all() as Array<{ source: string }>;
+      expect(usageSources).toEqual([{ source: "unknown" }]);
       // The orphan usage_events row is KEPT in place (append-only) and audited.
       expect(usageRefs).toContain(USAGE_EVENT_ORPHAN_REF);
       const usageOrphan = db
         .query("SELECT row_count FROM legacy_state WHERE surface = 'usage_events' AND old_ref = ?")
         .get(USAGE_EVENT_ORPHAN_REF) as { row_count: number } | undefined;
       expect(usageOrphan?.row_count).toBe(1);
+      expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`# pilot\n${SKILL_ITEM_REF}\n${MEMORY_ITEM_REF}\n`);
     } finally {
       db.close();
     }
@@ -407,6 +415,9 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
     db.prepare(`INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (':bad', 0.5, 100)`).run();
     db.close();
     seedOldIndexDb();
+    const treatmentFile = path.join(getDataDir(), "stash", ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`);
     const prepared = writeConfigs();
 
     // Semantic pre-state snapshot (VACUUM-INTO backups are not byte-identical to a
@@ -429,9 +440,87 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
       expect(refsIn(post, "asset_salience", "asset_ref")).toContain(RC_TRAIN_LIVE_REFS.skill);
       expect(ledgerIds(post)).toEqual(preLedger);
       expect(ledgerIds(post).at(-1)).toBe(PRE_CUTOVER_STATE_CEILING); // 020 rolled back
+      expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${RC_TRAIN_LIVE_REFS.skill}\n`);
     } finally {
       post.close();
     }
+  }, 30_000);
+});
+
+describe("WI-8.2 pilot treatment recovery", () => {
+  test("fsyncs the parent directory after atomically replacing a treatment file", () => {
+    const stash = path.join(getDataDir(), "pilot-durability");
+    const treatmentFile = path.join(stash, ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`);
+
+    const originalFsync = fs.fsyncSync;
+    let directorySyncObserved = false;
+    spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (fs.fstatSync(fd).isDirectory()) {
+        directorySyncObserved = true;
+        expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
+      }
+      return originalFsync(fd);
+    });
+
+    expect(
+      migratePilotTreatmentFiles(
+        [{ path: stash, primary: true }],
+        new Map([[RC_TRAIN_LIVE_REFS.skill, SKILL_ITEM_REF]]),
+      ),
+    ).toBe(1);
+    expect(directorySyncObserved).toBe(true);
+  });
+
+  test("keeps forward recovery pending when the treatment rewrite fails", async () => {
+    openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+    seedOldIndexDb();
+    const treatmentFile = path.join(getDataDir(), "stash", ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(treatmentFile, { recursive: true });
+    const prepared = writeConfigs();
+
+    const failed = await runCliCapture(["migrate", "apply", "--config", prepared]);
+    expect(failed.code).not.toBe(0);
+    expect(failed.stderr).toMatch(/pilot treatment|forward recovery|directory/i);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")).phase).toBe("pilot-prepared");
+
+    fs.rmSync(treatmentFile, { recursive: true });
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`);
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+  }, 30_000);
+
+  test("resumes after a crash between treatment rewrite and journal advancement", async () => {
+    openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+    seedOldIndexDb();
+    const treatmentFile = path.join(getDataDir(), "stash", ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+    fs.mkdirSync(path.dirname(treatmentFile), { recursive: true });
+    fs.writeFileSync(treatmentFile, `${RC_TRAIN_LIVE_REFS.skill}\n`);
+    const prepared = writeConfigs();
+
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env, AKM_TEST_MIGRATION_CRASH_GAP: "pilot" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode).not.toBe(0);
+    expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
+    expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")).phase).toBe("pilot-prepared");
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${SKILL_ITEM_REF}\n`);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
   }, 30_000);
 });
 

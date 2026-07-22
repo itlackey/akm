@@ -56,7 +56,7 @@ describe("usage_events query characterization (WS5)", () => {
     db.close();
   });
 
-  test("countFeedbackSignals matches the inline feedback-cli SUM query", () => {
+  test("countFeedbackSignals includes only user-attributed utility signals", () => {
     const entryId = 1;
     const expected = db
       .prepare(
@@ -64,7 +64,7 @@ describe("usage_events query characterization (WS5)", () => {
            SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
            SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
          FROM usage_events
-         WHERE event_type = 'feedback' AND entry_id = ?`,
+         WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
       )
       .get(entryId) as { pos: number | null; neg: number | null } | undefined;
 
@@ -74,8 +74,8 @@ describe("usage_events query characterization (WS5)", () => {
     });
     // entry 1: 2 positive, 1 negative.
     expect(countFeedbackSignals(db, 1)).toEqual({ pos: 2, neg: 1 });
-    // entry 2: 0 positive, 1 negative.
-    expect(countFeedbackSignals(db, 2)).toEqual({ pos: 0, neg: 1 });
+    // entry 2 has only improve-generated feedback, so it is not utility.
+    expect(countFeedbackSignals(db, 2)).toEqual({ pos: 0, neg: 0 });
     // unknown entry: zeroes (SUM over empty set is NULL -> coalesced to 0).
     expect(countFeedbackSignals(db, 999)).toEqual({ pos: 0, neg: 0 });
   });

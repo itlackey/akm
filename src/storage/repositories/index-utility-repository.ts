@@ -192,10 +192,8 @@ function bareRefCandidates(ref: string): string[] {
  * signal here. Legacy summary-only curate rows with a NULL entry_ref simply
  * contribute nothing.
  *
- * Machine-sourced events (`source` = 'improve' or 'task') are EXCLUDED: this
- * count feeds salience/ranking, and pipeline probe traffic counting as demand
- * creates a self-reinforcing loop (meta-review 05 DRIFT-6). NULL sources
- * (pre-column rows) count as user demand.
+ * Machine/eval/unattributed/extension events are excluded: this count feeds
+ * salience and ranking, so only explicitly attributed `user` traffic counts.
  */
 export function getRetrievalCounts(
   indexDb: Database,
@@ -247,7 +245,7 @@ export function getRetrievalCounts(
          FROM usage_events
          WHERE event_type IN ('search','show','curate')
            AND entry_ref IS NOT NULL
-           AND (source IS NULL OR source NOT IN ('improve','task'))
+            AND source = 'user'
            AND CASE
                  WHEN instr(entry_ref, '//') > 0
                    THEN substr(entry_ref, instr(entry_ref, '//') + 2)
@@ -309,7 +307,7 @@ function getSourceScopedRetrievalCounts(
            FROM usage_events ue
           WHERE ue.event_type IN ('search','show','curate')
             AND ue.entry_ref IS NOT NULL
-            AND (ue.source IS NULL OR ue.source NOT IN ('improve','task'))
+              AND ue.source = 'user'
             AND CASE
                   WHEN instr(ue.entry_ref, '//') > 0
                     THEN substr(ue.entry_ref, instr(ue.entry_ref, '//') + 2)

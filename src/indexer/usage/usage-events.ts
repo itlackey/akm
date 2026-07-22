@@ -18,13 +18,20 @@ import type { Database, SqlValue } from "../../storage/database";
 /**
  * Provenance of a usage event. `"user"` = interactive/direct invocation
  * (including agent sessions acting for the user); `"improve"` = the improve
- * pipeline's own retrievals (reflect/distill agents); `"task"` = the task
- * runner (scheduled/cron work). Non-`"user"` sources are machine demand and
- * are excluded from retrieval-derived ranking signals (`getRetrievalCounts`,
- * utility bumps) so pipeline traffic cannot inflate them (meta-review 05
- * DRIFT-6). Propagated across process boundaries via `AKM_EVENT_SOURCE`.
+ * pipeline's own retrievals; `"task"` = scheduled work; `"audit"` = eval or
+ * measurement traffic; `"unknown"` = unattributed legacy/extension traffic.
+ * Machine and unattributed sources are excluded from demand and utility.
  */
-export type UsageEventSource = "user" | "improve" | "task";
+export type UsageEventSource = "user" | "improve" | "task" | "audit" | "unknown";
+
+const USAGE_EVENT_SOURCES = new Set<UsageEventSource>(["user", "improve", "task", "audit", "unknown"]);
+
+/** Resolve subprocess provenance without treating an invalid value as user demand. */
+export function resolveUsageEventSource(env: Record<string, string | undefined> = process.env): UsageEventSource {
+  const raw = env.AKM_EVENT_SOURCE;
+  if (raw === undefined || raw === "") return "user";
+  return USAGE_EVENT_SOURCES.has(raw as UsageEventSource) ? (raw as UsageEventSource) : "unknown";
+}
 
 export interface UsageEvent {
   event_type: string;
@@ -33,7 +40,7 @@ export interface UsageEvent {
   entry_ref?: string;
   signal?: string;
   metadata?: string;
-  /** Event source (see {@link UsageEventSource}). Defaults to `"user"` when omitted. */
+  /** Event source (see {@link UsageEventSource}). Omitted events are unattributed. */
   source?: UsageEventSource;
 }
 
@@ -101,7 +108,7 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
       event.entry_ref ?? null,
       event.signal ?? null,
       event.metadata ?? null,
-      event.source ?? "user",
+      event.source ?? "unknown",
     );
   } catch {
     /* fire-and-forget: silently ignore errors */
@@ -173,8 +180,12 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
     }
   }
   if (filters?.source) {
-    conditions.push("source = ?");
-    params.push(filters.source);
+    if (filters.source === "unknown") {
+      conditions.push("(source = 'unknown' OR source IS NULL OR source = '')");
+    } else {
+      conditions.push("source = ?");
+      params.push(filters.source);
+    }
   }
   if (filters?.since) {
     conditions.push("created_at >= ?");
@@ -186,7 +197,8 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
                FROM usage_events ${where}
                ORDER BY id ASC`;
 
-  return db.prepare(sql).all(...(params as SqlValue[])) as UsageEventRow[];
+  const rows = db.prepare(sql).all(...(params as SqlValue[])) as Array<UsageEventRow & { source: string | null }>;
+  return rows.map((row) => ({ ...row, source: row.source || "unknown" }));
 }
 
 /**
@@ -204,7 +216,7 @@ export function countFeedbackSignals(db: Database, entryId: number): { pos: numb
          SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
          SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
        FROM usage_events
-       WHERE event_type = 'feedback' AND entry_id = ?`,
+       WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
     )
     .get(entryId) as { pos: number | null; neg: number | null } | undefined;
   return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };

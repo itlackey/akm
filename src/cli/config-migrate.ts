@@ -58,6 +58,8 @@ import {
   type CutoverStashRoot,
   cutoverMergeCommitted,
   deleteWorkflowDb,
+  loadCutoverRefMap,
+  migratePilotTreatmentFiles,
   quarantineIndexDb,
   runThreeDbCutover,
 } from "../migrate/legacy/three-db-cutover";
@@ -98,6 +100,8 @@ type ApplyPhase =
   // (the merge needs workflow.db already rolled to 010) and BEFORE config-applied.
   | "cutover-applied"
   | "config-applied"
+  | "pilot-prepared"
+  | "pilot-applied"
   | "rollback-prepared"
   | "committed";
 
@@ -366,7 +370,7 @@ function validateApplyPhase(journal: ApplyJournal, manifest: MigrationBackupMani
             ? stateApplied && workflowApplied && (configOriginal || configApplied)
             : journal.phase === "cutover-applied"
               ? stateApplied && workflowFinal && (configOriginal || configApplied)
-              : // config-applied / committed
+              : // config-applied / pilot-prepared / pilot-applied / committed
                 stateApplied && workflowFinal && configApplied;
   if (!reachable) {
     throw new ConfigError(
@@ -396,6 +400,8 @@ function readApplyJournal(): {
       "workflow-applied",
       "cutover-applied",
       "config-applied",
+      "pilot-prepared",
+      "pilot-applied",
       "rollback-prepared",
       "committed",
     ];
@@ -502,6 +508,8 @@ function advanceApplyJournal(journal: ApplyJournal, phase: ApplyPhase): void {
     "workflow-applied",
     "cutover-applied",
     "config-applied",
+    "pilot-prepared",
+    "pilot-applied",
     "committed",
   ];
   if (order.indexOf(phase) > order.indexOf(journal.phase)) journal.phase = phase;
@@ -523,11 +531,11 @@ function clearApplyJournal(): void {
   }
 }
 
-function crashAfterForTests(phase: "state" | "workflow" | "cutover" | "config"): void {
+function crashAfterForTests(phase: "state" | "workflow" | "cutover" | "config" | "pilot"): void {
   if (process.env.AKM_TEST_MIGRATION_CRASH_AFTER === phase) process.kill(process.pid, "SIGKILL");
 }
 
-function crashInMutationGapForTests(phase: "state" | "workflow" | "cutover" | "config" | "rollback"): void {
+function crashInMutationGapForTests(phase: "state" | "workflow" | "cutover" | "config" | "pilot" | "rollback"): void {
   if (process.env.AKM_TEST_MIGRATION_CRASH_GAP === phase) process.kill(process.pid, "SIGKILL");
 }
 
@@ -539,7 +547,7 @@ function expandTilde(p: string): string {
 }
 
 /**
- * Best-effort stash roots for the cutover ref map's origin aliases, the
+ * Stash roots for the cutover ref map's origin aliases, the
  * source-(b) legacy walk, AND the WI-8.5d content migration's `.stash.json`
  * fold + D-R6 rename walk. Derived from the TARGET config, which by this point in
  * the apply has already been normalized to the 0.9 `bundles` shape by
@@ -552,22 +560,18 @@ function expandTilde(p: string): string {
  */
 function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
   const roots: CutoverStashRoot[] = [];
-  try {
-    const bundles = config.bundles;
-    if (bundles && typeof bundles === "object") {
-      for (const [id, entry] of Object.entries(bundles)) {
-        const bundlePath = (entry as { path?: string }).path;
-        if (typeof bundlePath !== "string" || bundlePath.length === 0) continue; // only filesystem bundles
-        const registryId = (entry as { registryId?: string }).registryId ?? id;
-        roots.push({
-          path: path.resolve(expandTilde(bundlePath)),
-          registryId,
-          primary: config.defaultBundle === id,
-        });
-      }
+  const bundles = config.bundles;
+  if (bundles && typeof bundles === "object") {
+    for (const [id, entry] of Object.entries(bundles)) {
+      const bundlePath = (entry as { path?: string }).path;
+      if (typeof bundlePath !== "string" || bundlePath.length === 0) continue; // only filesystem bundles
+      const registryId = (entry as { registryId?: string }).registryId ?? id;
+      roots.push({
+        path: path.resolve(expandTilde(bundlePath)),
+        registryId,
+        primary: config.defaultBundle === id,
+      });
     }
-  } catch {
-    // Best-effort — see the doc comment.
   }
   return roots;
 }
@@ -624,15 +628,12 @@ function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
   const workflowPath = getLegacyWorkflowDbPath();
   const indexPath = getDbPath();
 
+  const stashRoots = cutoverStashRootsFromConfig(target);
   if (!cutoverMergeCommitted(statePath)) {
-    const mapPath = path.join(
-      path.dirname(getMigrationApplyJournalPath()),
-      `cutover-refmap-${journal.operationId}.json`,
-    );
     const refMap = buildCutoverRefMap({
       oldIndexDbPath: indexPath,
-      stashRoots: cutoverStashRootsFromConfig(target),
-      mapOutputPath: mapPath,
+      stashRoots,
+      mapOutputPath: cutoverRefMapPath(journal),
     });
     // Fail-closed: an integrity failure (unparseable ref / row-count mismatch)
     // throws a CutoverIntegrityError, which the outer catch converts to a
@@ -653,6 +654,16 @@ function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
   // + logged, never aborting a committed cutover), and idempotent (a resumed
   // apply finds no sidecars and no mis-named concepts, so it re-runs to a no-op).
   runContentMigrationStep(journal, target);
+}
+
+function cutoverRefMapPath(journal: ApplyJournal): string {
+  return path.join(path.dirname(getMigrationApplyJournalPath()), `cutover-refmap-${journal.operationId}.json`);
+}
+
+/** Required forward-only filesystem step after the core config/database cutover verifies. */
+function runPilotTreatmentStep(journal: ApplyJournal, target: AkmConfig): void {
+  const refMap = loadCutoverRefMap(cutoverRefMapPath(journal));
+  migratePilotTreatmentFiles(cutoverStashRootsFromConfig(target), refMap);
 }
 
 /**
@@ -913,6 +924,7 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
         generation: fingerprintMigrationGeneration(),
       };
       if (!active.journal) writeApplyJournal(journal);
+      let forwardRecoveryRequired = ["pilot-prepared", "pilot-applied", "committed"].includes(journal.phase);
       try {
         const beforeState = inspectMigrationState();
         if (beforeState.state.status === "old") {
@@ -1016,11 +1028,29 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
             "INVALID_CONFIG_FILE",
           );
         }
+
+        // The pilot file is outside the core backup artifact set. Start a
+        // forward-only journal phase before touching it: failures and crashes
+        // leave canonical access blocked and retry this idempotent rewrite,
+        // rather than rolling back databases while leaving a rewritten file.
+        advanceApplyJournal(journal, "pilot-prepared");
+        forwardRecoveryRequired = true;
+        runPilotTreatmentStep(journal, target);
+        crashInMutationGapForTests("pilot");
+        advanceApplyJournal(journal, "pilot-applied");
+        crashAfterForTests("pilot");
+
         advanceApplyJournal(journal, "committed");
         clearApplyJournal();
         const completed = inspectMigrationPlan();
         return { plan: completed, backup };
       } catch (error) {
+        if (forwardRecoveryRequired) {
+          throw new ConfigError(
+            `Migration apply requires forward recovery from ${getMigrationApplyJournalPath()}: ${error instanceof Error ? error.message : String(error)}`,
+            "INVALID_CONFIG_FILE",
+          );
+        }
         try {
           const rollbackGeneration = fingerprintMigrationGeneration();
           assertRollbackTransitionAllowed(journal, rollbackGeneration);

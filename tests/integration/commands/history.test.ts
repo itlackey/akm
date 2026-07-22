@@ -575,14 +575,14 @@ describe("akmHistory --source filter", () => {
     }
   });
 
-  test("source defaults to user when not specified in insert", async () => {
+  test("an omitted source remains unattributed instead of becoming user demand", async () => {
     const db = openIndexDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       insertUsageEvent(db, { event_type: "show", entry_ref: "memory:alpha", entry_id: 1 });
 
       const result = await akmHistory({ db });
-      expect(result.entries[0]?.source).toBe("user");
+      expect(result.entries[0]?.source).toBe("unknown");
     } finally {
       closeDatabase(db);
     }

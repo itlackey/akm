@@ -293,7 +293,7 @@ export const historyCommand = defineJsonCommand({
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
     generator: {
       type: "string",
-      description: 'Filter by event generator: "user" (default) or "improve" (akm improve operations).',
+      description: "Filter by event generator: user, improve, task, audit, or unknown.",
     },
     "include-proposals": {
       type: "boolean",
@@ -312,10 +312,17 @@ export const historyCommand = defineJsonCommand({
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
   },
   async run({ args }) {
-    const generatorFlag = args.generator as "user" | "improve" | undefined;
-    if (generatorFlag !== undefined && generatorFlag !== "user" && generatorFlag !== "improve") {
+    const generatorFlag = args.generator as "user" | "improve" | "task" | "audit" | "unknown" | undefined;
+    if (
+      generatorFlag !== undefined &&
+      generatorFlag !== "user" &&
+      generatorFlag !== "improve" &&
+      generatorFlag !== "task" &&
+      generatorFlag !== "audit" &&
+      generatorFlag !== "unknown"
+    ) {
       throw new UsageError(
-        `Invalid --generator value: "${generatorFlag}". Must be "user" or "improve".`,
+        `Invalid --generator value: "${generatorFlag}". Must be user, improve, task, audit, or unknown.`,
         "INVALID_FLAG_VALUE",
       );
     }

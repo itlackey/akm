@@ -48,10 +48,14 @@ export interface AkmCliRunResult {
 }
 
 export class AkmCli {
+  protected readonly env: Record<string, string>;
+
   constructor(
     protected readonly bin: string,
-    protected readonly env: Record<string, string>,
-  ) {}
+    env: Record<string, string>,
+  ) {
+    this.env = { ...env, AKM_EVENT_SOURCE: "audit" };
+  }
 
   protected run(args: string[]): AkmCliRunResult {
     const res = spawnSync(this.bin, args, { encoding: "utf8", env: this.env });

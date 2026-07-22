@@ -15,7 +15,7 @@ import { getDbPath } from "../core/paths";
 import { withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countFeedbackSignals, insertUsageEvent } from "../indexer/usage/usage-events";
+import { countFeedbackSignals, insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
@@ -149,6 +149,7 @@ function recordFeedbackUsage(
   metadataStr: string | undefined,
 ): ReturnType<typeof applyFeedbackToUtilityScore> | undefined {
   let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
     insertUsageEvent(stateDb, {
       event_type: "feedback",
@@ -156,7 +157,9 @@ function recordFeedbackUsage(
       entry_id: entryId,
       signal,
       metadata: metadataStr,
+      source: eventSource,
     });
+    if (eventSource !== "user") return;
     try {
       const { pos, neg } = countFeedbackSignals(stateDb, entryId);
       utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);

@@ -2062,7 +2062,7 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
   const emaDecay = EMA_DECAY ** elapsedDays;
   const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
-  // Aggregate per entry_id from state.db's usage_events, then keep only entries
+  // Aggregate explicit user demand per entry_id from state.db's usage_events, then keep only entries
   // that STILL EXIST in index.db's `entries` (the former in-SQL JOIN is now a
   // cross-DB filter). This latter check is critical: usage_events has no FK to
   // entries, so its entry_id can become stale (entry deleted, re-keyed, moved
@@ -2079,6 +2079,7 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
              MAX(u.created_at) AS last_used_at
       FROM usage_events u
       WHERE u.entry_id IS NOT NULL
+        AND u.source = 'user'
       GROUP BY u.entry_id
     `)
     .all() as Array<{
@@ -2090,12 +2091,9 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
     last_used_at: string | null;
   }>;
   const entryExists = db.prepare("SELECT 1 FROM entries WHERE id = ?");
-  const usageRows = aggregatedRows.filter((row) => entryExists.get(row.entry_id) != null);
-
-  if (usageRows.length === 0) {
-    setMeta(db, "last_utility_computed_at", new Date().toISOString());
-    return;
-  }
+  const usageByEntry = new Map(
+    aggregatedRows.filter((row) => entryExists.get(row.entry_id) != null).map((row) => [row.entry_id, row]),
+  );
 
   // Batch-load existing utility scores
   const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
@@ -2110,7 +2108,16 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
 
   const now = new Date().toISOString();
 
-  for (const row of usageRows) {
+  const entryIds = new Set([...existingScores.keys(), ...usageByEntry.keys()]);
+  for (const entryId of entryIds) {
+    const row = usageByEntry.get(entryId) ?? {
+      entry_id: entryId,
+      search_count: 0,
+      show_count: 0,
+      positive_feedback_count: 0,
+      negative_feedback_count: 0,
+      last_used_at: null,
+    };
     const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
     const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
     const feedbackRate =

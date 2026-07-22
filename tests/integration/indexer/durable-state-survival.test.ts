@@ -68,20 +68,22 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   //   - two search + one show retrieval for alpha, one search for beta;
   //   - positive/negative feedback for alpha.
   for (const ev of ["search", "search", "show"] as const) {
-    insertUsageEvent(stateDb, { event_type: ev, entry_ref: alphaItemRef, entry_id: alphaId });
+    insertUsageEvent(stateDb, { event_type: ev, entry_ref: alphaItemRef, entry_id: alphaId, source: "user" });
   }
-  insertUsageEvent(stateDb, { event_type: "search", entry_ref: betaItemRef, entry_id: betaId });
+  insertUsageEvent(stateDb, { event_type: "search", entry_ref: betaItemRef, entry_id: betaId, source: "user" });
   insertUsageEvent(stateDb, {
     event_type: "feedback",
     signal: "positive",
     entry_ref: alphaItemRef,
     entry_id: alphaId,
+    source: "user",
   });
   insertUsageEvent(stateDb, {
     event_type: "feedback",
     signal: "negative",
     entry_ref: alphaItemRef,
     entry_id: alphaId,
+    source: "user",
   });
 
   // Retrieval + feedback counts BEFORE the rebuild (conceptId caller refs).

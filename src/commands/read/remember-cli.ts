@@ -6,6 +6,7 @@ import { getStringArg } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../sources/types";
 import {
   buildMemoryFrontmatter,
@@ -33,9 +34,10 @@ import { akmSearch } from "./search";
 async function fetchSimilarMemories(
   query: string,
   excludeRef: string,
+  eventSource: UsageEventSource,
 ): Promise<Array<{ ref: string; title?: string }>> {
   try {
-    const result = await akmSearch({ query, type: "memory", limit: 4 });
+    const result = await akmSearch({ query, type: "memory", limit: 4, eventSource });
     return (result.hits ?? [])
       .filter((h): h is SourceSearchHit => "ref" in h && (h as { ref: string }).ref !== excludeRef)
       .slice(0, 3)
@@ -136,6 +138,7 @@ export const rememberCommand = defineJsonCommand({
   },
   async run({ args }) {
     const body = readMemoryContent(resolveRememberContentArg(args.content));
+    const eventSource = resolveUsageEventSource();
 
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
     assertFlatAssetName(args.name);
@@ -208,7 +211,7 @@ export const rememberCommand = defineJsonCommand({
         metadata: { path: result.path, force: args.force === true },
       });
       if (args.showSimilar) {
-        const similar = await fetchSimilarMemories(body.slice(0, 500), result.ref);
+        const similar = await fetchSimilarMemories(body.slice(0, 500), result.ref, eventSource);
         output("remember", { ok: true, ...result, similar });
       } else {
         output("remember", { ok: true, ...result });
@@ -320,7 +323,7 @@ export const rememberCommand = defineJsonCommand({
       },
     });
     if (args.showSimilar) {
-      const similar = await fetchSimilarMemories((body ?? args.content ?? "").slice(0, 500), result.ref);
+      const similar = await fetchSimilarMemories((body ?? args.content ?? "").slice(0, 500), result.ref, eventSource);
       output("remember", { ok: true, ...result, similar });
     } else {
       output("remember", { ok: true, ...result });

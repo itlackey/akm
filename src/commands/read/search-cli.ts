@@ -7,7 +7,7 @@
  * from src/cli.ts (WS6) so the God Module shrinks; the `main.subCommands.search`,
  * `.curate`, and `.show` keys and every command's args/output shape are
  * byte-identical. The three commands form a clean cluster: they share the
- * private `resolveEventSource()` helper and the `parseScopeFilterFlags`
+ * usage-event provenance and the `parseScopeFilterFlags`
  * search-source parsers. Handlers whose body is a plain
  * `runWithJsonErrors(async () => { … })` are migrated to `defineJsonCommand`,
  * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
@@ -20,23 +20,12 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared"
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
-import type { UsageEventSource } from "../../indexer/usage/usage-events";
+import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
 import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
 import type { KnowledgeView, ShowDetailLevel } from "../../sources/types";
 import { akmCurate } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
-
-// AKM_EVENT_SOURCE attributes a query to a `user` invocation, the internal
-// `improve` loop, or the `task` runner so the event log can distinguish
-// genuine demand from machine traffic; any other value is treated as unset.
-function resolveEventSource(): UsageEventSource | undefined {
-  const raw = process.env.AKM_EVENT_SOURCE;
-  if (raw === "improve") return "improve";
-  if (raw === "task") return "task";
-  if (raw === "user") return "user";
-  return undefined;
-}
 
 export const searchCommand = defineJsonCommand({
   meta: { name: "search", description: "Search the stash" },
@@ -117,7 +106,7 @@ export const searchCommand = defineJsonCommand({
       includeSessions,
       disableProjectContext: noProjectContext,
       disableScopedUtility: noProjectContext,
-      eventSource: resolveEventSource(),
+      eventSource: resolveUsageEventSource(),
     });
     output("search", result);
   },
@@ -156,7 +145,7 @@ export const curateCommand = defineJsonCommand({
     const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
     const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
     const source = parseSearchSource(args.source ?? "stash");
-    const curated = await akmCurate({ query: args.query, type, limit, source, eventSource: resolveEventSource() });
+    const curated = await akmCurate({ query: args.query, type, limit, source, eventSource: resolveUsageEventSource() });
     output("curate", curated);
   },
 });
@@ -237,7 +226,7 @@ export const showCommand = defineJsonCommand({
       view,
       detail: showDetail,
       scope,
-      eventSource: resolveEventSource(),
+      eventSource: resolveUsageEventSource(),
     });
     output("show", result);
   },

@@ -41,7 +41,7 @@ describe("relinkUsageEvents", () => {
 
   function insertEvent(entryRef: string, entryId: number | null): void {
     stateDb
-      .prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref) VALUES ('show', ?, ?)")
+      .prepare("INSERT INTO usage_events (event_type, entry_id, entry_ref, source) VALUES ('show', ?, ?, 'user')")
       .run(entryId, entryRef);
   }
 

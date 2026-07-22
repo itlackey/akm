@@ -624,13 +624,13 @@ describe("Production path end-to-end", () => {
       // row in index.db's entries — the cross-DB filter must drop it.
       stateDb
         .prepare(
-          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, source, created_at) VALUES (?, ?, 'search', NULL, 'user', datetime('now'))",
         )
         .run(realId!, "skills/real-skill");
       const staleId = 999999; // not in entries
       stateDb
         .prepare(
-          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, created_at) VALUES (?, ?, 'search', NULL, datetime('now'))",
+          "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, source, created_at) VALUES (?, ?, 'search', NULL, 'user', datetime('now'))",
         )
         .run(staleId, "skills/vaporware");
 

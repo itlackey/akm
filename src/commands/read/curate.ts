@@ -219,7 +219,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
       source,
     }));
-  const result = await curateSearchResults(options.query, searchResponse, limit, options.type);
+  const result = await curateSearchResults(options.query, searchResponse, limit, options.type, options.eventSource);
   logCurateEvent(options.query, result, options.eventSource);
   return result;
 }
@@ -229,6 +229,7 @@ export async function curateSearchResults(
   result: SearchResponse,
   limit: number,
   selectedType?: string,
+  eventSource?: UsageEventSource,
 ): Promise<CurateResponse> {
   const stashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
@@ -252,7 +253,9 @@ export async function curateSearchResults(
     ...(await Promise.all(
       selectedStashHits
         .slice(0, limit)
-        .map((hit) => enrichCuratedStashHit(query, hit, supportRefsByRef.get(hit.ref) ?? [], selectedRefs)),
+        .map((hit) =>
+          enrichCuratedStashHit(query, hit, supportRefsByRef.get(hit.ref) ?? [], selectedRefs, eventSource),
+        ),
     )),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
   ].slice(0, limit);
@@ -270,10 +273,11 @@ async function enrichCuratedStashHit(
   hit: SourceSearchHit,
   supportRefs: CurateSupportRef[],
   selectedRefs: Set<string>,
+  eventSource?: UsageEventSource,
 ): Promise<CuratedStashItem> {
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref });
+    shown = await akmShowUnified({ ref: hit.ref, eventSource });
   } catch {
     shown = undefined;
   }

@@ -5,6 +5,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getLastUseMsByRef } from "../../src/commands/improve/salience";
+import { recomputeUtilityScores } from "../../src/indexer/indexer";
 import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -19,7 +20,7 @@ import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/reposi
  *      entry_ref spellings both match a bare input ref (and aggregate together).
  *   2. `curate` events count alongside `search` / `show`.
  *   3. NULL entry_ref rows (legacy curate summary rows) contribute nothing.
- *   4. Machine-sourced events (source = 'improve' or 'task') are EXCLUDED —
+ *   4. Non-demand events (source = audit/improve/task/unknown) are EXCLUDED —
  *      this count feeds salience/ranking and pipeline probe traffic must not
  *      register as demand (meta-review 05 DRIFT-6).
  */
@@ -40,10 +41,10 @@ describe("getRetrievalCounts", () => {
     stateDb.close();
   });
 
-  function seed(eventType: string, entryRef: string | null, source = "user"): void {
+  function seed(eventType: string, entryRef: string | null, source = "user", entryId?: number): void {
     stateDb
-      .prepare("INSERT INTO usage_events (event_type, entry_ref, source) VALUES (?, ?, ?)")
-      .run(eventType, entryRef, source);
+      .prepare("INSERT INTO usage_events (event_type, entry_ref, source, entry_id) VALUES (?, ?, ?, ?)")
+      .run(eventType, entryRef, source, entryId ?? null);
   }
 
   test("matches both bare and stash-prefixed stored refs for a bare input ref", () => {
@@ -91,10 +92,12 @@ describe("getRetrievalCounts", () => {
     expect(getRetrievalCounts(db, stateDb, []).size).toBe(0);
   });
 
-  test("excludes machine-sourced events (improve, task) from counts", () => {
+  test("excludes audit, improve, task, and unknown events from demand counts", () => {
     seed("search", "skill:probe", "user");
     seed("search", "skill:probe", "improve"); // improve-loop probe — excluded
     seed("curate", "skill:probe", "task"); // task-runner traffic — excluded
+    seed("show", "skill:probe", "audit"); // eval traffic — excluded
+    seed("show", "skill:probe", "unknown"); // unattributed traffic — excluded
 
     const counts = getRetrievalCounts(db, stateDb, ["skill:probe"]);
     expect(counts.get("skill:probe")).toBe(1);
@@ -108,12 +111,66 @@ describe("getRetrievalCounts", () => {
     expect(counts.has("lesson:machine-only")).toBe(false);
   });
 
-  test("unknown future sources count as demand (exclusion list, not allowlist)", () => {
-    // e.g. a later 'hook' source for agent-session traffic must keep counting.
+  test("only explicit user provenance counts as demand", () => {
     seed("show", "agent:reviewer", "hook");
 
     const counts = getRetrievalCounts(db, stateDb, ["agent:reviewer"]);
-    expect(counts.get("agent:reviewer")).toBe(1);
+    expect(counts.has("agent:reviewer")).toBe(false);
+  });
+
+  test("utility recomputation excludes audit and unattributed events", () => {
+    const stashDir = "/tmp/utility-source";
+    const entryId = upsertEntry(
+      db,
+      `${stashDir}:skill:probe`,
+      `${stashDir}/skills`,
+      `${stashDir}/skills/probe.md`,
+      stashDir,
+      { type: "skill", name: "probe" } as never,
+      "probe",
+    );
+    seed("search", "skills/probe", "user", entryId);
+    seed("show", "skills/probe", "user", entryId);
+    seed("search", "skills/probe", "audit", entryId);
+    seed("show", "skills/probe", "unknown", entryId);
+
+    recomputeUtilityScores(db, stateDb);
+
+    const row = db.prepare("SELECT search_count, show_count FROM utility_scores WHERE entry_id = ?").get(entryId) as {
+      search_count: number;
+      show_count: number;
+    };
+    expect(row).toEqual({ search_count: 1, show_count: 1 });
+  });
+
+  test("utility recomputation decays and resets entries omitted by the user-only aggregate", () => {
+    const stashDir = "/tmp/utility-omitted-source";
+    const entryId = upsertEntry(
+      db,
+      `${stashDir}:skill:probe`,
+      `${stashDir}/skills`,
+      `${stashDir}/skills/probe.md`,
+      stashDir,
+      { type: "skill", name: "probe" } as never,
+      "probe",
+    );
+    upsertUtilityScore(db, entryId, {
+      utility: 1,
+      showCount: 5,
+      searchCount: 5,
+      selectRate: 1,
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+    });
+    seed("search", "skills/probe", "hook", entryId);
+    seed("show", "skills/probe", "hook", entryId);
+
+    recomputeUtilityScores(db, stateDb);
+
+    const row = db
+      .prepare("SELECT utility, search_count, show_count, select_rate FROM utility_scores WHERE entry_id = ?")
+      .get(entryId) as { utility: number; search_count: number; show_count: number; select_rate: number };
+    expect(row.utility).toBeLessThan(1);
+    expect(row).toMatchObject({ search_count: 0, show_count: 0, select_rate: 0 });
   });
 
   test("source-scoped counts exclude duplicate signals from other origins and legacy bare rows", () => {

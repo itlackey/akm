@@ -7,13 +7,13 @@
  *
  * `akm reflect` and `akm propose` both shell out to the configured agent CLI
  * (via {@link runAgent}) and ask it for a structured proposal payload. The
- * prompts are intentionally similar — both ask the agent to return a single
- * JSON object containing `ref`, `content`, and (optionally) `frontmatter` —
- * so we share the construction here. Keeping the prompt builders in
+ * prompts are intentionally similar and share their construction here. Agent
+ * and SDK stdout keeps the JSON/file-write contracts; direct LLM reflect adds
+ * native-schema and framed-markdown contracts. Keeping the prompt builders in
  * `src/integrations/agent/` rather than `src/llm/` is deliberate: these are
  * shell-out prompts targeting an agent CLI, not in-tree LLM API calls.
  *
- * The output the agent must produce is a *strict* JSON object:
+ * The legacy stdout output an agent must produce is a *strict* JSON object:
  *
  * ```json
  * {
@@ -27,6 +27,9 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
+import reflectLlmFramedContract from "../../assets/prompts/reflect-llm-framed-contract.md" with { type: "text" };
+import reflectLlmSchemaContract from "../../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
+import reflectOutputRepair from "../../assets/prompts/reflect-output-repair.md" with { type: "text" };
 import { placementTypes } from "../../core/asset/asset-placement";
 import {
   authoringRulesForType,
@@ -201,6 +204,35 @@ export interface ReflectPromptInput {
    * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
    */
   priorDraft?: string;
+  /** Direct-LLM response contract. Omitted for the existing agent/SDK contract. */
+  outputMode?: ReflectLlmOutputMode;
+}
+
+export type ReflectLlmOutputMode = "json_schema" | "framed_markdown";
+
+export function reflectLlmResponseContract(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
+  if (mode === "json_schema") {
+    return reflectLlmSchemaContract
+      .replace(
+        "{{FIELD_RULE}}",
+        targetScoped
+          ? "The response has exactly the required fields `content`, `confidence`, and `frontmatterPatch`; do not echo `ref` or arbitrary `frontmatter`."
+          : "The response has exactly the required fields `ref`, `content`, `confidence`, and `frontmatterPatch`; `ref` must identify the selected asset.",
+      )
+      .trim();
+  }
+  const refLine = targetScoped ? "" : "AKM_REFLECT_REF: <selected asset ref>\n";
+  return reflectLlmFramedContract.replace("{{REF_LINE}}", refLine).trim();
+}
+
+export function buildReflectOutputRepairPrompt(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
+  return reflectOutputRepair.replace("{{OUTPUT_CONTRACT}}", reflectLlmResponseContract(mode, targetScoped)).trim();
+}
+
+function reflectResponseContract(input: ReflectPromptInput): string {
+  if (input.draftFilePath) return fileWriteContract(input.draftFilePath);
+  if (input.outputMode) return reflectLlmResponseContract(input.outputMode, input.ref !== undefined);
+  return RESPONSE_CONTRACT_JSON;
 }
 
 /**
@@ -453,12 +485,12 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
       ].join("\n"),
     );
   }
-  if (!input.draftFilePath && input.ref) {
+  if (!input.draftFilePath && !input.outputMode && input.ref) {
     // Reinforce that the `ref` field is mandatory and must exactly match the target.
     // Small models frequently omit `ref` from the response JSON, causing parse errors.
     sections.push(`IMPORTANT: The JSON "ref" field is REQUIRED. It MUST be exactly: "${input.ref}"`);
   }
-  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  sections.push(reflectResponseContract(input));
   return { prompt: sections.join("\n\n"), ...(maxOutputChars !== undefined ? { maxOutputChars } : {}) };
 }
 

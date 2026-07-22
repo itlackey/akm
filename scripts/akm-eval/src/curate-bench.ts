@@ -157,6 +157,7 @@ function benchOne(cmdStr: string, fixture: string, judgments: JudgmentsFile): {
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       AKM_EMBED_DETERMINISTIC: "1",
+      AKM_EVENT_SOURCE: "audit",
       HOME: home,
       AKM_STASH_DIR: stash,
       AKM_DATA_DIR: data,

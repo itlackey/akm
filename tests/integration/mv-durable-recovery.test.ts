@@ -234,6 +234,7 @@ describe("mv durable journal crash recovery", () => {
       event_type: "show",
       entry_id: before.id,
       entry_ref: "stash//memories/crash-before-full-index",
+      source: "user",
     });
     stateSeed.close();
 

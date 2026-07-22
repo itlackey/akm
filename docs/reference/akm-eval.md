@@ -30,7 +30,7 @@ Outputs land under `<stash>/.akm/evals/runs/<eval-run-id>/`:
 
 | File | Purpose |
 | --- | --- |
-| `eval-result.json` | Summary envelope. `schemaVersion: 1`. |
+| `eval-result.json` | Summary envelope. New runs use `schemaVersion: 2`. |
 | `case-results.jsonl` | One JSON line per case. |
 | `report.md` | Human-readable rollup (also written to stdout by default). |
 | `latest` | Symlink to the most recent run. |
@@ -143,12 +143,14 @@ Three JSONL logs land under `<run-dir>/artifacts/replay/`:
 | `akm-invocations.jsonl` | one record per `AkmCli.run()` call: args, stdout, stderr, status, durationMs. |
 | `state-db-queries.jsonl` | one record per `readEvents` / `readProposals` / `available()` call, plus the captured rows. |
 | `improve-results.jsonl` | one record per `state.db` `improve_runs.result_json` read. |
-| `replay-result.json` | written by `akm-eval-replay`: `{ deterministic, divergentCases, missingCases, extraCases }`. |
+| `replay-result.json` | written by `akm-eval-replay`: `{ suiteFingerprint, deterministic, divergentCases, missingCases, extraCases }`. |
 
 These three surfaces are sufficient because every Phase 1 + Phase 3
 runner bottoms out on them. `--strict` additionally fails on missing or
 extra cases (the default fails only on per-case divergences). Score
 comparison uses `1e-9` tolerance; metrics and evidence are deep-equal.
+Replay first recomputes the canonical suite fingerprint, including fixture and
+probe files, and refuses to run when it differs from the recorded envelope.
 
 ## Compare, trend, collect
 
@@ -161,7 +163,8 @@ the current run (`--out` overrides). Exits non-zero if any regressions.
 `<stash>/.akm/evals/runs/*` oldest-first and prints a TSV with
 `ts | suite | mode | label | <metric>`. `--metric` accepts `overall`,
 `deterministic`, or any dot-separated path into the envelope. Pipe to
-`column -t` for a pretty table.
+`column -t` for a pretty table. A trend never mixes suite definitions: missing
+or differing fingerprints within one suite are an error.
 
 `akm-eval-collect --from-improve-run <run-id|latest>` reads the matching
 `improve_runs.result_json` value from `$XDG_DATA_HOME/akm/state.db` and surfaces the
@@ -289,7 +292,7 @@ metrics block still work.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "evalRunId": "2026-05-21T19-12-44-002Z-a1b2c3d4",
   "suite": "improve-smoke",
   "mode": "baseline",
@@ -297,7 +300,11 @@ metrics block still work.
   "completedAt": "2026-05-21T19:12:44.847Z",
   "durationMs": 845,
   "akm": { "version": "akm-cli 0.8.0", "stashRoot": "/home/me/akm" },
-  "inputs": { "caseCount": 8, "caseDir": "scripts/akm-eval/cases/improve-smoke" },
+  "inputs": {
+    "caseCount": 8,
+    "caseDir": "scripts/akm-eval/cases/improve-smoke",
+    "suiteFingerprint": "<sha256>"
+  },
   "scores": { "overall": 0.83, "deterministic": 0.83 },
   "countsByType": {
     "retrieval": { "run": 5, "passed": 4, "skipped": 0 },
@@ -312,6 +319,11 @@ metrics block still work.
   }
 }
 ```
+
+Schema-v1 run envelopes remain readable for historical inspection. Their
+`inputs.suiteFingerprint` was optional, so compare, regression, trend, verdict,
+and replay operations fail closed when a v1 run does not carry it. New runs
+always write schema v2 and require the fingerprint.
 
 ## Exit codes
 
@@ -413,32 +425,52 @@ giving a natural A/B without having to stand up a parallel environment.
   from `state.db` `reflect_invoked`/`distill_invoked`/`promoted` history and
   the `entries` catalog.
 
+The 0.9 cutover rewrites legacy refs in the pilot treatment file through the
+same frozen old-ref map used for durable state. This required filesystem step
+runs only after config/database cutover verification and remains under a
+forward-recovery journal until it succeeds. Runtime eval ref parsing accepts
+only current `[bundle//]conceptId[#fragment]` refs; it does not reinterpret
+legacy `type:name` strings, including nested forms where a colon precedes the
+concept ID's first path separator. Colons remain valid in later concept path
+segments and fragments. Treatment-file replacement fsyncs both the file and
+its parent directory before the journal advances to `pilot-applied`.
+
 ### 1. Real-query retrieval suite
 
 ```sh
-bun run scripts/akm-eval/src/gen-real-query-suite.ts [--max-cases 150]
+GENERATION="real-query-$(date -u +%Y%m%dT%H%M%SZ)"
+bun run scripts/akm-eval/src/gen-real-query-suite.ts \
+  --out-suite "$GENERATION" --max-cases 150
 ```
 
-Mines `index.db` `usage_events` for what users **actually** search for. For
+Mines authoritative `state.db` `usage_events` for what users **actually** search for,
+using `index.db` only to restrict labels to current entries. Only rows explicitly
+attributed to `source=user` participate; eval probes are stamped `source=audit`.
+For
 each distinct meaningful `search`/`curate` query it derives
 `mustIncludeRefs` = the refs the user subsequently engaged with for that
-query (`select`/`curate`/`show`/positive-`feedback` within a 30-minute
-window), normalised across bare (`type:name`) and origin-prefixed
-(`origin//type:name`) forms (see `src/lib/ref-normalize.ts`). It emits
-ordinary `type: "retrieval"` cases into `cases/real-query/` (capped at the
+query (`curate`/`show`/positive-`feedback` within a 30-minute
+window). Labels retain the exact current `[bundle//]conceptId` spelling, so
+same-named assets in different bundles never collapse. It emits
+ordinary `type: "retrieval"` cases into `cases/<generation>/` (capped at the
 top 150 highest-signal queries; query frequency × engagement weight) plus a
-`cases/real-query.manifest.json` recording emitted/dropped counts and the
+`cases/<generation>.manifest.json` recording emitted/dropped counts and the
 drop reasons (`too-short`, `synthetic-probe`, `free-text-prompt`,
 `no-engaged-refs`, `below-max-cases-cutoff`). The manifest is written
 **outside** the suite dir because the orchestrator parses every `*.json`
-under a suite dir as a case.
+under a suite dir as a case. Generation names are immutable: the command
+refuses to overwrite an existing suite or manifest and stages a complete new
+suite before publishing it. If the process stops between the suite and sibling
+manifest renames, the next invocation with that generation name completes the
+staged publication instead of overwriting or deleting it.
 
 > **The generated `rq-*.json` output is NOT committed** (gitignored). It is
-> mined from a personal live `index.db` — PII-ish and non-reproducible on
+> mined from a personal live `state.db` — PII-ish and non-reproducible on
 > another machine — so it is a local, on-demand *trend* tool, not a portable
 > benchmark. For a reproducible cross-version corpus benchmark, use the frozen,
-> synthetic, deterministic curate benchmark instead (`akm-eval-curate-bench`). Regenerate the local suite with
-> the command above whenever you want a fresh trend snapshot.
+> synthetic, deterministic curate benchmark instead (`akm-eval-curate-bench`).
+> Use a new generation name whenever you want a fresh snapshot; do not replace
+> files used by an existing baseline.
 
 This suite is the **corpus-quality benchmark**: its aggregate score, tracked
 across runs, is the "did retrieval get better or worse" signal. Pass
@@ -453,13 +485,20 @@ changed) and store it as the T0 baseline:
 
 ```sh
 AKM_STASH_DIR=~/akm scripts/akm-eval/bin/akm-eval-run \
-  --suite real-query --mode baseline --label "T0-pre-proactive-2026-06-14"
+  --suite "$GENERATION" --mode baseline --label "T0-pre-proactive-2026-06-14"
 ```
 
 The eval-run id it prints is the baseline the verdict runner compares
 against. (First captured baseline: `2026-06-14T17-29-48-772Z-498258e2`,
 overall retrieval score 0.216, against stash tag
 `baseline/pre-proactive-2026-06-14`.)
+
+Each run stores a SHA-256 fingerprint of a canonical manifest that preserves
+case execution order, sorts object keys, and contains the bytes of referenced
+fixture/probe trees. Symlinked dependencies are rejected rather than hashing
+link text that does not represent consumed fixture bytes.
+Compare and verdict commands reject runs with missing or different fingerprints;
+changing/regenerating a suite starts a new baseline rather than extending an old one.
 
 ### 3. Verdict runner
 
@@ -471,8 +510,8 @@ Read-only against `index.db`, `state.db`, and the stored eval runs; writes
 only its own report to `<stash>/.akm/measurement/verdicts/verdict-<ts>.{json,md}`.
 Computes:
 
-- **(a) retrieval-quality delta** — latest real-query run minus the stored
-  T0 baseline (no regression allowed).
+- **(a) retrieval-quality delta** — newest real-query run minus the oldest run
+  carrying the same suite fingerprint (no regression allowed).
 - **(b) accept-rate-by-source** — proactive vs reactive (reflect
   `signal-delta`/`high-retrieval`) from the proposals table.
 - **(c) proactive reversion/reject rate.**
@@ -503,20 +542,53 @@ proactive promotions / 15 decided proposals exist, well under the 30 floor.
 #### Re-running after N weeks
 
 ```sh
-# 1. Regenerate the suite so it reflects the latest queries.
-bun run scripts/akm-eval/src/gen-real-query-suite.ts
+# 1. Keep the suite files frozen and capture a fresh current run.
+AKM_STASH_DIR=~/akm scripts/akm-eval/bin/akm-eval-run --suite "$GENERATION" --mode baseline
 
-# 2. Capture a fresh run of the same suite (the new "current").
-AKM_STASH_DIR=~/akm scripts/akm-eval/bin/akm-eval-run --suite real-query --mode baseline
-
-# 3. Render the verdict (auto-selects oldest real-query run as baseline,
-#    newest as current).
+# 2. Render the verdict (selects newest current first, then the oldest run
+#    carrying that same suite fingerprint as its baseline).
 scripts/akm-eval/bin/akm-eval-proactive-verdict
 ```
 
 Once proactive promotions clear the 30-decided floor the verdict flips to a
 real PASS/FAIL. Override the compared runs with `--baseline-run <id>` /
 `--current-run <id>` if you want a specific pair.
+
+## Read-only recombine analysis
+
+```sh
+scripts/akm-eval/bin/akm-eval-recombine-analyze [--format md|json]
+```
+
+This standalone analyzer reads the current `entries`, `graph_files`, and
+`graph_file_entities` tables from `index.db` using a read-only SQLite handle.
+It reports deterministic tag/entity clusters without restoring the deleted
+production recombine process. It never indexes, calls an LLM, creates a
+proposal, emits an event, changes state, or adds schema.
+
+Clusters are isolated by bundle and indexed source root, use current canonical
+`bundle//memories/...` refs, exclude derived/session-telemetry memories and
+structural junk, enforce configurable min/max size, and apply a fair bounded
+entity/tag selection cap across bundle/source scopes. Reports include member
+refs, relocation-stable member-set fingerprints, member-capped and
+coverage-gated recurrence/source/project-diversity proxies, concrete
+path/identifier/project-concentration risks, unknown-evidence labels, and
+estimated LLM calls/tokens. The hypothetical observe pass does not enforce a
+token ceiling.
+
+Associative `xrefs` are linkage-only and never count as independent recurrence
+evidence. Supporting-member counts and observe decisions use normalized current
+refs from `sources`, `sourceRefs`, and `evidenceSources`. Cap selection is
+scope-first round-robin; entity/tag preference is secondary within each scope.
+Graph-only mode fails explicitly when graph tables are missing or incompatible,
+with guidance to rebuild the index using the current akm. Blended `both` mode
+continues with tag fallback but reports `graph.availability: degraded` and a
+`degradedReason`; graph query failures are never represented as valid emptiness.
+
+Output is stdout-only unless `--out <path>` explicitly requests an additional
+report file. Existing output files and any exact, symlinked, or hard-linked
+index/state database path are refused. Use `--help` for the clustering and
+format flags.
 
 ## Status
 

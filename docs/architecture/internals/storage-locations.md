@@ -303,18 +303,20 @@ non-regenerable telemetry does not belong in a rebuildable derived cache.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `event_type` | TEXT NOT NULL | `search`, `show`, `select`, `feedback` |
+| `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
 | `query` | TEXT | Search query (NULL for non-search events) |
 | `entry_id` | INTEGER | `index.db` entry id; NULL until re-linked after a rebuild |
 | `entry_ref` | TEXT | Stable ref string (survives entry ID changes across index rebuilds) |
 | `signal` | TEXT | Feedback signal: `positive` or `negative` |
 | `metadata` | TEXT | JSON free-form metadata |
-| `source` | TEXT NOT NULL DEFAULT 'user' | Event origin |
+| `source` | TEXT NOT NULL DEFAULT 'user' | Provenance: `user`, `improve`, `task`, `audit`, or `unknown`. The SQL default is retained for the sealed cutover schema; runtime writers always pass an explicit value. |
 | `created_at` | TEXT NOT NULL | ISO-8601 |
 
 Indexes: `idx_usage_events_entry`, `idx_usage_events_type`, `idx_usage_events_ref`, `idx_usage_events_source`.
 
 Preserved across `index.db` schema changes and full rebuilds. `relinkUsageEvents()` re-associates rows to new entry IDs via `entry_ref` after a full rebuild.
+Pre-provenance rows rescued during the three-DB cutover are explicitly stored as
+`unknown`, never promoted to user demand by the historical SQL default.
 
 #### Table: `legacy_state`
 
@@ -596,20 +598,25 @@ akm feedback
   → appendEvent()            → events table in state.db (for improve/distill/reflect pipeline)
 
 akm index  (recomputeUtilityScores)
-  → reads usage_events aggregates per entry
+  → reads source='user' usage_events aggregates per entry
        selectRate   = min(1, show_count / search_count)
        feedbackRate = (positive_count − negative_count) / total_feedback
        effectiveRate = max(selectRate, feedbackRate)
        decay        = 0.7 ^ elapsedDays
        utility      = prevUtility × decay + effectiveRate × (1 − decay)
-  → overwrites utility_scores rows
+  → overwrites/decays the union of aggregated entries and existing utility rows
 
 akm search  (ranking phase)
   → recencyFactor = exp(−daysSinceLastUse / 30)
   → score        *= min(1 + utility × recencyFactor × 0.5, 1.5)
 ```
 
-**Dual-write rationale:** `usage_events` (SQLite in `$DATA/index.db`) powers fast SQL aggregation for the EMA recompute during indexing. `events` table in `$DATA/state.db` powers text-filtered reads (by ref, type, tags, since-cutoff) used by the improve/distill/reflect pipeline without requiring the index DB to be open.
+`usage_events` and the general `events` log are both durable tables in
+`$DATA/state.db`. Utility recomputation reads usage telemetry there and joins
+entry ids against the regenerable `index.db` catalog in application code.
+Only `source='user'` contributes demand or utility. `improve`, `task`, `audit`,
+`unknown`, and unrecognized extension values remain inspectable telemetry but do
+not affect ranking, salience, real-query labels, or GRR.
 
 ---
 
@@ -617,9 +624,9 @@ akm search  (ranking phase)
 
 | # | Path | Format | Purpose |
 |---|---|---|---|
-| 1 | `$DATA/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, usage events, LLM cache, registry index cache |
+| 1 | `$DATA/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, LLM cache, registry index cache |
 | 2 | `$DATA/workflow.db` | — | **Removed in 0.9.0** — folded into `$DATA/state.db`. Deleted by `akm migrate apply`. |
-| 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event log, proposals, task history, and workflow run state (migration-safe) |
+| 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event and usage logs, proposals, task history, and workflow run state (migration-safe) |
 | 4 | `$STATE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history (legacy location, removed in v0.8.0; import into state.db via migration script) |
 | 5 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 6 | `$CONFIG/config.json` | JSONC | User configuration |

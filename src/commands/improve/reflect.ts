@@ -37,15 +37,19 @@ import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult, EligibilitySource } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
+import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { resolveEngine } from "../../integrations/agent/engine-resolution";
 import {
+  buildReflectOutputRepairPrompt,
   buildReflectPrompt,
   extractDraftConfidence,
   parseAgentProposalPayload,
+  type ReflectLlmOutputMode,
   type RejectedProposalContext,
 } from "../../integrations/agent/prompts";
 import {
@@ -56,7 +60,7 @@ import {
   runnerSupportsFileWrite,
 } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues, executeRunner } from "../../integrations/agent/runner-dispatch";
-import type { ChatMessage, chatCompletion } from "../../llm/client";
+import { type ChatMessage, type chatCompletion, LlmCallError } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
@@ -842,38 +846,60 @@ export function sanitizeReflectPayload(
 /**
  * JSON Schema for structured reflect output. Passed to `chatCompletion` when
  * the connection has `supportsJsonSchema: true` so the model returns a strict
- * JSON object matching {@link AgentProposalPayload}.
+ * JSON object containing only the target-scoped fields AKM cannot derive.
  */
-export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
+const REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["ref", "content"],
+  required: ["description", "when_to_use"],
   additionalProperties: false,
   properties: {
-    ref: { type: "string", description: "Asset ref as a subdir-qualified conceptId (e.g. lessons/my-lesson)." },
-    content: { type: "string", description: "Full markdown content for the asset." },
-    frontmatter: {
-      type: "object",
-      description: "Optional frontmatter key-value pairs to merge into the asset.",
-      additionalProperties: true,
-    },
+    description: { type: ["string", "null"] },
+    when_to_use: { type: ["string", "null"] },
+  },
+};
+
+export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["content", "confidence", "frontmatterPatch"],
+  additionalProperties: false,
+  properties: {
+    content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
     // Phase 6A (Advantage D6a): self-reported confidence in [0, 1]. When the
     // LLM is well-calibrated, scores at or above the configured threshold
     // (default 0.8) drive auto-accept in `akm improve`. Out-of-range or
-    // non-finite values are clamped/dropped by the parser — the schema keeps
-    // the field optional so older agents that don't emit a score still work.
+    // non-finite values are rejected by direct-output extraction. Agent and SDK
+    // confidence remains optional on their separate existing contracts.
     confidence: {
       type: "number",
       minimum: 0,
       maximum: 1,
       description:
-        "Optional self-reported quality confidence in [0, 1]. Persisted on the proposal for reviewers and the triage judge to read during adjudication.",
+        "Self-reported quality confidence in [0, 1]. Persisted on the proposal for reviewers and the triage judge to read during adjudication.",
     },
+    frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
+  },
+};
+
+const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["ref", "content", "confidence", "frontmatterPatch"],
+  additionalProperties: false,
+  properties: {
+    ref: { type: "string", description: "Selected asset ref as a subdir-qualified conceptId." },
+    content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description: "Self-reported quality confidence in [0, 1].",
+    },
+    frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
   },
 };
 
 /** Critique prompt injected between prior draft and refinement request (Self-Refine loop). */
 const REFLECT_CRITIQUE_PROMPT =
-  "Your previous proposal is shown above. Please review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved JSON proposal.";
+  "Your previous proposal is shown above. Review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved response using the output contract from the original prompt.";
 
 /** Options for the direct-LLM reflect runner (v2 config path). */
 export interface RunReflectViaLlmOptions {
@@ -901,7 +927,7 @@ export interface RunReflectViaLlmOptions {
    * Derived from the same blended-bound formula used by {@link checkReflectSize}
    * (via {@link buildReflectPrompt}) so the API layer enforces the same ceiling
    * that the post-processor would reject anyway. Adds a buffer for JSON structure
-   * and frontmatter overhead (÷3 chars/token, +500 char overhead).
+   * and response-envelope overhead (÷3 chars/token, +500 char overhead).
    * Only set when the source body is ≥ REFLECT_SIZE_GUARD_MIN_BYTES (200 chars).
    */
   maxTokens?: number;
@@ -910,43 +936,177 @@ export interface RunReflectViaLlmOptions {
    * for the LLM HTTP path: the chat-completion transport has no filesystem access,
    * so it cannot honour a file-write contract. The reflect dispatcher must NEVER
    * synthesize a draft path when the runner kind is `llm` — the prompt builder
-   * is also called WITHOUT `draftFilePath` so it emits the JSON contract instead.
+   * is also called WITHOUT `draftFilePath` so it emits the direct-LLM contract instead.
    */
   draftFilePath?: string;
+  /** Direct-LLM extraction contract. Omitted only by legacy unit-level callers. */
+  outputMode?: ReflectLlmOutputMode;
+  /** Known target identity; direct target-scoped output never echoes this. */
+  targetRef?: string;
+  /** Invocation-wide repair budget gate. Defaults to true for direct callers. */
+  allowRepair?: boolean;
+}
+
+interface ReflectLlmTelemetry {
+  outputMode: ReflectLlmOutputMode;
+  repairAttempts: number;
+}
+
+function reflectLlmTelemetry(result: AgentRunResult): ReflectLlmTelemetry | undefined {
+  if (!result.parsed || typeof result.parsed !== "object" || Array.isArray(result.parsed)) return undefined;
+  const parsed = result.parsed as Record<string, unknown>;
+  if (parsed.outputMode !== "json_schema" && parsed.outputMode !== "framed_markdown") return undefined;
+  if (typeof parsed.repairAttempts !== "number") return undefined;
+  return { outputMode: parsed.outputMode, repairAttempts: parsed.repairAttempts };
+}
+
+function reflectLlmPriorDraft(result: AgentRunResult): string | undefined {
+  if (!result.parsed || typeof result.parsed !== "object" || Array.isArray(result.parsed)) return undefined;
+  const priorDraft = (result.parsed as Record<string, unknown>).priorDraft;
+  return typeof priorDraft === "string" ? priorDraft : undefined;
+}
+
+function parseReflectConfidence(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error('direct reflect response missing required number field "confidence" in [0, 1]');
+  }
+  return value;
+}
+
+function parseReflectFrontmatterPatch(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error('direct reflect response missing required object field "frontmatterPatch"');
+  }
+  const patch = value as Record<string, unknown>;
+  const keys = Object.keys(patch).sort();
+  if (keys.length !== 2 || keys[0] !== "description" || keys[1] !== "when_to_use") {
+    throw new Error("direct reflect frontmatterPatch fields must be exactly: description, when_to_use");
+  }
+  const frontmatter: Record<string, unknown> = {};
+  for (const field of ["description", "when_to_use"] as const) {
+    const fieldValue = patch[field];
+    if (fieldValue === null) continue;
+    if (typeof fieldValue !== "string" || !fieldValue.trim() || /[\r\n]/.test(fieldValue)) {
+      throw new Error(`direct reflect frontmatterPatch.${field} must be a non-empty single-line string or null`);
+    }
+    frontmatter[field] = fieldValue.trim();
+  }
+  return Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
+}
+
+function parseSchemaReflectOutput(raw: string, targetRef: string | undefined) {
+  const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("direct reflect response was not valid JSON");
+  }
+  const expectedKeys = targetRef
+    ? ["confidence", "content", "frontmatterPatch"]
+    : ["confidence", "content", "frontmatterPatch", "ref"];
+  const actualKeys = Object.keys(parsed).sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error(`direct reflect response fields must be exactly: ${expectedKeys.join(", ")}`);
+  }
+  if (typeof parsed.content !== "string" || !parsed.content.trim()) {
+    throw new Error('direct reflect response missing required string field "content"');
+  }
+  const ref = targetRef ?? (typeof parsed.ref === "string" ? parsed.ref.trim() : "");
+  if (!ref) throw new Error('direct reflect response missing required string field "ref"');
+  const frontmatter = parseReflectFrontmatterPatch(parsed.frontmatterPatch);
+  return {
+    ref,
+    content: parsed.content,
+    confidence: parseReflectConfidence(parsed.confidence),
+    ...(frontmatter ? { frontmatter } : {}),
+  };
+}
+
+function parseFramedReflectOutput(raw: string, targetRef: string | undefined) {
+  const normalized = raw.replaceAll("\r\n", "\n").trim();
+  const beginMarker = "AKM_REFLECT_CONTENT_BEGIN\n";
+  const endMarker = "\nAKM_REFLECT_CONTENT_END";
+  const beginIndex = normalized.indexOf(beginMarker);
+  if (beginIndex < 0 || (beginIndex > 0 && normalized[beginIndex - 1] !== "\n")) {
+    throw new Error("direct reflect response missing AKM_REFLECT_CONTENT_BEGIN marker");
+  }
+  const contentStart = beginIndex + beginMarker.length;
+  const endIndex = normalized.lastIndexOf(endMarker);
+  if (endIndex < contentStart || normalized.slice(endIndex + endMarker.length).trim()) {
+    throw new Error("direct reflect response missing terminal AKM_REFLECT_CONTENT_END marker");
+  }
+  const headerLines = normalized.slice(0, beginIndex).trim().split("\n").filter(Boolean);
+  const confidenceLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_CONFIDENCE:"));
+  const refLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_REF:"));
+  const patchLine = headerLines.find((line) => line.startsWith("AKM_REFLECT_FRONTMATTER_PATCH:"));
+  const expectedHeaderLines = targetRef ? 2 : 3;
+  const invalidRefLine = targetRef ? refLine !== undefined : refLine === undefined;
+  if (headerLines.length !== expectedHeaderLines || !confidenceLine || !patchLine || invalidRefLine) {
+    throw new Error("direct reflect response contained invalid frame metadata");
+  }
+  const confidenceText = confidenceLine.slice("AKM_REFLECT_CONFIDENCE:".length).trim();
+  if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(confidenceText)) {
+    throw new Error("direct reflect frame confidence must be a decimal number in [0, 1]");
+  }
+  const confidence = parseReflectConfidence(Number(confidenceText));
+  const ref = targetRef ?? refLine?.slice("AKM_REFLECT_REF:".length).trim() ?? "";
+  if (!ref) throw new Error("direct reflect response contained an empty AKM_REFLECT_REF value");
+  const content = normalized.slice(contentStart, endIndex);
+  if (!content.trim()) throw new Error("direct reflect response contained empty framed content");
+  const patchText = patchLine.slice("AKM_REFLECT_FRONTMATTER_PATCH:".length).trim();
+  let parsedPatch: unknown;
+  try {
+    parsedPatch = JSON.parse(patchText);
+  } catch {
+    throw new Error("direct reflect response contained invalid frontmatter patch JSON");
+  }
+  const frontmatter = parseReflectFrontmatterPatch(parsedPatch);
+  return { ref, content, confidence, ...(frontmatter ? { frontmatter } : {}) };
+}
+
+function parseDirectReflectOutput(raw: string, mode: ReflectLlmOutputMode, targetRef: string | undefined) {
+  return mode === "json_schema" ? parseSchemaReflectOutput(raw, targetRef) : parseFramedReflectOutput(raw, targetRef);
 }
 
 /**
  * Run a single reflect iteration directly via the LLM API (v2 config path).
  *
  * Returns an {@link AgentRunResult}-shaped object so it can slot into the same
- * dispatch loop as agent-based runners. On success, `stdout` contains the raw
- * LLM response (unparsed JSON or prose). On failure, the error is captured
+ * dispatch loop as agent-based runners. Production calls extract the selected
+ * direct-LLM contract and normalize it to proposal JSON in `stdout`; legacy
+ * unit callers that omit `outputMode` retain raw stdout. Errors are captured
  * into the result rather than thrown.
  */
 export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<AgentRunResult> {
   const start = Date.now();
+  let repairAttempts = 0;
   const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
+  const configuredTimeout = Object.hasOwn(opts, "timeoutMs")
+    ? (opts.timeoutMs ?? null)
+    : Object.hasOwn(opts.connection, "timeoutMs")
+      ? (opts.connection.timeoutMs ?? null)
+      : DEFAULT_LLM_TIMEOUT_MS;
+  const deadline = typeof configuredTimeout === "number" ? start + configuredTimeout : undefined;
 
   if (opts.priorDraft !== undefined && opts.iteration > 0) {
     messages.push({ role: "assistant", content: opts.priorDraft });
     messages.push({ role: "user", content: REFLECT_CRITIQUE_PROMPT });
   }
 
-  try {
-    // UNGATED at the seam (no akmConfig): reflect enablement is resolved by
-    // the improve strategy before dispatch, and errors propagate into the
-    // catch below, folding into the failure-shaped AgentRunResult.
-    const stdout = await callStructured<string>({
+  const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> =>
+    callStructured<string>({
       feature: "reflect_proposal",
       config: opts.connection,
-      messages,
+      messages: callMessages,
       request: {
-        ...(Object.hasOwn(opts, "timeoutMs") ? { timeoutMs: opts.timeoutMs } : {}),
+        ...(repairTimeoutMs !== undefined
+          ? { timeoutMs: repairTimeoutMs }
+          : Object.hasOwn(opts, "timeoutMs")
+            ? { timeoutMs: opts.timeoutMs }
+            : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.responseSchema !== undefined ? { responseSchema: opts.responseSchema } : {}),
         ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
         // Reflect requires a machine-readable payload. Visible chain-of-thought
-        // can consume the output cap before the model reaches the JSON object.
+        // can consume the output cap before the model reaches the envelope.
         enableThinking: false,
         ...(opts.chat ? { chat: opts.chat } : {}),
       },
@@ -955,24 +1115,92 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       onError: () => "",
       fallback: "",
     });
-    return {
-      ok: true,
-      stdout,
-      stderr: "",
-      durationMs: Date.now() - start,
-      exitCode: 0,
-    };
-  } catch (err) {
+
+  const failure = (
+    err: unknown,
+    reason: AgentFailureReason,
+    repairAttempts: number,
+    stdout = "",
+    exitCode = 1,
+  ): AgentRunResult => {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      stdout: "",
+      stdout,
       stderr: msg,
       durationMs: Date.now() - start,
-      exitCode: 1,
-      reason: "non_zero_exit" as AgentFailureReason,
+      exitCode,
+      reason,
       error: msg,
+      ...(opts.outputMode ? { parsed: { outputMode: opts.outputMode, repairAttempts } } : {}),
     };
+  };
+
+  try {
+    if (opts.signal?.aborted) throw new Error("Reflect request aborted");
+    const stdout = await call(messages);
+
+    // Preserve the old raw-response seam for direct unit callers. Production
+    // akmReflect always sets outputMode and receives a normalized payload.
+    if (!opts.outputMode) {
+      return {
+        ok: true,
+        stdout,
+        stderr: "",
+        durationMs: Date.now() - start,
+        exitCode: 0,
+      };
+    }
+
+    let payload: ReturnType<typeof parseDirectReflectOutput>;
+    let acceptedOutput = stdout;
+    try {
+      payload = parseDirectReflectOutput(stdout, opts.outputMode, opts.targetRef);
+    } catch (err) {
+      if (opts.allowRepair === false) return failure(err, "parse_error", 0, stdout, 0);
+      if (opts.signal?.aborted) return failure(new Error("Reflect request aborted"), "aborted", 0, stdout);
+      const remaining = deadline === undefined ? undefined : deadline - Date.now();
+      if (remaining !== undefined && remaining <= 0) {
+        return failure(
+          new LlmCallError("Reflect request timed out before output repair", "timeout"),
+          "timeout",
+          0,
+          stdout,
+        );
+      }
+      repairAttempts = 1;
+      const repairMessages: ChatMessage[] = [
+        ...messages,
+        { role: "assistant", content: stdout },
+        {
+          role: "user",
+          content: buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined),
+        },
+      ];
+      const repaired = await call(repairMessages, remaining);
+      acceptedOutput = repaired;
+      try {
+        payload = parseDirectReflectOutput(repaired, opts.outputMode, opts.targetRef);
+      } catch (err) {
+        return failure(err, "parse_error", repairAttempts, repaired, 0);
+      }
+    }
+
+    return {
+      ok: true,
+      stdout: JSON.stringify(payload),
+      stderr: "",
+      durationMs: Date.now() - start,
+      exitCode: 0,
+      parsed: { outputMode: opts.outputMode, repairAttempts, priorDraft: acceptedOutput },
+    };
+  } catch (err) {
+    const reason: AgentFailureReason = opts.signal?.aborted
+      ? "aborted"
+      : err instanceof LlmCallError && err.code === "timeout"
+        ? "timeout"
+        : "non_zero_exit";
+    return failure(err, reason, repairAttempts);
   }
 }
 
@@ -1029,6 +1257,7 @@ async function finalizeReflectProposal(args: {
     emitReflectFailed,
   } = args;
   let payload = args.payload;
+  const outputTelemetry = reflectLlmTelemetry(result);
 
   // 7. Reflect content-preservation rails:
   //     - Restore source frontmatter so reflect can never strip indexable
@@ -1056,6 +1285,7 @@ async function finalizeReflectProposal(args: {
           rejected: true,
           rejectReason: sanitizeOutcome.reject.error,
           ...(sanitizeOutcome.warnings.length > 0 ? { sanitizerWarnings: sanitizeOutcome.warnings } : {}),
+          ...(outputTelemetry ?? {}),
         },
       },
       options.eventsCtx,
@@ -1098,7 +1328,7 @@ async function finalizeReflectProposal(args: {
           : changeKind === "low-value"
             ? "reflect_skipped_low_value"
             : "reflect_skipped_cosmetic";
-      emitReflectFailed("no_change", subreason, options.ref, { changeKind });
+      emitReflectFailed("no_change", subreason, options.ref, { changeKind, ...(outputTelemetry ?? {}) });
       return {
         schemaVersion: 2,
         ok: false,
@@ -1144,6 +1374,7 @@ async function finalizeReflectProposal(args: {
             qualityRejected: true,
             qualityScore: judgeResult.score,
             qualityReason: judgeResult.reason,
+            ...(outputTelemetry ?? {}),
           },
         },
         options.eventsCtx,
@@ -1167,6 +1398,7 @@ async function finalizeReflectProposal(args: {
     engineName,
     durationMs: result.durationMs,
     emitReflectFailed,
+    outputTelemetry,
   });
 }
 
@@ -1182,6 +1414,7 @@ function createReflectProposal(args: {
   stash: string;
   engineName: string;
   durationMs: number;
+  outputTelemetry?: ReflectLlmTelemetry;
   emitReflectFailed: (
     reason: AgentFailureReason,
     subreason: string,
@@ -1189,7 +1422,7 @@ function createReflectProposal(args: {
     extra?: Record<string, unknown>,
   ) => void;
 }): AkmReflectResult {
-  const { payload, options, stash, engineName, durationMs, emitReflectFailed } = args;
+  const { payload, options, stash, engineName, durationMs, emitReflectFailed, outputTelemetry } = args;
   // 8. Create the proposal. The proposal queue is the ONLY thing reflect
   // writes — promotion to a real asset is gated by `akm proposal accept`.
   //
@@ -1240,6 +1473,7 @@ function createReflectProposal(args: {
     // and exclude them from recentErrors/avoidPatterns injection.
     emitReflectFailed("cooldown", "proposal_skipped", options.ref, {
       proposalSkipReason: proposalResult.reason,
+      ...(outputTelemetry ?? {}),
     });
     return {
       schemaVersion: 2,
@@ -1262,6 +1496,7 @@ function createReflectProposal(args: {
         proposalId: proposal.id,
         source: "reflect",
         engine: engineName,
+        ...(outputTelemetry ?? {}),
       },
     },
     options.eventsCtx,
@@ -1371,6 +1606,7 @@ function resolveReflectPayload(args: {
     const reason: AgentFailureReason = isCooldownSignal ? "cooldown" : "parse_error";
     emitReflectFailed(reason, isCooldownSignal ? "stdout_cooldown_signal" : "parse_error", options.ref, {
       ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+      ...(reflectLlmTelemetry(result) ?? {}),
     });
     return {
       failure: {
@@ -1555,11 +1791,17 @@ async function runReflectRefineIterations(args: {
   // Agent CLI + OpenCode SDK runners both have filesystem access; the direct
   // LLM HTTP runner does NOT.
   const canRunnerWriteFile = runnerSupportsFileWrite(runnerSpec);
+  const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
+    ? runnerSpec.connection.supportsJsonSchema
+      ? "json_schema"
+      : "framed_markdown"
+    : undefined;
   // Initialized to a sentinel; always overwritten in the first loop iteration
   // (maxRefineIters is clamped to >= 1 above).
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
   let lastDraftPath: string | undefined;
+  let repairAttempts = 0;
 
   for (let iter = 0; iter < maxRefineIters; iter++) {
     // Synthesize a fresh tmp path per iteration so refinement passes never
@@ -1589,6 +1831,7 @@ async function runReflectRefineIterations(args: {
       // to a tmp file instead of inlining it in JSON. Avoids parse failures
       // on long bodies (e.g. knowledge:systems/KOKORO_USAGE_GUIDE 8.4KB).
       ...(iterDraftPath ? { draftFilePath: iterDraftPath } : {}),
+      ...(outputMode ? { outputMode } : {}),
     });
     // Convert char ceiling → token cap for the LLM path: divide by 3 chars/token
     // (conservative — most models are 3.5–4) and add 500-char overhead for the
@@ -1615,21 +1858,37 @@ async function runReflectRefineIterations(args: {
           ...(options.signal ? { signal: options.signal } : {}),
           priorDraft,
           iteration: iter,
-          responseSchema: REFLECT_JSON_SCHEMA,
+          ...(outputMode === "json_schema"
+            ? { responseSchema: options.ref ? REFLECT_JSON_SCHEMA : REFLECT_UNSCOPED_JSON_SCHEMA }
+            : {}),
+          ...(outputMode ? { outputMode } : {}),
+          ...(options.ref ? { targetRef: options.ref } : {}),
+          allowRepair: repairAttempts === 0,
           chat: options.chat,
           ...(maxTokensForLlm !== undefined ? { maxTokens: maxTokensForLlm } : {}),
         }),
     });
 
-    result = iterResult;
+    const iterTelemetry = reflectLlmTelemetry(iterResult);
+    if (iterTelemetry) repairAttempts += iterTelemetry.repairAttempts;
+    result = iterTelemetry
+      ? {
+          ...iterResult,
+          parsed: {
+            ...(iterResult.parsed as Record<string, unknown>),
+            ...iterTelemetry,
+            repairAttempts,
+          },
+        }
+      : iterResult;
 
-    if (!iterResult.ok) break; // surface failure after loop
+    if (!result.ok) break; // surface failure after loop
 
     // On success, extract the draft content for the next iteration.
     // If the agent returns the same content as the prior draft, stop early
     // (no-op refinement) to avoid wasting tokens on identical iterations.
     if (iter < maxRefineIters - 1) {
-      const nextDraft = iterResult.stdout ?? "";
+      const nextDraft = reflectLlmPriorDraft(result) ?? result.stdout ?? "";
       if (priorDraft !== undefined && nextDraft === priorDraft) break;
       priorDraft = nextDraft;
     }
@@ -1844,9 +2103,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
         };
       }
       const envelope = failureEnvelope(finalResult, options.ref, engineName);
-      emitReflectFailed(envelope.reason, "agent_crash", options.ref, {
-        ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
-      });
+      emitReflectFailed(
+        envelope.reason,
+        envelope.reason === "parse_error" ? "parse_error" : "agent_crash",
+        options.ref,
+        {
+          ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
+          ...(reflectLlmTelemetry(finalResult) ?? {}),
+        },
+      );
       return envelope;
     }
 
@@ -1889,6 +2154,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           expectedRef: options.ref,
           actualRef: payload.ref,
           ...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+          ...(reflectLlmTelemetry(result) ?? {}),
         });
         return {
           schemaVersion: 2,

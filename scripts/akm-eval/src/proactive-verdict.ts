@@ -11,7 +11,8 @@
  * and control coexist at any instant). It then emits PASS / FAIL /
  * INCONCLUSIVE with the offending metrics.
  *
- * READ-ONLY: reads index.db (usage_events), state.db (events + proposals),
+ * READ-ONLY: reads state.db (usage_events + events + proposals), index.db
+ * (the current entries catalog for control selection),
  * the stored retrieval baseline eval-run, and the pilot treatment files.
  * Writes only its own report under <stash>/.akm/measurement/verdicts/.
  *
@@ -29,7 +30,7 @@
  * Usage:
  *   bun run scripts/akm-eval/src/proactive-verdict.ts \
  *     [--stash <path>] [--index-db <path>] [--state-db <path>] \
- *     [--baseline-run <eval-run-id|latest>]   (retrieval baseline; default: latest real-query run)
+ *     [--baseline-run <eval-run-id|latest>]   (retrieval baseline; default: oldest run matching current fingerprint)
  *     [--current-run <eval-run-id|latest>]    (retrieval current; default: same as baseline if only one exists)
  *     [--treatment-file <path>] [--control-file <path>] \
  *     [--min-decided <n>]                      (INCONCLUSIVE below this; default 30)
@@ -44,7 +45,11 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
-import { loadEvalRunResult, resolveRunDir } from "./sources/eval-runs";
+import {
+  assertMatchingSuiteFingerprints,
+  loadEvalRunResult,
+  resolveRunDir,
+} from "./sources/eval-runs";
 import { normalizeRef } from "./lib/ref-normalize";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +162,7 @@ Options:
   --stash <path>               Stash root (default: \$AKM_STASH_DIR or ~/akm).
   --index-db <path>            index.db (default: <dataDir>/index.db).
   --state-db <path>            state.db (default: <dataDir>/state.db).
-  --baseline-run <id|latest>   Retrieval T0 baseline eval-run (default: oldest real-query run).
+  --baseline-run <id|latest>   Retrieval T0 baseline (default: oldest run matching current fingerprint).
   --current-run <id|latest>    Retrieval current eval-run (default: latest real-query run).
   --treatment-file <path>      Override proactive-treatment ref list.
   --control-file <path>        Override control ref list.
@@ -188,13 +193,10 @@ interface VerdictReport {
     retrievalQuality: { baselineRunId: string | null; currentRunId: string | null; delta: number | null; note?: string };
     downstreamLift: { treatment: DownstreamLift; control: DownstreamLift };
     /**
-     * Per-lane 30d GRR (meta-review 09's approved consumption-side addition).
-     * Mirrors the canonical receipt query: lane = COALESCE(eligibilitySource,
-     * source); promoted = distinct accepted refs created in the last 30d;
-     * read-back = the ref appears (origin-stripped) in any external
-     * show/curate/search/select usage event. Post-G5, events tagged with a
-     * non-'user' source (improve/task self-reads) are EXCLUDED from the
-     * numerator; pre-G5 rows still tagged 'user' keep this an upper bound.
+     * Per-lane 30d GRR. The denominator is each lane/ref's latest accepted
+     * revision in the window. The numerator requires an exact-ref user event
+     * strictly after that revision's acceptance. Historical machine traffic
+     * already persisted as `user` cannot be distinguished and remains a caveat.
      */
     laneGrr: LaneGrr[];
   };
@@ -280,6 +282,7 @@ interface ProposalRow {
   status: string;
   source: string;
   createdAt: string;
+  updatedAt: string;
   metadata: Record<string, unknown>;
 }
 
@@ -376,7 +379,14 @@ interface DownstreamLift {
  * normalised per-ref so cohorts of different sizes are comparable.
  */
 function downstreamLift(
-  usageEvents: Array<{ eventType: string; entryRef: string | null; signal: string | null; metadata: string | null; ts: number }>,
+  usageEvents: Array<{
+    eventType: string;
+    entryRef: string | null;
+    signal: string | null;
+    metadata: string | null;
+    source: string | null;
+    ts: number;
+  }>,
   cohort: Set<string>,
   cohortName: string,
   sinceMs: number,
@@ -385,6 +395,7 @@ function downstreamLift(
   let neg = 0;
   let retrieval = 0;
   for (const e of usageEvents) {
+    if (e.source !== "user") continue;
     if (e.ts < sinceMs) continue;
     const refs: string[] = [];
     if (e.entryRef) refs.push(e.entryRef);
@@ -403,7 +414,7 @@ function downstreamLift(
     if (e.eventType === "feedback") {
       if (e.signal === "positive") pos += 1;
       else if (e.signal === "negative") neg += 1;
-    } else if (e.eventType === "search" || e.eventType === "show" || e.eventType === "select" || e.eventType === "curate") {
+    } else if (e.eventType === "show" || e.eventType === "curate") {
       retrieval += 1;
     }
   }
@@ -428,53 +439,82 @@ interface LaneGrr {
   grr: number | null;
 }
 
-/** Read-back event types that count as external consumption (receipt query). */
-const READBACK_EVENT_TYPES = new Set(["show", "curate", "search", "select"]);
+/** Read-back event types that prove engagement rather than a search impression. */
+const READBACK_EVENT_TYPES = new Set(["show", "curate"]);
 
 /**
- * Per-lane 30d GRR, mirroring `findings/09-grr-receipt.sql.md` in memory:
- * lane key = COALESCE(metadata.eligibilitySource, source); the read-back set
- * is origin-stripped `entry_ref`s from external usage events. Events tagged
- * with a non-'user' provenance source (post-G5 improve/task self-reads) are
- * excluded so the numerator counts genuine demand only.
+ * Per-lane 30d GRR over current durable identity. Repeated acceptances of the
+ * same lane/ref collapse to the latest accepted revision. `review.decidedAt`
+ * is authoritative when present; historical rows fall back to `updated_at`.
  */
 function computeLaneGrr(
   proposals: ProposalRow[],
-  usageEvents: Array<{ eventType: string; entryRef: string | null; source: string | null }>,
+  usageEvents: Array<{
+    eventType: string;
+    entryRef: string | null;
+    signal: string | null;
+    source: string | null;
+    ts: number;
+  }>,
   now: Date,
 ): LaneGrr[] {
-  const readBackRefs = new Set<string>();
-  for (const e of usageEvents) {
-    if (!READBACK_EVENT_TYPES.has(e.eventType) || !e.entryRef) continue;
-    if (e.source !== null && e.source !== "user") continue; // G5: drop tagged self-reads
-    const idx = e.entryRef.indexOf("//");
-    readBackRefs.add(idx >= 0 ? e.entryRef.slice(idx + 2) : e.entryRef);
+  const thirtyDaysAgoMs = now.getTime() - 30 * 86_400_000;
+  const latest = new Map<string, { lane: string; ref: string; acceptedAt: number }>();
+  for (const proposal of proposals) {
+    if (proposal.status !== "accepted") continue;
+    const ref = normalizeRef(proposal.ref);
+    if (!ref) continue;
+    const lane = eligibilityOf(proposal.metadata) ?? proposal.source;
+    const review = proposal.metadata.review;
+    const decidedAt =
+      review && typeof review === "object" && typeof (review as { decidedAt?: unknown }).decidedAt === "string"
+        ? (review as { decidedAt: string }).decidedAt
+        : proposal.updatedAt;
+    const acceptedAt = parseTimestamp(decidedAt);
+    if (acceptedAt === 0 || acceptedAt < thirtyDaysAgoMs || acceptedAt > now.getTime()) continue;
+    const key = `${lane}\0${ref}`;
+    const prior = latest.get(key);
+    if (!prior || acceptedAt > prior.acceptedAt) latest.set(key, { lane, ref, acceptedAt });
   }
 
-  const thirtyDaysAgoMs = now.getTime() - 30 * 86_400_000;
+  const latestGenuineUsageByRef = new Map<string, number>();
+  for (const event of usageEvents) {
+    if (event.source !== "user" || !event.entryRef || event.ts > now.getTime()) continue;
+    const engaged =
+      READBACK_EVENT_TYPES.has(event.eventType) ||
+      (event.eventType === "feedback" && event.signal === "positive");
+    if (!engaged) continue;
+    const prior = latestGenuineUsageByRef.get(event.entryRef) ?? 0;
+    if (event.ts > prior) latestGenuineUsageByRef.set(event.entryRef, event.ts);
+  }
+
   const lanes = new Map<string, { promoted: Set<string>; readBack: Set<string> }>();
-  for (const p of proposals) {
-    if (p.status !== "accepted") continue;
-    const created = Date.parse(p.createdAt.includes("T") ? p.createdAt : `${p.createdAt.replace(" ", "T")}Z`);
-    if (Number.isNaN(created) || created < thirtyDaysAgoMs) continue;
-    const lane = eligibilityOf(p.metadata) ?? p.source;
-    let bucket = lanes.get(lane);
+  for (const revision of latest.values()) {
+    let bucket = lanes.get(revision.lane);
     if (!bucket) {
       bucket = { promoted: new Set(), readBack: new Set() };
-      lanes.set(lane, bucket);
+      lanes.set(revision.lane, bucket);
     }
-    bucket.promoted.add(p.ref);
-    if (readBackRefs.has(p.ref)) bucket.readBack.add(p.ref);
+    bucket.promoted.add(revision.ref);
+    if ((latestGenuineUsageByRef.get(revision.ref) ?? 0) > revision.acceptedAt) {
+      bucket.readBack.add(revision.ref);
+    }
   }
 
   return [...lanes.entries()]
-    .map(([lane, b]) => ({
+    .map(([lane, bucket]) => ({
       lane,
-      promoted30d: b.promoted.size,
-      readBack: b.readBack.size,
-      grr: b.promoted.size === 0 ? null : b.readBack.size / b.promoted.size,
+      promoted30d: bucket.promoted.size,
+      readBack: bucket.readBack.size,
+      grr: bucket.promoted.size === 0 ? null : bucket.readBack.size / bucket.promoted.size,
     }))
     .sort((a, b) => b.promoted30d - a.promoted30d);
+}
+
+function parseTimestamp(value: string): number {
+  const iso = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(iso);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 function fmt(n: number | null): string {
@@ -491,19 +531,61 @@ function main(): number {
   const controlOverride = opts.controlFile ? loadRefFile(opts.controlFile) : null;
   const treatmentRefs = loadRefFile(treatmentFile);
 
-  // ---- state.db: proposals + reflect history ----------------------------
+  // ---- state.db: proposals + reflect history + durable usage telemetry ---
   let proposals: ProposalRow[] = [];
   let reflectEvents: EventRow[] = [];
+  const usageEvents: Array<{
+    eventType: string;
+    entryRef: string | null;
+    signal: string | null;
+    metadata: string | null;
+    source: string | null;
+    ts: number;
+  }> = [];
   const stateAvailable = fs.existsSync(opts.stateDb);
   if (stateAvailable) {
     const sdb = new Database(opts.stateDb, { readonly: true });
     try {
       proposals = (
         sdb
-          .query(`SELECT ref, status, source, created_at, metadata_json FROM proposals`)
-          .all() as Array<{ ref: string; status: string; source: string; created_at: string; metadata_json: string | null }>
-      ).map((r) => ({ ref: r.ref, status: r.status, source: r.source, createdAt: r.created_at, metadata: safeJson(r.metadata_json) }));
+          .query(`SELECT ref, status, source, created_at, updated_at, metadata_json FROM proposals`)
+          .all() as Array<{
+          ref: string;
+          status: string;
+          source: string;
+          created_at: string;
+          updated_at: string;
+          metadata_json: string | null;
+        }>
+      ).map((row) => ({
+        ref: row.ref,
+        status: row.status,
+        source: row.source,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        metadata: safeJson(row.metadata_json),
+      }));
       reflectEvents = readEvents(sdb, ["reflect_invoked", "distill_invoked", "promoted"]);
+      const rows = sdb
+        .query(`SELECT event_type, entry_ref, signal, metadata, source, created_at FROM usage_events`)
+        .all() as Array<{
+        event_type: string;
+        entry_ref: string | null;
+        signal: string | null;
+        metadata: string | null;
+        source: string | null;
+        created_at: string;
+      }>;
+      for (const row of rows) {
+        usageEvents.push({
+          eventType: row.event_type,
+          entryRef: row.entry_ref,
+          signal: row.signal,
+          metadata: row.metadata,
+          source: row.source,
+          ts: parseTimestamp(row.created_at),
+        });
+      }
     } finally {
       sdb.close();
     }
@@ -511,32 +593,17 @@ function main(): number {
 
   const { proactive, reactive, usedFallback } = classifyProposals(proposals, treatmentRefs);
 
-  // ---- index.db: usage events + known refs ------------------------------
-  const usageEvents: Array<{ eventType: string; entryRef: string | null; signal: string | null; metadata: string | null; source: string | null; ts: number }> = [];
+  // ---- index.db: current entries catalog for control selection -----------
   const allKnownRefs = new Set<string>();
   const indexAvailable = fs.existsSync(opts.indexDb);
   if (indexAvailable) {
     const idb = new Database(opts.indexDb, { readonly: true });
     try {
-      const rows = idb
-        .query(`SELECT event_type, entry_ref, signal, metadata, source, created_at FROM usage_events`)
-        .all() as Array<{ event_type: string; entry_ref: string | null; signal: string | null; metadata: string | null; source: string | null; created_at: string }>;
-      for (const r of rows) {
-        const iso = r.created_at.includes("T") ? r.created_at : `${r.created_at.replace(" ", "T")}Z`;
-        const t = Date.parse(iso);
-        usageEvents.push({ eventType: r.event_type, entryRef: r.entry_ref, signal: r.signal, metadata: r.metadata, source: r.source, ts: Number.isNaN(t) ? 0 : t });
-        if (r.entry_ref) {
-          const n = normalizeRef(r.entry_ref);
-          if (n) allKnownRefs.add(n);
-        }
-      }
-      // entries catalog gives the full asset universe for control selection.
-      const entryRows = idb.query(`SELECT entry_type, entry_key FROM entries`).all() as Array<{ entry_type: string; entry_key: string }>;
-      for (const er of entryRows) {
-        // entry_key is "<stash_dir>:<type>:<name>" — take the type:name tail.
-        const idx = er.entry_key.indexOf(`:${er.entry_type}:`);
-        const tail = idx >= 0 ? er.entry_key.slice(idx + 1) : er.entry_key;
-        const n = normalizeRef(tail);
+      const entryRows = idb.query(`SELECT item_ref FROM entries WHERE item_ref IS NOT NULL`).all() as Array<{
+        item_ref: string;
+      }>;
+      for (const row of entryRows) {
+        const n = normalizeRef(row.item_ref);
         if (n) allKnownRefs.add(n);
       }
     } finally {
@@ -563,18 +630,21 @@ function main(): number {
     if (realQueryRuns.length === 0) {
       retrievalNote = "no real-query eval runs found; run gen-real-query-suite + akm-eval-run first";
     } else {
-      const baseId = opts.baselineRun ?? realQueryRuns[0];
       const curId = opts.currentRun ?? realQueryRuns[realQueryRuns.length - 1];
-      const base = loadEvalRunResult(resolveRunDir(runsRoot, baseId).dir);
       const cur = loadEvalRunResult(resolveRunDir(runsRoot, curId).dir);
+      assertMatchingSuiteFingerprints(cur.inputs.suiteFingerprint, cur.inputs.suiteFingerprint);
+      const baseId = opts.baselineRun ?? oldestRunWithFingerprint(runsRoot, realQueryRuns, cur.inputs.suiteFingerprint);
+      const base = loadEvalRunResult(resolveRunDir(runsRoot, baseId).dir);
+      assertMatchingSuiteFingerprints(base.inputs.suiteFingerprint, cur.inputs.suiteFingerprint);
       retrievalBaselineId = base.evalRunId;
       retrievalCurrentId = cur.evalRunId;
       retrievalDelta = cur.scores.overall - base.scores.overall;
-      if (baseId === curId) {
+      if (base.evalRunId === cur.evalRunId) {
         retrievalNote = "baseline == current (only one real-query run exists); delta is 0 by construction. Re-run the suite after the proactive period to get a real delta.";
       }
     }
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith("suite fingerprint")) throw err;
     retrievalNote = `retrieval delta unavailable: ${err instanceof Error ? err.message : String(err)}`;
   }
 
@@ -650,8 +720,13 @@ function main(): number {
   const outDir = path.join(measurementDir, "verdicts");
   fs.mkdirSync(outDir, { recursive: true });
   const stamp = now.toISOString().replace(/[:.]/g, "-");
-  const jsonPath = opts.out ?? path.join(outDir, `verdict-${stamp}.json`);
-  const mdPath = jsonPath.replace(/\.json$/, ".md");
+  const requestedPath = opts.out ?? path.join(outDir, `verdict-${stamp}.json`);
+  const ext = path.extname(requestedPath);
+  const basePath = ext === ".json" || ext === ".md" ? requestedPath.slice(0, -ext.length) : requestedPath;
+  const jsonPath = ext === ".json" ? requestedPath : `${basePath}.json`;
+  const mdPath = ext === ".md" ? requestedPath : `${basePath}.md`;
+  fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+  fs.mkdirSync(path.dirname(mdPath), { recursive: true });
   fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
   fs.writeFileSync(mdPath, renderMarkdown(report));
 
@@ -667,6 +742,19 @@ function main(): number {
   return verdict === "PASS" ? 0 : verdict === "FAIL" ? 1 : 3;
 }
 
+function oldestRunWithFingerprint(runsRoot: string, runIds: string[], fingerprint: string | undefined): string {
+  if (!fingerprint) throw new Error("suite fingerprint unavailable; regenerate the current eval run");
+  for (const runId of runIds) {
+    try {
+      const envelope = loadEvalRunResult(resolveRunDir(runsRoot, runId).dir);
+      if (envelope.inputs.suiteFingerprint === fingerprint) return runId;
+    } catch {
+      // A malformed historical run is not a valid baseline candidate.
+    }
+  }
+  throw new Error(`no real-query baseline found with suite fingerprint ${fingerprint}`);
+}
+
 function listRealQueryRuns(runsRoot: string): string[] {
   if (!fs.existsSync(runsRoot)) return [];
   const ids: string[] = [];
@@ -676,7 +764,7 @@ function listRealQueryRuns(runsRoot: string): string[] {
     if (!fs.existsSync(resultPath)) continue;
     try {
       const r = JSON.parse(fs.readFileSync(resultPath, "utf8")) as { suite?: string };
-      if (r.suite === "real-query") ids.push(e.name);
+      if (r.suite === "real-query" || r.suite?.startsWith("real-query-")) ids.push(e.name);
     } catch { /* ignore */ }
   }
   ids.sort();

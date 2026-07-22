@@ -325,6 +325,7 @@ describe("goldens: mv recovery entry points, pinned individually (WI-04, R3, int
       event_type: "show",
       entry_id: before.id,
       entry_ref: memoryItemRef(MV_RECOVERY_ENTRY_INDEXER_FULL_NAME),
+      source: "user",
     });
     stateSeed.close();
 
@@ -506,7 +507,12 @@ describe("golden fixture: serialize mv SIGKILL crash-recovery outcomes (WI-04, R
         if (!before) throw new Error("missing indexed source row");
         closeDatabase(db);
         const stateSeed = openStateDatabase();
-        insertUsageEvent(stateSeed, { event_type: "show", entry_id: before.id, entry_ref: memoryItemRef(name) });
+        insertUsageEvent(stateSeed, {
+          event_type: "show",
+          entry_id: before.id,
+          entry_ref: memoryItemRef(name),
+          source: "user",
+        });
         stateSeed.close();
         await crashAt("filesystem-committed", ref, `${name}-new`);
         await akmIndex({ stashDir: storage.stashDir, full: true });

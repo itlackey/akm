@@ -69,7 +69,7 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
   // Chunk-8 WI-8.3: usage_events lives in state.db now — seed it there.
   const stateDb = openStateDatabase();
   const insert = stateDb.prepare(
-    "INSERT INTO usage_events (event_type, entry_id, entry_ref, created_at) VALUES ('show', ?, ?, datetime('now'))",
+    "INSERT INTO usage_events (event_type, entry_id, entry_ref, source, created_at) VALUES ('show', ?, ?, 'user', datetime('now'))",
   );
   // Post-Chunk-8 the durable `usage_events.entry_ref` is the new-grammar
   // conceptId (`[bundle//]memories/duplicate`), not the legacy `memory:duplicate`.

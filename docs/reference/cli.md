@@ -1257,7 +1257,7 @@ akm history --format text                      # Human-readable trail
 | --- | --- |
 | `--ref` | Filter to a single asset ref (`[bundle//]conceptId`). Omit for stash-wide history. |
 | `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
-| `--generator` | Filter by event generator: `user` (default) or `improve` (`akm improve` operations). |
+| `--generator` | Filter by event provenance: `user`, `improve`, `task`, `audit`, or `unknown`. No filter is applied by default. |
 | `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
 
 Output envelope (JSON):
@@ -1276,6 +1276,7 @@ Output envelope (JSON):
       "entryId": 42,
       "query": null,
       "signal": "positive",
+      "source": "user",
       "metadata": null,
       "createdAt": "2026-04-12 14:03:21"
     }
@@ -1289,9 +1290,9 @@ back only when the corresponding flags were supplied. `totalCount` matches
 `entries.length` (no server-side pagination yet). `warnings` is omitted when
 empty. Entries are returned in chronological order (oldest first).
 
-If the stash has never been indexed, the `usage_events` schema is created
-on demand and the command returns an empty `entries` array rather than
-erroring.
+`usage_events` is durable in `state.db`, not the regenerable index. A fresh
+state database receives the schema through state migrations and returns an
+empty `entries` array rather than erroring.
 
 ### log
 
@@ -1316,7 +1317,7 @@ akm log tail --format jsonl                       # Stream as JSONL
 | | `akm history` | `akm log` |
 | --- | --- | --- |
 | Scope | Per-asset (or stash-wide) state changes | Raw stash-wide mutation stream |
-| Backing store | `usage_events` table (built by the indexer) | `state.db` append-only events |
+| Backing store | `state.db` `usage_events` table | `state.db` append-only `events` table |
 | Granularity | Analytical replay — what was *recorded* for an asset | Every mutating verb, at the moment it happens |
 | Cross-source | Yes — aggregates across configured sources | No — the local `state.db` only |
 | Resumable cursor | No | Yes (`--since '@offset:<id>'`) |

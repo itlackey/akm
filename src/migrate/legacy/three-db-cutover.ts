@@ -284,6 +284,94 @@ function persistRefMapJson(outputPath: string, map: Map<string, string>): void {
   }
 }
 
+/** Load the persisted cutover map when a committed migration resumes at a boundary step. */
+export function loadCutoverRefMap(inputPath: string): Map<string, string> {
+  if (!fs.existsSync(inputPath)) {
+    throw new CutoverIntegrityError(`persisted cutover ref map is missing: ${inputPath}`);
+  }
+  const parsed = JSON.parse(fs.readFileSync(inputPath, "utf8")) as {
+    formatVersion?: unknown;
+    entries?: unknown;
+  };
+  if (
+    parsed.formatVersion !== CUTOVER_REFMAP_FORMAT ||
+    !parsed.entries ||
+    typeof parsed.entries !== "object" ||
+    Array.isArray(parsed.entries)
+  ) {
+    throw new CutoverIntegrityError(`invalid persisted cutover ref map: ${inputPath}`);
+  }
+  const map = new Map<string, string>();
+  for (const [oldRef, itemRef] of Object.entries(parsed.entries)) {
+    if (!oldRef || typeof itemRef !== "string" || !itemRef) {
+      throw new CutoverIntegrityError(`invalid persisted cutover ref map entry for ${oldRef}`);
+    }
+    map.set(oldRef, itemRef);
+  }
+  return map;
+}
+
+const PILOT_TREATMENT_FILE = path.join(".akm", "measurement", "treatment-pilot-2026-06-14.txt");
+
+function fsyncPilotTreatmentDirectory(directory: string): void {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(directory, "r");
+    fs.fsyncSync(fd);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EISDIR" && code !== "EPERM") throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/** Re-key the one pre-0.9 pilot cohort file while the frozen old-ref map is available. */
+export function migratePilotTreatmentFiles(
+  stashRoots: readonly CutoverStashRoot[],
+  refMap: Map<string, string>,
+): number {
+  let migrated = 0;
+  const seen = new Set<string>();
+  for (const root of stashRoots) {
+    const file = path.join(root.path, PILOT_TREATMENT_FILE);
+    const resolved = path.resolve(file);
+    if (seen.has(resolved) || !fs.existsSync(file)) continue;
+    seen.add(resolved);
+    const original = fs.readFileSync(file, "utf8");
+    const rewritten = original
+      .split("\n")
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) return line;
+        const target = refMap.get(trimmed);
+        if (!target) return line;
+        const prefix = line.slice(0, line.indexOf(trimmed));
+        const suffix = line.slice(line.indexOf(trimmed) + trimmed.length);
+        return `${prefix}${target}${suffix}`;
+      })
+      .join("\n");
+    if (rewritten === original) continue;
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      const fd = fs.openSync(tmp, "w", fs.statSync(file).mode & 0o777);
+      try {
+        fs.writeFileSync(fd, rewritten);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmp, file);
+      fsyncPilotTreatmentDirectory(path.dirname(file));
+    } catch (error) {
+      fs.rmSync(tmp, { force: true });
+      throw error;
+    }
+    migrated += 1;
+  }
+  return migrated;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // The re-key engine (per-table policy, cutover-design.md §3)
 // ═══════════════════════════════════════════════════════════════════════
@@ -751,8 +839,19 @@ function rescueUsageEvents(db: Database, refMap: Map<string, string>): number {
   // Never carry the source rowid/id — let state.db mint fresh AUTOINCREMENT ids.
   const common = columnNames(db, "main", "usage_events").filter((c) => c !== "id" && srcCols.has(c));
   if (common.length > 0) {
-    const colList = common.join(", ");
-    db.exec(`INSERT INTO main.usage_events (${colList}) SELECT ${colList} FROM oldidx.usage_events`);
+    const targetColumns = [...common];
+    const selectColumns = [...common];
+    // Rows from the pre-provenance schema are historical but not necessarily
+    // interactive. Preserve them as unattributed rather than manufacturing
+    // user demand through state.db's legacy column default.
+    if (!srcCols.has("source")) {
+      targetColumns.push("source");
+      selectColumns.push("'unknown'");
+    }
+    db.exec(
+      `INSERT INTO main.usage_events (${targetColumns.join(", ")}) ` +
+        `SELECT ${selectColumns.join(", ")} FROM oldidx.usage_events`,
+    );
   }
 
   if (!columnNames(db, "main", "usage_events").includes("entry_ref")) return countRows(db, "usage_events");
