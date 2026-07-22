@@ -263,6 +263,17 @@ describe("0.9 migration backup", () => {
     expect((message.match(/oversized-directory-/g) ?? []).length).toBeLessThanOrEqual(100);
   });
 
+  test("operation mutex databases do not count toward the lock sample cap", () => {
+    createMigrationBackup();
+    const lockDir = path.join(getDataDir(), "extract-locks");
+    fs.mkdirSync(lockDir, { recursive: true });
+    for (let index = 0; index < 500; index += 1) {
+      fs.writeFileSync(path.join(lockDir, `.extract-${index}.lock.operations.sensitive`), "mutex");
+    }
+
+    expect(() => restoreMigrationBackup(true)).not.toThrow();
+  });
+
   test("maintenance barrier excludes new lock starts and restore contenders", async () => {
     createMigrationBackup();
     const release = acquireMaintenanceBarrier();

@@ -137,7 +137,8 @@ export function buildCutoverRefMap(opts: BuildCutoverRefMapOptions): Map<string,
   if (fs.existsSync(opts.oldIndexDbPath)) {
     const db = openDatabaseFinalizing(opts.oldIndexDbPath, { readonly: true });
     try {
-      if (tableExists(db, "main", "entries")) {
+      const entryColumns = tableExists(db, "main", "entries") ? new Set(columnNames(db, "main", "entries")) : undefined;
+      if (["entry_key", "item_ref", "entry_type", "stash_dir"].every((column) => entryColumns?.has(column))) {
         const rows = db
           .prepare(
             "SELECT entry_key AS entryKey, item_ref AS itemRef, entry_type AS entryType, stash_dir AS stashDir " +

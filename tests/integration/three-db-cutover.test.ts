@@ -30,7 +30,11 @@ import { type ContentMigrationReport, runContentMigration } from "../../src/migr
 import { getLegacyWorkflowDbPath } from "../../src/migrate/legacy/legacy-paths";
 import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json";
 import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
-import { migratePilotTreatmentFiles, quarantineIndexDb } from "../../src/migrate/legacy/three-db-cutover";
+import {
+  buildCutoverRefMap,
+  migratePilotTreatmentFiles,
+  quarantineIndexDb,
+} from "../../src/migrate/legacy/three-db-cutover";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import {
   buildOrphanBearingStateDb,
@@ -161,6 +165,26 @@ function refsIn(db: Database, table: string, keyColumn: string): string[] {
 function ledgerIds(db: Database): string[] {
   return (db.query("SELECT id FROM schema_migrations ORDER BY rowid").all() as Array<{ id: string }>).map((r) => r.id);
 }
+
+test("cutover ref map tolerates a pre-provenance index without item_ref", () => {
+  fs.mkdirSync(path.dirname(getDbPath()), { recursive: true });
+  const index = new Database(getDbPath());
+  index.exec(`
+    CREATE TABLE entries (
+      id INTEGER PRIMARY KEY,
+      entry_key TEXT NOT NULL,
+      entry_type TEXT NOT NULL,
+      stash_dir TEXT NOT NULL
+    )
+  `);
+  index.close();
+
+  const mapPath = path.join(getDataDir(), "cutover-ref-map.json");
+  const refMap = buildCutoverRefMap({ oldIndexDbPath: getDbPath(), mapOutputPath: mapPath });
+
+  expect(refMap.size).toBe(0);
+  expect(fs.existsSync(mapPath)).toBe(true);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // (a) rc-train FROM-state round-trip
