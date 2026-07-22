@@ -694,12 +694,13 @@ function sampleLockDirectory(directory: string): { paths: string[]; overflow: bo
     while (true) {
       const entry = handle.readSync();
       if (!entry) break;
+      if (!entry.isFile() || !entry.name.endsWith(".lock")) continue;
       inspected += 1;
       if (inspected > MAX_BLOCKER_DIRECTORY_SAMPLES) {
         overflow = true;
         break;
       }
-      if (entry.isFile() && entry.name.endsWith(".lock")) paths.push(path.join(directory, entry.name));
+      paths.push(path.join(directory, entry.name));
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paths: [], overflow: false };
