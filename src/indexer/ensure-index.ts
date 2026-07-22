@@ -176,13 +176,20 @@ function indexCanServeStash(stashDir: string): boolean {
   }
 }
 
-async function runInlineReindex(stashDir: string, signal?: AbortSignal): Promise<boolean> {
+async function runInlineReindex(
+  stashDir: string,
+  options: { signal?: AbortSignal; hydrateSources?: boolean } = {},
+): Promise<boolean> {
   try {
     const { akmIndex } = await import("./indexer.js");
-    await akmIndex({ stashDir, signal });
+    await akmIndex({
+      stashDir,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.hydrateSources === false ? { hydrateSources: false } : {}),
+    });
     return true;
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (options.signal?.aborted) throw error;
     warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
     return false;
   }
@@ -208,9 +215,17 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
   warnOnBundleRenameDrift();
   if (options.mode === "blocking") {
+    // Blocking callers (improve's planning preflight) are a sanctioned
+    // materialization point — hydrate cache-backed sources as usual.
     if (!isIndexStale(stashDir)) return false;
-    return runInlineReindex(stashDir, options.signal);
+    return runInlineReindex(stashDir, { ...(options.signal ? { signal: options.signal } : {}) });
   }
+  // Background = the READ path (`show` auto-index): query time must never clone/
+  // pull/fetch (spec §14.3 / D11). Build from already-materialized content only;
+  // absent source caches are skipped with a warning, not fetched.
   if (indexCanServeStash(stashDir)) return false;
-  return runInlineReindex(stashDir, options.signal);
+  return runInlineReindex(stashDir, {
+    ...(options.signal ? { signal: options.signal } : {}),
+    hydrateSources: false,
+  });
 }

@@ -182,6 +182,15 @@ interface IndexOptions {
   dryRun?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
+  /**
+   * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
+   * Default `true` — the sanctioned materialization callers (`akm index`,
+   * source add/update/sync, improve's blocking preflight). A READ command's
+   * inline auto-index passes `false` so query time never touches the network
+   * (spec §14.3 / D11): absent source caches are skipped with a warning instead
+   * of cloned.
+   */
+  hydrateSources?: boolean;
 }
 
 interface IndexedDirCandidate {
@@ -561,7 +570,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       const sourceCacheStart = Date.now();
       onProgress({ phase: "preflight", message: "Hydrating source caches." });
       const { ensureSourceCaches, resolveSourceEntries } = await import("./search/search-source.js");
-      await ensureSourceCaches(config, { force: full });
+      await ensureSourceCaches(config, { force: full, materialize: options.hydrateSources !== false });
       const sourceCacheEnd = Date.now();
       const allSourceEntries = resolveSourceEntries(stashDir, config);
       const allSourceDirs = allSourceEntries.map((s) => s.path);

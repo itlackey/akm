@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../../src/commands/read/show";
 import { saveConfig } from "../../../src/core/config/config";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { mergeLockEntriesSync } from "../../../src/integrations/lockfile";
 
 // Trigger source-provider self-registration
@@ -231,6 +232,37 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     expect(result.type).toBe("agent");
     expect(result.toolPolicy).toBeUndefined();
   });
+
+  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
+    // Query time must never touch the network (spec §14.3 / D11). A configured
+    // git bundle with NO materialized cache AND NO lock localRoot is UNAVAILABLE
+    // for the read: it is skipped with a warning naming the remedy, while the
+    // primary stash still resolves. The hostile `git:contrib/pack` URL would
+    // hang for 120s on any read that cloned — completing under the tight test
+    // timeout proves no `git clone`/`ssh git-upload-pack` subprocess was spawned.
+    const warnings: unknown[][] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args);
+    });
+    try {
+      // A resolvable asset in the PRIMARY stash proves "everything else resolves".
+      writeFile(path.join(stashDir, "agents", "local.md"), AGENT_MD);
+      saveConfig({
+        semanticSearchMode: "off",
+        bundles: { remote: { git: "git:contrib/pack" } },
+      });
+      // Deliberately NO lock entry for "remote" — the cache is cold.
+
+      const result = await akmShow({ ref: "agents/local" });
+      expect(result.type).toBe("agent");
+
+      const joined = warnings.map((a) => a.map(String).join(" ")).join("\n");
+      expect(joined).toContain('source "remote" is not materialized');
+      expect(joined).toContain("akm index");
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  }, 5000);
 
   test("a configured secondary source (nameless git/filesystem) drops toolPolicy", async () => {
     // Regression for the original bypass: a source added WITHOUT a name has no

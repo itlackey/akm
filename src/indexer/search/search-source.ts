@@ -307,10 +307,25 @@ function isValidDirectory(dir: string): boolean {
  * directories exist on disk. Must be called (async) before
  * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
+ *
+ * `materialize` (default `true`) is the query-time safety valve (spec §14.3 /
+ * D11): the sanctioned materialization callers (`akm index`, source
+ * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
+ * fetch as needed. A READ command's inline auto-index passes `materialize:
+ * false` — network is FORBIDDEN at query time, so instead of `sync()` we only
+ * check whether each cache-backed source is already materialized: a present
+ * cache is served as-is (last-known-good; no TTL pull either), while an absent
+ * or partially-staged cache makes that source UNAVAILABLE for the read and is
+ * skipped with one warning naming the remedy. The rest of the command still
+ * resolves.
  */
-export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
+export async function ensureSourceCaches(
+  config?: AkmConfig,
+  options?: { force?: boolean; materialize?: boolean },
+): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
+  const materialize = options?.materialize !== false;
   // Polymorphic refresh: walk every enabled source through its registered
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
@@ -340,6 +355,14 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
     }
 
     if (!provider.sync) continue;
+
+    if (!materialize) {
+      // READ path: never clone/pull/fetch. Serve an already-materialized cache
+      // as last-known-good; skip an absent/partial one with a single warning.
+      warnIfSourceUnavailableForRead(entry, provider.name);
+      continue;
+    }
+
     try {
       await provider.sync({ force });
     } catch (err) {
@@ -348,4 +371,39 @@ export async function ensureSourceCaches(config?: AkmConfig, options?: { force?:
       );
     }
   }
+}
+
+/**
+ * True when `dir` holds already-materialized content: it exists, is a
+ * directory, and is non-empty. A non-existent path or an empty leftover /
+ * partial staging dir reads as NOT materialized so the read skips it rather
+ * than walking a hollow cache.
+ */
+function isMaterializedDir(dir: string): boolean {
+  try {
+    if (!fs.statSync(dir).isDirectory()) return false;
+    return fs.readdirSync(dir).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * On a read-path auto-index, warn (once per source) that a cache-backed source
+ * is not materialized locally and is being skipped — naming the remedy. Uses
+ * the SAME lock-first content-root resolution the walker uses, so an installed
+ * source whose content lives at its lock `localRoot` counts as materialized.
+ */
+function warnIfSourceUnavailableForRead(entry: SourceConfigEntry, providerName: string): void {
+  let dir: string | undefined;
+  try {
+    dir = resolveEntryContentDir(entry);
+  } catch {
+    dir = undefined;
+  }
+  if (dir && isMaterializedDir(dir)) return;
+  warn(
+    `Warning: source "${providerName}" is not materialized locally; skipping it for this read. ` +
+      "Run `akm index` (or `akm source update`) to fetch it.",
+  );
 }
