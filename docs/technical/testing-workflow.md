@@ -37,12 +37,10 @@ bun run check
 
 Relevant coverage:
 
-- `tests/self-update.test.ts` - self-upgrade detection and checksum enforcement
-- `tests/stash-registry.test.ts` - `list`, `remove`, `update`, cache cleanup
-- `tests/registry-install.test.ts` - install resolution, tar safety, local/git/npm paths
-- `tests/e2e.test.ts` - real CLI workflows and subprocess behavior
+- `tests/integration/self-update.test.ts` - self-upgrade detection and checksum enforcement
+- `tests/integration/registry-*.test.ts`, `tests/provider-registry.test.ts` - `list`, `remove`, `update`, cache cleanup, install resolution, tar safety, local/git/npm paths
 - `tests/integration/setup-run.test.ts` - full setup wizard orchestration and failure handling
-- `tests/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
+- `tests/integration/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### Writing deterministic, isolated tests
 
@@ -95,14 +93,15 @@ tests) and restores via its own save/restore wrapper, add it to the linter's
 
 ### 2. End-to-end CLI validation
 
-Run the full E2E suite when changing CLI behavior, indexing, search, config,
-source management, or output shaping:
+Run the full integration suite when changing CLI behavior, indexing, search,
+config, source management, or output shaping:
 
 ```sh
-bun test tests/e2e.test.ts
+bun run test:integration
 ```
 
-This suite exercises real flows, including:
+Collectively, these suites (`tests/integration/`) exercise real flows,
+including:
 
 - fallback search without an index
 - `index -> search -> show`
@@ -155,7 +154,7 @@ Run the Docker matrix when changing install, packaging, startup, runtime
 dependencies, or platform behavior:
 
 ```sh
-bun test tests/docker-install.test.ts
+bun test tests/integration/docker-install.test.ts
 ```
 
 Or run the shell orchestrator directly:
@@ -213,8 +212,8 @@ See `docs/technical/curate-performance-evals.md` and `docs/akm-eval.md`.
 Use this for most code changes:
 
 ```sh
-bun test
-bun test tests/e2e.test.ts
+bun run test:unit
+bun run test:integration
 bunx biome check --write src/ tests/
 bunx tsc --noEmit
 ```
@@ -225,8 +224,8 @@ Use this when touching `src/cli.ts`, `src/self-update.ts`, install flows,
 source management, or Docker assets:
 
 ```sh
-bun test
-bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts tests/integration/setup-run.test.ts tests/install-script.test.ts
+bun run test:unit
+bun test tests/integration/self-update.test.ts tests/integration/setup-run.test.ts tests/integration/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
 bunx biome check --write src/ tests/
 bunx tsc --noEmit
@@ -366,11 +365,8 @@ There are two different upgrade paths and both matter.
 
 `akm update` refreshes managed stashes, not the `akm` binary itself.
 
-Automated coverage already exists in:
-
-- `tests/stash-registry.test.ts`
-- `tests/registry-install.test.ts`
-- upgrade-related scenarios inside `tests/e2e.test.ts`
+Automated coverage already exists in the `tests/integration/registry-*.test.ts`
+and `tests/provider-registry.test.ts` suites.
 
 Before release, validate this manually against a disposable managed source.
 Use a staging npm package, GitHub repo, or git ref that you can change between
@@ -413,7 +409,7 @@ Automated coverage:
 - checksum mismatches
 - npm and unknown-install guidance
 
-See `tests/self-update.test.ts`.
+See `tests/integration/self-update.test.ts`.
 
 ### Why Docker is required for final self-upgrade validation
 
@@ -450,14 +446,14 @@ Also run one negative-path check in automation or staging:
 - checksum mismatch
 - permission failure when install directory is not writable
 
-Most of those negative cases are already covered by `tests/self-update.test.ts`.
+Most of those negative cases are already covered by `tests/integration/self-update.test.ts`.
 
 ## Evidence To Capture For A Release
 
 For any release candidate, keep these artifacts:
 
-- `bun test` output
-- `bun test tests/e2e.test.ts` output
+- `bun run test:unit` output
+- `bun run test:integration` output
 - Docker matrix summary from `./tests/docker/run-docker-tests.sh`
 - one successful `install.sh` transcript in a fresh container
 - one successful `akm upgrade` transcript from an older binary to the candidate

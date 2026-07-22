@@ -14,7 +14,7 @@ All paths below use these resolved base directories:
 | `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR` |
 | `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_STASH_DIR` |
 
-> **Storage reorganization (v0.8.0):** akm uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `akm-migrate-storage` to migrate existing installations.
+akm uses four XDG-compliant directories. Durable data (`index.db`, `state.db`, `akm.lock`) lives in `$DATA`; the event log is stored in the `events` table in `state.db`.
 
 ---
 
@@ -22,13 +22,13 @@ All paths below use these resolved base directories:
 
 ### `$DATA/index.db` — Main Search Index
 
-Schema version `DB_VERSION = 17` (`src/indexer/db/schema.ts`). WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
+Schema managed by `ensureSchema()` (`src/storage/repositories/index-schema.ts`), gated by a `DB_VERSION` constant used only as a forensic stamp in `index_meta`. WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
 
 Opened by:
 - `openDatabase()` — full schema init, called by `akm index`
 - `openExistingDatabase()` — read/write without schema mutation, called by search/show/curate
 
-**Retention:** Rebuilt (drop + recreate all tables) on `DB_VERSION` mismatch. `usage_events` rows are backed up before the drop and restored after. `clearStaleCacheEntries()` removes orphaned LLM cache rows. `purgeOldUsageEvents()` removes rows older than 90 days.
+**Retention:** `index.db` is a fully regenerable derived cache. Schema convergence is additive and non-destructive — every table is `CREATE ... IF NOT EXISTS`, column additions go through guarded `ALTER`s, and targeted migrations handle structural changes; there is no drop-and-recreate-on-version-mismatch path. `clearStaleCacheEntries()` removes orphaned LLM cache rows.
 
 #### Table: `index_meta`
 
@@ -44,15 +44,21 @@ Known keys: `version` (stored DB_VERSION), `embeddingDim` (e.g. `"384"`), `hasEm
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | Internal row ID |
-| `entry_key` | TEXT NOT NULL UNIQUE | `<stash_dir>:<type>:<name>` |
+| `entry_key` | TEXT NOT NULL UNIQUE | `<stash_dir>:<type>:<name>` (legacy identity column) |
 | `dir_path` | TEXT NOT NULL | Parent directory of the asset file |
 | `file_path` | TEXT NOT NULL | Absolute path to the asset file |
 | `stash_dir` | TEXT NOT NULL | Root stash directory |
 | `entry_json` | TEXT NOT NULL | Full `StashEntry` as JSON |
 | `search_text` | TEXT NOT NULL | Pre-built BM25 search string |
 | `entry_type` | TEXT NOT NULL | Asset type: `memory`, `skill`, `lesson`, etc. |
+| `derived_from` | TEXT | Set on entries derived from another asset (e.g. `.derived` memories) |
+| `item_ref` | TEXT | Bundle-adapter identity: the durable `<bundle>//<concept-id>` spelling. Now the primary conflict target for the entries upsert; nullable only on partially-migrated rows. |
+| `bundle_id`, `component_id`, `concept_id`, `adapter_id` | TEXT | Bundle-adapter provenance columns, additive alongside the legacy columns above |
+| `type` | TEXT | Bundle-adapter item type (parallel to `entry_type`) |
+| `content_hash` | TEXT | Content hash for change detection |
+| `document_json` | TEXT | Bundle-adapter document payload |
 
-Indexes: `idx_entries_dir` on `dir_path`, `idx_entries_type` on `entry_type`.
+Indexes: `idx_entries_dir` on `dir_path`, `idx_entries_type` on `entry_type`, `idx_entries_file_path` on `file_path`, a UNIQUE index on `item_ref`.
 
 #### Virtual Table: `entries_fts` (FTS5)
 
@@ -140,34 +146,16 @@ re-enrichment callers.
 | `last_used_at` | TEXT | ISO-8601; NULL if never selected |
 | `updated_at` | TEXT NOT NULL | ISO-8601 |
 
+A companion `utility_scores_scoped` table (`entry_id, scope_key` PK) tracks the
+same EMA per `(entry, project-anchor)` pair so an asset useful in one project
+doesn't pollute rankings in another; `utility_scores` is preserved as the
+global fallback / cold-start signal.
+
 See [Utility Score Pipeline](#utility-score-pipeline) below.
 
-#### Table: `usage_events`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `event_type` | TEXT NOT NULL | `search`, `show`, `select`, `feedback` |
-| `query` | TEXT | Search query (NULL for non-search events) |
-| `entry_id` | INTEGER | FK → `entries(id)`; NULL until re-linked after rebuild |
-| `entry_ref` | TEXT | Stable `type:name` string (survives entry ID changes) |
-| `signal` | TEXT | Feedback signal: `positive` or `negative` |
-| `metadata` | TEXT | JSON free-form metadata |
-| `created_at` | TEXT NOT NULL | ISO-8601 |
-
-Indexes: `idx_usage_events_entry`, `idx_usage_events_type`, `idx_usage_events_ref`.
-
-Preserved across schema version upgrades. `relinkUsageEvents()` re-associates rows to new entry IDs via `entry_ref` after a full rebuild.
-
-#### Table: `search_events` (legacy)
-
-Queried defensively by `getZeroResultSearches()` but not created by current schema. May exist in databases created by older akm versions.
-
-| Column | Type |
-|---|---|
-| `query` | TEXT |
-| `result_count` | INTEGER |
-| `ts` | INTEGER (Unix ms) |
+`usage_events` (search/show/feedback telemetry) is **not** an `index.db` table —
+since the three-DB cutover (Chunk-8 WI-8.3) it lives in `state.db`. See the
+`state.db` section below.
 
 #### Table: `registry_index_cache`
 
@@ -206,8 +194,13 @@ keys ON. No automatic cleanup — runs persist indefinitely.
 | `created_at` | TEXT NOT NULL | ISO-8601 |
 | `updated_at` | TEXT NOT NULL | ISO-8601 |
 | `completed_at` | TEXT | ISO-8601; NULL while active |
+| `agent_harness`, `agent_session_id` | TEXT | Driving agent identity, recorded at start (see the check-in mechanism in `docs/features/workflows.md`) |
+| `checkin_armed_at` | TEXT | ISO-8601 timestamp; a stall past the check-in window surfaces a `continue` directive on the next poll |
+| `plan_json`, `plan_hash` | TEXT | Frozen workflow-v3 execution plan (engine caps, exact models, symbolic credentials, concurrency, timeout) and its hash |
+| `engine_lease_until`, `engine_lease_holder` | TEXT | Engine concurrency lease bookkeeping for the run |
+| `plan_ir_version` | INTEGER | Schema version of `plan_json`'s IR |
 
-Indexes: `idx_workflow_runs_ref`, `idx_workflow_runs_status`, `idx_workflow_runs_scope_ref_status`.
+Indexes: `idx_workflow_runs_ref`, `idx_workflow_runs_status`, `idx_workflow_runs_scope_ref_status`, `idx_workflow_runs_agent_session`.
 
 #### Table: `workflow_run_steps`
 
@@ -223,8 +216,20 @@ Indexes: `idx_workflow_runs_ref`, `idx_workflow_runs_status`, `idx_workflow_runs
 | `notes` | TEXT | Agent-provided completion notes |
 | `evidence_json` | TEXT | Structured evidence key-value pairs |
 | `completed_at` | TEXT | ISO-8601; NULL while pending |
+| `summary` | TEXT | Required completion summary, validated against `completion_json` by an LLM gate when both are present |
 
 Primary key: `(run_id, step_id)`.
+
+#### Table: `workflow_run_units`
+
+Fan-out execution units for workflow-v3 parallel/graph runs (one row per node in
+a run's execution graph), keyed `(run_id, unit_id)` with a FK to `workflow_runs`.
+Columns include `node_id`, `parent_unit_id`, `phase`, `runner`, `model`,
+`status` (`pending`/`running`/`completed`/`failed`/`skipped`), `result_json`,
+`tokens`, `failure_reason`, `worktree_path`, `session_id`, timing columns, and
+per-unit check-in/claim fields (`last_checkin_at`, `attempts`, `claim_holder`,
+`claim_expires_at`, `engine`) mirroring the run-level check-in design. See
+`docs/features/workflows.md`.
 
 ---
 
@@ -289,6 +294,33 @@ Replaces per-task JSONL files. Indexed on `task_id`, `started_at`.
 | `metadata_json` | TEXT | Versioned metadata: v2 records `durationMs`, `detail`, and prompt `engine`; unversioned historical metadata keeps `profile` as `legacyProfile` |
 
 Indexes: `idx_task_history_task` on `task_id`, `idx_task_history_started` on `started_at`.
+
+#### Table: `usage_events`
+
+Moved here from `index.db` at the three-DB cutover (Chunk-8 WI-8.3) — durable,
+non-regenerable telemetry does not belong in a rebuildable derived cache.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `event_type` | TEXT NOT NULL | `search`, `show`, `select`, `feedback` |
+| `query` | TEXT | Search query (NULL for non-search events) |
+| `entry_id` | INTEGER | `index.db` entry id; NULL until re-linked after a rebuild |
+| `entry_ref` | TEXT | Stable ref string (survives entry ID changes across index rebuilds) |
+| `signal` | TEXT | Feedback signal: `positive` or `negative` |
+| `metadata` | TEXT | JSON free-form metadata |
+| `source` | TEXT NOT NULL DEFAULT 'user' | Event origin |
+| `created_at` | TEXT NOT NULL | ISO-8601 |
+
+Indexes: `idx_usage_events_entry`, `idx_usage_events_type`, `idx_usage_events_ref`, `idx_usage_events_source`.
+
+Preserved across `index.db` schema changes and full rebuilds. `relinkUsageEvents()` re-associates rows to new entry IDs via `entry_ref` after a full rebuild.
+
+#### Table: `legacy_state`
+
+Orphan quarantine archive populated by the one-time three-DB-cutover ref-rekey
+migration (§11.4): rows from durable state keyed off a ref that could not be
+re-keyed onto `item_ref` land here instead of being silently dropped.
 
 ---
 
@@ -400,7 +432,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
-| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of graph schema v3 / `DB_VERSION = 17`, `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; every considered file persists a `status` and `reason`; `graph_file_entities` stores both canonical `entity` and normalized `entity_norm`; `graph_file_relations` stores canonical endpoints plus `from_entity_norm` / `to_entity_norm`; `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
+| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; every considered file persists a `status` and `reason`; `graph_file_entities` stores both canonical `entity` and normalized `entity_norm`; `graph_file_relations` stores canonical endpoints plus `from_entity_norm` / `to_entity_norm`; `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. `graph_meta` also stores the latest graph telemetry: model, prompt version, batch size, cache hits/misses, truncation count, and failure count. A companion `graph_extraction_queue` table holds a lazy, priority-ordered backlog of files awaiting extraction. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity_norm(stash_root, entity_norm)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction; regenerated on the next `akm index`/`akm improve` since `index.db` is a fully rebuildable cache |
 
 ---
 
@@ -449,7 +481,7 @@ Each `$STASH/wikis/<wikiName>/` contains:
 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Belief-state archived memory files + `cleanup.md` audit record | No cleanup |
 | `$STASH/.akm/distill-rejected/<ts>-<lessonRef>.md` | Lessons that failed the LLM-as-judge quality gate. Frontmatter: `{ score, reason }`. | No cleanup |
 | `$STASH/memories/MEMORY.md` | Human-maintained memory index. Budget: warn at 180 lines, hard cap at 200. Read-only for akm (not written by current code). | Manual |
-| `<dir>/.stash.json` | Legacy per-directory metadata manifest. Still parsed as an override layer by the indexer but no longer written. | Manual |
+| `<dir>/.stash.json` | Legacy per-directory metadata manifest (pre-0.9.0). The live indexer no longer reads it; only the storage migrator reads and folds it into inline asset metadata before deleting it. | Manual |
 
 ---
 
@@ -624,4 +656,4 @@ akm search  (ranking phase)
 
 ---
 
-Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getWorkflowDbPath`, `getStateDbPath`, `getEventsPath`, `getSemanticStatusPath`).
+Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getStateDbPathInDataDir`, `getSemanticStatusPath`).

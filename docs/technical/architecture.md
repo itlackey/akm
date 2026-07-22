@@ -5,8 +5,7 @@ filesystem sources, cache-backed sources (git, website, npm), and registry
 catalogs.
 
 This document is the operating summary of the current architecture and is the
-current-truth reference. The historical v1 planning spec is archived at
-`docs/archive/v1-architecture-spec.md` (archived 2026-07-05; not a live contract).
+current-truth reference.
 
 ---
 

@@ -4,8 +4,8 @@ Current state snapshot after the recent semantic-search fixes.
 
 ## Fixed
 
-- [x] Vector search path has dedicated tests (`tests/vector-search.test.ts`)
-- [x] `semantic-status.ts` has dedicated tests (`tests/semantic-status.test.ts`)
+- [x] Vector search path has dedicated tests (`tests/integration/vector-search.test.ts`)
+- [x] `semantic-status.ts` has dedicated tests (`tests/integration/semantic-status.test.ts`)
 - [x] `semanticSearchMode` schema/config mismatch was fixed
 - [x] `@huggingface/transformers` moved to optional dependency
 - [x] usage events survive index rebuilds/schema resets

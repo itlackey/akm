@@ -67,8 +67,8 @@ filesystem is optional depth
 ### 6. Refs are plumbing
 
 Consumers should treat refs as opaque lookup handles. The current wire format is
-`[origin//]type:name`, but agents should pass refs through rather than parse
-them.
+`[bundle//]conceptId[#fragment]`, but agents should pass refs through rather
+than parse them. See `docs/technical/ref.md`.
 
 ### 7. Output serves agents first
 
@@ -83,6 +83,6 @@ install, and provider plumbing, not in the hot path from `search` to `show`.
 ## What akm Does Not Do
 
 - execute assets itself
-- expose vault secret values through `show`
+- expose secret/env values through `show`
 - replace live-service integrations such as MCP
 - require agents to understand source layouts or provider internals

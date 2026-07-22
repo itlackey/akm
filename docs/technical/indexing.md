@@ -13,7 +13,7 @@ Resolve all sources (filesystem, git, website, npm) and materialise caches
         ↓
 Walk files and classify assets
         ↓
-Generate metadata from the asset, then merge explicit-file legacy overrides
+Generate metadata from the asset
         ↓
 Build weighted search fields
         ↓
@@ -33,7 +33,7 @@ Cache materialisation runs through each source's `sync()` method
 
 ## Search Field Mapping
 
-`src/indexer/search-fields.ts` builds five FTS columns:
+`src/indexer/search/search-fields.ts` builds five FTS columns:
 
 | Column | Contents |
 | --- | --- |
@@ -71,8 +71,9 @@ the entry's `quality` field is set to `"enriched"` and written back to the
 index. On subsequent `akm index` runs, entries already marked `"enriched"`
 are skipped unless the caller explicitly requests re-enrichment.
 
-**5-minute wall-clock budget** — the enrichment pass operates under a 5-minute
-total deadline enforced by `AbortSignal.timeout(5 * 60 * 1000)`. Once the
+**Enrichment deadline** — the pass runs under an `AbortSignal.timeout()`
+deadline sized as a per-entry timeout (default 10 minutes, `llm.timeoutMs`
+overrides) multiplied by the number of entries being enriched. Once the
 deadline fires, no new enrichment calls are started; entries that were not
 reached are left at `quality: "generated"` and will be picked up on the next
 eligible run.
@@ -95,26 +96,29 @@ skipped unless the caller explicitly requests re-enrichment.
 | `entries_fts` | multi-column FTS5 index |
 | `embeddings` | stored embeddings |
 | `entries_vec` | optional sqlite-vec index |
-| `usage_events` | search/show/feedback telemetry |
 | `utility_scores` | recomputed utility boost state |
 | `index_meta` | schema/version/runtime metadata |
 | `workflow_documents` | validated `WorkflowDocument` JSON for indexed workflows |
 
-Workflow runtime state lives separately in `state.db` (the former `workflow.db`
-was folded into `state.db` in the 0.9.0 cutover), not this index.
+`usage_events` (search/show/feedback telemetry) and workflow runtime state
+both live in `state.db`, not `index.db` — the three-DB cutover (Chunk-8
+WI-8.3) moved `usage_events` out of the regenerable index and folded the
+former `workflow.db` into `state.db`.
 
 ## Schema Versioning
 
 `index.db` is ephemeral — fully rebuildable from sources by `akm index`.
-The schema is gated by a single `DB_VERSION` constant (currently 9). When
-the stored version differs, `ensureSchema()` (in `src/indexer/db.ts`)
-drops + recreates every table in `index.db` (preserving `usage_events`
-via a typed backup); the next `akm index` repopulates. Durable workflow run
-state in `state.db` is never touched by this path.
+`ensureSchema()` (`src/storage/repositories/index-schema.ts`) converges the
+schema forward idempotently: every table is `CREATE ... IF NOT EXISTS`, column
+additions go through guarded `ALTER`s, and targeted migrations handle
+structural changes — there is no "drop the whole index on a version mismatch"
+path. `DB_VERSION` (a forensic stamp recorded in `index_meta`) only marks how
+far a fresh database was created; it never triggers destructive rebuilds.
+Durable workflow run state in `state.db` is never touched by this path.
 
-The `workflow_documents` table (introduced in v0.6.0 with `DB_VERSION = 9`)
-caches the validated `WorkflowDocument` JSON output of `parseWorkflow()` for
-each indexed workflow asset, keyed by `entry_id` with `ON DELETE CASCADE`:
+The `workflow_documents` table caches the validated `WorkflowDocument` JSON
+output of `parseWorkflow()` for each indexed workflow asset, keyed by
+`entry_id` with `ON DELETE CASCADE`:
 
 ```sql
 CREATE TABLE workflow_documents (
@@ -138,11 +142,10 @@ metadata from signals such as:
 - `package.json`
 - renderer-specific extraction (workflow params, TOC, vault key hints, wiki metadata)
 
-Legacy `.stash.json` support remains only as a compatibility layer for entries
-that name an explicit `filename`, and that compatibility layer is deprecated and
-scheduled for removal in v0.8.0. Filename-less `.stash.json` entries are no
-longer treated as first-class metadata during indexing, search fallback,
-manifest generation, or registry build.
+The live indexer no longer reads `.stash.json` at all — since the 0.9.0
+cutover it is a migrator-only concern: the storage migrator folds each
+sidecar's overrides into the asset's inline metadata (frontmatter or header
+comments) and deletes the sidecar. See `docs/technical/filesystem.md`.
 
 ## Parameters
 
@@ -159,7 +162,7 @@ lowest-weight `content` field.
 ## Quality Values
 
 The `quality` field on an index entry tracks how its metadata was produced.
-Well-known values (defined in `src/indexer/metadata.ts`):
+Well-known values (defined in `src/indexer/passes/metadata.ts`):
 
 | Value | Meaning |
 | --- | --- |

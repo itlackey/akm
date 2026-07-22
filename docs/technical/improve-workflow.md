@@ -379,8 +379,6 @@ merge_primary_missing spike → check log for:
   none of the above + code change            → investigate pre-flight filter / memoryByRef init
 ```
 
-See `docs/technical/incidents/2026-06-03-merge-primary-missing-taxonomy.md` for full investigation commands and query recipes.
-
 ## Reviewed
 
 Reviewed against `src/commands/improve/improve.ts`,

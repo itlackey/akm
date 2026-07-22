@@ -35,7 +35,7 @@ Canonical built-in type directories come from `TYPE_DIRS` in
 Directory names still act as strong classification hints, but scripts and
 markdown assets can also be recognized outside these folders.
 
-## Data and Cache (v0.8.0+)
+## Data and Cache
 
 akm uses four XDG-compliant directories. Durable databases live in `$DATA`
 (`~/.local/share/akm`); regenerable data lives in `$CACHE` (`~/.cache/akm`).
@@ -57,11 +57,6 @@ Override env vars: `AKM_DATA_DIR` (for `$DATA`), `AKM_CACHE_DIR` (for `$CACHE`),
 
 `bin/` is cache-managed, not stash-local.
 
-> **Upgrading from v0.7?** Run `akm-migrate-storage --yes` to move
-> `index.db` and `workflow.db` from `$CONFIG` to `$DATA`. See
-> [docs/migration/v0.7-to-v0.8.md](../migration/v0.7-to-v0.8.md) for the full
-> guide.
-
 ## Config
 
 | Platform | Path |
@@ -73,75 +68,13 @@ Override with `AKM_CONFIG_DIR`.
 
 ## Legacy `.stash.json`
 
-`.stash.json` support was removed in v0.8.0. Do not create new stashes with it.
-If you are upgrading from v0.7, migrate any existing `.stash.json` sidecars to
-inline metadata before indexing. Prefer frontmatter for markdown assets and
-structured script header comments for descriptions, parameters, and execution
-hints.
-
-### Supported legacy entry fields
-
-| Field | Notes |
-| --- | --- |
-| `name`, `type` | required |
-| `description`, `tags`, `aliases` | search and display metadata |
-| `filename` | on-disk file mapping |
-| `quality`, `source`, `confidence` | provenance/quality metadata |
-| `usage`, `examples`, `searchHints`, `intent` | hint text for search |
-| `toc` | markdown heading cache |
-| `run`, `setup`, `cwd` | script execution hints |
-| `parameters` | structured parameters |
-| `wikiRole`, `pageKind`, `xrefs`, `sources` | wiki-specific metadata |
-| `fileSize` | sizing/token estimation |
-
-### Current type values
-
-Built-in `type` values are:
-
-- `script`
-- `skill`
-- `command`
-- `agent`
-- `knowledge`
-- `env`
-- `secret`
-- `workflow`
-- `memory`
-- `wiki`
-- `lesson`
-
-### Legacy example
-
-```json
-{
-  "entries": [
-    {
-      "name": "release",
-      "type": "workflow",
-      "filename": "release.md",
-      "description": "Release workflow for tagged builds",
-      "searchHints": ["publish a release", "cut a release branch"],
-      "parameters": [{ "name": "version", "description": "Version to release" }]
-    }
-  ]
-}
-```
-
-### Filename resolution
-
-If `filename` is omitted, akm does not blindly choose the first file. It uses
-asset-type-specific canonical path rules and matching heuristics to resolve the
-entry to the right on-disk file.
-
-### Migration guidance
-
-When moving away from `.stash.json` before the v0.8.0 removal:
-
-- move markdown `description`, `tags`, and `params` into frontmatter
-- move script descriptions into the file's leading comment block
-- move script parameter docs into `@param` comments
-- move script exec hints into `@run`, `@setup`, and `@cwd` header tags
-- keep `package.json` descriptions/keywords for package-level fallback metadata
+`.stash.json` is a pre-0.9.0 per-directory metadata sidecar. The live indexer
+no longer reads it; the only remaining reader is the storage migrator, which
+folds each sidecar's overrides into the corresponding asset's inline
+frontmatter (or, for scripts, header comments) and then deletes the sidecar.
+Do not create new stashes with it — use frontmatter for markdown assets and
+structured script header comments (`@param`, `@run`, `@setup`, `@cwd`) for
+descriptions, parameters, and execution hints instead.
 
 ## Cache-Backed Sources
 

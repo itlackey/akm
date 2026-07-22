@@ -3,8 +3,6 @@
 Quick reference for the repeated design patterns used in akm's refactor away
 from type-centric behavior.
 
-**Related:** `docs/technical/implementation-plan-functional-contract-refactor.md`
-
 ---
 
 ## 1. Core Rule

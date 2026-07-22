@@ -6,8 +6,8 @@ test plan.
 
 ## Areas With Strong Existing Coverage
 
-- database and scoring (`db.test.ts`, `db-scoring.test.ts`, `fts-field-weighting.test.ts`)
-- stash search/show/resolve (`stash-search.test.ts`, `stash-show.test.ts`, `stash-resolve.test.ts`)
+- database and scoring (`tests/integration/db.test.ts`, `tests/integration/db-scoring.test.ts`, `tests/integration/fts-field-weighting.test.ts`)
+- search/show CLI surfaces (`tests/integration/commands/search-cli-envelope.test.ts`, `tests/integration/commands/show.test.ts`, and the other `search-*`/`show-*` suites under `tests/integration/`)
 - registry install/search/update/list flows
 - workflow, vault, and wiki behavior
 - semantic status, vector search, and embedding config behavior
@@ -32,10 +32,10 @@ test plan.
 
 ## Useful Existing Suites To Extend
 
-- `tests/stash-search.test.ts`
-- `tests/stash-show.test.ts`
-- `tests/vector-search.test.ts`
-- `tests/semantic-status.test.ts`
-- `tests/setup*.test.ts`
-- `tests/info-command.test.ts`
-- `tests/docker-install.test.ts`
+- `tests/integration/commands/search-cli-envelope.test.ts`
+- `tests/integration/commands/show.test.ts`
+- `tests/integration/vector-search.test.ts`
+- `tests/integration/semantic-status.test.ts`
+- `tests/setup-wizard.test.ts`, `tests/setup-scheduled-tasks.test.ts`
+- `tests/integration/info-command.test.ts`
+- `tests/integration/docker-install.test.ts`

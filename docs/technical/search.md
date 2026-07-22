@@ -27,8 +27,8 @@ Query
 
 ## Indexed Search (primary)
 
-When an index exists (`~/.cache/akm/index.db`), local search uses two ranking
-signals:
+When an index exists (`~/.local/share/akm/index.db`), local search uses two
+ranking signals:
 
 ### 1. FTS5 (lexical)
 
@@ -102,9 +102,11 @@ final_score = base_score × (1 + sum_of_boosts)
 | Near-exact name | +1.0 | Query is a substring of the name or vice versa |
 | Name token overlap | +0.3/token (max 0.9) | Individual query tokens found in name |
 | Type: skill | +0.4 | Asset is a skill |
-| Type: command | +0.35 | Asset is a command |
+| Type: command / workflow | +0.35 | Asset is a command or workflow |
 | Type: agent | +0.3 | Asset is an agent |
+| Type: knowledge / fact / instruction | +0.22 | Asset is a knowledge doc, fact, or project instruction file |
 | Type: script | +0.2 | Asset is a script |
+| Type: memory | -0.02 | Asset is a memory (slight demotion) |
 | Tag exact match | +0.15/tag (max 0.3) | Query token exactly matches a tag |
 | All-token description | +0.25 | Every query token appears in description |
 | Partial description | +0.1 | Some query tokens in description |
