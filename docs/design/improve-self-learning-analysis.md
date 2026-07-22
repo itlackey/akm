@@ -201,7 +201,7 @@ rather than "refactored away."
    one-shot summarization [research-07 §8]. Caveat: biological replay-driven generalization is
    *graded and probabilistic*, not a discrete confirmation counter — the 2-count
    `force:true` gate has no direct biological analog and is a reasonable engineering
-   simplification, not a faithful copy [improve-neuroscience-alignment-survey.md]. Keep the
+   simplification, not a faithful copy. Keep the
    *direction* (evidence-gated, gradual); don't defend the specific threshold as
    biologically grounded. See G9.
 

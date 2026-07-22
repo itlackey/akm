@@ -239,7 +239,7 @@ sequenceDiagram
 
 ## Documentation
 
-- `docs/design/` — `improve-salience-working-reference.md` (end-to-end mental model, read first), `improve-proactive-maintenance.md` + `-issue.md` (starvation root cause + fix), `improve-optimal-default-config.md` (fresh-install defaults), `improve-beta50-monitoring.md` (beta.50 baseline metrics); `docs/archive/improve-reconciliation-plan-review.md` (blocker review, archived — plan shipped 0.9.0)
+- `docs/design/` — `improve-salience-working-reference.md` (end-to-end mental model, read first), `improve-beta50-monitoring.md` (beta.50 baseline metrics); `docs/archive/improve-reconciliation-plan-review.md` (blocker review, archived — plan shipped 0.9.0)
 - `docs/technical/` — `improve-workflow.md` (command surface + flow diagram), `improve-autosync-investigation.md`
 - `docs/archive/` — `improve-vs-brain-analysis.md`, `improve-pipeline-deep-tuning-analysis.md`, `improve-pipeline-analysis-0.8.0.md` (superseded by `improve-self-learning-analysis.md`; archived 2026-07-05)
 - `docs/features/improvement-loop.md` — user-facing overview
