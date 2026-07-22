@@ -49,6 +49,21 @@ contract freeze. It replaces the flat asset-type registry with a
 In short: `0.9` reduces ambiguity, pays down pre-`1.0` debt, and arrives at a
 small, durable core ready for the `1.0` freeze.
 
+### The 0.9.x series
+
+`0.9.x` is a series of refactoring and clean-up releases. The intent is to
+have **all technical debt paid off and all planned breaking changes handled
+before the 0.10.x series begins**. To get there quickly, 0.9.x patch releases
+may include breaking changes (see [STABILITY.md](../../STABILITY.md)); every
+break ships with a CHANGELOG migration note.
+
+## 0.10
+
+The `0.10.x` series is focused on **bug fixes and tuning** on top of the
+debt-free 0.9 core — no new architecture. With the clean-up done, 0.10.x
+attempts to return to the normal semver discipline: breaking changes only in
+major and minor releases, never in patches.
+
 ## 1.0
 
 Release `1.0` is focused on freezing the public contract and shipping the first

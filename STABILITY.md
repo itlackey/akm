@@ -2,7 +2,15 @@
 
 `akm-cli` follows [Semantic Versioning](https://semver.org/) on the 0.x line
 **with one caveat**: until 1.0, minor releases (0.x → 0.x+1) may include
-breaking changes. Patch releases (0.x.y → 0.x.y+1) will not.
+breaking changes.
+
+**0.9.x series exception.** The 0.9.x releases are a deliberate refactoring
+and clean-up series: the goal is to pay off all remaining technical debt and
+land every planned breaking change before 0.10. While that work completes,
+**0.9.x patch releases may also contain breaking changes** — each one called
+out in the CHANGELOG with a migration note. The 0.10.x series returns to bug
+fixes and tuning, and aims to restore the normal discipline of breaking
+changes only in major and minor releases.
 
 This document classifies each user-facing surface by stability so you can
 decide which parts of `akm` are safe to script against today and which to

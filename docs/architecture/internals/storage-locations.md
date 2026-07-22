@@ -194,7 +194,7 @@ keys ON. No automatic cleanup — runs persist indefinitely.
 | `created_at` | TEXT NOT NULL | ISO-8601 |
 | `updated_at` | TEXT NOT NULL | ISO-8601 |
 | `completed_at` | TEXT | ISO-8601; NULL while active |
-| `agent_harness`, `agent_session_id` | TEXT | Driving agent identity, recorded at start (see the check-in mechanism in `docs/features/workflows.md`) |
+| `agent_harness`, `agent_session_id` | TEXT | Driving agent identity, recorded at start (see the check-in mechanism in `docs/reference/workflows.md`) |
 | `checkin_armed_at` | TEXT | ISO-8601 timestamp; a stall past the check-in window surfaces a `continue` directive on the next poll |
 | `plan_json`, `plan_hash` | TEXT | Frozen workflow-v3 execution plan (engine caps, exact models, symbolic credentials, concurrency, timeout) and its hash |
 | `engine_lease_until`, `engine_lease_holder` | TEXT | Engine concurrency lease bookkeeping for the run |
@@ -229,7 +229,7 @@ Columns include `node_id`, `parent_unit_id`, `phase`, `runner`, `model`,
 `tokens`, `failure_reason`, `worktree_path`, `session_id`, timing columns, and
 per-unit check-in/claim fields (`last_checkin_at`, `attempts`, `claim_holder`,
 `claim_expires_at`, `engine`) mirroring the run-level check-in design. See
-`docs/features/workflows.md`.
+`docs/reference/workflows.md`.
 
 ---
 

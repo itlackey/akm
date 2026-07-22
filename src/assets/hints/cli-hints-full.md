@@ -121,7 +121,7 @@ search results. No `--llm` anywhere — akm never reasons about page content.
 ## Env files
 
 A group of related CONFIGURATION for an app/service in one `.env` file at
-`<stashDir>/env/<name>.env`, sourced/injected wholesale. Key names are
+`<stash>/env/<name>.env`, sourced/injected wholesale. Key names are
 discoverable; values and comment text stay on disk and never reach stdout or
 the index (comments can contain commented-out credentials). akm does not edit
 entries — you edit the file with your own editor and akm loads it.
@@ -141,7 +141,7 @@ akm env remove env/prod                       # Delete the env file
 ## Secrets
 
 A single sensitive value used on its own for authentication (a token, key, or
-cert) — one file = one value at `<stashDir>/secrets/<name>`. The ENTIRE file is
+cert) — one file = one value at `<stash>/secrets/<name>`. The ENTIRE file is
 the value; only the name is ever surfaced.
 
 ```sh
@@ -154,7 +154,7 @@ akm secret remove secrets/deploy-token                      # Delete the secret
 
 ## Workflows
 
-Workflows live under `<stashDir>/workflows/` as markdown or YAML v2 (`.yaml`/`.yml`).
+Workflows live under `<stash>/workflows/` as markdown or YAML v2 (`.yaml`/`.yml`).
 
 Ref-based workflow commands are scoped to the current project/worktree/directory,
 so one active run does not block unrelated directories from starting the same

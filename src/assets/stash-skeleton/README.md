@@ -62,11 +62,11 @@ akm search "<query>"
 akm search "<query>" --type skill
 akm search "<query>" --type knowledge
 
-# Show a specific asset by ref
-akm show skill:<name>
-akm show knowledge:<name>
-akm show memory:<name>
-akm show command:<name>
+# Show a specific asset by ref ([bundle//]conceptId)
+akm show skills/<name>
+akm show knowledge/<name>
+akm show memories/<name>
+akm show commands/<name>
 
 # List available assets by type
 akm list --type skill

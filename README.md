@@ -47,33 +47,33 @@ bun run build
 
 ## What akm does
 
-- **Manage sources** — add local dirs, git repos, npm packages, and websites as searchable asset sources [(details)](docs/features/sources-registries.md)
+- **Manage sources** — add local dirs, git repos, npm packages, and websites as searchable asset sources [(details)](docs/guides/sources-registries.md)
   ```sh
   akm add github:owner/stash        # GitHub
   akm add https://docs.example.com  # crawled website
   ```
-- **Search a unified index** — one FTS5 index across all your sources [(details)](docs/features/search-discovery.md)
+- **Search a unified index** — one FTS5 index across all your sources [(details)](docs/guides/search-discovery.md)
   ```sh
   akm search "deploy" --type script --limit 5
   ```
-- **Curate a shortlist** — get the best-match assets for a task without knowing exact names [(details)](docs/features/search-discovery.md)
+- **Curate a shortlist** — get the best-match assets for a task without knowing exact names [(details)](docs/guides/search-discovery.md)
   ```sh
   akm curate "set up a kubernetes deployment"
   ```
-- **Load assets on demand** — show the full content of any asset by ref [(details)](docs/features/search-discovery.md)
+- **Load assets on demand** — show the full content of any asset by ref [(details)](docs/guides/search-discovery.md)
   ```sh
   akm show workflows/ship-release
   ```
-- **Capture local knowledge** — save discoveries as memories or imported docs [(details)](docs/features/knowledge-management.md)
+- **Capture local knowledge** — save discoveries as memories or imported docs [(details)](docs/guides/knowledge-management.md)
   ```sh
   akm remember "Staging deploys require VPN"
   akm import ./notes/runbook.md
   ```
-- **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/features/workflows.md)
+- **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/reference/workflows.md)
   ```sh
   akm workflow start workflows/onboarding
   ```
-- **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/features/improvement-loop.md)
+- **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/guides/improvement-loop.md)
   ```sh
   akm feedback skills/code-review --positive
   akm improve && akm proposal list
@@ -188,12 +188,12 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 
 | Feature | Description |
 | --- | --- |
-| [Search & Discovery](docs/features/search-discovery.md) | Build the index, search, curate a shortlist, and load assets by ref |
-| [Knowledge Management](docs/features/knowledge-management.md) | Capture memories, import docs, manage wikis, and store protected env/secret assets |
-| [Sources & Registries](docs/features/sources-registries.md) | Connect local dirs, git repos, npm packages, and websites; browse the registry |
-| [Workflows](docs/features/workflows.md) | Structured multi-step procedures with resumable run state |
-| [The Improvement Loop](docs/features/improvement-loop.md) | Feedback, history, proposals, and automated asset improvement |
-| [Agent Integration](docs/features/agent-integration.md) | Wire akm into Claude Code, OpenCode, Cursor, and other coding assistants |
+| [Search & Discovery](docs/guides/search-discovery.md) | Build the index, search, curate a shortlist, and load assets by ref |
+| [Knowledge Management](docs/guides/knowledge-management.md) | Capture memories, import docs, manage wikis, and store protected env/secret assets |
+| [Sources & Registries](docs/guides/sources-registries.md) | Connect local dirs, git repos, npm packages, and websites; browse the registry |
+| [Workflows](docs/reference/workflows.md) | Structured multi-step procedures with resumable run state |
+| [The Improvement Loop](docs/guides/improvement-loop.md) | Feedback, history, proposals, and automated asset improvement |
+| [Agent Integration](docs/guides/agent-integration.md) | Wire akm into Claude Code, OpenCode, Cursor, and other coding assistants |
 
 ### Reference docs
 

@@ -12,25 +12,18 @@ Task-oriented guides for using akm.
 - [Wikis](guides/wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
 - [Local Development](guides/local-development.md) -- Dogfooding akm while editing its own source
 - [Claude Code workflows vs. akm workflows](guides/claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
+- Command tours: [search & discovery](guides/search-discovery.md), [sources & registries](guides/sources-registries.md), [knowledge management](guides/knowledge-management.md), [the improvement loop](guides/improvement-loop.md), [agent integration](guides/agent-integration.md)
 
 ## [Reference](reference/README.md)
 
 - [CLI](reference/cli.md) -- All `akm` commands and flags
 - [Configuration](reference/configuration.md) -- Engines, strategies, bundles, and settings
+- [Workflows](reference/workflows.md) -- Workflow source formats, run state, and the YAML orchestration engine
+- [Wiki Snapshot Fetchers](reference/wiki-snapshot-fetchers.md) -- The pluggable fetcher API for URL-based knowledge reads
 - [Registry](reference/registry.md) -- Registries, search, hosting, and managing sources
 - [Data & Telemetry](reference/data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 - [akm-eval](reference/akm-eval.md) -- Standalone toolkit for measuring whether `akm improve` is working
 - [Roadmap](reference/roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
-
-## [Features](features/README.md)
-
-Feature-by-feature tours: [workflows](features/workflows.md),
-[search & discovery](features/search-discovery.md),
-[knowledge management](features/knowledge-management.md),
-[sources & registries](features/sources-registries.md),
-[wiki snapshot fetchers](features/wiki-snapshot-fetchers.md),
-[agent integration](features/agent-integration.md), and
-[the improvement loop](features/improvement-loop.md).
 
 ## [Agents](agents/README.md)
 

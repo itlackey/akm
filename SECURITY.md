@@ -43,8 +43,8 @@ bugs, but you should be aware of them:
 Workflow steps run in your shell with your PATH and your environment
 variables — including any secrets you have exported or loaded via
 `akm env run` / `akm secret run`. **Only add workflow sources you trust.** See
-[`docs/features/workflows.md` — "Security: workflow sources are executed
-code"](docs/features/workflows.md#security-workflow-sources-are-executed-code)
+[`docs/reference/workflows.md` — "Security: workflow sources are executed
+code"](docs/reference/workflows.md#security-workflow-sources-are-executed-code)
 for the full discussion.
 
 ### Scripts execute shell commands

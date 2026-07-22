@@ -181,6 +181,6 @@ a secret needs to be expunged from history.
 
 - [Search & Discovery](search-discovery.md) — finding assets you have captured
 - [Sources & Registries](sources-registries.md) — bringing in external knowledge at scale
-- [Workflows](workflows.md) — structured procedures as a knowledge format
+- [Workflows](../reference/workflows.md) — structured procedures as a knowledge format
 - [CLI Reference](../reference/cli.md) — full flag documentation for `remember`, `import`, `env`, and `secret`
 - [Wikis](../guides/wikis.md) — the LLM-wiki bundle format
