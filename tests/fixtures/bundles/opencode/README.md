@@ -7,7 +7,7 @@ runtime config and is never indexed.
 - **Adapter built by:** a future Chunk-2 format-adapter work item (no `opencode`
   adapter exists in `src/core/adapter/adapters/` yet).
 - **Goldens:** `tests/fixtures/format-family-goldens/opencode/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (opencode row), §6
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (opencode row), §6
   (type derivation), §8 (one adapter per tool dir).
 - **Real-world source:** https://opencode.ai/docs/commands/ ,
   https://opencode.ai/docs/agents/ , https://opencode.ai/docs/skills/ ,

@@ -7,7 +7,7 @@ program form (an AKM extension). Both emit `type=workflow`.
   recognition currently lives in the akm matcher stack; no dedicated
   `akm-workflow` adapter module exists yet).
 - **Goldens:** `tests/fixtures/format-family-goldens/akm-workflow/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (akm-workflow row),
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (akm-workflow row),
   §6 (workflow row).
 - **Grounding:** existing akm workflow codec (`src/workflows/`) + the frozen
   `all-types` workflow fixtures.

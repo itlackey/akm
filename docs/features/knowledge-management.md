@@ -86,7 +86,7 @@ akm show research-wiki//pages/attention  # read a page by bundle//conceptId ref
 
 Writing pages, ingesting raw material, and maintaining `index.md`/`log.md`
 are your agent's job, guided by `schema.md` — akm indexes the result. See
-[Wikis](../wikis.md) for the full format.
+[Wikis](../guides/wikis.md) for the full format.
 
 ## akm env / akm secret
 
@@ -182,5 +182,5 @@ a secret needs to be expunged from history.
 - [Search & Discovery](search-discovery.md) — finding assets you have captured
 - [Sources & Registries](sources-registries.md) — bringing in external knowledge at scale
 - [Workflows](workflows.md) — structured procedures as a knowledge format
-- [CLI Reference](../cli.md) — full flag documentation for `remember`, `import`, `env`, and `secret`
-- [Wikis](../wikis.md) — the LLM-wiki bundle format
+- [CLI Reference](../reference/cli.md) — full flag documentation for `remember`, `import`, `env`, and `secret`
+- [Wikis](../guides/wikis.md) — the LLM-wiki bundle format

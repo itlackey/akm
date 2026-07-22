@@ -62,7 +62,7 @@ describe("applyContributorAblation (eval-only AKM_ABLATE_CONTRIBUTORS filter)", 
 //
 // The metadata pass now merges directory (scope/domain) tokens from the
 // canonical ref subpath into tags even when explicit tags exist
-// (docs/design/stash-conventions-code-spec.md SPEC-2), so a scoped memory
+// (docs/architecture/specs/stash-conventions-code-spec.md SPEC-2), so a scoped memory
 // with author tags earns the exact-tag ranking boost (+0.15/token) for its
 // path token. These tests pin that end-to-end delta at the contributor level
 // (the shared ranking-baseline fixture is byte-frozen per its MANIFEST, so

@@ -302,7 +302,7 @@ describe("buildSearchFields", () => {
 
 // ── SPEC-8: bodyOpening folds into the FTS content field ────────────────────
 //
-// docs/design/stash-conventions-code-spec.md SPEC-8: when the metadata pass
+// docs/architecture/specs/stash-conventions-code-spec.md SPEC-8: when the metadata pass
 // (gated by `index.indexBodyOpening`) has put the first body paragraph on
 // IndexDocument.bodyOpening, buildSearchFields folds it into the lowest-weight
 // `content` column (bm25 weight 1.0) — NOT `hints` — so orientation prose is

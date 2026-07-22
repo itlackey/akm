@@ -1,7 +1,7 @@
 # Contract Tests
 
 This directory holds active architecture, runtime, schema, and documentation
-contracts. `docs/technical/architecture.md` and the production modules named by
+contracts. `docs/architecture/architecture.md` and the production modules named by
 each test are current truth. The archived v1 planning spec is historical context,
 not a test input or live contract.
 

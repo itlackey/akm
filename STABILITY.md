@@ -187,5 +187,5 @@ worth fixing.
 - [`CHANGELOG.md`](./CHANGELOG.md) — every release's behavior changes.
 - [`SECURITY.md`](./SECURITY.md) — security supported-version policy
   (independent of feature-stability policy above).
-- [`docs/data-and-telemetry.md`](./docs/data-and-telemetry.md) — what
+- [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what
   state akm reads and writes locally.

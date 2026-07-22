@@ -136,7 +136,7 @@ const triageJudgmentField = z
  *     true/absent (default) measures it on every merge. The MEASUREMENT's
  *     outcome is advisory in v1: a failing merge is counted
  *     (`merge_floor_violations`) and warned but never refused (promotion path:
- *     docs/design/improve-collapse-churn-detector-design.md §7). In short:
+ *     docs/architecture/specs/improve-collapse-churn-detector-design.md §7). In short:
  *     this field gates whether the check runs at all (a real code path), not
  *     whether a merge is allowed.
  *   - minSpecificityRetention: distinct-token retention floor for merges (default 0.6).

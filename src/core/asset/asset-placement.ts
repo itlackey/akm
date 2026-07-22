@@ -161,7 +161,7 @@ const PLACEMENT_SPECS: Record<string, AssetSpec> = {
   // `sessions/<harness>/<session-id>.md`.
   session: { stashDir: "sessions", ...markdownSpec },
   // Durable stash-level semantic knowledge — facts about the user, team, or
-  // project. A plain markdown spec; see docs/design/fact-asset-type.md.
+  // project. A plain markdown spec; see docs/architecture/specs/fact-asset-type.md.
   fact: { stashDir: "facts", ...markdownSpec },
 };
 

@@ -15,9 +15,9 @@ const NON_USER_FACING_DOC_DIRS = new Set([
 const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "SECURITY.md", "STABILITY.md"];
 const HELP_DOCS_ROOT = path.join(repoRoot, "src", "assets", "help");
 
-export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "technical", "architecture.md");
-export const CLI_DOC_PATH = path.join(repoRoot, "docs", "cli.md");
-export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "configuration.md");
+export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "architecture", "architecture.md");
+export const CLI_DOC_PATH = path.join(repoRoot, "docs", "reference", "cli.md");
+export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "reference", "configuration.md");
 export const MIGRATION_PATH = path.join(repoRoot, "docs", "migration", "v0.8-to-v0.9.md");
 
 export function readDoc(p: string): string {

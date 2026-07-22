@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "The dotenv ADAPTER is not built, but the env-file/secret-file RENDERERS are coded (src/output/renderers.ts) — the redaction below is code-grounded and is ported as adapter-keyed presentation (behavior-preserving, spec §2/plan §7.3).",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §2 (renderer implementations 'env-keys-only', 'secret-name-only'; redaction keyed on the ADAPTER, never the type), §6 (env 'key NAMES only, values never indexed'; secret 'filename only'), §7 (dotenv 'metadata-only'); normative akm-format-neutral-bundle-workspace-spec.md §21.2 'Sensitivity exception' (dotenv/secret components MUST present only key names / file name and MUST NOT read or print the body). [Task ref: '§C.2/redaction'.]",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §2 (renderer implementations 'env-keys-only', 'secret-name-only'; redaction keyed on the ADAPTER, never the type), §6 (env 'key NAMES only, values never indexed'; secret 'filename only'), §7 (dotenv 'metadata-only'); normative akm-format-neutral-bundle-workspace-spec.md §21.2 'Sensitivity exception' (dotenv/secret components MUST present only key names / file name and MUST NOT read or print the body). [Task ref: '§C.2/redaction'.]",
   "realWorldSource": [
     "akm env-file / secret-file renderers (src/output/renderers.ts) — the exact action strings + field sets reproduced here; matches the frozen renderer/all-types.json env + secret entries",
     "dotenv security guidance — https://www.dotenv.org/docs/security/env"

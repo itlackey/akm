@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item). The ONLY skill check coded today is `missing-skill-md` (src/commands/lint/skill-linter.ts, src/core/adapter/adapters/akm-lint.ts). The field-level Agent Skills checks below are SPEC-DEFINED (§4.5), not yet coded.",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §4.5 / §6 (skill validation column): 'hard: name 1-64 (^[a-z0-9]+(-[a-z0-9]+)*$, NFKC, == parent dir name), description 1-1024, compatibility ≤500, metadata string→string map, YAML-mapping frontmatter; soft (warnings): body <500 lines / instructions <5k tokens, lowercase skill.md filename, allowed-tools portability. Strictness is per-adapter: agent-skills errors on unknown frontmatter (skills-ref behavior).'",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §4.5 / §6 (skill validation column): 'hard: name 1-64 (^[a-z0-9]+(-[a-z0-9]+)*$, NFKC, == parent dir name), description 1-1024, compatibility ≤500, metadata string→string map, YAML-mapping frontmatter; soft (warnings): body <500 lines / instructions <5k tokens, lowercase skill.md filename, allowed-tools portability. Strictness is per-adapter: agent-skills errors on unknown frontmatter (skills-ref behavior).'",
   "realWorldSource": [
     "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — name: max 64, only lowercase letters/numbers/hyphens, no XML tags, no reserved words 'anthropic'/'claude'; description: non-empty, max 1024, no XML tags",
     "skills-ref validator (vendored, 0.1.0) per spec References — compatibility ≤500, metadata string→string map, name == parent dir name"

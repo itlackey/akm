@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED as an adapter — but the on-disk snapshot ARTIFACT is real (src/sources/website-ingest.ts writes it). The website-snapshot adapter that re-types those pages to `website` is a future Chunk-2 format-adapter work item.",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (website-snapshot adapter row: 'crawl snapshot (website-ingest.ts:180) — read-only (Mode A); export (Mode B) routes content through the destination adapter'), §6 (website row: 'website crawl snapshot; base (read-only)').",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (website-snapshot adapter row: 'crawl snapshot (website-ingest.ts:180) — read-only (Mode A); export (Mode B) routes content through the destination adapter'), §6 (website row: 'website crawl snapshot; base (read-only)').",
   "realWorldSource": [
     "src/sources/website-ingest.ts — the actual snapshot writer: manifest.json = {url, fetchedAt} (0o600); pages at <root>/stash/knowledge/<slug>.md with knowledge-shaped frontmatter (name, description, sourceUrl, title, tags:[website, host]); crawl caps MAX_PAGES=50, MAX_DEPTH=3, 5MB/page, 10min wall-clock, 8 redirects",
     "https://example.com/ — the canonical illustrative host used for the fixture pages"

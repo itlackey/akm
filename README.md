@@ -34,7 +34,7 @@ prefers Bun for execution; old, unusable, or absent Bun installations fall back
 to Node.js. Node.js remains required for the npm package. The standalone
 binaries are runtime-free.
 
-See [Privacy & data](docs/data-and-telemetry.md) for details on what akm stores locally.
+See [Privacy & data](docs/reference/data-and-telemetry.md) for details on what akm stores locally.
 
 ### From source (contributors only)
 
@@ -93,7 +93,7 @@ akm feedback workflows/deploy --positive
 
 For non-interactive setup: `akm setup --yes` (or `--dir ~/custom-stash` for a custom path).
 
-See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
+See [docs/guides/getting-started.md](docs/guides/getting-started.md) for a full walkthrough.
 
 ## Asset types
 
@@ -112,7 +112,7 @@ See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 | **task** | Scheduled prompt/command/workflow job | `tasks/nightly-review` |
 | **fact** | Durable stash-level fact (identity, conventions, stash-meta) | `facts/team/tool-stack` |
 
-See [docs/concepts.md](docs/concepts.md) for classification rules and the ref format.
+See [docs/guides/concepts.md](docs/guides/concepts.md) for classification rules and the ref format.
 
 ## Key workflows
 
@@ -137,7 +137,7 @@ akm search "attention"                     # its pages are indexed like any othe
 akm show research-wiki//pages/attention    # read a page by bundle//conceptId ref
 ```
 
-akm supports [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern as a first-class **bundle format**: raw sources live in `raw/` (immutable), the agent writes synthesized pages under `pages/`, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. A bundle whose root holds `schema.md` plus `pages/` is recognized automatically at install time; there is no separate wiki command family — your agent does the writing, akm indexes the result. See [docs/wikis.md](docs/wikis.md).
+akm supports [Andrej Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern as a first-class **bundle format**: raw sources live in `raw/` (immutable), the agent writes synthesized pages under `pages/`, and a `schema.md` rulebook keeps the voice and structure consistent across sessions. A bundle whose root holds `schema.md` plus `pages/` is recognized automatically at install time; there is no separate wiki command family — your agent does the writing, akm indexes the result. See [docs/guides/wikis.md](docs/guides/wikis.md).
 
 **Improvement loop**
 ```sh
@@ -199,13 +199,13 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 
 | Doc | Description |
 | --- | --- |
-| [Getting Started](docs/getting-started.md) | Install, first-time setup, add sources, search, show |
-| [Concepts](docs/concepts.md) | Sources, registries, asset types, refs, and the stash |
-| [CLI Reference](docs/cli.md) | All commands and flags |
-| [Configuration](docs/configuration.md) | Settings, providers, embedding, and Ollama setup |
-| [Stash Maker's Guide](docs/stash-makers.md) | Build, publish, and share your own stashes |
-| [Registry](docs/registry.md) | Registries, the index format, and private registry setup |
-| [Wikis](docs/wikis.md) | Multi-wiki knowledge bases |
+| [Getting Started](docs/guides/getting-started.md) | Install, first-time setup, add sources, search, show |
+| [Concepts](docs/guides/concepts.md) | Sources, registries, asset types, refs, and the stash |
+| [CLI Reference](docs/reference/cli.md) | All commands and flags |
+| [Configuration](docs/reference/configuration.md) | Settings, providers, embedding, and Ollama setup |
+| [Stash Maker's Guide](docs/guides/stash-makers.md) | Build, publish, and share your own stashes |
+| [Registry](docs/reference/registry.md) | Registries, the index format, and private registry setup |
+| [Wikis](docs/guides/wikis.md) | Multi-wiki knowledge bases |
 | [Release Notes — 0.9.0](docs/migration/release-notes/0.9.0.md) | Latest release notes and migration guide |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
@@ -215,9 +215,9 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 
 AKM stores data locally and has **no remote telemetry**. Events, proposals, and improve history are written to `~/.local/share/akm/state.db`. Registry packages and config backups go to `~/.cache/akm/`. Nothing leaves your machine except requests to sources you explicitly configure (GitHub, npm, your own LLM endpoint).
 
-Running on a network filesystem (NFS/SMB), where SQLite's WAL mode is unsupported? Set `AKM_SQLITE_JOURNAL_MODE` (`WAL` default, or `DELETE` / `TRUNCATE`) to pick the journal mode applied at every db open. At the `WAL` default AKM auto-detects a network mount and falls back to `DELETE`. See [docs/configuration.md](docs/configuration.md) for details.
+Running on a network filesystem (NFS/SMB), where SQLite's WAL mode is unsupported? Set `AKM_SQLITE_JOURNAL_MODE` (`WAL` default, or `DELETE` / `TRUNCATE`) to pick the journal mode applied at every db open. At the `WAL` default AKM auto-detects a network mount and falls back to `DELETE`. See [docs/reference/configuration.md](docs/reference/configuration.md) for details.
 
-See [docs/data-and-telemetry.md](docs/data-and-telemetry.md) for the complete on-disk inventory, event type reference, and instructions for inspecting or clearing local data.
+See [docs/reference/data-and-telemetry.md](docs/reference/data-and-telemetry.md) for the complete on-disk inventory, event type reference, and instructions for inspecting or clearing local data.
 
 ## License
 

@@ -251,7 +251,7 @@ Search-ranking baselines that curate should respect:
 ## Known Gaps / Mismatches
 
 - `docs/features/search-discovery.md` currently says curate prefers one strong match per type; that wording is too strong if curate becomes relevance-first.
-- `docs/cli.md` documents `--type`, `--limit`, and `--source`, but does not currently explain the effective `--detail` and `--shape` behavior alongside curate.
+- `docs/reference/cli.md` documents `--type`, `--limit`, and `--source`, but does not currently explain the effective `--detail` and `--shape` behavior alongside curate.
 - Some historical AKM refs about curate output shaping are stale because curate now has a dedicated shape implementation.
 
 ## Safe Edit Checklist

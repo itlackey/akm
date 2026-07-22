@@ -13,7 +13,7 @@
  *      `package.json`, so an accidental import would fail to resolve at
  *      build time.
  *   3. Code review and the architectural boundary documented in
- *      `docs/technical/architecture.md`.
+ *      `docs/architecture/architecture.md`.
  *
  * The guard below scans file contents under `src/integrations/agent/`
  * for known LLM SDK package names. It exists to surface accidental

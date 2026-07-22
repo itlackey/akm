@@ -5,7 +5,7 @@
 /**
  * The reference `okf` adapter — akm 0.9.0 chunk-2, WI-A.
  *
- * Implements `docs/design/akm-0.9.0-bundle-adapter-spec.md` §5 (the reference
+ * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 (the reference
  * OKF adapter) + §5.1 (BINDING: `okf` reads `type` FROM FRONTMATTER, with NO
  * directory gate) EXACTLY. This is pure OKF: `type` from frontmatter, identity
  * from path, no directory routing anywhere.

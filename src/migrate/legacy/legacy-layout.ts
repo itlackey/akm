@@ -7,8 +7,7 @@
  *
  * FROZEN copy of the pre-0.9.0 recognition/placement/ref-grammar/origin-
  * resolution surface — akm 0.9.0 chunk-1, WI-1.4, decision D1-6
- * (`docs/design/execution/chunk-1/brief.md`, `docs/design/execution/
- * chunk-1/anchors.md` §D). Seeds Chunk 8's migrator: it walks the OLD
+ * (chunk-1 brief + anchors §D). Seeds Chunk 8's migrator: it walks the OLD
  * on-disk layout per source with THIS frozen resolver and builds the
  * complete old-ref -> new-id map before any re-layout happens (normative
  * spec §11.4; plan §3.4/§3.3 item 2).

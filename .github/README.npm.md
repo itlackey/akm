@@ -92,11 +92,11 @@ Manage stashes with `akm list`, `akm update --all`, and `akm remove`.
 
 Full docs, CLI reference, and guides are available on [GitHub](https://github.com/itlackey/akm):
 
-- [Getting Started](https://github.com/itlackey/akm/blob/main/docs/getting-started.md)
-- [CLI Reference](https://github.com/itlackey/akm/blob/main/docs/cli.md)
-- [Configuration](https://github.com/itlackey/akm/blob/main/docs/configuration.md)
-- [Stash Maker's Guide](https://github.com/itlackey/akm/blob/main/docs/stash-makers.md)
-- [Registry](https://github.com/itlackey/akm/blob/main/docs/registry.md)
+- [Getting Started](https://github.com/itlackey/akm/blob/main/docs/guides/getting-started.md)
+- [CLI Reference](https://github.com/itlackey/akm/blob/main/docs/reference/cli.md)
+- [Configuration](https://github.com/itlackey/akm/blob/main/docs/reference/configuration.md)
+- [Stash Maker's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/stash-makers.md)
+- [Registry](https://github.com/itlackey/akm/blob/main/docs/reference/registry.md)
 
 ## License
 

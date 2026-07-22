@@ -9,7 +9,7 @@
 
 ## Architecture
 - This is a CLI-only package. There is no public API, no barrel exports, and no `exports` map. `src/cli.ts` is the thin dispatcher; add CLI verbs under `src/commands/*.ts`.
-- If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/technical/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
+- If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/architecture/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
 - Supported source providers are locked to `filesystem`, `git`, `website`, and `npm`. Do not add `context-hub`; do not reintroduce `openviking`.
 - `SourceProvider` is exactly `{ name, kind, path, sync? }`. All providers materialize files to local disk.
 - Asset refs are `[bundle//]conceptId[#fragment]`, where `conceptId` is subdir-qualified within its bundle (e.g. `skills/code-review`, `memories/vpn-note`, `knowledge/api-guide`, `env/prod`). Durable state stores the fully-qualified `bundle//conceptId`; the short bundle-omitted form is input sugar resolved against `defaultBundle`, then the remaining bundles in installation-priority order. Source locators like `github:owner/repo` are for `akm add`, not for asset addressing. The old `[origin//]type:name` grammar is gone (the frozen migrator in `src/migrate/legacy/` is the only place it survives).

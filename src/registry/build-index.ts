@@ -7,9 +7,8 @@
  * provider. This module emits artifacts that conform to the v2 schema; the
  * schema itself is the input contract owned by `src/registry/providers/static-index.ts`
  * (see v1 architecture spec §3.3 — "the v2 JSON index schema belongs to
- * static-index"). When the schema changes, both the parser in `static-index.ts`
- * and the JSON Schema in `docs/technical/registry-index.schema.json` must be
- * updated together with this builder.
+ * static-index"). When the schema changes, the parser in `static-index.ts`
+ * must be updated together with this builder.
  */
 
 import fs from "node:fs";

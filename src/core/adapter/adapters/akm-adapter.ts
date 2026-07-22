@@ -5,7 +5,7 @@
 /**
  * The AKM workspace's own `akm` adapter — akm 0.9.0 chunk-2, WI-B.
  *
- * Implements `docs/design/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) +
+ * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) +
  * §6 + §7 (the `akm` row) EXACTLY: a BEHAVIOR-PRESERVING PORT that reproduces
  * TODAY'S classification and placement VERBATIM by REUSING the existing matcher
  * stack. It is NOT re-derived onto frontmatter `type` (that is the sibling

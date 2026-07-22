@@ -728,7 +728,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   // ── Migration 016 — collapse/churn detector (R5) ─────────────────────────────
   //
   // Longitudinal store-health history for the improve pipeline
-  // (docs/design/improve-collapse-churn-detector-design.md).
+  // (docs/architecture/specs/improve-collapse-churn-detector-design.md).
   //
   //   canary_queries — the fixed canary set, minted deterministically from the
   //     live stash on first detector run and NEVER auto-refreshed (silent
@@ -851,7 +851,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   // ── Migration 020 — three-DB cutover baseline DDL (Chunk 8, WI-8.2) ───────────
   //
   // The state.db half of the three-DB merge (plan §3.2/§8, normative §11.4,
-  // docs/design/execution/chunk-8/cutover-design.md §1). This migration is PURE,
+  // chunk-8 cutover design §1). This migration is PURE,
   // SEALABLE, IDEMPOTENT DDL ONLY — `CREATE TABLE IF NOT EXISTS` (+ indexes),
   // never a DROP or a data move. The actual data movement (the workflow.db merge,
   // the usage_events rescue from index.db, the full old-ref→item_ref re-key, and

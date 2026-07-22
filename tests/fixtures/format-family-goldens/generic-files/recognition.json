@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future generic-files adapter must reproduce (future Chunk-2 format-adapter work item).",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (generic-files adapter row: 'any leftover file → document/script/file; explicit-config ONLY (never auto-selected, §1.2)'), §1.2 (generic-files is never in the auto-probe order; looksLikeRoot never fires).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (generic-files adapter row: 'any leftover file → document/script/file; explicit-config ONLY (never auto-selected, §1.2)'), §1.2 (generic-files is never in the auto-probe order; looksLikeRoot never fires).",
   "realWorldSource": [
     "SCRIPT_EXTENSIONS (src/core/recognition-util.ts) — the 16 script extensions: .sh .ts .js .ps1 .cmd .bat .py .rb .go .pl .php .lua .r .swift .kt .kts",
     "AKM-native fallback family; the v0.2 sensitive-content refusal was withdrawn (deviation §4.3c) — the user indexes exactly what they pointed generic-files at"

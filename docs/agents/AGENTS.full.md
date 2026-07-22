@@ -163,7 +163,7 @@ search results. No `--llm` anywhere — akm never reasons about page content.
 The `broken-source` finding kind flags pages whose `sources:` frontmatter
 entries point to raw files that no longer exist.
 
-See [wikis.md](../wikis.md) for the full guide.
+See [wikis.md](../guides/wikis.md) for the full guide.
 
 ## Add & Manage Sources
 

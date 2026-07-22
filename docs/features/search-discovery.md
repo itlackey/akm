@@ -113,5 +113,5 @@ akm show scripts/migrate.sh
 - [Knowledge Management](knowledge-management.md) — capturing and importing assets
 - [Sources & Registries](sources-registries.md) — where assets come from
 - [Agent Integration](agent-integration.md) — how agents reference assets by ref
-- [CLI Reference](../cli.md) — full flag documentation for `search`, `curate`, `show`, `index`
-- [Concepts](../concepts.md) — refs, search priority, and the FTS5 index
+- [CLI Reference](../reference/cli.md) — full flag documentation for `search`, `curate`, `show`, `index`
+- [Concepts](../guides/concepts.md) — refs, search priority, and the FTS5 index

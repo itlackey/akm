@@ -31,7 +31,7 @@ export interface CycleMetricsRow {
   ts: string;
   /**
    * Historical rows may carry values from the whole-corpus synthesis pass
-   * removed in 0.9.0 (see docs/design/execution/chunk-7/ledger.md); this type
+   * removed in 0.9.0 (chunk-7 ledger); this type
    * only covers writes going forward. `queryRecentCycleMetrics`/
    * `getLatestCycleMetrics` cast raw SQL rows, so old values still round-trip
    * at runtime even though the type is narrowed.

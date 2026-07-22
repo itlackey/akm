@@ -70,7 +70,7 @@ export function isVecFastPathReady(db: Database): boolean {
   return getMeta(db, VEC_FAST_PATH_READY_META) !== "0";
 }
 
-const VEC_DOCS_URL = "https://github.com/itlackey/akm/blob/main/docs/configuration.md#sqlite-vec-extension";
+const VEC_DOCS_URL = "https://github.com/itlackey/akm/blob/main/docs/reference/configuration.md#sqlite-vec-extension";
 const VEC_FALLBACK_THRESHOLD = 10_000;
 // Per-database warning state: tracks which databases have already emitted the
 // vec-missing warning so we don't spam on every openDatabase() call.

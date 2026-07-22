@@ -4,7 +4,7 @@
 
 /**
  * R5 — collapse/churn detector
- * (docs/design/improve-collapse-churn-detector-design.md §8).
+ * (docs/architecture/specs/improve-collapse-churn-detector-design.md §8).
  *
  * Headline: a deterministic collapse simulation — seed a distinct-vocabulary
  * memory corpus, run synthetic merge passes against the stash files

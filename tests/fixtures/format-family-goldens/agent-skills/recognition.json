@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future agent-skills adapter must reproduce (future Chunk-2 format-adapter work item). SKILL.md codec shared with claude/opencode as functions (spec §8).",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §7 (agent-skills adapter row: 'standalone SKILL.md packages'), §6 (skill row: SKILL.md → skill, item = the dir), §4.5 (Agent Skills contract), §1.2 (looksLikeRoot: root SKILL.md).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §7 (agent-skills adapter row: 'standalone SKILL.md packages'), §6 (skill row: SKILL.md → skill, item = the dir), §4.5 (Agent Skills contract), §1.2 (looksLikeRoot: root SKILL.md).",
   "realWorldSource": [
     "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — SKILL.md package structure; required fields name + description; name max 64, lowercase letters/numbers/hyphens, no XML tags, no reserved words 'anthropic'/'claude'; description non-empty max 1024; progressive disclosure metadata/instructions/resources",
     "https://github.com/anthropics/skills — the reference skills repository (a collection of SKILL.md packages)"

@@ -381,7 +381,7 @@ const lessonStrengthContributor: RankingContributor = {
  * Pinned-fact boost.
  *
  * Facts marked `pinned: true` form the small always-injected "core context"
- * (see docs/design/fact-asset-type.md). The fact metadata contributor records
+ * (see docs/architecture/specs/fact-asset-type.md). The fact metadata contributor records
  * a `pinned` search hint; here we give those facts a modest additive boost so
  * the core outranks ordinary facts on otherwise-equal queries. Capped small so
  * it cannot overpower an exact-name match.

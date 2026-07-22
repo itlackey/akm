@@ -10,13 +10,13 @@ const RUNTIME_DOCS = [
   "CHANGELOG.md",
   "SECURITY.md",
   "STABILITY.md",
-  "docs/getting-started.md",
+  "docs/guides/getting-started.md",
   "docs/agents/agent-install.md",
-  "docs/local-development.md",
+  "docs/guides/local-development.md",
   "docs/migration/release-notes/0.9.0.md",
   "docs/posts/intro-part-02.md",
   "docs/posts/workflows-vaults-09.md",
-  "docs/technical/fresh-host-rebuild-runbook.md",
+  "docs/architecture/internals/fresh-host-rebuild-runbook.md",
 ];
 
 function npmShimInterpreter(source: string): string | undefined {

@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item). The TaskLinter exists (src/commands/lint/*, dispatched for `tasks` in the frozen all-types lint golden); the adapter wrapper does not.",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (task validation column: 'invalid-task-yaml: schedule+enabled+one target'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §6 (task validation column: 'invalid-task-yaml: schedule+enabled+one target'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
   "realWorldSource": [
     "AKM-native; the task schema (schedule, enabled, one of prompt|command) — src/tasks/, and the frozen all-types task fixture"
   ],

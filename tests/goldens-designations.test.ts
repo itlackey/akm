@@ -3,7 +3,7 @@
  * §15 rule 5): every golden fixture asset must have exactly one entry in
  * `tests/fixtures/goldens/DESIGNATIONS.json`, with a valid designation and
  * (for `re-baseline` assets) a `reBaselineChunk` that names a real chunk in
- * `docs/design/akm-0.9.0-chunk-manifest.json`.
+ * `tests/fixtures/akm-0.9.0-chunk-manifest.json`.
  *
  * Written FIRST (test-first): at the moment this file is created, neither
  * `tests/fixtures/goldens/DESIGNATIONS.json` nor the area directories exist
@@ -31,7 +31,7 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(__dirname, "..");
 const GOLDENS_ROOT = path.join(REPO_ROOT, "tests", "fixtures", "goldens");
 const DESIGNATIONS_PATH = path.join(GOLDENS_ROOT, "DESIGNATIONS.json");
-const MANIFEST_PATH = path.join(REPO_ROOT, "docs", "design", "akm-0.9.0-chunk-manifest.json");
+const MANIFEST_PATH = path.join(REPO_ROOT, "tests", "fixtures", "akm-0.9.0-chunk-manifest.json");
 
 const VALID_DESIGNATIONS = new Set(["frozen-migration-input", "re-baseline"]);
 

@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 # or download install.ps1 manually from the release assets and unblock it:
 #   Unblock-File .\install.ps1; .\install.ps1
-# See docs/getting-started.md#windows-installation-notes for full guidance.
+# See docs/guides/getting-started.md#windows-installation-notes for full guidance.
 
 $Repo = "itlackey/akm"
 $InstallDir = if ($env:AKM_INSTALL_DIR) { $env:AKM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "akm" }

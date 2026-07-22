@@ -170,9 +170,9 @@ engine. `opencode` engines use `opencode run [--system-prompt "..."]
 
 ## See also
 
-- [Configuration](../configuration.md#engines) — named agent engines and model aliases
+- [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
 - [Search & Discovery](search-discovery.md) — the full curate → show retrieval path
 - [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
 - [Improvement Loop](improvement-loop.md) — feeding back usage signals
-- [CLI Reference](../cli.md) — `hints`, `completions`, `agent` command documentation
-- [Concepts](../concepts.md) — refs, origins, and the asset type system
+- [CLI Reference](../reference/cli.md) — `hints`, `completions`, `agent` command documentation
+- [Concepts](../guides/concepts.md) — refs, origins, and the asset type system

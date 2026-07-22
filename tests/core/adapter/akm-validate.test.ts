@@ -5,7 +5,7 @@
 /**
  * WI-C gate — the `akm` adapter's per-`type` `validate`
  * (`src/core/adapter/adapters/akm-adapter.ts` + `akm-lint.ts`), implementing
- * `docs/design/akm-0.9.0-bundle-adapter-spec.md` §6 as a behavior-preserving
+ * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §6 as a behavior-preserving
  * port of `src/commands/lint/*`'s type linters.
  *
  * The FROZEN lint golden (`tests/fixtures/goldens/lint/all-types.json`,

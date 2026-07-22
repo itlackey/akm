@@ -4,7 +4,7 @@
 
 /**
  * R5 — Longitudinal collapse/churn detector
- * (docs/design/improve-collapse-churn-detector-design.md).
+ * (docs/architecture/specs/improve-collapse-churn-detector-design.md).
  *
  * Detects the two measured failure modes of LLM-consolidated memory stores:
  *

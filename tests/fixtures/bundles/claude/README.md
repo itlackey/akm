@@ -8,7 +8,7 @@ config (`settings.json`, `.mcp.json`) is never indexed.
   adapter does not exist in `src/core/adapter/adapters/` yet — only `okf` + `akm`
   are built). These goldens are the spec-authored target it must hit test-first.
 - **Goldens:** `tests/fixtures/format-family-goldens/claude/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §6 (type derivation), §7
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §6 (type derivation), §7
   (claude adapter row), §8 (one adapter per tool dir).
 - **Real-world source:** https://code.claude.com/docs/en/claude-directory ,
   https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview

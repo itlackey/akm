@@ -295,7 +295,7 @@ function warnLegacyMdTaskFiles(typeRoot: string): void {
   const affected = mdFiles.map((f) => `tasks/${f}`).join(", ");
   process.stderr.write(
     `WARNING: ${mdFiles.length} task file(s) use the legacy .md format and were ignored.\n` +
-      `         AKM 0.8.0 requires tasks as pure .yml. See https://github.com/itlackey/akm/blob/v0.8.0/docs/migration/v0.7-to-v0.8.md#task-definition-files-mdfrontmatter--yml.\n` +
+      `         AKM 0.8.0 requires tasks as pure .yml. See docs/migration/v0.7-to-v0.8.md#task-definition-files-mdfrontmatter--yml.\n` +
       `         Affected: ${affected}\n`,
   );
 }

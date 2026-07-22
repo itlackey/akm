@@ -20,7 +20,7 @@
  *        • prompt   → `executeRunner(engine, prompt, { stdio: "captured" })`
  *   5. Capture stdout / stderr as structured rows in logs.db (task_logs) and,
  *      transitionally, as a flat text tail at `<cacheDir>/tasks/logs/<id>/<ts>.log`
- *      (see docs/technical/logs-audit.md).
+ *      (per the #579 logs audit).
  *   6. Write a history row to state.db task_history table.
  *
  * Returns a structured result so the CLI handler can shape it for `output()`
@@ -611,7 +611,7 @@ function renderPromptLog(input: { task: TaskDocument; engineName: string; result
  * A finished run's log in both shapes: the flat text written to the per-run
  * log file (transitional human tail) and the structured per-line rows written
  * to logs.db (the queryable record — see src/core/logs-db.ts and
- * docs/technical/logs-audit.md).
+ * the #579 logs audit).
  */
 interface RunLogContent {
   fileText: string;

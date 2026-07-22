@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * SPEC-4 (docs/design/stash-conventions-code-spec.md) — real ref-prefix filter.
+ * SPEC-4 (docs/architecture/specs/stash-conventions-code-spec.md) — real ref-prefix filter.
  *
  * `akm search "<type>:<prefix>/"` must translate into a typed enumeration of
  * the index narrowed to entry names under `<prefix>/`, instead of degenerating

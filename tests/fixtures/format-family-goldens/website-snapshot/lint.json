@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target (future Chunk-2 format-adapter work item).",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (website validation column: 'base (read-only)'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §6 (website validation column: 'base (read-only)'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
   "realWorldSource": [
     "src/sources/website-ingest.ts — snapshots are read-only; no native validation beyond base checks"
   ],

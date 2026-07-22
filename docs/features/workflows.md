@@ -893,5 +893,5 @@ enforced outside akm.
 - [Search & Discovery](search-discovery.md) — find available workflows with `akm curate`
 - [Knowledge Management](knowledge-management.md) — capture workflow outputs as memories
 - [Improvement Loop](improvement-loop.md) — improve workflow assets over time
-- [CLI Reference](../cli.md) — full flag documentation for all `workflow` subcommands
-- [Concepts](../concepts.md) — workflow asset type and run-state storage
+- [CLI Reference](../reference/cli.md) — full flag documentation for all `workflow` subcommands
+- [Concepts](../guides/concepts.md) — workflow asset type and run-state storage

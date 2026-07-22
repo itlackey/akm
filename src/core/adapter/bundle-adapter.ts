@@ -5,7 +5,7 @@
 /**
  * The amended `BundleAdapter` interface — akm 0.9.0 chunk-1, WI-1.1.
  *
- * Transcribed VERBATIM from `docs/design/akm-0.9.0-bundle-adapter-spec.md`
+ * Transcribed VERBATIM from `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md`
  * §2 (lines 133-179) — "one interface, optional capability methods," per
  * History §8.3's reconciliation. This is THE authoritative shape (chunk-1
  * anchors.md §A.1/§A.2 census): two other documents show incomplete or

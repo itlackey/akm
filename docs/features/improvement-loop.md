@@ -163,5 +163,5 @@ akm proposal accept deployment-gotchas
 - [Search & Discovery](search-discovery.md) — feedback improves ranking over time
 - [Knowledge Management](knowledge-management.md) — capturing memories and docs
 - [Agent Integration](agent-integration.md) — wiring feedback into agent workflows
-- [CLI Reference](../cli.md) — full flag documentation for `feedback`, `history`, `log`, `improve`, `proposal`, `propose`
-- [Concepts](../concepts.md) — how utility scores affect search ranking
+- [CLI Reference](../reference/cli.md) — full flag documentation for `feedback`, `history`, `log`, `improve`, `proposal`, `propose`
+- [Concepts](../guides/concepts.md) — how utility scores affect search ranking

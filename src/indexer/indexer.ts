@@ -42,7 +42,7 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
  * CRDT-based convergence (Shapiro et al. 2011) would require per-operation
  * CRDTs for all four stores — deferred pending a dedicated storage refactor.
  *
- * See docs/technical/index-consistency-adr.md for the full analysis.
+ * See the index-consistency ADR (2026-06) for the full analysis.
  */
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase, openIndexDatabase } from "../storage/repositories/index-connection";
@@ -1702,7 +1702,7 @@ function verifyIndexState(
     guidance:
       embeddingProvider === "remote"
         ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
-        : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and see docs/configuration.md for local embedding dependency setup.",
+        : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and see docs/reference/configuration.md for local embedding dependency setup.",
     semanticSearchEnabled: true,
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus: "blocked",

@@ -3,7 +3,7 @@
   "specificationGolden": true,
   "capturedAtHead": null,
   "adapterStatus": "NOT IMPLEMENTED — spec-authored target the future claude adapter must reproduce (adapter lands in a future Chunk-2 format-adapter work item).",
-  "specSource": "docs/design/akm-0.9.0-bundle-adapter-spec.md §6 (type-derivation conventions: command/agent/skill/instruction rows), §7 (claude adapter row), §8 (one adapter per tool dir), §1.2/§1.3 (component = .claude, conceptId = path − ext, skill item = the dir).",
+  "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §6 (type-derivation conventions: command/agent/skill/instruction rows), §7 (claude adapter row), §8 (one adapter per tool dir), §1.2/§1.3 (component = .claude, conceptId = path − ext, skill item = the dir).",
   "realWorldSource": [
     "https://code.claude.com/docs/en/claude-directory — CLAUDE.md at root; .claude/commands/*.md ($ARGUMENTS, argument-hint/allowed-tools frontmatter); .claude/agents/*.md (description/tools/model frontmatter); .claude/skills/<name>/SKILL.md; settings.json/.mcp.json = runtime config",
     "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview — SKILL.md skill package; skill folder name == skill name"

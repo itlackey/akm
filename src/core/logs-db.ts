@@ -10,7 +10,7 @@
  * The strategic direction (stop scattering data across files/folders) means
  * every NEW log consumer queries this database; the per-run text file written
  * by the task runner is retained only as a transitional tail for humans —
- * see docs/technical/logs-audit.md for the full producer audit.
+ * per the #579 logs audit of every producer.
  *
  * ## Why a separate database from state.db
  *

@@ -5,7 +5,7 @@
 /**
  * Chunk 1.5 (WI-1.5.1, D1.5-4) — the §2.3 "compile-time safety mitigation"
  * table for AKM's own presentation metadata. EXTENDED by chunk-2 WI-C
- * (`docs/design/akm-0.9.0-bundle-adapter-spec.md` §2) to carry the per-`type`
+ * (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §2) to carry the per-`type`
  * renderer NAME + action builder, so this table becomes the `TYPE_PRESENTATION`
  * data table §2 mandates ("Renderer/action = data table keyed on the open
  * `type`, pointing at a named-function core module").

@@ -9,7 +9,7 @@ hard contract keyed on the adapter/component, never the open `type`.
   RENDERERS already exist and are ported as adapter-keyed presentation).
 - **Goldens:** `tests/fixtures/format-family-goldens/dotenv/{recognition,placement,lint,renderer}.json`
   — **`renderer.json` is the §C.2 field-omission redaction oracle.**
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (dotenv row), §6
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (dotenv row), §6
   (env/secret rows), §2 (redaction keyed on adapter); normative
   `akm-format-neutral-bundle-workspace-spec.md` §21.2 (Sensitivity exception).
 - **Real-world source:** https://www.dotenv.org/docs/security/env

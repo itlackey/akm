@@ -9,7 +9,7 @@ pages to the open `type = "website"` and is READ-ONLY (Mode A).
 - **Adapter built by:** a future Chunk-2 format-adapter work item (the snapshot
   ARTIFACT is real today; the adapter that re-types it is not).
 - **Goldens:** `tests/fixtures/format-family-goldens/website-snapshot/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (website-snapshot
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (website-snapshot
   row), §6 (website row).
 - **Real-world source:** `src/sources/website-ingest.ts`, https://example.com/
 

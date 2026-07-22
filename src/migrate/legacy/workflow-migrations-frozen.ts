@@ -9,7 +9,7 @@
  * `{ id, checksum }` pairs of the pre-cutover workflow.db schema ledger
  * (`src/workflows/db.ts` `WORKFLOW_MIGRATIONS`, 001-add-scope-key …
  * 010-ir-v3-engine). akm 0.9.0 chunk-8, WI-8.1 (plan §3.3 item 1 / §3.4 /
- * §8.2; `docs/design/execution/chunk-8/brief.md`).
+ * §8.2; chunk-8 brief).
  *
  * ## Why this frozen copy exists
  *

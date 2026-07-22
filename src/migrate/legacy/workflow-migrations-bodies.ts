@@ -9,7 +9,7 @@
  * `{ id, up }` DDL of the 10 pre-cutover workflow.db migrations plus the
  * `ensureBaseSchema` baseline DDL (`src/workflows/db.ts`, 001-add-scope-key …
  * 010-ir-v3-engine). akm 0.9.0 chunk-8, WI-8.3 (plan §3.3/§8.2;
- * `docs/design/execution/chunk-8/brief.md` + `cutover-design.md` §4).
+ * chunk-8 brief + cutover design §4).
  *
  * ## Why this frozen copy exists
  *

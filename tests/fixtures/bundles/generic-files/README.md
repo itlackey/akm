@@ -7,7 +7,7 @@ adapter. Types are `document` / `script` / `file`. This adapter is
 
 - **Adapter built by:** a future Chunk-2 format-adapter work item.
 - **Goldens:** `tests/fixtures/format-family-goldens/generic-files/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (generic-files row),
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (generic-files row),
   §1.2 (never auto-selected).
 
 Files: `notes.md` (→ document), `build.sh` (→ script, `.sh` ∈ SCRIPT_EXTENSIONS),

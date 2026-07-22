@@ -15,7 +15,7 @@
  * populated index exists. The previous design — a staleness walk plus a
  * detached background reindex per read — made every read on an actively
  * written stash spawn a writer that the read's own telemetry then queued
- * behind (see docs/design/read-path-reindex-contention-findings.md).
+ * behind (the 2026-07 read-path reindex-contention findings).
  *
  * `mode: "blocking"` (improve) still checks staleness and rebuilds inline,
  * because its planning logic needs a current `entries` table in-process.

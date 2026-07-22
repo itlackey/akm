@@ -50,7 +50,7 @@ const ImproveSalienceSchema = z
 // R5 — longitudinal collapse/churn detector (observe-only in v1; deterministic,
 // fail-open, runs only on cycles where consolidate did work).
 // Default ON; opt out via `improve.collapseDetector.enabled: false`.
-// See docs/design/improve-collapse-churn-detector-design.md.
+// See docs/architecture/specs/improve-collapse-churn-detector-design.md.
 const ImproveCollapseDetectorSchema = z
   .object({
     enabled: z.boolean().optional(),

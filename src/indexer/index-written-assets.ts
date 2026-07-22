@@ -10,15 +10,15 @@
  * writing). The memory write paths — `akm remember` / `writeMarkdownAsset`
  * and extract's session assets — historically did not, which is why reads
  * used to compensate with stale-triggered background reindexes (the
- * lock-contention footgun removed alongside this module's introduction; see
- * docs/design/read-path-reindex-contention-findings.md §7).
+ * lock-contention footgun removed alongside this module's introduction, per
+ * the 2026-07 read-path reindex-contention findings §7).
  *
  * This is NOT a general reindex. It upserts exactly the files the caller just
  * wrote: frontmatter/metadata via the shared matcher pipeline, the `entries`
  * row, and an incremental FTS refresh. Embeddings, index-time LLM passes,
  * graph extraction, `builtAt`, and the per-dir walk cache are all deliberately
  * untouched — the next full run heals them (the opportunistic-recovery
- * strategy of docs/technical/index-consistency-adr.md).
+ * strategy of the index-consistency ADR).
  */
 
 import fs from "node:fs";

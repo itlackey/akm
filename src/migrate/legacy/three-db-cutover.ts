@@ -6,8 +6,8 @@
  * @removeIn 0.10.0
  *
  * The one-time three-DB cutover DATA step (akm 0.9.0 Chunk 8, WI-8.2;
- * plan §3.2/§3.3/§8, normative §11.4, `docs/design/execution/chunk-8/
- * cutover-design.md`). Migration `020-three-db-cutover` is the pure additive
+ * plan §3.2/§3.3/§8, normative §11.4, chunk-8 cutover design). Migration
+ * `020-three-db-cutover` is the pure additive
  * DDL (`CREATE TABLE IF NOT EXISTS` the merge-target tables); THIS module is the
  * code that MOVES the durable rows into place, exactly once, under the
  * migrate-apply fail-closed gate (`src/cli/config-migrate.ts` `cutover-applied`

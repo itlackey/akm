@@ -1,86 +1,61 @@
 # Documentation
 
-## Getting Started
+Each subdirectory has its own README indexing everything inside it.
 
-- [Concepts](concepts.md) -- Stashes, registries, asset types, and refs
-- [Getting Started](getting-started.md) -- Quick setup guide
-- [Local Development](local-development.md) -- Dogfooding akm while editing its own source
-- [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated install for agents
-- [Stash Maker's Guide](stash-makers.md) -- Build and share a stash on GitHub, npm, or a network directory
-- [Wikis](wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
+## [Guides](guides/README.md)
 
-## Configuration & Data
+Task-oriented guides for using akm.
 
-- [Configuration](configuration.md) -- Providers, settings, and Ollama setup
-- [Configuration](configuration.md#engines) -- Named LLM and agent engines
-- [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
+- [Getting Started](guides/getting-started.md) -- Quick setup guide
+- [Concepts](guides/concepts.md) -- Bundles, adapters, asset types, and refs
+- [Stash Maker's Guide](guides/stash-makers.md) -- Build and share a stash on GitHub, npm, or a network directory
+- [Wikis](guides/wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
+- [Local Development](guides/local-development.md) -- Dogfooding akm while editing its own source
+- [Claude Code workflows vs. akm workflows](guides/claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
 
-## Features
+## [Reference](reference/README.md)
 
-- [Workflows](features/workflows.md) -- Structured, resumable multi-step procedures
-- [Search & Discovery](features/search-discovery.md) -- Finding assets without knowing their exact name
-- [Knowledge Management](features/knowledge-management.md) -- Lessons, incidents, and research as first-class assets
-- [Sources & Registries](features/sources-registries.md) -- Where assets come from and how to find more
-- [Wiki Snapshot Fetchers](features/wiki-snapshot-fetchers.md) -- Pluggable fetchers for URL-based knowledge reads
-- [Agent Integration](features/agent-integration.md) -- Wiring akm into any shell-capable coding agent
-- [The Improvement Loop](features/improvement-loop.md) -- How the stash adapts from usage and feedback
+- [CLI](reference/cli.md) -- All `akm` commands and flags
+- [Configuration](reference/configuration.md) -- Engines, strategies, bundles, and settings
+- [Registry](reference/registry.md) -- Registries, search, hosting, and managing sources
+- [Data & Telemetry](reference/data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
+- [akm-eval](reference/akm-eval.md) -- Standalone toolkit for measuring whether `akm improve` is working
+- [Roadmap](reference/roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
 
-## Upgrading
+## [Features](features/README.md)
 
-- [Roadmap](roadmap.md) -- High-level focus for the 0.9 and 1.0 releases
-- [v0.8 -> v0.9 migration guide](migration/v0.8-to-v0.9.md) -- Current-cycle breaking changes
-- [Release notes (latest: 0.9.0)](migration/release-notes/0.9.0.md) -- Per-release notes; see the [release-notes index](migration/release-notes/README.md) for every version
+Feature-by-feature tours: [workflows](features/workflows.md),
+[search & discovery](features/search-discovery.md),
+[knowledge management](features/knowledge-management.md),
+[sources & registries](features/sources-registries.md),
+[wiki snapshot fetchers](features/wiki-snapshot-fetchers.md),
+[agent integration](features/agent-integration.md), and
+[the improvement loop](features/improvement-loop.md).
 
-## Reference
-
-- [CLI](cli.md) -- All `akm` commands and flags
-- [Registry](registry.md) -- Registries, search, hosting, and managing sources
-- [akm-eval](akm-eval.md) -- Standalone toolkit for measuring whether `akm improve` is working
-
-## Agents
+## [Agents](agents/README.md)
 
 - [AGENTS.md](agents/AGENTS.md) -- The system-prompt reference agents load to use akm
+- [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated install for agents
 - [Curate Workmap](agents/curate-workmap.md) -- Read before changing `akm curate` ranking or output
 
-## Architecture
+## [Architecture](architecture/README.md)
 
-- [Architecture](technical/architecture.md) -- How akm's sources, cache, index, and registries fit together
-- [Runtime Boundary Design](architecture/runtime-boundary-design.md) -- Isolating `bun:sqlite`/`Bun.*` from the core
-- [Brain Workflow (diagram)](architecture/brain-workflow.html) -- Visual map of the improve/self-learning loop
+System overview, normative specs, decision history, and subsystem internals.
 
-## Example Stash
+- [Architecture](architecture/architecture.md) -- How akm's bundles, cache, index, and registries fit together
+- [Core Principles](architecture/akm-core-principles.md) -- Design principles and constraints
+- [Specs](architecture/README.md#specs-specs) -- Normative specifications (bundle/adapter model, ref grammar, stash conventions)
+- [Internals](architecture/README.md#internals-internals) -- Current-truth subsystem references (storage, search, indexing, improve, health)
+- [Testing](architecture/README.md#testing-testing) -- Testing workflow and pre-release checklist
 
-- [Example Stash](example-stash/README.md) -- A documentation-backed example stash showing how asset types fit together
+## [Migration](migration/README.md)
 
-## Analysis
+- [v0.8 -> v0.9 migration guide](migration/v0.8-to-v0.9.md) -- Current-cycle breaking changes
+- [Release notes](migration/release-notes/) -- The short per-release notes `akm help migrate <version>` prints
 
-- [Indexer Vertical Slice Refactor Plan](analysis/indexer-vertical-slice-refactor-plan.md)
-- [Indexer Refactor Review (Expert Options)](analysis/indexer-refactor-expert-options.md)
+## [Posts](posts/README.md)
 
-## Design
-
-- [Bundle & Adapter Spec (0.9.0)](design/akm-0.9.0-bundle-adapter-spec.md) -- Normative spec for bundles, adapters, and stash recognition
-- [Architecture Decision History](design/akm-architecture-decision-history.md) -- ADR-style record of the major architecture rulings
-
-Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` header (pre-existing docs are grandfathered until next touched). When a design ships, the shipping PR deletes its doc in the same PR -- history lives in git.
-
-## Internals (technical/)
-
-- [Filesystem](technical/filesystem.md) -- Directory layout plus `.stash.json` deprecation and migration notes
-- [Search](technical/search.md) -- Hybrid search architecture and scoring
-- [Indexing](technical/indexing.md) -- How the search index is built
-- [Classification](technical/classification.md) -- Matcher and renderer behavior
-- [Storage Locations](technical/storage-locations.md) -- Authoritative inventory of every on-disk read/write path
-- [Improve Workflow](technical/improve-workflow.md) -- `akm improve` command surface and pipeline reference
-- [Health Advisories](technical/health-advisories.md) -- `akm health` advisory-to-action map for operators
-- [Fresh-Host Rebuild Runbook](technical/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
-- [Functional Contract Patterns](technical/functional-contract-patterns.md) -- Quick reference for contributor pipelines and small process contracts
-- [Test Coverage Guide](technical/test-coverage-guide.md) -- High-value testing areas
-- [Testing Workflow](technical/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation
-- [Ref Format](technical/ref.md) -- Wire format for asset references
-- [Core Principles](technical/akm-core-principles.md) -- Design principles and constraints
-- [Claude Code workflows vs. akm workflows](technical/claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
-- [Workflow source and IR](features/workflows.md) -- Current workflow execution model
+Source articles for the dev.to publishing pipeline (historical record).
 
 ## Official Ecosystem Repositories
 
@@ -89,10 +64,12 @@ Every doc under `docs/design/` must carry a `Status` / `Supersedes` / `Date` hea
 - [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional integrations for tools like OpenCode
 - [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the standalone benchmark and evaluation repo for akm
 
-## Posts
-
-- [Blog posts](posts/) -- Articles and posts about akm
-
 ---
 
-New docs, in five lines: keep one current-truth doc per subsystem, don't fork a second one. Unshipped designs live in `docs/design/` with a mandatory `Status` / `Supersedes` / `Date` header. The PR that ships the design deletes its doc in that same PR (history lives in git). Cite code by symbol and memories by search-terms -- not line numbers or exact refs, both rot. Nothing in `docs/` may reference `.plans/` (it's scratch -- promote the content or drop the link); no new improve-analysis docs until the 30-clean-day gate.
+New docs, in five lines: keep one current-truth doc per subsystem, don't fork a
+second one. Planning, review, and analysis material lives in the untracked
+`.plans/` directory, never under `docs/` -- promote conclusions into the
+current-truth doc or drop them. Normative specs live in
+`docs/architecture/specs/`. Cite code by symbol and memories by search-terms --
+not line numbers or exact refs, both rot. Nothing in `docs/` may reference
+`.plans/`.

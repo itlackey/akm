@@ -16,7 +16,7 @@ import { asNonEmptyString } from "../../core/common";
 import { loadUserConfig } from "../../core/config/config";
 import { DEPRECATED_REJECTED_TYPES } from "../../core/recognition-util";
 import { isVerbose, warn } from "../../core/warn";
-import { buildFileContext } from "../walk/file-context";
+import type { buildFileContext } from "../walk/file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -1036,7 +1036,7 @@ export function applyPreContributorFields(
     // Stash-organization conventions (SPEC-8): config-gated capture of the
     // self-situating body opening. Default off — enabling it changes indexed
     // text (collapse-detector canary baselines shift, and embeddings for
-    // already-embedded entries are NOT regenerated; see docs/configuration.md).
+    // already-embedded entries are NOT regenerated; see docs/reference/configuration.md).
     // Session-kind memories are raw transcripts and are never captured;
     // secrets never reach this branch (guard above) and env files are not .md.
     if (isBodyOpeningIndexingEnabled() && !hasSessionMemoryMarker(parsed.data, parsed.content)) {
@@ -1266,7 +1266,7 @@ export function extractTagsFromPath(filePath: string, rootDir: string): string[]
  * Unlike {@link extractTagsFromPath} this never tokenizes the filename
  * segment: it exists so a nested asset's directory (scope/domain) tokens can
  * be merged into explicit author tags without dragging every filename word
- * into exact-tag matching (SPEC-2, docs/design/stash-conventions-code-spec.md).
+ * into exact-tag matching (SPEC-2, docs/architecture/specs/stash-conventions-code-spec.md).
  * Tokenization mirrors `extractTagsFromPath`: each segment splits on `-`/`_`/
  * `.`, lowercased, single-character tokens dropped. A name with no directory
  * segments yields no tags.

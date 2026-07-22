@@ -51,7 +51,7 @@
  * The suite runs WITHOUT --isolate precisely because mock.module reached
  * zero (PR #689); one reintroduced call silently re-opens cross-file
  * poisoning. Use the swap-and-restore seams instead (tests/_helpers/seams.ts;
- * pattern: docs/design/di-seams-plan.md). No allowlist — zero is the invariant.
+ * pattern: docs/architecture/specs/di-seams-plan.md). No allowlist — zero is the invariant.
  *
  * Rule 7 (non-atomic Date.now()): flag ≥2 `new Date(Date.now() …)` timestamp
  * constructions in ONE scope (test/it/describe/hook/function). Reading the wall

@@ -151,7 +151,7 @@ export function collectImproveAdvisories(
         confidence: collapseKinds.length > 0 ? "high" : "medium",
         message:
           `R5 detector fired ${collapseAlertEvents.length} alert(s) in window (kinds: ${kinds.join(", ")}). ` +
-          `${cycleSummary} See docs/design/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
+          `${cycleSummary} See docs/architecture/specs/improve-collapse-churn-detector-design.md §6.3 runbook queries.`,
       });
     } else if (latestCycle) {
       advisories.push({

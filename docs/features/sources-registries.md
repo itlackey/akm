@@ -162,6 +162,6 @@ akm index
 - [Search & Discovery](search-discovery.md) — querying the index after sources are connected
 - [Knowledge Management](knowledge-management.md) — writing your own assets
 - [Agent Integration](agent-integration.md) — using refs across sources in prompts
-- [CLI Reference](../cli.md) — full flag documentation for `add`, `list`, `update`, `remove`, `clone`, `sync`, `registry`
-- [Registry](../registry.md) — registry index format and private registry setup
-- [Stash Maker's Guide](../stash-makers.md) — build and publish your own stash
+- [CLI Reference](../reference/cli.md) — full flag documentation for `add`, `list`, `update`, `remove`, `clone`, `sync`, `registry`
+- [Registry](../reference/registry.md) — registry index format and private registry setup
+- [Stash Maker's Guide](../guides/stash-makers.md) — build and publish your own stash

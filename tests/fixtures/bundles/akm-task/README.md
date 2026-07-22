@@ -7,7 +7,7 @@ A standalone task bundle of `.yml` tasks (AKM-native, not OKF markdown). Emits
   recognition currently lives in the akm matcher stack; no dedicated
   `akm-task` adapter module exists yet).
 - **Goldens:** `tests/fixtures/format-family-goldens/akm-task/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7 (akm-task row),
+- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (akm-task row),
   §6 (task row).
 
 Files:

@@ -4,7 +4,7 @@
  * Tests never call a `_set…ForTests` setter directly — they go through
  * `overrideSeam` / `withSeam` so the harness can restore every active seam
  * automatically (tests/_preload.ts calls `resetAllSeams()` before and after
- * every test). See docs/design/di-seams-plan.md.
+ * every test). See docs/architecture/specs/di-seams-plan.md.
  */
 type SeamSetter<T> = (fake: T | undefined) => void;
 

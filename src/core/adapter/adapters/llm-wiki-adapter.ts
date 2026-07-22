@@ -8,7 +8,7 @@
  * The `wiki` ASSET-TYPE dies in chunk 4 (plan §11 Chunk 4 / §7.4), but the LLM
  * Wiki structure stays first-class as its OWN adapter. This relocates the native
  * wiki semantics from `src/wiki/wiki.ts` + `src/wiki/wiki-templates.ts` into a
- * `BundleAdapter` implementing `docs/design/akm-0.9.0-bundle-adapter-spec.md` §7
+ * `BundleAdapter` implementing `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7
  * (llm-wiki row), §6 (wiki-page row), §0.2 (the `wiki` asset-type is retired;
  * the adapter is first-class), §1.2 (probe = schema.md + pages/), §9 (links).
  *

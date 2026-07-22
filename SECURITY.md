@@ -31,7 +31,7 @@ shell commands (via scripts, workflows, and agent dispatch), and talks to
 explicitly configured external services (LLM endpoints, git remotes, npm,
 HTTP sources). It does **not** ship telemetry, send data to anyone by
 default, or open network listeners. See
-[`docs/data-and-telemetry.md`](docs/data-and-telemetry.md) for the on-disk
+[`docs/reference/data-and-telemetry.md`](docs/reference/data-and-telemetry.md) for the on-disk
 inventory.
 
 Several akm surfaces execute user-controlled code or data with the full

@@ -5,13 +5,13 @@
 /**
  * Supporting type family for the amended `BundleAdapter` interface
  * (`./bundle-adapter.ts`), minted per akm 0.9.0 chunk-1 decision D1-1
- * (`docs/design/execution/chunk-1/brief.md`).
+ * (chunk-1 brief).
  *
  * Provenance, per type:
  *
  *  - `BundleId` / `ComponentId` / `ItemRef` / `BundleInstallation` /
  *    `BundleComponent` — transcribed verbatim from
- *    `docs/design/akm-0.9.0-bundle-adapter-spec.md` §1.1 (lines 56-75).
+ *    `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §1.1 (lines 56-75).
  *
  *  - `IndexDocument` — transcribed verbatim from the same doc, §3 (lines
  *    205-241). Per D1-1 this is the FULL/real shape, not a deferred
@@ -21,7 +21,7 @@
  *
  *  - `ValidateContext` — NOT restated in the adapter spec's own §2 code
  *    block (chunk-1 anchors.md §A.1); defined only in the normative spec,
- *    `docs/design/akm-format-neutral-bundle-workspace-spec.md:562-569`.
+ *    `docs/architecture/specs/akm-format-neutral-bundle-workspace-spec.md:562-569`.
  *    Transcribed verbatim from there.
  *
  *  - `Diagnostic` — referenced as `validate`'s `Promise<Diagnostic[]>`
