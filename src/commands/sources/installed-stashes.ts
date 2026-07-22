@@ -292,9 +292,12 @@ async function updateWebsiteSource(
 
 /** Sync a single registry-managed install and return the processed record. */
 async function updateManagedInstall(managed: ManagedInstall, force: boolean): Promise<UpdateResultItem> {
-  if (force && managed.source !== "local" && managed.localRoot) {
-    cleanupDirectoryBestEffort(managed.localRoot);
-  }
+  // No pre-cleanup of the old root, even under --force: the providers already
+  // re-materialize staging-first (git clones into a `.tmp-*` sibling and swaps
+  // only on success), so destroying `managed.localRoot` BEFORE `syncFromRef`
+  // succeeds would turn any sync failure (network down, bad ref) into losing a
+  // previously-working install. The old root is cleaned up below, after the
+  // lock points at the new content.
   const synced = await syncFromRef(managed.ref, { force });
 
   const installedEntry: InstalledBundle = {

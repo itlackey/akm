@@ -389,6 +389,20 @@ export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Request a synchronous garbage collection. On Bun runs `Bun.gc(true)`; on
+ * Node a no-op (no portable forced-GC without --expose-gc). Used by the
+ * migrate-apply WAL conversion to finalize any zombie-closed bun:sqlite
+ * connection (statements not finalized before close keep the connection and
+ * its WAL shared memory alive until GC — issue #720) before concluding that
+ * ANOTHER process holds the database.
+ */
+export function requestGc(): void {
+  if (isBun) {
+    (bunGlobal() as unknown as { gc: (force: boolean) => void }).gc(true);
+  }
+}
+
 /** Async sleep for `ms`. On Bun uses `Bun.sleep`; on Node a `setTimeout` promise. */
 export function sleep(ms: number): Promise<void> {
   if (isBun) {

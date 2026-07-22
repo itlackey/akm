@@ -34,7 +34,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
-import { type Database, openDatabase } from "../../../src/storage/database";
+import { type Database, openDatabaseFinalizing } from "../../../src/storage/database";
 import { runMigrations as runSqliteMigrations } from "../../../src/storage/engines/sqlite-migrations";
 import { applyStandardPragmas } from "../../../src/storage/sqlite-pragmas";
 
@@ -62,7 +62,7 @@ export function openStateDbAtCeiling(dbPath: string, ceilingId: string): Databas
   const ceilingIndex = STATE_MIGRATIONS.findIndex((m) => m.id === ceilingId);
   if (ceilingIndex < 0) throw new Error(`Unknown state.db migration ceiling "${ceilingId}"`);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = openDatabase(dbPath);
+  const db = openDatabaseFinalizing(dbPath);
   applyStandardPragmas(db, { dataDir: path.dirname(dbPath) });
   runSqliteMigrations(db, STATE_MIGRATIONS.slice(0, ceilingIndex + 1));
   return db;

@@ -177,10 +177,21 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       );
     }
 
-    if (overwritten) {
-      fs.rmSync(destSkillDir, { recursive: true, force: true });
+    // Stage-then-swap (never destroy-then-copy): a mid-copy failure must not
+    // leave the destination gone under --force. Copy into a tmp sibling, then
+    // remove the old dir and rename — the same pattern git-install uses.
+    const stagingDir = `${destSkillDir}.tmp-${process.pid}`;
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    try {
+      fs.cpSync(sourceSkillDir, stagingDir, { recursive: true });
+      if (overwritten) {
+        fs.rmSync(destSkillDir, { recursive: true, force: true });
+      }
+      fs.renameSync(stagingDir, destSkillDir);
+    } catch (err) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      throw err;
     }
-    fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
 
     destPath = path.join(destSkillDir, "SKILL.md");
     const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });

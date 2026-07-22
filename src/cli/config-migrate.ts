@@ -62,7 +62,8 @@ import {
   runThreeDbCutover,
 } from "../migrate/legacy/three-db-cutover";
 import { FROZEN_WORKFLOW_MIGRATIONS } from "../migrate/legacy/workflow-migrations-bodies";
-import { openDatabase } from "../storage/database";
+import { requestGc } from "../runtime";
+import { openDatabaseFinalizing } from "../storage/database";
 import { runMigrations as runSqliteMigrations } from "../storage/engines/sqlite-migrations";
 import { EXIT_CODES } from "./shared";
 
@@ -157,9 +158,59 @@ function sameArtifactFingerprint(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+/**
+ * Collapse state.db to a SINGLE FILE (DELETE journal) for the rest of the
+ * apply. A WAL-mode state.db carries `-wal`/`-shm` sidecars that the migration
+ * generation fingerprint tracks; a later read-only inspect (or a rolled-back
+ * cutover transaction) mutates them, which would trip the "state changed
+ * outside the journaled transition" rollback guard and REFUSE the fail-closed
+ * restore. In single-file mode a rolled-back transaction leaves state.db
+ * byte-identical, so the cutover's fail-closed rollback works. The runtime
+ * restores WAL on its next openStateDatabase.
+ *
+ * The resulting journal_mode is AUTHORITATIVE, not best-effort (issue #720):
+ * if state.db could not leave WAL mode — another PROCESS holds it open
+ * (same-process zombie closes are prevented by openDatabaseFinalizing's
+ * finalize-on-close guard) — the later cutover's rolled-back transaction
+ * would mutate `-wal` and the restore would be silently refused. Fail EARLY
+ * instead: journal.phase is still "prepared" at the call site, so the outer
+ * catch restores config+state+workflow from the backup with a clear retry
+ * message.
+ */
+function collapseStateDbToSingleFile(db: ReturnType<typeof openDatabaseFinalizing>): void {
+  const attempt = (): string => {
+    try {
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      db.exec("PRAGMA journal_mode = DELETE");
+    } catch {
+      // Already single-file / nothing to checkpoint, or blocked — the
+      // read-back below is the authoritative signal either way.
+    }
+    return String(
+      (db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string } | undefined)?.journal_mode ?? "",
+    ).toLowerCase();
+  };
+  let journalMode = attempt();
+  if (journalMode === "wal") {
+    // A zombie-closed sibling connection ANYWHERE in this process (a close()
+    // with unfinalized prepare() statements outside the openDatabaseFinalizing
+    // set) also blocks the switch until GC finalizes it. Force a collection
+    // and retry once before concluding another PROCESS holds the database.
+    requestGc();
+    journalMode = attempt();
+  }
+  if (journalMode === "wal") {
+    throw new ConfigError(
+      "Cannot convert state.db out of WAL mode for migration — another akm process is holding it open. " +
+        "Close other akm processes and re-run `akm migrate apply`.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+}
+
 function hasGenerationMarker(dbPath: string, operationId: string, phase: string): boolean {
   if (!fs.existsSync(dbPath)) return false;
-  const db = openDatabase(dbPath, { readonly: true });
+  const db = openDatabaseFinalizing(dbPath, { readonly: true });
   try {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='akm_migration_generation'").get()) {
       return false;
@@ -536,7 +587,7 @@ function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
  */
 function runFrozenWorkflowRoll(operationId: string): void {
   const workflowPath = getLegacyWorkflowDbPath();
-  const db = openDatabase(workflowPath);
+  const db = openDatabaseFinalizing(workflowPath);
   try {
     const hasRuns = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get();
     const hasLedger = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get();
@@ -865,26 +916,12 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
       try {
         const beforeState = inspectMigrationState();
         if (beforeState.state.status === "old") {
-          const db = openDatabase(getStateDbPathInDataDir());
+          const db = openDatabaseFinalizing(getStateDbPathInDataDir());
           try {
             runStateMigrations(db, {
               generationMarker: { operationId: journal.operationId, phase: "state-applied" },
             });
-            // Chunk 8, WI-8.2: collapse state.db to a SINGLE FILE (DELETE journal)
-            // for the rest of the apply. A WAL-mode state.db carries `-wal`/`-shm`
-            // sidecars that the migration generation fingerprint tracks; a later
-            // read-only inspect (or a rolled-back cutover transaction) mutates
-            // them, which would trip the "state changed outside the journaled
-            // transition" rollback guard and REFUSE the fail-closed restore. In
-            // single-file mode a rolled-back transaction leaves state.db
-            // byte-identical, so the cutover's fail-closed rollback works. The
-            // runtime restores WAL on its next openStateDatabase.
-            try {
-              db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-              db.exec("PRAGMA journal_mode = DELETE");
-            } catch {
-              // Already single-file / nothing to checkpoint.
-            }
+            collapseStateDbToSingleFile(db);
           } finally {
             db.close();
           }

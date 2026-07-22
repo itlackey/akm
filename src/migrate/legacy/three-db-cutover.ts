@@ -52,7 +52,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { warn } from "../../core/warn";
-import { type Database, openDatabase, type SqlValue } from "../../storage/database";
+import { type Database, openDatabaseFinalizing, type SqlValue } from "../../storage/database";
 import { applyStandardPragmas } from "../../storage/sqlite-pragmas";
 import { classifyRefGrammar, parseStoredRef } from "../legacy-ref-grammar";
 import { deriveCanonicalAssetName, TYPE_DIRS } from "./legacy-layout";
@@ -134,7 +134,7 @@ export function buildCutoverRefMap(opts: BuildCutoverRefMapOptions): Map<string,
 
   // ── Source (a): the last-good index join (authoritative). ──
   if (fs.existsSync(opts.oldIndexDbPath)) {
-    const db = openDatabase(opts.oldIndexDbPath, { readonly: true });
+    const db = openDatabaseFinalizing(opts.oldIndexDbPath, { readonly: true });
     try {
       if (tableExists(db, "main", "entries")) {
         const rows = db
@@ -383,7 +383,7 @@ export function rekeyStateDbCore(db: Database, refMap: Map<string, string>): Cut
  * directly inside the ATTACH transaction.
  */
 export function rekeyStateDb(dbPath: string, refMap: Map<string, string>): CutoverRekeyReport {
-  const db = openDatabase(dbPath);
+  const db = openDatabaseFinalizing(dbPath);
   try {
     applyStandardPragmas(db, { dataDir: path.dirname(dbPath) });
     let report: CutoverRekeyReport = emptyReport();
@@ -595,7 +595,7 @@ function cutoverAlreadyMerged(db: Database): boolean {
  */
 export function cutoverMergeCommitted(statePath: string): boolean {
   if (!fs.existsSync(statePath)) return false;
-  const db = openDatabase(statePath, { readonly: true });
+  const db = openDatabaseFinalizing(statePath, { readonly: true });
   try {
     if (!tableExists(db, "main", "akm_cutover_ledger")) return false;
     return !!db.prepare("SELECT 1 FROM akm_cutover_ledger WHERE singleton = 1").get();
@@ -619,7 +619,7 @@ export function cutoverMergeCommitted(statePath: string): boolean {
  */
 export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCutoverResult {
   const copied: Record<string, number> = {};
-  const db = openDatabase(opts.statePath);
+  const db = openDatabaseFinalizing(opts.statePath);
   try {
     db.exec("PRAGMA busy_timeout = 30000");
 

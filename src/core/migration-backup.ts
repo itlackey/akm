@@ -8,7 +8,7 @@ import path from "node:path";
 import { migrateConfigSourcesToBundles } from "../migrate/legacy/config-source-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
 import { WORKFLOW_MIGRATIONS_CHECKSUMS } from "../migrate/legacy/workflow-migrations-frozen";
-import { type Database, openDatabase } from "../storage/database";
+import { type Database, openDatabaseFinalizing } from "../storage/database";
 import {
   inspectMigrationLedger,
   inspectSealedMigrationLedger,
@@ -266,7 +266,7 @@ function inspectConfig(configPath: string): MigrationArtifactState {
   }
 }
 
-function quickCheck(db: ReturnType<typeof openDatabase>, filePath: string): void {
+function quickCheck(db: ReturnType<typeof openDatabaseFinalizing>, filePath: string): void {
   const rows = db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>;
   if (rows.length !== 1 || Object.values(rows[0]!)[0] !== "ok") {
     throw new ConfigError(`SQLite quick_check failed for ${filePath}.`, "INVALID_CONFIG_FILE");
@@ -275,9 +275,9 @@ function quickCheck(db: ReturnType<typeof openDatabase>, filePath: string): void
 
 function inspectSqlite(filePath: string, migrations: readonly Migration[]): MigrationArtifactState {
   if (!fs.existsSync(filePath)) return { status: "missing" };
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(filePath, { readonly: true });
+    db = openDatabaseFinalizing(filePath, { readonly: true });
     quickCheck(db, filePath);
     return mapLedgerState(inspectMigrationLedger(db, migrations));
   } catch (error) {
@@ -295,9 +295,9 @@ function inspectSqlite(filePath: string, migrations: readonly Migration[]): Migr
  */
 function inspectSqliteSealed(filePath: string, sealed: readonly SealedMigration[]): MigrationArtifactState {
   if (!fs.existsSync(filePath)) return { status: "missing" };
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(filePath, { readonly: true });
+    db = openDatabaseFinalizing(filePath, { readonly: true });
     quickCheck(db, filePath);
     return mapLedgerState(inspectSealedMigrationLedger(db, sealed));
   } catch (error) {
@@ -315,9 +315,9 @@ function inspectSqliteSealed(filePath: string, sealed: readonly SealedMigration[
  */
 function inspectIndexDbArtifact(filePath: string): MigrationArtifactState {
   if (!fs.existsSync(filePath)) return { status: "missing" };
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(filePath, { readonly: true });
+    db = openDatabaseFinalizing(filePath, { readonly: true });
     quickCheck(db, filePath);
     return { status: "current" };
   } catch (error) {
@@ -538,9 +538,9 @@ function backupSqlite(source: string, destination: string): void {
         ? "state-db"
         : undefined;
   const releaseActivity = activityName ? acquireMaintenanceActivitySync(activityName) : undefined;
-  let db: ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabaseFinalizing> | undefined;
   try {
-    db = openDatabase(source);
+    db = openDatabaseFinalizing(source);
     db.exec("PRAGMA busy_timeout = 10000");
     db.exec(`VACUUM INTO ${sqliteQuote(destination)}`);
   } finally {
@@ -830,7 +830,7 @@ function activeWorkflowClaims(): string[] {
   const blockers: string[] = [];
   for (const dbPath of [getStateDbPathInDataDir(), getLegacyWorkflowDbPath()]) {
     if (!fs.existsSync(dbPath)) continue;
-    const db = openDatabase(dbPath, { readonly: true });
+    const db = openDatabaseFinalizing(dbPath, { readonly: true });
     try {
       blockers.push(...scanWorkflowClaimsFrom(db, dbPath, maxSamples));
     } finally {

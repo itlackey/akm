@@ -13,6 +13,14 @@ earlier `0.9.0-rc.1` / `0.9.0-beta.*` development entries below.
 
 ### Breaking changes & migration
 
+- **Installed non-akm bundles reclassify on your next `akm index`.** The
+  indexer now dispatches each installed bundle's *detected* adapter (Claude
+  tool dirs, LLM wikis, website snapshots, agent-skills packs, …) instead of
+  recognizing everything with the akm-stash adapter. Entries in such bundles
+  change type and ref spelling to the owning adapter's own scheme the first
+  time you reindex. No action needed — the index is a regenerable cache and
+  rebuilds itself — but searches/saved refs into those bundles may resolve to
+  the new spellings afterwards.
 - **Ref grammar cutover — `type:name` → `[bundle//]conceptId`.** Every ref is
   now a subdir-qualified concept id inside its bundle (`skills/code-review`,
   `memories/vpn-note`, `env/prod`), optionally prefixed with a `bundle//`
