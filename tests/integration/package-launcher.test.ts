@@ -58,11 +58,8 @@ function fakeBun(dir: string, version: string, versionExitCode = 0): string {
   return executable;
 }
 
-async function generateWindowsShims(npm: string): Promise<void> {
-  const npmCli = fs.realpathSync(npm);
-  const npmPackageDir = path.dirname(path.dirname(npmCli));
-  const cmdShimPath = path.join(npmPackageDir, "node_modules", "cmd-shim");
-  const cmdShim = createRequire(import.meta.url)(cmdShimPath) as (from: string, to: string) => Promise<void>;
+async function generateWindowsShims(): Promise<void> {
+  const cmdShim = createRequire(import.meta.url)("cmd-shim") as (from: string, to: string) => Promise<void>;
 
   fs.mkdirSync(windowsShimDir, { recursive: true });
   await Promise.all(
@@ -138,7 +135,7 @@ beforeAll(async () => {
 
   fakeBun(oldBunPathDir, "0.9.9");
   fakeBun(unusableBunPathDir, "bun probe failed", 1);
-  await generateWindowsShims(npm);
+  await generateWindowsShims();
 });
 
 afterAll(() => {
