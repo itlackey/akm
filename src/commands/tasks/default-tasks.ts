@@ -20,7 +20,7 @@
 
 import fs from "node:fs";
 import os from "node:os";
-import { akmTasksAdd, akmTasksList, type TasksAddInput } from "./tasks";
+import { akmTasksAdd, listStashTasks, type TasksAddInput } from "./tasks";
 
 /**
  * One default task in the improve task set. `command` is the shell command run
@@ -101,12 +101,12 @@ const MANUAL_TASK_NOMINAL_SCHEDULE = "0 4 * * *";
 
 /** Injected primitives so tests never touch the OS scheduler or a real stash. */
 export interface RegisterDefaultTasksDeps {
-  list: typeof akmTasksList;
+  list: typeof listStashTasks;
   add: typeof akmTasksAdd;
 }
 
 const DEFAULT_DEPS: RegisterDefaultTasksDeps = {
-  list: akmTasksList,
+  list: listStashTasks,
   add: akmTasksAdd,
 };
 
@@ -205,7 +205,7 @@ export async function registerDefaultTasks(
   const deps = options.deps ?? DEFAULT_DEPS;
   const serverInstall = options.serverInstall ?? detectServerDefault();
 
-  let installed: Awaited<ReturnType<typeof akmTasksList>>["tasks"] = [];
+  let installed: ReturnType<typeof listStashTasks>["tasks"] = [];
   try {
     installed = (await deps.list()).tasks;
   } catch {

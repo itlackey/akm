@@ -27,13 +27,32 @@ export interface InstalledTaskRef {
    * cannot cheaply read its installed form — sync then reinstalls to be safe.
    */
   signature?: string;
+  /**
+   * The bundle this scheduled entry was installed from, parsed from the
+   * embedded `--target <bundle>` token. Absent (undefined) means the primary /
+   * default bundle — the byte-identical, no-`--target` form. `tasks sync`
+   * scopes reconciliation to entries whose `target` matches the bundle being
+   * synced so a plain (primary) sync never removes another bundle's entries.
+   */
+  target?: string;
+}
+
+/**
+ * Optional per-install context. `target` is the bundle name embedded as a
+ * `--target <bundle>` token in the scheduled invocation — passed ONLY for a
+ * non-default bundle (a default/primary task installs without it so its native
+ * definition stays byte-identical). `expectedSignature` receives the same opts
+ * so drift detection compares against the target-aware signature.
+ */
+export interface TaskInstallOptions {
+  target?: string;
 }
 
 export interface TaskBackend {
   /** Stable name surfaced by `tasks doctor`. */
   readonly name: ScheduleBackend;
   /** Replace a native definition transactionally; rejection must leave the prior definition active. */
-  install(task: TaskDocument): Promise<void> | void;
+  install(task: TaskDocument, opts?: TaskInstallOptions): Promise<void> | void;
   uninstall(id: string): Promise<void> | void;
   setEnabled(id: string, enabled: boolean): Promise<void> | void;
   list(): Promise<InstalledTaskRef[]> | InstalledTaskRef[];
@@ -44,5 +63,5 @@ export interface TaskBackend {
    * instead of being silently reported "unchanged". Optional — backends that
    * omit it fall back to always-reinstall during sync.
    */
-  expectedSignature?(task: TaskDocument): string;
+  expectedSignature?(task: TaskDocument, opts?: TaskInstallOptions): string;
 }

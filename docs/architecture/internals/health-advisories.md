@@ -11,7 +11,7 @@ and whether to act. Some `warn`s below are *adjudicated, expected* states — tr
 | `state-db-schema` | state.db is missing required tables. | Re-run `akm init`; a fresh/older DB was opened. |
 | `state-db-round-trip` | Append/read probe against state.db failed. | Check disk/permissions on the state.db path; the store is unwritable. |
 | `task-log-backing` | task_history rows reference log files missing on disk. | Logs were pruned/moved out from under the DB; safe to ignore if intentional, else restore the log dir. |
-| `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm tasks list`; a lane is likely wedged — kill/re-run it. |
+| `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm tasks history`; a lane is likely wedged — kill/re-run it. |
 | `default-engine` | The configured general default agent, SDK, or LLM engine is missing or incomplete. | Correct `defaults.engine`; native SDK operation requires its package or binary, while a fallback LLM is checked only when configured. |
 | `default-llm-engine` | The independently configured LLM default is missing, incompatible, or lacks a required credential. | Correct `defaults.llmEngine`, its connection, and any symbolic credential binding. |
 | `active-improve-strategy` | An enabled process in the effective improve strategy cannot resolve its engine or required credential. | Inspect the named unavailable process, then correct its process override, strategy triage engine, SDK fallback, or default LLM. |

@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Schedule tasks from any configured bundle via `--target <bundle>`** (#711).
+  `akm tasks add`, `enable`, `disable`, `run`, and `sync` (plus `history` /
+  `doctor`) now accept `--target <bundle>` to operate on a non-default bundle
+  instead of only the primary stash. `add`/`enable`/`disable` resolve the bundle
+  through the normal writable-target rules (an unknown or non-writable bundle
+  fails fast); `run --target X` resolves the task file and its relative asset refs
+  from bundle X. A non-default bundle is recorded in the installed scheduler entry
+  as a single `--target <bundle>` token — the provenance record that lets the
+  scheduled `akm tasks run` resolve the right bundle. Scheduler ids stay the bare
+  task id (never namespaced): enabling a task whose id is already scheduled from a
+  different bundle is a hard error rather than a silent clobber.
+
+### Changed
+
+- **`akm tasks sync [--target <bundle>]` reconciles a single bundle.** Sync now
+  attributes each installed scheduler entry to its bundle (parsed from the
+  `--target` token; absent ⇒ primary) and reconciles only the entries for the
+  bundle being synced. A plain (primary) sync never installs from, updates, or
+  removes another bundle's entries, and sync never scans all bundles — task
+  activation stays explicit (`enable` / `add --target`), so registering a bundle
+  still never activates code. When the target is the default bundle (or omitted),
+  installed scheduler entries are byte-identical to before, so upgrading shows no
+  spurious drift.
+
+### Removed
+
+- **`akm tasks list`, `akm tasks show`, and `akm tasks remove` are removed** as
+  redundant with the generic asset commands. List and inspect tasks with `akm
+  search` / `akm show <bundle//tasks/id>` (both already cross-bundle); to remove a
+  scheduled task, delete its file in the owning bundle and run `akm tasks sync`
+  (sync uninstalls the orphaned scheduler entry). Bare `akm tasks` now reports
+  scheduler diagnostics (equivalent to `akm tasks doctor`).
+
 ## [0.9.0] - 2026-07-20
 
 0.9.0 is the format-neutral **bundle / adapter** refactor: it replaces the flat

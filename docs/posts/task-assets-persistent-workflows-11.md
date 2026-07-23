@@ -54,7 +54,7 @@ The fields that matter most:
 | `command` or `prompt` | one of the two | `command` runs as a plain shell command. `prompt` dispatches through the configured agent profile. A third option, `workflow`, targets a stash workflow ref directly. |
 | `enabled` | yes | `false` keeps the task definition in your stash without installing a scheduler entry. |
 | `timeoutMs` | no | Per-task timeout in milliseconds, overriding whatever the agent profile sets globally. `null` removes the kill timer entirely — useful for long-running local-model tasks. |
-| `name`, `description`, `when_to_use`, `tags` | no | Metadata. `name` appears in `akm tasks list`; the others exist for your own records and for search. |
+| `name`, `description`, `when_to_use`, `tags` | no | Metadata. `name` appears in `akm show` and search results; the others exist for your own records and for search. |
 
 ## command: vs prompt:
 
@@ -101,15 +101,19 @@ akm tasks sync
 Other task management commands:
 
 ```sh
-akm tasks list                        # all defined tasks with status
-akm tasks show <id>                   # parsed YAML + scheduler state
+akm search --type task                # all defined tasks (any bundle)
+akm show tasks/<id>                    # parsed YAML + scheduler state
 akm tasks run <id>                    # execute immediately
 akm tasks enable <id>                 # install the scheduler entry
 akm tasks disable <id>                # remove the scheduler entry, keep the file
-akm tasks remove <id>                 # delete the file and uninstall
 akm tasks history [--id <id>]         # recent runs from state.db
 akm tasks doctor                      # scheduler backend + cron path
 ```
+
+To unschedule a task entirely, delete its `.yml` from the bundle and run `akm
+tasks sync` (which uninstalls scheduler entries that no longer have a backing
+file). `enable`, `disable`, `run`, and `sync` also accept `--target <bundle>`
+to act on a task that lives in a non-default bundle.
 
 `akm tasks run` is the same command the scheduler calls. You can run a task immediately to test it before committing it to a schedule.
 
@@ -165,8 +169,7 @@ To register the task after writing the YAML:
 
 ```sh
 akm tasks sync
-akm tasks list
-# → akm-health-report   0 * * * *   enabled   last run: —
+# → installed: akm-health-report
 ```
 
 Run it once immediately to confirm the script works before relying on the scheduled version:

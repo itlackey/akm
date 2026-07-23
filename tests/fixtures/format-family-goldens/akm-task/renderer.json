@@ -8,7 +8,7 @@
     "AKM-native; mirrors the frozen renderer/all-types.json task entry"
   ],
   "notes": [
-    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm tasks show <id> -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule` (the code strips a leading `task:` from the ref; under the new ref grammar there is no `task:` prefix, so the full ref appears)."
+    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm tasks run <id> -> run now; akm tasks disable <id> -> unschedule` (the full bundle-qualified ref is passed straight to `akm show`; the dedicated `tasks show`/`tasks remove` subcommands were removed in favor of generic `akm show` and `tasks disable`)."
   ],
   "byRelPath": {
     "nightly-index.yml": {
@@ -16,14 +16,14 @@
       "ref": "sample-akm-task//nightly-index",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm tasks show sample-akm-task//nightly-index -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule"
+      "action": "akm show sample-akm-task//nightly-index -> inspect; akm tasks run <id> -> run now; akm tasks disable <id> -> unschedule"
     },
     "two-targets.yml": {
       "type": "task",
       "ref": "sample-akm-task//two-targets",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm tasks show sample-akm-task//two-targets -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule",
+      "action": "akm show sample-akm-task//two-targets -> inspect; akm tasks run <id> -> run now; akm tasks disable <id> -> unschedule",
       "note": "renders normally despite being invalid; presentation keys on type=task, not on validity."
     }
   }

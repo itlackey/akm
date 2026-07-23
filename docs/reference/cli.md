@@ -2085,18 +2085,39 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Only version-2 task YAML is discovered.
 
 ```sh
-akm tasks list                              # List all tasks in the stash
-akm tasks show <id>                         # Show one parsed task
+akm search --type task                      # List tasks (cross-bundle; replaces `tasks list`)
+akm show tasks/<id>                          # Inspect one task (replaces `tasks show`)
 akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
   --command "akm improve --strategy default"
 akm tasks add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
 akm tasks run <id>                          # Execute now (what the scheduler calls)
 akm tasks enable <id> / disable <id>        # Toggle scheduler entry
-akm tasks remove <id>                       # Delete task file and uninstall
 akm tasks history [--id <id>] [--limit <n>] # Recent runs from state.db
 akm tasks sync                              # Reconcile on-disk YAML with scheduler
 akm tasks doctor                            # Report scheduler backend + paths
 ```
+
+To remove a scheduled task, delete its file (`<bundle>/tasks/<id>.yml`) and run
+`akm tasks sync` — sync uninstalls the orphaned scheduler entry.
+
+**Bundle targeting (`--target <bundle>`).** By default every subcommand operates
+on the primary/default bundle. Pass `--target <bundle>` to `add`, `enable`,
+`disable`, `run`, or `sync` (also accepted by `history` / `doctor`) to schedule
+and reconcile tasks that live in another configured bundle:
+
+```sh
+akm tasks add nightly --schedule "@daily" --command "akm improve" --target team-stash
+akm tasks enable nightly --target team-stash   # install from a non-default bundle
+akm tasks sync --target team-stash             # reconcile only that bundle
+```
+
+A non-default bundle is recorded in the installed scheduler entry as a
+`--target <bundle>` token, so the scheduled `akm tasks run` resolves the task
+(and its relative asset refs) from that bundle. `sync` reconciles one bundle at a
+time and only touches entries attributed to it, so a plain (primary) sync never
+disturbs another bundle's scheduled tasks. Scheduler ids are the bare task id and
+are never namespaced: enabling a task whose id is already scheduled from a
+different bundle is a hard error.
 
 Each task targets exactly one of `--workflow <ref>`, `--prompt <text-or-ref>`,
 or `--command <shell>`. Task YAML is strict and begins with `version: 2`.
@@ -2104,7 +2125,7 @@ Prompt targets dispatch through `--engine` or `defaults.engine` and may set
 `model`, `timeoutMs`, and LLM request overrides; command tasks may set only
 `timeoutMs`; workflow tasks may set only `params`. `tasks add` accepts
 `--engine`, `--model`, `--timeout-ms`, `--params`, `--name`, `--when-to-use`,
-`--description`, and `--tags`. A v1 task is diagnosed by list, sync, and doctor
+`--description`, and `--tags`. A v1 task is diagnosed by sync and doctor
 but is never rewritten or executed.
 
 `akm tasks run` is what cron / launchd / schtasks invoke at the scheduled

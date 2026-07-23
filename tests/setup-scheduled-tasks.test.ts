@@ -65,8 +65,7 @@ function makeDeps(installed: Array<{ id: string; enabled: boolean }>) {
     gitSyncCalls: 0,
   };
   const deps = {
-    list: async () =>
-      ({ tasks: installed }) as Awaited<ReturnType<typeof import("../src/commands/tasks/tasks").akmTasksList>>,
+    list: (() => ({ tasks: installed })) as typeof import("../src/commands/tasks/tasks").listStashTasks,
     add: async (input: { id: string; schedule: string; command?: string | string[] }) => {
       calls.added.push({ id: input.id, schedule: input.schedule, command: input.command });
       return { id: input.id } as Awaited<ReturnType<typeof import("../src/commands/tasks/tasks").akmTasksAdd>>;

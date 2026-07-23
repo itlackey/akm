@@ -636,25 +636,10 @@ describe("output format parity", () => {
   );
 });
 
-// ── tasks list ────────────────────────────────────────────────────────────────
+// ── tasks parity ────────────────────────────────────────────────────────────
 
 describe("tasks parity", () => {
   afterEach(() => cleanup());
-
-  test.skipIf(!ENABLED)("tasks list returns same shape on Bun and Node", async () => {
-    setupStorage();
-
-    const nodeResult = nodeRun(["tasks", "list"], nodeEnv);
-    assertNoBoundaryLeak(nodeResult, "tasks list");
-    expect(nodeResult.status).toBe(0);
-
-    const bunResult = await withEnv({ AKM_STASH_DIR: stashDir, ...nodeEnv, AKM_OUTPUT: "json", NO_COLOR: "1" }, () =>
-      runCliCapture(["tasks", "list"]),
-    );
-    const nodeJson = parseJson(nodeResult.stdout) as { shape?: string } | undefined;
-    const bunJson = parseJson(bunResult.stdout) as { shape?: string } | undefined;
-    expect(nodeJson?.shape).toBe(bunJson?.shape);
-  });
 
   test.skipIf(!ENABLED)("tasks doctor registers the supported Node wrapper", () => {
     setupStorage();

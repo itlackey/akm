@@ -19,7 +19,7 @@ import {
   type RegisterDefaultTasksDeps,
   registerDefaultTasks,
 } from "../../src/commands/tasks/default-tasks";
-import type { TasksAddInput, TasksAddResult, TasksListResult } from "../../src/commands/tasks/tasks";
+import type { StashTaskSummary, TasksAddInput, TasksAddResult } from "../../src/commands/tasks/tasks";
 import { parseSchedule, type ScheduleBackend } from "../../src/tasks/schedule";
 
 /**
@@ -32,17 +32,9 @@ function makeFakeDeps(): RegisterDefaultTasksDeps & { calls: TasksAddInput[] } {
   const calls: TasksAddInput[] = [];
   return {
     calls,
-    async list(): Promise<TasksListResult> {
+    list(): { tasks: StashTaskSummary[] } {
       return {
-        tasks: [...store.values()].map((c) => ({
-          id: c.id,
-          ref: `tasks/${c.id}`,
-          path: `/fake/${c.id}.yml`,
-          schedule: c.schedule,
-          enabled: c.disabled !== true,
-          target: { kind: "command", cmd: [String(c.command)] },
-        })),
-        stale: [],
+        tasks: [...store.values()].map((c) => ({ id: c.id, enabled: c.disabled !== true })),
       };
     },
     async add(input: TasksAddInput): Promise<TasksAddResult> {

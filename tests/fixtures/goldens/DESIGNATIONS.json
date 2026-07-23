@@ -241,8 +241,8 @@
       "consumers": [
         "tests/commands/goldens-cli-health-tasks.test.ts"
       ],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family C `tasks list|show|run|history|doctor` JSON envelope key-sets, driven against a command-type task running the `true` shell builtin. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
-      "sha256": "ca7aec3487655e4d068a31d77a5550944d690dad20ce767b23d735b1459bd642"
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Re-baselined by issue #711 (bundle-targeted tasks): the redundant `tasks list`/`tasks show` subcommands were retired (covered by `akm search` / `akm show`), so this oracle now pins the surviving Family C `tasks run|history|doctor` JSON envelope key-sets, driven against a command-type task running the `true` shell builtin. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
+      "sha256": "ed6af4de4c4345229dc8b4af34f5bd4ae928ed278f1931c62010e654a2b1472b"
     },
     {
       "path": "tests/fixtures/goldens/cli/c-tasks-run-config-bypass.json",

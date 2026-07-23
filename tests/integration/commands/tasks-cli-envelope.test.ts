@@ -8,9 +8,10 @@
  * stderr / exit code) for representative subcommands, proving the extraction of
  * the family from cli.ts into src/commands/tasks-cli.ts and the migration of the
  * leaf handlers onto `defineJsonCommand` is byte-identical. Only the
- * scheduler-free subcommands are exercised (`list`, `doctor`, and the `show`
- * not-found error path) so the test never touches the host OS scheduler. The
- * CLI reads an isolated stash through AKM_STASH_DIR via the in-process harness.
+ * scheduler-free subcommands are exercised (`doctor`, the bare-group default,
+ * and the `run` not-found error path) so the test never touches the host OS
+ * scheduler. The CLI reads an isolated stash through AKM_STASH_DIR via the
+ * in-process harness.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -52,14 +53,13 @@ async function runCli(args: string[], stashDir: string): Promise<{ stdout: strin
 }
 
 describe("akm tasks — JSON envelope snapshot (WS6)", () => {
-  test("tasks list: empty stash → success envelope with empty tasks array", async () => {
+  test("bare `akm tasks` → doctor diagnostics envelope (group defaultRun)", async () => {
     const stash = makeStashDir();
-    const { stdout, status } = await runCli(["--json", "tasks", "list"], stash);
+    const { stdout, status } = await runCli(["--json", "tasks"], stash);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.shape).toBe("tasks-list");
-    expect(Array.isArray(env.tasks)).toBe(true);
-    expect(env.tasks.length).toBe(0);
+    expect(env.shape).toBe("tasks-doctor");
+    expect(typeof env.backend).toBe("string");
   });
 
   test("tasks doctor: success envelope reports the active scheduler backend", async () => {
@@ -116,9 +116,9 @@ describe("akm tasks — JSON envelope snapshot (WS6)", () => {
     });
   });
 
-  test("tasks show: unknown id → byte-identical {ok:false} not-found envelope on stderr", async () => {
+  test("tasks run: unknown id → {ok:false} not-found envelope on stderr", async () => {
     const stash = makeStashDir();
-    const { stderr, status } = await runCli(["--json", "tasks", "show", "does-not-exist"], stash);
+    const { stderr, status } = await runCli(["--json", "tasks", "run", "does-not-exist"], stash);
     expect(status).toBe(1);
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);

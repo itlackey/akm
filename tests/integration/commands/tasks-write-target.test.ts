@@ -100,7 +100,7 @@ describe("task asset mutations honor write-target resolution", () => {
     }
   });
 
-  test("setEnabled and remove mutate the write target, not the primary stash", async () => {
+  test("setEnabled mutates the write target, not the primary stash", async () => {
     const iso = withIsolatedAkmStorage();
     const target = makeSandboxDir("akm-task-target");
     try {
@@ -123,10 +123,8 @@ describe("task asset mutations honor write-target resolution", () => {
       await tasksModule.akmTasksSetEnabled("toggle-me", false, { backend: fakeBackend });
       const taskPath = path.join(target.dir, "tasks", "toggle-me.yml");
       expect(fs.readFileSync(taskPath, "utf8")).toContain("enabled: false");
-
-      await tasksModule.akmTasksRemove("toggle-me", { backend: fakeBackend });
-      expect(fs.existsSync(taskPath)).toBe(false);
-      expect(backendState.uninstallCalls).toEqual(["toggle-me"]);
+      // The task file lives in the write target, never the primary stash.
+      expect(fs.existsSync(path.join(iso.stashDir, "tasks", "toggle-me.yml"))).toBe(false);
     } finally {
       iso.cleanup();
       target.cleanup();

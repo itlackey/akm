@@ -54,7 +54,7 @@ import {
   normalizeXmlForUtf16File,
   runOrThrow,
 } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./types";
+import type { InstalledTaskRef, TaskBackend, TaskInstallOptions } from "./types";
 
 export type SchtasksExec = BackendExec;
 
@@ -93,9 +93,14 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
 
   return {
     name: "schtasks",
-    install(task: TaskDocument) {
+    install(task: TaskDocument, opts?: TaskInstallOptions) {
       const xml = normalizeXmlForUtf16File(
-        buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder, scheduledContext, userSid }),
+        buildSchtasksXml(task, akmArgv, logDir, {
+          folderPrefix: folder,
+          scheduledContext,
+          userSid,
+          ...(opts?.target !== undefined ? { target: opts.target } : {}),
+        }),
       );
       const query = runOrThrow(exec, ["schtasks", "/Query", "/TN", taskName(task.id), "/XML"], {
         isOk: (r) => r.status === 0 || isMissingTaskResult(r),
@@ -201,17 +206,38 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
             `schtasks /Query /XML for "${taskName(id)}" failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
         });
         const signature = installedSignature(query.stdout);
-        return signature === undefined ? { id } : { id, signature };
+        const target = extractSchtasksTarget(query.stdout);
+        return {
+          id,
+          ...(signature !== undefined ? { signature } : {}),
+          ...(target !== undefined ? { target } : {}),
+        };
       });
     },
-    expectedSignature(task: TaskDocument): string {
+    expectedSignature(task: TaskDocument, opts?: TaskInstallOptions): string {
       const signature = taskXmlSignature(
-        buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder, scheduledContext, userSid }),
+        buildSchtasksXml(task, akmArgv, logDir, {
+          folderPrefix: folder,
+          scheduledContext,
+          userSid,
+          ...(opts?.target !== undefined ? { target: opts.target } : {}),
+        }),
       );
       if (signature === undefined) throw new Error("Failed to fingerprint generated Task Scheduler XML.");
       return signature;
     },
   };
+}
+
+/**
+ * Recover the bundle name embedded as a `--target <bundle>` pair in the
+ * PowerShell `<Arguments>` of an installed Task Scheduler definition. Returns
+ * undefined for the primary/default form.
+ */
+export function extractSchtasksTarget(xml: string): string | undefined {
+  const match = xml.match(/'--target'\s+'((?:[^']|'')*)'/);
+  if (!match) return undefined;
+  return match[1]!.replaceAll("''", "'");
 }
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
@@ -225,6 +251,8 @@ export interface BuildSchtasksXmlOptions {
   scheduledContext: ScheduledTaskContext;
   /** Current Windows user SID embedded in the principal. */
   userSid: string;
+  /** Non-default bundle embedded as a `--target <bundle>` token. */
+  target?: string;
 }
 
 interface SchtasksDefinition {
@@ -243,7 +271,15 @@ export function buildSchtasksXml(
 ): string {
   const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
   const now = options.now ? options.now() : new Date();
-  const definition = buildSchtasksDefinition(task, akmArgv, logDir, folder, options.scheduledContext, options.userSid);
+  const definition = buildSchtasksDefinition(
+    task,
+    akmArgv,
+    logDir,
+    folder,
+    options.scheduledContext,
+    options.userSid,
+    options.target,
+  );
   const triggerXml = renderSchtasksTrigger(definition.trigger, now);
 
   return schtasksTemplate
@@ -265,10 +301,11 @@ function buildSchtasksDefinition(
   folder: string,
   scheduledContext: ScheduledTaskContext,
   userSid: string,
+  target?: string,
 ): SchtasksDefinition {
   const spec = parseSchedule(task.schedule, "schtasks");
   const trigger = translateToSchtasks(spec);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext);
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
   const environment = Object.entries(invocation.environment)
     .map(([key, value]) => `$env:${key}=${quotePowerShell(value)}`)
     .join("; ");

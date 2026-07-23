@@ -86,7 +86,7 @@
       "type": "skill"
     },
     "tasks/all-types-task.yml": {
-      "action": "Scheduled task — `akm tasks show <id>` for parsed details, `akm tasks run <id>` to invoke now.",
+      "action": "Scheduled task — `akm show tasks/<id>` for parsed details, `akm tasks run <id>` to invoke now.",
       "content": "schedule: \"@daily\"\nenabled: false\nprompt: \"Say hello from the all-types fixture task.\"\n",
       "name": "all-types-task",
       "path": "<STASH>/tasks/all-types-task.yml",
