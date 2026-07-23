@@ -105,6 +105,8 @@ export interface RunThreeDbCutoverResult {
 /** A configured stash source root the ref map consults for origin aliases + the source (b) walk. */
 export interface CutoverStashRoot {
   path: string;
+  /** Canonical target bundle id used in the new item_ref. */
+  bundleId?: string;
   registryId?: string;
   /** True for the workspace-primary stash (bare / `stash` / `local` origins resolve here). */
   primary?: boolean;
@@ -195,7 +197,8 @@ function addIndexEntryMappings(
  */
 function walkLegacyLayoutInto(map: Map<string, string>, root: CutoverStashRoot): void {
   let bundle: string;
-  if (root.registryId && root.registryId.length > 0) bundle = root.registryId;
+  if (root.bundleId && root.bundleId.length > 0) bundle = root.bundleId;
+  else if (root.registryId && root.registryId.length > 0) bundle = root.registryId;
   else if (root.primary) bundle = basenameSlug(root.path);
   else return; // non-primary source with no registryId — cannot form a stable bundle here
   for (const [type, dirName] of Object.entries(TYPE_DIRS)) {
@@ -210,7 +213,6 @@ function walkLegacyLayoutInto(map: Map<string, string>, root: CutoverStashRoot):
       const name = safeDerive(type, typeRoot, filePath);
       if (name === undefined) continue;
       const bareTail = `${type}:${name}`;
-      if (map.has(bareTail)) continue; // source (a) already covers it
       const conceptId = `${dirName}/${name}`;
       const itemRef = `${bundle}//${conceptId}`;
       setMapping(map, bareTail, itemRef);
@@ -744,6 +746,10 @@ export function runThreeDbCutover(opts: RunThreeDbCutoverOptions): RunThreeDbCut
 
     if (workflowExists) db.exec(`ATTACH DATABASE '${sqliteQuote(opts.workflowPath)}' AS wf`);
     if (oldIndexExists) db.exec(`ATTACH DATABASE '${sqliteQuote(opts.oldIndexPath)}' AS oldidx`);
+    if (process.env.AKM_TEST_MIGRATION_CRASH_GAP === "cutover-attach") {
+      if (workflowExists) db.prepare("SELECT COUNT(*) FROM wf.sqlite_master").get();
+      process.kill(process.pid, "SIGKILL");
+    }
 
     let rekey: CutoverRekeyReport = emptyReport();
     try {
@@ -952,22 +958,20 @@ export function quarantineIndexDb(runId: string, indexPath: string): { quarantin
 /**
  * Journaled, idempotent unlink of workflow.db + its `-wal`/`-shm` sidecars, keyed
  * on the committed cutover marker (the caller passes it only once the merge has
- * committed). Best-effort: a failure is logged, never thrown.
+ * committed). A failure throws so the operation-bound journal remains available
+ * and the same cutover operation retries this boundary step.
  */
 export function deleteWorkflowDb(workflowPath: string): { deleted: boolean } {
+  if (process.env.AKM_TEST_MIGRATION_FAIL_WORKFLOW_DELETE === "1") {
+    throw new Error("injected workflow.db unlink failure");
+  }
   let deleted = false;
-  try {
-    for (const suffix of ["-shm", "-wal", ""] as const) {
-      const target = `${workflowPath}${suffix}`;
-      if (fs.existsSync(target)) {
-        fs.rmSync(target, { force: true });
-        if (suffix === "") deleted = true;
-      }
+  for (const suffix of ["-shm", "-wal", ""] as const) {
+    const target = `${workflowPath}${suffix}`;
+    if (fs.existsSync(target)) {
+      fs.rmSync(target, { force: true });
+      if (suffix === "") deleted = true;
     }
-  } catch (error) {
-    warn(
-      `[akm] three-DB cutover: workflow.db unlink failed (${error instanceof Error ? error.message : String(error)}); it is retried on the next migrate apply.`,
-    );
   }
   return { deleted };
 }

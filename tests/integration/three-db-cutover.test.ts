@@ -23,7 +23,7 @@ import { createProposal } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { getMigrationApplyJournalPath } from "../../src/core/migration-backup";
 import { getMigrationOperationRoot } from "../../src/core/migration-operation";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
+import { getConfigPath, getDataDir, getDbPath, getLockfilePath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { StashFile } from "../../src/indexer/passes/metadata";
 import { type ContentMigrationReport, runContentMigration } from "../../src/migrate/legacy/content-migration";
@@ -32,6 +32,7 @@ import { writeLegacyStashFile } from "../../src/migrate/legacy/legacy-stash-json
 import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
 import {
   buildCutoverRefMap,
+  deleteWorkflowDb,
   migratePilotTreatmentFiles,
   quarantineIndexDb,
 } from "../../src/migrate/legacy/three-db-cutover";
@@ -184,6 +185,174 @@ test("cutover ref map tolerates a pre-provenance index without item_ref", () => 
 
   expect(refMap.size).toBe(0);
   expect(fs.existsSync(mapPath)).toBe(true);
+});
+
+function seedInstalledBundleMigration(): { prepared: string; installedRoot: string; oldRef: string; itemRef: string } {
+  const installedRoot = path.join(getDataDir(), "installed-owner-repo");
+  fs.mkdirSync(path.join(installedRoot, "skills", "deploy"), { recursive: true });
+  fs.writeFileSync(path.join(installedRoot, "skills", "deploy", "SKILL.md"), "# Deploy\n");
+  const legacySkillRef = ["skill", "deploy"].join(":");
+  const oldRef = `github:owner/repo//${legacySkillRef}`;
+  const itemRef = "installed-owner-repo//skills/deploy";
+
+  const installed = [
+    {
+      id: "github:owner/repo",
+      source: "github",
+      ref: "owner/repo",
+      artifactUrl: "https://github.com/owner/repo",
+      stashRoot: installedRoot,
+      cacheDir: path.dirname(installedRoot),
+      installedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ];
+  fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+  fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.8.0", installed })}\n`, { mode: 0o600 });
+  const prepared = path.join(path.dirname(getConfigPath()), "prepared-installed-0.9.json");
+  fs.writeFileSync(
+    prepared,
+    `${JSON.stringify({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      installed,
+    })}\n`,
+    { mode: 0o600 },
+  );
+  return { prepared, installedRoot, oldRef, itemRef };
+}
+
+test("a real v17 index and v2 resume preserve installed-bundle durable state", async () => {
+  const { prepared, installedRoot, oldRef, itemRef } = seedInstalledBundleMigration();
+  const primaryRoot = path.join(getDataDir(), "primary-with-same-ref");
+  fs.mkdirSync(path.join(primaryRoot, "skills", "deploy"), { recursive: true });
+  fs.writeFileSync(path.join(primaryRoot, "skills", "deploy", "SKILL.md"), "# Primary deploy\n");
+  const preparedConfig = JSON.parse(fs.readFileSync(prepared, "utf8"));
+  preparedConfig.stashDir = primaryRoot;
+  fs.writeFileSync(prepared, `${JSON.stringify(preparedConfig)}\n`, { mode: 0o600 });
+  const state = openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING);
+  state
+    .prepare(
+      "INSERT INTO asset_outcome(asset_ref, retrieval_count, outcome_score, updated_at) VALUES (?, 17, 0.75, 42)",
+    )
+    .run(oldRef);
+  state.close();
+
+  const index = new Database(getDbPath());
+  index.exec(`
+    CREATE TABLE entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_key TEXT NOT NULL UNIQUE,
+      file_path TEXT NOT NULL,
+      stash_dir TEXT NOT NULL,
+      entry_json TEXT NOT NULL,
+      search_text TEXT NOT NULL,
+      entry_type TEXT NOT NULL
+    )
+  `);
+  index
+    .prepare(
+      "INSERT INTO entries(entry_key, file_path, stash_dir, entry_json, search_text, entry_type) VALUES (?, ?, ?, '{}', '', 'skill')",
+    )
+    .run(
+      `${installedRoot}:${["skill", "deploy"].join(":")}`,
+      path.join(installedRoot, "skills", "deploy", "SKILL.md"),
+      installedRoot,
+    );
+  index.close();
+
+  const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+    cwd: path.resolve(import.meta.dir, "../.."),
+    env: { ...process.env, AKM_TEST_MIGRATION_CRASH_AFTER: "workflow" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const journal = JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8"));
+  expect(journal.migrationLockEntries).toHaveLength(1);
+  journal.formatVersion = 2;
+  delete journal.migrationLockEntries;
+  fs.writeFileSync(getMigrationApplyJournalPath(), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+
+  const applied = await runCliCapture(["migrate", "apply"]);
+  expect(applied.code, applied.stderr).toBe(0);
+
+  const migrated = readState();
+  try {
+    expect(
+      migrated.query("SELECT asset_ref, retrieval_count, outcome_score, updated_at FROM asset_outcome").get(),
+    ).toEqual({ asset_ref: itemRef, retrieval_count: 17, outcome_score: 0.75, updated_at: 42 });
+    expect(migrated.query("SELECT * FROM legacy_state WHERE old_ref = ?").get(oldRef)).toBeNull();
+  } finally {
+    migrated.close();
+  }
+  expect(JSON.parse(fs.readFileSync(getLockfilePath(), "utf8"))).toEqual([
+    { id: "installed-owner-repo", source: "github", ref: "owner/repo", localRoot: installedRoot },
+  ]);
+}, 30_000);
+
+test("a v2 journal fails closed when its prepared installed root cannot be recovered", async () => {
+  const { prepared } = seedInstalledBundleMigration();
+  fs.writeFileSync(getConfigPath(), '{"configVersion":"0.8.0"}\n', { mode: 0o600 });
+  openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+  const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+    cwd: path.resolve(import.meta.dir, "../.."),
+    env: { ...process.env, AKM_TEST_MIGRATION_CRASH_AFTER: "workflow" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+
+  const journal = JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8"));
+  journal.formatVersion = 2;
+  delete journal.migrationLockEntries;
+  fs.writeFileSync(getMigrationApplyJournalPath(), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+  const before = fs.readFileSync(getMigrationApplyJournalPath());
+
+  const resumed = await runCliCapture(["migrate", "apply"]);
+  expect(resumed.code).not.toBe(0);
+  expect(resumed.stderr).toMatch(/cannot recover materialized roots.*installed-owner-repo/i);
+  expect(fs.readFileSync(getMigrationApplyJournalPath())).toEqual(before);
+}, 30_000);
+
+test("a required installed-bundle lock write keeps forward recovery pending", async () => {
+  const { prepared, installedRoot } = seedInstalledBundleMigration();
+  openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING).close();
+  fs.mkdirSync(path.dirname(getLockfilePath()), { recursive: true });
+  fs.writeFileSync(getLockfilePath(), "not a lockfile");
+
+  const failed = await runCliCapture(["migrate", "apply", "--config", prepared]);
+  expect(failed.code).not.toBe(0);
+  expect(failed.stderr).toMatch(/forward recovery/i);
+  expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8"))).toMatchObject({
+    phase: "cutover-applied",
+    migrationLockEntries: [{ id: "installed-owner-repo", localRoot: installedRoot }],
+  });
+  expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.8.0");
+  expect(fs.readFileSync(getLockfilePath(), "utf8")).toBe("not a lockfile");
+
+  fs.rmSync(getLockfilePath());
+  const resumed = await runCliCapture(["migrate", "apply"]);
+  expect(resumed.code, resumed.stderr).toBe(0);
+  expect(JSON.parse(fs.readFileSync(getLockfilePath(), "utf8"))).toEqual([
+    { id: "installed-owner-repo", source: "github", ref: "owner/repo", localRoot: installedRoot },
+  ]);
+  expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+}, 30_000);
+
+test("workflow deletion failures propagate so the boundary can be retried", () => {
+  const workflowPath = path.join(getDataDir(), "delete-retry.db");
+  fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+  fs.writeFileSync(workflowPath, "workflow");
+  const originalRm = fs.rmSync;
+  const rm = spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike, options?: fs.RmOptions) => {
+    if (target === workflowPath) throw new Error("injected workflow unlink failure");
+    return originalRm(target, options);
+  }) as typeof fs.rmSync);
+  expect(() => deleteWorkflowDb(workflowPath)).toThrow("injected workflow unlink failure");
+  expect(fs.existsSync(workflowPath)).toBe(true);
+  rm.mockRestore();
+  expect(deleteWorkflowDb(workflowPath)).toEqual({ deleted: true });
+  expect(fs.existsSync(workflowPath)).toBe(false);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

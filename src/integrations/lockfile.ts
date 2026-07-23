@@ -165,7 +165,26 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
  */
 export function mergeLockEntriesSync(entries: LockfileEntry[]): void {
   if (entries.length === 0) return;
-  const existing = readLockfile();
+  let existing: LockfileEntry[] = [];
+  const lockfilePath = getLockfilePath();
+  if (fs.existsSync(lockfilePath)) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
+    } catch (error) {
+      throw new ConfigError(
+        `Cannot merge migration lock entries into unreadable lockfile ${lockfilePath}: ${error instanceof Error ? error.message : String(error)}.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    if (!Array.isArray(raw) || !raw.every(isValidLockfileEntry)) {
+      throw new ConfigError(
+        `Cannot merge migration lock entries into malformed lockfile ${lockfilePath}.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    existing = raw;
+  }
   const incoming = new Set(entries.map((e) => e.id));
   writeLockfileUnlocked([...existing.filter((e) => !incoming.has(e.id)), ...entries]);
 }
@@ -183,7 +202,7 @@ export async function removeLockEntry(id: string): Promise<void> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function isValidLockfileEntry(value: unknown): value is LockfileEntry {
+export function isValidLockfileEntry(value: unknown): value is LockfileEntry {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const obj = value as Record<string, unknown>;
   return (

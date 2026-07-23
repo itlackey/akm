@@ -153,6 +153,17 @@ export function mutateFrontmatter(
 ): boolean {
   const raw = fs.readFileSync(filePath, "utf8");
   const parsed = parseFrontmatter(raw);
+  if (parsed.frontmatter?.trim()) {
+    let strict: unknown;
+    try {
+      strict = yamlParse(parsed.frontmatter);
+    } catch {
+      throw new Error(`Cannot mutate malformed YAML frontmatter in ${filePath}.`);
+    }
+    if (strict === null || typeof strict !== "object" || Array.isArray(strict)) {
+      throw new Error(`Cannot mutate non-mapping YAML frontmatter in ${filePath}.`);
+    }
+  }
   const nextFrontmatter = mutator(parsed);
   if (nextFrontmatter === null) return false;
   const next =

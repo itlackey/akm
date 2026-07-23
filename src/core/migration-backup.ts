@@ -74,7 +74,7 @@ export interface MigrationState {
   config: MigrationArtifactState;
   state: MigrationArtifactState;
   workflow: MigrationArtifactState;
-  /** index.db recoverability ("current" | "missing" | "corrupt") — never blocks backup eligibility. */
+  /** index.db recoverability ("current" | "missing" | "corrupt"). */
   index: MigrationArtifactState;
 }
 
@@ -349,16 +349,18 @@ export function inspectMigrationState(paths: MigrationInspectionPaths = {}): Mig
   };
 }
 
-function assertBackupEligible(state: MigrationState): void {
-  // index.db is deliberately absent here: an unreadable index.db is excluded
-  // from the backup (regenerable cache; the cutover's usage_events rescue
-  // reports an empty result) rather than blocking migration entirely.
+function assertBackupEligible(state: MigrationState, allowCorruptIndex = false): void {
   const entries: Array<[string, MigrationArtifactState]> = [
     ["config.json", state.config],
     ["state.db", state.state],
     ["workflow.db", state.workflow],
+    ["index.db", state.index],
   ];
-  const unsafe = entries.filter(([, artifact]) => ["newer", "inconsistent", "corrupt"].includes(artifact.status));
+  const unsafe = entries.filter(
+    ([name, artifact]) =>
+      ["newer", "inconsistent", "corrupt"].includes(artifact.status) &&
+      !(allowCorruptIndex && name === "index.db" && artifact.status === "corrupt"),
+  );
   if (unsafe.length > 0) {
     throw new ConfigError(
       `Refusing migration backup because artifact state is unsafe: ${unsafe
@@ -403,7 +405,7 @@ function parseManifest(bundlePath: string): MigrationBackupManifest {
   for (const name of artifactNamesFor(manifest.formatVersion as ManifestFormatVersion)) {
     const artifact = manifest.artifacts?.[name];
     // index.db is never ledger-classified: "current" (readable) or "missing" only.
-    const allowedStatuses = name === "index.db" ? ["current", "missing"] : ["old", "current", "missing"];
+    const allowedStatuses = name === "index.db" ? ["current", "missing", "corrupt"] : ["old", "current", "missing"];
     if (
       !artifact ||
       artifact.sourcePath !== expected[name] ||
@@ -571,9 +573,9 @@ function stateForName(state: MigrationState, name: ArtifactName): MigrationArtif
   return state.index;
 }
 
-function createMigrationBackupUnlocked(): MigrationBackupResult {
+function createMigrationBackupUnlocked(options: { allowCorruptIndex?: boolean } = {}): MigrationBackupResult {
   const state = inspectMigrationState();
-  assertBackupEligible(state);
+  assertBackupEligible(state, options.allowCorruptIndex);
   const root = getMigrationBackupRoot();
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   fs.chmodSync(root, 0o700);
@@ -588,24 +590,20 @@ function createMigrationBackupUnlocked(): MigrationBackupResult {
     for (const name of ARTIFACT_NAMES) {
       const sourcePath = sources[name];
       const sourceState = stateForName(state, name);
-      // index.db never blocks a backup: anything short of a clean read
-      // (corrupt cache) is recorded as absent — it is regenerable, and the
-      // cutover's usage_events rescue reports the empty result.
-      const effectiveState =
-        name === "index.db" && sourceState.status !== "current" ? { status: "missing" as const } : sourceState;
       const destination = path.join(temporary, name);
-      const present = effectiveState.status !== "missing";
+      const present = sourceState.status !== "missing";
       if (present) {
         if (name === "config.json") copyFileDurable(sourcePath, destination);
+        else if (name === "index.db" && sourceState.status === "corrupt") copyFileDurable(sourcePath, destination);
         else backupSqlite(sourcePath, destination);
       }
       const inspected = present ? inspectArtifactAt(name, destination) : { status: "missing" as const };
-      const expectedArtifact = { ...effectiveState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
+      const expectedArtifact = { ...sourceState, sourcePath, present, byteSize: 0, sha256: null, createdAt };
       if (!sameState(inspected, expectedArtifact)) {
         throw new ConfigError(`Snapshot ${name} does not match its source migration state.`, "INVALID_CONFIG_FILE");
       }
       artifacts[name] = {
-        ...effectiveState,
+        ...sourceState,
         sourcePath,
         present,
         byteSize: present ? fs.statSync(destination).size : 0,
@@ -1451,7 +1449,7 @@ export function restoreMigrationBackup(confirm: boolean, runId?: string): Migrat
         recoverInterruptedRestore();
         const manifest = verifyMigrationBackup(bundlePath);
 
-        const rescue = createMigrationBackupUnlocked();
+        const rescue = createMigrationBackupUnlocked({ allowCorruptIndex: true });
         replaceArtifactsFromBundle(bundlePath, manifest, rescue.manifest.runId);
         return { path: bundlePath, created: false, manifest, rescuePath: rescue.path };
       }),

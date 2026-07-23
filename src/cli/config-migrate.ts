@@ -18,13 +18,7 @@ import {
   resetConfigCache,
   sanitizeConfigForWrite,
 } from "../core/config/config";
-import {
-  backupExistingConfig,
-  parseConfigText,
-  readConfigText,
-  withConfigLock,
-  writeConfigAtomic,
-} from "../core/config/config-io";
+import { backupExistingConfig, parseConfigText, withConfigLock, writeConfigAtomic } from "../core/config/config-io";
 import { ConfigError } from "../core/errors";
 import { withMaintenanceStartBarrier } from "../core/maintenance-barrier";
 import {
@@ -49,7 +43,7 @@ import {
 } from "../core/migration-backup";
 import { getConfigPath, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { runMigrations as runStateMigrations } from "../core/state/migrations";
-import { mergeLockEntriesSync } from "../integrations/lockfile";
+import { isValidLockfileEntry, type LockfileEntry, mergeLockEntriesSync, readLockfile } from "../integrations/lockfile";
 import { migrateConfigSourcesToBundles, migratedLockEntries } from "../migrate/legacy/config-source-migration";
 import { type ContentMigrationReport, runContentMigration } from "../migrate/legacy/content-migration";
 import { getLegacyWorkflowDbPath } from "../migrate/legacy/legacy-paths";
@@ -127,7 +121,7 @@ const APPLY_PHASE_ORDER: ApplyPhase[] = [
 ];
 
 interface ApplyJournal {
-  formatVersion: 2;
+  formatVersion: 2 | 3;
   version: typeof MIGRATION_BACKUP_VERSION;
   operationId: string;
   installationId: string;
@@ -135,6 +129,7 @@ interface ApplyJournal {
   phase: ApplyPhase;
   backupPath: string;
   targetConfig: Record<string, unknown>;
+  migrationLockEntries: LockfileEntry[];
   generation: MigrationGenerationFingerprint;
 }
 
@@ -194,6 +189,73 @@ function sameArtifactFingerprint(
   right: MigrationGenerationFingerprint[keyof MigrationGenerationFingerprint],
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isEmptyFileFingerprint(value: { byteSize: number; sha256: string } | null): boolean {
+  return value?.byteSize === 0 && value.sha256 === createHash("sha256").digest("hex");
+}
+
+function sameWorkflowWal(
+  current: MigrationGenerationFingerprint["workflow"]["wal"],
+  expected: MigrationGenerationFingerprint["workflow"]["wal"],
+): boolean {
+  return JSON.stringify(current) === JSON.stringify(expected) || (expected === null && isEmptyFileFingerprint(current));
+}
+
+function sameApplyJournalGeneration(current: MigrationGenerationFingerprint, journal: ApplyJournal): boolean {
+  if (sameMigrationGeneration(current, journal.generation)) return true;
+  if (journal.phase !== "workflow-applied") return false;
+  return (
+    sameArtifactFingerprint(current.config, journal.generation.config) &&
+    sameArtifactFingerprint(current.state, journal.generation.state) &&
+    JSON.stringify(current.workflow.main) === JSON.stringify(journal.generation.workflow.main) &&
+    sameWorkflowWal(current.workflow.wal, journal.generation.workflow.wal)
+  );
+}
+
+function isMigrationLockEntries(value: unknown): value is LockfileEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) => isValidLockfileEntry(entry) && typeof entry.localRoot === "string" && entry.localRoot.length > 0,
+    )
+  );
+}
+
+function recoverV2MigrationLockEntries(journal: ApplyJournal): LockfileEntry[] {
+  const configBackupPath = path.join(journal.backupPath, "config.json");
+  const backupEntries = fs.existsSync(configBackupPath)
+    ? migratedLockEntries(
+        parseConfigText(
+          readTextFileWithLimit(configBackupPath, MAX_CONFIG_FILE_BYTES, "Migration backup config"),
+          configBackupPath,
+        ),
+      )
+    : [];
+  const bundles = journal.targetConfig.bundles;
+  if (!bundles || typeof bundles !== "object" || Array.isArray(bundles)) return [];
+  const managedBundleIds = new Set(
+    Object.entries(bundles)
+      .filter(([, entry]) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+        return "git" in entry || "npm" in entry;
+      })
+      .map(([id]) => id),
+  );
+  const candidates = [...backupEntries, ...readLockfile()];
+  const byId = new Map<string, LockfileEntry>();
+  for (const entry of candidates) {
+    if (managedBundleIds.has(entry.id) && entry.localRoot) byId.set(entry.id, entry);
+  }
+  const missing = [...managedBundleIds].filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    throw new ConfigError(
+      `Cannot recover materialized roots for format-2 migration journal bundle(s): ${missing.join(", ")}. ` +
+        "Restore the journal's verified backup or supply the missing lock roots before resuming.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -835,7 +897,7 @@ function inspectExactApplyJournalGeneration(journal: ApplyJournal): MigrationSta
   applyPreflightHookForTests?.(journal.phase);
   const capture = captureMigrationInspection(journal.phase);
   try {
-    if (!sameMigrationGeneration(capture.generation, journal.generation)) {
+    if (!sameApplyJournalGeneration(capture.generation, journal)) {
       throw new MigrationPreflightGenerationError(
         `Migration apply journal phase ${journal.phase} changed before its next mutation; the external generation was preserved.`,
         "INVALID_CONFIG_FILE",
@@ -1051,6 +1113,7 @@ function readApplyJournalMetadata(): ApplyJournalMetadata {
   const journalPath = getMigrationApplyJournalPath();
   if (!fs.existsSync(journalPath)) return {};
   let journal: ApplyJournal;
+  let wasFormat2 = false;
   try {
     const value = JSON.parse(
       readTextFileWithLimit(journalPath, MAX_LOCAL_METADATA_BYTES, "Migration apply journal"),
@@ -1070,30 +1133,33 @@ function readApplyJournalMetadata(): ApplyJournalMetadata {
       "rollback-prepared",
       "committed",
     ];
+    const formatVersion =
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as { formatVersion?: unknown }).formatVersion
+        : undefined;
+    const requiredKeys = [
+      "backupPath",
+      "backupRunId",
+      "formatVersion",
+      "generation",
+      "installationId",
+      ...(formatVersion === 3 ? ["migrationLockEntries"] : []),
+      "operationId",
+      "phase",
+      "targetConfig",
+      "version",
+    ];
     if (
       typeof value !== "object" ||
       value === null ||
       Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !==
-        [
-          "backupPath",
-          "backupRunId",
-          "formatVersion",
-          "generation",
-          "installationId",
-          "operationId",
-          "phase",
-          "targetConfig",
-          "version",
-        ]
-          .sort()
-          .join(",")
+      Object.keys(value).sort().join(",") !== requiredKeys.sort().join(",")
     ) {
       return { error: `Invalid migration apply journal at ${journalPath}.` };
     }
     const candidate = value as Partial<ApplyJournal>;
     if (
-      candidate.formatVersion !== 2 ||
+      (candidate.formatVersion !== 2 && candidate.formatVersion !== 3) ||
       candidate.version !== MIGRATION_BACKUP_VERSION ||
       typeof candidate.operationId !== "string" ||
       !/^[A-Za-z0-9._-]+$/.test(candidate.operationId) ||
@@ -1105,11 +1171,17 @@ function readApplyJournalMetadata(): ApplyJournalMetadata {
       !candidate.targetConfig ||
       typeof candidate.targetConfig !== "object" ||
       Array.isArray(candidate.targetConfig) ||
-      !phases.includes(candidate.phase as ApplyPhase)
+      !phases.includes(candidate.phase as ApplyPhase) ||
+      (candidate.formatVersion === 3 && !isMigrationLockEntries(candidate.migrationLockEntries))
     ) {
       return { error: `Invalid or foreign migration apply journal at ${journalPath}.` };
     }
-    journal = candidate as ApplyJournal;
+    wasFormat2 = candidate.formatVersion === 2;
+    journal = {
+      ...(candidate as ApplyJournal),
+      formatVersion: 3,
+      migrationLockEntries: candidate.formatVersion === 3 ? (candidate.migrationLockEntries ?? []) : [],
+    };
   } catch (error) {
     return {
       error: `Unreadable migration apply journal at ${journalPath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1135,6 +1207,7 @@ function readApplyJournalMetadata(): ApplyJournalMetadata {
         "INVALID_CONFIG_FILE",
       );
     }
+    if (wasFormat2) journal.migrationLockEntries = recoverV2MigrationLockEntries(journal);
     return { journal, config, manifest };
   } catch (error) {
     return {
@@ -1231,6 +1304,8 @@ function workflowArtifactIsDeletionSubset(
 ): boolean {
   return (["main", "wal", "shm"] as const).every((component) => {
     const actual = current.workflow[component];
+    if (component === "shm" && expected.workflow.shm === null) return true;
+    if (component === "wal" && sameWorkflowWal(actual, expected.workflow.wal)) return true;
     return actual === null || JSON.stringify(actual) === JSON.stringify(expected.workflow[component]);
   });
 }
@@ -1271,7 +1346,7 @@ function readApplyJournal(): {
     if (isPostCutoverPhase(journal.phase)) {
       if (isTaskOnlyRepair(manifest)) {
         const artifacts = validateApplyPhase(journal, manifest, capture.paths, inspectedArtifacts);
-        if (!sameMigrationGeneration(rawGeneration, journal.generation)) {
+        if (!sameApplyJournalGeneration(rawGeneration, journal)) {
           throw new ConfigError(
             `Migration apply journal phase ${journal.phase} does not match the exact live artifact generation.`,
             "INVALID_CONFIG_FILE",
@@ -1286,7 +1361,7 @@ function readApplyJournal(): {
       };
     }
     if (
-      !sameMigrationGeneration(rawGeneration, journal.generation) &&
+      !sameApplyJournalGeneration(rawGeneration, journal) &&
       isAuthenticatedCutoverAdjacent(journal, rawGeneration, capture.paths.stateDbPath)
     ) {
       const artifacts = postCutoverArtifacts(
@@ -1310,7 +1385,7 @@ function readApplyJournal(): {
     if (isPreConversionCompatiblePhase(journal.phase)) {
       const stateMarker = readSingleFileBoundStateMarker(journal, capture.paths.stateDbPath);
       if (stateMarker?.phase === "state-applied") {
-        if (sameMigrationGeneration(rawGeneration, journal.generation)) {
+        if (sameApplyJournalGeneration(rawGeneration, journal)) {
           return { journal, config, artifacts: inspectedArtifacts };
         }
         if (isAuthenticatedWorkflowAdjacent(journal, rawGeneration, capture.paths.workflowDbPath)) {
@@ -1332,7 +1407,7 @@ function readApplyJournal(): {
       }
     }
     if (isPreConversionCompatiblePhase(journal.phase)) {
-      if (sameMigrationGeneration(rawGeneration, journal.generation)) {
+      if (sameApplyJournalGeneration(rawGeneration, journal)) {
         return {
           journal,
           config,
@@ -1359,7 +1434,7 @@ function readApplyJournal(): {
       );
     }
     if (journal.phase === "state-converting") {
-      if (sameMigrationGeneration(rawGeneration, journal.generation)) {
+      if (sameApplyJournalGeneration(rawGeneration, journal)) {
         return {
           journal,
           config,
@@ -1387,7 +1462,7 @@ function readApplyJournal(): {
       );
     }
     if (journal.phase === "state-collapsing") {
-      if (sameMigrationGeneration(rawGeneration, journal.generation)) {
+      if (sameApplyJournalGeneration(rawGeneration, journal)) {
         return {
           journal,
           config,
@@ -1415,7 +1490,7 @@ function readApplyJournal(): {
       );
     }
     validateApplyPhase(journal, manifest, capture.paths, inspectedArtifacts);
-    if (!sameMigrationGeneration(rawGeneration, journal.generation)) {
+    if (!sameApplyJournalGeneration(rawGeneration, journal)) {
       const adjacent = detectAdjacentGeneration(
         journal,
         manifest,
@@ -1460,7 +1535,7 @@ function authenticatePreConversionJournalForApply(): void {
   if (isAuthenticatedCutoverAdjacent(journal, current)) return;
   if (readSingleFileBoundStateMarker(journal)?.phase === "state-applied") {
     if (
-      sameMigrationGeneration(current, journal.generation) ||
+      sameApplyJournalGeneration(current, journal) ||
       isAuthenticatedWorkflowAdjacent(journal, current) ||
       isAuthenticatedCutoverAdjacent(journal, current)
     ) {
@@ -1472,7 +1547,7 @@ function authenticatePreConversionJournalForApply(): void {
     );
   }
   if (
-    !sameMigrationGeneration(current, journal.generation) &&
+    !sameApplyJournalGeneration(current, journal) &&
     !isAuthenticatedWorkflowAdjacent(journal, current) &&
     !isAuthenticatedCutoverAdjacent(journal, current)
   ) {
@@ -1492,7 +1567,7 @@ function preparePreConversionJournalForApply(): void {
   let current = fingerprintMigrationGeneration();
   if (isAuthenticatedCutoverAdjacent(journal, current)) return;
   if (readSingleFileBoundStateMarker(journal)?.phase === "state-applied") return;
-  if (!sameMigrationGeneration(current, journal.generation)) {
+  if (!sameApplyJournalGeneration(current, journal)) {
     if (!isAuthenticatedWorkflowAdjacent(journal, current)) {
       throw new ConfigError(
         `Migration apply journal phase ${journal.phase} does not match the exact live artifact generation.`,
@@ -1626,7 +1701,7 @@ function runStateMigrationStep(journal: ApplyJournal): void {
     crashAfterForTests("state-marker");
   }
   if (journal.phase === "state-collapsing") {
-    if (!sameMigrationGeneration(fingerprintMigrationGeneration(), journal.generation)) {
+    if (!sameApplyJournalGeneration(fingerprintMigrationGeneration(), journal)) {
       const marker = readBoundStateGenerationMarkerFromDisk(journal.operationId);
       if (!marker) {
         throw new ConfigError(
@@ -1744,7 +1819,10 @@ function expandTilde(p: string): string {
  * Source (a) (the index `item_ref` join) is authoritative, so an unresolved root
  * only costs a few origin aliases.
  */
-function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
+function cutoverStashRootsFromConfig(
+  config: AkmConfig,
+  migrationLockEntries: readonly LockfileEntry[] = [],
+): CutoverStashRoot[] {
   const roots: CutoverStashRoot[] = [];
   const bundles = config.bundles;
   if (bundles && typeof bundles === "object") {
@@ -1754,8 +1832,20 @@ function cutoverStashRootsFromConfig(config: AkmConfig): CutoverStashRoot[] {
       const registryId = (entry as { registryId?: string }).registryId ?? id;
       roots.push({
         path: path.resolve(expandTilde(bundlePath)),
+        bundleId: id,
         registryId,
         primary: config.defaultBundle === id,
+      });
+    }
+    for (const lock of migrationLockEntries) {
+      const localRoot = lock.localRoot;
+      if (!localRoot || roots.some((root) => path.resolve(root.path) === path.resolve(localRoot))) continue;
+      const entry = bundles[lock.id] as { registryId?: string } | undefined;
+      roots.push({
+        path: path.resolve(expandTilde(localRoot)),
+        bundleId: lock.id,
+        registryId: entry?.registryId ?? lock.id,
+        primary: config.defaultBundle === lock.id,
       });
     }
   }
@@ -1814,7 +1904,7 @@ function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
   const workflowPath = getLegacyWorkflowDbPath();
   const indexPath = getDbPath();
 
-  const stashRoots = cutoverStashRootsFromConfig(target);
+  const stashRoots = cutoverStashRootsFromConfig(target, journal.migrationLockEntries);
   if (!cutoverMergeCommitted(statePath, journal.operationId)) {
     const refMap = buildCutoverRefMap({
       oldIndexDbPath: indexPath,
@@ -1831,9 +1921,8 @@ function runCutoverStep(journal: ApplyJournal, target: AkmConfig): void {
     assertPostCutoverWorkflowAuthenticated(journal, fingerprintMigrationGeneration());
   }
 
-  // Boundary ops run AFTER the committed state txn, OUTSIDE the fail-closed gate
-  // (cutover-design.md §2 step 5/6). Idempotent + best-effort — they log and
-  // return, never throw, so a rename/unlink hiccup never rolls back the merge.
+  // Boundary ops run AFTER the committed state txn. Index quarantine remains
+  // best-effort; workflow deletion must complete before the journal advances.
   quarantineIndexDb(journal.operationId, indexPath);
   deleteWorkflowDb(workflowPath);
 
@@ -1940,6 +2029,7 @@ function loadTargetConfig(
 ): {
   state: MigrationTargetState;
   config?: AkmConfig;
+  migrationLockEntries?: LockfileEntry[];
 } {
   const targetPath = preparedConfigPath ?? (artifacts.config.status === "current" ? getConfigPath() : undefined);
   if (!targetPath) {
@@ -1968,6 +2058,7 @@ function loadTargetConfig(
         path: targetPath,
       },
       config: parseMigrationTargetConfig(text, targetPath),
+      migrationLockEntries: migratedLockEntries(parseConfigText(text, targetPath)),
     };
   } catch (error) {
     return {
@@ -2001,6 +2092,7 @@ function buildMigrationPlan(preparedConfigPath: string | undefined, activeApply:
     unsafeArtifact("config.json", artifacts.config),
     unsafeArtifact("state.db", artifacts.state),
     unsafeArtifact("workflow.db", artifacts.workflow),
+    unsafeArtifact("index.db", artifacts.index),
   ].filter((blocker): blocker is string => blocker !== undefined);
   if (target.state.status !== "current") blockers.push(target.state.detail ?? "A current target config is required.");
   if (activeApply.error && (!activeApply.journal || target.state.status === "current"))
@@ -2064,13 +2156,15 @@ export async function runMigrationStatus(options: MigrationCommandOptions = {}):
 function requireEligiblePlan(
   preparedConfigPath?: string,
   active: ApplyJournalRead = readApplyJournal(),
-): { plan: MigrationPlan; target: AkmConfig } {
+): { plan: MigrationPlan; target: AkmConfig; migrationLockEntries: LockfileEntry[] } {
   const plan = buildMigrationPlan(preparedConfigPath, active);
-  const loaded = active.journal ? { config: active.config } : loadTargetConfig(preparedConfigPath, plan.artifacts);
+  const loaded = active.journal
+    ? { config: active.config, migrationLockEntries: active.journal.migrationLockEntries }
+    : loadTargetConfig(preparedConfigPath, plan.artifacts);
   if (plan.status === "blocked" || !loaded.config) {
     throw new ConfigError(`Migration is blocked: ${plan.blockers.join("; ")}`, "INVALID_CONFIG_FILE");
   }
-  return { plan, target: loaded.config };
+  return { plan, target: loaded.config, migrationLockEntries: loaded.migrationLockEntries ?? [] };
 }
 
 export async function runMigrationApply(options: MigrationCommandOptions = {}): Promise<void> {
@@ -2112,13 +2206,13 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
         if (active.adjacent.complete) active.journal.phase = active.adjacent.phase;
         writeApplyJournal(active.journal);
       }
-      const { plan, target } = requireEligiblePlan(options.preparedConfigPath, active);
+      const { plan, target, migrationLockEntries } = requireEligiblePlan(options.preparedConfigPath, active);
       if (plan.status === "current") return { plan };
       const backup = active.journal
         ? { path: active.journal.backupPath, manifest: verifyMigrationBackup(active.journal.backupPath) }
         : ensureMigrationBackupWithConfigLockHeld();
       const journal: ApplyJournal = active.journal ?? {
-        formatVersion: 2,
+        formatVersion: 3,
         version: MIGRATION_BACKUP_VERSION,
         operationId: `${process.pid}-${randomUUID()}`,
         installationId: backup.manifest.installationId,
@@ -2126,6 +2220,7 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
         phase: "prepared",
         backupPath: backup.path,
         targetConfig: sanitizeConfigForWrite(target),
+        migrationLockEntries,
         generation: fingerprintMigrationGeneration(),
       };
       if (!active.journal) writeApplyJournal(journal);
@@ -2181,14 +2276,7 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
 
         if (journal.phase === "cutover-applied") {
           // The cutover is committed, so all remaining work is forward-only.
-          try {
-            const preCutoverText = readConfigText(getConfigPath());
-            if (preCutoverText !== undefined) {
-              mergeLockEntriesSync(migratedLockEntries(parseConfigText(preCutoverText, getConfigPath())));
-            }
-          } catch {
-            // Advisory lock re-key only; the committed cutover is unaffected.
-          }
+          mergeLockEntriesSync(journal.migrationLockEntries);
 
           backupExistingConfig(getConfigPath());
           writeConfigAtomic(getConfigPath(), sanitizeConfigForWrite(target));
@@ -2241,7 +2329,7 @@ export async function runMigrationApply(options: MigrationCommandOptions = {}): 
           journal.phase = "rollback-prepared";
           journal.generation = rollbackGeneration;
           writeApplyJournal(journal);
-          if (!sameMigrationGeneration(fingerprintMigrationGeneration(), journal.generation)) {
+          if (!sameApplyJournalGeneration(fingerprintMigrationGeneration(), journal)) {
             throw new ConfigError(
               `Refusing migration rollback because live artifacts no longer match journal phase ${journal.phase}.`,
               "INVALID_CONFIG_FILE",

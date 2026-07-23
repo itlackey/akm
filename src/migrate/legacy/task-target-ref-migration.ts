@@ -136,14 +136,13 @@ function resolveOrigin(origin: string, bundles: MigrationBundle[], filePath: str
   return candidate;
 }
 
-function assertWorkflowExists(bundle: MigrationBundle, name: string, rawRef: string, filePath: string): void {
+function assertWorkflowPathSafe(bundle: MigrationBundle, name: string, rawRef: string, filePath: string): void {
   const candidate = resolveAssetPathFromName("workflow", path.join(bundle.root, "workflows"), name);
-  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
-    throw migrationError(
-      filePath,
-      `legacy target "${rawRef}" was not found in bundle "${bundle.id}" at ${bundle.root}.`,
-    );
-  }
+  // A stale task is valid persisted state. Rewrite its deterministic ref and let
+  // task sync/run continue to report the missing workflow per task.
+  if (!fs.existsSync(candidate)) return;
+  if (!fs.statSync(candidate).isFile())
+    throw migrationError(filePath, `legacy target "${rawRef}" is not a file in bundle "${bundle.id}".`);
   const realRoot = fs.realpathSync(bundle.root);
   const realCandidate = fs.realpathSync(candidate);
   const relative = path.relative(realRoot, realCandidate);
@@ -162,7 +161,10 @@ function renderScalarLike(sourceToken: string, replacement: string, filePath: st
     return `'${replacement.replaceAll("'", "''")}'`;
   }
   if (sourceToken.startsWith('"') && sourceToken.endsWith('"')) return JSON.stringify(replacement);
-  if (/^[^\s#[\]{},&*!|>'"%@`]+$/.test(sourceToken)) return replacement;
+  // parseDocument already proved this source range is one valid string scalar.
+  // Canonical replacements contain only slug/path characters, so any one-line
+  // plain legacy scalar can be replaced plainly even when its origin had @/#.
+  if (!sourceToken.includes("\n") && !sourceToken.includes("\r")) return replacement;
   throw migrationError(filePath, "the legacy workflow target uses an unsupported YAML scalar style.");
 }
 
@@ -210,7 +212,7 @@ function planTaskFile(
   }
   const name = canonicalizeWorkflowName(parsed.name);
   const targetBundle = parsed.origin ? resolveOrigin(parsed.origin, bundles, filePath) : containing;
-  assertWorkflowExists(targetBundle, name, from, filePath);
+  assertWorkflowPathSafe(targetBundle, name, from, filePath);
   const conceptId = legacyConceptId("workflow", name);
   const to = parsed.origin ? `${targetBundle.id}//${conceptId}` : conceptId;
   const range = node.range;

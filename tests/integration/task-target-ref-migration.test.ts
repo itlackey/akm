@@ -66,18 +66,13 @@ test("migrate apply rewrites a persisted 0.8 workflow target and leaves current 
   expect(fs.readFileSync(currentTaskPath, "utf8")).toBe(currentTask);
 });
 
-test("an unresolvable persisted workflow target fails before task mutation and restores core artifacts", async () => {
+test("a stale persisted workflow target is rewritten without blocking core migration", async () => {
   const { prepared, taskPath } = seedMigration("workflow:missing", false);
-  const originalTask = fs.readFileSync(taskPath);
-  const originalConfig = fs.readFileSync(getConfigPath());
 
   const applied = await runCliCapture(["migrate", "apply", "--config", prepared]);
-  expect(applied.code).not.toBe(0);
-  expect(applied.stderr).toMatch(/workflow:missing.*not found/i);
-  expect(applied.stderr).toMatch(/upgrade-workflow\.yml.*rerun `akm migrate apply`/i);
-  expect(fs.readFileSync(taskPath)).toEqual(originalTask);
-  expect(fs.readFileSync(getConfigPath())).toEqual(originalConfig);
-  expect(inspectMigrationState().state.status).toBe("old");
+  expect(applied.code, applied.stderr).toBe(0);
+  expect(fs.readFileSync(taskPath, "utf8")).toContain("workflow: workflows/missing");
+  expect(inspectMigrationState().state.status).toBe("current");
   expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
 });
 
