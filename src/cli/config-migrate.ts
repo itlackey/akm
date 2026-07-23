@@ -941,6 +941,16 @@ function assertRollbackTransitionAllowed(journal: ApplyJournal, current: Migrati
             : (["config", "state", "workflow"] as const);
   for (const name of unchanged) {
     if (!sameArtifactFingerprint(journal.generation[name], current[name])) {
+      if (
+        name === "state" &&
+        (journal.phase === "state-applied" || journal.phase === "workflow-applied") &&
+        readSingleFileBoundStateMarker(journal)?.phase === "state-applied"
+      ) {
+        // SQLite rollback preserves the logical generation but may rewrite
+        // physical pages. The operation-bound canonical digest covers the full
+        // schema and every row, so it safely authenticates that rollback.
+        continue;
+      }
       throw new ConfigError(
         `Refusing migration rollback because ${name} changed outside the journaled ${journal.phase} transition.`,
         "INVALID_CONFIG_FILE",

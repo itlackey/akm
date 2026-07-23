@@ -358,6 +358,32 @@ describe("WI-8.2 (b) — orphan-bearing state completes with quarantine", () => 
       db.close();
     }
   }, 30_000);
+
+  test("historical events for a retired asset type are quarantined as expected orphans", async () => {
+    const state = openStateDbAtCeiling(getStateDbPathInDataDir(), PRE_CUTOVER_STATE_CEILING);
+    const insert = state.prepare("INSERT INTO events (event_type, ts, ref) VALUES ('show', ?, 'vault:default')");
+    insert.run("2026-01-01T00:00:00.000Z");
+    insert.run("2026-01-02T00:00:00.000Z");
+    state.close();
+    seedOldIndexDb();
+
+    const applied = await runCliCapture(["migrate", "apply", "--config", writeConfigs()]);
+    expect(applied.code, applied.stderr).toBe(0);
+
+    const migrated = readState();
+    try {
+      expect(
+        (migrated.query("SELECT COUNT(*) AS n FROM events WHERE ref = 'vault:default'").get() as { n: number }).n,
+      ).toBe(0);
+      expect(
+        migrated
+          .query("SELECT row_count, reason FROM legacy_state WHERE surface = 'events' AND old_ref = 'vault:default'")
+          .get(),
+      ).toEqual({ row_count: 2, reason: "orphan" });
+    } finally {
+      migrated.close();
+    }
+  }, 30_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,8 +461,9 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
     db.prepare(`INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (?, 0.5, 100)`).run(
       RC_TRAIN_LIVE_REFS.skill,
     );
-    // An unparseable legacy-grammar ref (colon at position 0) — an integrity failure.
-    db.prepare(`INSERT INTO asset_salience (asset_ref, encoding_salience, updated_at) VALUES (':bad', 0.5, 100)`).run();
+    // Fail late, after the scalar-table pass has physically mutated pages. A
+    // logical SQL rollback need not restore byte-identical database pages.
+    db.prepare("INSERT INTO events (event_type, ts, ref) VALUES ('show', '2026-01-01T00:00:00.000Z', ':bad')").run();
     db.close();
     seedOldIndexDb();
     const treatmentFile = path.join(getDataDir(), "stash", ".akm", "measurement", "treatment-pilot-2026-06-14.txt");
@@ -448,20 +475,24 @@ describe("WI-8.2 (e) — an integrity failure fails closed to restore", () => {
     // fresh fixture, so assert the pre-state rows + ledger survive intact).
     const pre = readState();
     const preSalience = refsIn(pre, "asset_salience", "asset_ref");
+    const preEvents = refsIn(pre, "events", "ref");
     const preLedger = ledgerIds(pre);
     pre.close();
 
     const applied = await runCliCapture(["migrate", "apply", "--config", prepared]);
     expect(applied.code).not.toBe(0);
     expect(applied.stderr).toMatch(/restored|unparseable|integrity/i);
+    expect(applied.stderr).not.toMatch(/rollback could not complete/i);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
 
     const post = readState();
     try {
-      // Pre-state preserved: the same asset_ref set (including the injected ':bad',
-      // NOT re-keyed), and the ledger rolled back to the pre-cutover ceiling.
+      // Pre-state preserved: the live scalar ref was not re-keyed, the malformed
+      // event remains present, and the ledger rolled back to the pre-cutover ceiling.
       expect(refsIn(post, "asset_salience", "asset_ref").sort()).toEqual(preSalience.sort());
-      expect(refsIn(post, "asset_salience", "asset_ref")).toContain(":bad");
       expect(refsIn(post, "asset_salience", "asset_ref")).toContain(RC_TRAIN_LIVE_REFS.skill);
+      expect(refsIn(post, "events", "ref")).toEqual(preEvents);
+      expect(refsIn(post, "events", "ref")).toContain(":bad");
       expect(ledgerIds(post)).toEqual(preLedger);
       expect(ledgerIds(post).at(-1)).toBe(PRE_CUTOVER_STATE_CEILING); // 020 rolled back
       expect(fs.readFileSync(treatmentFile, "utf8")).toBe(`${RC_TRAIN_LIVE_REFS.skill}\n`);
