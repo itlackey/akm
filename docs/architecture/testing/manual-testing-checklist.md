@@ -622,9 +622,9 @@ checklist did not exercise.
 #### Task `.md` → `.yml` migration verification
 
 - [ ] Drop a pre-0.8.0 `.md` task with YAML frontmatter into
-      `<stash>/tasks/<id>.md`. `akm tasks list` does **not** show it.
-- [ ] Convert it to `<stash>/tasks/<id>.yml`. `akm tasks list` shows it.
-- [ ] `akm tasks show <id>.md` strips the suffix and resolves to the `.yml`
+      `<stash>/tasks/<id>.md`. `akm search --type task` does **not** show it.
+- [ ] Convert it to `<stash>/tasks/<id>.yml`. `akm search --type task` shows it.
+- [ ] `akm show tasks/<id>.md` strips the suffix and resolves to the `.yml`
       file; missing `.yml` yields a structured "task not found", not a parse
       error.
 - [ ] `akm tasks add` writes a new `.yml` and refuses to overwrite an existing

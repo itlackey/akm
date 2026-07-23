@@ -29,7 +29,7 @@ export interface EmbeddedTask {
   /**
    * Task id as written to disk and registered with the scheduler — the
    * template filename without its `.yml` suffix (e.g. `improve`). This is the
-   * id matched against `akm tasks list` output.
+   * id matched against `akm search --type task` output.
    */
   id: string;
   /** Conceptual namespaced label shown in the wizard (e.g. `core/improve`). */

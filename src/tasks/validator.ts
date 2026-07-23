@@ -12,7 +12,7 @@
  *   • the selected engine resolves (prompt targets)
  *
  * Validation is deliberately split from parsing: callers that only want to
- * read frontmatter (e.g. `tasks list`) can skip these checks, while
+ * read frontmatter (e.g. `akm show`) can skip these checks, while
  * `tasks add` and `tasks run` should always run them.
  */
 

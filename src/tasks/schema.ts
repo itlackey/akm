@@ -65,7 +65,7 @@ export interface TaskDocument {
   schedule: string;
   enabled: boolean;
   target: TaskTarget;
-  /** Human-readable display name shown in `akm tasks list`. */
+  /** Human-readable display name shown in `akm show` and search results. */
   name?: string;
   description?: string;
   /** Guidance on when this task should be used or triggered manually. */

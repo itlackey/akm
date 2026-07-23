@@ -2,8 +2,8 @@
  * Tests for the legacy `.md` task file warning (release-blocker fix for 0.8.0).
  *
  * In 0.8.0, task definitions are read exclusively from pure `.yml` files. Any
- * leftover `.md` task files from 0.7.x are silently skipped by `akm tasks list`
- * and `akm tasks sync`, which makes scheduled tasks vanish without operator
+ * leftover `.md` task files from 0.7.x are silently skipped by `akm tasks sync`
+ * (and the other task commands), which makes scheduled tasks vanish without operator
  * notice. This fix emits a single grouped stderr warning that lists the
  * affected files and points at the migration doc. It does NOT auto-migrate.
  */
@@ -17,11 +17,9 @@ import {
   _resetLegacyMdTaskWarningStateForTests,
   akmTasksDoctor,
   akmTasksHistory,
-  akmTasksList,
-  akmTasksRemove,
   akmTasksRun,
   akmTasksSetEnabled,
-  akmTasksShow,
+  listStashTasks,
 } from "../../src/commands/tasks/tasks";
 import { runCliCapture } from "../_helpers/cli";
 
@@ -75,12 +73,12 @@ function captureStderr(fn: () => Promise<void> | void): Promise<string> {
     .then(() => chunks.join(""));
 }
 
-describe("akm tasks list: legacy .md task file warning", () => {
+describe("akm tasks history: legacy .md task file warning", () => {
   test("emits a single grouped stderr warning when .md task files are present", async () => {
     const tasksRoot = path.join(stashDir, "tasks");
     fs.writeFileSync(path.join(tasksRoot, "daily-backup.md"), "# legacy 0.7.x task\n", "utf8");
     fs.writeFileSync(path.join(tasksRoot, "nightly-report.md"), "# legacy 0.7.x task\n", "utf8");
-    // One valid .yml task so we also confirm it still shows up in the result.
+    // One valid .yml task so we also confirm it still parses from the stash.
     fs.writeFileSync(
       path.join(tasksRoot, "ok.yml"),
       ["version: 2", 'schedule: "@daily"', "command: echo hi", ""].join("\n"),
@@ -88,9 +86,9 @@ describe("akm tasks list: legacy .md task file warning", () => {
     );
 
     const stderr = await captureStderr(async () => {
-      const result = await akmTasksList();
-      expect(result.tasks.map((t) => t.id)).toEqual(["ok"]);
+      await akmTasksHistory({ limit: 1 });
     });
+    expect(listStashTasks(stashDir).tasks.map((t) => t.id)).toEqual(["ok"]);
 
     expect(stderr).toContain("2 task file(s) use the legacy .md format");
     expect(stderr).toContain("AKM 0.8.0 requires tasks as pure .yml");
@@ -108,7 +106,7 @@ describe("akm tasks list: legacy .md task file warning", () => {
     );
 
     const stderr = await captureStderr(async () => {
-      await akmTasksList();
+      await akmTasksHistory({ limit: 1 });
     });
 
     expect(stderr).toBe("");
@@ -119,12 +117,12 @@ describe("akm tasks list: legacy .md task file warning", () => {
     fs.writeFileSync(path.join(tasksRoot, "old.md"), "x", "utf8");
 
     const stderr = await captureStderr(async () => {
-      await akmTasksList();
-      await akmTasksList();
-      await akmTasksList();
+      await akmTasksHistory({ limit: 1 });
+      await akmTasksHistory({ limit: 1 });
+      await akmTasksHistory({ limit: 1 });
     });
 
-    // The warning header must appear exactly once even though we called list
+    // The warning header must appear exactly once even though we called history
     // three times — operators should not see the same wall of text repeated.
     const occurrences = stderr.split("WARNING:").length - 1;
     expect(occurrences).toBe(1);
@@ -132,18 +130,6 @@ describe("akm tasks list: legacy .md task file warning", () => {
 });
 
 describe("legacy .md task file warning fires from all task subcommands", () => {
-  test("akm tasks show warns about legacy .md files before resolving the task", async () => {
-    const tasksRoot = path.join(stashDir, "tasks");
-    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
-
-    const stderr = await captureStderr(async () => {
-      await expect(akmTasksShow("legacy")).rejects.toBeDefined();
-    });
-
-    expect(stderr).toContain("legacy .md format");
-    expect(stderr).toContain("tasks/legacy.md");
-  });
-
   test("akm tasks run warns about legacy .md files before runTask", async () => {
     const tasksRoot = path.join(stashDir, "tasks");
     fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
@@ -156,17 +142,6 @@ describe("legacy .md task file warning fires from all task subcommands", () => {
 
     expect(stderr).toContain("legacy .md format");
     expect(stderr).toContain("tasks/legacy.md");
-  });
-
-  test("akm tasks remove warns about legacy .md files before resolving", async () => {
-    const tasksRoot = path.join(stashDir, "tasks");
-    fs.writeFileSync(path.join(tasksRoot, "legacy.md"), "# legacy\n", "utf8");
-
-    const stderr = await captureStderr(async () => {
-      await expect(akmTasksRemove("legacy")).rejects.toBeDefined();
-    });
-
-    expect(stderr).toContain("legacy .md format");
   });
 
   test("akm tasks set-enabled warns about legacy .md files before resolving", async () => {
@@ -204,7 +179,7 @@ describe("legacy .md task file warning fires from all task subcommands", () => {
 });
 
 describe("singular `akm task` alias", () => {
-  test("`akm task list` resolves to the same `tasks` command group", async () => {
+  test("`akm task doctor` resolves to the same `tasks` command group", async () => {
     const tasksRoot = path.join(stashDir, "tasks");
     fs.writeFileSync(
       path.join(tasksRoot, "ok.yml"),
@@ -212,10 +187,11 @@ describe("singular `akm task` alias", () => {
       "utf8",
     );
 
-    // `task` is a citty meta.alias for `tasks` in 0.8 (flip primary in 0.9).
-    const result = await runCliCapture(["task", "list", "--format=json"]);
+    // `task` is a citty meta.alias for `tasks`. Task listing/inspection moved to
+    // the generic `akm search` / `akm show`; `doctor` is the group's default.
+    const result = await runCliCapture(["task", "doctor", "--format=json"]);
     expect(result.code).toBe(0);
-    const parsed = JSON.parse(result.stdout) as { tasks: Array<{ id: string }> };
-    expect(parsed.tasks.map((t) => t.id)).toContain("ok");
+    const parsed = JSON.parse(result.stdout) as { backend: string };
+    expect(typeof parsed.backend).toBe("string");
   });
 });

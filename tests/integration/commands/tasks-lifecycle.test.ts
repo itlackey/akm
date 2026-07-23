@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTasksAdd, akmTasksRemove, akmTasksSetEnabled, akmTasksSync } from "../../../src/commands/tasks/tasks";
+import { akmTasksAdd, akmTasksSetEnabled, akmTasksSync } from "../../../src/commands/tasks/tasks";
 import type { TaskBackend } from "../../../src/tasks/backends";
 import type { ScheduleBackend } from "../../../src/tasks/schedule";
 import type { TaskDocument } from "../../../src/tasks/schema";
@@ -488,78 +488,6 @@ describe("task lifecycle failure handling", () => {
       { schedule: "0 2 * * *", enabled: false },
     ]);
     expect(installed.get("nightly")).toMatchObject({ schedule: "0 2 * * *", enabled: false });
-  });
-
-  test("remove preserves the definition when backend uninstall fails", async () => {
-    const yaml = 'version: 2\nschedule: "@daily"\ncommand: echo keep\n';
-    const taskPath = writeTask("keep", yaml);
-    installed.set("keep", undefined);
-    uninstallError = new Error("backend uninstall failed");
-
-    await expect(akmTasksRemove("keep", { backend })).rejects.toThrow("backend uninstall failed");
-
-    expect(uninstallCalls).toEqual(["keep"]);
-    expect(fs.readFileSync(taskPath, "utf8")).toBe(yaml);
-  });
-
-  test("remove restores the definition and installed task when source deletion fails", async () => {
-    const yaml = 'version: 2\nschedule: "@daily"\ncommand: echo keep\nenabled: false\n';
-    const taskPath = writeTask("keep", yaml);
-    installed.set("keep", {
-      version: 2,
-      schemaVersion: 2,
-      id: "keep",
-      schedule: "@daily",
-      enabled: false,
-      target: { kind: "command", cmd: ["echo", "keep"] },
-      source: { path: taskPath },
-    });
-
-    await expect(
-      akmTasksRemove("keep", {
-        backend,
-        async deleteAsset() {
-          fs.unlinkSync(taskPath);
-          throw new Error("source deletion failed");
-        },
-      }),
-    ).rejects.toThrow("source deletion failed");
-
-    expect(fs.readFileSync(taskPath, "utf8")).toBe(yaml);
-    expect(uninstallCalls).toEqual(["keep"]);
-    expect(installCalls).toHaveLength(1);
-    expect(installed.get("keep")).toMatchObject({ schedule: "@daily", enabled: false });
-  });
-
-  test("remove restores the definition and installed task when the commit boundary fails", async () => {
-    const yaml = 'version: 2\nschedule: "@daily"\ncommand: echo keep\nenabled: true\n';
-    const taskPath = writeTask("keep", yaml);
-    installed.set("keep", {
-      version: 2,
-      schemaVersion: 2,
-      id: "keep",
-      schedule: "@daily",
-      enabled: true,
-      target: { kind: "command", cmd: ["echo", "keep"] },
-      source: { path: taskPath },
-    });
-    let commitCalls = 0;
-
-    await expect(
-      akmTasksRemove("keep", {
-        backend,
-        commitBoundary() {
-          commitCalls += 1;
-          if (commitCalls === 1) throw new Error("commit boundary failed");
-        },
-      }),
-    ).rejects.toThrow("commit boundary failed");
-
-    expect(commitCalls).toBe(2);
-    expect(fs.readFileSync(taskPath, "utf8")).toBe(yaml);
-    expect(uninstallCalls).toEqual(["keep"]);
-    expect(installCalls).toHaveLength(1);
-    expect(installed.get("keep")).toMatchObject({ schedule: "@daily", enabled: true });
   });
 
   test.each([

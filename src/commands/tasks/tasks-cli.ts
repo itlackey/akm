@@ -22,20 +22,26 @@ import {
   akmTasksAdd,
   akmTasksDoctor,
   akmTasksHistory,
-  akmTasksList,
-  akmTasksRemove,
   akmTasksRun,
   akmTasksSetEnabled,
-  akmTasksShow,
   akmTasksSync,
   parseTaskRef,
 } from "./tasks";
+
+/** Shared `--target <bundle>` arg wired onto every bundle-resolving subcommand. */
+const targetArg = {
+  target: {
+    type: "string",
+    description: "Bundle to operate on (defaults to the primary/default bundle)",
+  },
+} as const;
 
 const tasksAddCommand = defineJsonCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
   args: {
     id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
     schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
+    ...targetArg,
     workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflows/my-flow)" },
     prompt: {
       type: "string",
@@ -61,6 +67,7 @@ const tasksAddCommand = defineJsonCommand({
     const result = await akmTasksAdd({
       id: args.id,
       schedule: args.schedule,
+      target: args.target,
       workflow: args.workflow,
       prompt: args.prompt,
       command: args.command,
@@ -106,34 +113,6 @@ const tasksInitCommand = defineJsonCommand({
   },
 });
 
-const tasksListCommand = defineJsonCommand({
-  meta: { name: "list", description: "List scheduled tasks in the stash" },
-  async run() {
-    const result = await akmTasksList();
-    output("tasks-list", result);
-  },
-});
-
-const tasksShowCommand = defineJsonCommand({
-  meta: { name: "show", description: "Show a parsed task definition" },
-  args: { id: { type: "positional", description: "Task id or tasks/<id>", required: true } },
-  async run({ args }) {
-    const { id } = parseTaskRef(args.id);
-    const result = await akmTasksShow(id);
-    output("tasks-show", result);
-  },
-});
-
-const tasksRemoveCommand = defineJsonCommand({
-  meta: { name: "remove", description: "Delete a task file and uninstall it from the OS scheduler" },
-  args: { id: { type: "positional", description: "Task id", required: true } },
-  async run({ args }) {
-    const { id } = parseTaskRef(args.id);
-    const result = await akmTasksRemove(id);
-    output("tasks-remove", result);
-  },
-});
-
 function makeTasksToggleCommand(enabled: boolean) {
   const verb = enabled ? "enable" : "disable";
   const description = enabled
@@ -141,10 +120,10 @@ function makeTasksToggleCommand(enabled: boolean) {
     : "Disable a task in the OS scheduler without removing the file";
   return defineJsonCommand({
     meta: { name: verb, description },
-    args: { id: { type: "positional", description: "Task id", required: true } },
+    args: { id: { type: "positional", description: "Task id", required: true }, ...targetArg },
     async run({ args }) {
       const { id } = parseTaskRef(args.id);
-      const result = await akmTasksSetEnabled(id, enabled);
+      const result = await akmTasksSetEnabled(id, enabled, {}, args.target);
       output(`tasks-${verb}`, result);
     },
   });
@@ -160,12 +139,14 @@ const tasksRunCommand = defineCommand({
   },
   args: {
     id: { type: "positional", description: "Task id", required: true },
+    ...targetArg,
     scheduled: { type: "boolean", description: "Internal marker for scheduler-generated runs", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
+        ...(args.target !== undefined ? { target: args.target } : {}),
       });
       output("tasks-run", envelope);
       if (envelope.exitCode !== 0) process.exit(envelope.exitCode);
@@ -178,10 +159,11 @@ const tasksHistoryCommand = defineJsonCommand({
   args: {
     id: { type: "string", description: "Filter to one task id" },
     limit: { type: "string", description: "Maximum rows to return (default 50)" },
+    ...targetArg,
   },
   async run({ args }) {
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const result = await akmTasksHistory({ id: args.id, limit });
+    const result = await akmTasksHistory({ id: args.id, limit, target: args.target });
     output("tasks-history", result);
   },
 });
@@ -189,10 +171,11 @@ const tasksHistoryCommand = defineJsonCommand({
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description: "Reconcile the on-disk task files with the OS scheduler",
+    description: "Reconcile the on-disk task files of a bundle with the OS scheduler",
   },
-  async run() {
-    const result = await akmTasksSync();
+  args: { ...targetArg },
+  async run({ args }) {
+    const result = await akmTasksSync({}, args.target);
     output("tasks-sync", result);
   },
 });
@@ -202,8 +185,9 @@ const tasksDoctorCommand = defineJsonCommand({
     name: "doctor",
     description: "Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
   },
-  async run() {
-    const result = await akmTasksDoctor();
+  args: { ...targetArg },
+  async run({ args }) {
+    const result = await akmTasksDoctor({ target: args.target });
     output("tasks-doctor", result);
   },
 });
@@ -218,9 +202,6 @@ export const tasksCommand = defineGroupCommand({
   subCommands: {
     add: tasksAddCommand,
     init: tasksInitCommand,
-    list: tasksListCommand,
-    show: tasksShowCommand,
-    remove: tasksRemoveCommand,
     enable: tasksEnableCommand,
     disable: tasksDisableCommand,
     run: tasksRunCommand,
@@ -228,8 +209,10 @@ export const tasksCommand = defineGroupCommand({
     sync: tasksSyncCommand,
     doctor: tasksDoctorCommand,
   },
+  // Bare `akm tasks` reports scheduler diagnostics. Inspection of individual
+  // tasks moved to the generic `akm search` / `akm show <bundle//tasks/id>`.
   async defaultRun() {
-    const result = await akmTasksList();
-    output("tasks-list", result);
+    const result = await akmTasksDoctor();
+    output("tasks-doctor", result);
   },
 });

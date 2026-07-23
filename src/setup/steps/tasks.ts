@@ -9,7 +9,7 @@
 
 import * as p from "../../cli/clack";
 import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../../commands/tasks/default-tasks";
-import { akmTasksAdd, akmTasksList, akmTasksSetEnabled, akmTasksSync } from "../../commands/tasks/tasks";
+import { akmTasksAdd, akmTasksSetEnabled, akmTasksSync, listStashTasks } from "../../commands/tasks/tasks";
 import { saveGitStash } from "../../sources/providers/git";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
@@ -19,7 +19,7 @@ import { prompt } from "../prompt";
 /**
  * Normalise a task id the same way `akm tasks` does (strip a trailing `.yml`
  * / `.md` suffix, trim) so the wizard can match embedded template ids against
- * the ids reported by `akmTasksList()`.
+ * the ids reported by `listStashTasks()`.
  */
 function normaliseTaskIdForMatch(raw: string): string {
   return raw.trim().replace(/\.(yml|md)$/, "");
@@ -61,7 +61,7 @@ export async function stepDefaultImproveTasks(
 }
 
 export interface ScheduledTasksDeps {
-  list: typeof akmTasksList;
+  list: typeof listStashTasks;
   add: typeof akmTasksAdd;
   setEnabled: typeof akmTasksSetEnabled;
   sync: typeof akmTasksSync;
@@ -69,7 +69,7 @@ export interface ScheduledTasksDeps {
 }
 
 const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
-  list: akmTasksList,
+  list: listStashTasks,
   add: akmTasksAdd,
   setEnabled: akmTasksSetEnabled,
   sync: akmTasksSync,
@@ -81,7 +81,7 @@ export async function stepScheduledTasks(deps: ScheduledTasksDeps = DEFAULT_SCHE
   if (embedded.length === 0) return;
 
   // Snapshot current state so we can diff against the user's selection.
-  let installed: Awaited<ReturnType<typeof akmTasksList>>["tasks"] = [];
+  let installed: ReturnType<typeof listStashTasks>["tasks"] = [];
   try {
     installed = (await deps.list()).tasks;
   } catch {

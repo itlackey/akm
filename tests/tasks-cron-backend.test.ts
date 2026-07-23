@@ -6,6 +6,7 @@ import {
   type CronExec,
   type CronExecResult,
   cronBlockBody,
+  extractInstalledTarget,
   listBlocks,
   removeBlock,
   renderBlock,
@@ -39,6 +40,29 @@ describe("cron backend helpers", () => {
     expect(line).toContain("/usr/local/bin/akm tasks run ping --scheduled");
     expect(line).toContain("AKM_STASH_DIR=");
     expect(line).not.toContain("AKM_LLM_API_KEY");
+  });
+
+  test("buildCronLine embeds --target only when a non-default bundle is given", () => {
+    const withTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT, "work");
+    expect(withTarget).toContain("tasks run ping --target work --scheduled");
+    const withoutTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
+    expect(withoutTarget).toContain("tasks run ping --scheduled");
+    expect(withoutTarget).not.toContain("--target");
+  });
+
+  test("extractInstalledTarget recovers the bundle from a cron body (and undefined for the primary form)", () => {
+    const withTarget = buildCronLine(
+      TASK,
+      ["/usr/local/bin/akm"],
+      "/var/log",
+      undefined,
+      SCHEDULED_CONTEXT,
+      "team-stash",
+    );
+    expect(extractInstalledTarget(withTarget)).toBe("team-stash");
+    expect(extractInstalledTarget(cronBlockBody(withTarget, false))).toBe("team-stash");
+    const primary = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
+    expect(extractInstalledTarget(primary)).toBeUndefined();
   });
 
   test("buildCronLine quotes paths containing spaces", () => {
@@ -262,6 +286,20 @@ describe("cron backend drift detection", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]!.id).toBe("ping");
     expect(listed[0]!.signature).toBe(backend.expectedSignature?.(SYNC_TASK));
+    // No --target token → primary attribution (target omitted).
+    expect(listed[0]!.target).toBeUndefined();
+  });
+
+  test("list() attributes a target-installed entry, and its signature matches the target-aware expectation", () => {
+    const exec = memoryExec();
+    const backend = CRON_BACKEND(opts(exec));
+    backend.install(SYNC_TASK, { target: "work" });
+    const listed = listSync(backend);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]!.target).toBe("work");
+    expect(listed[0]!.signature).toBe(backend.expectedSignature?.(SYNC_TASK, { target: "work" }));
+    // The target-aware signature differs from the primary (no-target) one.
+    expect(backend.expectedSignature?.(SYNC_TASK, { target: "work" })).not.toBe(backend.expectedSignature?.(SYNC_TASK));
   });
 
   test("expectedSignature changes when the schedule changes (drift is detectable)", () => {

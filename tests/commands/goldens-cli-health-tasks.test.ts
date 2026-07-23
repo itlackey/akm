@@ -254,14 +254,8 @@ function writeTrueTask(): void {
 }
 
 describe("family C — akm tasks", () => {
-  test("tasks list / show / run / history / doctor — command-type task running `true`", async () => {
+  test("tasks run / history / doctor — command-type task running `true`", async () => {
     writeTrueTask();
-
-    const list = await runCli(["tasks", "list", "--format=json"]);
-    expect(list.code).toBe(0);
-
-    const show = await runCli(["tasks", "show", TASK_TRUE_ID, "--format=json"]);
-    expect(show.code).toBe(0);
 
     const run = await runCli(["tasks", "run", TASK_TRUE_ID, "--format=json"]);
     expect(run.code).toBe(0);
@@ -277,8 +271,6 @@ describe("family C — akm tasks", () => {
     expectGolden(
       "tests/fixtures/goldens/cli/c-tasks-family.json",
       {
-        list: { exitCode: list.code, stdoutKeys: Object.keys(JSON.parse(list.stdout)).sort() },
-        show: { exitCode: show.code, stdoutKeys: Object.keys(JSON.parse(show.stdout)).sort() },
         run: {
           exitCode: run.code,
           stdoutKeys: Object.keys(runJson).sort(),

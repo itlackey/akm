@@ -25,6 +25,26 @@ describe("scheduled task invocation", () => {
     expect(invocation.environment).toEqual(CONTEXT);
   });
 
+  test("embeds --target only for a non-default bundle; omitted / empty stays byte-identical", () => {
+    expect(buildScheduledTaskInvocation(["/opt/akm/bin/akm"], "ping", CONTEXT, "work").argv).toEqual([
+      "/opt/akm/bin/akm",
+      "tasks",
+      "run",
+      "ping",
+      "--target",
+      "work",
+      "--scheduled",
+    ]);
+    // An empty target string is treated as "no target" (primary form).
+    expect(buildScheduledTaskInvocation(["/opt/akm/bin/akm"], "ping", CONTEXT, "").argv).toEqual([
+      "/opt/akm/bin/akm",
+      "tasks",
+      "run",
+      "ping",
+      "--scheduled",
+    ]);
+  });
+
   test("resolves exactly the five non-secret AKM directories", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-scheduler-context-"));
     const stashDir = path.join(root, "stash");

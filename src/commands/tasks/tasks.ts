@@ -22,11 +22,12 @@ import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
+  type ResolvedWriteTarget,
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
 import { resolveAssetPath } from "../../sources/resolve";
-import { backendNameForPlatform, selectBackend, type TaskBackend } from "../../tasks/backends";
+import { backendNameForPlatform, type InstalledTaskRef, selectBackend, type TaskBackend } from "../../tasks/backends";
 import { findBareAkmExecutableIndex } from "../../tasks/command-executable";
 import { parseTaskDocument } from "../../tasks/parser";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
@@ -38,7 +39,7 @@ import {
   runTask,
   type TaskRunResult,
 } from "../../tasks/runner";
-import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT, translateToCron } from "../../tasks/schedule";
+import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
 import type { TaskDocument } from "../../tasks/schema";
 import { normaliseTaskId } from "../../tasks/task-id";
 import { validateTaskDocument } from "../../tasks/validator";
@@ -47,6 +48,12 @@ import { resolveImproveStrategy } from "../improve/improve-strategies";
 export interface TasksAddInput {
   id: string;
   schedule: string;
+  /**
+   * Bundle to write the task into and schedule from. Defaults to the primary /
+   * default write target. Resolved via {@link resolveWriteTarget}; a non-default
+   * bundle is recorded in the scheduled invocation as `--target <bundle>`.
+   */
+  target?: string;
   workflow?: string;
   prompt?: string;
   /**
@@ -115,8 +122,10 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const backend = deps.backend?.name ?? backendNameForPlatform();
   parseSchedule(input.schedule, backend);
 
-  const target = resolveTaskWriteTarget();
-  const stashDir = target.source.path;
+  const bundle = resolveTaskBundle(input.target, { requireWritable: true });
+  const writeTarget = bundle.resolved;
+  const stashDir = bundle.stashDir;
+  const installOpts = bundle.installTarget !== undefined ? { target: bundle.installTarget } : undefined;
   const typeRoot = path.join(stashDir, "tasks");
 
   const assetPath = assetPathForName("task", typeRoot, id);
@@ -125,7 +134,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   }
   if (fs.existsSync(assetPath) && !input.force) {
     throw new UsageError(
-      `Task "${id}" already exists. Pass --force to overwrite, or use \`akm tasks remove ${id}\` first.`,
+      `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm tasks sync\` first.`,
       "RESOURCE_ALREADY_EXISTS",
     );
   }
@@ -167,16 +176,18 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const writeAsset = deps.writeAsset ?? writeAssetToSource;
   const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
-  const wasInstalled = previousYaml !== undefined && (await sched.list()).some((entry) => entry.id === id);
+  const installedEntries = await sched.list();
+  assertNoForeignSchedule(installedEntries, id, bundle.installTarget);
+  const wasInstalled = previousYaml !== undefined && installedEntries.some((entry) => entry.id === id);
   let sourceRestoreArmed = false;
   let installSucceeded = false;
 
   try {
     sourceRestoreArmed = true;
-    await writeAsset(target.source, target.config, ref, yaml);
-    await sched.install(task);
+    await writeAsset(writeTarget.source, writeTarget.config, ref, yaml);
+    await sched.install(task, installOpts);
     installSucceeded = true;
-    commitBoundary(target, `Update tasks/${id}`);
+    commitBoundary(writeTarget, `Update tasks/${id}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
@@ -184,11 +195,18 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
       try {
         if (previousYaml === undefined) {
           if (fs.existsSync(assetPath)) {
-            await deleteAsset(target.source, target.config, ref);
+            await deleteAsset(writeTarget.source, writeTarget.config, ref);
             sourceRestored = true;
           }
         } else {
-          await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, assetPath, previousYaml);
+          await restoreTaskSourceBytes(
+            writeAsset,
+            writeTarget.source,
+            writeTarget.config,
+            ref,
+            assetPath,
+            previousYaml,
+          );
           sourceRestored = true;
         }
       } catch (rollbackError) {
@@ -204,7 +222,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
       }
     } else if (installSucceeded && previousTask) {
       try {
-        await sched.install(previousTask);
+        await sched.install(previousTask, installOpts);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
         try {
@@ -227,7 +245,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore tasks/${id}`);
+        commitBoundary(writeTarget, `Restore tasks/${id}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -252,21 +270,36 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   };
 }
 
-export interface TasksListResult {
-  tasks: Array<{
-    id: string;
-    ref: string;
-    path: string;
-    schedule: string;
-    enabled: boolean;
-    target: TaskDocument["target"];
-    name?: string;
-    description?: string;
-    when_to_use?: string;
-    tags?: string[];
-  }>;
-  /** Task IDs using an unsupported task schema version. */
-  stale: string[];
+/** Minimal per-task summary for internal enumeration (setup + default-task registration). */
+export interface StashTaskSummary {
+  id: string;
+  enabled: boolean;
+}
+
+/**
+ * List the task ids + enabled-state present in a stash's `tasks/` directory.
+ *
+ * Internal utility for the setup wizard and default-improve-task registration —
+ * NOT a user-facing surface. Cross-bundle task inspection is covered by the
+ * generic `akm search` / `akm show <bundle//tasks/id>` commands. Malformed /
+ * stale files are skipped silently (those are surfaced by `tasks doctor`).
+ */
+export function listStashTasks(stashDir: string = resolveStashDir()): { tasks: StashTaskSummary[] } {
+  const typeRoot = path.join(stashDir, "tasks");
+  if (!fs.existsSync(typeRoot)) return { tasks: [] };
+  const tasks: StashTaskSummary[] = [];
+  for (const file of fs.readdirSync(typeRoot)) {
+    if (!file.endsWith(".yml")) continue;
+    const id = file.slice(0, -4);
+    const filePath = path.join(typeRoot, file);
+    try {
+      const task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
+      tasks.push({ id: task.id, enabled: task.enabled });
+    } catch {
+      // Skip malformed / stale-schema files — `tasks doctor` owns reporting them.
+    }
+  }
+  return { tasks };
 }
 
 /**
@@ -277,8 +310,8 @@ export interface TasksListResult {
  * — that is a separate workstream — but operators must see the affected files.
  *
  * `seen` is module-level so the warning is emitted at most once per process,
- * even when both `akm tasks list` and `akm tasks sync` are invoked in the same
- * akm run.
+ * even when several `akm tasks` subcommands (e.g. `sync` and `run`) are
+ * invoked in the same akm run.
  */
 const warnedLegacyMdDirs = new Set<string>();
 
@@ -308,153 +341,17 @@ export function _resetLegacyMdTaskWarningStateForTests(): void {
   warnedLegacyMdDirs.clear();
 }
 
-export async function akmTasksList(): Promise<TasksListResult> {
-  const stashDir = resolveStashDir();
-  const typeRoot = path.join(stashDir, "tasks");
-  if (!fs.existsSync(typeRoot)) return { tasks: [], stale: [] };
-  const entries = fs.readdirSync(typeRoot);
-  warnLegacyMdTaskFiles(typeRoot);
-  const files = entries.filter((f) => f.endsWith(".yml"));
-  const tasks: TasksListResult["tasks"] = [];
-  const stale: string[] = [];
-  for (const file of files) {
-    const id = file.slice(0, -4);
-    const filePath = path.join(typeRoot, file);
-    let task: TaskDocument;
-    try {
-      task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
-    } catch (err) {
-      if (isStaleTaskError(err)) stale.push(id);
-      continue; // skip malformed files; `akm tasks show <id>` will surface the error
-    }
-    tasks.push({
-      id: task.id,
-      ref: conceptIdFromTypeName("task", task.id),
-      path: filePath,
-      schedule: task.schedule,
-      enabled: task.enabled,
-      target: task.target,
-      name: task.name,
-      description: task.description,
-      when_to_use: task.when_to_use,
-      tags: task.tags,
-    });
-  }
-  if (stale.length > 0) warnStaleTaskFiles(stale);
-  return { tasks, stale };
-}
-
-export async function akmTasksShow(id: string): Promise<{
-  id: string;
-  ref: string;
-  path: string;
-  schedule: string;
-  cron: string;
-  enabled: boolean;
-  target: TaskDocument["target"];
-  name?: string;
-  description?: string;
-  when_to_use?: string;
-  tags?: string[];
-}> {
-  const normalised = normaliseTaskId(id);
-  const stashDir = resolveStashDir();
-  const typeRoot = path.join(stashDir, "tasks");
-  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
-  const filePath = await resolveAssetPath(stashDir, "task", normalised);
-  const task = parseTaskDocument({
-    yaml: fs.readFileSync(filePath, "utf8"),
-    filePath,
-    id: normalised,
-  });
-  const spec = parseSchedule(task.schedule, backendNameForPlatform());
-  return {
-    id: task.id,
-    ref: conceptIdFromTypeName("task", task.id),
-    path: filePath,
-    schedule: task.schedule,
-    cron: translateToCron(spec),
-    enabled: task.enabled,
-    target: task.target,
-    name: task.name,
-    description: task.description,
-    when_to_use: task.when_to_use,
-    tags: task.tags,
-  };
-}
-
-export async function akmTasksRemove(
-  id: string,
-  deps: TaskMutationDeps = {},
-): Promise<{ id: string; removed: true; backend: string }> {
-  const normalised = normaliseTaskId(id);
-  const target = resolveTaskWriteTarget();
-  const stashDir = target.source.path;
-  const typeRoot = path.join(stashDir, "tasks");
-  if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
-  const filePath = await resolveAssetPath(stashDir, "task", normalised);
-  const yaml = fs.readFileSync(filePath, "utf8");
-  const ref = taskAssetRef(normalised);
-  const sched = deps.backend ?? selectBackend();
-  const writeAsset = deps.writeAsset ?? writeAssetToSource;
-  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
-  const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
-  const wasInstalled = (await sched.list()).some((entry) => entry.id === normalised);
-  const previousTask = wasInstalled ? parseTaskDocument({ yaml, filePath, id: normalised }) : undefined;
-  let uninstallAttempted = false;
-  let deleteAttempted = false;
-
-  try {
-    uninstallAttempted = true;
-    await sched.uninstall(normalised);
-    deleteAttempted = true;
-    await deleteAsset(target.source, target.config, ref);
-    commitBoundary(target, `Remove tasks/${normalised}`);
-  } catch (err) {
-    const rollbackErrors: unknown[] = [];
-    let sourceRestored = false;
-    if (deleteAttempted) {
-      try {
-        await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, filePath, yaml);
-        sourceRestored = true;
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    if (uninstallAttempted && previousTask) {
-      try {
-        await sched.install(previousTask);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    if (sourceRestored) {
-      try {
-        commitBoundary(target, `Restore tasks/${normalised}`);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    if (rollbackErrors.length > 0) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new AggregateError(
-        [err, ...rollbackErrors],
-        `${message}; rollback for task "${normalised}" was incomplete.`,
-      );
-    }
-    throw err;
-  }
-  return { id: normalised, removed: true, backend: sched.name };
-}
-
 export async function akmTasksSetEnabled(
   id: string,
   enabled: boolean,
   deps: TaskMutationDeps = {},
+  bundleTarget?: string,
 ): Promise<{ id: string; enabled: boolean; backend: string }> {
   const normalised = normaliseTaskId(id);
-  const target = resolveTaskWriteTarget();
-  const stashDir = target.source.path;
+  const bundle = resolveTaskBundle(bundleTarget, { requireWritable: true });
+  const writeTarget = bundle.resolved;
+  const stashDir = bundle.stashDir;
+  const installOpts = bundle.installTarget !== undefined ? { target: bundle.installTarget } : undefined;
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const filePath = await resolveAssetPath(stashDir, "task", normalised);
@@ -470,26 +367,28 @@ export async function akmTasksSetEnabled(
   const sched = deps.backend ?? selectBackend();
   const writeAsset = deps.writeAsset ?? writeAssetToSource;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
-  const wasInstalled = (await sched.list()).some((entry) => entry.id === normalised);
+  const installedEntries = await sched.list();
+  assertNoForeignSchedule(installedEntries, normalised, bundle.installTarget);
+  const wasInstalled = installedEntries.some((entry) => entry.id === normalised);
   let sourceRestoreArmed = false;
   let installSucceeded = false;
   try {
     sourceRestoreArmed = true;
-    await writeAsset(target.source, target.config, ref, updated);
+    await writeAsset(writeTarget.source, writeTarget.config, ref, updated);
     // Reinstall from the (just-updated) definition rather than only toggling
     // the comment. A plain toggle leaves a stale schedule in place if the
     // .yml's `schedule:` changed while the task was disabled — re-enabling
     // would silently keep the old cron line. install() renders the block with
     // both the current schedule and the new enabled state, and is idempotent.
-    await sched.install(task);
+    await sched.install(task, installOpts);
     installSucceeded = true;
-    commitBoundary(target, `Update tasks/${normalised}`);
+    commitBoundary(writeTarget, `Update tasks/${normalised}`);
   } catch (err) {
     const rollbackErrors: unknown[] = [];
     let sourceRestored = false;
     if (sourceRestoreArmed) {
       try {
-        await restoreTaskSourceBytes(writeAsset, target.source, target.config, ref, filePath, yaml);
+        await restoreTaskSourceBytes(writeAsset, writeTarget.source, writeTarget.config, ref, filePath, yaml);
         sourceRestored = true;
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
@@ -497,7 +396,7 @@ export async function akmTasksSetEnabled(
     }
     if (installSucceeded) {
       try {
-        if (wasInstalled) await sched.install(previousTask);
+        if (wasInstalled) await sched.install(previousTask, installOpts);
         else await sched.uninstall(normalised);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
@@ -505,7 +404,7 @@ export async function akmTasksSetEnabled(
     }
     if (sourceRestored) {
       try {
-        commitBoundary(target, `Restore tasks/${normalised}`);
+        commitBoundary(writeTarget, `Restore tasks/${normalised}`);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
@@ -528,7 +427,10 @@ export interface TasksRunResultEnvelope {
   exitCode: number;
 }
 
-export async function akmTasksRun(id: string, options: { scheduled?: boolean } = {}): Promise<TasksRunResultEnvelope> {
+export async function akmTasksRun(
+  id: string,
+  options: { scheduled?: boolean; target?: string } = {},
+): Promise<TasksRunResultEnvelope> {
   const startedAt = new Date();
   let normalised: string;
   try {
@@ -545,7 +447,13 @@ export async function akmTasksRun(id: string, options: { scheduled?: boolean } =
 
   let stashDir: string;
   try {
-    stashDir = resolveStashDir();
+    // No --target keeps the primary stash (byte-identical to pre-0.9.x runs).
+    // With --target, resolve (read-only) the named bundle so the task file and
+    // its relative asset refs load from that bundle's path.
+    stashDir =
+      options.target !== undefined
+        ? resolveWriteTarget(loadConfig(), options.target, { requireWritable: false }).source.path
+        : resolveStashDir();
   } catch (failure) {
     recordTaskAttemptFailure({
       taskId: normalised,
@@ -573,10 +481,16 @@ export interface TasksHistoryResult {
   rows: TaskRunResult[];
 }
 
-export async function akmTasksHistory(input: { id?: string; limit?: number }): Promise<TasksHistoryResult> {
+export async function akmTasksHistory(input: {
+  id?: string;
+  limit?: number;
+  target?: string;
+}): Promise<TasksHistoryResult> {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const id = input.id ? normaliseTaskId(input.id) : undefined;
-  const stashDir = resolveStashDir();
+  // History rows are keyed by task id in state.db (not per-bundle); --target
+  // only scopes which tasks/ directory the legacy-.md advisory inspects.
+  const stashDir = resolveTaskInspectDir(input.target);
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   return { rows: readTaskHistory({ id, limit }) };
@@ -593,16 +507,31 @@ export interface TasksSyncResult {
 }
 
 /**
- * Reconcile the on-disk task files with the OS scheduler.
+ * Reconcile the on-disk task files of ONE bundle with the OS scheduler.
  *   • install missing tasks (after validating them — invalid files are
  *     skipped with a per-task reason rather than aborting the whole sync)
  *   • reinstall tasks whose schedule or enabled state changed in the .yml
  *     (drift detected by comparing the backend's installed signature against
  *     the signature the current definition would produce)
  *   • remove orphan scheduler entries that no longer have a backing file
+ *
+ * `--target <bundle>` scopes the reconciliation to that bundle: the file set is
+ * the bundle's `tasks/*.yml` and — crucially — the scheduler entries considered
+ * are ONLY those attributed to the same bundle (parsed from the installed
+ * `--target` token; absent ⇒ primary). This is the security boundary that keeps
+ * "registering a bundle never activates code": a plain (primary) sync never
+ * installs from, updates, or removes another bundle's entries, and sync never
+ * scans all bundles. Activation happens only through explicit `enable` /
+ * `add --target`.
  */
-export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promise<TasksSyncResult> {
-  const stashDir = resolveStashDir();
+export async function akmTasksSync(
+  deps: { backend?: TaskBackend } = {},
+  bundleTarget?: string,
+): Promise<TasksSyncResult> {
+  const stashDir = resolveTaskInspectDir(bundleTarget);
+  // Embed --target only for a genuinely non-primary bundle so a default-bundle
+  // sync stays byte-identical and keeps managing legacy no-`--target` entries.
+  const syncTarget = bundleTarget !== undefined && !isPrimaryStashPath(stashDir) ? bundleTarget : undefined;
   const typeRoot = path.join(stashDir, "tasks");
   if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   const fileIds = fs.existsSync(typeRoot)
@@ -613,9 +542,14 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
     : [];
   const sched = deps.backend ?? selectBackend();
   const backend = sched.name;
-  // Map id → installed signature so sync can detect schedule/enabled drift on
-  // tasks that already exist in the scheduler, not just presence/absence.
-  const present = new Map((await sched.list()).map((t) => [t.id, t.signature] as const));
+  const installOpts = syncTarget !== undefined ? { target: syncTarget } : undefined;
+  const allEntries = await sched.list();
+  // Attribution filter: only entries installed from THIS bundle are reconciled
+  // here. Entries carrying a `--target` for a different bundle are invisible to
+  // this sync — never removed, never touched.
+  const present = new Map(
+    allEntries.filter((t) => sameBundle(t.target, syncTarget)).map((t) => [t.id, t.signature] as const),
+  );
   const installed: string[] = [];
   const updated: string[] = [];
   const unchanged: string[] = [];
@@ -629,6 +563,12 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
       await validateTaskDocument(task, { backend, stashDir });
       const obsoleteReason = obsoleteBackupTaskReason(task);
       if (obsoleteReason) throw new UsageError(obsoleteReason, "INVALID_FLAG_VALUE");
+      // A bare id can only be scheduled from ONE bundle at a time (scheduler ids
+      // are never namespaced). If this id is already scheduled from a different
+      // bundle, refuse rather than clobber it — surface it as a per-task skip so
+      // the rest of the sync still proceeds.
+      const foreign = allEntries.find((e) => e.id === id && !sameBundle(e.target, syncTarget));
+      if (foreign) throw new UsageError(foreignScheduleMessage(id, foreign.target), "RESOURCE_ALREADY_EXISTS");
     } catch (err) {
       skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
       if (present.has(id)) {
@@ -648,7 +588,7 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
       continue;
     }
     if (!present.has(id)) {
-      await sched.install(task);
+      await sched.install(task, installOpts);
       installed.push(id);
       continue;
     }
@@ -658,11 +598,11 @@ export async function akmTasksSync(deps: { backend?: TaskBackend } = {}): Promis
     // didn't record one), reinstall unconditionally — install() is idempotent,
     // so the cost is one crontab write and correctness is guaranteed.
     const installedSig = present.get(id);
-    const expectedSig = sched.expectedSignature?.(task);
+    const expectedSig = sched.expectedSignature?.(task, installOpts);
     if (installedSig !== undefined && expectedSig !== undefined && installedSig === expectedSig) {
       unchanged.push(id);
     } else {
-      await sched.install(task);
+      await sched.install(task, installOpts);
       updated.push(id);
     }
   }
@@ -712,7 +652,7 @@ export interface TasksDoctorResult {
   };
 }
 
-export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
+export async function akmTasksDoctor(input: { target?: string } = {}): Promise<TasksDoctorResult> {
   const warnings: string[] = [];
   let invocation: { argv: string[]; via: string } = { argv: [], via: "unresolved" };
   try {
@@ -721,9 +661,11 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
   } catch (err) {
     warnings.push(err instanceof Error ? err.message : String(err));
   }
+  // `--target` scopes the tasks/ directory doctor inspects for advisories.
+  let inspectDir: string | undefined;
   try {
-    const stashDir = resolveStashDir();
-    const typeRoot = path.join(stashDir, "tasks");
+    inspectDir = resolveTaskInspectDir(input.target);
+    const typeRoot = path.join(inspectDir, "tasks");
     if (fs.existsSync(typeRoot)) warnLegacyMdTaskFiles(typeRoot);
   } catch {
     // doctor must never fail on stash-resolution; the warning is best-effort
@@ -753,8 +695,8 @@ export async function akmTasksDoctor(): Promise<TasksDoctorResult> {
     logDir: getTaskLogDir(),
     historyDir: getTaskHistoryDir(),
     engine: { defaultEngine, available: engines },
-    stale: collectStaleTaskIds(),
-    staleGeneratedCommands: collectStaleGeneratedCommands(),
+    stale: collectStaleTaskIds(inspectDir),
+    staleGeneratedCommands: collectStaleGeneratedCommands(inspectDir),
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
     ...(improveTriage ? { improveTriage } : {}),
@@ -780,8 +722,65 @@ async function restoreTaskSourceBytes(
   fs.writeFileSync(filePath, yaml, "utf8");
 }
 
-function resolveTaskWriteTarget() {
-  return resolveWriteTarget(loadConfig());
+/**
+ * Resolve the bundle a mutating/run task command targets. Returns the resolved
+ * write/read target, its stash path, and the `--target <bundle>` token to embed
+ * in scheduled invocations — undefined when the bundle is the primary stash (so
+ * default-bundle cron lines stay byte-identical to pre-0.9.x installs).
+ */
+function resolveTaskBundle(
+  target: string | undefined,
+  opts: { requireWritable: boolean },
+): { resolved: ResolvedWriteTarget; stashDir: string; installTarget: string | undefined } {
+  const resolved = resolveWriteTarget(loadConfig(), target, { requireWritable: opts.requireWritable });
+  const stashDir = resolved.source.path;
+  const installTarget = isPrimaryStashPath(stashDir) ? undefined : (resolved.selector ?? resolved.source.name);
+  return { resolved, stashDir, installTarget };
+}
+
+/**
+ * Resolve the tasks/ directory a read/inspect command (run/sync/history/doctor)
+ * operates on. No `--target` keeps the primary stash (byte-identical default);
+ * `--target X` resolves bundle X read-only.
+ */
+function resolveTaskInspectDir(target: string | undefined): string {
+  if (target === undefined) return resolveStashDir();
+  return resolveWriteTarget(loadConfig(), target, { requireWritable: false }).source.path;
+}
+
+/** True when `candidate` resolves to the same directory as the primary stash. */
+function isPrimaryStashPath(candidate: string): boolean {
+  let primary: string | undefined;
+  try {
+    primary = path.resolve(resolveStashDir());
+  } catch {
+    return false;
+  }
+  return path.resolve(candidate) === primary;
+}
+
+/** Two bundle attributions match when both are the primary (undefined) or equal names. */
+function sameBundle(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? undefined) === (b ?? undefined);
+}
+
+function foreignScheduleMessage(id: string, existingTarget: string | undefined): string {
+  const where = existingTarget === undefined ? "the default bundle" : `bundle "${existingTarget}"`;
+  return `Task id "${id}" is already scheduled from ${where}; rename the task or disable the existing one first.`;
+}
+
+/**
+ * Refuse to schedule an id already installed from a DIFFERENT bundle. Scheduler
+ * ids are the bare task id (never namespaced), so a single id can be active from
+ * only one bundle at a time — a collision is a hard error, not an auto-rename.
+ */
+function assertNoForeignSchedule(
+  entries: readonly InstalledTaskRef[],
+  id: string,
+  installTarget: string | undefined,
+): void {
+  const foreign = entries.find((entry) => entry.id === id && !sameBundle(entry.target, installTarget));
+  if (foreign) throw new UsageError(foreignScheduleMessage(id, foreign.target), "RESOURCE_ALREADY_EXISTS");
 }
 
 interface RenderInput {
@@ -831,16 +830,8 @@ function isStaleTaskError(err: unknown): err is UsageError {
   return err instanceof UsageError && err.code === "TASK_SCHEMA_VERSION_UNSUPPORTED";
 }
 
-function warnStaleTaskFiles(ids: readonly string[]): void {
-  process.stderr.write(
-    `WARNING: ${ids.length} task file(s) use an unsupported task schema version and were not loaded.\n` +
-      `         Use version: 2. See docs/migration/v0.8-to-v0.9.md#engine-and-task-assets.\n` +
-      `         Affected: ${ids.map((id) => `tasks/${id}.yml`).join(", ")}\n`,
-  );
-}
-
-function collectStaleTaskIds(): string[] {
-  const typeRoot = path.join(resolveStashDir(), "tasks");
+function collectStaleTaskIds(stashDir?: string): string[] {
+  const typeRoot = path.join(stashDir ?? resolveStashDir(), "tasks");
   if (!fs.existsSync(typeRoot)) return [];
   const stale: string[] = [];
   for (const file of fs.readdirSync(typeRoot)) {
@@ -903,8 +894,8 @@ const STALE_GENERATED_COMMANDS: Record<string, { commands: readonly string[]; re
   },
 };
 
-function collectStaleGeneratedCommands(): Array<{ id: string; replacement: string }> {
-  const typeRoot = path.join(resolveStashDir(), "tasks");
+function collectStaleGeneratedCommands(stashDir?: string): Array<{ id: string; replacement: string }> {
+  const typeRoot = path.join(stashDir ?? resolveStashDir(), "tasks");
   if (!fs.existsSync(typeRoot)) return [];
   const stale: Array<{ id: string; replacement: string }> = [];
   for (const [id, expected] of Object.entries(STALE_GENERATED_COMMANDS)) {

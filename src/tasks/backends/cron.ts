@@ -39,7 +39,7 @@ import {
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type NodeFs, nodeFs, throwIfNotOk } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./types";
+import type { InstalledTaskRef, TaskBackend, TaskInstallOptions } from "./types";
 
 export type CronExecResult = { status: number; stdout: string; stderr: string };
 
@@ -81,12 +81,12 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
 
   return {
     name: "cron",
-    install(task: TaskDocument) {
+    install(task: TaskDocument, opts?: TaskInstallOptions) {
       // Create the log directory before writing the crontab line — cron
       // appends with `>>` and the surrounding shell will fail the entire
       // entry if the parent directory doesn't exist.
       fsLike.ensureDir(logDir);
-      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext);
+      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext, opts?.target);
       const existing = readCrontab(exec);
       const block = renderBlock(task.id, cronLine, task.enabled);
       const next = upsertBlock(existing, task.id, block);
@@ -104,10 +104,13 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
     },
     list(): InstalledTaskRef[] {
       const existing = readCrontab(exec);
-      return listBlocks(existing).map(({ id, body }) => ({ id, signature: normalizeSignature(body) }));
+      return listBlocks(existing).map(({ id, body }) => {
+        const target = extractInstalledTarget(body);
+        return { id, signature: normalizeSignature(body), ...(target !== undefined ? { target } : {}) };
+      });
     },
-    expectedSignature(task: TaskDocument): string {
-      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext);
+    expectedSignature(task: TaskDocument, opts?: TaskInstallOptions): string {
+      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext, opts?.target);
       return normalizeSignature(cronBlockBody(cronLine, task.enabled));
     },
   };
@@ -121,11 +124,12 @@ export function buildCronLine(
   logDir: string,
   envPath: string | undefined,
   scheduledContext: ScheduledTaskContext,
+  target?: string,
 ): string {
   const spec = parseSchedule(task.schedule, "cron");
   const cronExpr = translateToCron(spec);
   const logPath = path.join(logDir, `${task.id}.log`);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext);
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
   const cmd = invocation.argv.map((part) => quoteForCron(part)).join(" ");
   const contextPrefix = Object.entries(invocation.environment)
     .map(([key, value]) => `${key}=${quoteForCron(value)}`)
@@ -194,6 +198,31 @@ function malformedBlockError(id: string): ConfigError {
     `Crontab contains a malformed akm task block for "${id}"; refusing to modify it.`,
     "INVALID_CONFIG_FILE",
   );
+}
+
+/**
+ * Recover the bundle name from an installed cron block body by reading the
+ * `--target <bundle>` token embedded in the scheduled `akm tasks run …`
+ * invocation. Returns undefined for the byte-identical primary/default form
+ * (no `--target`). Bundle slugs never contain whitespace (config-schema
+ * `isBundleSlug`), so the quoted token is a single whitespace-delimited field
+ * even when cron-quoted — a plain field split recovers it, and
+ * {@link unquoteCronValue} reverses the quoting.
+ */
+export function extractInstalledTarget(body: string): string | undefined {
+  const line = body.startsWith(DISABLED_PREFIX) ? body.slice(DISABLED_PREFIX.length) : body;
+  const fields = line.trim().split(/\s+/);
+  const idx = fields.indexOf("--target");
+  if (idx === -1 || idx + 1 >= fields.length) return undefined;
+  return unquoteCronValue(fields[idx + 1]!);
+}
+
+/** Reverse {@link quoteForCron} for a single whitespace-free token. */
+function unquoteCronValue(token: string): string {
+  if (token.length >= 2 && token.startsWith("'") && token.endsWith("'")) {
+    return token.slice(1, -1).replaceAll("'\\''", "'").replaceAll("'\\%'", "%");
+  }
+  return token.replaceAll("\\%", "%");
 }
 
 /** Collapse incidental whitespace so signature comparison ignores it. */

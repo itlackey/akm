@@ -68,8 +68,7 @@ const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
     `akm show ${ref} -> inspect key names; akm env run ${ref} -- <command> -> run with the whole .env injected (prefer --clean to minimize inherited parent env; child stdout is not redacted). akm env export ${ref} --out <file> writes a sourceable script (values to a file, not stdout).`,
   secret: (ref) =>
     `akm show ${ref} -> name only (value never shown); akm secret path ${ref} -> file path; akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
-  task: (ref) =>
-    `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,
+  task: (ref) => `akm show ${ref} -> inspect; akm tasks run <id> -> run now; akm tasks disable <id> -> unschedule`,
   session: (ref) =>
     `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   fact: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
@@ -135,9 +134,13 @@ describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbat
     expect(out).toBe(ACTION_BUILDERS.workflow!("team//workflows/release"));
   });
 
-  test("the task action reproduces the `task:` prefix strip", () => {
-    expect(presentationFor("task").action?.("task:deploy")).toBe(ACTION_BUILDERS.task!("task:deploy"));
-    expect(presentationFor("task").action?.("task:deploy")).toContain("akm tasks show deploy ->");
+  test("the task action points at akm show plus the surviving tasks subcommands", () => {
+    expect(presentationFor("task").action?.("tasks/deploy")).toBe(ACTION_BUILDERS.task!("tasks/deploy"));
+    const action = presentationFor("task").action?.("tasks/deploy") ?? "";
+    expect(action).toContain("akm show tasks/deploy ->");
+    // The removed `tasks show`/`tasks remove` subcommands must not resurface.
+    expect(action).not.toContain("tasks show");
+    expect(action).not.toContain("tasks remove");
   });
 });
 

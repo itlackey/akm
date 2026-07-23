@@ -38,7 +38,7 @@ import {
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type BackendExec, escapeXml, type NodeFs, nodeExec, nodeFs, runOrThrow } from "./exec-utils";
-import type { InstalledTaskRef, TaskBackend } from "./types";
+import type { InstalledTaskRef, TaskBackend, TaskInstallOptions } from "./types";
 
 export type LaunchdExec = BackendExec<{ uid(): number }>;
 
@@ -97,10 +97,10 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
 
   return {
     name: "launchd",
-    install(task: TaskDocument) {
+    install(task: TaskDocument, opts?: TaskInstallOptions) {
       // Capture PATH at install time so launchd (which strips the environment
       // aggressively) can find the same binaries the user sees interactively.
-      const xml = buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext);
+      const xml = buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext, opts?.target);
       const file = plistPath(task.id);
       const previousPlist = fsLike.exists(file) ? fsLike.readFile(file) : undefined;
       let previousEnabled = true;
@@ -253,19 +253,44 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
           return { id };
         }
         try {
-          const xml = fsLike
-            .readFile(plistPath(id))
-            .replace(/<!-- akm-enabled:(?:true|false) -->/, `<!-- akm-enabled:${!disabledLabels.has(label(id))} -->`);
-          return { id, signature: normalizeSignature(xml) };
+          const raw = fsLike.readFile(plistPath(id));
+          const xml = raw.replace(
+            /<!-- akm-enabled:(?:true|false) -->/,
+            `<!-- akm-enabled:${!disabledLabels.has(label(id))} -->`,
+          );
+          const bundle = extractPlistTarget(raw);
+          return { id, signature: normalizeSignature(xml), ...(bundle !== undefined ? { target: bundle } : {}) };
         } catch {
           return { id };
         }
       });
     },
-    expectedSignature(task: TaskDocument): string {
-      return normalizeSignature(buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext));
+    expectedSignature(task: TaskDocument, opts?: TaskInstallOptions): string {
+      return normalizeSignature(buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext, opts?.target));
     },
   };
+}
+
+/**
+ * Recover the bundle name embedded as a `--target <bundle>` pair in a plist's
+ * `<ProgramArguments>`. Returns undefined for the primary/default form.
+ */
+export function extractPlistTarget(xml: string): string | undefined {
+  const block = xml.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/);
+  if (!block) return undefined;
+  const args = [...block[1]!.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => decodeXmlEntities(m[1]!));
+  const idx = args.indexOf("--target");
+  if (idx === -1 || idx + 1 >= args.length) return undefined;
+  return args[idx + 1];
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
@@ -276,10 +301,11 @@ export function buildPlistXml(
   logDir: string,
   pathEnv: string | undefined,
   scheduledContext: ScheduledTaskContext,
+  target?: string,
 ): string {
   const spec = parseSchedule(task.schedule, "launchd");
   const trigger = translateToLaunchd(spec);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext);
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
   const argv = invocation.argv;
   const programArgs = argv.map((a) => `      <string>${escapeXml(a)}</string>`).join("\n");
   const logPath = path.join(logDir, `${task.id}.log`);

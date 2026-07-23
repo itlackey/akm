@@ -477,50 +477,16 @@ test.skipIf(!ENABLED)(
       );
       expectTasksUnchanged(stashDir, migratedTasks);
 
-      const shown = new Map<string, { enabled: boolean; target: Record<string, unknown> }>();
+      // The task-specific `tasks show` subcommand was removed in 0.9 — task
+      // inspection is now the generic `akm show tasks/<id>`. Verify each migrated
+      // task still resolves as a stash asset. The parsed/normalized target shapes
+      // (profile→strategy, workflow-ref rewrite, enabled state) are asserted from
+      // the byte-exact migrated file contents (expectTasksUnchanged, above) and
+      // the crontab body (disabled → `# akm:disabled`) rather than a show payload.
       for (const id of TASK_IDS) {
-        const show = run([currentCli, "tasks", "show", id], currentEnv);
-        expectSuccess(show, `packed 0.9 tasks show ${id}`);
-        shown.set(id, JSON.parse(show.stdout) as { enabled: boolean; target: Record<string, unknown> });
+        const show = run([currentCli, "show", `tasks/${id}`, "--format=json"], currentEnv);
+        expectSuccess(show, `packed 0.9 show tasks/${id}`);
       }
-      expect(shown.get("upgrade-prompt")).toMatchObject({
-        enabled: true,
-        target: { kind: "prompt", engine: "legacy-agent" },
-      });
-      expect(shown.get("upgrade-workflow")).toMatchObject({
-        enabled: true,
-        target: { kind: "workflow", ref: "workflows/upgrade-noop", params: { source: "published" } },
-      });
-      expect(shown.get("upgrade-command")).toMatchObject({
-        enabled: true,
-        target: { kind: "command", cmd: ["akm", "--version"] },
-      });
-      expect(shown.get("upgrade-disabled")).toMatchObject({ enabled: false });
-      expect(shown.get("upgrade-explicit-improve")).toMatchObject({
-        enabled: true,
-        target: {
-          kind: "command",
-          cmd: ["/opt/retained-0.8/akm", "improve", "--profile", "frequent"],
-        },
-      });
-      expect(shown.get("upgrade-global-improve")).toMatchObject({
-        enabled: true,
-        target: {
-          kind: "command",
-          cmd: ["akm", "--no-quiet", "--verbose=false", "improve", "--strategy", "frequent"],
-        },
-      });
-      expect(shown.get("akm-improve-frequent")).toMatchObject({
-        enabled: true,
-        target: {
-          kind: "command",
-          cmd: ["akm", "improve", "--strategy", "frequent", "--auto-accept", "safe"],
-        },
-      });
-      expect(shown.get("backup")).toMatchObject({
-        enabled: true,
-        target: { kind: "command", cmd: ["akm", "db", "backups"] },
-      });
 
       const crontab = fs.readFileSync(fakeCrontab, "utf8");
       expect(crontab).toContain(currentPackageRoot);
