@@ -17,7 +17,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AkmDistillResult } from "../../../../src/commands/improve/distill";
-import { buildLatestFeedbackTsMap, buildLatestProposalTsMap } from "../../../../src/commands/improve/eligibility";
+import {
+  buildLatestFeedbackTsMap,
+  buildLatestProposalTsMap,
+  collectEligibleRefs,
+} from "../../../../src/commands/improve/eligibility";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmReflectResult } from "../../../../src/commands/improve/reflect";
 import type { AssetSalienceRow } from "../../../../src/commands/improve/salience";
@@ -32,6 +36,7 @@ import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
 
 // Deterministic, strictly-ordered timestamps for signal-delta ordering.
@@ -138,6 +143,36 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("skips a malformed indexed ref without discarding valid candidates", async () => {
+  const stash = makeTempDir("akm-elig-malformed-ref-");
+  writeMemory(stash, "valid", "Valid memory.");
+  writeMemory(stash, "bad#fragment", "Malformed ref.");
+  await buildIndex(stash);
+
+  const result = await collectEligibleRefs({ mode: "all" }, stash, {});
+
+  expect(result.plannedRefs.map((entry) => entry.ref)).toEqual(["memories/valid"]);
+  expect(result.plannedRefs[0]?.filePath).toBe(path.join(stash, "memories", "valid.md"));
+  expect(result.memorySummary).toEqual({ eligible: 1, derived: 0 });
+  expect(result.strategyFilteredRefs).toEqual([]);
+});
+
+test("treats an index without an entries table as an empty candidate plan", async () => {
+  const stash = makeTempDir("akm-elig-empty-index-");
+  writeMemory(stash, "valid", "Valid memory.");
+  await buildIndex(stash);
+
+  const db = openExistingDatabase();
+  db.exec("DROP TABLE entries");
+  closeDatabase(db);
+
+  await expect(collectEligibleRefs({ mode: "all" }, stash, {})).resolves.toEqual({
+    plannedRefs: [],
+    memorySummary: { eligible: 0, derived: 0 },
+    strategyFilteredRefs: [],
+  });
 });
 
 // ── Reflect signal-delta ────────────────────────────────────────────────────

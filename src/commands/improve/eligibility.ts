@@ -182,6 +182,12 @@ async function collectEligibleRefsFromIndex(
       // xrefs, and `displayRef` output spelling. `.itemRef` below stays the
       // fully-qualified durable key.
       const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
+      try {
+        parseRefInput(ref);
+      } catch (error) {
+        if (error instanceof UsageError || error instanceof NotFoundError) continue;
+        throw error;
+      }
       // Chunk-5 flip F5d (Step 4): the durable `item_ref` (`<bundle>//<concept-id>`),
       // reconstructed from the mapper-unlocked provenance columns with ZERO extra
       // queries (D-R3 — derived from the resolved index entry, never raw input).
@@ -232,9 +238,9 @@ async function collectEligibleRefsFromIndex(
       strategyFilteredRefs: [...profileFiltered.values()],
     };
   } catch (error) {
-    // The bun-test isolation guard must never be downgraded to "empty plan".
+    // Empty-stash setup paths can open index.db before its schema exists.
     rethrowIfTestIsolationError(error);
-    if (error instanceof NotFoundError || error instanceof Error) {
+    if (error instanceof Error && /no such table:\s*entries/i.test(error.message)) {
       return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
     }
     throw error;
