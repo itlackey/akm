@@ -83,8 +83,7 @@ export function refToString(ref: AssetRef): string {
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 
-/** Parse a legacy ref string in the format `[origin//]type:name`. */
-export function parseAssetRef(ref: string): AssetRef {
+function parseLegacyAssetRef(ref: string, allowRetiredTypes: boolean): AssetRef {
   const trimmed = ref.trim();
   if (!trimmed) throw new UsageError("Empty ref.", "MISSING_REQUIRED_ARGUMENT");
 
@@ -111,7 +110,7 @@ export function parseAssetRef(ref: string): AssetRef {
 
   // The `vault` asset type was removed in 0.9.0. Point callers at its
   // replacements rather than failing with a generic unknown-type error.
-  if (rawType === "vault") {
+  if (!allowRetiredTypes && rawType === "vault") {
     throw new UsageError(
       "The `vault` asset type was removed in 0.9.0 — use `env:` (whole .env config) or `secret:` (a single value).",
       "MISSING_REQUIRED_ARGUMENT",
@@ -123,7 +122,7 @@ export function parseAssetRef(ref: string): AssetRef {
 
   // Open type token (chunk 1.5, D1.5-6): any other non-empty type is valid ref
   // data (foreign/adapter types included) EXCEPT the deliberately-removed set.
-  if (DEPRECATED_REJECTED_TYPES.has(resolvedType)) {
+  if (!allowRetiredTypes && DEPRECATED_REJECTED_TYPES.has(resolvedType)) {
     throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
   }
 
@@ -131,6 +130,11 @@ export function parseAssetRef(ref: string): AssetRef {
   const name = normalizeName(rawName);
 
   return { type: resolvedType, name, origin: origin || undefined };
+}
+
+/** Parse a legacy ref string in the format `[origin//]type:name`. */
+export function parseAssetRef(ref: string): AssetRef {
+  return parseLegacyAssetRef(ref, false);
 }
 
 // ── Validation (private copies — kept self-contained) ────────────────────────
@@ -245,14 +249,16 @@ export function legacyRefToBundleRef(raw: string): BundleRef {
  * this is the safe superset of `parseRefInput` (input boundaries are new-only).
  *
  * Mapping mirrors the pre-flip input bridge exactly:
- *   - legacy input      → `parseAssetRef` (byte-identical).
+ *   - legacy input      → historical syntax parser (including retired types).
  *   - new `conceptId`   → `type`/`name` via the D-R2 reverse table.
  *   - new `bundle`      → `origin`.
  *   - `#fragment`       → rejected (no stored ref carries one).
  */
 export function parseStoredRef(raw: string): AssetRef {
   if (classifyRefGrammar(raw) === "legacy") {
-    return parseAssetRef(raw);
+    // Durable state may predate the removal of a type. Retired but structurally
+    // valid refs are expected orphans; current user input remains strict.
+    return parseLegacyAssetRef(raw, true);
   }
   const ref = parseBundleRef(raw);
   if (ref.fragment !== undefined) {
