@@ -561,6 +561,20 @@ describe("resolveWriteTarget", () => {
     expect(result.source.path).toBe(stashDir);
   });
 
+  test("preserves the default bundle identity for the configured working stash", () => {
+    const stashDir = makeTempDir("akm-target-default-bundle-");
+    process.env.AKM_STASH_DIR = stashDir;
+    const result = resolveWriteTarget({
+      semanticSearchMode: "off",
+      bundles: { akm: { path: stashDir, writable: true } },
+      defaultBundle: "akm",
+    });
+    expect(result.selector).toBeUndefined();
+    expect(result.source.name).toBe("akm");
+    expect(result.source.kind).toBe("filesystem");
+    expect(result.source.path).toBe(stashDir);
+  });
+
   test("throws ConfigError when defaultWriteTarget points at a missing source", () => {
     expect(() =>
       resolveWriteTarget({

@@ -184,6 +184,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       safeOpencodeConfig: "/safe/opencode.json",
       safeClaudeConfig: "/safe/claude.json",
       safeCodexConfig: "/safe/codex.toml",
+      safeEventSource: "improve",
     };
     const profile: AgentProfile = {
       ...sdkProfile,
@@ -211,7 +212,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       spec,
       "p",
       {
-        env: { BOUND_VALUE: values.binding },
+        env: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource },
         envSource: {
           PATH: values.safePath,
           CUSTOM_AGENT_TOKEN: values.passthrough,
@@ -246,6 +247,7 @@ describe("executeRunner — unified RunnerSpec dispatch (X3)", () => {
       values.safeOpencodeConfig,
       values.safeClaudeConfig,
       values.safeCodexConfig,
+      values.safeEventSource,
     ]) {
       expect(JSON.stringify(result)).toContain(nonsecret);
     }

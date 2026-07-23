@@ -444,12 +444,24 @@ describe("update preserves entry.source for writable installed entries", () => {
       syncedAt: new Date().toISOString(),
       resolvedRevision: "def456",
     });
+    const mirrorSpy = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
+      id: "github:dimm-city/agent-stash",
+      source: "git",
+      ref: "github:dimm-city/agent-stash",
+      artifactUrl: "https://github.com/dimm-city/agent-stash.git",
+      contentDir: stashRoot,
+      cacheDir,
+      extractedDir: stashRoot,
+      syncedAt: new Date().toISOString(),
+      writable: true,
+    });
 
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
       result = await akmUpdate({ target: "github:dimm-city/agent-stash", stashDir });
     } finally {
       syncSpy.mockRestore();
+      mirrorSpy.mockRestore();
     }
 
     expect(result).toBeDefined();
@@ -458,7 +470,7 @@ describe("update preserves entry.source for writable installed entries", () => {
     const bundle = Object.values(config.bundles ?? {}).find((b) => b.registryId === "github:dimm-city/agent-stash");
     expect(bundle).toBeDefined();
     // Desired descriptor stays git (#37 split: desired in config, resolved in lock)
-    expect(typeof bundle?.git).toBe("string");
+    expect(bundle?.git).toBe("https://github.com/dimm-city/agent-stash");
     // writable must survive the update
     expect(bundle?.writable).toBe(true);
     // resolved revision lives in the lock and should be updated

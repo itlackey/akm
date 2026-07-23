@@ -316,6 +316,32 @@ describe("WS-1 wiring — subsequent run (table has rows)", () => {
     expect(typeof meta?.totalChanged).toBe("number");
     expect(typeof meta?.forgettingCandidates).toBe("number");
   });
+
+  test("uses a non-stash defaultBundle as the existing salience scope", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "named-primary", "Named primary content.");
+    await buildIndex(stash);
+
+    const runOpts = {
+      scope: "skill" as const,
+      config: {
+        ...minimalConfig(),
+        bundles: { akm: { path: stash, writable: true } },
+        defaultBundle: "akm",
+      },
+      ...noopIndexFns,
+      reflectFn: async ({ ref }: { ref?: string }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }: { ref?: string }) => queuedDistill(ref ?? ""),
+    };
+
+    await akmImprove(runOpts);
+    await akmImprove(runOpts);
+
+    const { events: firstRunEvents } = readEvents({ type: "improve_salience_first_run" });
+    const { events: rankChangeEvents } = readEvents({ type: "improve_salience_rank_change" });
+    expect(firstRunEvents).toHaveLength(1);
+    expect(rankChangeEvents).toHaveLength(1);
+  });
 });
 
 // ── Test 3: recordNoOp fires on no_change reflect ─────────────────────────────

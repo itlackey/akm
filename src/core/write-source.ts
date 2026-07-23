@@ -345,7 +345,7 @@ export function resolveWritableTargets(akmConfig: AkmConfig): ResolvedWriteTarge
  *
  *   1. Explicit `--target <name>` (when supplied)
  *   2. `config.defaultWriteTarget`
- *   3. `config.stashDir` (the working stash created by `akm init`)
+ *   3. `config.defaultBundle`'s path (the working stash created by `akm init`)
  *   4. `ConfigError("no writable source configured; run `akm init`")`
  *
  * The legacy `first-writable-in-source-array-order` fallback is *not* used —
@@ -421,6 +421,22 @@ export function resolveWriteTarget(
   // improve auto-sync via saveGitStash). Per-write stays non-committing.
   try {
     const stashDir = resolveStashDir({ readOnly: true });
+    const defaultBundleSource = akmConfig.defaultBundle
+      ? configuredSources.find((source) => source.name === akmConfig.defaultBundle && source.type === "filesystem")
+      : undefined;
+    if (defaultBundleSource) {
+      const target = adaptConfiguredSource(defaultBundleSource);
+      if (path.resolve(target.source.path) === path.resolve(stashDir)) {
+        if (requireWritable && !resolveWritable(target.config)) {
+          throw new ConfigError(
+            `defaultBundle "${akmConfig.defaultBundle}" is not writable`,
+            "INVALID_CONFIG_FILE",
+            `Set \`writable: true\` on the "${akmConfig.defaultBundle}" bundle, or set \`defaultWriteTarget\` to a writable source.`,
+          );
+        }
+        return { ...target, selector: undefined };
+      }
+    }
     return {
       source: { kind: "filesystem", name: "stash", path: stashDir },
       config: { type: "filesystem", path: stashDir, name: "stash", writable: true },

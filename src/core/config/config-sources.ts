@@ -62,7 +62,7 @@ export function bundleEntryToSourceEntry(
     return { type: "filesystem", path: bundle.path, ...base };
   }
   if (typeof bundle.git === "string" && bundle.git.length > 0) {
-    return { type: "git", url: bundle.git, ...base };
+    return { type: "git", url: normalizeInstalledGitRef("", bundle.git), ...base };
   }
   if (bundle.website && typeof bundle.website.url === "string") {
     // All non-`url` website-descriptor keys (maxPages/refresh/maxDepth + any
@@ -86,13 +86,14 @@ export function bundleEntryToSourceEntry(
 /**
  * Desired 0.9.0 bundle descriptor for a registry-installed source (spec §10.1).
  * Maps the install source kind onto the ONE source descriptor a bundle entry
- * carries: git/github → `{ git: ref }`, npm → `{ npm: ref }`, everything else
- * (local/filesystem) → `{ path: stashRoot }`.
+ * carries: git/github → a provider-ready clone URL, npm → `{ npm: ref }`,
+ * everything else (local/filesystem) → `{ path: stashRoot }`.
  *
  * CRITICAL (spec §10.2:453): the materialized cache root NEVER appears in the
  * descriptor for a git/npm bundle — the desired config carries only the source
- * LOCATOR (the re-installable ref); the resolved root belongs exclusively in the
- * lock's `localRoot`. Callers layer `registryId`/`writable` onto the result.
+ * descriptor; the install locator stays in `registryId` and the resolved root
+ * belongs exclusively in the lock's `localRoot`. Callers layer
+ * `registryId`/`writable` onto the result.
  */
 export function installedSourceDescriptor(
   source: string,
@@ -102,7 +103,7 @@ export function installedSourceDescriptor(
   switch (source) {
     case "git":
     case "github":
-      if (ref) return { git: ref };
+      if (ref) return { git: normalizeInstalledGitRef(source, ref) };
       break;
     case "npm":
       if (ref) return { npm: ref };
@@ -113,6 +114,19 @@ export function installedSourceDescriptor(
   // local/filesystem installs reference a real on-disk path (no package-manager
   // cache to re-materialize), so the resolved root IS the desired path.
   return { path: stashRoot };
+}
+
+function normalizeInstalledGitRef(source: string, ref: string): string {
+  if (ref.startsWith("git+")) return ref.slice(4);
+  const isGithubShorthand = ref.startsWith("github:") || (source === "github" && /^[^/:#]+\/[^/#]+(?:#.+)?$/.test(ref));
+  if (!isGithubShorthand) return ref;
+
+  const body = ref.startsWith("github:") ? ref.slice("github:".length) : ref;
+  const fragmentAt = body.indexOf("#");
+  const repository = fragmentAt >= 0 ? body.slice(0, fragmentAt) : body;
+  const requestedRef = fragmentAt >= 0 ? body.slice(fragmentAt + 1) : "";
+  const cloneUrl = `https://github.com/${repository.replace(/\.git$/i, "")}`;
+  return requestedRef ? `${cloneUrl}/tree/${requestedRef}` : cloneUrl;
 }
 
 /**

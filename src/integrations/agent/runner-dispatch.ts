@@ -87,7 +87,9 @@ export function collectDispatchSensitiveValues(
       if (!isEnvPassthroughValueSafeToExpose(name, value)) add(value);
     }
   }
-  for (const value of Object.values(opts.env ?? {})) add(value);
+  for (const [name, value] of Object.entries(opts.env ?? {})) {
+    if (!isEnvPassthroughValueSafeToExpose(name, value)) add(value);
+  }
   return collectSensitiveValues(values);
 }
 

@@ -15,6 +15,7 @@ import path from "node:path";
 import { registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
 import { resetAdapterRegistryForTests } from "../../../src/core/adapter/registry";
 import { validateConfigShape } from "../../../src/core/config/config-schema";
+import { bundleEntryToSourceEntry, installedSourceDescriptor } from "../../../src/core/config/config-sources";
 import { deriveInstallations } from "../../../src/indexer/installations";
 import {
   hasOldSourceShape,
@@ -54,6 +55,22 @@ function oldShapeConfig(): Record<string, unknown> {
 }
 
 describe("migrateConfigSourcesToBundles", () => {
+  test("normalizes install locators into git provider URLs", () => {
+    expect(installedSourceDescriptor("github", "github:owner/repo#v1", "/cache/repo")).toEqual({
+      git: "https://github.com/owner/repo/tree/v1",
+    });
+    expect(installedSourceDescriptor("github", "https://github.com/owner/repo", "/cache/repo")).toEqual({
+      git: "https://github.com/owner/repo",
+    });
+    expect(installedSourceDescriptor("git", "git+https://example.test/repo.git", "/cache/repo")).toEqual({
+      git: "https://example.test/repo.git",
+    });
+    expect(bundleEntryToSourceEntry("repo", { git: "github:owner/repo" })).toMatchObject({
+      type: "git",
+      url: "https://github.com/owner/repo",
+    });
+  });
+
   test("emits bundle keys equal to a direct deriveInstallations run (D-R5 no-identity-shift proof)", () => {
     const raw = oldShapeConfig();
     const migrated = migrateConfigSourcesToBundles(raw) as { bundles: Record<string, unknown>; defaultBundle?: string };
@@ -78,7 +95,10 @@ describe("migrateConfigSourcesToBundles", () => {
     // WI-8.5 desired/resolved split (spec §10.2): the installed github entry emits
     // its DESIRED git locator (the re-installable ref), NOT the resolved cache
     // root; the original id is preserved. The materialized root belongs in the lock.
-    expect(migrated.bundles.repo).toEqual({ git: "owner/repo", registryId: "github:owner/repo" });
+    expect(migrated.bundles.repo).toEqual({
+      git: "https://github.com/owner/repo",
+      registryId: "github:owner/repo",
+    });
     // §10.2:453 — an installed bundle's config entry carries NO resolved cache path.
     expect(migrated.bundles.repo!.path).toBeUndefined();
   });
