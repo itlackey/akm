@@ -218,12 +218,11 @@ export function computeDegradationMetrics(
         return acc + vals.slice(i + 1).reduce((a, xj) => a + Math.abs(xi - xj), 0);
       }, 0);
       const mean = vals.reduce((a, b) => a + b, 0) / n;
-      // Gini = (sum |xi - xj|) / (2 n^2 mean); 0 = perfect equality, 1 = perfect inequality.
-      const gini = mean > 0 ? sumAbsDiff / (2 * n * n * mean) : 0;
+      // `sumAbsDiff` contains each unordered pair once, so the standard Gini
+      // denominator is n² × mean (the equivalent ordered-pair formula has 2n²).
+      const gini = mean > 0 ? sumAbsDiff / (n * n * mean) : 0;
       // Re-express as a diversity proxy in [0,1]: high gini = low diversity.
       // corpusCentroidDistance approximation: gini is "distance from uniform".
-      // Note: retrieval_salience values are in [0,1], so the max achievable Gini
-      // with this formula is ~0.5 (when one asset dominates and others are near 0).
       // Two-tailed: >0.35 flags entrenchment (robustly above the ~0.1 uniform
       // baseline); <0.08 flags uniformity collapse — the distribution no longer
       // discriminates between assets (live 2026-07 value 0.040 sat unflagged

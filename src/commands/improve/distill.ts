@@ -522,7 +522,11 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   }
   lines.push("Asset content:");
   if (input.assetContent) {
-    const body = input.assetContent.trim().slice(0, 3000);
+    // The output contract also uses YAML fences. Feeding source frontmatter
+    // verbatim caused local models to copy it into the lesson body, producing
+    // deterministic double-frontmatter rejection. Distillation needs the
+    // source body; its metadata is not evidence to reproduce.
+    const body = parseFrontmatter(input.assetContent).content.trim().slice(0, 3000);
     lines.push("```");
     lines.push(body);
     lines.push("```");

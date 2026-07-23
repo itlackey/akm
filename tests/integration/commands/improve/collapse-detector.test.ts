@@ -163,6 +163,18 @@ describe("ensureCanarySet", () => {
     // Pin the canonical metrics path (shared with curate-golden via re-export).
     expect(ndcgAtK(["a"], new Set(["a"]), 10)).toBe(1);
   });
+
+  test("scores bundle-qualified canary anchors against short index refs", async () => {
+    seedCorpus();
+    await reindex();
+    const canarySet = withIndexDb((db) => ensureCanarySet(stateDb, db, CFG));
+    if (!canarySet) throw new Error("expected a canary set");
+    stateDb
+      .prepare("UPDATE canary_queries SET anchor_ref = 'stash//' || anchor_ref WHERE canary_set_id = ?")
+      .run(canarySet.canarySetId);
+
+    expect(snapshot("qualified-anchors").mean_recall).toBeGreaterThanOrEqual(0.9);
+  });
 });
 
 describe("refreshCanarySet", () => {

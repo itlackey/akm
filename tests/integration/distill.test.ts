@@ -237,6 +237,18 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("(no feedback events recorded");
   });
 
+  test("omits source frontmatter so it cannot leak into the generated body", () => {
+    const prompt = buildDistillPrompt({
+      inputRef: "memories/deploy",
+      assetContent: "---\ndescription: Source metadata\ntags: [deploy]\n---\n\n## Deploy\n\nRun the preflight first.",
+      feedback: [],
+    });
+    expect(prompt).toContain("## Deploy");
+    expect(prompt).toContain("Run the preflight first.");
+    expect(prompt).not.toContain("description: Source metadata");
+    expect(prompt).not.toContain("tags: [deploy]");
+  });
+
   test("falls back gracefully when asset is not indexed", () => {
     const prompt = buildDistillPrompt({ inputRef: "skills/deploy", assetContent: null, feedback: [] });
     expect(prompt).toContain("(asset is not currently indexed");

@@ -640,17 +640,8 @@ export function injectGenerationFrontmatter(
       ...(Array.isArray(existingFm.source_refs) ? existingFm.source_refs.map(String) : []),
     ];
     const canonicalRefs = [...existingRefs, ...provenanceRefs].flatMap((ref) => {
-      try {
-        // Canonical stored provenance xref, WI-8.5b display-flip: emit the D-R5
-        // new-grammar spelling (short conceptId for the primary/default bundle,
-        // `bundle//conceptId` for a slug source, legacy `origin//type:name` only
-        // for a non-slug registry origin) via `displayRef`, so a merged asset's
-        // stored `xrefs` unify with the WI-8.5a content/frontmatter xref writer.
-        const p = parseRefInput(ref);
-        return [displayRef({ type: p.type, name: p.name, bundleId: p.origin })];
-      } catch {
-        return [];
-      }
+      const canonical = canonicalStoredXref(ref);
+      return canonical === undefined ? [] : [canonical];
     });
     const updatedFm: Record<string, unknown> = {
       ...existingFm,
@@ -664,20 +655,33 @@ export function injectGenerationFrontmatter(
   }
 }
 
-/**
- * WI-8.5b — canonical D-R5 display spelling of a stored provenance xref: short
- * conceptId for the primary/default bundle, `bundle//conceptId` for a slug
- * source, legacy `origin//type:name` only for a non-slug registry origin.
- * Returns the input unchanged when it cannot be parsed as a ref (fail-open, the
- * pre-flip behavior for hand-authored provenance strings).
- */
-function canonicalXref(ref: string): string {
+/** Parse a stored provenance ref and emit its canonical D-R5 display spelling. */
+function canonicalStoredXref(ref: string): string | undefined {
   try {
     const p = parseRefInput(ref);
     return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
   } catch {
-    return ref;
+    // Read tolerance for pre-0.9 provenance still present in asset frontmatter.
+    // New writes always use conceptIds; this only folds existing type:name refs
+    // forward while their containing asset is being merged.
+    const trimmed = ref.trim();
+    const boundary = trimmed.indexOf("//");
+    const origin = boundary >= 0 ? trimmed.slice(0, boundary) : undefined;
+    const body = boundary >= 0 ? trimmed.slice(boundary + 2) : trimmed;
+    const colon = body.indexOf(":");
+    if (colon <= 0 || colon === body.length - 1) return undefined;
+    const conceptId = conceptIdFromTypeName(body.slice(0, colon), body.slice(colon + 1));
+    try {
+      const p = parseRefInput(conceptId);
+      return displayRef({ type: p.type, name: p.name, bundleId: origin });
+    } catch {
+      return undefined;
+    }
   }
+}
+
+function canonicalXref(ref: string): string {
+  return canonicalStoredXref(ref) ?? ref;
 }
 
 /**
@@ -1847,7 +1851,10 @@ async function finalizeMerge(
       const sourceRefs = [
         ...(Array.isArray(fm.xrefs) ? fm.xrefs.map(String) : []),
         ...(Array.isArray(fm.source_refs) ? fm.source_refs.map(String) : []),
-      ];
+      ].flatMap((ref) => {
+        const canonical = canonicalStoredXref(ref);
+        return canonical === undefined ? [] : [canonical];
+      });
       return { ref, generation: readAssetGeneration(fm), body: stripFrontmatterBody(raw), sourceRefs };
     } catch {
       return { ref, generation: 0, body: "", sourceRefs: [] as string[] };

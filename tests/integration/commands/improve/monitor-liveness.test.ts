@@ -118,7 +118,7 @@ const UNTIL = "2026-12-31T00:00:00.000Z";
 
 describe("computeDegradationMetrics — Gini two-tailed", () => {
   test("collapsed-toward-uniform distribution (Gini < 0.08) flags uniformity, not entrenchment", () => {
-    // Near-identical scores: Gini ≈ 0.005 — the live 2026-07 failure shape.
+    // Near-identical scores: Gini ≈ 0.01 — the live 2026-07 failure shape.
     const values = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? 0.49 : 0.51));
     const db = salienceDb(values);
     const result = computeDegradationMetrics(db, SINCE, UNTIL);
@@ -127,16 +127,17 @@ describe("computeDegradationMetrics — Gini two-tailed", () => {
   });
 
   test("healthy spread (Gini between 0.08 and 0.35) flags neither tail", () => {
-    // Alternating 0.25/0.75 → Gini 0.125 under the top-100 formula.
+    // Alternating 0.25/0.75 → standard Gini 0.25.
     const values = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? 0.25 : 0.75));
     const db = salienceDb(values);
     const result = computeDegradationMetrics(db, SINCE, UNTIL);
+    expect(result?.corpusCentroidDistance).toBe(0.25);
     expect(result?.salienceUniformityFlagged).toBe(false);
     expect(result?.entrenchmentFlagged).toBe(false);
   });
 
   test("entrenched distribution (Gini > 0.35) still flags entrenchment, not uniformity", () => {
-    // One dominant asset, nine near-zero → Gini ≈ 0.41.
+    // One dominant asset, nine near-zero → Gini ≈ 0.82.
     const values = [1.0, ...Array.from({ length: 9 }, () => 0.01)];
     const db = salienceDb(values);
     const result = computeDegradationMetrics(db, SINCE, UNTIL);

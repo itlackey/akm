@@ -5,7 +5,7 @@
       "enabled": true,
       "allowedTypes": ["agent", "command", "knowledge", "lesson", "memory", "skill", "workflow"]
     },
-    "distill": { "enabled": true, "allowedTypes": ["memory"] },
+    "distill": { "enabled": true, "allowedTypes": ["memory"], "requirePlannedRefs": false },
     "consolidate": { "enabled": false },
     "memoryInference": { "enabled": true },
     "graphExtraction": { "enabled": false },

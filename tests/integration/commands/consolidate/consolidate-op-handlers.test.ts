@@ -177,9 +177,9 @@ describe("consolidation merge provenance", () => {
     ).injectGenerationFrontmatter;
     expect(typeof inject).toBe("function");
     const content = inject(
-      "---\ndescription: Merged memory\nsource_refs: [memories/legacy]\nxrefs: [memories/existing]\n---\n\nMerged body.\n",
+      "---\ndescription: Merged memory\nsource_refs: [memory:legacy]\nxrefs: [memories/existing]\n---\n\nMerged body.\n",
       [1, 2],
-      ["memories/primary", "memories/secondary", "env/alias", "not-a-ref"],
+      ["memory:primary", "memories/secondary", "env/alias", "not-a-ref"],
     );
     const parsed = parseFrontmatter(content);
     const xrefs = parsed.data.xrefs as string[];
@@ -210,12 +210,12 @@ describe("consolidation merge provenance", () => {
       fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
       fs.writeFileSync(
         primaryPath,
-        "---\ndescription: Primary\ngeneration: 2\nxrefs: [memories/primary-xref]\nsource_refs: [env/primary-legacy]\n---\n\nPrimary source body with distinct details.\n",
+        "---\ndescription: Primary\ngeneration: 2\nxrefs: [memories/primary-xref]\nsource_refs: [memory:primary-legacy]\n---\n\nPrimary source body with distinct details.\n",
         "utf8",
       );
       fs.writeFileSync(
         secondaryPath,
-        "---\ndescription: Secondary\ngeneration: 1\nxrefs: [memories/secondary-xref]\nsource_refs: [env/secondary-legacy]\n---\n\nSecondary source body with other details.\n",
+        "---\ndescription: Secondary\ngeneration: 1\nxrefs: [memories/secondary-xref]\nsource_refs: [memory:secondary-legacy]\n---\n\nSecondary source body with other details.\n",
         "utf8",
       );
       const skips: SkipCall[] = [];
@@ -236,7 +236,7 @@ describe("consolidation merge provenance", () => {
         ]),
         generateMergedContentFn: (async () => ({
           content:
-            "---\ndescription: Merged memory\nxrefs: [memories/output-existing]\nsource_refs: [env/output-legacy]\n---\n\nPrimary source body with distinct details and secondary source body with other details.\n",
+            "---\ndescription: Merged memory\nxrefs: [memories/output-existing]\nsource_refs: [memory:output-legacy]\n---\n\nPrimary source body with distinct details and secondary source body with other details.\n",
         })) as never,
       });
       const op: ConsolidateMergeOp = {
@@ -253,15 +253,16 @@ describe("consolidation merge provenance", () => {
       expect(merged.data.source_refs).toBeUndefined();
       expect(merged.data.xrefs).toEqual([
         "memories/output-existing",
-        "env/output-legacy",
+        "memories/output-legacy",
         "memories/primary",
         "memories/secondary",
         "memories/primary-xref",
-        "env/primary-legacy",
+        "memories/primary-legacy",
         "memories/secondary-xref",
-        "env/secondary-legacy",
+        "memories/secondary-legacy",
       ]);
       expect(ctx.counts.merged).toBe(1);
+      expect(ctx.counts.mergeFloorViolations).toBe(0);
     });
   }
 });

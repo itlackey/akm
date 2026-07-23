@@ -27,6 +27,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
@@ -244,16 +245,26 @@ export function normHash(text: string): string {
  */
 function scoreCanary(indexDb: IndexDatabase, canary: { anchor_ref: string; query: string }, k: number): number {
   const results = searchFts(indexDb, canary.query, k);
+  const anchorConceptId = canaryConceptId(canary.anchor_ref);
   for (let i = 0; i < Math.min(results.length, k); i++) {
     const r = results[i]!;
-    // Chunk-8 WI-8.5c: match the stored anchor (SHORT conceptId) and the
-    // canonical `xrefs` provenance (also conceptIds post WI-8.5a) on the
-    // conceptId spelling.
+    // Persisted canaries may be fully qualified after a state migration while
+    // index refs and xrefs remain short conceptIds. Compare identity, not display
+    // spelling, so migration alone cannot collapse recall to zero.
     const ref = conceptIdFromTypeName(r.entry.type, r.entry.name);
-    if (ref === canary.anchor_ref) return i;
-    if (r.entry.xrefs?.includes(canary.anchor_ref) || r.entry.sourceRefs?.includes(canary.anchor_ref)) return i;
+    if (ref === anchorConceptId) return i;
+    const provenance = [...(r.entry.xrefs ?? []), ...(r.entry.sourceRefs ?? [])];
+    if (provenance.some((sourceRef) => canaryConceptId(sourceRef) === anchorConceptId)) return i;
   }
   return -1;
+}
+
+function canaryConceptId(ref: string): string {
+  try {
+    return parseBundleRef(ref).conceptId;
+  } catch {
+    return ref;
+  }
 }
 
 /**

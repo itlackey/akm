@@ -78,6 +78,12 @@ describe("default improve strategies (#552)", () => {
     expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.extract?.enabled).toBe(false);
   });
 
+  test("reflect-distill processes distill-only signal deltas", () => {
+    const p = resolveImproveStrategy("reflect-distill", MINIMAL_CONFIG).config;
+    expect(p.processes?.distill?.enabled).toBe(true);
+    expect(p.processes?.distill?.requirePlannedRefs).toBe(false);
+  });
+
   test("consolidate resolves to consolidation-only with maxChunkSize 25 and minPoolSize 500", () => {
     const p = resolveImproveStrategy("consolidate", MINIMAL_CONFIG).config;
     expect(p.processes?.consolidate?.enabled).toBe(true);
