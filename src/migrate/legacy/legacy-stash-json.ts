@@ -36,6 +36,10 @@ export interface LegacyStashOptions {
   requireFilename?: boolean;
 }
 
+export type LegacyStashReadResult =
+  | { status: "missing" | "invalid" }
+  | { status: "valid"; stash: StashFile; complete: boolean };
+
 /** Absolute path of a directory's legacy metadata sidecar. */
 export function legacyStashFilePath(dirPath: string): string {
   return path.join(dirPath, LEGACY_STASH_FILENAME);
@@ -46,19 +50,24 @@ export function legacyStashFilePath(dirPath: string): string {
  * or `null` when absent/empty/corrupt. Was `loadStashFile` in `metadata.ts`;
  * relocated verbatim to the migrator home (scope-B ruling) — behavior unchanged.
  */
-export function readLegacyStashOverrides(dirPath: string, options?: LegacyStashOptions): StashFile | null {
+export function inspectLegacyStashOverrides(dirPath: string, options?: LegacyStashOptions): LegacyStashReadResult {
   const filePath = legacyStashFilePath(dirPath);
-  if (!fs.existsSync(filePath)) return null;
+  if (!fs.existsSync(filePath)) return { status: "missing" };
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    if (!raw || !Array.isArray(raw.entries)) return null;
+    if (!raw || !Array.isArray(raw.entries)) return { status: "invalid" };
     const entries: IndexDocument[] = [];
+    let complete = true;
     for (const e of raw.entries) {
       const validated = validateStashEntry(e);
       if (validated) {
-        if (options?.requireFilename && !validated.filename) continue;
+        if (options?.requireFilename && !validated.filename) {
+          complete = false;
+          continue;
+        }
         entries.push(validated);
       } else {
+        complete = false;
         const name =
           typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).name === "string"
             ? (e as Record<string, unknown>).name
@@ -66,10 +75,15 @@ export function readLegacyStashOverrides(dirPath: string, options?: LegacyStashO
         warn(`Warning: Skipping invalid entry "${name}" in ${filePath}`);
       }
     }
-    return entries.length > 0 ? { entries } : null;
+    return { status: "valid", stash: { entries }, complete };
   } catch {
-    return null;
+    return { status: "invalid" };
   }
+}
+
+export function readLegacyStashOverrides(dirPath: string, options?: LegacyStashOptions): StashFile | null {
+  const result = inspectLegacyStashOverrides(dirPath, options);
+  return result.status === "valid" && result.stash.entries.length > 0 ? result.stash : null;
 }
 
 /** Write a legacy metadata sidecar (test/migrator fixtures). Was `writeStashFile`. */

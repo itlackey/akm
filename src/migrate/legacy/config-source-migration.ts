@@ -33,6 +33,7 @@
  * nothing is lost.
  */
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { installedSourceDescriptor } from "../../core/config/config-sources";
@@ -133,7 +134,8 @@ export function oldConfigMigratableSources(raw: Record<string, unknown>): Migrat
         descriptor,
       });
     }
-  } else if (stashDir) {
+  }
+  if (!out.some((source) => source.primary) && stashDir) {
     out.push({
       derivationPath: path.resolve(expandTilde(stashDir)),
       writable: true,
@@ -177,7 +179,30 @@ export function oldConfigMigratableSources(raw: Record<string, unknown>): Migrat
     });
   }
 
-  return out;
+  const deduplicated: MigratableSource[] = [];
+  const byPath = new Map<string, MigratableSource>();
+  for (const source of out) {
+    let pathIdentity: string | undefined;
+    if (path.isAbsolute(source.derivationPath)) {
+      const resolved = path.resolve(source.derivationPath);
+      try {
+        pathIdentity = fs.realpathSync(resolved);
+      } catch {
+        pathIdentity = resolved;
+      }
+      if (process.platform === "win32") pathIdentity = pathIdentity.toLowerCase();
+    }
+    const prior = pathIdentity ? byPath.get(pathIdentity) : undefined;
+    if (!prior) {
+      deduplicated.push(source);
+      if (pathIdentity) byPath.set(pathIdentity, source);
+      continue;
+    }
+    prior.registryId ??= source.registryId;
+    prior.writable ||= source.writable;
+    prior.primary ||= source.primary;
+  }
+  return deduplicated;
 }
 
 /**
@@ -231,6 +256,7 @@ export function migrateConfigSourcesToBundles(raw: Record<string, unknown>): Rec
   const migratable = oldConfigMigratableSources(raw);
   const usedIds = new Set<string>();
   const bundles: Record<string, BundleConfigEntry> = {};
+  const selectorToBundle = new Map<string, string>();
   let defaultBundle: string | undefined;
 
   for (const src of migratable) {
@@ -243,6 +269,7 @@ export function migrateConfigSourcesToBundles(raw: Record<string, unknown>): Rec
     // (a non-slug-legal id like `github:owner/repo`), so the locator is not lost.
     if (src.registryId && src.registryId !== id) entry.registryId = src.registryId;
     bundles[id] = entry;
+    if (src.registryId) selectorToBundle.set(src.registryId, id);
     if (src.primary) defaultBundle = id;
   }
 
@@ -250,5 +277,8 @@ export function migrateConfigSourcesToBundles(raw: Record<string, unknown>): Rec
   for (const key of OLD_SOURCE_KEYS) delete out[key];
   out.bundles = bundles;
   if (defaultBundle !== undefined) out.defaultBundle = defaultBundle;
+  const defaultWriteTarget = readString(raw.defaultWriteTarget);
+  const migratedWriteTarget = defaultWriteTarget ? selectorToBundle.get(defaultWriteTarget) : undefined;
+  if (migratedWriteTarget) out.defaultWriteTarget = migratedWriteTarget;
   return out;
 }

@@ -755,6 +755,62 @@ describe("cross-artifact migration apply crash recovery", () => {
     }, 20_000);
   }
 
+  test("resumes when ATTACH leaves only a reconstructible workflow shm sidecar", async () => {
+    const prepared = seed();
+    const workflow = new Database(getLegacyWorkflowDbPath());
+    workflow.exec("PRAGMA journal_mode = WAL");
+    workflow.close();
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env, AKM_TEST_MIGRATION_CRASH_GAP: "cutover-attach" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+
+    const workflowPath = getLegacyWorkflowDbPath();
+    const journal = JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8"));
+    expect(journal.phase).toBe("workflow-applied");
+    expect(journal.generation.workflow.shm).toBeNull();
+    expect(fs.existsSync(`${workflowPath}-shm`)).toBe(true);
+    const current = fingerprintMigrationGeneration();
+    expect(current.workflow.shm).not.toBeNull();
+    expect(current.config).toEqual(journal.generation.config);
+    expect(current.state).toEqual(journal.generation.state);
+    expect(current.workflow.main).toEqual(journal.generation.workflow.main);
+    expect(journal.generation.workflow.wal).toBeNull();
+    expect(current.workflow.wal === null || current.workflow.wal.byteSize === 0).toBe(true);
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(fs.existsSync(workflowPath)).toBe(false);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+  }, 20_000);
+
+  test("keeps the committed cutover journal when workflow deletion fails, then retries", async () => {
+    const prepared = seed();
+    const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {
+      cwd: path.resolve(import.meta.dir, "../.."),
+      env: { ...process.env, AKM_TEST_MIGRATION_FAIL_WORKFLOW_DELETE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, , stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/forward recovery.*workflow\.db unlink failure/i);
+    expect(JSON.parse(fs.readFileSync(getMigrationApplyJournalPath(), "utf8")).phase).toBe("workflow-applied");
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(true);
+
+    const resumed = await runCliCapture(["migrate", "apply"]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(fs.existsSync(getLegacyWorkflowDbPath())).toBe(false);
+    expect(fs.existsSync(getMigrationApplyJournalPath())).toBe(false);
+  }, 20_000);
+
   test("rejects and preserves a workflow database recreated after cutover-applied", async () => {
     const prepared = seed();
     const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "apply", "--config", prepared], {

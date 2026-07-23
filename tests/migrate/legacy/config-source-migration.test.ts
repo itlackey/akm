@@ -10,6 +10,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 import { registerBuiltinAdapters } from "../../../src/core/adapter/adapters";
 import { resetAdapterRegistryForTests } from "../../../src/core/adapter/registry";
@@ -21,6 +22,7 @@ import {
   migratedLockEntries,
   oldConfigToSearchSources,
 } from "../../../src/migrate/legacy/config-source-migration";
+import { makeSandboxDir } from "../../_helpers/sandbox";
 
 beforeAll(() => {
   resetAdapterRegistryForTests();
@@ -130,5 +132,76 @@ describe("migrateConfigSourcesToBundles", () => {
     expect(sources.map((s) => s.registryId)).toEqual([undefined, "team", "catalog", "github:owner/repo"]);
     expect(sources[0]!.path).toBe(path.resolve("/home/u/akm"));
     expect(sources[0]!.writable).toBe(true);
+  });
+
+  test("coalesces duplicate filesystem roots before deriving bundle identity", () => {
+    const raw = {
+      configVersion: "0.9.0",
+      stashDir: "/home/u/work",
+      sources: [{ type: "filesystem", path: "/home/u/work", name: "named-work", writable: true }],
+    };
+    const migrated = migrateConfigSourcesToBundles(raw) as {
+      bundles: Record<string, Record<string, unknown>>;
+      defaultBundle: string;
+    };
+
+    expect(Object.keys(migrated.bundles)).toEqual(["named-work"]);
+    expect(migrated.defaultBundle).toBe("named-work");
+    expect(migrated.bundles["named-work"]).toEqual({ path: "/home/u/work", writable: true });
+  });
+
+  test.skipIf(process.platform === "win32")("coalesces filesystem roots that resolve through a symlink", () => {
+    const sandbox = makeSandboxDir("akm-config-source-realpath");
+    try {
+      const root = path.join(sandbox.dir, "work");
+      const alias = path.join(sandbox.dir, "work-alias");
+      fs.mkdirSync(root);
+      fs.symlinkSync(root, alias, "dir");
+      const migrated = migrateConfigSourcesToBundles({
+        configVersion: "0.9.0",
+        stashDir: root,
+        sources: [{ type: "filesystem", path: alias, name: "named-work", writable: true }],
+      }) as { bundles: Record<string, unknown>; defaultBundle: string };
+
+      expect(Object.keys(migrated.bundles)).toEqual(["named-work"]);
+      expect(migrated.defaultBundle).toBe("named-work");
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("falls back to stashDir when an explicit primary source has no usable descriptor", () => {
+    const migrated = migrateConfigSourcesToBundles({
+      configVersion: "0.9.0",
+      stashDir: "/custom/non-default/work",
+      sources: [{ type: "git", name: "broken-primary", primary: true }],
+    }) as {
+      bundles: Record<string, Record<string, unknown>>;
+      defaultBundle: string;
+    };
+
+    expect(migrated.bundles).toEqual({ work: { path: "/custom/non-default/work", writable: true } });
+    expect(migrated.defaultBundle).toBe("work");
+    expect(validateConfigShape(migrated).ok).toBe(true);
+  });
+
+  test("re-keys defaultWriteTarget through the generated bundle id", () => {
+    const migrated = migrateConfigSourcesToBundles({
+      configVersion: "0.9.0",
+      sources: [
+        {
+          type: "filesystem",
+          path: "/home/u/docs",
+          name: "my.docs",
+          primary: true,
+          writable: true,
+        },
+      ],
+      defaultWriteTarget: "my.docs",
+    }) as Record<string, unknown>;
+
+    expect(migrated.defaultBundle).toBe("docs");
+    expect(migrated.defaultWriteTarget).toBe("docs");
+    expect(validateConfigShape(migrated).ok).toBe(true);
   });
 });

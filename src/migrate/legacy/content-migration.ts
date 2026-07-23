@@ -18,12 +18,13 @@
  *     the indexer reads curated frontmatter for `.md` files only
  *     ({@link applyCuratedFrontmatter} runs on `ext === ".md"`), and prepending a
  *     `---` block to a shell/script/env asset would corrupt it — non-markdown
- *     entries are counted + logged, never rewritten.
+ *     entries are counted + logged, never rewritten. A sidecar is deleted only
+ *     after every entry folds successfully; otherwise its source bytes remain.
  *  2. **D-R6 reserved-filename conformance.** OKF reserves `index.md`/`log.md` as
  *     bundle structure at every depth (never concept documents). A pre-existing
- *     stash file so named that actually carries akm ASSET frontmatter (a
- *     `description`/`when_to_use`-bearing concept mis-placed under a reserved
- *     name) is renamed to a collision-safe reported name (`index-content.md`,
+ *     stash file so named that the frozen layout treated as an asset (or that
+ *     carries explicit asset frontmatter outside a canonical type root) is
+ *     renamed to a collision-safe reported name (`index-content.md`,
  *     `log-content.md`, appending `-2`/`-3`/… on collision) so the akm adapter's
  *     new reserved-file exclusion never silently drops it. A structural
  *     `index.md`/`log.md` (no asset frontmatter) is left in place.
@@ -55,7 +56,8 @@ import type { IndexDocument } from "../../core/adapter/types";
 import { mutateFrontmatter, parseFrontmatter } from "../../core/asset/frontmatter";
 import { asNonEmptyString } from "../../core/common";
 import { warn } from "../../core/warn";
-import { legacyStashFilePath, readLegacyStashOverrides } from "./legacy-stash-json";
+import { isRelevantAssetFile, TYPE_DIRS } from "./legacy-layout";
+import { inspectLegacyStashOverrides, legacyStashFilePath } from "./legacy-stash-json";
 
 /** A single D-R6 reserved-filename rename, recorded in the step report. */
 export interface ReservedRename {
@@ -188,7 +190,7 @@ export function runContentMigration(stashRoots: readonly string[]): ContentMigra
     seen.add(resolved);
     const dirs = collectDirs(resolved);
     for (const dir of dirs) foldSidecarInDir(dir, report);
-    for (const dir of dirs) renameReservedConceptsInDir(dir, report);
+    for (const dir of dirs) renameReservedConceptsInDir(resolved, dir, report);
     for (const dir of dirs) rewriteSourceBackrefsInDir(dir, report);
   }
   return report;
@@ -243,8 +245,17 @@ function foldSidecarInDir(dir: string, report: ContentMigrationReport): void {
   const sidecarPath = legacyStashFilePath(dir);
   if (!fs.existsSync(sidecarPath)) return;
   try {
-    const overrides = readLegacyStashOverrides(dir);
-    for (const entry of overrides?.entries ?? []) foldEntry(dir, entry, report);
+    const inspected = inspectLegacyStashOverrides(dir);
+    if (inspected.status !== "valid") {
+      warn(`[akm] content-migration: retained unreadable sidecar ${sidecarPath}.`);
+      return;
+    }
+    let complete = inspected.complete;
+    for (const entry of inspected.stash.entries) complete = foldEntry(dir, entry, report) && complete;
+    if (!complete) {
+      warn(`[akm] content-migration: retained partially migrated sidecar ${sidecarPath}.`);
+      return;
+    }
     fs.rmSync(sidecarPath, { force: true });
     report.sidecarsFolded++;
   } catch (error) {
@@ -253,22 +264,34 @@ function foldSidecarInDir(dir: string, report: ContentMigrationReport): void {
 }
 
 /** Fold one sidecar entry into its target markdown file's frontmatter. */
-function foldEntry(dir: string, entry: IndexDocument, report: ContentMigrationReport): void {
+function foldEntry(dir: string, entry: IndexDocument, report: ContentMigrationReport): boolean {
   if (!entry.filename) {
     report.entriesSkipped++;
-    return;
+    return false;
   }
-  const target = path.join(dir, entry.filename);
+  const target = path.resolve(dir, entry.filename);
+  const relative = path.relative(path.resolve(dir), target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    report.entriesSkipped++;
+    return false;
+  }
   if (!fs.existsSync(target) || path.extname(target).toLowerCase() !== ".md") {
     report.entriesSkipped++;
-    return;
+    return false;
   }
   try {
+    const realRelative = path.relative(fs.realpathSync(dir), fs.realpathSync(target));
+    if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      report.entriesSkipped++;
+      return false;
+    }
     mutateFrontmatter(target, (parsed) => foldCuratedFields(parsed.data, entry));
     report.entriesFolded++;
+    return true;
   } catch (error) {
     report.entriesSkipped++;
     warn(`[akm] content-migration: could not fold entry into ${target}: ${errMsg(error)}`);
+    return false;
   }
 }
 
@@ -284,7 +307,7 @@ function foldCuratedFields(existing: Record<string, unknown>, entry: IndexDocume
 }
 
 /** D-R6: rename any mis-named reserved-filename concept in `dir` to a collision-safe name. */
-function renameReservedConceptsInDir(dir: string, report: ContentMigrationReport): void {
+function renameReservedConceptsInDir(root: string, dir: string, report: ContentMigrationReport): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -295,13 +318,32 @@ function renameReservedConceptsInDir(dir: string, report: ContentMigrationReport
     if (!entry.isFile() || !RESERVED_BASENAMES.has(entry.name.toLowerCase())) continue;
     const filePath = path.join(dir, entry.name);
     try {
-      if (!carriesAssetFrontmatter(filePath)) continue;
+      const legacyType = legacyTypeForDirectory(root, dir);
+      if (legacyType === "wiki") continue;
+      if (!carriesAssetFrontmatter(filePath) && !(legacyType && isRelevantAssetFile(legacyType, entry.name))) continue;
       const target = collisionSafeTarget(dir, entry.name);
       fs.renameSync(filePath, target);
       report.reservedRenames.push({ from: filePath, to: target });
     } catch (error) {
       warn(`[akm] content-migration: could not rename reserved file ${filePath}: ${errMsg(error)}`);
     }
+  }
+}
+
+function legacyTypeForDirectory(root: string, dir: string): string | undefined {
+  const [top] = path.relative(root, dir).split(path.sep);
+  if (!top || top === "..") return undefined;
+  const exact = Object.entries(TYPE_DIRS).find(([, typeDir]) => typeDir === top)?.[0];
+  if (exact) return exact;
+  const actualRoot = path.join(root, top);
+  try {
+    const actualIdentity = fs.realpathSync(actualRoot);
+    return Object.entries(TYPE_DIRS).find(([, typeDir]) => {
+      const canonicalRoot = path.join(root, typeDir);
+      return fs.existsSync(canonicalRoot) && fs.realpathSync(canonicalRoot) === actualIdentity;
+    })?.[0];
+  } catch {
+    return undefined;
   }
 }
 

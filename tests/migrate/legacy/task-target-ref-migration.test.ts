@@ -98,7 +98,7 @@ test("resolves an origin-qualified legacy target to the configured bundle id", (
   }
 });
 
-test("fails closed for ambiguous or missing legacy workflow targets", () => {
+test("fails closed for ambiguous origins but rewrites a stale missing workflow target", () => {
   const sandbox = makeSandboxDir("akm-task-target-fail-closed-unit");
   try {
     const stash = path.join(sandbox.dir, "stash");
@@ -124,16 +124,44 @@ test("fails closed for ambiguous or missing legacy workflow targets", () => {
       path.join(stash, "tasks", "ambiguous.yml"),
       'schedule: "@daily"\nworkflow: workflow:missing\nenabled: true\n',
     );
-    const planMissing = () =>
-      planTaskTargetRefMigration(
-        configFor({
-          stash: { path: stash, writable: true },
-          first: { path: first },
-          second: { path: second },
-        }),
-      );
-    expect(planMissing).toThrow(/workflow:missing.*not found/i);
-    expect(planMissing).toThrow(/ambiguous\.yml.*rerun `akm migrate apply`/i);
+    const planMissing = planTaskTargetRefMigration(
+      configFor({
+        stash: { path: stash, writable: true },
+        first: { path: first },
+        second: { path: second },
+      }),
+    );
+    expect(planMissing.rewrites).toHaveLength(1);
+    expect(planMissing.rewrites[0]).toMatchObject({ from: "workflow:missing", to: "workflows/missing" });
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test("rewrites plain origin-qualified targets containing @ or #", () => {
+  const sandbox = makeSandboxDir("akm-task-target-origin-scalars-unit");
+  try {
+    const stash = path.join(sandbox.dir, "stash");
+    const pkg = path.join(sandbox.dir, "pkg");
+    const team = path.join(sandbox.dir, "team");
+    writeBundle(stash, "unused", {
+      npm: "workflow: npm:@scope/pkg//workflow:ship\n",
+      github: "workflow: github:owner/repo#v1//workflow:ship\n",
+    });
+    writeBundle(pkg, "ship", {});
+    writeBundle(team, "ship", {});
+
+    const plan = planTaskTargetRefMigration(
+      configFor({
+        stash: { path: stash, writable: true },
+        pkg: { path: pkg, registryId: "npm:@scope/pkg" },
+        team: { path: team, registryId: "github:owner/repo#v1" },
+      }),
+    );
+    expect(plan.rewrites.map(({ from, to }) => ({ from, to }))).toEqual([
+      { from: "github:owner/repo#v1//workflow:ship", to: "team//workflows/ship" },
+      { from: "npm:@scope/pkg//workflow:ship", to: "pkg//workflows/ship" },
+    ]);
   } finally {
     sandbox.cleanup();
   }

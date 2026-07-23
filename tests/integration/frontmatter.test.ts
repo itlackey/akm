@@ -274,6 +274,16 @@ describe("mutateFrontmatter", () => {
     expect(wrote).toBe(false);
     expect(fs.readFileSync(filePath, "utf8")).toBe(original);
   });
+
+  test("refuses to serialize a lenient parse of malformed frontmatter", () => {
+    const original = '---\nsource: memory:parent\ntitle: "unterminated\ntags:\n  - keep-me\n---\nBody.\n';
+    const filePath = writeTmpFile(original);
+
+    expect(() => mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, source: "memories/parent" }))).toThrow(
+      /malformed YAML frontmatter/i,
+    );
+    expect(fs.readFileSync(filePath, "utf8")).toBe(original);
+  });
 });
 
 // ── parseYamlScalar ─────────────────────────────────────────────────────────

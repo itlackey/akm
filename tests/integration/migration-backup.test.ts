@@ -474,7 +474,7 @@ describe("0.9 migration backup", () => {
     restored.close();
   });
 
-  test("an absent or corrupt index.db never blocks the backup — recorded absent", () => {
+  test("an absent index is recorded absent and a corrupt index blocks backup", () => {
     seedLegacyConfig();
     fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
     const state = new Database(getStateDbPathInDataDir());
@@ -488,12 +488,37 @@ describe("0.9 migration backup", () => {
     expect(absent.manifest.artifacts["index.db"]?.status).toBe("missing");
     expect(fs.existsSync(path.join(absent.path, "index.db"))).toBe(false);
 
-    // Corrupt index.db → excluded from the backup (regenerable cache), not fatal.
+    // index.db contains usage_events that are durable until cutover rescue, so a
+    // physically present but corrupt file must not be represented as absent.
     fs.mkdirSync(path.dirname(getDbPath()), { recursive: true });
     fs.writeFileSync(getDbPath(), "this is not a sqlite database");
-    const corrupt = createMigrationBackup();
-    expect(corrupt.manifest.artifacts["index.db"]?.present).toBe(false);
-    expect(corrupt.manifest.artifacts["index.db"]?.status).toBe("missing");
-    expect(fs.existsSync(path.join(corrupt.path, "index.db"))).toBe(false);
+    expect(() => createMigrationBackup()).toThrow(/index\.db=corrupt/i);
+    expect(fs.readFileSync(getDbPath(), "utf8")).toBe("this is not a sqlite database");
+  });
+
+  test("restore preserves a corrupt live index in its verified rescue run", () => {
+    seedLegacyConfig();
+    fs.mkdirSync(path.dirname(getStateDbPathInDataDir()), { recursive: true });
+    const state = new Database(getStateDbPathInDataDir());
+    state.exec("CREATE TABLE durable(value TEXT); INSERT INTO durable VALUES ('before')");
+    state.close();
+    const index = new Database(getDbPath());
+    index.exec("CREATE TABLE usage_events(entry_ref TEXT); INSERT INTO usage_events VALUES ('memories/before')");
+    index.close();
+    const good = createMigrationBackup();
+
+    const corruptBytes = Buffer.from("corrupt live index that must survive rescue");
+    fs.writeFileSync(getDbPath(), corruptBytes);
+    const restored = restoreMigrationBackup(true, good.manifest.runId);
+
+    const live = new Database(getDbPath(), { readonly: true });
+    expect(live.prepare("SELECT entry_ref FROM usage_events").get()).toEqual({ entry_ref: "memories/before" });
+    live.close();
+    expect(restored.rescuePath).toBeDefined();
+    const rescuePath = restored.rescuePath;
+    if (!rescuePath) throw new Error("restore did not create its rescue backup");
+    const rescue = verifyMigrationBackup(rescuePath);
+    expect(rescue.artifacts["index.db"]?.status).toBe("corrupt");
+    expect(fs.readFileSync(path.join(rescuePath, "index.db"))).toEqual(corruptBytes);
   });
 });
