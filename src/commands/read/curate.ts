@@ -50,6 +50,9 @@ export type CuratedStashItem = {
   type: string;
   name: string;
   ref: string;
+  path: string;
+  editable: boolean;
+  editHint?: string;
   description?: string;
   preview?: string;
   keys?: string[];
@@ -310,6 +313,11 @@ async function enrichCuratedStashHit(
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
     ref: hit.ref,
+    path: shown?.path ?? hit.path,
+    editable: shown?.editable ?? hit.editable ?? false,
+    ...((shown?.editable ?? hit.editable ?? false) === false
+      ? { editHint: shown?.editHint ?? hit.editHint ?? `This asset is read-only. Inspect it with: akm show ${hit.ref}` }
+      : {}),
     ...(description ? { description } : {}),
     ...(preview ? { preview } : {}),
     ...(shown?.keys?.length ? { keys: shown.keys } : {}),

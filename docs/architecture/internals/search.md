@@ -196,16 +196,21 @@ always works, even before `akm index` has been run.
 ### Standard output
 
 By default (`--format json`, `--detail brief`), search emits minimal fields:
-`type`, `name`, `action`, and `estimatedTokens`.
+`type`, `name`, `ref`, `action`, and `estimatedTokens`.
 
-`--detail normal` adds `description`, `score`, `ref`, and `tags`.
+`--detail normal` emits `type`, `name`, `description`, `action`, `score`, and
+`estimatedTokens`, plus optional warning, quality, or env-key fields.
 `--detail full` adds `whyMatched`, `origin`, `path`, and timing data.
 `--shape summary` returns metadata only (no content), under 200 tokens.
 
 ### Agent-optimized output
 
-`--shape agent` strips non-actionable fields, keeping only: `name`, `ref`,
-`type`, `description`, `action`, `score`.
+For each materialized local hit, `--shape agent` includes `name`, canonical
+`ref`, `type`, absolute `path`, current-policy `editable`, `description`,
+`action`, `score`, and optional `estimatedTokens`/env keys. `editHint` appears
+only when `editable` is `false`. The hint is supplemental: `action` remains the
+normal show, run, or use action. Registry-only hits do not acquire local access
+fields.
 
 `--format jsonl` outputs one JSON object per line for streaming consumption.
 

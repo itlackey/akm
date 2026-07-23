@@ -84,7 +84,7 @@ describe("remember --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memories/pinned-context-for-the-rollout");
+    expect(json.ref).toBe("writable-target//memories/pinned-context-for-the-rollout");
 
     // The memory must land in the explicit target — NOT the working stash.
     const expectedPath = path.join(targetDir, "memories", "pinned-context-for-the-rollout.md");
@@ -147,7 +147,7 @@ describe("remember --target", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe("memories/pinned-note-for-secondary-stash");
+    expect(json.ref).toBe("secondary//memories/pinned-note-for-secondary-stash");
 
     // Must land in the explicit secondary stash, NOT the working stash.
     const expectedPath = path.join(secondaryDir, "memories", "pinned-note-for-secondary-stash.md");

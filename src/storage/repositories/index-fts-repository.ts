@@ -72,7 +72,7 @@ function runFtsQuery(
 
   const sql = `
     SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
-           e.item_ref AS itemRef,
+           e.item_ref AS itemRef, e.bundle_id AS bundleId, e.concept_id AS conceptId,
            bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
     FROM entries_fts f
     JOIN entries e ON e.id = f.entry_id
@@ -89,6 +89,8 @@ function runFtsQuery(
       entry_json: string;
       searchText: string;
       itemRef: string | null;
+      bundleId: string | null;
+      conceptId: string | null;
       bm25Score: number;
     }>;
 
@@ -109,6 +111,8 @@ function runFtsQuery(
         searchText: row.searchText,
         bm25Score: row.bm25Score,
         itemRef: row.itemRef,
+        bundleId: row.bundleId,
+        conceptId: row.conceptId,
       });
     }
     return results;

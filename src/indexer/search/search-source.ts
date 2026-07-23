@@ -5,12 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isSourceWriteActivated } from "../../core/activation-policy";
-import { displayRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { bundlesToSourceEntries, getSources, loadConfig } from "../../core/config/config";
-import { resolveGitContentRoot } from "../../core/write-source";
-import { lockContentRootFor, readLockfile } from "../../integrations/lockfile";
+import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
+import { lockContentRootFor } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -28,14 +27,10 @@ export interface SearchSource {
   path: string;
   /** For installed sources, the installed stash id */
   registryId?: string;
-  /**
-   * Whether this source accepts writes. The primary stash is always writable.
-   * Filesystem/git sources with `writable: true` in config are also writable.
-   * Registry-cached sources (installed without writable: true) are read-only.
-   * The write-activation decision itself lives in the workspace activation
-   * policy — see `isSourceWriteActivated` in `core/activation-policy.ts`.
-   */
+  /** Effective policy after applying `resolveWritable`. */
   writable?: boolean;
+  /** Configured provider kind when this source has a config owner. */
+  type?: SourceConfigEntry["type"];
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -59,11 +54,17 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   const stashDir = overrideStashDir ?? resolveStashDir();
   const config = existingConfig ?? loadConfig();
 
-  // Primary stash is always writable.
-  const sources: SearchSource[] = [{ path: stashDir, writable: true }];
+  // The implicit working stash is writable unless a configured source below
+  // claims the same root and supplies its canonical policy.
+  const sources: SearchSource[] = [{ path: path.resolve(stashDir), writable: true }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
-  const addSource = (dir: string, registryId?: string, writable?: boolean) => {
+  const addSource = (
+    dir: string,
+    registryId: string | undefined,
+    writable: boolean,
+    type: SourceConfigEntry["type"],
+  ) => {
     const resolved = path.resolve(dir);
     if (seen.has(resolved)) {
       // Already in the source list — typically the primary stash injected at
@@ -73,9 +74,10 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       // identity-less and a user-named primary source ("name": "my-stash")
       // would validate but match zero entries when filtering.
       const existing = sources.find((s) => s.path === resolved);
-      if (existing) {
-        if (registryId && !existing.registryId) existing.registryId = registryId;
-        if (writable && !existing.writable) existing.writable = true;
+      if (existing && existing.type === undefined) {
+        if (registryId) existing.registryId = registryId;
+        existing.type = type;
+        existing.writable = writable;
       }
       return;
     }
@@ -87,7 +89,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       sources.push({
         path: resolved,
         ...(registryId ? { registryId } : {}),
-        ...(writable ? { writable: true } : {}),
+        writable,
+        type,
       });
     }
   };
@@ -102,7 +105,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     if (entry.enabled === false) continue;
     const dir = resolveEntryContentDir(entry);
     if (dir == null) continue;
-    addSource(dir, entry.name, entry.writable === true);
+    addSource(dir, entry.name, resolveWritable(entry), entry.type);
   }
 
   return sources;
@@ -183,11 +186,6 @@ export function resolveAllStashDirs(overrideStashDir?: string): string[] {
 
 /**
  * Return the resolved absolute paths of all writable stash sources.
- *
- * The primary stash is always writable. Filesystem/git sources that have
- * `writable: true` in config are also included. Registry-cached sources
- * (installed without `writable: true`) are excluded because they are
- * overwritten on `akm update` and must never be mutated.
  */
 export function getWritableStashDirs(overrideStashDir?: string, existingConfig?: AkmConfig): string[] {
   return resolveSourceEntries(overrideStashDir, existingConfig)
@@ -230,37 +228,14 @@ export function getPrimarySource(sources: SearchSource[]): SearchSource | undefi
 // ── Editability ─────────────────────────────────────────────────────────────
 
 /**
- * Determine whether a file is safe to edit in place.
- *
- * 0.9.0 (spec §10.2 / Decision D): the files that are NOT editable are those
- * under a bundle's materialized cache root (the lock's `localRoot`) whose bundle
- * is not explicitly `writable` — `akm update` overwrites them without warning.
- * The read-only decision is re-expressed via bundle `writable` + lock `localRoot`
- * (replacing the retired `installed[].cacheDir` scan); a writable git/filesystem
- * bundle stays editable, and a source with no lock entry (a plain filesystem
- * bundle / local project dir) is the user's domain to manage.
+ * Determine whether AKM policy allows modifying this exact file in place.
+ * Ownership is resolved by longest source-root match and unknown ownership
+ * fails closed. Resolved sources already carry canonical `resolveWritable()`
+ * semantics; editability is never persisted in the index.
  */
-export function isEditable(filePath: string, config?: AkmConfig): boolean {
-  const cfg = config ?? loadConfig();
-  const resolved = path.resolve(filePath);
-  const isWin = process.platform === "win32";
-  const bundles = cfg.bundles ?? {};
-
-  const startsWithin = (root: string): boolean => {
-    const base = path.resolve(root);
-    return isWin
-      ? resolved.toLowerCase().startsWith(base.toLowerCase() + path.sep)
-      : resolved.startsWith(base + path.sep);
-  };
-
-  for (const lock of readLockfile()) {
-    if (!lock.localRoot) continue;
-    // The lock is keyed by bundle id, so writability comes from that bundle.
-    const writable = bundles[lock.id]?.writable === true;
-    if (!writable && startsWithin(lock.localRoot)) return false;
-  }
-
-  return true;
+export function isEditable(filePath: string, config?: AkmConfig, sources?: SearchSource[]): boolean {
+  const resolvedSources = sources ?? resolveSourceEntries(undefined, config ?? loadConfig());
+  return findSourceForPath(filePath, resolvedSources)?.writable === true;
 }
 
 /**
@@ -268,10 +243,8 @@ export function isEditable(filePath: string, config?: AkmConfig): boolean {
  * Callers must check `isEditable()` before calling — this function
  * unconditionally returns the hint string.
  */
-export function buildEditHint(_filePath: string, assetType: string, assetName: string, origin?: string): string {
-  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the clone hint.
-  const ref = displayRef({ type: assetType, name: assetName, bundleId: origin });
-  return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${ref}`;
+export function buildEditHint(ref: string): string {
+  return `This asset is read-only under current AKM source policy. To make an editable copy, run: akm clone ${ref}`;
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ import {
   type Proposal,
   resolveProposalId,
 } from "../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { importLegacyProposalsIntoState } from "../../src/migrate/legacy/proposal-fs-import";
@@ -414,6 +415,33 @@ describe("migrator legacy-import output round-trips the proposal lifecycle", () 
     expect(result.ok).toBe(true);
     expect(fs.readFileSync(result.assetPath, "utf8")).toContain("Prefer rg over grep");
     expect(getProposal(stash, id).status).toBe("accepted");
+  });
+
+  test("legacy origin-qualified refs migrate for current filtering and bound acceptance", async () => {
+    const primary = makeStashDir();
+    const team = makeStashDir();
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const legacyRef = `team//${"lesson"}:legacy-origin`;
+    writeLegacyProposal(team, legacyRecord(id, legacyRef, "pending"));
+    expect(runLegacyImport(team)).toBe(1);
+
+    expect(listProposals(team, { ref: "lessons/legacy-origin" }).map((proposal) => proposal.id)).toEqual([id]);
+    expect(listProposals(team, { ref: "team//lessons/legacy-origin" }).map((proposal) => proposal.id)).toEqual([id]);
+    const migrated = getProposal(team, id);
+    expect(migrated.ref).toBe("team//lessons/legacy-origin");
+    expect(migrated.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
+
+    const config = {
+      bundles: {
+        primary: { path: primary, writable: true },
+        team: { path: team, writable: true },
+      },
+      defaultBundle: "primary",
+      defaultWriteTarget: "primary",
+    } as unknown as AkmConfig;
+    const accepted = await akmProposalAccept({ queue: "team", id, config });
+    expect(accepted.assetPath).toBe(path.join(team, "lessons", "legacy-origin.md"));
+    expect(fs.existsSync(path.join(primary, "lessons", "legacy-origin.md"))).toBe(false);
   });
 });
 

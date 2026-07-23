@@ -116,6 +116,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
       ...(frontmatter !== undefined ? { frontmatter } : {}),
     },
     changes: storedToChanges(meta.changes, row.content),
+    ...(meta.proposedTarget !== undefined ? { proposedTarget: meta.proposedTarget as Proposal["proposedTarget"] } : {}),
     ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
@@ -149,6 +150,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   metaObj.changes = changesToStored(
     safeChanges && safeChanges.length > 0 ? safeChanges : [{ path: "", after: proposal.payload.content, op: "update" }],
   );
+  if (proposal.proposedTarget !== undefined) metaObj.proposedTarget = proposal.proposedTarget;
   if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;

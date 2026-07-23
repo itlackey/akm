@@ -47,6 +47,7 @@ import {
   mergeXrefsIntoContent,
   readKnowledgeInput,
   resolveSupersedesForWrite,
+  resolveSupersedesWriteTarget,
   resolveXrefsForWrite,
   writeMarkdownAsset,
 } from "../read/knowledge";
@@ -230,17 +231,19 @@ export const importKnowledgeCommand = defineJsonCommand({
     // the last value, so read argv directly). Validation happens BEFORE any
     // read/write so an unresolvable ref (UsageError → exit 2) leaves the
     // stash untouched.
-    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), args.target);
+    const rawSupersedes = parseAllFlagValues("--supersedes");
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.target);
+    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget);
     // Collect and validate --supersedes occurrences (repeatable). Same
     // before-any-read/write contract: an unresolvable ref exits 2 with nothing
     // imported AND nothing demoted. The superseded refs fold into the imported
     // doc's xrefs automatically (correction provenance); the demotion runs
     // inside writeMarkdownAsset, ordered before the git boundary commit.
-    const supersedes = resolveSupersedesForWrite(parseAllFlagValues("--supersedes"), args.target);
+    const supersedes = resolveSupersedesForWrite(rawSupersedes, writeTarget);
     for (const s of supersedes) {
       if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
     }
-    const stashDir = resolveWriteTarget(loadConfig(), args.target).source.path;
+    const stashDir = resolveWriteTarget(loadConfig(), writeTarget).source.path;
     const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
     // Imported docs may carry their own frontmatter: merge (dedupe-append)
     // BEFORE the write so write-path indexing sees the final content and no
@@ -261,7 +264,7 @@ export const importKnowledgeCommand = defineJsonCommand({
       fallbackPrefix: "knowledge",
       preferredName: preferredName ?? inferAssetName(parseFrontmatter(content).content, "knowledge"),
       force: args.force,
-      target: args.target,
+      target: writeTarget,
       path: args.path,
       supersedes,
     });

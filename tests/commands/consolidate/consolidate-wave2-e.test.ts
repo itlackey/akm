@@ -48,11 +48,10 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
     expect(out).toHaveProperty("editHint");
   });
 
-  test("agent mode does NOT expose path (security: keep in non-agent shape only)", () => {
+  test("agent mode exposes exact local access information", () => {
     const out = shapeShowOutput(showResult as Record<string, unknown>, "normal", /* shape */ "agent");
-    // Agent mode picks a minimal subset; path is not in that subset
-    expect(out.editable).toBeUndefined();
-    expect(out.path).toBeUndefined();
+    expect(out.editable).toBe(true);
+    expect(out.path).toBe("/home/user/stash/skills/deploy/SKILL.md");
   });
 });
 

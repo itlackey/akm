@@ -20,6 +20,7 @@ import {
   assertFlatAssetName,
   inferAssetName,
   resolveSupersedesForWrite,
+  resolveSupersedesWriteTarget,
   resolveXrefsForWrite,
   writeMarkdownAsset,
 } from "./knowledge";
@@ -159,7 +160,9 @@ export const rememberCommand = defineJsonCommand({
     // input validation (UsageError → exit 2) and must leave the stash
     // untouched. Refs resolvable only in a configured extra stash source are
     // accepted (cross-stash provenance).
-    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), args.target);
+    const rawSupersedes = parseAllFlagValues("--supersedes");
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.target);
+    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget);
 
     // Collect and validate --supersedes occurrences (repeatable). Same
     // before-any-write validation contract: an unresolvable ref exits 2 with
@@ -168,7 +171,7 @@ export const rememberCommand = defineJsonCommand({
     // (correction provenance per the back-linking conventions); the demotion
     // itself runs inside writeMarkdownAsset, ordered before the git boundary
     // commit.
-    const supersedes = resolveSupersedesForWrite(parseAllFlagValues("--supersedes"), args.target);
+    const supersedes = resolveSupersedesForWrite(rawSupersedes, writeTarget);
     for (const s of supersedes) {
       if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
     }
@@ -207,7 +210,7 @@ export const rememberCommand = defineJsonCommand({
         fallbackPrefix: "memory",
         preferredName: inferAssetName(body, "memory"),
         force: args.force,
-        target: args.target,
+        target: writeTarget,
         path: args.path,
         supersedes,
       });
@@ -312,7 +315,7 @@ export const rememberCommand = defineJsonCommand({
       fallbackPrefix: "memory",
       preferredName: inferAssetName(body, "memory"),
       force: args.force,
-      target: args.target,
+      target: writeTarget,
       path: args.path,
       supersedes,
     });

@@ -53,7 +53,7 @@ import { isBundleSlug } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import {
@@ -203,6 +203,15 @@ export interface ProposalsContext {
 
 export interface CreateProposalInput {
   ref: string;
+  /**
+   * Stable destination identity for the proposal. Callers creating proposals
+   * in a named queue should pass the resolved source name and materialized root
+   * rather than relying on path-derived bundle identity.
+   */
+  target?: {
+    source: string;
+    root: string;
+  };
   /**
    * Origin tag identifying the source subsystem (F-4 / #385).
    *
@@ -361,43 +370,35 @@ function withProposalsDb<T>(_stashDir: string, ctx: ProposalsContext | undefined
  * `local`/`stash` primary-stash sentinels resolve to the write-target bundle.
  */
 /**
- * The conceptId (`<stash-subdir>/<name>`) a STORED proposal ref maps to
- * (`undefined` when unparseable). TOLERANT by design: a single malformed durable
- * row must never crash a listing, so a parse failure here degrades to "no match"
- * rather than throwing. WI-8.5a stores `proposals.ref` as the item_ref, so a
- * user query ref (`lessons/x` / `bundle//lessons/x`) can no longer exact-match
- * the stored `bundle//lessons/x`; matching on the shared conceptId is the durable
- * read for the user-facing filter paths (`proposal list --ref`,
- * `resolveProposalId`). The internal fingerprint/backoff paths keep exact
- * `ref`-column matching (they compare the already-final `normalizedRef`), so old
- * legacy rejected rows aging out is the documented dedup-window reset, not a
- * lookup regression.
- *
- * USER-SUPPLIED filter refs go through {@link filterConceptId} instead — an
- * unparseable filter is a loud usage error, never a silent empty result.
+ * Parse a user-supplied `--ref` / `idOrRef` filter. Qualified filters retain
+ * their bundle instead of collapsing to the concept id, while short filters
+ * intentionally match that concept in the selected queue. Invalid filters fail
+ * loudly with the current ref grammar.
  */
-function proposalConceptId(ref: string): string | undefined {
+interface ProposalRefIdentity {
+  conceptId: string;
+  bundle?: string;
+}
+
+function proposalRefIdentity(ref: string): ProposalRefIdentity | undefined {
   try {
-    const p = parseRefInput(ref);
-    return conceptIdFromTypeName(p.type, p.name);
+    const parsed = parseRefInput(ref);
+    return {
+      conceptId: conceptIdFromTypeName(parsed.type, parsed.name),
+      ...(parsed.origin !== undefined ? { bundle: parsed.origin } : {}),
+    };
   } catch {
     return undefined;
   }
 }
 
-/**
- * The conceptId a USER-SUPPLIED `--ref` / `idOrRef` filter maps to. Unlike the
- * tolerant {@link proposalConceptId} (which reads STORED rows), an unparseable
- * filter throws a typed {@link UsageError} rather than resolving to `undefined`
- * and silently matching nothing — an invalid filter should fail loudly, naming
- * the 0.9.0 grammar (D-R3: the legacy `type:name` grammar is gone). Delegates the
- * grammar to `parseRefInput`, so a legacy `skill:x` input surfaces the same loud
- * error as any other unparseable filter.
- */
-function filterConceptId(ref: string): string {
+function filterRefIdentity(ref: string): ProposalRefIdentity {
   try {
     const p = parseRefInput(ref);
-    return conceptIdFromTypeName(p.type, p.name);
+    return {
+      conceptId: conceptIdFromTypeName(p.type, p.name),
+      ...(p.origin !== undefined ? { bundle: p.origin } : {}),
+    };
   } catch {
     throw new UsageError(
       `Invalid asset-ref filter "${ref}". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
@@ -406,14 +407,54 @@ function filterConceptId(ref: string): string {
   }
 }
 
-function proposalDurableRef(parsedRef: AssetRef, stashDir: string): string {
+function proposalMatchesRef(proposalRef: string, filter: ProposalRefIdentity): boolean {
+  const proposal = proposalRefIdentity(proposalRef);
+  return (
+    proposal !== undefined &&
+    proposal.conceptId === filter.conceptId &&
+    (filter.bundle === undefined || proposal.bundle === filter.bundle)
+  );
+}
+
+function proposalDurableRef(parsedRef: AssetRef, stashDir: string, target?: CreateProposalInput["target"]): string {
   const conceptId = conceptIdFromTypeName(parsedRef.type, parsedRef.name);
   const { origin } = parsedRef;
   if (origin !== undefined && origin !== "local" && origin !== "stash") {
+    if (target && target.source !== origin) {
+      throw new UsageError(
+        `Proposal ref bundle "${origin}" conflicts with target source "${target.source}".`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
     return isBundleSlug(origin) ? `${origin}//${conceptId}` : `${origin}//${parsedRef.type}:${parsedRef.name}`; // WI-8.5b: collapse (non-slug registry origin)
+  }
+  if (target) {
+    if (!isBundleSlug(target.source)) {
+      throw new UsageError(
+        `Proposal target source "${target.source}" is not a valid bundle name.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    return `${target.source}//${conceptId}`;
   }
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
   return `${bundleId}//${conceptId}`;
+}
+
+/** Bind unqualified proposals created directly in a configured secondary queue. */
+function inferSecondaryProposalTarget(stashDir: string): CreateProposalInput["target"] | undefined {
+  try {
+    const config = loadConfig();
+    const target = resolveWritableTargets(config).find(
+      (candidate) => path.resolve(candidate.source.path) === path.resolve(stashDir),
+    );
+    if (!target || target.source.name === "stash" || target.source.name === config.defaultBundle) return undefined;
+    return { source: target.source.name, root: target.source.path };
+  } catch (error) {
+    rethrowIfTestIsolationError(error);
+    // Proposal creation historically did not require a resolvable config.
+    return undefined;
+  }
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -506,7 +547,9 @@ export function createProposal(
     }
   }
 
-  const normalizedRef = proposalDurableRef(parsedRef, stashDir); // durable proposal.ref (WI-8.5a item_ref flip)
+  const proposalTarget = input.target ?? inferSecondaryProposalTarget(stashDir);
+  const normalizedRef = proposalDurableRef(parsedRef, stashDir, proposalTarget); // durable proposal.ref (WI-8.5a item_ref flip)
+  const targetRoot = path.resolve(proposalTarget?.root ?? stashDir);
 
   // WI-6.2: derive the FileChange[] envelope + mint-time beforeHash. The
   // target is resolved against the proposal's OWN stash (a local snapshot —
@@ -516,9 +559,9 @@ export function createProposal(
   let targetRelPath: string;
   let mintBeforeContent: string | undefined;
   try {
-    const typeRoot = path.join(stashDir, stashDirFor(parsedRef.type) as string);
+    const typeRoot = path.join(targetRoot, stashDirFor(parsedRef.type) as string);
     const targetAbs = assetPathForName(parsedRef.type, typeRoot, parsedRef.name);
-    targetRelPath = path.relative(stashDir, targetAbs);
+    targetRelPath = path.relative(targetRoot, targetAbs);
     if (fs.existsSync(targetAbs)) mintBeforeContent = fs.readFileSync(targetAbs, "utf8");
   } catch {
     // Resolution failure degrades to a best-effort create — never blocks the mint.
@@ -573,6 +616,11 @@ export function createProposal(
           ...(input.payload.frontmatter !== undefined ? { frontmatter: input.payload.frontmatter } : {}),
         },
         changes: mintedChanges,
+        ...(proposalTarget
+          ? { proposedTarget: { source: proposalTarget.source, root: targetRoot } }
+          : parsedRef.origin !== undefined && parsedRef.origin !== "local" && parsedRef.origin !== "stash"
+            ? { proposedTarget: { source: parsedRef.origin, root: path.resolve(stashDir) } }
+            : {}),
         ...(mintedBeforeHash !== undefined ? { beforeHash: mintedBeforeHash } : {}),
         ...(sanitizedConfidence !== undefined ? { confidence: sanitizedConfidence } : {}),
         // Attribution tagging: persist the eligibility lane so it survives to
@@ -719,15 +767,15 @@ export function listProposals(
       return [];
     }
     const status = options.includeArchive ? options.status : "pending";
-    // WI-8.5a: the `ref` filter matches by conceptId (grammar-independent) so a
-    // display/legacy query ref finds the item_ref-spelled row. Applied in JS, not
-    // as a SQL `ref = ?`, since the stored spelling no longer equals the query ref.
-    const wantConceptId = options.ref !== undefined ? filterConceptId(options.ref) : undefined;
+    // Short filters match by conceptId; qualified filters additionally retain
+    // bundle identity. Applied in JS because a short query does not equal the
+    // fully-qualified stored ref.
+    const wantRef = options.ref !== undefined ? filterRefIdentity(options.ref) : undefined;
     return listStateProposals(db, {
       stashDir,
       ...(status !== undefined ? { status } : {}),
     }).filter((p) => {
-      if (options.ref !== undefined && (wantConceptId === undefined || proposalConceptId(p.ref) !== wantConceptId)) {
+      if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) {
         return false;
       }
       if (!options.type) return true;
@@ -761,7 +809,7 @@ function requireProposal(db: Database, stashDir: string, id: string): Proposal {
  *
  * Resolution order:
  *   1. Exact UUID match (existing behaviour).
- *   2. Asset ref (contains `:`) — finds the most-recent pending proposal for
+ *   2. Asset ref (contains `/`) — finds the most-recent pending proposal for
  *      that ref; falls back to archived if nothing is pending.
  *   3. UUID prefix — matches any PENDING proposal whose id starts with the
  *      given string; throws if ambiguous.
@@ -772,17 +820,15 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
     const exact = getStateProposal(db, idOrRef, stashDir);
     if (exact) return exact;
 
-    // 2. Asset ref in EITHER grammar — most recent pending, else most recent
-    // archived. WI-8.5a: match by conceptId (a UUID carries neither `:` nor `/`,
-    // so both grammars — legacy `skill:x` and new `skills/x` / `bundle//skills/x`
-    // — route here and match the item_ref-spelled stored row).
-    const wantConceptId = idOrRef.includes(":") || idOrRef.includes("/") ? filterConceptId(idOrRef) : undefined;
-    if (wantConceptId !== undefined) {
+    // 2. Asset ref — most recent pending, else most recent archived. Qualified
+    // refs retain bundle identity; short refs match by conceptId in this queue.
+    const wantRef = idOrRef.includes(":") || idOrRef.includes("/") ? filterRefIdentity(idOrRef) : undefined;
+    if (wantRef !== undefined) {
       const byRecency = (proposals: Proposal[]): Proposal | undefined =>
         proposals.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
       const forConcept = (status?: string): Proposal[] =>
-        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter(
-          (p) => proposalConceptId(p.ref) === wantConceptId,
+        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) =>
+          proposalMatchesRef(p.ref, wantRef),
         );
       const pending = byRecency(forConcept("pending"));
       if (pending) return pending;
@@ -1567,6 +1613,52 @@ export interface PromoteResult {
   ref: string;
 }
 
+function resolveRecordedProposalTarget(
+  config: AkmConfig,
+  proposalId: string,
+  binding: { source: string; root: string },
+  explicitTarget?: string,
+): ResolvedWriteTarget {
+  const target = explicitTarget
+    ? resolveWriteTarget(config, explicitTarget)
+    : resolveWritableTargets(config).find(
+        (candidate) =>
+          candidate.source.name === binding.source &&
+          path.resolve(candidate.source.path) === path.resolve(binding.root),
+      );
+  if (!target) {
+    throw new UsageError(
+      `Proposal ${proposalId} is bound to target "${binding.source}" at ${binding.root}, but that writable target is no longer configured.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (target.source.name !== binding.source || path.resolve(target.source.path) !== path.resolve(binding.root)) {
+    throw new UsageError(
+      `Proposal ${proposalId} is bound to target "${binding.source}" at ${binding.root}; ` +
+        `--target "${explicitTarget}" resolves to "${target.source.name}" at ${target.source.path}.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return target;
+}
+
+function resolveProposalWriteTarget(
+  config: AkmConfig,
+  proposal: Proposal,
+  explicitTarget?: string,
+  queueTarget?: ResolvedWriteTarget,
+): ResolvedWriteTarget {
+  if (proposal.proposedTarget) {
+    return resolveRecordedProposalTarget(config, proposal.id, proposal.proposedTarget, explicitTarget);
+  }
+  if (explicitTarget) return resolveWriteTarget(config, explicitTarget);
+  if (queueTarget) return queueTarget;
+  // A caller-provided stashDir identifies storage, not a write destination.
+  // Named queues pass queueTarget explicitly; legacy unbound proposals retain
+  // the normal defaultWriteTarget -> working-stash resolution chain.
+  return resolveWriteTarget(config, explicitTarget);
+}
+
 /**
  * Validate a proposal, then promote it through the canonical
  * {@link writeAssetToSource} dispatch (the single place that branches on
@@ -1583,7 +1675,7 @@ export async function promoteProposal(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string; eventMetadata?: Record<string, unknown> } = {},
+  options: { target?: string; queueTarget?: ResolvedWriteTarget; eventMetadata?: Record<string, unknown> } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
   return withAssetMutationLease("proposal-accept", () => promoteProposalWithLease(stashDir, config, id, options, ctx));
@@ -1593,7 +1685,7 @@ async function promoteProposalWithLease(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string; eventMetadata?: Record<string, unknown> },
+  options: { target?: string; queueTarget?: ResolvedWriteTarget; eventMetadata?: Record<string, unknown> },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
   let proposal = getProposal(stashDir, id, ctx);
@@ -1634,7 +1726,7 @@ async function promoteProposalWithLease(
 
   await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
   proposal = getProposal(stashDir, id, ctx);
-  const target = resolveWriteTarget(config, options.target);
+  const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   await recoverTxnsForRoot(target.source.path, (journal) => journal.kind === "mv");
   if (proposal.status === "accepted" && proposal.acceptedContentHash) {
     const assetPath = resolveAssetFilePathSafe(target.source, ref);
@@ -1727,7 +1819,7 @@ export async function revertProposal(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string } = {},
+  options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
   return withAssetMutationLease("proposal-revert", () => revertProposalWithLease(stashDir, config, id, options, ctx));
@@ -1737,7 +1829,7 @@ async function revertProposalWithLease(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string },
+  options: { target?: string; queueTarget?: ResolvedWriteTarget },
   ctx?: ProposalsContext,
 ): Promise<RevertResult> {
   let proposal = getProposal(stashDir, id, ctx);
@@ -1749,14 +1841,15 @@ async function revertProposalWithLease(
   await recoverProposalTransactionsForStash(stashDir, config, ctx, id);
   proposal = getProposal(stashDir, id, ctx);
   if (proposal.status === "reverted") {
-    if (options.target) resolveWriteTarget(config, options.target);
     const target = proposal.legacyAcceptedTargetDerived
       ? resolveWritableTargets(config).find(
           (candidate) =>
             candidate.source.name === proposal.acceptedTarget?.source &&
             path.resolve(candidate.source.path) === path.resolve(proposal.acceptedTarget?.root ?? ""),
         )
-      : resolveWriteTarget(config, options.target);
+      : proposal.acceptedTarget
+        ? resolveRecordedProposalTarget(config, id, proposal.acceptedTarget, options.target)
+        : resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
     const requestedAssetPath = target ? resolveAssetFilePathSafe(target.source, ref) : undefined;
     if (
       !target ||
@@ -1878,7 +1971,7 @@ async function revertProposalWithLease(
     target = bound;
     assetPath = acceptedTarget.path;
   } else {
-    target = resolveWriteTarget(config, options.target);
+    target = resolveRecordedProposalTarget(config, id, proposal.acceptedTarget, options.target);
     const requestedAssetPath = resolveAssetFilePathSafe(target.source, ref);
     if (
       proposal.acceptedTarget.source !== target.source.name ||
@@ -1943,7 +2036,7 @@ export function diffProposal(
   stashDir: string,
   config: AkmConfig,
   id: string,
-  options: { target?: string } = {},
+  options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
   ctx?: ProposalsContext,
 ): ProposalDiff {
   const proposal = getProposal(stashDir, id, ctx);
@@ -1951,13 +2044,16 @@ export function diffProposal(
 
   let targetPath: string | undefined;
   let existing: string | null = null;
-  try {
-    const target = resolveWriteTarget(config, options.target);
+  const readTarget = (target: ResolvedWriteTarget): void => {
     targetPath = resolveAssetFilePathSafe(target.source, ref);
     if (targetPath && fs.existsSync(targetPath)) {
       existing = fs.readFileSync(targetPath, "utf8");
     }
-  } catch {
+  };
+  try {
+    readTarget(resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget));
+  } catch (error) {
+    if (proposal.proposedTarget || options.target) throw error;
     // No writable target configured — still return a "new asset" diff so
     // callers can see the proposed payload without erroring out.
   }

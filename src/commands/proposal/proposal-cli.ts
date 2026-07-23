@@ -68,6 +68,7 @@ function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | 
 const proposalListCommand = defineJsonCommand({
   meta: { name: "list", description: "List proposal queue entries" },
   args: {
+    queue: { type: "string", description: "Select the proposal queue by source name" },
     status: {
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
@@ -78,6 +79,7 @@ const proposalListCommand = defineJsonCommand({
   run({ args }) {
     const status = parseProposalStatus(args.status);
     const result = akmProposalList({
+      queue: args.queue,
       status,
       ref: args.ref,
       type: args.type,
@@ -96,7 +98,8 @@ const proposalAcceptCommand = defineJsonCommand({
         "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream). Optional when --generator is provided.",
       required: false,
     },
-    target: { type: "string", description: "Override the write target by source name" },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
+    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
     // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
@@ -145,6 +148,7 @@ const proposalAcceptCommand = defineJsonCommand({
         maxDiffLines,
         olderThanMs,
         dryRun: args["dry-run"] as boolean,
+        queue: args.queue as string | undefined,
         target: args.target as string | undefined,
       });
       output("proposal-accept-batch", { accepted: count, results, dryRun: args["dry-run"] as boolean });
@@ -156,7 +160,11 @@ const proposalAcceptCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const result = await akmProposalAccept({ id: args.id as string, target: args.target as string | undefined });
+    const result = await akmProposalAccept({
+      id: args.id as string,
+      queue: args.queue as string | undefined,
+      target: args.target as string | undefined,
+    });
     output("proposal-accept", result);
   },
 });
@@ -171,6 +179,7 @@ const proposalRejectCommand = defineJsonCommand({
       required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
     // F-6 / #393: Batch reject by generator, diff size, or age.
     generator: {
       type: "string",
@@ -225,6 +234,7 @@ const proposalRejectCommand = defineJsonCommand({
         maxDiffLines,
         olderThanMs,
         dryRun: args["dry-run"] as boolean,
+        queue: args.queue as string | undefined,
         reason: String(args.reason),
       });
       output("proposal-reject-batch", { rejected: count, results, dryRun: args["dry-run"] as boolean });
@@ -244,7 +254,11 @@ const proposalRejectCommand = defineJsonCommand({
       process.stderr.write("Aborted.\n");
       return;
     }
-    const result = await akmProposalReject({ id: args.id as string, reason: String(args.reason) });
+    const result = await akmProposalReject({
+      id: args.id as string,
+      queue: args.queue as string | undefined,
+      reason: String(args.reason),
+    });
     output("proposal-reject", result);
   },
 });
@@ -257,10 +271,11 @@ const proposalDiffCommand = defineJsonCommand({
       description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
       required: true,
     },
-    target: { type: "string", description: "Override the write target by source name" },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
+    target: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
   },
   run({ args }) {
-    const result = akmProposalDiff({ id: args.id, target: args.target });
+    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.target });
     output("proposal-diff", result);
   },
 });
@@ -289,11 +304,13 @@ const proposalRevertCommand = defineJsonCommand({
         "Proposal id (full uuid) or asset ref (e.g. skill:akm-dream). UUID prefixes are not supported for archived proposals — use the full UUID.",
       required: true,
     },
-    target: { type: "string", description: "Override the write target by source name" },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
+    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
   },
   async run({ args }) {
     const result = await akmProposalRevert({
       id: args.id as string,
+      queue: args.queue as string | undefined,
       target: args.target as string | undefined,
     });
     output("proposal-revert", result);
@@ -311,9 +328,10 @@ const proposalShowCommand = defineJsonCommand({
       description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
       required: true,
     },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
   },
   run({ args }) {
-    const result = akmProposalShow({ id: args.id as string });
+    const result = akmProposalShow({ id: args.id as string, queue: args.queue as string | undefined });
     output("proposal-show", result);
   },
 });
@@ -490,6 +508,7 @@ const proposalDrainCommand = defineJsonCommand({
 export const proposalCommand = defineGroupCommand({
   meta: { name: "proposal", description: "Manage the proposal queue: list, show, diff, accept, reject, revert" },
   args: {
+    queue: { type: "string", description: "Select the proposal queue by source name" },
     status: {
       type: "string",
       description: "Filter by status (pending|accepted|rejected|reverted)",
@@ -510,6 +529,7 @@ export const proposalCommand = defineGroupCommand({
   defaultRun({ args }) {
     const status = parseProposalStatus(args.status);
     const result = akmProposalList({
+      queue: args.queue,
       status,
       ref: args.ref,
       type: args.type,

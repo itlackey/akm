@@ -59,9 +59,8 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
   const rows = db
     .prepare("SELECT id, stash_dir FROM entries WHERE entry_type = 'memory' AND entry_key LIKE '%:memory:duplicate'")
     .all() as Array<{ id: number; stash_dir: string }>;
-  // The index's existing winner-dedup keeps only the primary duplicate. The
-  // team-qualified event must remain detached rather than adopting that row.
-  expect(rows.map((row) => row.stash_dir)).toEqual([stashDir]);
+  // Both bundle-qualified concepts remain indexed and independently linkable.
+  expect(rows.map((row) => row.stash_dir).sort()).toEqual([stashDir, teamDir].sort());
   const stashId = rows.find((row) => row.stash_dir === stashDir)?.id;
   expect(stashId).toBeNumber();
   closeDatabase(db);
@@ -96,20 +95,13 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
         ? null
         : ((stashDirById.get(r.entry_id) as { stash_dir: string } | undefined)?.stash_dir ?? null),
   }));
-  // Chunk-8 relink (origin-faithful): the bare `memories/duplicate` and the
-  // `stash//memories/duplicate` events both RE-RESOLVE their `entry_id` onto the
-  // WINNING stash row inside its source boundary. `relinkUsageEvents` only
-  // re-attaches `entry_id`; it never rewrites the durable `entry_ref` column, so
-  // each event keeps its original spelling. `team//memories/duplicate` names the
-  // team source, whose copy was deduped OUT of `entries`: it finds no matching
-  // entry and stays detached (entry_id NULL) — kept in place, NOT deleted. On a
-  // plain full re-index (no v18→v19 cutover) no `legacy_state` quarantine is
-  // written; that archival now lives only in the three-db migration cutover.
+  // Relinking remains origin-faithful: short/default refs attach to the stash
+  // row and the qualified team ref attaches only to the team row.
   const stashLinked = linked.filter((r) => r.stash_dir === stashDir);
   expect(stashLinked.length).toBe(2);
   expect(stashLinked.map((r) => r.entry_ref).sort()).toEqual(["memories/duplicate", "stash//memories/duplicate"]);
   const teamRow = linked.filter((r) => r.entry_ref === "team//memories/duplicate");
-  expect(teamRow).toEqual([{ entry_ref: "team//memories/duplicate", stash_dir: null }]);
+  expect(teamRow).toEqual([{ entry_ref: "team//memories/duplicate", stash_dir: teamDir }]);
   const quarantined = stateDb2
     .prepare("SELECT old_ref, row_count, reason FROM legacy_state WHERE surface = 'usage_events'")
     .all() as Array<{ old_ref: string; row_count: number; reason: string }>;

@@ -5,9 +5,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
-import { loadConfig } from "../../core/config/config";
-import { rethrowIfTestIsolationError } from "../../core/errors";
+import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
+import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventEnvelope, type EventsContext, readEvents } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
 import type {
@@ -18,6 +19,7 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
+import { resolveMutationTarget } from "../../core/mutation-target";
 import { getDbPath, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
@@ -25,7 +27,7 @@ import { info, warn } from "../../core/warn";
 import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { akmIndex } from "../../indexer/indexer";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { materializeLlmRunnerConnection } from "../../integrations/agent/runner";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
@@ -374,6 +376,56 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 // mass. Args objects carry the run-scoped values; return values replace the
 // old closure-mutated outer `let`s.
 
+interface ImproveReadSource {
+  selector?: string;
+  source: { name: string; path: string };
+}
+
+/** Resolve a dry-run inspection source without adapting it into a write target. */
+function resolveImproveReadSource(
+  config: AkmConfig,
+  scopedRef: AssetRef | undefined,
+  explicitTarget: string | undefined,
+  fallbackStashDir?: string,
+): ImproveReadSource {
+  if (scopedRef?.origin && explicitTarget && scopedRef.origin !== explicitTarget) {
+    throw new UsageError(
+      `Qualified ref bundle "${scopedRef.origin}" conflicts with --target "${explicitTarget}".`,
+      "INVALID_FLAG_VALUE",
+      `Drop --target or use --target ${scopedRef.origin}.`,
+    );
+  }
+
+  const selector = scopedRef?.origin ?? explicitTarget ?? config.defaultWriteTarget;
+  if (!selector && fallbackStashDir) {
+    return { source: { name: "stash", path: fallbackStashDir } };
+  }
+  const configuredSelector = selector ?? config.defaultBundle;
+  if (configuredSelector) {
+    const entry = bundlesToSourceEntries(config)?.find((source) => source.name === configuredSelector);
+    if (!entry) {
+      throw new UsageError(
+        `No source named "${configuredSelector}" is configured. Run \`akm list\` to see available sources.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const sourcePath = resolveEntryContentDir(entry);
+    if (!sourcePath) {
+      throw new ConfigError(
+        `Source "${configuredSelector}" has no resolvable on-disk path; improve cannot inspect this entry.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    return { selector: configuredSelector, source: { name: configuredSelector, path: sourcePath } };
+  }
+
+  const implicit = resolveSourceEntries(undefined, config)[0];
+  if (!implicit) {
+    throw new ConfigError("no source configured; run `akm init`", "STASH_DIR_NOT_FOUND");
+  }
+  return { source: { name: implicit.registryId ?? "stash", path: implicit.path } };
+}
+
 /**
  * Run-setup: budget/watchdog plumbing, scope + seam resolution, the invocation
  * plan, write-target resolution, the profile-defaulted options rebuild, and
@@ -413,19 +465,31 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const selectedStrategy = resolvedPlan.strategy;
   const improveSensitiveValues = collectEngineCredentialValues(_earlyConfig);
   const improveProfile = selectedStrategy.config;
-  const writeTarget =
-    options.writeTarget ??
-    (options.target || _earlyConfig.defaultWriteTarget || !options.stashDir
-      ? resolveWriteTarget(_earlyConfig, options.target, { requireWritable: !options.dryRun })
-      : {
-          source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },
-          config: {
-            type: "filesystem" as const,
-            name: "stash",
-            path: options.stashDir,
-            writable: true,
-          },
-        });
+  const scopedRef = scope.mode === "ref" && scope.value ? parseRefInput(scope.value) : undefined;
+  const readSource = options.dryRun
+    ? options.writeTarget
+      ? { selector: options.writeTarget.selector, source: options.writeTarget.source }
+      : resolveImproveReadSource(_earlyConfig, scopedRef, options.target, options.stashDir)
+    : undefined;
+  const writeTarget = options.dryRun
+    ? undefined
+    : scopedRef?.origin
+      ? resolveMutationTarget(_earlyConfig, scopedRef, options.writeTarget?.source.name ?? options.target).target
+      : (options.writeTarget ??
+        (options.target || _earlyConfig.defaultWriteTarget || !options.stashDir
+          ? resolveWriteTarget(_earlyConfig, options.target)
+          : {
+              source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },
+              config: {
+                type: "filesystem" as const,
+                name: "stash",
+                path: options.stashDir,
+                writable: true,
+              },
+            }));
+  const selectedSource = writeTarget?.source ?? readSource?.source;
+  if (!selectedSource) throw new ConfigError("improve could not resolve a source", "STASH_DIR_NOT_FOUND");
+  const selectedSelector = writeTarget?.selector ?? readSource?.selector;
   // Apply profile defaults — CLI flags take precedence over profile defaults.
   // Rebuild options with effective values so all downstream stage functions
   // automatically pick up the profile-driven defaults.
@@ -434,18 +498,18 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     // Pin nested calls and quality gates to the same config snapshot as the
     // invocation plan. They must never reload a changed config mid-run.
     config: _earlyConfig,
-    target: writeTarget.selector,
-    sourceName: writeTarget.source.name,
-    writeTarget,
-    stashDir: writeTarget.source.path,
+    target: selectedSelector,
+    sourceName: selectedSource.name,
+    ...(writeTarget ? { writeTarget } : {}),
+    stashDir: selectedSource.path,
     consolidateOptions: {
       ...options.consolidateOptions,
-      target: writeTarget.selector,
-      writeTarget,
+      target: selectedSelector,
+      ...(writeTarget ? { writeTarget } : {}),
     },
     legacyBareState:
       options.legacyBareState ??
-      shouldReadLegacyBareImproveState(writeTarget.source.name, writeTarget.source.path, _earlyConfig),
+      shouldReadLegacyBareImproveState(selectedSource.name, selectedSource.path, _earlyConfig),
     // Profile-level limit, then process-level reflect.limit as fallback.
     // CLI --limit takes precedence over both.
     limit: options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit,

@@ -67,7 +67,11 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
 export async function indexWrittenAssets(
   stashDir: string,
   filePaths: string[],
-  options: { recoverMoves?: boolean } = {},
+  options: {
+    recoverMoves?: boolean;
+    /** Configured stable identity for a managed source. */
+    bundleId?: string;
+  } = {},
 ): Promise<boolean> {
   try {
     return await withIndexWriterLease({ purpose: "index-written-assets" }, async () => {
@@ -94,8 +98,10 @@ export async function indexWrittenAssets(
       // short. One drain call per file keeps the entry↔path pairing exact and
       // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
       // workflows drop, valid workflow docs are cached for the side-table upsert.
-      const component = deriveInstallations([{ path: stashDir, writable: true }])[0]?.components[0] ?? {
-        id: stashDir,
+      const component = deriveInstallations([
+        { path: stashDir, writable: true, ...(options.bundleId ? { registryId: options.bundleId } : {}) },
+      ])[0]?.components[0] ?? {
+        id: options.bundleId ?? stashDir,
         adapter: "akm",
         root: stashDir,
         writable: true,
@@ -110,9 +116,9 @@ export async function indexWrittenAssets(
         const ctx = buildFileContext(stashDir, file);
         // Hardcoded `akmAdapter` on purpose (owner ruling 2026-07-21): this
         // write-path fast path only ever runs for assets a first-class akm
-        // mutation command (`remember`/`wiki`/`workflow`/`setup`/`mv`) just wrote
-        // into the PRIMARY akm workspace, so the akm adapter is always the right
-        // recognizer here — no per-component dispatch needed.
+        // mutation command just wrote into a managed akm source, so the akm
+        // adapter is always the right recognizer here — no per-component
+        // dispatch needed.
         const drained = drainDirDocuments(akmAdapter, component, [ctx]);
         const entry = drained.entries[0];
         // Workflows also carry a workflow_documents side-table upsert — handled

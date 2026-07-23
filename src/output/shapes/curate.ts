@@ -25,6 +25,9 @@ const NORMAL_FIELDS = [
   "type",
   "name",
   "ref",
+  "path",
+  "editable",
+  "editHint",
   "id",
   "description",
   "preview",
@@ -42,6 +45,9 @@ const AGENT_FIELDS = [
   "type",
   "name",
   "ref",
+  "path",
+  "editable",
+  "editHint",
   "id",
   "description",
   "supportRefs",
@@ -56,7 +62,9 @@ function shapeCurateItem(
   shape: ShapeMode,
 ): Record<string, unknown> {
   if (shape === "agent") {
-    return capDescription(pickFields(item, AGENT_FIELDS), NORMAL_DESCRIPTION_LIMIT);
+    const shaped = pickFields(item, AGENT_FIELDS);
+    if (shaped.editable !== false) delete shaped.editHint;
+    return capDescription(shaped, NORMAL_DESCRIPTION_LIMIT);
   }
   if (detail === "brief") {
     return pickFields(item, BRIEF_FIELDS);

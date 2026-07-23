@@ -27,7 +27,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { lockContentRootFor } from "../integrations/lockfile";
-import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, saveGitStash } from "../sources/providers/git";
+import { getCachePaths, listGitChangedPaths, parseGitRepoUrl, runGit, saveGitStash } from "../sources/providers/git";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { displayRef } from "./asset/resolve-ref";
@@ -314,6 +314,78 @@ export interface ResolvedWriteTarget {
   /** Stable source identity. Durable state uses `source.name`. */
   source: WriteTargetSource;
   config: SourceConfigEntry;
+}
+
+/**
+ * Validate and normalize a write target before a command mutates it.
+ *
+ * Git bundle locks record the materialized content root, which can be a
+ * subdirectory of the checkout. Resolve the actual repository boundary from
+ * that root so scoped commits use repository-relative paths. Extracted or
+ * unmaterialized Git caches are not writable checkouts and must fail before a
+ * command writes files into them.
+ */
+export function prepareWriteTargetForMutation(target: ResolvedWriteTarget): ResolvedWriteTarget {
+  if (target.source.kind !== "git") return target;
+
+  const contentRoot = path.resolve(target.source.path);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(contentRoot);
+  } catch {
+    throw gitTargetNotMaterialized(target, contentRoot);
+  }
+  if (!stat.isDirectory()) throw gitTargetNotMaterialized(target, contentRoot);
+
+  const rootResult = runGit(["-C", contentRoot, "rev-parse", "--show-toplevel"]);
+  if (rootResult.status !== 0 || !rootResult.stdout.trim()) {
+    throw gitTargetNotMaterialized(target, contentRoot);
+  }
+
+  const repoPath = path.resolve(rootResult.stdout.trim());
+  const gitDirResult = runGit(["-C", repoPath, "rev-parse", "--git-dir"]);
+  if (gitDirResult.status !== 0 || !gitDirResult.stdout.trim()) {
+    throw gitTargetNotMaterialized(target, contentRoot);
+  }
+  const gitDir = path.resolve(repoPath, gitDirResult.stdout.trim());
+  let realContentRoot: string;
+  let realRepoPath: string;
+  try {
+    realContentRoot = fs.realpathSync(contentRoot);
+    realRepoPath = fs.realpathSync(repoPath);
+    fs.accessSync(realContentRoot, fs.constants.W_OK);
+    fs.accessSync(gitDir, fs.constants.W_OK);
+  } catch {
+    throw new ConfigError(
+      `Writable Git target "${target.source.name}" is not writable at ${contentRoot}.`,
+      "INVALID_CONFIG_FILE",
+      `Fix the checkout permissions or choose a different --target.`,
+    );
+  }
+  if (!isWithin(realContentRoot, realRepoPath)) {
+    throw new ConfigError(
+      `Writable Git target "${target.source.name}" resolves outside its checkout: ${contentRoot}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
+  const statusResult = runGit(["-C", repoPath, "status", "--porcelain"]);
+  if (statusResult.status !== 0 || statusResult.error) {
+    throw gitTargetNotMaterialized(target, contentRoot);
+  }
+
+  return {
+    ...target,
+    source: { ...target.source, path: contentRoot, repoPath },
+  };
+}
+
+function gitTargetNotMaterialized(target: ResolvedWriteTarget, contentRoot: string): ConfigError {
+  return new ConfigError(
+    `Writable Git target "${target.source.name}" is not materialized as a Git checkout at ${contentRoot}; refusing to write without a commit boundary.`,
+    "INVALID_CONFIG_FILE",
+    `Run \`akm update ${target.source.name}\` to materialize it, or point the bundle at a writable Git checkout.`,
+  );
 }
 
 /** Enumerate enabled writable targets, deduplicated by materialized content root. */

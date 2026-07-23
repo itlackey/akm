@@ -27,13 +27,7 @@ import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared"
 import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import {
-  commitEnvSecretWrite,
-  makeEnvRef,
-  resolveEnvPath,
-  resolveEnvWriteTarget,
-  writeTargetDisplaySource,
-} from "../../core/env-secret-ref";
+import { commitEnvSecretWrite, makeEnvRef, resolveEnvPath, resolveEnvWriteTarget } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isQuiet } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -118,10 +112,9 @@ const envCreateCommand = defineJsonCommand({
     const { createEnv, writeEnv } = await import("./env.js");
     // `create` always targets env/, never the frozen vaults/ copy. `--path` is
     // the subdirectory; `--target` selects the writable destination source.
-    const { name, absPath, target } = resolveEnvWriteTarget(args.name, args.target, {
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.target, {
       subPath: getStringArg(args, "path"),
     });
-    const displaySource = writeTargetDisplaySource(target);
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -133,7 +126,7 @@ const envCreateCommand = defineJsonCommand({
       // Ingest path: never silently clobber an existing env file.
       if (fs.existsSync(absPath)) {
         throw new UsageError(
-          `Env "${makeEnvRef(name, displaySource)}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
+          `Env "${ref}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
           "RESOURCE_ALREADY_EXISTS",
         );
       }
@@ -165,7 +158,7 @@ const envCreateCommand = defineJsonCommand({
       written.push(markerPath);
     }
     commitEnvSecretWrite(target, { type: "env", name }, "Update", written);
-    output("env-create", { ref: makeEnvRef(name, displaySource) });
+    output("env-create", { ref });
   },
 });
 
@@ -370,8 +363,7 @@ const envRemoveCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
-    const displaySource = writeTargetDisplaySource(target);
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.target);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -381,12 +373,12 @@ const envRemoveCommand = defineJsonCommand({
       return;
     }
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, displaySource)}`);
+      throw new NotFoundError(`Env not found: ${ref}`);
     }
     const { removeEnv } = await import("./env.js");
     const removed = removeEnv(absPath);
     commitEnvSecretWrite(target, { type: "env", name }, "Remove", [absPath, `${absPath}.sensitive`]);
-    output("env-remove", { ref: makeEnvRef(name, displaySource), removed });
+    output("env-remove", { ref, removed });
   },
 });
 
@@ -408,8 +400,7 @@ const envSetCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
-    const displaySource = writeTargetDisplaySource(target);
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.target);
     const key = String(args.key);
     const { ENV_KEY_RE, setEnvKey } = await import("./env.js");
     if (!ENV_KEY_RE.test(key)) {
@@ -450,7 +441,7 @@ const envSetCommand = defineJsonCommand({
         `warning: "${key}" can influence process execution when this env is loaded via 'akm env run'.\n`,
       );
     }
-    output("env-set", { ref: makeEnvRef(name, displaySource), key });
+    output("env-set", { ref, key });
   },
 });
 
@@ -472,10 +463,9 @@ const envUnsetCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target } = resolveEnvWriteTarget(args.ref, args.target);
-    const displaySource = writeTargetDisplaySource(target);
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.target);
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, displaySource)}`);
+      throw new NotFoundError(`Env not found: ${ref}`);
     }
     // citty puts every positional in `args._` (incl. the ref at [0]); the keys
     // are the remaining positionals. citty also mis-captures the space-separated
@@ -500,7 +490,7 @@ const envUnsetCommand = defineJsonCommand({
     }
     const { removed, missing } = unsetEnvKeys(absPath, keys);
     commitEnvSecretWrite(target, { type: "env", name }, "Update", [absPath]);
-    output("env-unset", { ref: makeEnvRef(name, displaySource), removed, missing });
+    output("env-unset", { ref, removed, missing });
   },
 });
 

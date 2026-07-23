@@ -7,8 +7,10 @@ import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parseAutoAcceptFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { output, runWithJsonErrors } from "../../cli/shared";
+import { isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { withStateDb } from "../../core/state-db";
@@ -198,7 +200,13 @@ export const improveCommand = defineCommand({
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
-      const writeTarget = resolveWriteTarget(effectiveConfig, targetArg, { requireWritable: !dryRun });
+      const scopeArg = getStringArg(args, "scope");
+      const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
+      const writeTarget = dryRun
+        ? undefined
+        : scopeRef
+          ? resolveMutationTarget(effectiveConfig, scopeRef, targetArg).target
+          : resolveWriteTarget(effectiveConfig, targetArg);
       // Resolve every enabled model-backed process before logging, signal
       // lifecycle setup, or any filesystem/database side effect.
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
@@ -230,9 +238,8 @@ export const improveCommand = defineCommand({
       // was minted at end-of-run, so SIGTERM'd runs (cron timeout) left no
       // row in improve_runs and effectively disappeared from `akm health`.
       const runId = buildImproveRunId();
-      const primaryStashDir = writeTarget.source.path;
-      const scopeArg = getStringArg(args, "scope");
-      const inferredScopeMode = (scopeArg ?? "").includes(":") ? "ref" : scopeArg ? "type" : "all";
+      const primaryStashDir = writeTarget?.source.path;
+      const inferredScopeMode = scopeRef ? "ref" : scopeArg ? "type" : "all";
 
       // Signal handler + exception path both flow through this helper so
       // every abnormal termination produces a row with ok:false and a
@@ -278,7 +285,7 @@ export const improveCommand = defineCommand({
                 dryRun,
                 resolvedPlan,
                 target: targetArg,
-                writeTarget,
+                ...(writeTarget ? { writeTarget } : {}),
                 ...(runId !== undefined ? { runId } : {}),
                 ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
                 ...(timeoutMs !== undefined ? { timeoutMs } : {}),

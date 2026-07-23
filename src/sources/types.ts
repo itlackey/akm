@@ -17,7 +17,7 @@ export interface SourceSearchHit {
   origin?: string | null;
   /** Env-only: key names surfaced in search results (no values). */
   keys?: string[];
-  /** Whether this asset is safe to edit in place (false only for cache-managed files) */
+  /** Whether AKM policy allows modifying this exact owned file in place. */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;
@@ -314,6 +314,8 @@ export interface ShowResponse {
   type: string;
   name: string;
   path: string;
+  /** Canonical indexed ref for a materialized local asset. */
+  ref?: string;
   activeRun?: {
     runId: string;
     stepId: string | null;
@@ -345,7 +347,7 @@ export interface ShowResponse {
   workflowTitle?: string;
   workflowParameters?: WorkflowParameter[];
   steps?: WorkflowStepDefinition[];
-  /** Whether this asset is safe to edit in place (false only for cache-managed files) */
+  /** Whether AKM policy allows modifying this exact owned file in place. */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;

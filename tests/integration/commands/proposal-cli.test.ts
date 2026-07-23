@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
+import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { runCliCapture } from "../../_helpers/cli";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -337,6 +339,152 @@ describe("akm proposal noun group (canonical)", () => {
     const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+  });
+});
+
+describe("akm proposal multi-bundle queues", () => {
+  function multiBundleConfig(primary: string, secondary: string): AkmConfig {
+    return {
+      configVersion: "0.9.0",
+      bundles: {
+        primary: { path: primary, writable: true },
+        secondary: { path: secondary, writable: true },
+      },
+      defaultBundle: "primary",
+      defaultWriteTarget: "primary",
+      semanticSearchMode: "off",
+    };
+  }
+
+  test("lists, shows, diffs, accepts, rejects, and reverts a secondary queue through --queue", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    const config = multiBundleConfig(primary, secondary);
+    writeSandboxConfig(config);
+
+    const original = `---\ndescription: Original secondary lesson\nwhen_to_use: Testing proposal targets\n---\n\nORIGINAL.\n`;
+    const assetPath = path.join(secondary, "lessons", "shared.md");
+    fs.writeFileSync(assetPath, original, "utf8");
+    const primaryProposal = seedProposal(primary, "primary//lessons/primary-only");
+    const secondaryProposal = seedProposal(secondary, "secondary//lessons/shared");
+
+    const primaryList = await runCli(["proposal", "list", "--format=json"], { stashDir: primary });
+    expect(JSON.parse(primaryList.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      primaryProposal.id,
+    ]);
+
+    const secondaryList = await runCli(["proposal", "list", "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(secondaryList.status).toBe(0);
+    expect(JSON.parse(secondaryList.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      secondaryProposal.id,
+    ]);
+
+    const shown = await runCli(["proposal", "show", secondaryProposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(shown.status).toBe(0);
+    expect(JSON.parse(shown.stdout).proposal.ref).toBe("secondary//lessons/shared");
+
+    const diff = await runCli(["proposal", "diff", secondaryProposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(diff.status).toBe(0);
+    expect(JSON.parse(diff.stdout)).toMatchObject({ isNew: false, targetPath: assetPath });
+
+    const accepted = await runCli(
+      ["proposal", "accept", secondaryProposal.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(accepted.status).toBe(0);
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("Prefer rg.");
+    expect(fs.existsSync(path.join(primary, "lessons", "shared.md"))).toBe(false);
+
+    const reverted = await runCli(
+      ["proposal", "revert", secondaryProposal.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(reverted.status).toBe(0);
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+
+    const rejectedProposal = seedProposal(secondary, "secondary//lessons/reject-me");
+    const rejected = await runCli(
+      [
+        "proposal",
+        "reject",
+        rejectedProposal.id,
+        "--queue",
+        "secondary",
+        "--reason",
+        "not needed",
+        "--yes",
+        "--format=json",
+      ],
+      { stashDir: primary },
+    );
+    expect(rejected.status).toBe(0);
+    expect(JSON.parse(rejected.stdout).proposal.status).toBe("rejected");
+  });
+
+  test("qualified proposal refs preserve bundle identity", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    writeSandboxConfig(multiBundleConfig(primary, secondary));
+    const primaryProposal = seedProposal(primary, "primary//lessons/duplicate");
+    const secondaryProposal = seedProposal(primary, "secondary//lessons/duplicate");
+
+    const listed = await runCli(
+      ["proposal", "list", "--queue", "primary", "--ref", "secondary//lessons/duplicate", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(listed.status).toBe(0);
+    expect(JSON.parse(listed.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      secondaryProposal.id,
+    ]);
+
+    const shown = await runCli(
+      ["proposal", "show", "primary//lessons/duplicate", "--queue", "primary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(shown.status).toBe(0);
+    expect(JSON.parse(shown.stdout).proposal.id).toBe(primaryProposal.id);
+  });
+
+  test("accept defaults to the recorded destination and rejects a conflicting explicit target", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    const config = multiBundleConfig(primary, secondary);
+    writeSandboxConfig(config);
+    const acceptedByBinding = seedProposal(secondary, "secondary//lessons/recorded-target");
+
+    await akmProposalAccept({ stashDir: secondary, id: acceptedByBinding.id, config });
+    expect(fs.existsSync(path.join(secondary, "lessons", "recorded-target.md"))).toBe(true);
+    expect(fs.existsSync(path.join(primary, "lessons", "recorded-target.md"))).toBe(false);
+
+    const acceptedByQueueRoot = seedProposal(secondary, "lessons/recorded-queue-root");
+    const queueRootDiff = await runCli(
+      ["proposal", "diff", acceptedByQueueRoot.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(queueRootDiff.status).toBe(0);
+    expect(JSON.parse(queueRootDiff.stdout).targetPath).toBe(path.join(secondary, "lessons", "recorded-queue-root.md"));
+    await akmProposalAccept({ stashDir: secondary, id: acceptedByQueueRoot.id, config });
+    expect(fs.existsSync(path.join(secondary, "lessons", "recorded-queue-root.md"))).toBe(true);
+    expect(fs.existsSync(path.join(primary, "lessons", "recorded-queue-root.md"))).toBe(false);
+
+    const conflicting = seedProposal(secondary, "secondary//lessons/conflicting-target");
+    await expect(
+      akmProposalAccept({ stashDir: secondary, id: conflicting.id, target: "primary", config }),
+    ).rejects.toThrow(/bound.*target.*primary/i);
+    const cliConflict = await runCli(
+      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--target", "primary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(cliConflict.status).toBe(2);
+    expect(JSON.parse(cliConflict.stderr)).toMatchObject({ code: "INVALID_FLAG_VALUE" });
+    expect(cliConflict.stderr).toMatch(/bound.*target.*primary/i);
+    expect(fs.existsSync(path.join(primary, "lessons", "conflicting-target.md"))).toBe(false);
   });
 });
 

@@ -30,7 +30,6 @@ import {
   makeSecretRef,
   resolveSecretPath,
   resolveSecretWriteTarget,
-  writeTargetDisplaySource,
 } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -111,10 +110,9 @@ const secretSetCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { setSecret } = await import("./secret.js");
-    const { name, absPath, target } = resolveSecretWriteTarget(args.ref, args.target, {
+    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.target, {
       subPath: getStringArg(args, "path"),
     });
-    const displaySource = writeTargetDisplaySource(target);
 
     const fromEnv = args["from-env"];
     const fromFile = args["from-file"];
@@ -151,7 +149,7 @@ const secretSetCommand = defineJsonCommand({
 
     setSecret(absPath, value);
     commitEnvSecretWrite(target, { type: "secret", name }, "Update", [absPath]);
-    output("secret-set", { ref: makeSecretRef(name, displaySource) });
+    output("secret-set", { ref });
   },
 });
 
@@ -272,8 +270,7 @@ const secretRemoveCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target } = resolveSecretWriteTarget(args.ref, args.target);
-    const displaySource = writeTargetDisplaySource(target);
+    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.target);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -284,11 +281,11 @@ const secretRemoveCommand = defineJsonCommand({
     }
     const { removeSecret } = await import("./secret.js");
     if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, displaySource)}`);
+      throw new NotFoundError(`Secret not found: ${ref}`);
     }
     const removed = removeSecret(absPath);
     commitEnvSecretWrite(target, { type: "secret", name }, "Remove", [absPath, `${absPath}.sensitive`]);
-    output("secret-remove", { ref: makeSecretRef(name, displaySource), removed });
+    output("secret-remove", { ref, removed });
   },
 });
 

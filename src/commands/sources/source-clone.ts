@@ -2,17 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
+import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import {
-  findSourceForPath,
-  getPrimarySource,
-  resolveSourceEntries,
-  type SearchSource,
-} from "../../indexer/search/search-source";
+import { warn } from "../../core/warn";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -24,8 +25,10 @@ export interface CloneOptions {
   newName?: string;
   /** If true, overwrite existing asset in working stash */
   force?: boolean;
-  /** Destination directory (default: working stash) */
+  /** Unmanaged destination directory escape hatch */
   dest?: string;
+  /** Configured bundle to receive the managed clone */
+  target?: string;
 }
 
 export interface CloneResponse {
@@ -42,6 +45,12 @@ export interface CloneResponse {
 }
 
 export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
+  const unmanagedDest = options.dest;
+  const hasUnmanagedDest = unmanagedDest !== undefined;
+  if (hasUnmanagedDest && options.target !== undefined) {
+    throw new UsageError("--dest and --target cannot be used together; choose an unmanaged path or a managed bundle.");
+  }
+
   // F1b/F4b: accept the 0.9.0 conceptId spelling (`akm clone scripts/deploy.sh`).
   // F5 origin split (parseQualifiedRefInput): `akm clone` also accepts a NON-slug
   // clone SOURCE as the `origin//conceptId` prefix — a registry ref
@@ -50,25 +59,26 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   // fallback below (the strict new-grammar parser rejects such origins as they
   // are not bundle slugs).
   const parsed = parseQualifiedRefInput(options.sourceRef);
+  const config = hasUnmanagedDest ? undefined : loadConfig();
+  const writeTarget = config ? prepareWriteTargetForMutation(resolveWriteTarget(config, options.target)) : undefined;
 
-  // When --dest is provided, the working stash is optional
+  // An unmanaged --dest does not require any configured write target.
   let allSources: SearchSource[];
   try {
     allSources = resolveSourceEntries();
   } catch (err) {
-    if (options.dest) {
+    if (hasUnmanagedDest) {
       allSources = [];
     } else {
       throw err;
     }
   }
 
-  const primarySource = getPrimarySource(allSources);
-  const destRoot = options.dest ? path.resolve(options.dest) : primarySource?.path;
+  const destRoot = unmanagedDest !== undefined ? path.resolve(unmanagedDest) : writeTarget?.source.path;
 
   if (!destRoot) {
     throw new ConfigError(
-      "No working stash configured and no --dest provided. Run `akm init` or pass --dest.",
+      "No writable source configured and no --dest provided. Run `akm init` or pass --dest.",
       "STASH_DIR_NOT_FOUND",
     );
   }
@@ -145,7 +155,11 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       throw new UsageError(`Unsafe clone name "${destName}": resolves outside the target type directory.`);
     }
   }
-  const destLabel = options.dest ? "at destination" : "in working stash";
+  const destLabel = hasUnmanagedDest
+    ? "at destination"
+    : writeTarget?.selector
+      ? `in target "${writeTarget.selector}"`
+      : "in working stash";
 
   // Guard against self-clone
   if (parsed.type === "skill") {
@@ -164,37 +178,80 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     }
   }
 
-  let destPath: string;
-  if (parsed.type === "skill") {
-    const sourceSkillDir = path.dirname(sourcePath);
-    const destSkillDir = path.join(destRoot, typeDir, destName);
-    const overwritten = fs.existsSync(destSkillDir);
+  return withAssetMutationLease("clone", async () => {
+    let destPath: string;
+    let overwritten: boolean;
+    let operationPaths: string[];
+    if (parsed.type === "skill") {
+      const sourceSkillDir = path.dirname(sourcePath);
+      const destSkillDir = path.join(destRoot, typeDir, destName);
+      assertNoDestinationSymlinkParent(destRoot, destSkillDir);
+      const existing = lstatIfExists(destSkillDir);
+      overwritten = existing !== undefined;
 
-    if (overwritten && !options.force) {
-      throw new UsageError(
-        `Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`,
-        "RESOURCE_ALREADY_EXISTS",
-      );
-    }
-
-    // Stage-then-swap (never destroy-then-copy): a mid-copy failure must not
-    // leave the destination gone under --force. Copy into a tmp sibling, then
-    // remove the old dir and rename — the same pattern git-install uses.
-    const stagingDir = `${destSkillDir}.tmp-${process.pid}`;
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-    try {
-      fs.cpSync(sourceSkillDir, stagingDir, { recursive: true });
-      if (overwritten) {
-        fs.rmSync(destSkillDir, { recursive: true, force: true });
+      if (overwritten && !options.force) {
+        throw new UsageError(
+          `Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`,
+          "RESOURCE_ALREADY_EXISTS",
+        );
       }
-      fs.renameSync(stagingDir, destSkillDir);
-    } catch (err) {
-      fs.rmSync(stagingDir, { recursive: true, force: true });
-      throw err;
+      const replacedPaths = existing?.isDirectory() && !existing.isSymbolicLink() ? listTreeFiles(destSkillDir) : [];
+
+      // Stage first so a failed source copy leaves the old entry untouched. A
+      // final symlink is removed as an entry, never traversed.
+      const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
+      try {
+        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
+        if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
+        fs.renameSync(stagingDir, destSkillDir);
+      } catch (err) {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        throw err;
+      }
+
+      destPath = path.join(destSkillDir, "SKILL.md");
+      operationPaths = [...new Set([...replacedPaths, ...listTreeFiles(destSkillDir)])];
+    } else {
+      destPath = path.join(destRoot, typeDir, destName);
+      assertNoDestinationSymlinkParent(destRoot, destPath);
+      const existing = lstatIfExists(destPath);
+      overwritten = existing !== undefined;
+
+      if (overwritten && !options.force) {
+        throw new UsageError(
+          `Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`,
+          "RESOURCE_ALREADY_EXISTS",
+        );
+      }
+
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      const stagingPath = `${destPath}.tmp-${randomUUID()}`;
+      try {
+        fs.copyFileSync(sourcePath, stagingPath, fs.constants.COPYFILE_EXCL);
+        if (overwritten) fs.rmSync(destPath, { recursive: true, force: true });
+        fs.renameSync(stagingPath, destPath);
+      } catch (err) {
+        fs.rmSync(stagingPath, { force: true });
+        throw err;
+      }
+      operationPaths = [destPath];
     }
 
-    destPath = path.join(destSkillDir, "SKILL.md");
-    const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
+    const ref = displayRef(
+      { type: parsed.type, name: destName, bundleId: writeTarget?.source.name ?? "local" },
+      config?.defaultBundle,
+    );
+
+    if (writeTarget) {
+      const commitRoot = writeTarget.source.repoPath ?? writeTarget.source.path;
+      const commitPaths = operationPaths.map((filePath) =>
+        path.relative(commitRoot, filePath).replaceAll(path.sep, "/"),
+      );
+      commitWriteTargetBoundary(writeTarget, `Clone ${ref}`, { paths: commitPaths });
+      if (!(await indexWrittenAssets(writeTarget.source.path, [destPath], { bundleId: writeTarget.source.name }))) {
+        warn(`Clone ${ref} succeeded, but its targeted index update failed; run \`akm index\` to refresh it.`);
+      }
+    }
 
     return {
       source: { path: sourcePath, registryId: sourceSource?.registryId },
@@ -202,27 +259,44 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       overwritten,
       ...(remoteFetched ? { remoteFetched } : {}),
     };
+  });
+}
+
+function lstatIfExists(filePath: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function assertNoDestinationSymlinkParent(root: string, destination: string): void {
+  const resolvedRoot = path.resolve(root);
+  const relativeParent = path.relative(resolvedRoot, path.dirname(path.resolve(destination)));
+  if (relativeParent === "" || relativeParent === ".") return;
+  if (relativeParent.startsWith("..") || path.isAbsolute(relativeParent)) {
+    throw new UsageError(`Clone destination escapes the selected target: ${destination}.`, "PATH_ESCAPE_VIOLATION");
   }
 
-  destPath = path.join(destRoot, typeDir, destName);
-  const overwritten = fs.existsSync(destPath);
-
-  if (overwritten && !options.force) {
-    throw new UsageError(
-      `Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
+  let current = resolvedRoot;
+  for (const segment of relativeParent.split(path.sep)) {
+    current = path.join(current, segment);
+    if (lstatIfExists(current)?.isSymbolicLink()) {
+      throw new UsageError(
+        `Clone destination has a symbolic-link parent outside the selected target boundary: ${current}.`,
+        "PATH_ESCAPE_VIOLATION",
+      );
+    }
   }
+}
 
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  fs.copyFileSync(sourcePath, destPath);
-
-  const ref = displayRef({ type: parsed.type, name: destName, bundleId: "local" });
-
-  return {
-    source: { path: sourcePath, registryId: sourceSource?.registryId },
-    destination: { path: destPath, ref },
-    overwritten,
-    ...(remoteFetched ? { remoteFetched } : {}),
-  };
+function listTreeFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...listTreeFiles(entryPath));
+    else files.push(entryPath);
+  }
+  return files;
 }

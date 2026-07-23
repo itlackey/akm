@@ -50,6 +50,7 @@ import {
   deleteEntriesByDirExceptKeys,
   deleteEntriesByIds,
   deleteEntriesByStashDir,
+  findEntryIdByRef,
   getEmbeddableEntryCount,
   getEntryCount,
   relinkUsageEvents,
@@ -1037,11 +1038,10 @@ function persistDirRecords(
     }
   }
 
-  // Cross-stash dedup: track indexed assets by type + entry.name so a
-  // lower-priority stash row with the same logical index identity is skipped
-  // when a higher-priority root already covers it.
-  // Sources are ordered by priority (primary stash first), so the first
-  // occurrence wins.
+  // Per-source dedup: the same logical asset can appear more than once within
+  // one owning source, where source order still makes the first occurrence win.
+  // The owner is part of the key so identical concepts in different bundles
+  // remain distinct indexed rows.
   const indexedAssetIdentities = new Set<string>();
 
   const insertTransaction = db.transaction(() => {
@@ -1096,6 +1096,8 @@ function persistDirRecords(
       let dedupedRows = 0;
 
       if (stash) {
+        const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
+        const ownerIdentity = bundle?.bundleId ?? path.resolve(currentStashDir);
         for (const entry of stash.entries) {
           const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
           if (!entryPath) {
@@ -1103,8 +1105,9 @@ function persistDirRecords(
             continue;
           }
 
-          // Skip if a higher-priority stash root already indexed this asset
-          const identityKey = `${entry.type}\0${entry.name}`;
+          // Skip a true duplicate within this owning source, not a matching
+          // concept owned by another bundle.
+          const identityKey = `${ownerIdentity}\0${entry.type}\0${entry.name}`;
           if (indexedAssetIdentities.has(identityKey)) {
             dedupedRows++;
             continue;
@@ -1125,7 +1128,6 @@ function persistDirRecords(
           // the shared helper that the write-path fast path also uses. NULL
           // provenance when the source root has no bundle mapping (e.g. write-back
           // paths) — healed on next index.
-          const bundle = bundleByRoot?.get(path.resolve(currentStashDir));
           const provenance = bundle
             ? deriveEntryProvenance(bundle, entry.type, entry.name, conceptIdByFile?.get(entryPath))
             : undefined;
@@ -1931,7 +1933,7 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
 
 // ── lookup ─────────────────────────────────────────────────────────────────
 
-import type { AssetRef } from "../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName } from "../core/asset/resolve-ref";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */
@@ -1944,6 +1946,11 @@ export interface IndexEntry {
   type: string;
   /** Asset name as recorded by the indexer. */
   name: string;
+  /** Canonical durable identity from `entries.item_ref`. */
+  itemRef?: string;
+  /** Nullable-row fallback provenance from the index. */
+  bundleId?: string;
+  conceptId?: string;
 }
 
 /**
@@ -1993,18 +2000,31 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 
     if (candidateDirs.length === 0) return null;
 
+    // Prefer durable indexed identity. Scoping each lookup to candidateDirs
+    // preserves configured source priority for duplicate concepts while exact
+    // bundle refs resolve directly through `item_ref`.
     for (const name of nameVariants) {
-      const suffix = `:${ref.type}:${name}`;
-      const escapedSuffix = escapeLike(suffix);
+      const conceptId = conceptIdFromTypeName(ref.type, name);
+      const itemRefInput =
+        ref.origin && ref.origin !== "local" && ref.origin !== "stash" ? `${ref.origin}//${conceptId}` : conceptId;
       for (const dir of candidateDirs) {
-        const escapedDir = escapeLike(dir);
+        const id = findEntryIdByRef(db, itemRefInput, dir);
+        if (id === undefined) continue;
         const row = db
           .prepare(
-            "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type FROM entries " +
-              "WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1",
+            "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type, " +
+              "item_ref AS itemRef, bundle_id AS bundleId, concept_id AS conceptId FROM entries WHERE id = ?",
           )
-          .get(`${escapedDir}${escapedSuffix}`, ref.type) as
-          | { entryKey: string; filePath: string; stashDir: string; type: string }
+          .get(id) as
+          | {
+              entryKey: string;
+              filePath: string;
+              stashDir: string;
+              type: string;
+              itemRef: string | null;
+              bundleId: string | null;
+              conceptId: string | null;
+            }
           | undefined;
         if (row) {
           return {
@@ -2012,7 +2032,49 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
             filePath: row.filePath,
             stashDir: row.stashDir,
             type: row.type,
-            name: ref.name,
+            name,
+            itemRef: row.itemRef ?? undefined,
+            bundleId: row.bundleId ?? undefined,
+            conceptId: row.conceptId ?? undefined,
+          };
+        }
+      }
+    }
+
+    // Nullable pre-flip rows cannot be found by item_ref. Keep the legacy
+    // entry_key lookup only as their compatibility fallback.
+    for (const name of nameVariants) {
+      const suffix = `:${ref.type}:${name}`;
+      const escapedSuffix = escapeLike(suffix);
+      for (const dir of candidateDirs) {
+        const escapedDir = escapeLike(dir);
+        const row = db
+          .prepare(
+            "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type, " +
+              "item_ref AS itemRef, bundle_id AS bundleId, concept_id AS conceptId FROM entries " +
+              "WHERE item_ref IS NULL AND entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1",
+          )
+          .get(`${escapedDir}${escapedSuffix}`, ref.type) as
+          | {
+              entryKey: string;
+              filePath: string;
+              stashDir: string;
+              type: string;
+              itemRef: string | null;
+              bundleId: string | null;
+              conceptId: string | null;
+            }
+          | undefined;
+        if (row) {
+          return {
+            entryKey: row.entryKey,
+            filePath: row.filePath,
+            stashDir: row.stashDir,
+            type: row.type,
+            name,
+            itemRef: row.itemRef ?? undefined,
+            bundleId: row.bundleId ?? undefined,
+            conceptId: row.conceptId ?? undefined,
           };
         }
       }

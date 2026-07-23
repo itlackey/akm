@@ -23,15 +23,12 @@ import type { DbIndexedEntry } from "./index-entry-types";
  * Canonical column list for reading a full indexed entry from the `entries`
  * table, in the order {@link rowToIndexedEntry} expects.
  *
- * Chunk-5 flip (Checkpoint A): the durable identity columns `concept_id` and
- * `bundle_id` are surfaced here so the state.db salience/outcome dual-read arms
- * can build the fully-qualified `<bundle>//<concept-id>` new-grammar key from a
- * mapped entry with ZERO extra queries (they are the last two columns and both
- * nullable — a NULL-provenance write-back straggler simply yields `undefined`,
- * and the reader falls through to its inline legacy `type:name` arm).
+ * Durable identity columns are surfaced here so every mapped entry can prefer
+ * indexed provenance while retaining path/type fallback for nullable pre-flip
+ * rows.
  */
 export const ENTRY_COLUMNS =
-  "id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text, concept_id, bundle_id";
+  "id, entry_key, dir_path, file_path, stash_dir, entry_json, search_text, item_ref, concept_id, bundle_id";
 
 /** A raw row selected via {@link ENTRY_COLUMNS}. */
 export type EntryRow = {
@@ -42,6 +39,8 @@ export type EntryRow = {
   stash_dir: string;
   entry_json: string;
   search_text: string;
+  /** Canonical durable `<bundle>//<concept-id>` ref; NULL on pre-flip rows. */
+  item_ref: string | null;
   /** Durable OKF concept id (`item_ref` tail); NULL on pre-flip / write-back rows. */
   concept_id: string | null;
   /** Durable bundle id (`item_ref` head); NULL on pre-flip / write-back rows. */
@@ -69,6 +68,7 @@ export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntr
     stashDir: row.stash_dir,
     entry,
     searchText: row.search_text,
+    itemRef: row.item_ref ?? undefined,
     conceptId: row.concept_id ?? undefined,
     bundleId: row.bundle_id ?? undefined,
   };

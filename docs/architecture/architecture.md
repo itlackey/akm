@@ -85,11 +85,20 @@ User-facing item refs are path-identified:
 [bundle//]conceptId[#fragment]
 ```
 
-- the subdir-qualified `conceptId` (`skills/code-review`) is the canonical
-  item identity — `type` is no longer part of a ref
-- optional `bundle//` narrows lookup to a configured bundle
+- the subdir-qualified `conceptId` (`skills/code-review`) identifies an item
+  within a bundle; `type` is no longer a separate ref segment
+- the fully qualified `bundle//conceptId` spelling is canonical in index rows
+  and durable state; index-backed local read output keeps the short form for the
+  default bundle and qualifies every non-default bundle
+- optional `bundle//` narrows input lookup to a configured bundle
 - refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`
 - markdown-backed items strip `.md` from canonical names
+
+Each indexed entry stores that identity as `item_ref`, with `bundle_id` and
+`concept_id` provenance, and stores its absolute materialized local file as
+`file_path`. Search and show return these index-backed refs and paths, so two
+bundles containing the same concept remain distinguishable. Nullable
+pre-cutover rows retain a path/type lookup fallback until they are reindexed.
 
 Examples:
 
@@ -142,16 +151,28 @@ indexer's local search (`src/indexer/search/db-search.ts`). Provider fan-out is 
 
 Local show flow (`src/commands/read/show.ts`):
 
-1. parse `[origin//]type:name`
-2. `lookup(ref)` against the FTS5 index (`src/indexer/indexer.ts`)
-3. fall back to on-disk type-dir traversal only when the index has no row
+1. parse `[bundle//]conceptId`
+2. `lookup(ref)` by indexed `item_ref` and materialized source root
+3. return the indexed canonical ref and read `file_path` from disk
+4. fall back to on-disk type-dir traversal only when the index has no row
    (covers the "indexed yet?" gap before `akm index` runs)
-4. classify the file and render a response
+5. classify the file and render a response
 
-There is **no remote provider fallback**. Show is local FTS5 only.
+There is **no remote provider fallback**. The fallback is local disk traversal,
+not a provider read.
 
-Special case: `wiki:<name>` with no page path returns the wiki root summary
-payload rather than a single markdown page response.
+### Local access metadata
+
+Agent-shaped search, show, and curate results for materialized local assets
+include the index-backed `ref`, absolute `path`, and `editable`. `editHint` is
+included only when `editable` is `false`; it is secondary guidance and never
+replaces the normal show, run, or use action (or curate follow-up). Registry-only
+results have no local path or editability fields.
+
+`editable` means current AKM source policy authorizes direct in-place
+modification of that exact file. It is computed when the response is built from
+the current resolved source roots and effective `writable` policy, is not stored
+in the index, and fails closed when no configured source owns the path.
 
 ---
 
@@ -186,17 +207,27 @@ commits per asset.
 `npm` is rejected at config load — `sync()` would clobber edits on the next
 refresh.
 
-Write-target resolution (`resolveWriteTarget`) follows: explicit `--target` →
-`config.defaultWriteTarget` → working stash (`config.stashDir`) → `ConfigError`.
+Write-target resolution (`resolveWriteTarget`) follows: explicit `--target` ->
+`config.defaultWriteTarget` -> working stash (`defaultBundle`) -> `ConfigError`.
 The resolved target keeps the optional configured selector separate from the
 stable `source.name`: APIs that must re-resolve a destination use the selector,
 while durable refs and state rows always use `source.name`. The implicit working
 stash therefore has no selector but has durable identity `stash`.
 
+On mutation surfaces that accept asset refs, a qualified ref implies its bundle
+as the write target. A matching `--target` is allowed; a different explicit
+target is a usage error. This applies, for example, to env/secret mutations,
+ref-scoped improve, and qualified `--supersedes` refs on remember/import.
+
+`akm clone` uses the same managed write-target fallback and accepts `--target`
+for an explicit managed destination. `--dest` is the unmanaged path escape
+hatch: it bypasses managed target resolution and cannot be combined with
+`--target`.
+
 ### Improve durable-state transition
 
 Improve state written after the source-identity cutover uses
-`source//type:name` keys. Pre-cutover bare feedback, proposal-cursor, salience,
+`source//conceptId` keys. Pre-cutover bare feedback, proposal-cursor, salience,
 and convergence rows are read as a fallback only when the selected source root
 equals the configured historical `stashDir`. A qualified row takes precedence.
 Named sources at any other root never read bare rows, preventing a duplicate ref
@@ -206,6 +237,16 @@ the fallback naturally becomes irrelevant as local assets accumulate new state.
 Retrieval demand is scoped separately through usage-event entry IDs and selected
 source roots, with qualified refs covering detached events. Improve never merges
 retrieval counts or last-use timestamps solely by bare ref across sources.
+
+### Proposal queues and destinations
+
+`akm proposal ... --queue <source>` selects the configured writable source root
+whose proposal queue is read or adjudicated; it does not override the proposal's
+write destination. Qualified proposals and unqualified proposals created in a
+configured secondary queue record the destination source name and materialized
+root. Diff, accept, and revert use that binding by default and reject an explicit
+`--target` that resolves elsewhere. Historical unbound proposals retain the
+normal write-target fallback.
 
 ---
 

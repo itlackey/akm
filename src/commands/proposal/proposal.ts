@@ -16,12 +16,13 @@
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import type { ResolvedWriteTarget } from "../../core/write-source";
+import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import {
   type CreateProposalInput,
   createProposal,
   diffProposal,
-  getProposal,
   isProposalSkipped,
   listProposals,
   type Proposal,
@@ -42,10 +43,28 @@ function resolveStash(stashDir?: string): string {
   return resolveStashDir();
 }
 
+interface ResolvedProposalQueue {
+  stashDir: string;
+  target?: ResolvedWriteTarget;
+}
+
+function resolveProposalQueue(
+  stashDir: string | undefined,
+  queue: string | undefined,
+  config?: AkmConfig,
+): ResolvedProposalQueue {
+  if (stashDir) return { stashDir };
+  if (!queue) return { stashDir: resolveStash() };
+  const target = resolveWriteTarget(config ?? loadConfig(), queue);
+  return { stashDir: target.source.path, target };
+}
+
 // ── list ────────────────────────────────────────────────────────────────────
 
 export interface ProposalListOptions {
   stashDir?: string;
+  queue?: string;
+  config?: AkmConfig;
   status?: "pending" | "accepted" | "rejected" | "reverted";
   ref?: string;
   type?: string;
@@ -71,7 +90,7 @@ export function listPendingProposals(stashDir?: string): Proposal[] {
 }
 
 export function akmProposalList(options: ProposalListOptions = {}): ProposalListResult {
-  const stash = resolveStash(options.stashDir);
+  const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, options.config);
   // `--status accepted|rejected|reverted` implies archive-inclusion since the
   // live queue only ever contains pending entries.
   const includeArchive =
@@ -92,6 +111,8 @@ export function akmProposalList(options: ProposalListOptions = {}): ProposalList
 
 export interface ProposalShowOptions {
   stashDir?: string;
+  queue?: string;
+  config?: AkmConfig;
   id: string;
 }
 
@@ -102,8 +123,8 @@ export interface ProposalShowResult {
 }
 
 export function akmProposalShow(options: ProposalShowOptions): ProposalShowResult {
-  const stash = resolveStash(options.stashDir);
-  const proposal = getProposal(stash, options.id);
+  const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, options.config);
+  const proposal = resolveProposalId(stash, options.id);
   return {
     schemaVersion: 1,
     proposal,
@@ -116,6 +137,7 @@ export function akmProposalShow(options: ProposalShowOptions): ProposalShowResul
 export interface ProposalAcceptOptions {
   stashDir?: string;
   id: string;
+  queue?: string;
   target?: string;
   /** Test seam — overrides config used for the write target. */
   config?: AkmConfig;
@@ -133,10 +155,17 @@ export interface ProposalAcceptResult {
 }
 
 export async function akmProposalAccept(options: ProposalAcceptOptions): Promise<ProposalAcceptResult> {
-  const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
+  const queue = resolveProposalQueue(options.stashDir, options.queue, config);
+  const stash = queue.stashDir;
   const resolvedId = resolveProposalId(stash, options.id).id;
-  const result = await promoteProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
+  const result = await promoteProposal(
+    stash,
+    config,
+    resolvedId,
+    { target: options.target, queueTarget: queue.target },
+    options.ctx,
+  );
 
   return {
     schemaVersion: 1,
@@ -153,6 +182,7 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
 export interface ProposalRejectOptions {
   stashDir?: string;
   id: string;
+  queue?: string;
   reason?: string;
   ctx?: ProposalsContext;
   config?: AkmConfig;
@@ -169,8 +199,8 @@ export interface ProposalRejectResult {
 
 export async function akmProposalReject(options: ProposalRejectOptions): Promise<ProposalRejectResult> {
   return withAssetMutationLease("proposal-reject", async () => {
-    const stash = resolveStash(options.stashDir);
     const config = options.config ?? loadConfig();
+    const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, config);
     const proposalId = resolveProposalId(stash, options.id).id;
     await recoverProposalTransactionsForStash(stash, config, options.ctx, proposalId);
     const updated = rejectProposalDurably(stash, proposalId, options.reason, options.ctx);
@@ -191,6 +221,7 @@ export async function akmProposalReject(options: ProposalRejectOptions): Promise
 export interface ProposalDiffOptions {
   stashDir?: string;
   id: string;
+  queue?: string;
   target?: string;
   config?: AkmConfig;
 }
@@ -205,10 +236,11 @@ export interface ProposalDiffResult {
 }
 
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
-  const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
+  const queue = resolveProposalQueue(options.stashDir, options.queue, config);
+  const stash = queue.stashDir;
   const proposal = resolveProposalId(stash, options.id);
-  const diff = diffProposal(stash, config, proposal.id, { target: options.target });
+  const diff = diffProposal(stash, config, proposal.id, { target: options.target, queueTarget: queue.target });
   return {
     schemaVersion: 1,
     id: proposal.id,
@@ -223,6 +255,8 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
 
 export interface ProposalCreateOptions extends CreateProposalInput {
   stashDir?: string;
+  queue?: string;
+  config?: AkmConfig;
   ctx?: ProposalsContext;
 }
 
@@ -233,7 +267,10 @@ export interface ProposalCreateResult {
 }
 
 export function akmProposalCreate(options: ProposalCreateOptions): ProposalCreateResult {
-  const stash = resolveStash(options.stashDir);
+  const queue = resolveProposalQueue(options.stashDir, options.queue, options.config);
+  const stash = queue.stashDir;
+  const target =
+    options.target ?? (queue.target ? { source: queue.target.source.name, root: queue.target.source.path } : undefined);
   // Manual proposal creation (via `akm proposal create`) always bypasses
   // dedup/cooldown guards — the operator is explicitly requesting a proposal.
   const result = createProposal(
@@ -241,6 +278,7 @@ export function akmProposalCreate(options: ProposalCreateOptions): ProposalCreat
     {
       ref: options.ref,
       source: options.source,
+      ...(target !== undefined ? { target } : {}),
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: options.payload,
       force: true,
@@ -260,6 +298,8 @@ export interface ProposalRevertOptions {
   stashDir?: string;
   /** Proposal id (uuid / prefix) or asset ref. */
   id: string;
+  /** Select the proposal queue by configured source name. */
+  queue?: string;
   /** Override the write target by source name (same semantics as accept). */
   target?: string;
   /** Test seam — overrides config used for the write target. */
@@ -294,10 +334,17 @@ export interface ProposalRevertResult {
  * `rejected`.
  */
 export async function akmProposalRevert(options: ProposalRevertOptions): Promise<ProposalRevertResult> {
-  const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
+  const queue = resolveProposalQueue(options.stashDir, options.queue, config);
+  const stash = queue.stashDir;
   const resolvedId = resolveProposalId(stash, options.id).id;
-  const result = await revertProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
+  const result = await revertProposal(
+    stash,
+    config,
+    resolvedId,
+    { target: options.target, queueTarget: queue.target },
+    options.ctx,
+  );
 
   return {
     schemaVersion: 1,
@@ -313,6 +360,7 @@ export async function akmProposalRevert(options: ProposalRevertOptions): Promise
 
 export interface BulkAdjudicateOptions {
   stashDir?: string;
+  queue?: string;
   /** Which way to adjudicate every matching pending proposal. */
   action: "accept" | "reject";
   /** Match proposals whose `source` equals this generator (required). */
@@ -327,6 +375,7 @@ export interface BulkAdjudicateOptions {
   target?: string;
   /** reject-only: forwarded to `akmProposalReject`. */
   reason?: string;
+  config?: AkmConfig;
 }
 
 export interface BulkAdjudicateResult {
@@ -346,7 +395,8 @@ export interface BulkAdjudicateResult {
  * dry-run record shape. The destructive-confirmation prompt stays CLI-side.
  */
 export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
-  const stashDir = resolveStash(options.stashDir);
+  const config = options.config ?? loadConfig();
+  const { stashDir } = resolveProposalQueue(options.stashDir, options.queue, config);
   const pending = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
@@ -364,9 +414,13 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
     if (options.dryRun) {
       results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
     } else if (options.action === "accept") {
-      results.push(await akmProposalAccept({ id: proposal.id, target: options.target }));
+      results.push(
+        await akmProposalAccept({ stashDir, id: proposal.id, queue: options.queue, target: options.target, config }),
+      );
     } else {
-      results.push(await akmProposalReject({ id: proposal.id, reason: options.reason }));
+      results.push(
+        await akmProposalReject({ stashDir, id: proposal.id, queue: options.queue, reason: options.reason, config }),
+      );
     }
   }
   return { count: results.length, results };

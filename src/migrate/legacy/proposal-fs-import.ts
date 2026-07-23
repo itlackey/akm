@@ -26,8 +26,10 @@
  * leisure. Legacy `backup.<ext>` files are inlined into `backupContent` so
  * `akm proposal revert` keeps working for proposals accepted before 0.9.0.
  *
- * The parsing/backup-inlining logic below is FROZEN pre-0.9.0 behavior, moved
- * verbatim from the deleted `src/commands/proposal/legacy-import.ts`.
+ * Parsing and backup inlining retain the frozen pre-0.9.0 behavior from the
+ * deleted `src/commands/proposal/legacy-import.ts`. Before insertion, refs are
+ * translated through the frozen legacy grammar module so normal proposal
+ * runtime boundaries remain new-grammar-only.
  *
  * Migrator-only: opens state.db through the raw storage engine (leaving its
  * journal mode untouched — the apply has already collapsed it to single-file
@@ -38,8 +40,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Proposal } from "../../commands/proposal/proposal-types";
 import { warn } from "../../core/warn";
+import { deriveInstallations, slugForPath } from "../../indexer/installations";
 import { type Database, openDatabase } from "../../storage/database";
 import { insertProposalIfAbsent } from "../../storage/repositories/proposals-repository";
+import { classifyRefGrammar, legacyRefToBundleRef } from "../legacy-ref-grammar";
 
 /** Legacy (pre-0.9.0) proposal directory: `<stashDir>/.akm/proposals[/archive]`. */
 function legacyProposalsRoot(stashDir: string, archive: boolean): string {
@@ -106,7 +110,7 @@ function importLegacyProposalsForStash(db: Database, stashDir: string): number {
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name === "archive") continue;
       const proposalDir = path.join(root, entry.name);
-      const proposal = readLegacyProposalFile(proposalDir);
+      const proposal = readLegacyProposalFile(proposalDir, stashDir);
       if (!proposal) continue;
       try {
         if (insertProposalIfAbsent(db, proposal, stashDir)) imported += 1;
@@ -128,7 +132,7 @@ function importLegacyProposalsForStash(db: Database, stashDir: string): number {
  * warning — when the `proposal.json` is missing, unreadable, or malformed, so
  * a single corrupt legacy entry never blocks the import of the rest.
  */
-function readLegacyProposalFile(proposalDir: string): Proposal | undefined {
+function readLegacyProposalFile(proposalDir: string, stashDir: string): Proposal | undefined {
   const filePath = path.join(proposalDir, "proposal.json");
   let parsed: LegacyProposalFile;
   try {
@@ -148,6 +152,20 @@ function readLegacyProposalFile(proposalDir: string): Proposal | undefined {
   }
 
   const { backup, ...rest } = parsed;
+  let migratedRef = rest.ref;
+  let migratedTarget = rest.proposedTarget;
+  if (classifyRefGrammar(rest.ref) === "legacy") {
+    try {
+      const translated = legacyRefToBundleRef(rest.ref);
+      const bundle =
+        translated.bundle ?? deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+      migratedRef = `${bundle}//${translated.conceptId}`;
+      if (translated.bundle) migratedTarget = { source: translated.bundle, root: path.resolve(stashDir) };
+    } catch (err) {
+      warn(`[akm] content-migration: skipping legacy proposal at ${filePath}: ${errMsg(err)}`);
+      return undefined;
+    }
+  }
   let backupContent: string | undefined;
   if (typeof backup === "string" && backup.length > 0) {
     try {
@@ -160,6 +178,8 @@ function readLegacyProposalFile(proposalDir: string): Proposal | undefined {
 
   return {
     ...rest,
+    ref: migratedRef,
+    ...(migratedTarget ? { proposedTarget: migratedTarget } : {}),
     payload: {
       content: rest.payload?.content ?? "",
       ...(rest.payload?.frontmatter ? { frontmatter: rest.payload.frontmatter } : {}),

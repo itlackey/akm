@@ -112,6 +112,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
 
     expect(indexed.type).toBe("skill");
     expect(indexed.name).toBe("parity-skill");
+    expect(indexed.itemRef).toMatch(/\/\/skills\/parity-skill$/);
 
     // Reading the indexer-resolved path should yield the on-disk content.
     const fileBody = fs.readFileSync(indexed.filePath, "utf8");
@@ -121,6 +122,8 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     // the legacy `ref` above feeds the parseAssetRef lookup arm of the parity).
     const shown = await akmShowUnified({ ref: "skills/parity-skill" });
     expect(shown.path).toBe(indexed.filePath);
+    expect(indexed.itemRef).toMatch(/\/\/skills\/parity-skill$/);
+    expect(shown.ref).toBe("skills/parity-skill");
   });
 
   test("origin-prefixed ref: local//skill:foo resolves to primary stash path", async () => {
@@ -140,6 +143,25 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     const shownLocal = await akmShowUnified({ ref: "local//skills/origin-skill" });
     expect(shownBare.path).toBe(shownLocal.path);
     expect(shownBare.path).toBe(bare?.filePath as string);
+  });
+
+  test("lookup retains the entry-key fallback only for nullable pre-flip provenance", async () => {
+    writeFile(path.join(stashDir, "knowledge", "legacy.md"), "# Legacy\n");
+    await akmIndex({ stashDir, full: true });
+
+    const dbPath = path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db");
+    const db = openIndexDatabase(dbPath);
+    try {
+      db.prepare(
+        "UPDATE entries SET item_ref = NULL, bundle_id = NULL, concept_id = NULL WHERE entry_type = 'knowledge'",
+      ).run();
+    } finally {
+      closeDatabase(db);
+    }
+
+    const indexed = await lookup(parseAssetRef("knowledge:legacy"));
+    expect(indexed?.filePath).toBe(path.join(stashDir, "knowledge", "legacy.md"));
+    expect(indexed?.itemRef).toBeUndefined();
   });
 
   test("lookup and show do not downgrade embedding dimension metadata", async () => {

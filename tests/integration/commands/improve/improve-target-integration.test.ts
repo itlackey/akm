@@ -4,7 +4,10 @@ import path from "node:path";
 import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig, ImproveProfileConfig } from "../../../../src/core/config/config";
+import { ConfigError, UsageError } from "../../../../src/core/errors";
+import { mergeLockEntriesSync } from "../../../../src/integrations/lockfile";
 import { getCachePaths, parseGitRepoUrl } from "../../../../src/sources/providers/git";
+import { getWebsiteCachePaths } from "../../../../src/sources/snapshot-fetchers/website-ingest";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
 import { makeStashDir, type SandboxedDir } from "../../../_helpers/sandbox";
 
@@ -57,6 +60,31 @@ describe("improve named target integration", () => {
     });
 
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+  });
+
+  test("a qualified scope selects its bundle and conflicts with a different --target", async () => {
+    const primary = stash();
+    const team = stash();
+    const vendor = stash();
+    const config = targetConfig(primary, team, vendor);
+    let selectedRoot: string | undefined;
+    const collectEligibleRefsFn = async (_scope: unknown, stashDir?: string) => {
+      selectedRoot = stashDir;
+      return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+    };
+
+    await akmImprove({ scope: "team//memories/shared", dryRun: true, config, collectEligibleRefsFn });
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+
+    await expect(
+      akmImprove({
+        scope: "team//memories/shared",
+        target: "primary",
+        dryRun: true,
+        config,
+        collectEligibleRefsFn,
+      }),
+    ).rejects.toBeInstanceOf(UsageError);
   });
 
   test("consolidation isolates the selected source when another source has the same bare ref", async () => {
@@ -113,6 +141,49 @@ describe("improve named target integration", () => {
     expect(result.dryRun).toBe(true);
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(vendor));
   });
+
+  for (const kind of ["website", "npm"] as const) {
+    test(`qualified dry-run can inspect a read-only ${kind} bundle while a live run rejects it`, async () => {
+      const primary = stash();
+      const websiteUrl = "https://example.com/improve-read-only";
+      const websitePaths = getWebsiteCachePaths(websiteUrl);
+      const vendor = kind === "website" ? websitePaths.stashDir : stash();
+      fs.mkdirSync(vendor, { recursive: true });
+      if (kind === "npm") {
+        mergeLockEntriesSync([{ id: "vendor", source: "npm", ref: "npm:improve-read-only@1.0.0", localRoot: vendor }]);
+      }
+      const config = withTestImproveLlm({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: {
+          primary: { path: primary, writable: true },
+          vendor: kind === "website" ? { website: { url: websiteUrl } } : { npm: "npm:improve-read-only@1.0.0" },
+        },
+        defaultBundle: "primary",
+        defaultWriteTarget: "primary",
+      } as AkmConfig);
+      let selectedRoot: string | undefined;
+
+      try {
+        const result = await akmImprove({
+          scope: "vendor//knowledge/guide",
+          dryRun: true,
+          config,
+          ensureIndexFn: async () => {},
+          collectEligibleRefsFn: async (_scope, stashDir) => {
+            selectedRoot = stashDir;
+            return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+          },
+        });
+
+        expect(result.dryRun).toBe(true);
+        expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(vendor));
+        await expect(akmImprove({ scope: "vendor//knowledge/guide", config })).rejects.toBeInstanceOf(ConfigError);
+      } finally {
+        if (kind === "website") fs.rmSync(websitePaths.rootDir, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("judgedNoAction accounting does not suppress the same bare ref in another source", async () => {
     const primary = stash();

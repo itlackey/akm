@@ -137,7 +137,10 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "release", "--type", "command", "--format=json"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items.map((item) => item.ref)).toEqual(["commands/release", "commands/release-notes"]);
+    expect(json.items.map((item) => String(item.ref).split("//").at(-1))).toEqual([
+      "commands/release",
+      "commands/release-notes",
+    ]);
   });
 
   test("text output includes direct refs and follow-up commands", async () => {
@@ -146,7 +149,7 @@ describe("curate command", () => {
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
-    expect(output).toContain("ref: commands/release");
+    expect(output).toContain("commands/release");
     expect(output).toContain("show: akm show commands/release");
   });
 
@@ -210,6 +213,10 @@ describe("curate command", () => {
     expect(stashItem).toBeDefined();
     // agent shape never carries the heavyweight `preview` field.
     expect(stashItem).not.toHaveProperty("preview");
+    expect(stashItem).toHaveProperty("ref");
+    expect(path.isAbsolute(String(stashItem?.path))).toBe(true);
+    expect(stashItem).toHaveProperty("editable", true);
+    expect(stashItem).not.toHaveProperty("editHint");
     // but keeps the actionable followUp.
     expect(String(stashItem?.followUp)).toContain("akm show");
   });
@@ -245,14 +252,18 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "docker homelab", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items[0]?.ref).toBe("skills/docker-homelab");
+    expect(String(json.items[0]?.ref)).toBe("skills/docker-homelab");
     const familyItems = json.items.filter(
       (item) =>
-        item.ref === "skills/docker-homelab" ||
-        String(item.ref).startsWith("knowledge/skills/docker-homelab/references/"),
+        String(item.ref).endsWith("skills/docker-homelab") ||
+        String(item.ref).includes("knowledge/skills/docker-homelab/references/"),
     );
     expect(familyItems).toHaveLength(1);
-    expect(json.items[0]?.supportRefs).toEqual([
+    const supportRefs = (json.items[0]?.supportRefs as Array<Record<string, unknown>>).map((support) => ({
+      ...support,
+      ref: String(support.ref).split("//").at(-1),
+    }));
+    expect(supportRefs as Array<Record<string, unknown>>).toEqual([
       {
         ref: "knowledge/skills/docker-homelab/references/compose",
         type: "knowledge",
@@ -272,7 +283,7 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
     expect(json.items.length).toBeGreaterThan(0);
-    expect(json.items[0]?.ref).toBe("skills/docker-homelab");
+    expect(String(json.items[0]?.ref)).toBe("skills/docker-homelab");
   });
 
   test("docker deploy no longer surfaces release-manager filler", async () => {
@@ -280,6 +291,6 @@ describe("curate command", () => {
     const output = await runCli(stashDir, ["curate", "docker deploy", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
 
-    expect(json.items.some((item) => item.ref === "commands/release-manager")).toBe(false);
+    expect(json.items.some((item) => String(item.ref).endsWith("//commands/release-manager"))).toBe(false);
   });
 });

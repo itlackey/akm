@@ -13,6 +13,7 @@
  * traversal.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
@@ -22,12 +23,12 @@ import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
+import { resolveMutationTarget } from "./mutation-target";
 import {
   commitWriteTargetBoundary,
   formatRefForMessage,
   type ResolvedWriteTarget,
   recordWriteTargetPath,
-  resolveWriteTarget,
 } from "./write-source";
 
 export type { IndexSearchSource };
@@ -59,13 +60,28 @@ export function parseEnvRef(ref: string): AssetRef {
   return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
 }
 
-export function findEnvSource(origin: string | undefined): IndexSearchSource {
+export function findEnvSource(origin: string | undefined, type: "env" | "secret", name: string): IndexSearchSource {
   const sources = resolveSourceEntries(undefined, loadConfig());
   if (sources.length === 0) {
     throw new UsageError("No stashes configured. Run `akm init` to create your working stash.");
   }
-  if (!origin || origin === "local") return sources[0]!;
-  const named = sources.find((source) => source.registryId === origin);
+  const candidates =
+    !origin || origin === "local"
+      ? origin === "local"
+        ? sources.slice(0, 1)
+        : sources
+      : sources.filter((s) => s.registryId === origin);
+  const typeDir = type === "env" ? "env" : "secrets";
+  const member = candidates.find((source) =>
+    fs.existsSync(assetPathForName(type, path.join(source.path, typeDir), name)),
+  );
+  if (member) return member;
+  if (!origin || origin === "local") {
+    const fallback = candidates[0];
+    if (fallback) return fallback;
+    throw new UsageError("No stashes configured. Run `akm init` to create your working stash.");
+  }
+  const named = candidates[0];
   if (!named) {
     throw new NotFoundError(`Source not found for origin: ${origin}`);
   }
@@ -94,7 +110,7 @@ export function resolveEnvPath(ref: string): {
   if (parsed.type !== "env") {
     throw new UsageError(`Expected an env ref (env:<name>); got "${ref}".`);
   }
-  const source = findEnvSource(parsed.origin);
+  const source = findEnvSource(parsed.origin, "env", parsed.name);
 
   const envRoot = path.join(source.path, "env");
   const envPath = assetPathForName("env", envRoot, parsed.name);
@@ -141,7 +157,7 @@ export function resolveSecretPath(
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
   // Source resolution is identical for every asset type; reuse the env helper.
-  const source = findEnvSource(parsed.origin);
+  const source = findEnvSource(parsed.origin, "secret", parsed.name);
   const typeRoot = path.join(source.path, "secrets");
   const absPath = assetPathForName("secret", typeRoot, parsed.name);
   // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
@@ -162,22 +178,12 @@ export function resolveSecretPath(
 // shared typed ConfigError). Env/secret VALUES are still never read or surfaced
 // here — these helpers only resolve the write target and the absolute path.
 
-/**
- * Spell an env/secret ref for a resolved write target. `target.selector` is the
- * config source name for a `--target`/`defaultWriteTarget` destination and
- * undefined for the working-stash fallback; `displayRef` suppresses the
- * `local`/`stash`/default sentinels, so the primary stash still spells the bare
- * `env/name` while a named bundle spells `bundle//env/name`.
- */
-export function writeTargetDisplaySource(target: ResolvedWriteTarget): IndexSearchSource {
-  return { path: target.source.path, ...(target.selector ? { registryId: target.selector } : {}) };
-}
-
 export interface EnvWriteResolution {
   name: string;
   absPath: string;
   target: ResolvedWriteTarget;
   parsedRef: AssetRef;
+  ref: string;
 }
 
 /**
@@ -199,19 +205,21 @@ export function resolveEnvWriteTarget(
     assertFlatAssetName(parsed.name);
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
-  const target = resolveWriteTarget(loadConfig(), writeTarget);
+  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget);
+  const { target } = resolved;
   const envRoot = path.join(target.source.path, "env");
   const absPath = assetPathForName("env", envRoot, parsed.name);
   if (!isWithin(absPath, envRoot)) {
     throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
   }
-  return { name: parsed.name, absPath, target, parsedRef: parsed };
+  return { name: parsed.name, absPath, target, parsedRef: resolved.ref, ref: resolved.displayRef };
 }
 
 export interface SecretWriteResolution {
   name: string;
   absPath: string;
   target: ResolvedWriteTarget;
+  ref: string;
 }
 
 /**
@@ -233,13 +241,14 @@ export function resolveSecretWriteTarget(
     assertFlatAssetName(parsed.name);
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
-  const target = resolveWriteTarget(loadConfig(), writeTarget);
+  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget);
+  const { target } = resolved;
   const typeRoot = path.join(target.source.path, "secrets");
   const absPath = assetPathForName("secret", typeRoot, parsed.name);
   if (!isWithin(absPath, typeRoot)) {
     throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
   }
-  return { name: parsed.name, absPath, target };
+  return { name: parsed.name, absPath, target, ref: resolved.displayRef };
 }
 
 /**
@@ -258,6 +267,6 @@ export function commitEnvSecretWrite(
   for (const filePath of paths) recordWriteTargetPath(target.source, filePath);
   commitWriteTargetBoundary(
     target,
-    `${op} ${formatRefForMessage({ type: ref.type, name: ref.name, ...(target.selector ? { origin: target.selector } : {}) })}`,
+    `${op} ${formatRefForMessage({ type: ref.type, name: ref.name, origin: target.source.name })}`,
   );
 }

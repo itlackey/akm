@@ -54,6 +54,19 @@ The `content` column is intentionally sparse. Longer freeform guidance such as
 Full rebuilds preserve usage history and then re-link it to rebuilt entries by
 ref.
 
+## Indexed Identity and Location
+
+Every current `entries` row carries a canonical fully qualified
+`item_ref` (`bundle//conceptId`), its `bundle_id` and `concept_id` provenance,
+and the absolute `file_path` of the materialized local asset. Search and show
+prefer those columns for identity and access rather than reconstructing refs
+from a name or source path. This preserves bundle identity when multiple sources
+contain the same concept.
+
+The provenance columns remain nullable only for partially migrated rows. Lookup
+retains the older entry-key/path fallback for those rows until a reindex writes
+their canonical identity.
+
 ## LLM Enrichment Pass
 
 When metadata enhancement is enabled, the enrichment pass runs after all

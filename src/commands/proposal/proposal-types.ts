@@ -250,7 +250,7 @@ export interface ProposalGateDecision {
 export interface Proposal {
   /** Stable random id (crypto.randomUUID()). Primary key in the store. */
   id: string;
-  /** Asset ref the proposal would create or update (`[origin//]type:name`). */
+  /** Asset ref the proposal would create or update (`[bundle//]conceptId`). */
   ref: string;
   status: ProposalStatus;
   /**
@@ -281,6 +281,19 @@ export interface Proposal {
    * an empty `path` at read time.
    */
   changes: FileChange[];
+  /**
+   * Destination selected when the proposal was created. Named-queue creation
+   * and qualified refs bind both the durable bundle identity and its
+   * materialized root so a later accept cannot follow a changed default write
+   * target.
+   *
+   * Absent on historical or compatibility-path proposals created without an
+   * explicit destination; those rows retain the queue/default fallback.
+   */
+  proposedTarget?: {
+    source: string;
+    root: string;
+  };
   /**
    * SHA-256 hex of the content that existed at the primary change's target
    * path in the proposal's OWN stash when the proposal was minted. Absent when

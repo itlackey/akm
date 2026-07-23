@@ -44,6 +44,8 @@ export interface DbIndexedEntry {
   stashDir: string;
   entry: IndexDocument;
   searchText: string;
+  /** Canonical durable ref from `entries.item_ref`; absent on nullable pre-flip rows. */
+  itemRef?: string;
   /**
    * Chunk-5 flip (Checkpoint A): the durable `concept_id`/`bundle_id` provenance
    * columns, surfaced from the `entries` row so the state.db salience/outcome
@@ -71,6 +73,9 @@ export interface DbSearchResult {
    * reader then falls through to its inline legacy `type:name` arm.
    */
   itemRef?: string | null;
+  /** Indexed provenance used when `item_ref` is temporarily NULL. */
+  bundleId?: string | null;
+  conceptId?: string | null;
 }
 
 /** One nearest-neighbour hit from the vector index (id + L2 distance). */

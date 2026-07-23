@@ -147,12 +147,13 @@ async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
     const filePath = resolveMetaFilePath(source.path, metaRef.name);
     if (!filePath) continue;
     const content = fs.readFileSync(filePath, "utf8");
-    const editable = isEditable(filePath, config);
+    const editable = isEditable(filePath, config, allSources);
     appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
     return {
       type: "meta",
       name: metaRef.name,
       path: filePath,
+      ref: `meta:${metaRef.name}`,
       content,
       origin: source.registryId ?? null,
       editable,
@@ -308,10 +309,19 @@ export async function showLocal(input: {
 
   const allSourceDirs = searchSources.map((s) => s.path);
 
-  const resolvedAssetPath = await resolveAssetPath(parsed, {
-    stashDir: input.stashDir,
-    mode: "index-first",
-  });
+  let indexedEntry: Awaited<ReturnType<typeof lookup>> = null;
+  try {
+    indexedEntry = await lookup(parsed);
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    indexedEntry = null;
+  }
+  const resolvedAssetPath =
+    indexedEntry?.filePath ??
+    (await resolveAssetPath(parsed, {
+      stashDir: input.stashDir,
+      mode: "disk-only",
+    }));
   const assetPath = resolvedAssetPath ?? undefined;
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {
@@ -355,6 +365,16 @@ export async function showLocal(input: {
 
   const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
+  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
+  const canonicalRef = displayRef(
+    {
+      type: parsed.type,
+      name: parsed.name,
+      conceptId: indexedEntry?.conceptId,
+      bundleId: indexedEntry?.bundleId ?? source?.registryId,
+    },
+    config.defaultBundle ?? (isPrimaryStash ? indexedEntry?.bundleId : undefined),
+  );
   // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
   // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
   // the assets they authored. Every other source is content pulled from
@@ -366,16 +386,16 @@ export async function showLocal(input: {
   // `allSources[0]` is always the primary (search-source.ts) — not a
   // name-derived registryId or the orthogonal `writable` bit. `source` undefined
   // (unresolved path) also fails closed.
-  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
   if (response.toolPolicy !== undefined && !isPrimaryStash) {
     delete (response as { toolPolicy?: unknown }).toolPolicy;
   }
-  const editable = isEditable(assetPath, config);
+  const editable = isEditable(assetPath, config, allSources);
   const fullResponse: ShowResponse = {
     ...response,
+    ref: canonicalRef,
     origin: source?.registryId ?? null,
     editable,
-    ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
+    ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
     related: (() => {
       try {
         return withIndexDb((db) => {
@@ -498,11 +518,13 @@ function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowRespons
     type: summary.type,
     name: summary.name,
     path: summary.path,
+    ...(summary.ref ? { ref: summary.ref } : {}),
     ...(summary.description ? { description: summary.description } : {}),
     ...(summary.action ? { action: summary.action } : {}),
     ...(summary.run ? { run: summary.run } : {}),
     ...(summary.origin !== undefined ? { origin: summary.origin } : {}),
     ...(full.editable !== undefined ? { editable: full.editable } : {}),
+    ...(full.editHint ? { editHint: full.editHint } : {}),
   };
 }
 
@@ -531,6 +553,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     type: full.type,
     name: full.name,
     path: full.path,
+    ...(full.ref ? { ref: full.ref } : {}),
     ...(description ? { description } : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
     ...(full.parameters ? { parameters: full.parameters } : {}),
@@ -538,6 +561,8 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     ...(full.action ? { action: full.action } : {}),
     ...(full.run ? { run: full.run } : {}),
     ...(full.origin !== undefined ? { origin: full.origin } : {}),
+    ...(full.editable !== undefined ? { editable: full.editable } : {}),
+    ...(full.editHint ? { editHint: full.editHint } : {}),
   };
 
   return summary;

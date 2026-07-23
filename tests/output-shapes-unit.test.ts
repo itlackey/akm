@@ -200,6 +200,25 @@ describe("shapeSearchHitForAgent", () => {
     expect(out).not.toHaveProperty("origin");
     expect(typeof out.description).toBe("string");
   });
+
+  test("omits editHint unless the local asset is read-only", () => {
+    const editable = shapeSearchHitForAgent({
+      type: "skill",
+      name: "deploy",
+      ref: "skills/deploy",
+      path: "/tmp/skills/deploy/SKILL.md",
+      editable: true,
+      editHint: "stale hint",
+    });
+    expect(editable).not.toHaveProperty("editHint");
+
+    const readOnly = shapeSearchHitForAgent({
+      ...editable,
+      editable: false,
+      editHint: "akm clone team//skills/deploy",
+    });
+    expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
+  });
 });
 
 describe("shapeAssetHit", () => {
@@ -235,6 +254,10 @@ describe("shapeShowOutput", () => {
   const fullShow = {
     type: "skill",
     name: "deploy",
+    ref: "team//skills/deploy",
+    path: "/tmp/team/skills/deploy/SKILL.md",
+    editable: false,
+    editHint: "Inspect with akm show team//skills/deploy",
     description: "Deploy",
     action: "akm show skills/deploy",
     content: "long body...",
@@ -248,6 +271,10 @@ describe("shapeShowOutput", () => {
     expect(out).toMatchObject({
       type: "skill",
       name: "deploy",
+      ref: "team//skills/deploy",
+      path: "/tmp/team/skills/deploy/SKILL.md",
+      editable: false,
+      editHint: "Inspect with akm show team//skills/deploy",
       description: "Deploy",
       content: "long body...",
     });
@@ -348,6 +375,8 @@ describe("shapeSearchOutput", () => {
           name: "x",
           action: "a",
           ref: "skills/x",
+          path: "/tmp/skills/x/SKILL.md",
+          editable: true,
           description: "d",
           score: 0.1,
           estimatedTokens: 1,
@@ -356,7 +385,65 @@ describe("shapeSearchOutput", () => {
       registryHits: [],
     };
     const out = shapeSearchOutput(result, "brief", "agent") as { hits: Record<string, unknown>[] };
-    expect((out.hits[0] as Record<string, unknown>).ref).toBe("skills/x");
+    expect(out.hits[0]).toMatchObject({
+      ref: "skills/x",
+      path: "/tmp/skills/x/SKILL.md",
+      editable: true,
+    });
+  });
+
+  test("agent registry hits never acquire a local path", () => {
+    const out = shapeSearchOutput(
+      { hits: [], registryHits: [{ type: "registry", name: "kit", id: "kit", action: "akm add kit" }] },
+      "normal",
+      "agent",
+    ) as { registryHits: Record<string, unknown>[] };
+    expect(out.registryHits[0]).not.toHaveProperty("path");
+    expect(out.registryHits[0]).not.toHaveProperty("editable");
+  });
+});
+
+describe("curate agent access projection", () => {
+  test("local items include access fields while registry-only items have no path", () => {
+    const out = shapeForCommand(
+      "curate",
+      {
+        query: "deploy",
+        summary: "Selected two",
+        items: [
+          {
+            source: "stash",
+            type: "knowledge",
+            name: "guide",
+            ref: "team//knowledge/guide",
+            path: "/tmp/team/knowledge/guide.md",
+            editable: false,
+            editHint: "Inspect with akm show team//knowledge/guide",
+            followUp: "akm show team//knowledge/guide",
+            reason: "Useful guide",
+          },
+          {
+            source: "registry",
+            type: "registry",
+            name: "deploy-kit",
+            id: "deploy-kit",
+            followUp: "akm add deploy-kit",
+            reason: "External kit",
+          },
+        ],
+      },
+      "normal",
+      "agent",
+    ) as { items: Record<string, unknown>[] };
+
+    expect(out.items[0]).toMatchObject({
+      ref: "team//knowledge/guide",
+      path: "/tmp/team/knowledge/guide.md",
+      editable: false,
+      editHint: "Inspect with akm show team//knowledge/guide",
+    });
+    expect(out.items[1]).not.toHaveProperty("path");
+    expect(out.items[1]).not.toHaveProperty("editable");
   });
 });
 

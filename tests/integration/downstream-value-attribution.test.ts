@@ -254,7 +254,7 @@ describe("downstream value attribution", () => {
     });
   });
 
-  test("source-qualifies indexed children and constrains type+entry.name duplicates to the production winner", async () => {
+  test("source-qualifies indexed children and preserves duplicate concepts in each bundle", async () => {
     const index = openExistingDatabase(getDbPath());
     const indexedRefs = (
       index.prepare("SELECT item_ref FROM entries WHERE item_ref IS NOT NULL ORDER BY item_ref").all() as Array<{
@@ -263,7 +263,8 @@ describe("downstream value attribution", () => {
     ).map((row) => row.item_ref);
     index.close();
     expect(indexedRefs).toContain("stash//memories/parent");
-    expect(indexedRefs).not.toContain("team//memories/parent");
+    expect(indexedRefs).toContain("team//memories/parent");
+    expect(indexedRefs).toContain("team//memories/parent.derived");
     expect(indexedRefs).toContain("team//memories/team-only");
     expect(indexedRefs).toContain("team//memories/team-only.derived");
     const result = await akmSearch({ query: "team surface needle", source: "team", limit: 10 });

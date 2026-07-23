@@ -258,13 +258,18 @@ function wasFormatValueConsumedAsName(name: string, formatValue: string, verb: "
 export const cloneCommand = defineJsonCommand({
   meta: {
     name: "clone",
-    description: "Clone an asset from any source into the working stash or a custom destination",
+    description: "Clone an asset from any source into a managed bundle or an unmanaged custom destination",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//script:deploy.sh)", required: true },
     name: { type: "string", description: "New name for the cloned asset" },
-    force: { type: "boolean", description: "Overwrite if asset already exists in working stash", default: false },
-    dest: { type: "string", description: "Destination directory (default: working stash)" },
+    force: { type: "boolean", description: "Overwrite if the asset already exists at the destination", default: false },
+    target: {
+      type: "string",
+      description:
+        "Override the managed destination. Accepts a bundle name from config; falls back to defaultWriteTarget then the working stash.",
+    },
+    dest: { type: "string", description: "Unmanaged destination directory (cannot be combined with --target)" },
   },
   async run({ args }) {
     const result = await akmClone({
@@ -272,6 +277,7 @@ export const cloneCommand = defineJsonCommand({
       newName: args.name,
       force: args.force,
       dest: args.dest,
+      target: args.target,
     });
     output("clone", result);
   },

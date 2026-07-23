@@ -386,7 +386,20 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 
 /** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
 export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens", "keys"]);
+  const picked = pickFields(hit, [
+    "name",
+    "ref",
+    "type",
+    "path",
+    "editable",
+    "editHint",
+    "description",
+    "action",
+    "score",
+    "estimatedTokens",
+    "keys",
+  ]);
+  if (picked.editable !== false) delete picked.editHint;
   return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
 }
 
@@ -411,9 +424,13 @@ export function shapeShowOutput(
   shape: ShapeMode = "human",
 ): Record<string, unknown> {
   if (shape === "agent") {
-    return pickFields(result, [
+    const shaped = pickFields(result, [
       "type",
       "name",
+      "ref",
+      "path",
+      "editable",
+      "editHint",
       "description",
       "action",
       "content",
@@ -433,6 +450,8 @@ export function shapeShowOutput(
       "keys",
       "related",
     ]);
+    if (shaped.editable !== false) delete shaped.editHint;
+    return shaped;
   }
   if (shape === "summary") {
     return pickFields(result, [

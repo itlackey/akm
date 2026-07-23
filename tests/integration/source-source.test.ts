@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import type { AkmConfig, BundleConfigEntry } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
+import { resolveWritable } from "../../src/core/write-source";
+import { buildDbHit } from "../../src/indexer/search/db-search";
 import {
   ensureSourceCaches,
   findSourceForPath,
@@ -87,6 +89,7 @@ describe("resolveSourceEntries", () => {
     expect(sources.length).toBeGreaterThanOrEqual(1);
     expect(sources[0]!.path).toBe(stashDir);
     expect(sources[0]!.registryId).toBeUndefined();
+    expect(sources[0]?.writable).toBe(true);
   });
 
   test("includes valid stash paths", () => {
@@ -96,6 +99,8 @@ describe("resolveSourceEntries", () => {
       const sources = resolveSourceEntries();
       expect(sources.length).toBe(2);
       expect(sources[1]!.path).toBe(extraDir);
+      expect(sources[1]?.type).toBe("filesystem");
+      expect(sources[1]?.writable).toBe(true);
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
     }
@@ -214,6 +219,54 @@ describe("resolveSourceEntries", () => {
       fs.rmSync(overrideDir, { recursive: true, force: true });
     }
   });
+
+  test("uses canonical writable defaults for every configured provider kind", () => {
+    const filesystemDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-policy-filesystem-"));
+    const gitDefaultDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-policy-git-default-"));
+    const gitWritableDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-policy-git-writable-"));
+    const npmDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-policy-npm-"));
+    const websiteUrl = "https://example.com/akm-policy";
+    const websitePaths = websiteIngest.getWebsiteCachePaths(websiteUrl);
+    fs.mkdirSync(websitePaths.stashDir, { recursive: true });
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        bundles: {
+          filesystem: { path: filesystemDir },
+          "git-default": { git: "https://example.test/default.git" },
+          "git-writable": { git: "https://example.test/writable.git", writable: true },
+          website: { website: { url: websiteUrl } },
+          npm: { npm: "npm:policy-package@1.0.0" },
+        },
+      });
+      mergeLockEntriesSync([
+        {
+          id: "git-default",
+          source: "git",
+          ref: "https://example.test/default.git",
+          localRoot: gitDefaultDir,
+        },
+        {
+          id: "git-writable",
+          source: "git",
+          ref: "https://example.test/writable.git",
+          localRoot: gitWritableDir,
+        },
+        { id: "npm", source: "npm", ref: "npm:policy-package@1.0.0", localRoot: npmDir },
+      ]);
+
+      const byName = new Map(resolveSourceEntries().map((source) => [source.registryId, source]));
+      expect(byName.get("filesystem")).toMatchObject({ type: "filesystem", writable: true });
+      expect(byName.get("git-default")).toMatchObject({ type: "git", writable: false });
+      expect(byName.get("git-writable")).toMatchObject({ type: "git", writable: true });
+      expect(byName.get("website")).toMatchObject({ type: "website", writable: false });
+      expect(byName.get("npm")).toMatchObject({ type: "npm", writable: false });
+    } finally {
+      for (const dir of [filesystemDir, gitDefaultDir, gitWritableDir, npmDir, websitePaths.rootDir]) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
 });
 
 describe("resolveAllStashDirs", () => {
@@ -284,30 +337,162 @@ describe("isEditable", () => {
     }
   });
 
-  test("files under a non-writable managed bundle's lock localRoot are NOT editable (Decision D)", () => {
+  test("agent output honors an explicit read-only policy on the configured primary bundle", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stashDir, writable: false } },
+      defaultBundle: "stash",
+    });
+    const sources = resolveSourceEntries();
+    const filePath = path.join(stashDir, "knowledge", "guide.md");
+    const hit = await buildDbHit({
+      entry: { type: "knowledge", name: "guide", description: "Guide" },
+      path: filePath,
+      itemRef: "stash//knowledge/guide",
+      score: 1,
+      query: "guide",
+      rankingMode: "fts",
+      defaultStashDir: stashDir,
+      allSourceDirs: sources.map((source) => source.path),
+      sources,
+      config: { semanticSearchMode: "off" },
+    });
+
+    expect(sources[0]).toMatchObject({ registryId: "stash", type: "filesystem", writable: false });
+    expect(hit.editable).toBe(false);
+    expect(hit.editHint).toContain("read-only under current AKM source policy");
+    expect(hit.editHint).not.toContain("overwritten on update");
+  });
+
+  test("explicit read-only filesystem bundles are not editable", () => {
+    const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-readonly-"));
+    try {
+      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir, writable: false } } });
+      expect(isEditable(path.join(extraDir, "scripts", "deploy.sh"))).toBe(false);
+    } finally {
+      fs.rmSync(extraDir, { recursive: true, force: true });
+    }
+  });
+
+  test("git bundles are read-only by default", () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-cache-"));
     try {
-      // A lock-backed npm bundle (not writable) → files under its localRoot are
-      // cache-managed and overwritten on `akm update`, so not editable.
       seedManagedBundle(
-        "test-pkg",
-        { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
+        "team",
+        { git: "https://example.test/team.git" },
         {
-          source: "npm",
-          ref: "npm:test-pkg@1.0.0",
+          source: "git",
+          ref: "https://example.test/team.git",
           localRoot: cacheDir,
         },
       );
-      const filePath = path.join(cacheDir, "scripts", "deploy.sh");
-      expect(isEditable(filePath)).toBe(false);
+      expect(isEditable(path.join(cacheDir, "scripts", "deploy.sh"))).toBe(false);
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
   });
 
-  test("files outside any known path are editable", () => {
+  test("writable git bundles are editable", () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-cache-writable-"));
+    try {
+      seedManagedBundle(
+        "team",
+        { git: "https://example.test/team.git", writable: true },
+        {
+          source: "git",
+          ref: "https://example.test/team.git",
+          localRoot: cacheDir,
+        },
+      );
+      expect(isEditable(path.join(cacheDir, "scripts", "deploy.sh"))).toBe(true);
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  for (const type of ["website", "npm"] as const) {
+    test(`${type} bundles are read-only`, () => {
+      const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-${type}-readonly-`));
+      try {
+        const writable = resolveWritable({ type });
+        expect(writable).toBe(false);
+        expect(
+          isEditable(path.join(cacheDir, "knowledge", "guide.md"), undefined, [
+            { path: stashDir, writable: true },
+            { path: cacheDir, type, writable },
+          ]),
+        ).toBe(false);
+      } finally {
+        fs.rmSync(cacheDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("files outside every configured source fail closed", () => {
     saveConfig({ semanticSearchMode: "off" });
-    expect(isEditable("/some/random/path/file.sh")).toBe(true);
+    expect(isEditable("/some/random/path/file.sh")).toBe(false);
+  });
+
+  test("read-only hits keep a use-oriented action and receive a secondary edit hint", async () => {
+    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-readonly-hit-"));
+    try {
+      const filePath = path.join(sourceDir, "knowledge", "guide.md");
+      const hit = await buildDbHit({
+        entry: { type: "knowledge", name: "guide", description: "Guide" },
+        path: filePath,
+        itemRef: "team//knowledge/guide",
+        score: 1,
+        query: "guide",
+        rankingMode: "fts",
+        defaultStashDir: stashDir,
+        allSourceDirs: [stashDir, sourceDir],
+        sources: [
+          { path: stashDir, writable: true },
+          { path: sourceDir, registryId: "team", type: "git", writable: false },
+        ],
+        config: { semanticSearchMode: "off" },
+      });
+
+      expect(hit.ref).toBe("team//knowledge/guide");
+      expect(hit.editable).toBe(false);
+      expect(hit.editHint).toContain("akm clone team//knowledge/guide");
+      expect(hit.action).toContain("akm show team//knowledge/guide");
+      expect(hit.action).not.toContain("clone");
+    } finally {
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("stored item refs distinguish duplicate concepts across bundles", async () => {
+    const roots = [
+      fs.mkdtempSync(path.join(os.tmpdir(), "akm-bundle-a-")),
+      fs.mkdtempSync(path.join(os.tmpdir(), "akm-bundle-b-")),
+    ];
+    try {
+      const hits = await Promise.all(
+        roots.map((root, index) =>
+          buildDbHit({
+            entry: { type: "knowledge", name: "shared" },
+            path: path.join(root, "knowledge", "shared.md"),
+            itemRef: `bundle-${index + 1}//knowledge/shared`,
+            score: 1,
+            query: "shared",
+            rankingMode: "fts",
+            defaultStashDir: stashDir,
+            allSourceDirs: roots,
+            sources: roots.map((sourceRoot, sourceIndex) => ({
+              path: sourceRoot,
+              registryId: `bundle-${sourceIndex + 1}`,
+              writable: false,
+            })),
+            config: { semanticSearchMode: "off" },
+          }),
+        ),
+      );
+      expect(hits.map((hit) => hit.ref)).toEqual(["bundle-1//knowledge/shared", "bundle-2//knowledge/shared"]);
+    } finally {
+      for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -587,17 +587,15 @@ describe("Issue #15: Hybrid ranking mode label", () => {
   });
 });
 
-// ── Cross-stash deduplication (indexer level) ────────────────────────────────
+// ── Cross-stash identity (indexer level) ─────────────────────────────────────
 
-describe("Cross-stash deduplication at index time", () => {
-  test("same asset in two stash sources produces only one index entry", async () => {
+describe("Cross-stash identity at index time", () => {
+  test("same asset in two stash sources remains addressable in both bundles", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
     // Same asset name + metadata in both stashes (mimics primary stash + installed
-    // stash). #39: sidecars retired — seed via knowledge/*.md frontmatter. Dedup
-    // identity is type + entry.name, so identical knowledge/github in both roots
-    // dedupes to one entry (the higher-priority primary stash wins).
+    // stash). #39: sidecars retired — seed via knowledge/*.md frontmatter.
     const asset = "---\ndescription: GitHub Platform Adapter for issue tracking\n---\n";
 
     writeFile(path.join(primaryStash, "knowledge", "github.md"), asset);
@@ -618,10 +616,10 @@ describe("Cross-stash deduplication at index time", () => {
       (h) => h.name.includes("github") && h.description?.includes("GitHub Platform Adapter"),
     );
 
-    // Indexer should skip the duplicate — only one entry in the DB
-    expect(githubHits.length).toBe(1);
-    // The surviving hit should be from the primary stash (higher priority)
-    expect(githubHits[0]!.path).toContain(primaryStash);
+    expect(githubHits.length).toBe(2);
+    expect(githubHits.map((hit) => hit.path).sort()).toEqual(
+      [path.join(primaryStash, "knowledge", "github.md"), path.join(secondStash, "knowledge", "github.md")].sort(),
+    );
   });
 
   test("different stash directory structures are not deduped when entry names differ", async () => {
@@ -653,13 +651,12 @@ describe("Cross-stash deduplication at index time", () => {
     expect(adapterHits.length).toBe(2);
   });
 
-  test("same asset name across stashes is deduped even when descriptions differ", async () => {
+  test("same asset name across stashes preserves each bundle's description", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
     // #39: sidecars retired — seed via knowledge/*.md frontmatter. Both roots
-    // declare the SAME name (`helper`) with DIFFERENT descriptions; type + name
-    // identity dedupes them and the higher-priority primary stash wins.
+    // declare the SAME name (`helper`) with DIFFERENT descriptions.
     writeFile(path.join(primaryStash, "knowledge", "helper.md"), "---\ndescription: Build helper for CI\n---\n");
     writeFile(path.join(secondStash, "knowledge", "helper.md"), "---\ndescription: Test helper for local dev\n---\n");
 
@@ -674,8 +671,10 @@ describe("Cross-stash deduplication at index time", () => {
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const helperHits = localHits.filter((h) => h.name.includes("helper"));
 
-    // Identity uses type + entry.name, so the higher-priority stash wins.
-    expect(helperHits.length).toBe(1);
-    expect(helperHits[0]!.description).toBe("Build helper for CI");
+    expect(helperHits.length).toBe(2);
+    expect(helperHits.map((hit) => hit.description).sort()).toEqual([
+      "Build helper for CI",
+      "Test helper for local dev",
+    ]);
   });
 });

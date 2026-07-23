@@ -16,8 +16,10 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { buildActionFromContributors, defaultActionContributors } from "../../core/action-contributors";
 import { placementTypes } from "../../core/asset/asset-placement";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { displayRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveConfig } from "../../core/config/config";
 import { getDbPath } from "../../core/paths";
@@ -43,6 +45,7 @@ import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../
 import { resolveProjectContext } from "../walk/project-context";
 import { parseRefPrefixQuery, sanitizeFtsQuery } from "./fts-query";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
+import type { RankedEntryInput } from "./ranking-types";
 import { attachSearchHitAttribution, copySearchHitAttribution, getSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -75,6 +78,10 @@ function buildStaleIndexHint(db: Database): string | undefined {
   }
 }
 
+function indexedProvenance(entry: RankedEntryInput): Pick<RankedEntryInput, "itemRef" | "bundleId" | "conceptId"> {
+  return { itemRef: entry.itemRef, bundleId: entry.bundleId, conceptId: entry.conceptId };
+}
+
 export function buildLocalAction(
   type: string,
   ref: string,
@@ -83,18 +90,23 @@ export function buildLocalAction(
   return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
 }
 
-function resolveSearchHitRef(entry: IndexDocument, refName: string, source?: SearchSource): string {
-  // F4b output-spelling flip: emit the 0.9.0 conceptId grammar for the hit's
-  // user-facing ref (short conceptId in the primary bundle, `bundle//conceptId`
-  // for a slug-clean non-default source). `displayRef` prefers the row's stored
-  // conceptId and derives `stashDir/name` (== the old `stashDir/name` body) when it
-  // is absent, so this is a pure ref-spelling change over the old output.
-  return displayRef({
-    type: entry.type,
-    name: refName,
-    conceptId: entry.conceptId,
-    bundleId: source?.registryId ?? undefined,
-  });
+function resolveSearchHitRef(
+  entry: IndexDocument,
+  refName: string,
+  source?: SearchSource,
+  provenance?: { itemRef?: string | null; bundleId?: string | null; conceptId?: string | null },
+  defaultBundleId?: string,
+): string {
+  const indexedRef = provenance?.itemRef ? parseBundleRef(provenance.itemRef) : undefined;
+  return displayRef(
+    {
+      type: entry.type,
+      name: refName,
+      conceptId: provenance?.conceptId ?? indexedRef?.conceptId ?? entry.conceptId,
+      bundleId: provenance?.bundleId ?? indexedRef?.bundle ?? source?.registryId ?? undefined,
+    },
+    defaultBundleId,
+  );
 }
 
 function resolveSearchHitOrigin(source?: SearchSource): string | null {
@@ -543,7 +555,7 @@ async function searchDatabase(
       return buildDbHit({
         entry,
         path: filePath,
-        // Round to 4 decimal places
+        ...indexedProvenance(ranked),
         score: Math.round(finalScore * 10000) / 10000,
         query,
         rankingMode,
@@ -645,6 +657,9 @@ async function enumerateEntries(opts: {
       buildDbHit({
         entry: ie.entry,
         path: ie.filePath,
+        itemRef: ie.itemRef,
+        bundleId: ie.bundleId,
+        conceptId: ie.conceptId,
         score: 1,
         query,
         rankingMode: "fts",
@@ -809,6 +824,9 @@ async function tryVecScores(
 export async function buildDbHit(input: {
   entry: IndexDocument;
   path: string;
+  itemRef?: string | null;
+  bundleId?: string | null;
+  conceptId?: string | null;
   score: number;
   query: string;
   rankingMode: "hybrid" | "semantic" | "fts";
@@ -830,7 +848,8 @@ export async function buildDbHit(input: {
   db?: Database;
 }): Promise<SourceSearchHit> {
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
-  const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
+  const absolutePath = path.resolve(input.path);
+  const entryStashDir = findSourceForPath(absolutePath, input.sources)?.path ?? input.defaultStashDir;
 
   // Quality and confidence boosts are now applied in the main scoring
   // phase (searchDatabase). buildDbHit receives the already-final score and
@@ -856,24 +875,27 @@ export async function buildDbHit(input: {
     graphBoost,
   );
 
-  const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, input.path) : null;
+  const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, absolutePath) : null;
 
-  const source = findSourceForPath(input.path, input.sources);
-  const ref = resolveSearchHitRef(input.entry, input.entry.name, source);
+  const source = findSourceForPath(absolutePath, input.sources);
+  const defaultBundleId =
+    input.config?.defaultBundle ??
+    (source && path.resolve(source.path) === path.resolve(input.defaultStashDir)
+      ? (input.bundleId ?? undefined)
+      : undefined);
+  const ref = resolveSearchHitRef(input.entry, input.entry.name, source, input, defaultBundleId);
 
-  const editable = isEditable(input.path, input.config);
+  const editable = isEditable(absolutePath, input.config, input.sources);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
 
   const hit: SourceSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
-    path: input.path,
+    path: absolutePath,
     ref,
     origin: resolveSearchHitOrigin(source),
     editable,
-    ...(!editable
-      ? { editHint: buildEditHint(input.path, input.entry.type, input.entry.name, source?.registryId) }
-      : {}),
+    ...(!editable ? { editHint: buildEditHint(ref) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),

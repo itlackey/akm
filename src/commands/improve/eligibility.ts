@@ -552,6 +552,6 @@ export async function findAssetFilePath(
     writableDirSet,
     directoryIndexNames: ["SKILL.md"],
     preserveDirectNameFallback: true,
-    honorOrigin: false,
+    honorOrigin: true,
   });
 }

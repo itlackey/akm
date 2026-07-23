@@ -75,7 +75,7 @@ describe("--shape agent field projection", () => {
     return stashDir;
   }
 
-  test("--shape agent search output has only: name, ref, type, description, action, score", async () => {
+  test("--shape agent search output includes canonical location and edit authorization", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
@@ -88,15 +88,31 @@ describe("--shape agent field projection", () => {
     expect(keys).toContain("name");
     expect(keys).toContain("type");
     expect(keys).toContain("action");
+    expect(hit).toHaveProperty("ref");
+    expect(hit).toHaveProperty("path");
+    expect(path.isAbsolute(String(hit?.path))).toBe(true);
+    expect(hit).toHaveProperty("editable", true);
+    expect(hit).not.toHaveProperty("editHint");
 
     // Only allowed keys (estimatedTokens is optional — present when fileSize is known)
-    const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
+    const allowedKeys = new Set([
+      "name",
+      "ref",
+      "type",
+      "path",
+      "editable",
+      "editHint",
+      "description",
+      "action",
+      "score",
+      "estimatedTokens",
+    ]);
     for (const key of keys) {
       expect(allowedKeys.has(key)).toBe(true);
     }
   });
 
-  test("--shape agent search output does NOT have: schemaVersion, stashDir, path, whyMatched, origin, editable", async () => {
+  test("--shape agent search output omits envelope and ranking internals", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
@@ -109,11 +125,8 @@ describe("--shape agent field projection", () => {
     // Hits must not have these
     const hits = json.hits as Array<Record<string, unknown>>;
     for (const hit of hits) {
-      expect(hit).not.toHaveProperty("path");
       expect(hit).not.toHaveProperty("whyMatched");
       expect(hit).not.toHaveProperty("origin");
-      expect(hit).not.toHaveProperty("editable");
-      expect(hit).not.toHaveProperty("editHint");
       expect(hit).not.toHaveProperty("tags");
       expect(hit).not.toHaveProperty("size");
     }
@@ -128,12 +141,14 @@ describe("--shape agent field projection", () => {
     expect(json).toHaveProperty("name");
     expect(json).toHaveProperty("type");
 
-    // Must NOT have non-essential fields
+    // Must expose exact local access information but omit unrelated metadata.
     expect(json).not.toHaveProperty("schemaVersion");
-    expect(json).not.toHaveProperty("path");
-    expect(json).not.toHaveProperty("origin");
-    expect(json).not.toHaveProperty("editable");
+    expect(json).toHaveProperty("ref");
+    expect(json).toHaveProperty("path");
+    expect(path.isAbsolute(String(json.path))).toBe(true);
+    expect(json).toHaveProperty("editable", true);
     expect(json).not.toHaveProperty("editHint");
+    expect(json).not.toHaveProperty("origin");
   });
 
   test("--shape agent show output keeps content/run/action", async () => {
@@ -171,6 +186,46 @@ describe("--shape agent field projection", () => {
     const showJson = JSON.parse(showOutput) as Record<string, unknown>;
     expect(showJson).toHaveProperty("origin");
   });
+
+  test("read-only local assets expose secondary edit hints without replacing use actions", async () => {
+    const stashDir = makeStash();
+    const teamDir = makeTempDir("akm-agent-readonly-");
+    const assetPath = path.join(teamDir, "knowledge", "readonly-guide.md");
+    writeFile(assetPath, "# Read-only guide\n\nUse this reference.\n");
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { team: { path: teamDir, writable: false } },
+    };
+
+    const search = JSON.parse(
+      await runCli(stashDir, ["search", "readonly guide", "--format=json", "--shape=agent"], config),
+    ) as { hits: Array<Record<string, unknown>> };
+    const searchHit = search.hits.find((hit) => hit.ref === "team//knowledge/readonly-guide");
+    expect(searchHit).toMatchObject({
+      ref: "team//knowledge/readonly-guide",
+      path: assetPath,
+      editable: false,
+    });
+    expect(searchHit?.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(searchHit?.action).toContain("akm show team//knowledge/readonly-guide");
+    expect(searchHit?.action).not.toContain("clone");
+
+    const show = JSON.parse(
+      await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--shape=agent"], config),
+    ) as Record<string, unknown>;
+    expect(show).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
+    expect(show.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(show.action).not.toContain("clone");
+
+    const curate = JSON.parse(
+      await runCli(stashDir, ["curate", "readonly guide", "--format=json", "--shape=agent"], config),
+    ) as { items: Array<Record<string, unknown>> };
+    const curated = curate.items.find((item) => item.ref === "team//knowledge/readonly-guide");
+    expect(curated).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
+    expect(curated?.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(curated?.followUp).toBe("akm show team//knowledge/readonly-guide");
+  }, 30_000);
 });
 
 // ── WS2: --shape agent is the canonical spelling ─────────────────────────────
@@ -193,17 +248,30 @@ describe("--shape agent output mode", () => {
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
     expect(json.hits.length).toBeGreaterThan(0);
-    const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
+    const allowedKeys = new Set([
+      "name",
+      "ref",
+      "type",
+      "path",
+      "editable",
+      "editHint",
+      "description",
+      "action",
+      "score",
+      "estimatedTokens",
+    ]);
     for (const key of Object.keys(json.hits[0]!)) {
       expect(allowedKeys.has(key)).toBe(true);
     }
   });
 
-  test("--shape agent show output strips non-essential fields", async () => {
+  test("--shape agent show output includes local access fields", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
-    expect(json).not.toHaveProperty("path");
+    expect(json).toHaveProperty("ref");
+    expect(json).toHaveProperty("path");
+    expect(json).toHaveProperty("editable", true);
     expect(json).not.toHaveProperty("origin");
     // commands carry their body in `template`; the agent shape keeps it.
     expect(json).toHaveProperty("template");
@@ -259,12 +327,22 @@ describe("--format jsonl", () => {
 
     for (const line of lines) {
       const parsed = JSON.parse(line) as Record<string, unknown>;
-      const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
+      const allowedKeys = new Set([
+        "name",
+        "ref",
+        "type",
+        "path",
+        "editable",
+        "editHint",
+        "description",
+        "action",
+        "score",
+        "estimatedTokens",
+      ]);
       for (const key of Object.keys(parsed)) {
         expect(allowedKeys.has(key)).toBe(true);
       }
       // Must not have stripped fields
-      expect(parsed).not.toHaveProperty("path");
       expect(parsed).not.toHaveProperty("origin");
       expect(parsed).not.toHaveProperty("whyMatched");
     }

@@ -192,12 +192,12 @@
     },
     {
       "path": "tests/fixtures/goldens/cli/a-show-shapes.json",
-      "designation": "frozen-migration-input",
+      "designation": "re-baseline",
+      "reBaselineChunk": "9",
       "consumers": [
         "tests/commands/goldens-cli-output.test.ts"
       ],
-      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show --shape=agent` / `--shape=summary` JSON key-sets. Chunk 9 oracle (\"CLI output baselines from Chunk 0a stay green\") — key-set/count/boolean assertions only, no production ref literals.",
-      "sha256": "beb0102eab6ef8ba414b680feab09dda7de3567923200e00b47ffe254f084b05"
+      "notes": "WI-07, plan §11 Chunk 0a / R4. Family A `show --shape=agent` / `--shape=summary` JSON key-sets. Re-baselined by the multi-bundle agent-access change: agent show output now deliberately includes the indexed canonical ref, materialized path, current-policy editable flag, and conditional editHint while preserving show/run/use as the primary action. Chunk 9 owns the CLI output surface under the surface-owner rule; key-set/count/boolean assertions only, no production ref literals."
     },
     {
       "path": "tests/fixtures/goldens/cli/b-health-fail-warn-exit.json",

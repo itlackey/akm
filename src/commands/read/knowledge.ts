@@ -21,6 +21,7 @@ import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
 import {
@@ -151,9 +152,8 @@ interface ParsedWriteRef {
    * the parsed components — what lands in frontmatter. WI-8.5a flips this from
    * the legacy `type:name`: frontmatter refs are intra-bundle SHORT refs (§11.1,
    * D-R4 "short refs inside bundle content resolve to the containing bundle"),
-   * and `--xref`/`--supersedes` only ever resolve LOCAL targets (any non-`local`
-   * origin is rejected below), so the containing-bundle short conceptId is the
-   * canonical write spelling — never a fully-qualified `bundle//conceptId`.
+   * Unqualified refs remain intra-bundle short refs; explicit cross-bundle refs
+   * retain their qualifier so duplicate names stay unambiguous.
    * Persisting the raw flag value instead would store spellings the ref parser
    * accepts but later ref scanners (lint's ref-list scan, mv's rewriter) key on
    * differently; the bare conceptId is exactly what both now recognize.
@@ -163,6 +163,8 @@ interface ParsedWriteRef {
   type: string;
   /** Normalized asset name. */
   name: string;
+  /** Explicit bundle qualifier, retained for duplicate-name disambiguation. */
+  origin?: string;
 }
 
 /**
@@ -171,9 +173,8 @@ interface ParsedWriteRef {
  * origin-prefixed spellings get a structured error instead of a misleading "did
  * not resolve". Chunk-8 WI-8.5c: the legacy `[origin//]type:name` content-surface
  * arm is retired — `--xref`/`--supersedes` take the conceptId form. A `local//`
- * origin is accepted (it names the same local resolution this validator
- * performs, mirroring lint's `local//` strip); any other origin is rejected —
- * write-time validation only resolves local stash roots.
+ * origin is accepted and stripped; bundle qualifiers are retained for exact
+ * source membership checks.
  */
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
@@ -187,19 +188,16 @@ function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWrit
       `Refs use the conceptId form, e.g. ${flag} knowledge/auth-flow.`,
     );
   }
-  if (parsed.origin && parsed.origin !== "local") {
-    throw new UsageError(
-      `${flag} "${raw}" carries the origin prefix "${parsed.origin}//" — ${flag} only resolves refs in the write target, the working stash, and configured sources.`,
-      "INVALID_FLAG_VALUE",
-      `Pass the plain conceptId form, e.g. ${flag} ${conceptIdFromTypeName(parsed.type, parsed.name)}.`,
-    );
-  }
-  // Canonical bare conceptId: type alias resolved, name normalized, `local//`
-  // dropped (it names the same local resolution this validator performs). The
-  // bare `<stash-subdir>/<name>` short ref (WI-8.5a) is what lands in the
-  // containing bundle's frontmatter (§11.1 short-ref rule); the name is already
-  // normalized by the parser.
-  return { ref: conceptIdFromTypeName(parsed.type, parsed.name), type: parsed.type, name: parsed.name };
+  // Type alias resolved, name normalized, and `local//` dropped. Other bundle
+  // qualifiers remain explicit so duplicate names resolve in the named source.
+  const conceptId = conceptIdFromTypeName(parsed.type, parsed.name);
+  const origin = parsed.origin === "local" ? undefined : parsed.origin;
+  return {
+    ref: origin ? `${origin}//${conceptId}` : conceptId,
+    type: parsed.type,
+    name: parsed.name,
+    ...(origin ? { origin } : {}),
+  };
 }
 
 /**
@@ -234,10 +232,7 @@ function parseWriteRefs(rawRefs: string[], flag: "--xref" | "--supersedes"): Par
  * working stash; this roots at the write target AND the working stash).
  */
 function resolveWriteRefRoots(target?: string): {
-  /** Demotion-eligible roots, write target first (existing dirs only). */
-  mutableRoots: string[];
-  /** Every other configured source (existing dirs only), with metadata. */
-  otherSources: SearchSource[];
+  roots: Array<{ path: string; source?: SearchSource; mutable: boolean }>;
 } {
   const cfg = loadConfig();
   const stashRoot = resolveWriteTarget(cfg, target).source.path;
@@ -249,10 +244,29 @@ function resolveWriteRefRoots(target?: string): {
   }
   const mutableRoots: string[] = [stashRoot];
   if (workingStash && path.resolve(workingStash) !== path.resolve(stashRoot)) mutableRoots.push(workingStash);
-  const otherSources = resolveSourceEntries(stashRoot, cfg).filter(
+  const namedSources = resolveSourceEntries(stashRoot, cfg);
+  const otherSources = namedSources.filter(
     (s) => !mutableRoots.some((m) => path.resolve(m) === path.resolve(s.path)) && fs.existsSync(s.path),
   );
-  return { mutableRoots: mutableRoots.filter((p) => fs.existsSync(p)), otherSources };
+  const roots = [
+    ...mutableRoots
+      .filter((p) => fs.existsSync(p))
+      .map((p) => ({
+        path: p,
+        source: namedSources.find((source) => path.resolve(source.path) === path.resolve(p)),
+        mutable: true,
+      })),
+    ...otherSources.map((source) => ({ path: source.path, source, mutable: false })),
+  ];
+  return { roots };
+}
+
+function rootsForWriteRef(
+  parsed: ParsedWriteRef,
+  roots: Array<{ path: string; source?: SearchSource; mutable: boolean }>,
+): Array<{ path: string; source?: SearchSource; mutable: boolean }> {
+  if (!parsed.origin) return roots;
+  return roots.filter((root) => root.source?.registryId === parsed.origin);
 }
 
 /**
@@ -288,11 +302,12 @@ function locateWriteRefInRoot(type: string, name: string, root: string): string 
 
 /** Build the shared exit-2 error for refs that resolved in no root. */
 function unresolvedRefsError(flag: "--xref" | "--supersedes", unresolved: ParsedWriteRef[]): UsageError {
-  const first = unresolved[0]!;
+  const firstName = unresolved[0]?.name ?? "asset";
+  const firstType = unresolved[0]?.type ?? "knowledge";
   return new UsageError(
     `${flag} ref${unresolved.length > 1 ? "s" : ""} did not resolve in the write target or any configured source: ${unresolved.map((u) => u.ref).join(", ")}`,
     "INVALID_FLAG_VALUE",
-    `Find the intended asset with \`akm search "${first.name}" --type ${first.type}\`. Refs use the form [bundle//]conceptId (e.g. knowledge/guide.md).`,
+    `Find the intended asset with \`akm search "${firstName}" --type ${firstType}\`. Refs use the form [bundle//]conceptId (e.g. knowledge/guide.md).`,
   );
 }
 
@@ -329,13 +344,16 @@ export function resolveXrefsForWrite(rawXrefs: string[], target?: string): strin
   const parsedRefs = parseWriteRefs(rawXrefs, "--xref");
   if (parsedRefs.length === 0) return [];
 
-  const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
-  const allRoots = [...mutableRoots, ...otherSources.map((s) => s.path)];
+  const { roots } = resolveWriteRefRoots(target);
 
   const unresolved: ParsedWriteRef[] = [];
   for (const parsed of parsedRefs) {
     if (isFailOpenRefType(parsed.type, parsed.name)) continue;
-    if (!allRoots.some((root) => locateWriteRefInRoot(parsed.type, parsed.name, root) !== null)) {
+    if (
+      !rootsForWriteRef(parsed, roots).some(
+        (root) => locateWriteRefInRoot(parsed.type, parsed.name, root.path) !== null,
+      )
+    ) {
       unresolved.push(parsed);
     }
   }
@@ -444,6 +462,21 @@ export interface SupersededTarget {
   reason?: string;
 }
 
+/** Resolve any qualified supersedes ref as the mutation target for remember/import. */
+export function resolveSupersedesWriteTarget(rawRefs: string[], target?: string): string | undefined {
+  const config = loadConfig();
+  let effectiveTarget = target;
+  for (const parsed of parseWriteRefs(rawRefs, "--supersedes")) {
+    if (!parsed.origin) continue;
+    effectiveTarget = resolveMutationTarget(
+      config,
+      { type: parsed.type, name: parsed.name, origin: parsed.origin },
+      effectiveTarget,
+    ).target.source.name;
+  }
+  return effectiveTarget;
+}
+
 /**
  * Asset types `--supersedes` must refuse to demote: the demotion writes a YAML
  * frontmatter block onto the target file, and these types are RAW files whose
@@ -486,20 +519,12 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
   const parsedRefs = parseWriteRefs(rawRefs, "--supersedes");
   if (parsedRefs.length === 0) return [];
 
-  const { mutableRoots, otherSources } = resolveWriteRefRoots(target);
-  // Mutable roots first: when a ref resolves in several roots, demote the copy
-  // this command is allowed to mutate. Non-mutable roots keep their SearchSource
-  // so the skip reason can distinguish "re-run with --target" (a configured
-  // writable source that simply is not this write's target) from genuinely
-  // read-only sources.
-  const orderedRoots: Array<{ path: string; source?: SearchSource }> = [
-    ...mutableRoots.map((p) => ({ path: p })),
-    ...otherSources.map((s) => ({ path: s.path, source: s })),
-  ];
+  const { roots } = resolveWriteRefRoots(target);
 
   const plan: SupersededTarget[] = [];
   const unresolved: ParsedWriteRef[] = [];
   for (const parsed of parsedRefs) {
+    const orderedRoots = rootsForWriteRef(parsed, roots);
     // Data-corruption gate (SPEC-5): demotion is a frontmatter write; a raw
     // asset type must be rejected up front — resolving it and mutating the
     // file would prepend a YAML block over its raw bytes.
@@ -510,11 +535,11 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
         "Only markdown assets (e.g. memory:, knowledge:, fact:) can carry the beliefState/supersededBy demotion. Replace or delete the raw asset instead.",
       );
     }
-    let located: { root: string; source?: SearchSource; filePath: string } | null = null;
+    let located: { root: string; source?: SearchSource; mutable: boolean; filePath: string } | null = null;
     for (const root of orderedRoots) {
       const filePath = locateWriteRefInRoot(parsed.type, parsed.name, root.path);
       if (filePath !== null) {
-        located = { root: root.path, source: root.source, filePath };
+        located = { root: root.path, source: root.source, mutable: root.mutable, filePath };
         break;
       }
     }
@@ -533,8 +558,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
         "Only markdown assets can carry the beliefState/supersededBy demotion. Replace or delete the file instead.",
       );
     }
-    const { root, source, filePath } = located;
-    const writable = source === undefined;
+    const { root, source, mutable: writable, filePath } = located;
     // The eligibility rule is write-target-or-working-stash, NOT source
     // writability: mutating a non-target writable source would leave it dirty
     // outside any boundary commit. Name the remedy when one exists.
@@ -605,10 +629,6 @@ export async function writeMarkdownAsset(options: {
   superseded?: Array<{ ref: string; applied: boolean; reason?: string }>;
 }> {
   const cfg = loadConfig();
-  const target = resolveWriteTarget(cfg, options.target);
-  const { source, config } = target;
-
-  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   // `--name` is the flat asset name; `--path` is the subdirectory under the
   // type root. Combine them into the nested name the path resolver expects.
   const subPath = normalizeCreateSubPath(options.path);
@@ -617,6 +637,10 @@ export async function writeMarkdownAsset(options: {
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
   const normalizedName = combineCreatePath(subPath, baseName);
+  const resolved = resolveMutationTarget(cfg, { type: options.type, name: normalizedName }, options.target);
+  const { target } = resolved;
+  const { source, config } = target;
+  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   // Pre-flight: existence + force semantics. The helper itself overwrites
   // unconditionally; the CLI surfaces a friendlier UsageError before any
   // disk activity when --force is absent.
@@ -645,8 +669,8 @@ export async function writeMarkdownAsset(options: {
     }
   }
 
-  const ref = { type: options.type, name: normalizedName };
-  const result = await writeAssetToSource(source, config, ref, options.content);
+  const result = await writeAssetToSource(source, config, resolved.ref, options.content);
+  result.ref = resolved.displayRef;
   // SPEC-5 (--supersedes): demote each superseded asset by mutating its
   // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
   // every other key and the body are preserved). Ordered BEFORE
@@ -693,12 +717,11 @@ export async function writeMarkdownAsset(options: {
     // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
     // Degrade to the same applied:false report the non-writable path uses.
     try {
-      // supersededBy points at the correction's canonical write ref (F4b-flipped
-      // display spelling), keeping it in lockstep with the reported `result.ref`.
-      // The --xref/--supersedes input path (resolveXrefsForWrite/parseWriteRef)
-      // is now the new-grammar conceptId surface too (WI-8.5c).
-      writeSupersededEdge(item.filePath, result.ref);
-      if (path.resolve(item.stashRoot) === path.resolve(source.path)) {
+      const sameSource = path.resolve(item.stashRoot) === path.resolve(source.path);
+      // Refs inside one bundle stay short; cross-bundle edges retain the
+      // qualified output ref so duplicate concepts remain unambiguous.
+      writeSupersededEdge(item.filePath, sameSource ? conceptIdFromTypeName(options.type, normalizedName) : result.ref);
+      if (sameSource) {
         recordWriteTargetPath(source, item.filePath);
       }
     } catch (error) {
@@ -717,7 +740,7 @@ export async function writeMarkdownAsset(options: {
   }
   // 0.9.0 (issue #507): single batch commit at the write boundary for git
   // targets. No-op for filesystem/primary-stash targets.
-  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(ref)}`);
+  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(resolved.ref)}`);
   // Write-path indexing: the asset is searchable immediately. Fail-open; reads
   // no longer trigger reindexes, so keeping the index current is the writer's
   // job. Demoted files reindex under their own containing root (usually the

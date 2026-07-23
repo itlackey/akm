@@ -28,6 +28,8 @@ export interface RankedEntryInput {
    * inline legacy `type:name` arm). `undefined`/`null` for a NULL-provenance row.
    */
   itemRef?: string | null;
+  bundleId?: string | null;
+  conceptId?: string | null;
   utilityBoosted?: boolean;
   /**
    * Set by `applyBeliefStateScoreCeiling` when a demoting belief state's

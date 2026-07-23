@@ -27,7 +27,7 @@ describe("current orchestration documentation contract", () => {
 
   test("write-target resolution retains explicit, default, stash order", () => {
     const section = extractSection(architecture, "## Writing to Sources");
-    expect(section.replace(/\s+/g, " ")).toMatch(/--target.*defaultWriteTarget.*stashDir.*ConfigError/);
+    expect(section.replace(/\s+/g, " ")).toMatch(/--target.*defaultWriteTarget.*working stash.*ConfigError/);
   });
 
   test("workflow run state remains separate from the asset index", () => {
