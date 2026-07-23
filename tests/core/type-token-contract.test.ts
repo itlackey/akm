@@ -27,7 +27,7 @@ import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES, type KnownType } f
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
 import { validateStashEntry } from "../../src/indexer/passes/metadata";
 import { TYPE_BOOST, typeBoostFor } from "../../src/indexer/search/ranking-contributors";
-import { parseAssetRef } from "../../src/migrate/legacy-ref-grammar";
+import { parseAssetRef, parseStoredRef } from "../../src/migrate/legacy-ref-grammar";
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 
@@ -155,6 +155,16 @@ describe("DEPRECATED_REJECTED_TYPES deny-list — tool/vault stay rejected", () 
 
   test("parseAssetRef rejects vault with its migration-hint message (checked before the deny-list)", () => {
     expect(() => parseAssetRef("vault:prod")).toThrow(/vault.*removed in 0\.9\.0.*env.*secret/i);
+  });
+
+  test("parseStoredRef accepts retired types only for historical durable state", () => {
+    expect(parseStoredRef("vault:default")).toEqual({ type: "vault", name: "default" });
+    expect(parseStoredRef("local//tool:deploy.sh")).toEqual({
+      type: "tool",
+      name: "deploy.sh",
+      origin: "local",
+    });
+    expect(() => parseStoredRef(":bad")).toThrow();
   });
 
   test("validateStashEntry rejects tool/vault even though they are otherwise well-formed entries", () => {
