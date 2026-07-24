@@ -6,6 +6,8 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
+import { parseWorkflow } from "../../../workflows/parser";
+import { looksLikeWorkflowProgram, parseWorkflowProgram } from "../../../workflows/program/parser";
 import type {
   Proposal,
   ProposalValidationContext,
@@ -72,8 +74,32 @@ const lessonProposalValidator: ProposalValidator = {
   },
 };
 
+const workflowProposalValidator: ProposalValidator = {
+  name: "workflow-proposal-validator",
+  appliesTo(_proposal, ctx) {
+    return ctx.parsedRef?.type === "workflow";
+  },
+  validate(proposal) {
+    const content = proposalContent(proposal);
+    if (!content.trim()) return [];
+
+    const changePath = proposal.changes[0]?.path ?? "";
+    const isYamlProgram = /\.ya?ml$/i.test(changePath) || (changePath === "" && looksLikeWorkflowProgram(content));
+    const result = isYamlProgram
+      ? parseWorkflowProgram(content, { path: changePath || proposal.ref })
+      : parseWorkflow(content, { path: changePath || proposal.ref });
+    if (result.ok) return [];
+
+    return result.errors.map((error) => ({
+      kind: "invalid-workflow-structure",
+      message: `Workflow proposal ${proposal.id} (${proposal.ref}) is invalid at line ${error.line}: ${error.message}`,
+    }));
+  },
+};
+
 export const defaultProposalValidators: ProposalValidator[] = [
   genericProposalValidator,
+  workflowProposalValidator,
   lessonProposalValidator,
   ...defaultProposalQualityValidators,
 ];

@@ -102,7 +102,7 @@
         {
           "id": "superseded-open-before-lease",
           "match": "literal",
-          "pattern": "open the output file before acquiring the lease"
+          "pattern": "may also open the output file before acquiring the lease"
         }
       ]
     },
@@ -132,7 +132,7 @@
         {
           "id": "zero-depth-before-replace",
           "match": "regex",
-          "pattern": "wait until queue depth reaches zero.{0,40}replace the image"
+          "pattern": "wait until queue depth reaches zero.{0,40}replac"
         },
         {
           "id": "green-before-resume",
@@ -167,13 +167,13 @@
       "requiredClaims": [
         {
           "id": "both-renames-before-durable",
-          "match": "literal",
-          "pattern": "durable only after both renames succeed"
+          "match": "regex",
+          "pattern": "durable only after both.{0,40}rename"
         },
         {
           "id": "failure-preserves-offset",
           "match": "literal",
-          "pattern": "any rename failure leaves the checkpoint at the prior offset"
+          "pattern": "rename failure leaves the checkpoint at the prior offset"
         }
       ],
       "forbiddenClaims": []

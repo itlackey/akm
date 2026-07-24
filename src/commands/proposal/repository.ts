@@ -141,7 +141,12 @@ export {
  * `proposal_creation_rejected` event so we can quantify *which* check fires
  * most across runs and tune upstream pipelines.
  */
-export type ProposalRejectionReason = "invalid_ref" | "unknown_type" | "empty_content" | "missing_description";
+export type ProposalRejectionReason =
+  | "invalid_ref"
+  | "unknown_type"
+  | "empty_content"
+  | "missing_description"
+  | "invalid_workflow_structure";
 
 /** Result of {@link purgeOrphanProposals}. */
 export interface OrphanPurgeResult {
@@ -575,6 +580,27 @@ export function createProposal(
     },
   ];
   const mintedBeforeHash = mintBeforeContent !== undefined ? contentHash(mintBeforeContent) : undefined;
+
+  if (parsedRef.type === "workflow") {
+    const report = validateProposal({
+      id: "pending",
+      ref: normalizedRef,
+      status: "pending",
+      source: input.source,
+      createdAt: "",
+      updatedAt: "",
+      payload: input.payload,
+      changes: mintedChanges,
+    });
+    if (!report.ok) {
+      return rejectProposal(
+        "invalid_workflow_structure",
+        `Proposal for "${input.ref}" has invalid workflow structure:\n${report.findings
+          .map((finding) => `[${finding.kind}] ${finding.message}`)
+          .join("\n")}`,
+      );
+    }
+  }
 
   const fingerprint = computeProposalFingerprint({
     ref: normalizedRef,

@@ -162,6 +162,28 @@ describe("createProposal validation", () => {
     });
     expect(isProposalSkipped(result)).toBe(false);
   });
+
+  test("rejects a workflow with numbered step headings before queueing", () => {
+    const stash = makeStashDir();
+    let caught: { code?: string; message?: string } | undefined;
+    try {
+      createProposal(stash, {
+        ref: "workflows/ship-feature-from-spec",
+        source: "reflect",
+        force: true,
+        payload: {
+          content:
+            "# Workflow: Ship Feature From Spec\n\n## Step 1: Validate inputs\nStep ID: validate\n\n### Instructions\nValidate the specification.\n",
+        },
+      });
+    } catch (err) {
+      caught = err as { code?: string; message?: string };
+    }
+
+    expect(caught?.code).toBe("INVALID_PROPOSAL");
+    expect(caught?.message).toContain('Only "## Step: <title>" sections are allowed');
+    expect(listProposals(stash)).toHaveLength(0);
+  });
 });
 
 describe("purgeOrphanProposals", () => {

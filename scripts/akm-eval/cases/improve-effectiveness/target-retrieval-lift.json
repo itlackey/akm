@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "target-retrieval-lift",
+  "suite": "improve-effectiveness",
+  "type": "retrieval",
+  "description": "Measures whether improve removes a redundant derived memory while preserving the canonical PostgreSQL recovery memory.",
+  "input": {
+    "query": "PostgreSQL point-in-time recovery WAL checksum",
+    "topK": 3,
+    "fixture": "fixtures"
+  },
+  "expected": {
+    "mustIncludeRefs": ["memories/database-restore.derived"],
+    "mustNotIncludeRefs": ["memories/database-restore-copy.derived"]
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.3,
+      "noForbiddenRefs": 0.7
+    },
+    "passThreshold": 1.0
+  },
+  "tags": ["retrieval", "effectiveness", "treatment-sensitive"]
+}

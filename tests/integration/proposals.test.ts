@@ -344,6 +344,43 @@ describe("validation failure", () => {
     expect(threw).toBe(true);
     expect(code).toBe("INVALID_PROPOSAL");
   });
+
+  test("queued workflow with numbered step headings cannot replace an indexed workflow", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const workflowDir = path.join(stash, "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    const workflowPath = path.join(workflowDir, "ship-feature-from-spec.md");
+    const original =
+      "# Workflow: Ship Feature From Spec\n\n## Step: Validate inputs\nStep ID: validate\n\n### Instructions\nValidate the specification.\n";
+    const invalid = original.replace("## Step: Validate inputs", "## Step 1: Validate inputs");
+    fs.writeFileSync(workflowPath, original, "utf8");
+    await akmIndex({ stashDir: stash });
+    expect(indexedEntry(workflowPath)).toBeDefined();
+
+    const created = createProposal(stash, {
+      ref: "workflows/ship-feature-from-spec",
+      source: "reflect",
+      force: true,
+      payload: { content: original.replace("Validate the specification.", "Validate the updated specification.") },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+
+    // Simulate a structurally-invalid row queued before workflow proposal validation existed.
+    const state = openStateDatabase();
+    try {
+      state.prepare("UPDATE proposals SET content = ? WHERE id = ?").run(invalid, created.id);
+    } finally {
+      state.close();
+    }
+
+    await expect(akmProposalAccept({ stashDir: stash, id: created.id, config })).rejects.toThrow(
+      "invalid-workflow-structure",
+    );
+    expect(fs.readFileSync(workflowPath, "utf8")).toBe(original);
+    expect(indexedEntry(workflowPath)).toBeDefined();
+    expect(getProposal(stash, created.id).status).toBe("pending");
+  });
 });
 
 // ── #284 GAP-HIGH backfill ───────────────────────────────────────────────────

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "protected-anchor-retrieval",
+  "suite": "improve-effectiveness",
+  "type": "retrieval",
+  "description": "Protects index/search health, exact anchor retrieval, and separation of the recovery memories from an unrelated query.",
+  "input": {
+    "query": "vesper continuity sentinel",
+    "topK": 2
+  },
+  "expected": {
+    "mustIncludeRefs": ["knowledge/eval-anchor"],
+    "mustNotIncludeRefs": ["memories/database-restore.derived", "memories/database-restore-copy.derived"],
+    "minHits": 1
+  },
+  "scoring": {
+    "deterministic": true,
+    "weights": {
+      "mustIncludeRefs": 0.6,
+      "noForbiddenRefs": 0.2,
+      "minHits": 0.2
+    },
+    "passThreshold": 1.0
+  },
+  "tags": ["retrieval", "structural", "protected", "regression-guard"]
+}
