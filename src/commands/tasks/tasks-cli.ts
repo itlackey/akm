@@ -62,6 +62,11 @@ const tasksAddCommand = defineJsonCommand({
     tags: { type: "string", description: "Comma-separated tags" },
     disabled: { type: "boolean", description: "Register but leave disabled in the OS scheduler", default: false },
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
+    rebind: {
+      type: "boolean",
+      description: "Explicitly permit scheduler creation from this ineligible local invocation",
+      default: false,
+    },
   },
   async run({ args }) {
     const result = await akmTasksAdd({
@@ -86,6 +91,7 @@ const tasksAddCommand = defineJsonCommand({
         : undefined,
       disabled: args.disabled === true,
       force: args.force === true,
+      rebind: args.rebind === true,
     });
     output("tasks-add", result);
   },
@@ -105,10 +111,15 @@ const tasksInitCommand = defineJsonCommand({
       type: "boolean",
       description: "Treat this as a laptop install (leaves the nightly sweep disabled).",
     },
+    rebind: {
+      type: "boolean",
+      description: "Explicitly permit scheduler creation from this ineligible local invocation",
+      default: false,
+    },
   },
   async run({ args }) {
     const serverInstall = args.server === true ? true : args.laptop === true ? false : detectServerDefault();
-    const result = await registerDefaultTasks({ serverInstall });
+    const result = await registerDefaultTasks({ serverInstall, rebind: args.rebind === true });
     output("tasks-init", result);
   },
 });
@@ -173,9 +184,16 @@ const tasksSyncCommand = defineJsonCommand({
     name: "sync",
     description: "Reconcile the on-disk task files of a bundle with the OS scheduler",
   },
-  args: { ...targetArg },
+  args: {
+    ...targetArg,
+    rebind: {
+      type: "boolean",
+      description: "Replace installed bindings with the current invocation",
+      default: false,
+    },
+  },
   async run({ args }) {
-    const result = await akmTasksSync({}, args.target);
+    const result = await akmTasksSync({}, args.target, { rebind: args.rebind === true });
     output("tasks-sync", result);
   },
 });

@@ -201,8 +201,7 @@ describe("deriveRecommendedConfig", () => {
     expect(recommended.agentDefault).toBe("claude");
     expect(recommended.llm?.provider).toBe("anthropic");
     expect(recommended.llm?.endpoint).toContain("anthropic.com");
-    expect(recommended.taskSchedules?.improve).toBe("0 2 * * *");
-    expect(recommended.taskSchedules?.index).toBe("0 4 * * *");
+    expect(recommended).not.toHaveProperty("taskSchedules");
     // No API key value is ever present.
     expect(JSON.stringify(recommended)).not.toContain(SECRET_VALUE);
   });
@@ -380,14 +379,13 @@ describe("akm setup --reset-recommended", () => {
         defaults?: { llmEngine?: string };
         registries?: Array<{ name?: string }>;
         archiveRetentionDays?: number;
-        setup?: { taskSchedules?: { improve?: string; index?: string } };
+        setup?: unknown;
       };
       // The pre-existing custom keys survived.
       expect(written.registries?.some((r) => r.name === "custom-reg")).toBe(true);
       expect(written.archiveRetentionDays).toBe(7);
-      // Opinionated cron defaults were merged in.
-      expect(written.setup?.taskSchedules?.improve).toBe("0 2 * * *");
-      expect(written.setup?.taskSchedules?.index).toBe("0 4 * * *");
+      // Recommended setup no longer registers maintainer-specific task schedules.
+      expect(written.setup).toBeUndefined();
       // Detection persists the recommendation without making --probe a gate.
       expect(written.defaults?.llmEngine).toBe("openai");
       expect(written.engines?.openai).toEqual({

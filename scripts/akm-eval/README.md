@@ -82,7 +82,9 @@ left untouched.
 
 `akm-eval-snapshot` captures one verified input before either experiment arm is
 created. It copies configured bundle roots, `config.json`, `index.db`, and
-`state.db` into a canonical, private manifest. The SQLite databases are copied
+`state.db` into a canonical, private schema-v2 manifest. Manifest entries retain
+source mtimes, and path-bearing database state is rewritten to snapshot-relative
+bundle roots then remapped for each materialization. The SQLite databases are copied
 without content redaction and may contain sensitive historical metadata, so the
 entire snapshot is private-sensitive and must stay on trusted local storage.
 Capture fails rather than silently weakening privacy or reproducibility when it
@@ -114,6 +116,14 @@ be protected with a `protected`/`regression-guard` suite tag or a repeated
 improve subprocess wall time; model-call duration remains separate throughput
 telemetry.
 
+Private suites can be supplied with `--cases-dir <root>` where `<root>/<suite>/`
+contains the case JSON and fixture dependencies. External roots must be outside
+the workspace, owner-private, and free of links, hard links, and executable
+files; the Docker launcher mounts them read-only. Use repeated
+`--protected-asset bundles/<snapshot-bundle>/<relative-file>` declarations to
+bind protected bytes to their snapshot SHA-256. Both arms report verification,
+and any treatment drift fails the decision gate.
+
 Use
 `--endpoint-metadata`, `--endpoint-assignment balanced`, and a mode-0600
 `--endpoint-runtime` file for compatible dual-endpoint runs. Endpoint runtime
@@ -123,6 +133,8 @@ assigned model ID; prompt fingerprints remain operator-attested metadata.
 Use a separate mode-0600 `--common-runtime` file shaped as `{ "env": { ... } }`
 for embedding credentials or other values that must be identical during both
 arms' index, improve base environment, reindex, and evaluation phases.
+No AKM credential variable is inherited from the parent environment; every
+credential used by a twin run must be present in one of these explicit overlays.
 
 A conclusive single-endpoint LLM run supplies all private and identity inputs:
 
@@ -172,7 +184,7 @@ scripts/akm-eval/bin/akm-eval-twin-docker \
 The Docker launcher copies an explicit source allowlist into a private temporary
 build context, builds the current workspace, supplies that build as the AKM
 command, mounts snapshots read-only, and forwards no host environment or
-credentials. Snapshot, output, metadata, and runtime paths must stay outside the
+credentials. Snapshot, output, cases, metadata, and runtime paths must stay outside the
 workspace. Shared credentials belong in `--common-runtime`; treatment endpoint
 routing belongs in `--endpoint-runtime`. Keep bind sources outside `/tmp` and
 `/var/tmp`; Docker daemons using systemd `PrivateTmp` can otherwise mount an

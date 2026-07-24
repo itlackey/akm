@@ -125,7 +125,7 @@ test.skipIf(!ENABLED)(
 
       const doctor = run([binary, "tasks", "doctor"], env);
       expectSuccess(doctor, "standalone tasks doctor");
-      expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "execPath" } });
+      expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "standalone" } });
 
       const add = run([binary, "tasks", "add", id, "--schedule", "@daily", "--command", "akm --version"], env);
       expectSuccess(add, "standalone tasks add");

@@ -125,6 +125,10 @@ export const CONSOLIDATION_FIDELITY_MANIFEST_PATH = fileURLToPath(
   new URL("../cases/consolidation-fidelity/fixtures/manifest.json", import.meta.url),
 );
 
+export const CONSOLIDATION_FIDELITY_HOLDOUT_MANIFEST_PATH = fileURLToPath(
+  new URL("../cases/consolidation-fidelity/fixtures/holdout-manifest.json", import.meta.url),
+);
+
 const MANIFEST_PURPOSE = "deterministic-fixture-authored-oracle-for-grading-generated-candidates" as const;
 
 const CLASSES = new Set<ConsolidationFidelityClass>([

@@ -87,7 +87,7 @@ describe("akm-eval twin contracts", () => {
   test("snapshot layout names every materialized root", () => {
     const digest = "a".repeat(64) as InstallationSnapshotManifest["snapshotFingerprint"];
     const manifest: InstallationSnapshotManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       snapshotFingerprint: digest,
       producer: { version: "0.9.0-rc.10", commit: null },
       configFingerprint: digest,
@@ -114,12 +114,14 @@ describe("akm-eval twin contracts", () => {
       modelFingerprint: null,
     };
     const policy: TwinExperimentPolicy = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       control: "no-improve",
       treatment: "current",
+      casesSource: "builtin",
       improveArgs: ["--no-sync"],
       commandTimeoutMs: 1_000,
       protectedCaseIds: ["guard"],
+      protectedAssets: [],
       criteria: {
         minimumDeterministicLift: 0.1,
         protectedLossMargin: 0,

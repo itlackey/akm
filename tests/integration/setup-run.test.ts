@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../../src/cli/clack";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
-import { _setDefaultTasksForTests } from "../../src/commands/tasks/default-tasks";
 import type { IndexResponse } from "../../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
@@ -190,14 +189,6 @@ function installIndexerNeverRunsSeam(): void {
   });
 }
 
-function installDefaultTasksSeam(): void {
-  overrideSeam(_setDefaultTasksForTests, {
-    detectServerDefault: () => false,
-    isCiEnvironment: () => false,
-    registerDefaultTasks: async () => ({ skipped: false, created: [], existing: [], toggled: [] }),
-  });
-}
-
 /**
  * Install the standard seam/mock stanza every test needs. Behavior is
  * steered per-test through `setupState` (and, where a test needs a bespoke
@@ -270,7 +261,6 @@ beforeEach(() => {
   DEFAULT_STASH_DIR = storage.stashDir;
   DEFAULT_CONFIG_PATH = path.join(storage.configDir, "akm", "config.json");
   resetSetupState();
-  installDefaultTasksSeam();
 });
 
 afterEach(() => {
@@ -288,10 +278,8 @@ describe("runSetupWizard", () => {
     // Real wizard prompt order (see SETUP_RUN_CAPTURE): stash dir -> LLM
     // provider -> semantic search -> registries -> registry stashes ->
     // add-another-source loop -> output format/detail -> small-model provider
-    // -> agent connection -> save -> server install -> scheduled tasks. The
-    // scheduled-tasks work now runs AFTER the save confirm and config persist,
-    // so its confirm ("server install") trails the "Save this configuration?"
-    // confirm in the queue.
+    // -> agent connection -> save -> scheduled tasks -> scheduler activation.
+    // The task step runs after the save confirm and config persist.
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, false, true, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
@@ -476,12 +464,8 @@ describe("runSetupWizard", () => {
     installSetupSeams();
     installIndexerNeverRunsSeam();
 
-    // Answer through to the "Save this configuration?" confirm, then decline it
-    // (last confirm = false). The scheduled-tasks work — the "server install"
-    // confirm plus the "scheduled core tasks" multiselect, the wizard's only
-    // OS-visible side effect — now runs ONLY after that save. Declining must
-    // reach neither it, nor stash init, nor the index, and must write no
-    // config: cancelling leaves no task files or scheduler entries behind.
+    // Answer through to the "Save this configuration?" confirm, then decline it.
+    // The task review and activation confirmation run only after that save.
     promptState.selects.push("default", "none", "done", "json", "brief", "skip", "none");
     promptState.confirms.push(false, false, false); // apply / semantic / SAVE=false
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
@@ -492,7 +476,7 @@ describe("runSetupWizard", () => {
     expect(fs.existsSync(DEFAULT_CONFIG_PATH)).toBe(false);
     expect(setupState.initCalls).toEqual([]);
     expect(setupState.indexCalls).toHaveLength(0);
-    expect(promptState.trace.some((line) => line.includes("server install"))).toBe(false);
-    expect(promptState.trace.some((line) => line.includes("scheduled core tasks"))).toBe(false);
+    expect(promptState.trace.some((line) => line.includes("core task definitions"))).toBe(false);
+    expect(promptState.trace.some((line) => line.includes("Activate these schedules"))).toBe(false);
   });
 });

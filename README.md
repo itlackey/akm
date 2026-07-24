@@ -10,7 +10,13 @@ akm gives agents a curated, searchable library built from local directories, Git
 
 ## Install
 
-**Option 1 — Prebuilt binary (recommended, no runtime required):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+
+```sh
+npm install -g akm-cli
+```
+
+**Option 2 — Prebuilt binary (no runtime required):**
 
 ```sh
 # Linux / macOS
@@ -18,12 +24,6 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 
 # Windows (PowerShell)
 irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
-```
-
-**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 22):**
-
-```sh
-npm install -g akm-cli
 ```
 
 Upgrade in place: `akm upgrade`
@@ -83,6 +83,7 @@ bun run build
 
 ```sh
 akm setup                             # guided first-time setup
+akm tasks doctor                      # verify scheduler and installed runtime
 akm add github:itlackey/akm-stash     # install the official onboarding stash
 akm index                             # build the search index
 akm curate "deploy"                   # get a curated shortlist
@@ -92,6 +93,7 @@ akm feedback workflows/deploy --positive
 ```
 
 For non-interactive setup: `akm setup --yes` (or `--dir ~/custom-stash` for a custom path).
+Non-interactive setup never activates schedules.
 
 See [docs/guides/getting-started.md](docs/guides/getting-started.md) for a full walkthrough.
 
@@ -153,6 +155,30 @@ akm proposal reject <uuid-or-ref>   # discard it
 akm clone workflows/ship-release --dest ./project/.claude
 # edit the local copy — it wins in subsequent searches automatically
 ```
+
+**Schedule tasks safely**
+```sh
+akm setup                 # review definitions, schedules, and enabled state
+# Confirm scheduler activation only after reviewing the complete task summary.
+akm tasks doctor          # verify backend, runtime, task state, and warnings
+```
+
+Setup shows the complete task review before asking one explicit question about
+changing task files and the OS scheduler. Only confirmation prepares the
+definitions and syncs the scheduler. Declining, or running setup
+non-interactively, leaves both unchanged. A scheduled entry captures
+the installed akm runtime used during activation. Ordinary `akm tasks sync`
+preserves that runtime; after moving or replacing the installation, use
+`akm tasks sync --rebind` explicitly to migrate or repair scheduler entries, then
+run `akm tasks doctor` again.
+
+Rerunning setup preserves existing scheduler bindings. If setup changes the AKM
+storage path, or the installed runtime path changes, run
+`akm tasks sync --rebind` explicitly. Fresh setup offers the core task templates;
+it does not register the separate maintainer-oriented improve cadence. That
+automation remains an explicit `akm tasks init` operation, which creates missing
+definitions and immediately installs enabled schedules. Inspect its documented
+task set and options before running it.
 
 ## The improvement loop
 

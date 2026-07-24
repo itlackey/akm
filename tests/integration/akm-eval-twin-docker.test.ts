@@ -101,6 +101,8 @@ describe("akm-eval-twin-docker", () => {
       const runtime = path.join(fixture.root, "runtime.json");
       const commonRuntime = path.join(fixture.root, "common-runtime.json");
       const assignment = path.join(fixture.root, "assignment.json");
+      const cases = path.join(fixture.root, "cases");
+      fs.mkdirSync(cases, { mode: 0o700 });
       fs.writeFileSync(metadata, "{}\n");
       fs.writeFileSync(runtime, "{}\n", { mode: 0o600 });
       fs.writeFileSync(commonRuntime, "{}\n", { mode: 0o600 });
@@ -117,6 +119,8 @@ describe("akm-eval-twin-docker", () => {
           fixture.out,
           "--suite",
           "improve-smoke",
+          "--cases-dir",
+          cases,
           "--endpoint-metadata",
           metadata,
           "--endpoint-runtime",
@@ -172,6 +176,7 @@ describe("akm-eval-twin-docker", () => {
       expect(run).toContain("example/akm-twin:test");
       expect(optionValue(run, "--snapshot")).toBe("/akm-eval/snapshot");
       expect(optionValue(run, "--out")).toBe("/akm-eval/out");
+      expect(optionValue(run, "--cases-dir")).toBe("/akm-eval/cases");
       expect(optionValue(run, "--endpoint-metadata")).toBe("/akm-eval/inputs/endpoint-metadata-001.json");
       expect(optionValue(run, "--endpoint-runtime")).toBe("/akm-eval/inputs/endpoint-runtime-001.json");
       expect(optionValue(run, "--common-runtime")).toBe("/akm-eval/inputs/common-runtime-001.json");
@@ -183,6 +188,9 @@ describe("akm-eval-twin-docker", () => {
       );
       expect(mountFor(run, "/akm-eval/out")).toBe(
         `type=bind,source=${fs.realpathSync(fixture.out)},target=/akm-eval/out`,
+      );
+      expect(mountFor(run, "/akm-eval/cases")).toBe(
+        `type=bind,source=${fs.realpathSync(cases)},target=/akm-eval/cases,readonly`,
       );
       expect(mountFor(run, "/akm-eval/inputs/endpoint-metadata-001.json")).toEndWith(
         "target=/akm-eval/inputs/endpoint-metadata-001.json,readonly",
@@ -310,6 +318,17 @@ describe("akm-eval-twin-docker", () => {
         fixture.snapshot,
         "--out",
         path.join(PROJECT_ROOT, `.akm-eval-twin-out-${path.basename(fixture.root)}`),
+      ],
+    },
+    {
+      name: "cases directory",
+      args: (fixture: Fixture) => [
+        "--snapshot",
+        fixture.snapshot,
+        "--out",
+        fixture.out,
+        "--cases-dir",
+        path.join(PROJECT_ROOT, "scripts", "akm-eval", "cases"),
       ],
     },
     {

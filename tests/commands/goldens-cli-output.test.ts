@@ -254,7 +254,8 @@ describe("family A — search/show/list/info/curate/history/proposal/env/secret/
       source: "reflect",
       force: true,
       payload: {
-        content: "---\ndescription: Prefer rg over grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n",
+        content:
+          "---\ndescription: Prefer ripgrep over grep for repository searches\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n",
       },
     });
     if (isProposalSkipped(created)) throw new Error("unexpected skip seeding the family-A proposal fixture");

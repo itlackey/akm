@@ -6,12 +6,19 @@ temperature 0 with thinking disabled, requires that every response report that
 exact model ID, and then applies deterministic claim, forbidden-claim,
 direct-provenance, and negation scoring.
 
+`fixtures/holdout-manifest.json` is a separately authored blind holdout. Its
+semantic-scope, direct-versus-indirect provenance, negation, and bounded
+compression cases were sealed before any model completion was collected and
+must not be edited in response to model wording. The embedded safe/lossy
+candidates calibrate only the deterministic oracle.
+
 Run it against Don's LM Studio endpoint from the repository root:
 
 ```sh
 OUT="$HOME/.cache/akm-eval/consolidation-fidelity/$(date -u +%Y%m%dT%H%M%SZ)"
 scripts/akm-eval/bin/akm-eval-consolidation-fidelity \
   --endpoint http://192.168.0.205:1234 \
+  --manifest scripts/akm-eval/cases/consolidation-fidelity/fixtures/holdout-manifest.json \
   --out "$OUT"
 ```
 

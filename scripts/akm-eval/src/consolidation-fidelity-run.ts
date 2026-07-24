@@ -450,6 +450,7 @@ export function writeConsolidationFidelityArtifacts(
 
 interface CliOptions {
   endpoint?: string;
+  manifest?: string;
   out?: string;
   help: boolean;
 }
@@ -467,6 +468,9 @@ function parseArgs(argv: string[]): CliOptions {
     switch (arg) {
       case "--endpoint":
         options.endpoint = next();
+        break;
+      case "--manifest":
+        options.manifest = next();
         break;
       case "--out":
         options.out = next();
@@ -486,7 +490,7 @@ function printHelp(): void {
   process.stdout.write(`akm-eval consolidation fidelity
 
 Usage:
-  akm-eval-consolidation-fidelity --endpoint <OpenAI base URL> --out <new directory>
+  akm-eval-consolidation-fidelity --endpoint <OpenAI base URL> --out <new directory> [--manifest <json>]
 
 The measurement always requests ${CONSOLIDATION_FIDELITY_MODEL} at temperature 0,
 disables thinking, and runs one request at a time. AKM_LLM_API_KEY is optional.
@@ -504,9 +508,11 @@ async function main(argv: string[]): Promise<number> {
   if (!options.out) throw new Error("--out is required");
   const outDir = path.resolve(options.out);
   if (fs.existsSync(outDir)) throw new Error(`output path already exists: ${outDir}`);
+  const manifestPath = options.manifest ? path.resolve(options.manifest) : CONSOLIDATION_FIDELITY_MANIFEST_PATH;
 
   const measurement = await runConsolidationFidelityMeasurement({
     endpoint,
+    manifestPath,
     complete: createConsolidationFidelityClient({ endpoint, apiKey: process.env.AKM_LLM_API_KEY }),
     onCaseComplete: (result, index, total) => {
       const outcome = result.oracle?.oraclePassed ? "pass" : result.validModelEvidence ? "fail" : "inconclusive";

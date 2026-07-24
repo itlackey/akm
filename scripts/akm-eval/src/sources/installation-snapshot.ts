@@ -57,7 +57,7 @@ const MANIFEST_KEYS = [
   "dataDir",
   "entries",
 ] as const;
-const MANIFEST_ENTRY_KEYS = ["kind", "path", "byteSize", "sha256"] as const;
+const MANIFEST_ENTRY_KEYS = ["kind", "path", "byteSize", "sha256", "mtimeMs"] as const;
 const PRODUCER_KEYS = ["version", "commit"] as const;
 const SECRET_KEY_HINT =
   /(?:secret|token|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|bearer|auth[_-]?token|client[_-]?secret|authorization|cookie)/i;
@@ -67,6 +67,7 @@ const SECRET_VALUE_PREFIX =
 interface FileFingerprint {
   byteSize: number;
   sha256: Sha256;
+  mtimeMs: number;
 }
 
 interface NamedRoot {
@@ -150,7 +151,11 @@ export function verifyInstallationSnapshot(snapshotDir: string): InstallationSna
     const filePath = resolveInside(root, entry.path);
     assertMode(filePath, PRIVATE_FILE_MODE, `snapshot entry ${entry.path}`);
     const fingerprint = fingerprintRegularFile(filePath);
-    if (fingerprint.byteSize !== entry.byteSize || fingerprint.sha256 !== entry.sha256) {
+    if (
+      fingerprint.byteSize !== entry.byteSize ||
+      fingerprint.sha256 !== entry.sha256 ||
+      !mtimesEqual(fingerprint.mtimeMs, entry.mtimeMs)
+    ) {
       throw new Error(`snapshot entry fingerprint mismatch: ${entry.path}`);
     }
     if (entry.path === manifest.configPath) configEntry = entry;
@@ -168,6 +173,7 @@ export function verifyInstallationSnapshot(snapshotDir: string): InstallationSna
     if (!expectedFiles.has(relativePath)) throw new Error(`snapshot data is missing ${databaseName}`);
     verifySqliteDatabase(resolveInside(root, relativePath));
   }
+  assertSnapshotDatabasePaths(root, manifest);
   for (const relativeRoot of Object.values(manifest.bundleRoots)) {
     requireDirectory(resolveInside(root, relativeRoot), `bundle root ${relativeRoot}`);
   }
@@ -203,6 +209,28 @@ export function materializeInstallationSnapshot(
   }
 }
 
+export function normalizedMaterializedDatabaseFingerprint(
+  installation: MaterializedInstallation,
+  manifest: InstallationSnapshotManifest,
+): Sha256 {
+  const mappings = Object.entries(manifest.bundleRoots).map(([id, snapshotRoot]) => {
+    const materializedRoot = installation.bundleRoots[id];
+    if (!materializedRoot) throw new Error(`missing materialized root for database normalization: ${id}`);
+    return { from: materializedRoot, to: snapshotRoot };
+  });
+  const fingerprints = DATABASE_NAMES.map((databaseName) => {
+    const databasePath = path.join(installation.dataDir, databaseName);
+    verifySqliteDatabase(databasePath);
+    rewriteDatabasePaths(databasePath, databaseName, mappings, false);
+    const snapshotEntry = manifest.entries.find((entry) => entry.path === `${manifest.dataDir}/${databaseName}`);
+    if (!snapshotEntry || snapshotEntry.kind !== "data") {
+      throw new Error(`snapshot manifest is missing database identity: ${databaseName}`);
+    }
+    return { databaseName, byteSize: snapshotEntry.byteSize, sha256: snapshotEntry.sha256 };
+  });
+  return hashBytes(canonicalJson(fingerprints));
+}
+
 function materializeInstallationSnapshotUnlocked(
   sourceRoot: string,
   physicalRoot: string,
@@ -226,10 +254,16 @@ function materializeInstallationSnapshotUnlocked(
 
   for (const entry of manifest.entries) {
     const copied = copyRegularFile(resolveInside(sourceRoot, entry.path), resolveInside(physicalRoot, entry.path));
-    if (copied.byteSize !== entry.byteSize || copied.sha256 !== entry.sha256) {
+    if (
+      copied.byteSize !== entry.byteSize ||
+      copied.sha256 !== entry.sha256 ||
+      !mtimesEqual(copied.mtimeMs, entry.mtimeMs)
+    ) {
       throw new Error(`snapshot changed during materialization: ${entry.path}`);
     }
   }
+
+  remapMaterializedDatabasePaths(physicalDataDir, manifest, bundleRoots);
 
   const config = parseConfig(readStableFile(physicalConfigPath).toString("utf8"), physicalConfigPath);
   const bundles = requireConfigBundles(config);
@@ -248,6 +282,10 @@ function materializeInstallationSnapshotUnlocked(
   remapMaterializedWorkspaces(config, manifest.bundleRoots, bundleRoots, physicalBundleRoots);
   const materializedConfig = parseConfig(`${JSON.stringify(config)}\n`, physicalConfigPath);
   writeExistingPrivateFile(physicalConfigPath, Buffer.from(prettyCanonicalJson(materializedConfig), "utf8"));
+  restoreManifestMtime(physicalConfigPath, manifest, manifest.configPath);
+  for (const databaseName of DATABASE_NAMES) {
+    restoreManifestMtime(path.join(physicalDataDir, databaseName), manifest, `${manifest.dataDir}/${databaseName}`);
+  }
 
   const runtimeRoot = path.join(root, "runtime");
   const physicalRuntimeRoot = path.join(physicalRoot, "runtime");
@@ -318,14 +356,25 @@ function captureInstallationSnapshotUnlocked(
   }
 
   const configRelativePath = asSafeRelativePath(CONFIG_PATH);
-  const configFingerprint = writePrivateFile(resolveInside(destinationDir, configRelativePath), configBytes);
+  const configFingerprint = writePrivateFile(
+    resolveInside(destinationDir, configRelativePath),
+    configBytes,
+    mtimeMsOf(requireRegularFile(configPath, "config file")),
+  );
   entries.push({ kind: "config", path: configRelativePath, ...configFingerprint });
 
   validateSqliteSourcePaths(dataDir);
   const sourceDatabaseFingerprints = fingerprintSqliteSourceArtifacts(dataDir);
   for (const databaseName of DATABASE_NAMES) {
     const relativePath = asSafeRelativePath(`${DATA_DIR}/${databaseName}`);
-    const fingerprint = snapshotDatabase(path.join(dataDir, databaseName), resolveInside(destinationDir, relativePath));
+    const fingerprint = snapshotDatabase(
+      path.join(dataDir, databaseName),
+      resolveInside(destinationDir, relativePath),
+      databaseName,
+      sourceBundleRoots,
+      bundleRoots,
+      sqliteGenerationMtimeMs(dataDir, databaseName),
+    );
     entries.push({ kind: "data", path: relativePath, ...fingerprint });
   }
   assertSqliteSourceArtifactsUnchanged(dataDir, sourceDatabaseFingerprints);
@@ -338,7 +387,7 @@ function captureInstallationSnapshotUnlocked(
 
   entries.sort((left, right) => compareStrings(left.path, right.path));
   const unsignedManifest = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     producer: { ...options.producer },
     configFingerprint: configFingerprint.sha256,
     defaultBundle: options.defaultBundle,
@@ -404,7 +453,11 @@ function assertBundleTreeMatchesSnapshot(
   }
   for (const { entry, relativePath } of expectedEntries) {
     const fingerprint = fingerprintRegularFile(resolveInside(sourceRoot, relativePath));
-    if (fingerprint.byteSize !== entry.byteSize || fingerprint.sha256 !== entry.sha256) {
+    if (
+      fingerprint.byteSize !== entry.byteSize ||
+      fingerprint.sha256 !== entry.sha256 ||
+      !mtimesEqual(fingerprint.mtimeMs, entry.mtimeMs)
+    ) {
       throw new Error(`bundle source file changed after it was copied: ${relativePath}`);
     }
   }
@@ -439,7 +492,13 @@ function assertSqliteSourceArtifactsUnchanged(
   for (const name of expectedNames) {
     const before = expected[name];
     const after = actual[name];
-    if (!before || !after || before.byteSize !== after.byteSize || before.sha256 !== after.sha256) {
+    if (
+      !before ||
+      !after ||
+      before.byteSize !== after.byteSize ||
+      before.sha256 !== after.sha256 ||
+      !mtimesEqual(before.mtimeMs, after.mtimeMs)
+    ) {
       throw new Error(`SQLite source artifact changed while the installation snapshot was captured: ${name}`);
     }
   }
@@ -453,7 +512,14 @@ function assertSourceConfigUnchanged(configPath: string, expected: Buffer): void
 }
 
 /** Matches the repository's verified migration-backup mechanism: SQLite VACUUM INTO, never a raw WAL copy. */
-function snapshotDatabase(sourcePath: string, destinationPath: string): FileFingerprint {
+function snapshotDatabase(
+  sourcePath: string,
+  destinationPath: string,
+  databaseName: (typeof DATABASE_NAMES)[number],
+  sourceBundleRoots: NamedRoot[],
+  snapshotBundleRoots: Record<string, SafeRelativePath>,
+  mtimeMs: number,
+): FileFingerprint {
   const before = requireRegularFile(sourcePath, "SQLite database");
   assertTrustedSourceRegularFile(sourcePath, before, "SQLite database");
   let database: Database | undefined;
@@ -470,9 +536,11 @@ function snapshotDatabase(sourcePath: string, destinationPath: string): FileFing
   } finally {
     database?.close();
   }
+  remapCapturedDatabasePaths(destinationPath, databaseName, sourceBundleRoots, snapshotBundleRoots);
   const after = requireRegularFile(sourcePath, "SQLite database");
   if (!sameStableFile(before, after)) throw new Error(`SQLite database changed during capture: ${sourcePath}`);
   fs.chmodSync(destinationPath, PRIVATE_FILE_MODE);
+  setFileMtime(destinationPath, mtimeMs);
   verifySqliteDatabase(destinationPath);
   for (const suffix of SQLITE_SIDECAR_SUFFIXES) {
     if (lstatIfExists(`${destinationPath}${suffix}`)) {
@@ -503,6 +571,269 @@ function assertQuickCheck(database: Database, filePath: string): void {
 
 function sqliteQuote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+interface DatabasePathMapping {
+  from: string;
+  to: string;
+}
+
+const DATABASE_JSON_PATH_KEYS = new Set([
+  "assetPath",
+  "dirPath",
+  "filePath",
+  "path",
+  "root",
+  "sourcePath",
+  "stashDir",
+  "stashRoot",
+]);
+
+function remapCapturedDatabasePaths(
+  databasePath: string,
+  databaseName: (typeof DATABASE_NAMES)[number],
+  sourceBundleRoots: NamedRoot[],
+  snapshotBundleRoots: Record<string, SafeRelativePath>,
+): void {
+  const mappings = sourceBundleRoots.map(({ id, root }) => {
+    const snapshotRoot = snapshotBundleRoots[id];
+    if (!snapshotRoot) throw new Error(`missing snapshot root for database path mapping: ${id}`);
+    return { from: root, to: snapshotRoot };
+  });
+  rewriteDatabasePaths(databasePath, databaseName, mappings, true);
+}
+
+function remapMaterializedDatabasePaths(
+  dataDir: string,
+  manifest: InstallationSnapshotManifest,
+  bundleRoots: Record<string, string>,
+): void {
+  const mappings = Object.entries(manifest.bundleRoots).map(([id, snapshotRoot]) => {
+    const materializedRoot = bundleRoots[id];
+    if (!materializedRoot) throw new Error(`missing materialized root for database path mapping: ${id}`);
+    return { from: snapshotRoot, to: materializedRoot };
+  });
+  for (const databaseName of DATABASE_NAMES) {
+    rewriteDatabasePaths(path.join(dataDir, databaseName), databaseName, mappings, true);
+  }
+}
+
+function assertSnapshotDatabasePaths(root: string, manifest: InstallationSnapshotManifest): void {
+  const mappings = Object.values(manifest.bundleRoots).map((snapshotRoot) => ({
+    from: snapshotRoot,
+    to: snapshotRoot,
+  }));
+  for (const databaseName of DATABASE_NAMES) {
+    rewriteDatabasePaths(resolveInside(root, `${manifest.dataDir}/${databaseName}`), databaseName, mappings, false);
+  }
+}
+
+function rewriteDatabasePaths(
+  databasePath: string,
+  databaseName: (typeof DATABASE_NAMES)[number],
+  mappings: DatabasePathMapping[],
+  write: boolean,
+): void {
+  const sortedMappings = [...mappings].sort((left, right) => right.from.length - left.from.length);
+  const mapValue = (value: string, context: string): string => mapDatabasePath(value, sortedMappings, context);
+  const database = write
+    ? openDatabaseFinalizing(databasePath)
+    : openDatabaseFinalizing(databasePath, { readonly: true, create: false });
+  let inTransaction = false;
+  try {
+    if (write) {
+      database.exec("PRAGMA foreign_keys = OFF");
+      database.exec("BEGIN IMMEDIATE");
+      inTransaction = true;
+    }
+    if (databaseName === "state.db") rewriteStateDatabasePaths(database, mapValue, write);
+    else rewriteIndexDatabasePaths(database, mapValue, write);
+    if (write) {
+      database.exec("COMMIT");
+      inTransaction = false;
+      const violations = database.prepare<Record<string, unknown>>("PRAGMA foreign_key_check").all();
+      if (violations.length > 0) throw new Error(`${databaseName} path remap violated foreign keys`);
+    }
+  } catch (error) {
+    if (inTransaction) database.exec("ROLLBACK");
+    throw new Error(
+      `${databaseName} path remap failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function rewriteStateDatabasePaths(
+  database: Database,
+  mapValue: (value: string, context: string) => string,
+  write: boolean,
+): void {
+  for (const [table, column] of [
+    ["proposals", "stash_dir"],
+    ["proposal_fingerprints", "stash_dir"],
+    ["improve_runs", "stash_dir"],
+    ["proposal_fs_imports", "stash_dir"],
+  ] as const) {
+    rewriteTextColumn(database, table, column, mapValue, write);
+  }
+  for (const [table, column] of [
+    ["events", "metadata_json"],
+    ["proposals", "metadata_json"],
+    ["improve_runs", "result_json"],
+    ["improve_runs", "metadata_json"],
+  ] as const) {
+    rewriteJsonColumn(database, table, column, mapValue, write);
+  }
+}
+
+function rewriteIndexDatabasePaths(
+  database: Database,
+  mapValue: (value: string, context: string) => string,
+  write: boolean,
+): void {
+  for (const [table, column] of [
+    ["entries", "entry_key"],
+    ["entries", "dir_path"],
+    ["entries", "file_path"],
+    ["entries", "stash_dir"],
+    ["workflow_documents", "source_path"],
+    ["graph_meta", "stash_root"],
+    ["graph_files", "stash_root"],
+    ["graph_files", "file_path"],
+    ["graph_file_entities", "stash_root"],
+    ["graph_file_entities", "file_path"],
+    ["graph_file_relations", "stash_root"],
+    ["graph_file_relations", "file_path"],
+    ["graph_extraction_queue", "stash_root"],
+    ["graph_extraction_queue", "file_path"],
+    ["index_dir_state", "dir_path"],
+    ["llm_enrichment_cache", "asset_ref"],
+  ] as const) {
+    rewriteTextColumn(database, table, column, mapValue, write);
+  }
+  for (const [table, column] of [
+    ["entries", "entry_json"],
+    ["entries", "document_json"],
+    ["workflow_documents", "document_json"],
+  ] as const) {
+    rewriteJsonColumn(database, table, column, mapValue, write);
+  }
+  rewriteIndexStashDirs(database, mapValue, write);
+}
+
+function rewriteTextColumn(
+  database: Database,
+  table: string,
+  column: string,
+  mapValue: (value: string, context: string) => string,
+  write: boolean,
+): void {
+  if (!databaseColumnExists(database, table, column)) return;
+  const rows = database
+    .prepare<{ value: string }>(`SELECT DISTINCT ${column} AS value FROM ${table} WHERE ${column} IS NOT NULL`)
+    .all();
+  const update = write ? database.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`) : undefined;
+  for (const row of rows) {
+    if (typeof row.value !== "string") throw new Error(`${table}.${column} contains a non-string path`);
+    const mapped = mapValue(row.value, `${table}.${column}`);
+    if (write && mapped !== row.value) update?.run(mapped, row.value);
+  }
+}
+
+function rewriteJsonColumn(
+  database: Database,
+  table: string,
+  column: string,
+  mapValue: (value: string, context: string) => string,
+  write: boolean,
+): void {
+  if (!databaseColumnExists(database, table, column)) return;
+  const rows = database
+    .prepare<{ rowId: number; value: string }>(
+      `SELECT rowid AS rowId, ${column} AS value FROM ${table} WHERE ${column} IS NOT NULL`,
+    )
+    .all();
+  const update = write ? database.prepare(`UPDATE ${table} SET ${column} = ? WHERE rowid = ?`) : undefined;
+  for (const row of rows) {
+    if (typeof row.value !== "string") throw new Error(`${table}.${column} contains non-string JSON`);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.value);
+    } catch {
+      throw new Error(`${table}.${column} contains invalid JSON at rowid ${row.rowId}`);
+    }
+    const mapped = mapJsonPaths(parsed, mapValue, `${table}.${column}`);
+    const serialized = JSON.stringify(mapped);
+    if (write && serialized !== row.value) update?.run(serialized, row.rowId);
+  }
+}
+
+function rewriteIndexStashDirs(
+  database: Database,
+  mapValue: (value: string, context: string) => string,
+  write: boolean,
+): void {
+  if (!databaseColumnExists(database, "index_meta", "value")) return;
+  const row = database.prepare<{ value: string }>("SELECT value FROM index_meta WHERE key = 'stashDirs'").get();
+  if (!row) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.value);
+  } catch {
+    throw new Error("index_meta.stashDirs contains invalid JSON");
+  }
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+    throw new Error("index_meta.stashDirs must be an array of strings");
+  }
+  const mapped = parsed.map((value) => mapValue(value as string, "index_meta.stashDirs"));
+  const serialized = JSON.stringify(mapped);
+  if (write && serialized !== row.value) {
+    database.prepare("UPDATE index_meta SET value = ? WHERE key = 'stashDirs'").run(serialized);
+  }
+}
+
+function mapJsonPaths(
+  value: unknown,
+  mapValue: (value: string, context: string) => string,
+  context: string,
+  key?: string,
+): unknown {
+  if (typeof value === "string") return key && DATABASE_JSON_PATH_KEYS.has(key) ? mapValue(value, `${context}.${key}`) : value;
+  if (Array.isArray(value)) return value.map((child, index) => mapJsonPaths(child, mapValue, `${context}[${index}]`));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([childKey, child]) => [
+      childKey,
+      mapJsonPaths(child, mapValue, context, childKey),
+    ]),
+  );
+}
+
+function mapDatabasePath(value: string, mappings: DatabasePathMapping[], context: string): string {
+  for (const mapping of mappings) {
+    if (value === mapping.from) return mapping.to;
+    for (const separator of [path.sep, "/"]) {
+      if (value.startsWith(`${mapping.from}${separator}`)) {
+        const suffix = value.slice(mapping.from.length + 1).replaceAll("\\", "/");
+        return path.isAbsolute(mapping.to) ? path.join(mapping.to, ...suffix.split("/")) : `${mapping.to}/${suffix}`;
+      }
+    }
+    if (value.startsWith(`${mapping.from}:`)) return `${mapping.to}${value.slice(mapping.from.length)}`;
+  }
+  if (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) {
+    throw new Error(`${context} contains a path outside captured bundle roots`);
+  }
+  return value;
+}
+
+function databaseColumnExists(database: Database, table: string, column: string): boolean {
+  const tableRow = database
+    .prepare<{ present: number }>("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table);
+  if (!tableRow) return false;
+  const columns = database.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
+  return columns.some((candidate) => candidate.name === column);
 }
 
 function validateSqliteSourcePaths(dataDir: string): void {
@@ -540,7 +871,9 @@ function copyRegularFile(sourcePath: string, destinationPath: string): FileFinge
       throw new Error(`source file changed while it was being copied: ${sourcePath}`);
     }
     fs.chmodSync(destinationPath, PRIVATE_FILE_MODE);
-    return fingerprint;
+    const mtimeMs = mtimeMsOf(before);
+    fs.futimesSync(destinationFd, Number(before.atimeNs) / 1e9, mtimeMs / 1000);
+    return { ...fingerprint, mtimeMs };
   } finally {
     if (destinationFd !== undefined) fs.closeSync(destinationFd);
     fs.closeSync(sourceFd);
@@ -560,13 +893,13 @@ function fingerprintRegularFile(filePath: string): FileFingerprint {
     if (!sameStableFile(before, after) || !sameFileIdentity(after, finalPathStat) || BigInt(fingerprint.byteSize) !== after.size) {
       throw new Error(`snapshot file changed while it was being verified: ${filePath}`);
     }
-    return fingerprint;
+    return { ...fingerprint, mtimeMs: mtimeMsOf(after) };
   } finally {
     fs.closeSync(fd);
   }
 }
 
-function copyAndHash(sourceFd: number, destinationFd?: number): FileFingerprint {
+function copyAndHash(sourceFd: number, destinationFd?: number): Omit<FileFingerprint, "mtimeMs"> {
   const hash = crypto.createHash("sha256");
   const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
   let byteSize = 0;
@@ -602,7 +935,7 @@ function readStableFile(filePath: string): Buffer {
   }
 }
 
-function writePrivateFile(filePath: string, contents: Buffer): FileFingerprint {
+function writePrivateFile(filePath: string, contents: Buffer, mtimeMs = Date.now()): FileFingerprint {
   makePrivateDirectory(path.dirname(filePath));
   const fd = fs.openSync(filePath, "wx", PRIVATE_FILE_MODE);
   try {
@@ -613,7 +946,8 @@ function writePrivateFile(filePath: string, contents: Buffer): FileFingerprint {
     fs.closeSync(fd);
   }
   fs.chmodSync(filePath, PRIVATE_FILE_MODE);
-  return { byteSize: contents.byteLength, sha256: hashBytes(contents) };
+  setFileMtime(filePath, mtimeMs);
+  return { byteSize: contents.byteLength, sha256: hashBytes(contents), mtimeMs: fs.statSync(filePath).mtimeMs };
 }
 
 function writeExistingPrivateFile(filePath: string, contents: Buffer): void {
@@ -961,7 +1295,7 @@ function assertNoActiveProcessLocks(dataDir: string, configPath: string, bundleR
 }
 
 function validateManifest(value: unknown): InstallationSnapshotManifest {
-  if (!isRecord(value) || value.schemaVersion !== 1) throw new Error("unsupported snapshot manifest schemaVersion");
+  if (!isRecord(value) || value.schemaVersion !== 2) throw new Error("unsupported snapshot manifest schemaVersion");
   assertExactKeys(value, MANIFEST_KEYS, "snapshot manifest");
   assertSha256(value.snapshotFingerprint);
   assertSha256(value.configFingerprint);
@@ -996,6 +1330,9 @@ function validateManifest(value: unknown): InstallationSnapshotManifest {
     if (!Number.isSafeInteger(entry.byteSize) || (entry.byteSize as number) < 0) {
       throw new Error(`invalid snapshot entry byteSize: ${entryPath}`);
     }
+    if (typeof entry.mtimeMs !== "number" || !Number.isFinite(entry.mtimeMs) || entry.mtimeMs < 0) {
+      throw new Error(`invalid snapshot entry mtimeMs: ${entryPath}`);
+    }
     assertSha256(entry.sha256);
     const dataName = entryPath.startsWith(`${DATA_DIR}/`) ? entryPath.slice(DATA_DIR.length + 1) : undefined;
     const bundleRoot = Object.values(bundleRoots).find((root) => entryPath.startsWith(`${root}/`));
@@ -1014,7 +1351,13 @@ function validateManifest(value: unknown): InstallationSnapshotManifest {
         throw new Error(`snapshot manifest includes a secret-bearing bundle path: ${entryPath}`);
       }
     }
-    return { kind: entry.kind, path: entryPath, byteSize: entry.byteSize as number, sha256: entry.sha256 };
+    return {
+      kind: entry.kind,
+      path: entryPath,
+      byteSize: entry.byteSize as number,
+      sha256: entry.sha256,
+      mtimeMs: entry.mtimeMs,
+    };
   });
   for (let index = 1; index < entries.length; index += 1) {
     if (compareStrings(entries[index - 1]?.path ?? "", entries[index]?.path ?? "") >= 0) {
@@ -1022,7 +1365,7 @@ function validateManifest(value: unknown): InstallationSnapshotManifest {
     }
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     snapshotFingerprint: value.snapshotFingerprint,
     producer: value.producer,
     configFingerprint: value.configFingerprint,
@@ -1227,6 +1570,37 @@ function safeBundleId(id: string): string {
 function asSafeRelativePath(value: string): SafeRelativePath {
   assertSafeRelativePath(value);
   return value;
+}
+
+function mtimeMsOf(stat: BigIntStats): number {
+  return Number(stat.mtimeNs) / 1e6;
+}
+
+function mtimesEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 0.01;
+}
+
+function setFileMtime(filePath: string, mtimeMs: number): void {
+  fs.utimesSync(filePath, mtimeMs / 1000, mtimeMs / 1000);
+}
+
+function sqliteGenerationMtimeMs(dataDir: string, databaseName: string): number {
+  let mtimeMs = mtimeMsOf(requireRegularFile(path.join(dataDir, databaseName), "SQLite database"));
+  for (const suffix of STABLE_SQLITE_SIDECAR_SUFFIXES) {
+    const sidecar = path.join(dataDir, `${databaseName}${suffix}`);
+    if (lstatIfExists(sidecar)) mtimeMs = Math.max(mtimeMs, mtimeMsOf(requireRegularFile(sidecar, "SQLite sidecar")));
+  }
+  return mtimeMs;
+}
+
+function restoreManifestMtime(
+  filePath: string,
+  manifest: InstallationSnapshotManifest,
+  relativePath: string,
+): void {
+  const entry = manifest.entries.find((candidate) => candidate.path === relativePath);
+  if (!entry) throw new Error(`snapshot manifest entry is missing for mtime restoration: ${relativePath}`);
+  setFileMtime(filePath, entry.mtimeMs);
 }
 
 function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {

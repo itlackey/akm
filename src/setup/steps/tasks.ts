@@ -2,176 +2,268 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Setup wizard steps: register the default improve task set and enable/disable
- * scheduled core tasks.
- */
+/** Setup wizard step for reviewing task definitions and activating schedules. */
 
+import fs from "node:fs";
+import path from "node:path";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
-import { detectServerDefault, isCiEnvironment, registerDefaultTasks } from "../../commands/tasks/default-tasks";
-import { akmTasksAdd, akmTasksSetEnabled, akmTasksSync, listStashTasks } from "../../commands/tasks/tasks";
-import { saveGitStash } from "../../sources/providers/git";
+import { isCiEnvironment } from "../../commands/tasks/default-tasks";
+import { akmTasksSync, setEnabledInYaml } from "../../commands/tasks/tasks";
+import { loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
+import {
+  commitWriteTargetBoundary,
+  deleteAssetFromSource,
+  resolveWriteTarget,
+  writeAssetToSource,
+} from "../../core/write-source";
 import { backendNameForPlatform } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
+import { parseTaskDocument } from "../../tasks/parser";
 import { parseSchedule } from "../../tasks/schedule";
 import { prompt } from "../prompt";
 
-/**
- * Normalise a task id the same way `akm tasks` does (strip a trailing `.yml`
- * / `.md` suffix, trim) so the wizard can match embedded template ids against
- * the ids reported by `listStashTasks()`.
- */
 function normaliseTaskIdForMatch(raw: string): string {
   return raw.trim().replace(/\.(yml|md)$/, "");
 }
 
-/**
- * Setup sub-step (issue #552): idempotently register the default improve task
- * set. Asks a single "Is this a server install?" question (defaulting per
- * platform) to decide whether the nightly sweep is enabled, then delegates to
- * {@link registerDefaultTasks}, which is CI-aware and never duplicates an
- * existing task. Skipped entirely under CI (the registration helper short-
- * circuits, and we never even prompt).
- *
- * Exported for testing.
- */
-export async function stepDefaultImproveTasks(
-  register: typeof registerDefaultTasks = registerDefaultTasks,
-): Promise<void> {
-  // CI: register nothing and don't prompt.
-  if (isCiEnvironment()) {
-    p.log.info("CI detected — skipping default improve task registration.");
-    return;
-  }
+export interface SetupTaskDefinition {
+  id: string;
+  schedule: string;
+  enabled: boolean;
+  description?: string;
+}
 
-  const platformDefault = detectServerDefault();
-  const serverInstall = await prompt(() =>
-    p.confirm({
-      message: "Is this a server install? (enables the nightly quality sweep at 2am)",
-      initialValue: platformDefault,
-    }),
-  );
-
-  const result = await register({ serverInstall: serverInstall === true });
-  if (result.skipped) return;
-  const total = result.created.length + result.existing.length;
-  p.log.success(
-    `Default improve tasks registered (${result.created.length} new, ${result.existing.length} already present, ${total} total).`,
-  );
+export interface PreparedSetupTask {
+  task: EmbeddedTask;
+  schedule: string;
+  enabled: boolean;
+  installed: boolean;
 }
 
 export interface ScheduledTasksDeps {
-  list: typeof listStashTasks;
-  add: typeof akmTasksAdd;
-  setEnabled: typeof akmTasksSetEnabled;
+  list: () => SetupTaskDefinition[] | Promise<SetupTaskDefinition[]>;
+  prepare: (tasks: PreparedSetupTask[]) => Promise<number>;
   sync: typeof akmTasksSync;
-  gitSync: typeof saveGitStash;
+}
+
+export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
+  const config = loadConfig();
+  const target = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false });
+  const taskDir = path.join(target.source.path, "tasks");
+  if (!fs.existsSync(taskDir)) return [];
+
+  const tasks: SetupTaskDefinition[] = [];
+  for (const file of fs.readdirSync(taskDir)) {
+    if (!file.endsWith(".yml")) continue;
+    const id = file.slice(0, -4);
+    const filePath = path.join(taskDir, file);
+    try {
+      const task = parseTaskDocument({ yaml: fs.readFileSync(filePath, "utf8"), filePath, id });
+      tasks.push({ id: task.id, schedule: task.schedule, enabled: task.enabled, description: task.description });
+    } catch (error) {
+      throw new UsageError(
+        `Cannot review task definition ${filePath}: ${error instanceof Error ? error.message : String(error)} ` +
+          "Fix or remove the invalid task, then rerun `akm setup`. No task files or scheduler state were changed.",
+        "INVALID_FLAG_VALUE",
+        "Fix or remove the invalid task definition, then rerun `akm setup`.",
+      );
+    }
+  }
+  return tasks.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export interface PrepareSetupTaskDefinitionsDeps {
+  writeAsset?: typeof writeAssetToSource;
+  deleteAsset?: typeof deleteAssetFromSource;
+  commitBoundary?: typeof commitWriteTargetBoundary;
+}
+
+export async function prepareSetupTaskDefinitions(
+  tasks: PreparedSetupTask[],
+  deps: PrepareSetupTaskDefinitionsDeps = {},
+): Promise<number> {
+  const config = loadConfig();
+  const target = resolveWriteTarget(config, config.defaultBundle, { requireWritable: true });
+  const taskDir = path.join(target.source.path, "tasks");
+  const writeAsset = deps.writeAsset ?? writeAssetToSource;
+  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
+  const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
+
+  const prepared = tasks.map((plan) => {
+    const filePath = path.join(taskDir, `${plan.task.id}.yml`);
+    const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : undefined;
+    let yaml: string;
+    if (original !== undefined) {
+      yaml = setEnabledInYaml(original, plan.enabled);
+    } else {
+      const document = yamlParse(plan.task.yaml) as Record<string, unknown>;
+      document.schedule = plan.schedule;
+      document.enabled = plan.enabled;
+      yaml = yamlStringify(document);
+    }
+
+    parseTaskDocument({ yaml, filePath, id: plan.task.id });
+    parseSchedule(plan.schedule, backendNameForPlatform());
+    return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
+  });
+  const changed = prepared.filter((entry) => entry.original !== entry.yaml);
+  if (changed.length === 0) return 0;
+
+  const attempted: typeof changed = [];
+  try {
+    for (const entry of changed) {
+      attempted.push(entry);
+      await writeAsset(target.source, target.config, entry.ref, entry.yaml);
+    }
+    commitBoundary(target, "Prepare scheduled tasks");
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const entry of [...attempted].reverse()) {
+      try {
+        if (entry.original === undefined) {
+          if (fs.existsSync(entry.filePath)) await deleteAsset(target.source, target.config, entry.ref);
+        } else {
+          await writeAsset(target.source, target.config, entry.ref, entry.original);
+          fs.writeFileSync(entry.filePath, entry.original, "utf8");
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    try {
+      commitBoundary(target, "Restore scheduled tasks after failed setup");
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        `Task definition preparation failed and rollback was incomplete: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    throw error;
+  }
+
+  return changed.length;
 }
 
 const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
-  list: listStashTasks,
-  add: akmTasksAdd,
-  setEnabled: akmTasksSetEnabled,
+  list: listSetupTaskDefinitions,
+  prepare: prepareSetupTaskDefinitions,
   sync: akmTasksSync,
-  gitSync: saveGitStash,
 };
 
-export async function stepScheduledTasks(deps: ScheduledTasksDeps = DEFAULT_SCHEDULED_TASKS_DEPS): Promise<void> {
+export async function stepScheduledTasks(
+  deps: ScheduledTasksDeps = DEFAULT_SCHEDULED_TASKS_DEPS,
+  options: { nonInteractive?: boolean } = {},
+): Promise<void> {
+  if (options.nonInteractive || isCiEnvironment()) {
+    p.log.info(
+      "Non-interactive setup leaves task files and scheduler state unchanged. Run `akm setup` interactively to review tasks.",
+    );
+    return;
+  }
+
   const embedded = listEmbeddedTasks().filter((task) => task.enabled);
   if (embedded.length === 0) return;
 
-  // Snapshot current state so we can diff against the user's selection.
-  let installed: ReturnType<typeof listStashTasks>["tasks"] = [];
-  try {
-    installed = (await deps.list()).tasks;
-  } catch {
-    // A missing/empty tasks dir is fine — treat as nothing installed.
-    installed = [];
-  }
-  const byId = new Map<string, (typeof installed)[number]>();
-  for (const t of installed) byId.set(normaliseTaskIdForMatch(t.id), t);
+  const installed = await deps.list();
+  const byId = new Map<string, SetupTaskDefinition>();
+  for (const task of installed) byId.set(normaliseTaskIdForMatch(task.id), task);
 
-  // Pre-check tasks that are installed AND enabled.
-  const preChecked = embedded.filter((e) => byId.get(e.id)?.enabled === true).map((e) => e.id);
-
-  const stateLabel = (e: EmbeddedTask): string => {
-    const cur = byId.get(e.id);
-    if (!cur) return "not installed";
-    return cur.enabled ? "enabled" : "disabled";
-  };
-
+  const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
   const selected = await prompt(() =>
     p.multiselect({
-      message: "Enable scheduled core tasks? (space to toggle, enter to confirm)",
+      message: "Which core task definitions should be enabled? (scheduler activation is confirmed separately)",
       required: false,
       initialValues: preChecked,
-      options: embedded.map((e) => ({
-        value: e.id,
-        label: e.label,
-        hint: `${e.description} — ${e.schedule} [${stateLabel(e)}]`,
-      })),
+      options: embedded.map((task) => {
+        const current = byId.get(task.id);
+        const schedule = current?.schedule ?? task.schedule;
+        const state = current ? (current.enabled ? "enabled" : "disabled") : "not prepared";
+        return {
+          value: task.id,
+          label: task.label,
+          hint: `${task.description} - ${schedule} [${state}]`,
+        };
+      }),
     }),
   );
-
   const selectedSet = new Set(selected as string[]);
 
-  // Resolve per-task schedule edits for newly-checked, not-yet-installed tasks.
   const scheduleFor = new Map<string, string>();
-  for (const e of embedded) {
-    const cur = byId.get(e.id);
-    if (selectedSet.has(e.id) && !cur) {
-      const edited = await prompt(() =>
-        p.text({
-          message: `Schedule for ${e.label}?`,
-          initialValue: e.schedule,
-          validate(value) {
-            const candidate = (value ?? "").trim() || e.schedule;
-            try {
-              parseSchedule(candidate, backendNameForPlatform());
-            } catch (err) {
-              return err instanceof Error ? err.message : "Invalid schedule.";
-            }
-            return undefined;
-          },
-        }),
-      );
-      const sched = ((edited as string) ?? "").trim() || e.schedule;
-      scheduleFor.set(e.id, sched);
-    }
+  for (const task of embedded) {
+    if (!selectedSet.has(task.id) || byId.has(task.id)) continue;
+    const edited = await prompt(() =>
+      p.text({
+        message: `Schedule for ${task.label}?`,
+        initialValue: task.schedule,
+        validate(value) {
+          const candidate = (value ?? "").trim() || task.schedule;
+          try {
+            parseSchedule(candidate, backendNameForPlatform());
+          } catch (error) {
+            return error instanceof Error ? error.message : "Invalid schedule.";
+          }
+          return undefined;
+        },
+      }),
+    );
+    scheduleFor.set(task.id, ((edited as string) ?? "").trim() || task.schedule);
   }
 
-  let syncNeeded = false;
-  for (const e of embedded) {
-    const cur = byId.get(e.id);
-    const checked = selectedSet.has(e.id);
-    if (checked && !cur) {
-      // New task: copy template into the primary stash + install scheduler entry.
-      const schedule = scheduleFor.get(e.id) ?? e.schedule;
-      await deps.add({
-        id: e.id,
-        schedule,
-        command: e.command,
-        description: e.description,
-      });
-      syncNeeded = true;
-    } else if (checked && cur && !cur.enabled) {
-      // Present but disabled → re-enable.
-      await deps.setEnabled(e.id, true);
-    } else if (!checked && cur?.enabled) {
-      // Previously enabled, now unchecked → disable (keep the stash file).
-      await deps.setEnabled(e.id, false);
-    }
-    // No state change → no action.
+  const plans = embedded.map((task) => {
+    const current = byId.get(task.id);
+    return {
+      task,
+      schedule: current?.schedule ?? scheduleFor.get(task.id) ?? task.schedule,
+      enabled: selectedSet.has(task.id),
+      installed: current !== undefined,
+    };
+  });
+  const embeddedIds = new Set(embedded.map((task) => task.id));
+  const custom = installed.filter((task) => !embeddedIds.has(normaliseTaskIdForMatch(task.id)));
+  p.note(
+    [
+      ...plans.map(
+        (plan) =>
+          `${plan.task.label}: ${plan.enabled ? "enabled" : "disabled"} | ${plan.schedule} | ${plan.task.description}`,
+      ),
+      ...custom.map(
+        (task) =>
+          `${task.id}: ${task.enabled ? "enabled" : "disabled"} | ${task.schedule}${task.description ? ` | ${task.description}` : ""}`,
+      ),
+    ].join("\n"),
+    "Task Schedule Review",
+  );
+
+  const activate = await prompt(() =>
+    p.confirm({
+      message: `Activate these schedules now? This will update task files and sync them to the ${backendNameForPlatform()} scheduler.`,
+      initialValue: false,
+    }),
+  );
+  if (!activate) {
+    p.log.info("Task definitions and scheduler state were not changed.");
+    return;
   }
 
-  if (syncNeeded) {
-    // Reconcile scheduler entries with on-disk YAML, then commit the new file
-    // to git (a no-op for non-git stashes).
-    await deps.sync();
-    try {
-      deps.gitSync(undefined, "akm setup: enable scheduled tasks");
-    } catch {
-      // Non-fatal — the task is installed regardless of git sync outcome.
+  const changed = await deps.prepare(plans);
+  if (changed > 0) p.log.success(`Prepared ${changed} task definition${changed === 1 ? "" : "s"}.`);
+  const syncResult = await deps.sync();
+  if (syncResult.skipped.length > 0) {
+    for (const skipped of syncResult.skipped) {
+      p.log.warn(`Task "${skipped.id}" was not activated: ${skipped.reason}`);
     }
+    const activeCount = syncResult.installed.length + syncResult.updated.length + syncResult.unchanged.length;
+    p.log.warn(
+      `${activeCount === 0 ? "No task schedules were activated." : "Task schedule activation was incomplete."} ` +
+        "If you are running AKM from source, run the installed `akm setup`. " +
+        "To migrate or repair existing scheduler bindings explicitly, run `akm tasks sync --rebind`.",
+    );
+    return;
   }
+  p.log.success("Task schedules activated. Verify them with `akm tasks doctor`.");
 }

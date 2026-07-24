@@ -4,10 +4,13 @@
     "stdoutKeys": [
       "akm",
       "backend",
+      "bindings",
+      "caller",
       "engine",
       "historyDir",
       "improveTriage",
       "logDir",
+      "remediation",
       "scheduleSubset",
       "schemaVersion",
       "shape",

@@ -5,6 +5,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Prerequisites
 
 - [Bun](https://bun.sh/) >= 1.0
+- [Node.js](https://nodejs.org/) >= 22 and npm for npm package acceptance and global-install workflows
 
 ## Setting Up the Dev Environment
 
@@ -19,28 +20,22 @@ bun install
 Run the CLI from source during development:
 
 ```bash
-bun run src/cli.ts <command>
+bun src/cli.ts <command>
 ```
 
-### Local `akm` alias
+Use an explicit invocation for the behavior you intend to test:
 
-For local development, prefer a shell alias over a wrapper symlink/script:
+- Live working-tree source: `bun src/cli.ts <command>`
+- Fresh built launcher: `bun run build`, then `node dist/akm <command>`
+- Isolated packed-package acceptance: `bun run test:package`
+- Intentional machine-wide checkout install: `bun run build:install`
 
-```bash
-alias akm='bun /home/founder3/code/github/itlackey/akm/src/cli.ts'
-```
-
-If you choose a wrapper file instead, **do not** make it a symlink to a
-package-manager global `akm`. A global npm install ultimately links its
-platform shim to the package launcher:
-
-```
-<global bin>/akm  →  <global modules>/akm-cli/dist/akm
-```
-
-A symlink into that chain means any `npm install -g akm-cli` (or `akm upgrade`)
-silently replaces what `akm` runs with the published package rather than your
-local source. The alias form avoids that entire class of problem.
+The global checkout install deliberately replaces the globally resolved `akm`;
+do not use it for routine inner-loop testing. Some development machines still
+have a machine-local wrapper for historical workflows. Treat it as transitional,
+leave it untouched, and do not rely on it in tests or contributor instructions.
+See [Local development](../docs/guides/local-development.md) for exact isolated
+package-acceptance commands.
 
 ### Running Tests
 

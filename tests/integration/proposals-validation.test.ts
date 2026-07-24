@@ -184,6 +184,36 @@ describe("createProposal validation", () => {
     expect(caught?.message).toContain('Only "## Step: <title>" sections are allowed');
     expect(listProposals(stash)).toHaveLength(0);
   });
+
+  test("rejects invalid task YAML before queueing", () => {
+    const stash = makeStashDir();
+
+    expect(() =>
+      createProposal(stash, {
+        ref: "tasks/nightly",
+        source: "reflect",
+        force: true,
+        payload: {
+          content: 'version: 2\nschedule: "0 1 * * *"\nenabled: true\nprompt: one\ncommand: ["akm", "index"]\n',
+        },
+      }),
+    ).toThrow(/invalid task structure.*more than one/is);
+    expect(listProposals(stash)).toHaveLength(0);
+  });
+
+  test("rejects invalid lesson metadata before queueing", () => {
+    const stash = makeStashDir();
+
+    expect(() =>
+      createProposal(stash, {
+        ref: "lessons/no-trigger",
+        source: "distill",
+        force: true,
+        payload: { content: "---\ndescription: A complete description of the lesson.\n---\n\nBody.\n" },
+      }),
+    ).toThrow(/invalid lesson structure.*when_to_use/is);
+    expect(listProposals(stash)).toHaveLength(0);
+  });
 });
 
 describe("purgeOrphanProposals", () => {
@@ -200,8 +230,8 @@ describe("purgeOrphanProposals", () => {
       source: "reflect",
       force: true,
       payload: {
-        content: "x",
-        frontmatter: { description: "a lesson", when_to_use: "always" },
+        content:
+          "---\ndescription: A complete lesson description for proposal validation.\nwhen_to_use: Apply this lesson when validating proposal retention behavior.\n---\n\nBody.\n",
       },
     });
     const result = purgeOrphanProposals(stash, [stash]);

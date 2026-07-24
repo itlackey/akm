@@ -315,7 +315,13 @@ describe("akm reflect", () => {
       ref: "lessons/any",
       stashDir: stash,
       config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("# Title\n\nUse rg for recursive search.\n", "", 0) },
+      runAgentOptions: {
+        spawn: fakeSpawn(
+          "---\ndescription: Use ripgrep for recursive repository searches\nwhen_to_use: Searching a repository recursively\n---\n\n# Title\n\nUse rg for recursive search.\n",
+          "",
+          0,
+        ),
+      },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected success");

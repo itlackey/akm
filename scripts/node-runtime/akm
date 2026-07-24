@@ -4,46 +4,159 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-if (!process.versions.bun) {
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  if (major < 22) {
-    console.error("The akm-cli npm package requires Node.js >= 22 to bootstrap.");
-    process.exit(1);
+const CONTEXT_ARG = "--scheduler-context";
+const CONTEXT_KEYS = ["AKM_STASH_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"];
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+
+function invalidContext(file, reason) {
+  throw new Error(`Invalid scheduler context descriptor "${file}": ${reason}.`);
+}
+
+function readSchedulerContext(file) {
+  if (CONTROL_CHARACTER.test(file) || (!path.posix.isAbsolute(file) && !path.win32.isAbsolute(file))) {
+    invalidContext(file, "path must be absolute");
+  }
+  let linkStat;
+  try {
+    linkStat = fs.lstatSync(file);
+  } catch (error) {
+    invalidContext(file, error instanceof Error ? error.message : String(error));
+  }
+  if (linkStat.isSymbolicLink()) invalidContext(file, "symbolic links are not allowed");
+  if (!linkStat.isFile()) invalidContext(file, "path is not a regular file");
+
+  let bytes;
+  let fd;
+  try {
+    const noFollow = process.platform === "win32" ? 0 : fs.constants.O_NOFOLLOW;
+    fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) invalidContext(file, "path is not a regular file");
+    if (process.platform !== "win32") {
+      if (typeof process.getuid !== "function") {
+        invalidContext(file, "current uid is unavailable for ownership verification");
+      }
+      const uid = process.getuid();
+      if (stat.uid !== uid) invalidContext(file, `file owner ${stat.uid} does not match uid ${uid}`);
+      if ((stat.mode & 0o077) !== 0) invalidContext(file, "group or other permissions must be disabled");
+    }
+    bytes = fs.readFileSync(fd);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+
+  const match = /^([a-f0-9]{64})\.json$/.exec(path.basename(file));
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (!match || match[1] !== digest) {
+    invalidContext(file, "content SHA-256 does not match the descriptor filename");
+  }
+
+  let descriptor;
+  try {
+    descriptor = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    invalidContext(file, error instanceof Error ? error.message : String(error));
+  }
+  if (
+    typeof descriptor !== "object" ||
+    descriptor === null ||
+    Array.isArray(descriptor) ||
+    descriptor.version !== 1 ||
+    Object.keys(descriptor).sort().join("\0") !== "environment\0version"
+  ) {
+    invalidContext(file, "expected the scheduler context v1 schema");
+  }
+  const environment = descriptor.environment;
+  const expected = [...CONTEXT_KEYS, "PATH"].sort();
+  const keys =
+    environment && typeof environment === "object" && !Array.isArray(environment)
+      ? Object.keys(environment).sort()
+      : [];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    invalidContext(file, "environment keys do not match the scheduler context v1 schema");
+  }
+  for (const key of CONTEXT_KEYS) {
+    const value = environment[key];
+    if (
+      typeof value !== "string" ||
+      value.trim() === "" ||
+      CONTROL_CHARACTER.test(value) ||
+      (!path.posix.isAbsolute(value) && !path.win32.isAbsolute(value))
+    ) {
+      invalidContext(file, `${key} must be an absolute path without control characters`);
+    }
+  }
+  if (typeof environment.PATH !== "string" || CONTROL_CHARACTER.test(environment.PATH)) {
+    invalidContext(file, "PATH must be a string without control characters");
+  }
+  return environment;
+}
+
+const contextIndex = process.argv.indexOf(CONTEXT_ARG);
+let contextValid = true;
+if (contextIndex !== -1) {
+  try {
+    const contextPath = process.argv[contextIndex + 1];
+    if (!contextPath) throw new Error(`${CONTEXT_ARG} requires an absolute path.`);
+    const environment = readSchedulerContext(contextPath);
+    const expected = [...CONTEXT_KEYS, "PATH"].sort();
+    for (const key of expected) process.env[key] = environment[key];
+    process.argv.splice(contextIndex, 2);
+  } catch (error) {
+    console.error(`akm: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 78;
+    contextValid = false;
   }
 }
 
-const bunProbe = process.versions.bun
-  ? { status: 0, stdout: process.versions.bun }
-  : spawnSync("bun", ["--version"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5_000,
-    });
-const [bunMajor = 0] = (bunProbe.status === 0 ? bunProbe.stdout.trim() : "").split(".").map(Number);
-const useBun = bunMajor >= 1;
-const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
-const nodeEntry = fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
+if (contextValid) {
+  process.env.AKM_LAUNCHER_NODE = process.execPath;
+  process.env.AKM_LAUNCHER_PATH = fileURLToPath(import.meta.url);
 
-if (!useBun && !process.versions.bun) {
-  await import("./cli-node.mjs");
-} else {
-  const command = useBun ? (process.versions.bun ? process.execPath : "bun") : "node";
-  const entry = useBun ? bunEntry : nodeEntry;
-  const runtime = useBun ? "Bun" : "Node.js";
-  const result = await new Promise((resolve) => {
-    const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit" });
-    child.once("error", (error) => resolve({ error }));
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
+  if (!process.versions.bun) {
+    const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+    if (major < 22) {
+      console.error("The akm-cli npm package requires Node.js >= 22 to bootstrap.");
+      process.exit(1);
+    }
+  }
 
-  if (result.error) {
-    console.error(`akm launcher could not start ${runtime}: ${result.error.message}`);
-    process.exitCode = 127;
-  } else if (result.signal) {
-    process.kill(process.pid, result.signal);
+  const bunProbe = process.versions.bun
+    ? { status: 0, stdout: process.versions.bun }
+    : spawnSync("bun", ["--version"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5_000,
+      });
+  const [bunMajor = 0] = (bunProbe.status === 0 ? bunProbe.stdout.trim() : "").split(".").map(Number);
+  const useBun = bunMajor >= 1;
+  const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
+  const nodeEntry = fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
+
+  if (!useBun && !process.versions.bun) {
+    await import("./cli-node.mjs");
   } else {
-    process.exitCode = result.code ?? 1;
+    const command = useBun ? (process.versions.bun ? process.execPath : "bun") : "node";
+    const entry = useBun ? bunEntry : nodeEntry;
+    const runtime = useBun ? "Bun" : "Node.js";
+    const result = await new Promise((resolve) => {
+      const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
+      child.once("error", (error) => resolve({ error }));
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+
+    if (result.error) {
+      console.error(`akm launcher could not start ${runtime}: ${result.error.message}`);
+      process.exitCode = 127;
+    } else if (result.signal) {
+      process.kill(process.pid, result.signal);
+    } else {
+      process.exitCode = result.code ?? 1;
+    }
   }
 }

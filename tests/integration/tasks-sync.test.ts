@@ -103,9 +103,9 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.unchanged).toEqual(["alpha"]);
     expect(result.installed).toEqual([]);
     // The crontab now carries the new schedule, not the stale one.
-    expect(exec.current()).toContain("45 */6 * * * AKM_STASH_DIR=");
-    expect(exec.current()).toContain("/usr/local/bin/akm tasks run beta --scheduled");
-    expect(exec.current()).not.toContain("0 2 * * * AKM_STASH_DIR=");
+    expect(exec.current()).toContain("45 */6 * * * /usr/local/bin/akm --scheduler-context");
+    expect(exec.current()).toContain("tasks run beta --scheduled");
+    expect(exec.current()).not.toContain("0 2 * * * /usr/local/bin/akm");
   });
 
   test("detects an enabled→disabled flip and reinstalls commented", async () => {
@@ -118,8 +118,8 @@ describe("akmTasksSync — schedule drift", () => {
     writeTask("alpha", "*/15 * * * *", false);
     const result = await akmTasksSync({ backend });
     expect(result.updated).toEqual(["alpha"]);
-    expect(exec.current()).toContain("# akm:disabled */15 * * * * AKM_STASH_DIR=");
-    expect(exec.current()).toContain("/usr/local/bin/akm tasks run alpha --scheduled");
+    expect(exec.current()).toContain("# akm:disabled */15 * * * * /usr/local/bin/akm --scheduler-context");
+    expect(exec.current()).toContain("tasks run alpha --scheduled");
   });
 
   test("removes orphaned scheduler entries with no backing file", async () => {
@@ -148,10 +148,11 @@ describe("akmTasksSync — schedule drift", () => {
     const result = await akmTasksSync({ backend });
     expect(result.skipped).toEqual([]);
     expect(result.installed).toEqual(["legacy"]);
-    expect(exec.current()).toContain("/usr/local/bin/akm tasks run legacy");
+    expect(exec.current()).toContain("/usr/local/bin/akm --scheduler-context");
+    expect(exec.current()).toContain("tasks run legacy");
   });
 
-  test("replaces a persisted unmarked invocation while keeping a disabled task disabled", async () => {
+  test("preserves a persisted legacy invocation until explicit rebind", async () => {
     const exec = memoryExec(
       [
         "# akm:task alpha BEGIN",
@@ -165,9 +166,9 @@ describe("akmTasksSync — schedule drift", () => {
 
     const result = await akmTasksSync({ backend });
 
-    expect(result.updated).toEqual(["alpha"]);
-    expect(exec.current()).toContain("# akm:disabled */15 * * * * AKM_STASH_DIR=");
-    expect(exec.current()).toContain("/usr/local/bin/akm tasks run alpha --scheduled");
+    expect(result.updated).toEqual([]);
+    expect(result.skipped[0]?.reason).toContain("tasks sync --rebind");
+    expect(exec.current()).toContain("/usr/local/bin/akm tasks run alpha");
   });
 
   test("a failed replacement leaves the prior native definition active", async () => {

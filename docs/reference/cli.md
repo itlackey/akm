@@ -2137,15 +2137,48 @@ akm show tasks/<id>                          # Inspect one task (replaces `tasks
 akm tasks add <id> --schedule "@daily" \    # Register a new task and install it
   --command "akm improve --strategy default"
 akm tasks add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
+akm tasks init                              # Create and immediately activate default improve schedules
 akm tasks run <id>                          # Execute now (what the scheduler calls)
 akm tasks enable <id> / disable <id>        # Toggle scheduler entry
 akm tasks history [--id <id>] [--limit <n>] # Recent runs from state.db
 akm tasks sync                              # Reconcile on-disk YAML with scheduler
+akm tasks sync --rebind                     # Also capture the current installed runtime
 akm tasks doctor                            # Report scheduler backend + paths
 ```
 
 To remove a scheduled task, delete its file (`<bundle>/tasks/<id>.yml`) and run
 `akm tasks sync` — sync uninstalls the orphaned scheduler entry.
+
+Scheduler activation captures the installed akm runtime. Ordinary `tasks sync`
+reconciles definitions, schedules, and enabled state while preserving that
+runtime binding. Use `tasks sync --rebind` only after intentionally moving or
+replacing the installation, or to repair a stale runtime path, then verify the
+result with `akm tasks doctor`. Interactive `akm setup` reviews the complete task
+plan and asks once before changing task files or scheduler state;
+non-interactive setup changes neither.
+
+Setup reconfiguration preserves existing scheduler runtime bindings. Changing
+the AKM storage path or installed runtime path therefore requires an explicit
+`akm tasks sync --rebind`; setup does not silently migrate those entries. Fresh
+setup reviews the core templates only and does not register the separate
+maintainer-oriented improve task set.
+
+`akm tasks init` is the explicit maintainer opt-in. It has no preview phase: the
+command creates missing task definitions and immediately installs every enabled
+schedule. Inspect this default set before running it:
+
+| Task | Default schedule/state |
+| --- | --- |
+| `akm-improve-frequent` | Hourly at `:40`, enabled |
+| `akm-improve-consolidate` | Every four hours at `:20`, enabled |
+| `akm-improve-nightly` | Daily at `02:15`, enabled for server mode and disabled for laptop mode |
+| `akm-improve-catchup` | Manual recovery task, disabled |
+| `akm-graph-refresh-weekly` | Sunday at `03:10`, enabled |
+
+Use `--server` to enable the nightly sweep, `--laptop` to leave it disabled, or
+neither to use platform detection. `--rebind` explicitly permits scheduler
+creation from a source-checkout invocation. Because creation and activation are
+immediate, choose these options before invoking `akm tasks init`.
 
 **Bundle targeting (`--target <bundle>`).** By default every subcommand operates
 on the primary/default bundle. Pass `--target <bundle>` to `add`, `enable`,

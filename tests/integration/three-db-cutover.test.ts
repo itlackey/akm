@@ -477,7 +477,10 @@ describe("WI-8.2 (a) — rc-train FROM-state round-trip", () => {
       source: "distill",
       sourceRun: "post-cutover-run",
       force: true,
-      payload: { content: "---\ndescription: Born final.\n---\nPost-cutover payload.\n" },
+      payload: {
+        content:
+          "---\ndescription: A proposal born after the database cutover\nwhen_to_use: Verifying post-cutover proposal reference identity\n---\nPost-cutover payload.\n",
+      },
     });
     if ("message" in bornFinal) throw new Error(`unexpected skip: ${bornFinal.message}`);
     const bundleId = deriveInstallations([{ path: postStash, writable: true }])[0]?.id ?? slugForPath(postStash);

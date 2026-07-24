@@ -12,7 +12,13 @@ to Node.js. The standalone binaries are runtime-free.
 
 ## Install
 
-**Option 1 — Prebuilt binary (no runtime required):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+
+```sh
+npm install -g akm-cli
+```
+
+**Option 2 — Prebuilt binary (no runtime required):**
 
 ```sh
 # Linux / macOS
@@ -24,12 +30,6 @@ irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex
 
 Or download a standalone binary directly from the
 [GitHub releases](https://github.com/itlackey/akm/releases) page.
-
-**Option 2 — npm package (requires [Node.js](https://nodejs.org) >= 22):**
-
-```sh
-npm install -g akm-cli
-```
 
 ### Windows installation notes
 
@@ -63,8 +63,16 @@ akm setup
 ```
 
 `akm setup` walks through stash location, embedding/LLM settings, semantic
-search asset preparation, registries, and sources, then saves your
-config, initializes the stash directory, and builds the search index.
+search asset preparation, registries, sources, and task definitions. Before any
+OS scheduler change, it shows every reviewed task's schedule and enabled state
+and asks one explicit activation question. Confirming runs the scheduler sync;
+declining leaves both task files and scheduler state unchanged.
+
+Verify the resulting setup with:
+
+```sh
+akm tasks doctor
+```
 
 ## Initialize Your Working Stash
 
@@ -81,6 +89,45 @@ This creates `~/akm` with subdirectories for each asset type: `scripts/`,
 `env/`, `secrets/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](../architecture/internals/storage-locations.md) for platform-specific paths and environment
 variable overrides.
+
+`akm setup --yes`, config-file setup, and CI runs do not activate schedules.
+
+## Safe Scheduling Walkthrough
+
+Run interactive setup, review the complete task summary, and confirm activation
+only if the schedules and enabled flags are correct:
+
+```sh
+akm setup
+akm tasks doctor
+```
+
+Task definitions live under `<stash>/tasks/`; scheduler entries are separate OS
+state. Activation captures the installed akm runtime so scheduled execution does
+not silently switch to a different checkout or package. Editing definitions and
+running ordinary `akm tasks sync` preserves that captured runtime. If akm was
+moved, reinstalled under a different package prefix, or repaired after an
+installation problem, migrate scheduler entries deliberately:
+
+```sh
+akm tasks sync --rebind
+akm tasks doctor
+```
+
+Use `--rebind` only for that explicit runtime migration or repair.
+
+Rerunning `akm setup` preserves existing scheduler bindings by design. If you
+change the AKM storage path during reconfiguration, or move/install akm at a new
+runtime path, follow setup with `akm tasks sync --rebind`; setup never silently
+rebinds existing entries.
+
+Fresh setup offers the small core task-template set shown in its review. It no
+longer registers the separate maintainer-oriented multi-cadence improve task set.
+`akm tasks init` is the explicit maintainer opt-in, but it is not a preview or
+preparation command: it creates missing definitions and immediately installs all
+enabled schedules. Inspect the documented default task set and the `--server`,
+`--laptop`, and `--rebind` options in the [tasks CLI reference](../reference/cli.md#tasks)
+before running it.
 
 ## Add Your First Asset
 

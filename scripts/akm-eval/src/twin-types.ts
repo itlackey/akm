@@ -14,6 +14,8 @@ export interface InstallationSnapshotEntry {
   path: SafeRelativePath;
   byteSize: number;
   sha256: Sha256;
+  /** Source modification time retained for causal age/eligibility checks. */
+  mtimeMs: number;
 }
 
 export interface ProducerIdentity {
@@ -22,7 +24,7 @@ export interface ProducerIdentity {
 }
 
 export interface InstallationSnapshotManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   /** Canonical manifest hash; this is the source snapshot hash used by twin results. */
   snapshotFingerprint: Sha256;
   producer: ProducerIdentity;
@@ -77,13 +79,25 @@ export interface TwinDecisionCriteria {
 }
 
 export interface TwinExperimentPolicy {
-  schemaVersion: 1;
+  schemaVersion: 2;
   control: TwinControlPolicy;
   treatment: TwinTreatmentPolicy;
+  casesSource: "builtin" | "external";
   improveArgs: string[];
   commandTimeoutMs: number;
   protectedCaseIds: string[];
+  protectedAssets: ProtectedAssetDeclaration[];
   criteria: TwinDecisionCriteria;
+}
+
+export interface ProtectedAssetDeclaration {
+  path: SafeRelativePath;
+  sha256: Sha256;
+}
+
+export interface ProtectedAssetVerification extends ProtectedAssetDeclaration {
+  actualSha256: Sha256 | null;
+  status: "preserved" | "modified" | "missing" | "unavailable";
 }
 
 export interface EndpointAssignment {
@@ -135,6 +149,7 @@ export interface TwinArmResult {
   deterministicScore: number;
   mutations: TwinMutationSummary;
   resources: TwinArmResources;
+  protectedAssets: ProtectedAssetVerification[];
   errors: string[];
 }
 
@@ -180,7 +195,7 @@ export interface TwinExperimentStatus {
 }
 
 interface TwinSampleResultEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 2;
   experimentId: string;
   sampleId: string;
   snapshotFingerprint: Sha256;
@@ -211,7 +226,7 @@ export interface TwinExperimentMetrics {
 }
 
 interface TwinExperimentResultEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 2;
   experimentId: string;
   snapshotFingerprint: Sha256;
   suiteFingerprint: Sha256;

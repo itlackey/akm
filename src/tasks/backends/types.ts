@@ -19,6 +19,10 @@ import type { TaskDocument } from "../schema";
 
 export interface InstalledTaskRef {
   id: string;
+  /** Absolute bootstrap argv parsed from the actual installed definition. */
+  binding?: string[];
+  /** Immutable scheduler context descriptor used by the installed definition. */
+  contextPath?: string;
   /**
    * Opaque, backend-specific fingerprint of the *currently installed* entry
    * (e.g. the cron line incl. enabled/disabled state). `tasks sync` compares
@@ -46,6 +50,10 @@ export interface InstalledTaskRef {
  */
 export interface TaskInstallOptions {
   target?: string;
+  /** Existing binding to preserve, or the explicitly selected rebind candidate. */
+  binding?: readonly string[];
+  /** Undefined preserves the backend default; null explicitly renders a legacy entry without a descriptor. */
+  contextPath?: string | null;
 }
 
 export interface TaskBackend {

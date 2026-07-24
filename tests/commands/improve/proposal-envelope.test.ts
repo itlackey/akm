@@ -124,7 +124,20 @@ describe("emitProposal facade", () => {
       const stash = freshStash();
       // No explicit ctx — the default state.db path resolves under the sandboxed
       // XDG_DATA_HOME, so the write still lands in the isolated tmpdir.
-      const result = emitProposal({ stashDir: stash }, baseInput("lessons/x.md"));
+      const result = emitProposal(
+        { stashDir: stash },
+        {
+          ...baseInput("lessons/x.md"),
+          payload: {
+            content:
+              "---\ndescription: A valid lesson proposal fixture\nwhen_to_use: Testing proposal context forwarding\n---\n\nFixture body.\n",
+            frontmatter: {
+              description: "A valid lesson proposal fixture",
+              when_to_use: "Testing proposal context forwarding",
+            },
+          },
+        },
+      );
       expect(isProposalSkipped(result)).toBe(false);
       const rows = listProposals(stash);
       expect(rows.map((p) => p.ref)).toEqual([durableRef(stash, "lesson", "x.md")]);

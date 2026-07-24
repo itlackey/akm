@@ -13,7 +13,11 @@ import {
   toggleBlock,
   upsertBlock,
 } from "../src/tasks/backends/cron";
-import type { ScheduledTaskContext } from "../src/tasks/scheduler-invocation";
+import {
+  type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
+} from "../src/tasks/scheduler-invocation";
 import type { TaskDocument } from "../src/tasks/schema";
 
 const SCHEDULED_CONTEXT: ScheduledTaskContext = {
@@ -23,6 +27,7 @@ const SCHEDULED_CONTEXT: ScheduledTaskContext = {
   AKM_CACHE_DIR: "/srv/akm cache",
   AKM_STATE_DIR: "/srv/akm state",
 };
+const contextPath = (envPath = "") => schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, envPath));
 
 const TASK: TaskDocument = {
   version: 2,
@@ -36,37 +41,31 @@ const TASK: TaskDocument = {
 
 describe("cron backend helpers", () => {
   test("buildCronLine emits absolute akm path", () => {
-    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", undefined, SCHEDULED_CONTEXT);
-    expect(line).toContain("/usr/local/bin/akm tasks run ping --scheduled");
-    expect(line).toContain("AKM_STASH_DIR=");
+    const line = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", contextPath());
+    expect(line).toContain("/usr/local/bin/akm --scheduler-context");
+    expect(line).toContain("tasks run ping --scheduled");
+    expect(line).not.toContain("AKM_STASH_DIR=");
     expect(line).not.toContain("AKM_LLM_API_KEY");
   });
 
   test("buildCronLine embeds --target only when a non-default bundle is given", () => {
-    const withTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT, "work");
+    const withTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", contextPath(), "work");
     expect(withTarget).toContain("tasks run ping --target work --scheduled");
-    const withoutTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
+    const withoutTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", contextPath());
     expect(withoutTarget).toContain("tasks run ping --scheduled");
     expect(withoutTarget).not.toContain("--target");
   });
 
   test("extractInstalledTarget recovers the bundle from a cron body (and undefined for the primary form)", () => {
-    const withTarget = buildCronLine(
-      TASK,
-      ["/usr/local/bin/akm"],
-      "/var/log",
-      undefined,
-      SCHEDULED_CONTEXT,
-      "team-stash",
-    );
+    const withTarget = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", contextPath(), "team-stash");
     expect(extractInstalledTarget(withTarget)).toBe("team-stash");
     expect(extractInstalledTarget(cronBlockBody(withTarget, false))).toBe("team-stash");
-    const primary = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
+    const primary = buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log", contextPath());
     expect(extractInstalledTarget(primary)).toBeUndefined();
   });
 
   test("buildCronLine quotes paths containing spaces", () => {
-    const line = buildCronLine(TASK, ["/Applications/My Stuff/akm"], "/var/log", undefined, SCHEDULED_CONTEXT);
+    const line = buildCronLine(TASK, ["/Applications/My Stuff/akm"], "/var/log", contextPath());
     expect(line).toContain("'/Applications/My Stuff/akm'");
   });
 
@@ -75,14 +74,14 @@ describe("cron backend helpers", () => {
       TASK,
       ["/home/user/.bun/bin/bun", "/opt/akm/cli.js"],
       "/var/log",
-      "/home/user/.bun/bin:/usr/bin",
-      SCHEDULED_CONTEXT,
+      contextPath("/home/user/.bun/bin:/usr/bin"),
     );
-    expect(line).toContain("PATH=/home/user/.bun/bin:/usr/bin /home/user/.bun/bin/bun /opt/akm/cli.js tasks run ping");
+    expect(line).not.toContain("PATH=");
+    expect(line).toContain("/home/user/.bun/bin/bun /opt/akm/cli.js --scheduler-context");
   });
 
   test("buildCronLine escapes apostrophes for POSIX shell", () => {
-    const line = buildCronLine(TASK, ["/opt/akm's/bin/akm"], "/var/log/akm's", undefined, SCHEDULED_CONTEXT);
+    const line = buildCronLine(TASK, ["/opt/akm's/bin/akm"], "/var/log/akm's", contextPath());
     expect(line).toContain("'/opt/akm'\\''s/bin/akm'");
     expect(line).toContain("'/var/log/akm'\\''s/ping.log'");
   });
@@ -93,10 +92,9 @@ describe("cron backend helpers", () => {
       task,
       ["/opt/100% ready/akm's bin"],
       "/var/log/100% ready",
-      "/opt/100% tools/bin:/usr/bin",
-      SCHEDULED_CONTEXT,
+      contextPath("/opt/100% tools/bin:/usr/bin"),
     );
-    expect(line).toContain("PATH='/opt/100'\\%' tools/bin:/usr/bin'");
+    expect(line).not.toContain("PATH=");
     expect(line).toContain("'/opt/100'\\%' ready/akm'\\''s bin'");
     expect(line).toContain("tasks run ping\\%done");
     expect(line).toContain("'/var/log/100'\\%' ready/ping'\\%'done.log'");
@@ -104,29 +102,25 @@ describe("cron backend helpers", () => {
 
   test("buildCronLine rejects newline injection from every interpolated input", () => {
     const cases: Array<() => string> = [
-      () =>
-        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", "/usr/bin\n* * * * * injected", SCHEDULED_CONTEXT),
-      () =>
-        buildCronLine(TASK, ["/usr/local/bin/akm\n* * * * * injected"], "/var/log/akm", undefined, SCHEDULED_CONTEXT),
+      () => buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", "/context\n* * * * * injected"),
+      () => buildCronLine(TASK, ["/usr/local/bin/akm\n* * * * * injected"], "/var/log/akm", contextPath()),
       () =>
         buildCronLine(
           { ...TASK, id: "ping\n* * * * * injected" },
           ["/usr/local/bin/akm"],
           "/var/log/akm",
-          undefined,
-          SCHEDULED_CONTEXT,
+          contextPath(),
         ),
-      () =>
-        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm\n* * * * * injected", undefined, SCHEDULED_CONTEXT),
+      () => buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm\n* * * * * injected", contextPath()),
     ];
-    for (const build of cases) expect(build).toThrow("control characters");
+    for (const build of cases) expect(build).toThrow();
   });
 
   test("buildCronLine rejects C0, DEL, and C1 controls", () => {
     for (const control of ["\0", "\t", "\n", "\r", "\u001f", "\u007f", "\u0085", "\u009f"]) {
       expect(() =>
-        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", `/usr/bin${control}/bin`, SCHEDULED_CONTEXT),
-      ).toThrow("control characters");
+        buildCronLine(TASK, ["/usr/local/bin/akm"], "/var/log/akm", `/context${control}/file.json`),
+      ).toThrow();
     }
   });
 
@@ -423,6 +417,29 @@ describe("cron backend drift detection", () => {
     });
 
     expect(() => backend.install(SYNC_TASK)).toThrow("injected log directory failure");
+    expect(reads).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  test("rejects a cron command over the portable 1000-byte ceiling before scheduler I/O", () => {
+    let reads = 0;
+    let writes = 0;
+    const exec: CronExec = {
+      read: () => {
+        reads += 1;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      write: () => {
+        writes += 1;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+    const backend = CRON_BACKEND({
+      ...opts(exec),
+      akmArgv: [`/${"x".repeat(1100)}`],
+    });
+
+    expect(() => backend.install(SYNC_TASK)).toThrow("limited to 1000 bytes");
     expect(reads).toBe(0);
     expect(writes).toBe(0);
   });

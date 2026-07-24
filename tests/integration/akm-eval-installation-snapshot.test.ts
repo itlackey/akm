@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   captureInstallationSnapshot,
   materializeInstallationSnapshot,
+  normalizedMaterializedDatabaseFingerprint,
   verifyInstallationSnapshot,
 } from "../../scripts/akm-eval/src/sources/installation-snapshot";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -161,6 +162,7 @@ function rewriteSnapshotConfig(snapshotDir: string, mutate: (config: Record<stri
   if (!configEntry) throw new Error("fixture manifest is missing config entry");
   configEntry.byteSize = configBytes.byteLength;
   configEntry.sha256 = sha256(configBytes);
+  configEntry.mtimeMs = fs.statSync(configPath).mtimeMs;
   manifest.configFingerprint = configEntry.sha256;
   const { snapshotFingerprint: _, ...unsigned } = manifest;
   manifest.snapshotFingerprint = sha256(canonicalJson(unsigned));
@@ -176,6 +178,39 @@ describePosix("akm-eval installation snapshots", () => {
     const snapshotDir = path.join(sandbox.dir, "snapshot");
     const destinationRoot = path.join(sandbox.dir, "materialized");
     try {
+      const sourceAsset = path.join(fixture.bundleRoots.personal ?? "", "memories", "preference.md");
+      const causalMtimeMs = Date.parse("2025-03-04T05:06:07.000Z");
+      fs.utimesSync(sourceAsset, causalMtimeMs / 1000, causalMtimeMs / 1000);
+      const state = fixture.databases[0];
+      state
+        ?.prepare(
+          `INSERT INTO proposals
+           (id, stash_dir, ref, status, source, created_at, updated_at, content, metadata_json)
+         VALUES ('snapshot-proposal', ?, 'personal//memories/preference', 'pending', 'reflect',
+                 '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'content', '{}')`,
+        )
+        .run(fixture.bundleRoots.personal ?? "");
+      state
+        ?.prepare(
+          `INSERT INTO proposal_fingerprints
+           (stash_dir, fingerprint, ref, source, created_at)
+         VALUES (?, 'snapshot-fingerprint', 'personal//memories/preference', 'reflect',
+                 '2026-01-01T00:00:00.000Z')`,
+        )
+        .run(fixture.bundleRoots.personal ?? "");
+      state
+        ?.prepare(
+          `INSERT INTO improve_runs
+           (id, started_at, stash_dir, dry_run, scope_mode, ok, result_json)
+         VALUES ('snapshot-run', '2026-01-01T00:00:00.000Z', ?, 0, 'all', 1, '{}')`,
+        )
+        .run(fixture.bundleRoots.personal ?? "");
+      state
+        ?.prepare(
+          `INSERT INTO events (event_type, ts, metadata_json)
+         VALUES ('promoted', '2026-01-01T00:00:00.000Z', ?)`,
+        )
+        .run(JSON.stringify({ assetPath: sourceAsset }));
       expect(fs.existsSync(path.join(fixture.dataDir, "state.db-wal"))).toBe(true);
       const manifest = capture(fixture, snapshotDir);
 
@@ -193,6 +228,9 @@ describePosix("akm-eval installation snapshots", () => {
       expect(fs.existsSync(path.join(snapshotDir, "data", "logs.db"))).toBe(false);
       expect(fs.existsSync(path.join(snapshotDir, "data", "random.json"))).toBe(false);
       expect(fs.existsSync(path.join(snapshotDir, "data", "akm.lock"))).toBe(false);
+      const sourceAssetEntry = manifest.entries.find((entry) => entry.path.endsWith("/memories/preference.md"));
+      expect(sourceAssetEntry?.mtimeMs).toBe(causalMtimeMs);
+      expect(fs.statSync(path.join(snapshotDir, sourceAssetEntry?.path ?? "missing")).mtimeMs).toBe(causalMtimeMs);
 
       const snapshotConfig = JSON.parse(fs.readFileSync(path.join(snapshotDir, "config", "config.json"), "utf8")) as {
         bundles: Record<string, { path?: string; git?: string; writable?: boolean }>;
@@ -220,7 +258,36 @@ describePosix("akm-eval installation snapshots", () => {
         }
       }
 
+      const snapshotState = new Database(path.join(snapshotDir, "data", "state.db"), {
+        readonly: true,
+        create: false,
+      });
+      try {
+        const canonicalRoot = manifest.bundleRoots.personal;
+        expect(snapshotState.query("SELECT stash_dir FROM proposals WHERE id = 'snapshot-proposal'").get()).toEqual({
+          stash_dir: canonicalRoot,
+        });
+        expect(
+          snapshotState
+            .query("SELECT stash_dir FROM proposal_fingerprints WHERE fingerprint = 'snapshot-fingerprint'")
+            .get(),
+        ).toEqual({ stash_dir: canonicalRoot });
+        expect(snapshotState.query("SELECT stash_dir FROM improve_runs WHERE id = 'snapshot-run'").get()).toEqual({
+          stash_dir: canonicalRoot,
+        });
+        const event = snapshotState.query("SELECT metadata_json FROM events WHERE event_type = 'promoted'").get() as {
+          metadata_json: string;
+        };
+        expect(JSON.parse(event.metadata_json)).toEqual({ assetPath: `${canonicalRoot}/memories/preference.md` });
+      } finally {
+        snapshotState.close();
+      }
+
       const installation = materializeInstallationSnapshot(snapshotDir, destinationRoot);
+      const secondInstallation = materializeInstallationSnapshot(snapshotDir, path.join(sandbox.dir, "material-two"));
+      expect(normalizedMaterializedDatabaseFingerprint(installation, manifest)).toBe(
+        normalizedMaterializedDatabaseFingerprint(secondInstallation, manifest),
+      );
       const materializedConfig = JSON.parse(fs.readFileSync(installation.configPath, "utf8")) as {
         bundles: Record<string, { path?: string; git?: string; writable?: boolean }>;
         engines: Record<string, { workspace?: string }>;
@@ -235,6 +302,39 @@ describePosix("akm-eval installation snapshots", () => {
         path.join(installation.bundleRoots.personal ?? "", "workspace"),
       );
       expect(installation.env.AKM_STASH_DIR).toBe(installation.bundleRoots.personal);
+      expect(fs.statSync(path.join(installation.bundleRoots.personal ?? "", "memories", "preference.md")).mtimeMs).toBe(
+        causalMtimeMs,
+      );
+      const materializedState = new Database(path.join(installation.dataDir, "state.db"), {
+        readonly: true,
+        create: false,
+      });
+      try {
+        const materializedRoot = installation.bundleRoots.personal;
+        expect(materializedState.query("SELECT stash_dir FROM proposals WHERE id = 'snapshot-proposal'").get()).toEqual(
+          {
+            stash_dir: materializedRoot,
+          },
+        );
+        expect(
+          materializedState
+            .query("SELECT stash_dir FROM proposal_fingerprints WHERE fingerprint = 'snapshot-fingerprint'")
+            .get(),
+        ).toEqual({ stash_dir: materializedRoot });
+        expect(materializedState.query("SELECT stash_dir FROM improve_runs WHERE id = 'snapshot-run'").get()).toEqual({
+          stash_dir: materializedRoot,
+        });
+        const event = materializedState
+          .query("SELECT metadata_json FROM events WHERE event_type = 'promoted'")
+          .get() as {
+          metadata_json: string;
+        };
+        expect(JSON.parse(event.metadata_json)).toEqual({
+          assetPath: path.join(materializedRoot ?? "", "memories", "preference.md"),
+        });
+      } finally {
+        materializedState.close();
+      }
       for (const key of [
         "HOME",
         "XDG_CONFIG_HOME",
@@ -294,6 +394,13 @@ describePosix("akm-eval installation snapshots", () => {
       capture(fixture, snapshotDir);
       const manifestPath = path.join(snapshotDir, "manifest.json");
       const original = fs.readFileSync(manifestPath, "utf8");
+      const oldSchema = JSON.parse(original) as Record<string, unknown>;
+      oldSchema.schemaVersion = 1;
+      const { snapshotFingerprint: _oldFingerprint, ...oldUnsigned } = oldSchema;
+      oldSchema.snapshotFingerprint = sha256(canonicalJson(oldUnsigned));
+      fs.writeFileSync(manifestPath, canonicalJson(oldSchema));
+      expect(() => verifyInstallationSnapshot(snapshotDir)).toThrow(/unsupported snapshot manifest schemaVersion/);
+
       const withUnknownManifestKey = JSON.parse(original) as Record<string, unknown>;
       withUnknownManifestKey.unhashed = "not-covered";
       fs.writeFileSync(manifestPath, canonicalJson(withUnknownManifestKey));
@@ -315,6 +422,8 @@ describePosix("akm-eval installation snapshots", () => {
     const sandbox = makeSandboxDir("akm-eval-snapshot-reproducible-config");
     const fixture = createFixture(sandbox.dir);
     try {
+      const configMtimeMs = Date.parse("2025-04-05T06:07:08.000Z");
+      fs.utimesSync(fixture.configPath, configMtimeMs / 1000, configMtimeMs / 1000);
       const first = capture(fixture, path.join(sandbox.dir, "first"));
       const config = configFor(fixture);
       writeConfig(fixture, {
@@ -323,7 +432,9 @@ describePosix("akm-eval installation snapshots", () => {
         defaultBundle: config.defaultBundle,
         configVersion: config.configVersion,
       });
+      fs.utimesSync(fixture.configPath, configMtimeMs / 1000, configMtimeMs / 1000);
       const second = capture(fixture, path.join(sandbox.dir, "second"));
+      expect(second.entries).toEqual(first.entries);
       expect(second.snapshotFingerprint).toBe(first.snapshotFingerprint);
     } finally {
       closeFixture(fixture);
@@ -387,6 +498,26 @@ describePosix("akm-eval installation snapshots", () => {
     try {
       writeConfig(fixture, { ...configFor(fixture), client_secret: "literal-secret-value" });
       expect(() => capture(fixture, path.join(sandbox.dir, "snapshot"))).toThrow(/obvious literal secret/);
+    } finally {
+      closeFixture(fixture);
+      sandbox.cleanup();
+    }
+  });
+
+  test("fails closed on state paths outside captured bundle roots", () => {
+    const sandbox = makeSandboxDir("akm-eval-snapshot-unmapped-state");
+    const fixture = createFixture(sandbox.dir);
+    try {
+      fixture.databases[0]
+        ?.prepare(
+          `INSERT INTO proposals
+             (id, stash_dir, ref, status, source, created_at, updated_at, content, metadata_json)
+           VALUES ('unmapped', ?, 'personal//memories/preference', 'pending', 'reflect',
+                   '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'content', '{}')`,
+        )
+        .run(path.join(sandbox.dir, "not-captured"));
+
+      expect(() => capture(fixture, path.join(sandbox.dir, "snapshot"))).toThrow(/path outside captured bundle roots/);
     } finally {
       closeFixture(fixture);
       sandbox.cleanup();

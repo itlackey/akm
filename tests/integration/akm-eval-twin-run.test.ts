@@ -5,6 +5,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -73,7 +74,7 @@ function armIdentity(overrides: Partial<EndpointFingerprint> = {}) {
 
 function snapshotManifest(): InstallationSnapshotManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     snapshotFingerprint: digest,
     producer: { version: "fixture", commit: "snapshot-commit" },
     configFingerprint: digest,
@@ -128,7 +129,7 @@ function materializeFixture(destinationRoot: string): MaterializedInstallation {
 
 function fakeArmExecution(input: TwinArmExecutionInput): TwinArmExecution {
   const score = input.arm === "control" ? 0.5 : 0.75;
-  const suiteDir = path.join(process.cwd(), "scripts", "akm-eval", "cases", input.suite);
+  const suiteDir = path.join(input.casesRoot, input.suite);
   const caseResults = input.caseIds.map<EvalCaseResult>((caseId) => {
     const evalCase = JSON.parse(fs.readFileSync(path.join(suiteDir, `${caseId}.json`), "utf8")) as {
       type: EvalCaseResult["type"];
@@ -636,6 +637,151 @@ describe("akm-eval twin runner", () => {
     }
   });
 
+  test("loads owner-private external cases without persisting their host path", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-twin-external-cases-"));
+    const snapshot = path.join(root, "snapshot");
+    const casesRoot = path.join(root, "private-cases");
+    const suiteDir = path.join(casesRoot, "private-suite");
+    fs.mkdirSync(snapshot, { mode: 0o700 });
+    fs.mkdirSync(suiteDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(suiteDir, "guard.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        id: "guard",
+        suite: "private-suite",
+        type: "retrieval",
+        input: { query: "private fixture", topK: 1 },
+        expected: { minHits: 0 },
+        scoring: { deterministic: true },
+        tags: ["protected"],
+      })}\n`,
+      { mode: 0o600 },
+    );
+    fs.chmodSync(casesRoot, 0o700);
+    fs.chmodSync(suiteDir, 0o700);
+    try {
+      const result = await runTwinExperiment(
+        {
+          snapshotDir: snapshot,
+          suite: "private-suite",
+          casesDir: casesRoot,
+          akmCommand: ["unused"],
+          outDir: path.join(root, "out"),
+          samples: 1,
+          policy: "current",
+          improveArgs: [],
+          keepSandboxes: false,
+          includePrivateArtifacts: false,
+          criteria: { ...criteria, requiredSampleCount: 1 },
+        },
+        {
+          experimentId: () => "external",
+          verifySnapshot: snapshotManifest,
+          materializeSnapshot: (_source, destination) => materializeFixture(destination),
+          executeArm: fakeArmExecution,
+        },
+      );
+
+      expect(result.status).toBe("pass");
+      expect(result.policy.casesSource).toBe("external");
+      const serialized = fs.readFileSync(path.join(root, "out", "external", "twin-experiment-result.json"), "utf8");
+      expect(serialized).not.toContain(casesRoot);
+
+      fs.chmodSync(path.join(suiteDir, "guard.json"), 0o644);
+      let executions = 0;
+      const rejected = await runTwinExperiment(
+        {
+          snapshotDir: snapshot,
+          suite: "private-suite",
+          casesDir: casesRoot,
+          akmCommand: ["unused"],
+          outDir: path.join(root, "rejected-out"),
+          samples: 1,
+          policy: "current",
+          improveArgs: [],
+          keepSandboxes: false,
+          includePrivateArtifacts: false,
+          criteria: { ...criteria, requiredSampleCount: 1 },
+        },
+        {
+          experimentId: () => "rejected",
+          verifySnapshot: snapshotManifest,
+          materializeSnapshot: (_source, destination) => materializeFixture(destination),
+          executeArm: (input) => {
+            executions += 1;
+            return fakeArmExecution(input);
+          },
+        },
+      );
+      expect(rejected.status).toBe("inconclusive");
+      expect(rejected.reasons.some((reason) => reason.includes("inconclusive samples"))).toBe(true);
+      expect(executions).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("declares protected snapshot hashes and fails when treatment bytes drift", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-twin-protected-assets-"));
+    const snapshot = path.join(root, "snapshot");
+    fs.mkdirSync(snapshot);
+    const protectedPath = "bundles/personal/asset.md";
+    const assetHash = crypto.createHash("sha256").update("fixture\n").digest("hex") as Sha256;
+    const manifest = {
+      ...snapshotManifest(),
+      entries: [
+        {
+          kind: "bundle" as const,
+          path: protectedPath as InstallationSnapshotManifest["configPath"],
+          byteSize: 8,
+          sha256: assetHash,
+          mtimeMs: 1,
+        },
+      ],
+    };
+    try {
+      const result = await runTwinExperiment(
+        {
+          snapshotDir: snapshot,
+          suite: "improve-smoke",
+          akmCommand: ["unused"],
+          outDir: path.join(root, "out"),
+          protectedCaseIds: [protectedCaseId],
+          protectedAssetPaths: [protectedPath],
+          samples: 1,
+          policy: "current",
+          improveArgs: [],
+          keepSandboxes: false,
+          includePrivateArtifacts: false,
+          criteria: { ...criteria, requiredSampleCount: 1 },
+        },
+        {
+          experimentId: () => "protected",
+          verifySnapshot: () => manifest,
+          materializeSnapshot: (_source, destination) => materializeFixture(destination),
+          executeArm: (input) => {
+            const execution = fakeArmExecution(input);
+            if (input.arm === "treatment") {
+              fs.writeFileSync(path.join(input.installation.bundleRoots.personal ?? "", "asset.md"), "drifted\n");
+            }
+            return execution;
+          },
+        },
+      );
+
+      expect(result.status).toBe("fail");
+      expect(result.policy.protectedAssets).toEqual([
+        { path: protectedPath as InstallationSnapshotManifest["configPath"], sha256: assetHash },
+      ]);
+      expect(result.samples[0]?.arms.control.protectedAssets[0]?.status).toBe("preserved");
+      expect(result.samples[0]?.arms.treatment.protectedAssets[0]?.status).toBe("modified");
+      expect(result.samples[0]?.reasons[0]).toContain("protected asset bytes drifted");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("refuses candidate-only before materialization and refuses unapplied endpoint labels", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-twin-refusal-"));
     const snapshot = path.join(root, "snapshot");
@@ -1102,6 +1248,8 @@ fs.appendFileSync(process.env.EVAL_ENV_LOG, JSON.stringify({
   armLabel: process.env.AKM_EVAL_TWIN_ARM ?? null,
   sampleLabel: process.env.AKM_EVAL_TWIN_SAMPLE_ID ?? null,
   hostSecret: process.env.TWIN_HOST_SECRET ?? null,
+  llmKey: process.env.AKM_LLM_API_KEY ?? null,
+  namedKey: process.env.AKM_ENGINE_FIXTURE_API_KEY ?? null,
 }) + "\\n");
 if (verb === "--version") { process.stdout.write("fixture-akm\\n"); process.exit(0); }
 if (verb === "index") process.exit(0);
@@ -1154,32 +1302,41 @@ fs.writeFileSync(path.join(runDir, "case-results.jsonl"), results.map((item) => 
     );
     try {
       const routed = endpoint("local");
-      const result = await withEnv({ EVAL_ENV_LOG: logFile, TWIN_HOST_SECRET: "must-not-reach-child" }, () =>
-        runTwinExperiment(
-          {
-            snapshotDir: snapshot,
-            suite: "improve-smoke",
-            akmCommand: [process.execPath, fakeAkm],
-            outDir,
-            protectedCaseIds: [protectedCaseId],
-            samples: 2,
-            policy: "current",
-            improveArgs: [],
-            keepSandboxes: false,
-            includePrivateArtifacts: false,
-            criteria,
-            commonRuntime: { env: { COMMON_EMBED_TOKEN: "shared-embedding-secret" } },
-            endpoints: [routed],
-            endpointAssignments: buildBalancedEndpointAssignments([routed], 2),
-            endpointRuntimeOverlays: { local: { env: { FAKE_ENDPOINT_TOKEN: "private-token" } } },
-          },
-          {
-            experimentId: () => "experiment",
-            verifySnapshot: snapshotManifest,
-            materializeSnapshot: (_source, destination) => materializeFixture(destination),
-            evalCommand: [process.execPath, fakeEval],
-          },
-        ),
+      const result = await withEnv(
+        {
+          EVAL_ENV_LOG: logFile,
+          TWIN_HOST_SECRET: "must-not-reach-child",
+          AKM_LLM_API_KEY: "ambient-must-not-reach-child",
+          AKM_ENGINE_FIXTURE_API_KEY: "named-ambient-must-not-reach-child",
+        },
+        () =>
+          runTwinExperiment(
+            {
+              snapshotDir: snapshot,
+              suite: "improve-smoke",
+              akmCommand: [process.execPath, fakeAkm],
+              outDir,
+              protectedCaseIds: [protectedCaseId],
+              samples: 2,
+              policy: "current",
+              improveArgs: [],
+              keepSandboxes: false,
+              includePrivateArtifacts: false,
+              criteria,
+              commonRuntime: { env: { COMMON_EMBED_TOKEN: "shared-embedding-secret" } },
+              endpoints: [routed],
+              endpointAssignments: buildBalancedEndpointAssignments([routed], 2),
+              endpointRuntimeOverlays: {
+                local: { env: { FAKE_ENDPOINT_TOKEN: "private-token", AKM_LLM_API_KEY: "explicit-overlay-key" } },
+              },
+            },
+            {
+              experimentId: () => "experiment",
+              verifySnapshot: snapshotManifest,
+              materializeSnapshot: (_source, destination) => materializeFixture(destination),
+              evalCommand: [process.execPath, fakeEval],
+            },
+          ),
       );
 
       expect(result.status).toBe("pass");
@@ -1218,6 +1375,8 @@ fs.writeFileSync(path.join(runDir, "case-results.jsonl"), results.map((item) => 
         expect(record.armLabel).toBeNull();
         expect(record.sampleLabel).toBeNull();
         expect(record.hostSecret).toBeNull();
+        expect(record.namedKey).toBeNull();
+        expect(record.llmKey === "explicit-overlay-key").toBe(record.verb === "improve");
         expect(record.commonToken).toBe("shared-embedding-secret");
         expect(record.endpointToken === null).toBe(record.verb !== "improve");
         if (!record.stash || !record.tmp) throw new Error("expected isolated child paths");

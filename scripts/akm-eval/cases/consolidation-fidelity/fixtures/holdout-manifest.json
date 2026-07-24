@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "purpose": "deterministic-fixture-authored-oracle-for-grading-generated-candidates",
+  "cases": [
+    {
+      "id": "holdout-lossy-region-scoped-retention",
+      "class": "implementation-invariant-omitted",
+      "label": "lossy",
+      "description": "A global summary erases region-specific retention periods and the legal-hold deletion precondition.",
+      "sources": [
+        {
+          "ref": "memories/mercury-eu-retention",
+          "body": "For Mercury EU audit exports, retain records for 13 months. Begin deletion only after confirming that no legal hold applies."
+        },
+        {
+          "ref": "memories/mercury-us-retention",
+          "body": "For Mercury US audit exports, retain records for 7 years. An active legal hold suspends deletion regardless of age."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Retain all Mercury audit exports for 7 years, then delete them automatically.",
+        "directProvenance": [
+          "memories/mercury-eu-retention",
+          "memories/mercury-us-retention"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "eu-thirteen-month-scope",
+          "match": "literal",
+          "pattern": "Mercury EU audit exports, retain records for 13 months"
+        },
+        {
+          "id": "us-seven-year-scope",
+          "match": "literal",
+          "pattern": "Mercury US audit exports, retain records for 7 years"
+        },
+        {
+          "id": "legal-hold-before-deletion",
+          "match": "literal",
+          "pattern": "deletion only after confirming that no legal hold applies"
+        }
+      ],
+      "forbiddenClaims": [
+        {
+          "id": "automatic-unconditional-deletion",
+          "match": "literal",
+          "pattern": "delete them automatically"
+        }
+      ]
+    },
+    {
+      "id": "holdout-lossy-indirect-provenance-promoted",
+      "class": "provenance-equivalence",
+      "label": "lossy",
+      "description": "Faithful prose is paired with an indirect background ref incorrectly declared as a direct participant.",
+      "sources": [
+        {
+          "ref": "operations//memories/iris-ingest-limit",
+          "body": "Iris ingestion accepts batches of at most 240 records. This operational limit was derived from knowledge/iris-capacity-study."
+        },
+        {
+          "ref": "operations//memories/iris-retry-delay",
+          "body": "After a 429 response, Iris clients wait 18 seconds before retrying the batch."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Iris accepts batches of at most 240 records, and clients wait 18 seconds before retrying after a 429 response.",
+        "directProvenance": [
+          "operations//memories/iris-ingest-limit",
+          "operations//memories/iris-retry-delay",
+          "knowledge/iris-capacity-study"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "batch-limit",
+          "match": "literal",
+          "pattern": "batches of at most 240 records"
+        },
+        {
+          "id": "retry-delay",
+          "match": "literal",
+          "pattern": "wait 18 seconds before retrying"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "holdout-lossy-prohibition-reversed",
+      "class": "negation-adversarial",
+      "label": "lossy",
+      "description": "A scoped prohibition is reversed while the permitted shadow-ledger behavior remains plausible.",
+      "sources": [
+        {
+          "ref": "memories/canary-ledger-boundary",
+          "body": "Canary workers must never write to the primary ledger. They may write validation records to the shadow ledger."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Canary workers may write validation records to the primary ledger and the shadow ledger.",
+        "directProvenance": [
+          "memories/canary-ledger-boundary"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "never-primary",
+          "match": "literal",
+          "pattern": "must never write to the primary ledger"
+        },
+        {
+          "id": "shadow-is-permitted",
+          "match": "literal",
+          "pattern": "may write validation records to the shadow ledger"
+        }
+      ],
+      "forbiddenClaims": [
+        {
+          "id": "primary-is-permitted",
+          "match": "literal",
+          "pattern": "may write validation records to the primary ledger"
+        }
+      ]
+    },
+    {
+      "id": "holdout-safe-bounded-retry-compression",
+      "class": "defensible-compression",
+      "label": "safe",
+      "description": "Overlapping retry notes compress safely while preserving the attempt cap, delay sequence, and terminal action.",
+      "sources": [
+        {
+          "ref": "memories/orchid-retry-count",
+          "body": "Orchid delivery makes at most three attempts. Wait 2 seconds before the second attempt and 11 seconds before the third attempt."
+        },
+        {
+          "ref": "memories/orchid-retry-terminal",
+          "body": "After the third Orchid delivery failure, stop retrying and move the message to the quarantine queue."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Orchid delivery makes at most three attempts, waiting 2 seconds before the second and 11 seconds before the third; after the third failure, stop retrying and move the message to the quarantine queue.",
+        "directProvenance": [
+          "memories/orchid-retry-count",
+          "memories/orchid-retry-terminal"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "three-attempt-cap",
+          "match": "literal",
+          "pattern": "at most three attempts"
+        },
+        {
+          "id": "ordered-delays",
+          "match": "regex",
+          "pattern": "2 seconds before the second.{0,40}11 seconds before the third"
+        },
+        {
+          "id": "quarantine-after-third",
+          "match": "literal",
+          "pattern": "after the third failure, stop retrying and move the message to the quarantine queue"
+        }
+      ],
+      "forbiddenClaims": []
+    }
+  ]
+}

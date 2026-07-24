@@ -267,6 +267,11 @@ export function getTaskHistoryStateDir(): string {
   return path.join(getDataDir(), "tasks", "history");
 }
 
+/** Content-addressed scheduler runtime descriptors. */
+export function getTaskContextDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDataDir(env), "tasks", "context");
+}
+
 /** Path to the akm.lock file in $DATA. */
 export function getLockfilePath(): string {
   return path.join(getDataDir(), "akm.lock");

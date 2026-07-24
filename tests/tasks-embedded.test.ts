@@ -64,4 +64,10 @@ describe("embedded core task registry", () => {
       expect(topLevelCommands, `${embedded.id} invokes unknown command: ${command}`).toHaveProperty(command as string);
     }
   });
+
+  test("version-check uses the non-mutating upgrade check", () => {
+    expect(listEmbeddedTasks().find((task) => task.id === "version-check")?.command).toBe("akm upgrade --check");
+    const commands = main.subCommands as unknown as Record<string, { args?: ArgsDef }>;
+    expect(commands.upgrade?.args).toHaveProperty("check");
+  });
 });

@@ -664,36 +664,171 @@ describe("runTask — disabled tasks", () => {
 });
 
 describe("resolveAkmInvocation", () => {
-  test("AKM_BIN takes precedence", () => {
-    const r = resolveAkmInvocation({ env: { AKM_BIN: "/abs/akm" } });
-    expect(r).toEqual({ argv: ["/abs/akm"], via: "AKM_BIN" });
-  });
+  function packageLauncher(packageRoot: string): string {
+    const fixtureDir = path.join(packageRoot, "dist");
+    fs.mkdirSync(fixtureDir, { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, "package.json"), '{"name":"akm-cli"}\n');
+    const launcher = path.join(fixtureDir, "akm");
+    fs.writeFileSync(launcher, "#!/usr/bin/env node\n");
+    return launcher;
+  }
 
-  test("uses the Node wrapper when a scheduler is installed from Node", () => {
-    const fixtureDir = path.join(tmpRoot, "invocation-dist");
-    const tasksFixtureDir = path.join(fixtureDir, "tasks");
-    fs.mkdirSync(tasksFixtureDir, { recursive: true });
-    fs.writeFileSync(path.join(tasksFixtureDir, "resolve-akm-bin.js"), "");
-    fs.writeFileSync(path.join(fixtureDir, "cli.js"), "");
-    fs.writeFileSync(path.join(fixtureDir, "cli-node.mjs"), "");
+  test("binds a package owned by the active npm global root, including paths with spaces", () => {
+    const globalRoot = path.join(tmpRoot, "npm prefix with spaces", "lib", "node_modules");
+    const launcher = packageLauncher(path.join(globalRoot, "akm-cli"));
     const r = resolveAkmInvocation({
       env: {},
       runtime: "node",
       execPath: "/usr/bin/node",
-      cliEntryUrl: pathToFileURL(path.join(tasksFixtureDir, "resolve-akm-bin.js")).href,
+      launcherPath: launcher,
+      nodePath: "/usr/bin/node",
+      resolveNpmGlobalRoot: () => globalRoot,
     });
-    expect(r.argv).toEqual(["/usr/bin/node", path.join(fixtureDir, "cli-node.mjs")]);
+    expect(r).toEqual({ argv: ["/usr/bin/node", launcher], via: "npm", kind: "npm", eligible: true });
   });
 
-  test("uses the source CLI entry when running through Bun", () => {
+  test("classifies a project-local node_modules package as ineligible", () => {
+    const launcher = packageLauncher(path.join(tmpRoot, "project", "node_modules", "akm-cli"));
+    const globalRoot = path.join(tmpRoot, "global", "lib", "node_modules");
+    fs.mkdirSync(globalRoot, { recursive: true });
+
+    expect(
+      resolveAkmInvocation({
+        env: {},
+        runtime: "node",
+        launcherPath: launcher,
+        nodePath: "/usr/bin/node",
+        resolveNpmGlobalRoot: () => globalRoot,
+      }),
+    ).toEqual({
+      argv: ["/usr/bin/node", launcher],
+      via: "package-local",
+      kind: "package-local",
+      eligible: false,
+    });
+  });
+
+  test("classifies an npm exec cache package as ineligible", () => {
+    const launcher = packageLauncher(path.join(tmpRoot, ".npm", "_npx", "abc123", "node_modules", "akm-cli"));
+    const globalRoot = path.join(tmpRoot, "global-cache-case", "lib", "node_modules");
+    fs.mkdirSync(globalRoot, { recursive: true });
+
+    const result = resolveAkmInvocation({
+      env: {},
+      runtime: "node",
+      launcherPath: launcher,
+      nodePath: "/usr/bin/node",
+      resolveNpmGlobalRoot: () => globalRoot,
+    });
+
+    expect(result.kind).toBe("package-local");
+    expect(result.eligible).toBe(false);
+  });
+
+  test("fails closed when npm global-root resolution is unavailable", () => {
+    const launcher = packageLauncher(path.join(tmpRoot, "unresolved-package", "akm-cli"));
+    const nodePath = path.join(tmpRoot, "node-without-npm", "bin", "node");
+    expect(
+      resolveAkmInvocation({
+        env: {},
+        runtime: "node",
+        launcherPath: launcher,
+        nodePath,
+      }),
+    ).toMatchObject({ argv: [nodePath, launcher], via: "package-local", kind: "package-local", eligible: false });
+  });
+
+  test("accepts an npm global package under an NVM-style prefix", () => {
+    const prefix = path.join(tmpRoot, ".nvm", "versions", "node", "v22.14.0");
+    const nodePath = path.join(prefix, "bin", "node");
+    const globalRoot = path.join(prefix, "lib", "node_modules");
+    const launcher = packageLauncher(path.join(globalRoot, "akm-cli"));
+
+    expect(
+      resolveAkmInvocation({
+        env: {},
+        runtime: "node",
+        launcherPath: launcher,
+        nodePath,
+        resolveNpmGlobalRoot: (bootstrapNode) => {
+          expect(bootstrapNode).toBe(nodePath);
+          return globalRoot;
+        },
+      }),
+    ).toEqual({ argv: [nodePath, launcher], via: "npm", kind: "npm", eligible: true });
+  });
+
+  test("classifies a source CLI invocation as checkout-only", () => {
     const r = resolveAkmInvocation({
       env: {},
       runtime: "bun",
       execPath: "/usr/bin/bun",
       mainPath: path.resolve(import.meta.dir, "../../src/cli.ts"),
-      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
-    expect(r.argv).toEqual(["/usr/bin/bun", path.resolve(import.meta.dir, "../../src/cli.ts")]);
+    expect(r).toEqual({
+      argv: ["/usr/bin/bun", path.resolve(import.meta.dir, "../../src/cli.ts")],
+      via: "checkout",
+      kind: "checkout",
+      eligible: false,
+    });
+  });
+
+  test("uses cli-node.mjs rather than dist/cli.js for a direct Node checkout", () => {
+    const dist = path.join(tmpRoot, "node-checkout", "dist");
+    const tasks = path.join(dist, "tasks");
+    fs.mkdirSync(tasks, { recursive: true });
+    const modulePath = path.join(tasks, "resolve-akm-bin.js");
+    const cliPath = path.join(dist, "cli.js");
+    const wrapperPath = path.join(dist, "cli-node.mjs");
+    fs.writeFileSync(modulePath, "");
+    fs.writeFileSync(cliPath, "");
+    fs.writeFileSync(wrapperPath, "");
+
+    expect(
+      resolveAkmInvocation({
+        env: {},
+        runtime: "node",
+        execPath: "/usr/bin/node",
+        mainPath: cliPath,
+        cliEntryUrl: pathToFileURL(modulePath).href,
+      }),
+    ).toEqual({
+      argv: ["/usr/bin/node", wrapperPath],
+      via: "checkout",
+      kind: "checkout",
+      eligible: false,
+    });
+  });
+
+  test("refuses a direct Node checkout when cli-node.mjs is unavailable", () => {
+    const dist = path.join(tmpRoot, "node-checkout-missing-wrapper", "dist");
+    const tasks = path.join(dist, "tasks");
+    fs.mkdirSync(tasks, { recursive: true });
+    const modulePath = path.join(tasks, "resolve-akm-bin.js");
+    const cliPath = path.join(dist, "cli.js");
+    fs.writeFileSync(modulePath, "");
+    fs.writeFileSync(cliPath, "");
+
+    expect(() =>
+      resolveAkmInvocation({
+        env: {},
+        runtime: "node",
+        execPath: "/usr/bin/node",
+        mainPath: cliPath,
+        cliEntryUrl: pathToFileURL(modulePath).href,
+      }),
+    ).toThrow("Cannot resolve absolute path");
+  });
+
+  test("reports the removed AKM_BIN scheduler override with migration guidance", () => {
+    expect(() =>
+      resolveAkmInvocation({
+        env: { AKM_BIN: "/opt/vendor/akm" },
+        runtime: "bun",
+        execPath: "/usr/bin/bun",
+        mainPath: path.resolve(import.meta.dir, "../../src/cli.ts"),
+      }),
+    ).toThrow("npm-global or standalone launcher; run `akm tasks sync --rebind`");
   });
 
   test("uses only the executable for a Bun standalone build", () => {
@@ -702,9 +837,8 @@ describe("resolveAkmInvocation", () => {
       runtime: "bun",
       execPath: "/opt/akm",
       mainPath: "/$bunfs/root/src/cli.ts",
-      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
-    expect(r).toEqual({ argv: ["/opt/akm"], via: "execPath" });
+    expect(r).toEqual({ argv: ["/opt/akm"], via: "standalone", kind: "standalone", eligible: true });
   });
 
   test("uses only the executable for a Windows Bun standalone build", () => {
@@ -713,8 +847,12 @@ describe("resolveAkmInvocation", () => {
       runtime: "bun",
       execPath: "D:\\akm\\akm.exe",
       mainPath: "B:\\~BUN\\root\\src\\cli.ts",
-      cliEntryUrl: new URL("../../src/tasks/resolve-akm-bin.ts", import.meta.url).href,
     });
-    expect(r).toEqual({ argv: ["D:\\akm\\akm.exe"], via: "execPath" });
+    expect(r).toEqual({
+      argv: ["D:\\akm\\akm.exe"],
+      via: "standalone",
+      kind: "standalone",
+      eligible: true,
+    });
   });
 });

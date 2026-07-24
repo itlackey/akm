@@ -17,7 +17,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { buildScheduledTaskInvocation, type ScheduledTaskContext } from "../../../src/tasks/scheduler-invocation";
+import { buildScheduledTaskInvocation } from "../../../src/tasks/scheduler-invocation";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../../_helpers/sandbox";
 
@@ -139,18 +139,10 @@ describe("akm tasks — JSON envelope snapshot (WS6)", () => {
     const capturedStash = makeStashDir();
     const ambientStash = makeStashDir();
     writeDisabledCommandTask(capturedStash);
-    const root = path.dirname(capturedStash);
-    const context: ScheduledTaskContext = {
-      AKM_STASH_DIR: capturedStash,
-      AKM_CONFIG_DIR: path.join(root, "captured-config"),
-      AKM_DATA_DIR: path.join(root, "captured-data"),
-      AKM_CACHE_DIR: path.join(root, "captured-cache"),
-      AKM_STATE_DIR: path.join(root, "captured-state"),
-    };
-    const generated = buildScheduledTaskInvocation(["akm"], "disabled-command", context);
+    const generated = buildScheduledTaskInvocation(["akm"], "disabled-command", undefined);
     const ambientEnv: NodeJS.ProcessEnv = { AKM_STASH_DIR: ambientStash };
 
-    const { code, stdout } = await withEnv({ ...ambientEnv, ...generated.environment }, () =>
+    const { code, stdout } = await withEnv({ ...ambientEnv, AKM_STASH_DIR: capturedStash }, () =>
       runCliCapture(["--json", ...generated.argv.slice(1)]),
     );
 

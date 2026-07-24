@@ -34,8 +34,11 @@ import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, translateToCron } from "../schedule";
 import {
   buildScheduledTaskInvocation,
+  parseScheduledTaskArgv,
   resolveScheduledTaskContext,
   type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type NodeFs, nodeFs, throwIfNotOk } from "./exec-utils";
@@ -70,6 +73,7 @@ const END = (id: string) => `# akm:task ${assertCronValue(id)} END`;
 const DISABLED_PREFIX = "# akm:disabled ";
 const BLOCK_RE = /^# akm:task ([\w.@:_-]+) BEGIN$/;
 const BLOCK_END_RE = /^# akm:task ([\w.@:_-]+) END$/;
+export const PORTABLE_CRON_LINE_LIMIT = 1000;
 
 export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
   const exec = options.exec ?? defaultCronExec();
@@ -78,6 +82,7 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
   const envPath = options.envPath === false ? undefined : (options.envPath ?? process.env.PATH);
   const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext, envPath ?? ""));
 
   return {
     name: "cron",
@@ -85,8 +90,15 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
       // Create the log directory before writing the crontab line — cron
       // appends with `>>` and the surrounding shell will fail the entire
       // entry if the parent directory doesn't exist.
+      const cronLine = buildCronLine(
+        task,
+        [...(opts?.binding ?? akmArgv)],
+        logDir,
+        opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
+        opts?.target,
+      );
+      assertPortableCronLine(cronLine);
       fsLike.ensureDir(logDir);
-      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext, opts?.target);
       const existing = readCrontab(exec);
       const block = renderBlock(task.id, cronLine, task.enabled);
       const next = upsertBlock(existing, task.id, block);
@@ -105,12 +117,25 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
     list(): InstalledTaskRef[] {
       const existing = readCrontab(exec);
       return listBlocks(existing).map(({ id, body }) => {
-        const target = extractInstalledTarget(body);
-        return { id, signature: normalizeSignature(body), ...(target !== undefined ? { target } : {}) };
+        const installed = extractCronInvocation(body);
+        return {
+          id,
+          signature: normalizeSignature(body),
+          ...(installed?.target !== undefined ? { target: installed.target } : {}),
+          ...(installed?.binding !== undefined ? { binding: installed.binding } : {}),
+          ...(installed?.contextPath !== undefined ? { contextPath: installed.contextPath } : {}),
+        };
       });
     },
     expectedSignature(task: TaskDocument, opts?: TaskInstallOptions): string {
-      const cronLine = buildCronLine(task, akmArgv, logDir, envPath, scheduledContext, opts?.target);
+      const cronLine = buildCronLine(
+        task,
+        [...(opts?.binding ?? akmArgv)],
+        logDir,
+        opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
+        opts?.target,
+      );
+      assertPortableCronLine(cronLine);
       return normalizeSignature(cronBlockBody(cronLine, task.enabled));
     },
   };
@@ -122,20 +147,15 @@ export function buildCronLine(
   task: TaskDocument,
   akmArgv: string[],
   logDir: string,
-  envPath: string | undefined,
-  scheduledContext: ScheduledTaskContext,
+  contextPath: string | undefined,
   target?: string,
 ): string {
   const spec = parseSchedule(task.schedule, "cron");
   const cronExpr = translateToCron(spec);
   const logPath = path.join(logDir, `${task.id}.log`);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, contextPath, target);
   const cmd = invocation.argv.map((part) => quoteForCron(part)).join(" ");
-  const contextPrefix = Object.entries(invocation.environment)
-    .map(([key, value]) => `${key}=${quoteForCron(value)}`)
-    .join(" ");
-  const pathPrefix = envPath === undefined ? "" : `PATH=${quoteForCron(envPath)} `;
-  return `${cronExpr} ${contextPrefix} ${pathPrefix}${cmd} >> ${quoteForCron(logPath)} 2>&1`;
+  return `${cronExpr} ${cmd} >> ${quoteForCron(logPath)} 2>&1`;
 }
 
 /** The crontab line as it appears inside a block — commented when disabled. */
@@ -207,22 +227,46 @@ function malformedBlockError(id: string): ConfigError {
  * (no `--target`). Bundle slugs never contain whitespace (config-schema
  * `isBundleSlug`), so the quoted token is a single whitespace-delimited field
  * even when cron-quoted — a plain field split recovers it, and
- * {@link unquoteCronValue} reverses the quoting.
+ * the shell-word parser below reverses the quoting.
  */
 export function extractInstalledTarget(body: string): string | undefined {
+  return extractCronInvocation(body)?.target;
+}
+
+export function extractCronInvocation(body: string): ReturnType<typeof parseScheduledTaskArgv> {
   const line = body.startsWith(DISABLED_PREFIX) ? body.slice(DISABLED_PREFIX.length) : body;
-  const fields = line.trim().split(/\s+/);
-  const idx = fields.indexOf("--target");
-  if (idx === -1 || idx + 1 >= fields.length) return undefined;
-  return unquoteCronValue(fields[idx + 1]!);
+  const fields = splitCronShellWords(line);
+  if (fields.length < 6) return undefined;
+  let commandStart = 5;
+  while (commandStart < fields.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(fields[commandStart]!)) commandStart += 1;
+  return parseScheduledTaskArgv(fields.slice(commandStart));
 }
 
 /** Reverse {@link quoteForCron} for a single whitespace-free token. */
-function unquoteCronValue(token: string): string {
-  if (token.length >= 2 && token.startsWith("'") && token.endsWith("'")) {
-    return token.slice(1, -1).replaceAll("'\\''", "'").replaceAll("'\\%'", "%");
+function splitCronShellWords(value: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (char === "'") {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "\\" && index + 1 < value.length) {
+      current += value[index + 1];
+      index += 1;
+      continue;
+    }
+    if (!quoted && /\s/.test(char)) {
+      if (current) words.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
   }
-  return token.replaceAll("\\%", "%");
+  if (current) words.push(current);
+  return words;
 }
 
 /** Collapse incidental whitespace so signature comparison ignores it. */
@@ -301,6 +345,16 @@ function assertCronValue(value: string): string {
     }
   }
   return value;
+}
+
+function assertPortableCronLine(line: string): void {
+  const bytes = Buffer.byteLength(line, "utf8");
+  if (bytes > PORTABLE_CRON_LINE_LIMIT) {
+    throw new ConfigError(
+      `Generated cron definition is ${bytes} bytes; portable cron command lines are limited to ${PORTABLE_CRON_LINE_LIMIT} bytes.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
 }
 
 function readCrontab(exec: CronExec): string {

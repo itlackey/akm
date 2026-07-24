@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { akmTasksSync } from "../src/commands/tasks/tasks";
 import type { InstalledTaskRef } from "../src/tasks/backends";
-import { decodeCommandOutput } from "../src/tasks/backends/exec-utils";
+import { decodeCommandOutput, escapeXml } from "../src/tasks/backends/exec-utils";
 import type { SchtasksExec, SchtasksFs } from "../src/tasks/backends/schtasks";
-import { buildSchtasksXml, SCHTASKS_BACKEND } from "../src/tasks/backends/schtasks";
-import type { ScheduledTaskContext } from "../src/tasks/scheduler-invocation";
+import { buildSchtasksXml, extractSchtasksTarget, SCHTASKS_BACKEND } from "../src/tasks/backends/schtasks";
+import {
+  type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
+} from "../src/tasks/scheduler-invocation";
 import type { TaskDocument } from "../src/tasks/schema";
+import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const SCHEDULED_CONTEXT: ScheduledTaskContext = {
   AKM_STASH_DIR: "C:\\Users\\Akm User\\O'Brien & notes",
@@ -17,7 +23,7 @@ const USER_SID = "S-1-5-21-1000-2000-3000-1001";
 
 const xmlOptions = <T extends Record<string, unknown>>(options?: T) => ({
   ...options,
-  scheduledContext: SCHEDULED_CONTEXT,
+  contextPath: schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, process.env.PATH ?? "")),
   userSid: USER_SID,
 });
 
@@ -53,6 +59,23 @@ function sourceSignature(xml: string): string {
   return match[1]!;
 }
 
+function legacyTargetXml(): string {
+  const task = makeTask("0 9 * * *");
+  const binding = "C:\\Program Files\\O'Brien & Sons\\akm.exe";
+  const powershellEnv = "$" + "env:";
+  const script = [
+    `${powershellEnv}AKM_DATA_DIR='C:\\Data & O''Brien'`,
+    `${powershellEnv}PATH='C:\\Tools & More'`,
+    `& '${binding.replaceAll("'", "''")}' 'tasks' 'run' 'ping' '--target' 'work' '--scheduled'`,
+    "exit $LASTEXITCODE",
+  ].join("; ");
+  const argumentsValue = `-NoLogo -NoProfile -NonInteractive -Command "${script}"`;
+  return buildSchtasksXml(task, [binding], "C:/log", xmlOptions()).replace(
+    /<Arguments>[\s\S]*?<\/Arguments>/,
+    `<Arguments>${escapeXml(argumentsValue)}</Arguments>`,
+  );
+}
+
 describe("buildSchtasksXml", () => {
   test("common-divisor minute steps reset daily without losing wall-clock phase", () => {
     const xml = buildSchtasksXml(makeTask("*/5 * * * *"), ["C:/akm/akm.exe"], "C:/log", xmlOptions());
@@ -65,9 +88,9 @@ describe("buildSchtasksXml", () => {
     expect(xml).toContain("<URI>\\akm\\ping</URI>");
     expect(xml).toContain(`<UserId>${USER_SID}</UserId>`);
     expect(xml).toContain("<Command>powershell.exe</Command>");
-    expect(xml).toContain("$env:AKM_STASH_DIR=");
+    expect(xml).not.toContain("$env:AKM_STASH_DIR=");
+    expect(xml).toContain("&apos;--scheduler-context&apos;");
     expect(xml).toContain("&apos;tasks&apos; &apos;run&apos; &apos;ping&apos; &apos;--scheduled&apos;");
-    expect(xml).toContain("O&apos;&apos;Brien &amp; notes");
     expect(xml).not.toContain("AKM_LLM_API_KEY");
     expect(xml).toContain("<Enabled>true</Enabled>");
     expect(xml).not.toContain("<WorkingDirectory>");
@@ -289,6 +312,43 @@ describe("buildSchtasksXml", () => {
   });
 });
 
+describe("legacy schtasks bundle attribution", () => {
+  test("parses --target after environment values containing ampersands and apostrophes", () => {
+    expect(extractSchtasksTarget(legacyTargetXml())).toBe("work");
+  });
+
+  test("primary sync cannot remove the foreign legacy entry", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const xml = legacyTargetXml();
+      const calls: string[][] = [];
+      const backend = SCHTASKS_BACKEND({
+        exec: {
+          run(args) {
+            calls.push(args);
+            if (args.includes("/FO")) {
+              return { status: 0, stdout: '"\\akm\\ping","N/A","Ready"\r\n', stderr: "" };
+            }
+            if (args.includes("/XML")) return { status: 0, stdout: xml, stderr: "" };
+            return { status: 0, stdout: "", stderr: "" };
+          },
+        },
+        akmArgv: ["C:/current/akm.exe"],
+        logDir: "C:/log",
+        scheduledContext: SCHEDULED_CONTEXT,
+        userSid: USER_SID,
+      });
+
+      const result = await akmTasksSync({ backend });
+
+      expect(result.removed).toEqual([]);
+      expect(calls.some((args) => args.includes("/Delete"))).toBe(false);
+    } finally {
+      storage.cleanup();
+    }
+  });
+});
+
 describe("schtasks backend signatures", () => {
   function queryExec(installedXml: string): SchtasksExec & { calls: string[][] } {
     const calls: string[][] = [];
@@ -329,7 +389,14 @@ describe("schtasks backend signatures", () => {
       userSid: USER_SID,
     });
 
-    expect(listSync(backend)).toEqual([{ id: "ping", signature: backend.expectedSignature?.(task) }]);
+    expect(listSync(backend)).toEqual([
+      {
+        id: "ping",
+        signature: backend.expectedSignature?.(task),
+        binding: ["C:/akm.exe"],
+        contextPath: expect.any(String),
+      },
+    ]);
     expect(exec.calls).toEqual([
       ["schtasks", "/Query", "/FO", "CSV", "/NH"],
       ["schtasks", "/Query", "/TN", "\\akm\\ping", "/XML"],

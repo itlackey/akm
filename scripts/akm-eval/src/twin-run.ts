@@ -27,18 +27,22 @@ import {
 } from "./twin-run-private";
 import {
   materializeInstallationSnapshot,
+  normalizedMaterializedDatabaseFingerprint,
   verifyInstallationSnapshot,
 } from "./sources/installation-snapshot";
 import { EVAL_STORAGE_ENV_KEYS } from "./sources/sandbox";
 import { aggregateScores } from "./scoring";
 import {
   assertSha256,
+  assertSafeRelativePath,
   assertTwinDecisionCriteria,
   isSha256,
   type EndpointAssignment,
   type EndpointFingerprint,
   type InstallationSnapshotManifest,
   type MaterializedInstallation,
+  type ProtectedAssetDeclaration,
+  type ProtectedAssetVerification,
   type Sha256,
   type TwinArm,
   type TwinArmArtifactPaths,
@@ -75,10 +79,7 @@ const SAFE_TWIN_PARENT_ENV = [
   "ComSpec",
   "PATHEXT",
   "WINDIR",
-  "AKM_LLM_API_KEY",
-  "AKM_EMBED_API_KEY",
 ] as const;
-const NAMED_AKM_CREDENTIAL = /^AKM_(?:ENGINE|PROFILE)_[A-Z0-9_]+_API_KEY$/;
 const APPEND_EVENT_FAILURE = /akm:\s*appendEvent failed:/i;
 const ENDPOINT_KEYS = new Set([
   "schemaVersion",
@@ -127,6 +128,8 @@ export interface CommonRuntimeOverlay {
 export interface TwinRunOptions {
   snapshotDir: string;
   suite: string;
+  /** Private external root containing <suite>/. Never serialized. */
+  casesDir?: string;
   akmCommand: string[];
   outDir: string;
   samples: number;
@@ -137,6 +140,8 @@ export interface TwinRunOptions {
   criteria: TwinDecisionCriteria;
   commandTimeoutMs?: number;
   protectedCaseIds?: string[];
+  /** Snapshot-relative bundle files whose bytes must remain unchanged. */
+  protectedAssetPaths?: string[];
   /** Runtime-only environment shared identically by both arms. Never serialized. */
   commonRuntime?: CommonRuntimeOverlay;
   endpoints?: EndpointFingerprint[];
@@ -168,6 +173,7 @@ export interface TwinArmExecutionInput {
   sampleId: string;
   installation: MaterializedInstallation;
   suite: string;
+  casesRoot: string;
   suiteFingerprint: Sha256;
   caseIds: string[];
   akmCommand: string[];
@@ -196,6 +202,10 @@ export type TwinArmExecutor = (
 export interface TwinRunnerDependencies {
   verifySnapshot?: (snapshotDir: string) => InstallationSnapshotManifest;
   materializeSnapshot?: (snapshotDir: string, destinationRoot: string) => MaterializedInstallation;
+  normalizeMaterializedDatabases?: (
+    installation: MaterializedInstallation,
+    manifest: InstallationSnapshotManifest,
+  ) => Sha256;
   executeArm?: TwinArmExecutor;
   executeCommand?: TwinCommandExecutor;
   evalCommand?: string[];
@@ -225,12 +235,14 @@ export interface TwinDecisionInput {
   endpointServingFingerprintsCompatible: boolean;
   armErrors: string[];
   incompleteReasons: string[];
+  protectedAssetDriftPaths?: string[];
 }
 
 interface MaterializedArm {
   installation?: MaterializedInstallation;
   initialManifest?: FileManifest;
   effectiveConfigFingerprint?: Sha256;
+  normalizedDatabaseFingerprint?: Sha256;
   materializationError?: string;
 }
 
@@ -534,6 +546,13 @@ export function decideTwinExperimentStatus(input: TwinDecisionInput): TwinExperi
   const resources = input.treatmentResources.improve ?? emptyResourceMetrics();
   const budgetFailures = resourceBudgetFailures(resources, criteria);
   if (budgetFailures.length > 0) return { status: "fail", reasons: budgetFailures as [string, ...string[]] };
+  const protectedAssetDrifts = [...new Set(input.protectedAssetDriftPaths ?? [])].sort();
+  if (protectedAssetDrifts.length > 0) {
+    return {
+      status: "fail",
+      reasons: [`protected asset bytes drifted: ${protectedAssetDrifts.join(", ")}`],
+    };
+  }
   const protectedRegressions = input.regressions.filter((regression) => regression.protected);
   if (protectedRegressions.length > 0) {
     return {
@@ -593,21 +612,64 @@ function resolveProtectedCases(
   return { caseIds: sorted, reasons };
 }
 
+function resolveProtectedAssets(
+  manifest: InstallationSnapshotManifest,
+  requestedPaths: readonly string[],
+): ProtectedAssetDeclaration[] {
+  const byPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
+  return [...new Set(requestedPaths)]
+    .sort()
+    .map((requestedPath) => {
+      assertSafeRelativePath(requestedPath);
+      const entry = byPath.get(requestedPath as InstallationSnapshotManifest["configPath"]);
+      if (!entry || entry.kind !== "bundle") {
+        throw new Error(`--protected-asset is not a bundle file declared by the snapshot: ${requestedPath}`);
+      }
+      return { path: entry.path, sha256: entry.sha256 };
+    });
+}
+
+function verifyProtectedAssets(
+  manifest: FileManifest | undefined,
+  declarations: readonly ProtectedAssetDeclaration[],
+): ProtectedAssetVerification[] {
+  const byPath = new Map(manifest?.files.map((entry) => [entry.path, entry]) ?? []);
+  return declarations.map((declaration) => {
+    if (!manifest) return { ...declaration, actualSha256: null, status: "unavailable" };
+    const actual = byPath.get(declaration.path);
+    if (!actual) return { ...declaration, actualSha256: null, status: "missing" };
+    return {
+      ...declaration,
+      actualSha256: actual.sha256,
+      status: actual.sha256 === declaration.sha256 ? "preserved" : "modified",
+    };
+  });
+}
+
 export async function runTwinExperiment(
   options: TwinRunOptions,
   dependencies: TwinRunnerDependencies = {},
 ): Promise<TwinExperimentResult> {
   validateRunOptions(options);
   assertNonOverlappingPaths(options.snapshotDir, options.outDir);
+  if (options.casesDir) {
+    assertNonOverlappingPaths(options.casesDir, options.snapshotDir, "--cases-dir", "--snapshot");
+    assertNonOverlappingPaths(options.casesDir, options.outDir, "--cases-dir", "--out");
+  }
   const effectiveOptions: TwinRunOptions = {
     ...options,
+    ...(options.casesDir ? { casesDir: path.resolve(options.casesDir) } : {}),
     akmCommand: [...options.akmCommand],
     improveArgs: [...options.improveArgs, "--no-sync"],
     commandTimeoutMs: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
     protectedCaseIds: [...(options.protectedCaseIds ?? [])],
+    protectedAssetPaths: [...(options.protectedAssetPaths ?? [])],
   };
   const verifySnapshot = dependencies.verifySnapshot ?? verifyInstallationSnapshot;
   const materializeSnapshot = dependencies.materializeSnapshot ?? materializeInstallationSnapshot;
+  const normalizeMaterializedDatabases =
+    dependencies.normalizeMaterializedDatabases ??
+    (dependencies.materializeSnapshot ? undefined : normalizedMaterializedDatabaseFingerprint);
   const executeArm = dependencies.executeArm ?? executeArmWithExistingRunner;
   const commandExecutor = dependencies.executeCommand ?? executeCommand;
   const evalCommand = dependencies.evalCommand ?? [process.execPath, "run", path.join(import.meta.dir, "run.ts")];
@@ -623,12 +685,14 @@ export async function runTwinExperiment(
     snapshotError = `snapshot verification failed: ${errorMessage(error)}`;
   }
   let cases: EvalCase[] = [];
+  let casesRoot = path.resolve(path.join(import.meta.dir, "..", "cases"));
   let suiteFingerprint = ZERO_SHA256;
   let suiteError: string | undefined;
   try {
-    const loaded = loadSuite(effectiveOptions.suite);
+    const loaded = loadSuite(effectiveOptions.suite, effectiveOptions.casesDir);
     cases = loaded.cases;
     suiteFingerprint = loaded.fingerprint;
+    casesRoot = loaded.casesRoot;
   } catch (error) {
     suiteError = `suite loading failed: ${errorMessage(error)}`;
   }
@@ -637,13 +701,18 @@ export async function runTwinExperiment(
   const assignments = normalizeEndpointAssignments(effectiveOptions, endpoints);
   const endpointCompatibility = endpointServingFingerprintsAreCompatible(endpoints, assignments);
   const protection = resolveProtectedCases(cases, effectiveOptions.protectedCaseIds ?? []);
+  const protectedAssets = snapshotManifest
+    ? resolveProtectedAssets(snapshotManifest, effectiveOptions.protectedAssetPaths ?? [])
+    : [];
   const policy: TwinExperimentPolicy = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     control: "no-improve",
     treatment: effectiveOptions.policy,
+    casesSource: effectiveOptions.casesDir ? "external" : "builtin",
     improveArgs: [...effectiveOptions.improveArgs],
     commandTimeoutMs: effectiveOptions.commandTimeoutMs!,
     protectedCaseIds: protection.caseIds,
+    protectedAssets,
     criteria: { ...effectiveOptions.criteria },
   };
   const protectedCaseIds = new Set(policy.protectedCaseIds);
@@ -669,6 +738,7 @@ export async function runTwinExperiment(
       experimentId,
       snapshotManifest,
       suiteFingerprint,
+      casesRoot,
       cases,
       protectedCaseIds,
       endpoints,
@@ -678,6 +748,7 @@ export async function runTwinExperiment(
       globalReasons,
       verifySnapshot,
       materializeSnapshot,
+      normalizeMaterializedDatabases,
       executeArm,
       commandExecutor,
       evalCommand,
@@ -711,6 +782,7 @@ async function runSample(input: {
   snapshotManifest?: InstallationSnapshotManifest;
   suiteFingerprint: Sha256;
   cases: EvalCase[];
+  casesRoot: string;
   protectedCaseIds: ReadonlySet<string>;
   endpoints: EndpointFingerprint[];
   endpointAssignments: EndpointAssignment[];
@@ -719,6 +791,10 @@ async function runSample(input: {
   globalReasons: string[];
   verifySnapshot: (snapshotDir: string) => InstallationSnapshotManifest;
   materializeSnapshot: (snapshotDir: string, destinationRoot: string) => MaterializedInstallation;
+  normalizeMaterializedDatabases?: (
+    installation: MaterializedInstallation,
+    manifest: InstallationSnapshotManifest,
+  ) => Sha256;
   executeArm: TwinArmExecutor;
   commandExecutor: TwinCommandExecutor;
   evalCommand: string[];
@@ -757,6 +833,7 @@ async function runSample(input: {
           installation,
           initialManifest: captureFileManifest(installation.root),
           effectiveConfigFingerprint: normalizedEffectiveConfigFingerprint(installation),
+          normalizedDatabaseFingerprint: input.normalizeMaterializedDatabases?.(installation, snapshotManifest),
         };
       } catch (error) {
         materialized[arm].materializationError = `${arm} materialization failed: ${errorMessage(error)}`;
@@ -768,10 +845,17 @@ async function runSample(input: {
     materialized.control.initialManifest,
     materialized.treatment.initialManifest,
     snapshotManifest?.configPath,
+    snapshotManifest
+      ? [`${snapshotManifest.dataDir}/index.db`, `${snapshotManifest.dataDir}/state.db`]
+      : [],
   );
   const effectiveConfigsMatch =
     materialized.control.effectiveConfigFingerprint !== undefined &&
     materialized.control.effectiveConfigFingerprint === materialized.treatment.effectiveConfigFingerprint;
+  const normalizedDatabasesMatch =
+    input.normalizeMaterializedDatabases === undefined ||
+    (materialized.control.normalizedDatabaseFingerprint !== undefined &&
+      materialized.control.normalizedDatabaseFingerprint === materialized.treatment.normalizedDatabaseFingerprint);
   const bothMaterialized = Boolean(materialized.control.installation && materialized.treatment.installation);
   const collected = {} as Record<TwinArm, CollectedArm>;
   const armOrder = armExecutionOrder(input.sampleIndex);
@@ -786,7 +870,9 @@ async function runSample(input: {
         sampleRoot,
         snapshotManifest,
         suiteFingerprint: input.suiteFingerprint,
+        casesRoot: input.casesRoot,
         cases: input.cases,
+        protectedAssets: input.policy.protectedAssets,
         endpointAssignments: input.endpointAssignments,
         endpoints: input.endpoints,
         executeArm: input.executeArm,
@@ -819,6 +905,18 @@ async function runSample(input: {
   ];
   if (!initialFingerprintsMatch) incompleteReasons.push("materialized arm fingerprints differ or are unavailable");
   if (!effectiveConfigsMatch) incompleteReasons.push("normalized effective configs differ or are unavailable");
+  if (!normalizedDatabasesMatch) incompleteReasons.push("normalized materialized databases differ or are unavailable");
+  const controlProtectedDrifts = collected.control.result.protectedAssets.filter(
+    (asset) => asset.status !== "preserved",
+  );
+  if (controlProtectedDrifts.length > 0) {
+    incompleteReasons.push(
+      `control protected asset verification failed: ${controlProtectedDrifts.map((asset) => asset.path).join(", ")}`,
+    );
+  }
+  const treatmentProtectedDrifts = collected.treatment.result.protectedAssets
+    .filter((asset) => asset.status === "modified" || asset.status === "missing")
+    .map((asset) => asset.path);
   const status = decideTwinExperimentStatus({
     criteria: options.criteria,
     controlExecutedCaseCount: collected.control.result.executedCaseCount,
@@ -829,7 +927,7 @@ async function runSample(input: {
     controlIdentity: collected.control.result.identity,
     treatmentIdentity: collected.treatment.result.identity,
     regressions: comparison.regressions,
-    snapshotFingerprintsMatch: initialFingerprintsMatch && effectiveConfigsMatch,
+    snapshotFingerprintsMatch: initialFingerprintsMatch && effectiveConfigsMatch && normalizedDatabasesMatch,
     suiteFingerprintsMatch,
     endpointServingFingerprintsCompatible: input.endpointCompatibility,
     armErrors: [
@@ -837,9 +935,10 @@ async function runSample(input: {
       ...collected.treatment.result.errors.map((error) => `treatment: ${error}`),
     ],
     incompleteReasons,
+    protectedAssetDriftPaths: treatmentProtectedDrifts,
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentId: input.experimentId,
     sampleId: input.sampleId,
     snapshotFingerprint: snapshotManifest?.snapshotFingerprint ?? ZERO_SHA256,
@@ -870,7 +969,9 @@ async function collectArm(input: {
   sampleRoot: string;
   snapshotManifest?: InstallationSnapshotManifest;
   suiteFingerprint: Sha256;
+  casesRoot: string;
   cases: EvalCase[];
+  protectedAssets: ProtectedAssetDeclaration[];
   endpointAssignments: EndpointAssignment[];
   endpoints: EndpointFingerprint[];
   executeArm: TwinArmExecutor;
@@ -913,6 +1014,7 @@ async function collectArm(input: {
           sampleId: input.sampleId,
           installation: input.materialized.installation,
           suite: input.options.suite,
+          casesRoot: input.casesRoot,
           suiteFingerprint: input.suiteFingerprint,
           caseIds: input.cases.map((evalCase) => evalCase.id),
           akmCommand: [...input.options.akmCommand],
@@ -987,6 +1089,10 @@ async function collectArm(input: {
     incompleteReasons.push(`${input.arm} installation unavailable`);
   }
   const mutations = summarizeMutations(input.materialized.initialManifest, finalManifest);
+  const protectedAssets = verifyProtectedAssets(finalManifest, input.protectedAssets);
+  if (protectedAssets.some((asset) => asset.status === "unavailable")) {
+    incompleteReasons.push(`${input.arm} protected asset verification is unavailable`);
+  }
   const evalResult = execution?.evalResult;
   const caseResults = execution?.caseResults ?? [];
   let deterministicScore = 0;
@@ -1045,6 +1151,7 @@ async function collectArm(input: {
     deterministicScore,
     mutations,
     resources,
+    protectedAssets,
     errors: [...new Set(errors)],
   };
   writePrivateJson(metricsPath, { schemaVersion: 1, arm: input.arm, result });
@@ -1155,6 +1262,8 @@ async function executeArmWithExistingRunner(input: TwinArmExecutionInput): Promi
       ...input.evalCommand.slice(1),
       "--suite",
       input.suite,
+      "--cases-dir",
+      input.casesRoot,
       "--mode",
       "baseline",
       "--stash",
@@ -1324,9 +1433,17 @@ function buildAggregateResult(input: {
   } else {
     const budgetFailures = resourceBudgetFailures(treatmentResources, input.policy.criteria);
     const protectedRegressions = input.samples.flatMap((sample) => sample.regressions.filter((regression) => regression.protected));
+    const protectedAssetDrifts = input.samples.flatMap((sample) =>
+      sample.arms.treatment.protectedAssets.filter(
+        (asset) => asset.status === "modified" || asset.status === "missing",
+      ),
+    );
     if (budgetFailures.length > 0) {
       status = "fail";
       reasons.push(...budgetFailures);
+    } else if (protectedAssetDrifts.length > 0) {
+      status = "fail";
+      reasons.push(`protected asset bytes drifted in ${protectedAssetDrifts.length} sample-asset comparisons`);
     } else if (protectedRegressions.length > 0) {
       status = "fail";
       reasons.push(`protected regressions occurred in ${protectedRegressions.length} sample-case comparisons`);
@@ -1341,7 +1458,7 @@ function buildAggregateResult(input: {
     }
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentId: input.experimentId,
     snapshotFingerprint: input.snapshotFingerprint,
     suiteFingerprint: input.suiteFingerprint,
@@ -1580,6 +1697,14 @@ function validateRunOptions(options: TwinRunOptions): void {
   ) {
     throw new Error("--protected-case values must be non-empty strings");
   }
+  if (
+    options.protectedAssetPaths !== undefined &&
+    (!Array.isArray(options.protectedAssetPaths) ||
+      options.protectedAssetPaths.some((assetPath) => typeof assetPath !== "string" || assetPath.trim().length === 0))
+  ) {
+    throw new Error("--protected-asset values must be non-empty snapshot-relative paths");
+  }
+  for (const assetPath of options.protectedAssetPaths ?? []) assertSafeRelativePath(assetPath);
   if (options.commonRuntime) validateRuntimeOverlay("common runtime", options.commonRuntime);
   const endpointIds = new Set((options.endpoints ?? []).map((endpoint) => endpoint.endpointId));
   for (const [endpointId, overlay] of Object.entries(options.endpointRuntimeOverlays ?? {})) {
@@ -1633,9 +1758,6 @@ function buildTwinChildEnv(
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && NAMED_AKM_CREDENTIAL.test(key)) env[key] = value;
-  }
   for (const key of EVAL_STORAGE_ENV_KEYS) {
     const value = installation.env[key];
     if (!value || !isSameOrInside(installation.root, value)) {
@@ -1676,6 +1798,7 @@ function parseArgs(argv: string[]): CliOptions {
     includePrivateArtifacts: false,
     commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
     protectedCaseIds: [],
+    protectedAssetPaths: [],
     endpointMetadataFiles: [],
   };
   for (let index = 0; index < argv.length; index++) {
@@ -1688,6 +1811,7 @@ function parseArgs(argv: string[]): CliOptions {
     switch (argument) {
       case "--snapshot": options.snapshotDir = next(); break;
       case "--suite": options.suite = next(); break;
+      case "--cases-dir": options.casesDir = next(); break;
       case "--akm": options.akmCommand = tokenizeCommandVector(next()); break;
       case "--out": options.outDir = next(); break;
       case "--samples": options.samples = Number(next()); break;
@@ -1710,6 +1834,7 @@ function parseArgs(argv: string[]): CliOptions {
       case "--endpoint-runtime": options.endpointRuntimeFile = next(); break;
       case "--common-runtime": options.commonRuntimeFile = next(); break;
       case "--protected-case": options.protectedCaseIds?.push(next()); break;
+      case "--protected-asset": options.protectedAssetPaths?.push(next()); break;
       case "--minimum-deterministic-lift":
       case "--min-deterministic-lift": criteria.minimumDeterministicLift = Number(next()); break;
       case "--protected-loss-margin": criteria.protectedLossMargin = Number(next()); break;
@@ -1788,6 +1913,7 @@ Usage:
 
 Options:
   --samples <n>                    Samples to execute (default: 1).
+  --cases-dir <dir>                Owner-private external root containing <suite>/; never serialized.
   --policy current|candidate-only  Candidate-only currently returns inconclusive without executing.
   --improve-args "<args>"          Safely tokenized arguments; --no-sync is always appended.
   --include-private-artifacts      Persist full eval/case/improve/manifests with private modes.
@@ -1795,6 +1921,8 @@ Options:
   --command-timeout-ms <n>         Per-command timeout (default: ${DEFAULT_COMMAND_TIMEOUT_MS}).
   --protected-case <id>            Protected case ID; repeatable. Unioned with protected and
                                    regression-guard suite tags; at least one is required.
+  --protected-asset <path>         Snapshot-relative bundle file whose SHA-256 must not drift;
+                                   repeatable and persisted with its snapshot hash.
   --common-runtime <json>          Mode-0600 {env:{...}} applied identically to both arms.
   --endpoint-metadata <json>       Strict canonical EndpointFingerprint JSON; repeatable.
   --endpoint-assignment <value>    balanced, endpoint ID, or assignment JSON file. Every endpoint

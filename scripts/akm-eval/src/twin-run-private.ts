@@ -40,15 +40,20 @@ export function writePrivateText(file: string, value: string): void {
   fs.chmodSync(file, 0o600);
 }
 
-export function assertNonOverlappingPaths(snapshotDir: string, outDir: string): void {
-  const snapshot = resolvePhysicalPath(snapshotDir);
-  const output = resolvePhysicalPath(outDir);
+export function assertNonOverlappingPaths(
+  leftPath: string,
+  rightPath: string,
+  leftLabel = "--snapshot",
+  rightLabel = "--out",
+): void {
+  const snapshot = resolvePhysicalPath(leftPath);
+  const output = resolvePhysicalPath(rightPath);
   if (
     snapshot === output ||
     snapshot.startsWith(`${output}${path.sep}`) ||
     output.startsWith(`${snapshot}${path.sep}`)
   ) {
-    throw new Error("--snapshot and --out must not overlap");
+    throw new Error(`${leftLabel} and ${rightLabel} must not overlap`);
   }
 }
 
@@ -135,12 +140,14 @@ export function manifestsMatchExceptConfig(
   left: FileManifest | undefined,
   right: FileManifest | undefined,
   configPath: SafeRelativePath | undefined,
+  ignoredPaths: readonly string[] = [],
 ): boolean {
   if (!left || !right || !configPath) return false;
+  const ignored = new Set([configPath, ...ignoredPaths]);
   const comparable = (manifest: FileManifest): string =>
     JSON.stringify(
       manifest.files
-        .filter((entry) => entry.path !== configPath)
+        .filter((entry) => !ignored.has(entry.path))
         .map(({ path: filePath, byteSize, sha256: digest }) => ({ path: filePath, byteSize, sha256: digest })),
     );
   return comparable(left) === comparable(right);
@@ -171,8 +178,14 @@ export function normalizedEffectiveConfigFingerprint(installation: MaterializedI
   return sha256(Buffer.from(JSON.stringify(normalize(parsed)), "utf8"));
 }
 
-export function loadSuite(suite: string): { cases: EvalCase[]; fingerprint: Sha256 } {
-  const casesRoot = path.resolve(path.join(import.meta.dir, "..", "cases"));
+export function loadSuite(
+  suite: string,
+  externalCasesRoot?: string,
+): { cases: EvalCase[]; fingerprint: Sha256; casesRoot: string } {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(suite)) throw new Error("suite must be a safe directory name");
+  const casesRoot = externalCasesRoot
+    ? resolvePrivateCasesRoot(externalCasesRoot, suite)
+    : path.resolve(path.join(import.meta.dir, "..", "cases"));
   const suiteDir = path.join(casesRoot, suite);
   if (!fs.existsSync(suiteDir)) throw new Error(`suite directory not found: ${suiteDir}`);
   const cases = fs
@@ -187,7 +200,56 @@ export function loadSuite(suite: string): { cases: EvalCase[]; fingerprint: Sha2
     });
   const fingerprint = fingerprintEvalCases(cases, suiteDir);
   assertSha256(fingerprint);
-  return { cases, fingerprint };
+  return { cases, fingerprint, casesRoot };
+}
+
+export function resolvePrivateCasesRoot(inputRoot: string, suite: string): string {
+  if (process.platform === "win32") {
+    throw new Error("private external cases require POSIX file-mode enforcement");
+  }
+  const lexicalRoot = path.resolve(inputRoot);
+  const rootStat = fs.lstatSync(lexicalRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error("--cases-dir must be a non-symlink directory");
+  }
+  const root = fs.realpathSync(lexicalRoot);
+  const workspace = fs.realpathSync(path.resolve(import.meta.dir, "..", "..", ".."));
+  if (isSameOrInside(workspace, root) || isSameOrInside(root, workspace)) {
+    throw new Error("--cases-dir must be outside the workspace");
+  }
+  assertPrivateCasesNode(root, true);
+  const suiteDir = path.join(root, suite);
+  const suiteStat = fs.lstatSync(suiteDir);
+  if (suiteStat.isSymbolicLink() || !suiteStat.isDirectory()) {
+    throw new Error(`suite directory must be a non-symlink directory: ${suite}`);
+  }
+  const visit = (entryPath: string): void => {
+    assertPrivateCasesNode(entryPath, false);
+    const stat = fs.lstatSync(entryPath);
+    if (!stat.isDirectory()) return;
+    for (const entry of fs.readdirSync(entryPath)) visit(path.join(entryPath, entry));
+  };
+  visit(suiteDir);
+  return root;
+}
+
+function assertPrivateCasesNode(entryPath: string, root: boolean): void {
+  const stat = fs.lstatSync(entryPath);
+  if (stat.isSymbolicLink()) throw new Error(`external cases must not contain symbolic links: ${entryPath}`);
+  if (!stat.isDirectory() && !stat.isFile()) {
+    throw new Error(`external cases contain an unsupported entry: ${entryPath}`);
+  }
+  const currentUid = process.getuid?.();
+  if (currentUid !== undefined && stat.uid !== currentUid) {
+    throw new Error(`external cases must be owned by the current user: ${entryPath}`);
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    throw new Error(`${root ? "--cases-dir" : "external case entries"} must be owner-private: ${entryPath}`);
+  }
+  if (stat.isFile() && stat.nlink !== 1) throw new Error(`external cases must not contain hard links: ${entryPath}`);
+  if (stat.isFile() && (stat.mode & 0o111) !== 0) {
+    throw new Error(`external cases must not contain executable files: ${entryPath}`);
+  }
 }
 
 export function loadLatestEvalArtifacts(outRoot: string): {
@@ -428,4 +490,9 @@ function resolvePhysicalPath(inputPath: string): string {
   }
   const physical = fs.existsSync(existing) ? fs.realpathSync(existing) : existing;
   return path.resolve(physical, ...missingParts);
+}
+
+function isSameOrInside(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }

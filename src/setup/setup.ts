@@ -78,7 +78,7 @@ import {
 import { stepSemanticSearch } from "./steps/semantic";
 import { stepAdditionalSources, stepAddSources, stepRegistries } from "./steps/sources";
 import { stepStashDir } from "./steps/stashdir";
-import { stepDefaultImproveTasks, stepScheduledTasks } from "./steps/tasks";
+import { stepScheduledTasks } from "./steps/tasks";
 
 // ── Setup sandbox guard ─────────────────────────────────────────────────────
 
@@ -589,17 +589,10 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
     if (!opts?.noInit) await akmInit({ dir: resolvedStashDir, setDefault: true, persistConfig: false });
   });
 
-  // Scheduled tasks are the wizard's only externally-visible side effect
-  // (task files + OS scheduler entries). Run them ONLY now that the config is
-  // confirmed and persisted, so cancelling at the final confirm above leaves
-  // nothing behind. The task-setup path re-reads config via `loadConfig()`,
-  // which now returns the just-saved config (the cache is invalidated on
-  // write) — so tasks register against the confirmed engine/connection rather
-  // than the stale pre-wizard config. This is interactive-only: `akm init` /
-  // `--yes` go through the non-interactive entry points, which never reach
-  // here (issue #512).
+  // After config persistence, the task step reviews the plan and asks one
+  // explicit confirmation before changing task files or scheduler state.
+  // Non-interactive setup paths never reach this interactive-only step.
   p.log.step("Scheduled Tasks");
-  await stepDefaultImproveTasks();
   await stepScheduledTasks();
 
   if (semanticSearchMode.mode === "off") {
@@ -685,7 +678,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
     }
   }
 
-  p.outro(`Configuration saved to ${configPath}`);
+  p.outro(`Configuration saved to ${configPath}\nNext: akm tasks doctor`);
 }
 
 // ── Non-interactive / scripting entry points ─────────────────────────────────
@@ -804,7 +797,6 @@ export async function runDetectOnly(): Promise<DetectedEnvironment> {
  * - Best harness → agent default (when a profile maps to it).
  * - Fastest live local model, else the first detected cloud key's provider.
  * - `nomic-embed-text` embeddings when a local LLM is live.
- * - improve task `0 2 * * *`, index task `0 4 * * *`.
  *
  * Returns a partial `AkmConfig`-shaped object plus a legacy `llm` block, ready
  * to merge. Never includes an API key value.
@@ -814,7 +806,6 @@ export function deriveRecommendedConfig(env: DetectedEnvironment): {
   llmApiKeyEnvVar?: string;
   embedding?: EmbeddingConnectionConfig;
   agentDefault?: string;
-  taskSchedules?: { improve?: string; index?: string };
 } {
   const result: ReturnType<typeof deriveRecommendedConfig> = {};
 
@@ -847,8 +838,6 @@ export function deriveRecommendedConfig(env: DetectedEnvironment): {
       }
     }
   }
-
-  result.taskSchedules = { improve: "0 2 * * *", index: "0 4 * * *" };
 
   return result;
 }
@@ -907,10 +896,6 @@ export async function runResetRecommended(opts: {
       writeAgentEngines(incoming as AkmConfig, { default: recommended.agentDefault }) as Record<string, unknown>,
     ) as Partial<AkmConfig>;
   }
-  if (recommended.taskSchedules) {
-    (incoming as Record<string, unknown>).setup = { taskSchedules: recommended.taskSchedules };
-  }
-
   return runSetupFromConfig({
     configJson: JSON.stringify(incoming),
     dir: opts.dir,

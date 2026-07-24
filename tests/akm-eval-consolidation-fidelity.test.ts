@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  CONSOLIDATION_FIDELITY_HOLDOUT_MANIFEST_PATH,
   CONSOLIDATION_ORACLE_LIMITS,
   type ConsolidationFidelityFixture,
   type ConsolidationFidelityManifest,
@@ -19,6 +20,7 @@ import { bundleRefToString, parseBundleRef } from "../src/core/asset/asset-ref";
 import { legacyRefToBundleRef } from "../src/migrate/legacy-ref-grammar";
 
 const manifest = loadConsolidationFidelityManifest();
+const holdout = loadConsolidationFidelityManifest(CONSOLIDATION_FIDELITY_HOLDOUT_MANIFEST_PATH);
 
 function fixtureById(id: string): ConsolidationFidelityFixture {
   const fixture = manifest.cases.find((candidate) => candidate.id === id);
@@ -34,6 +36,27 @@ function firstRequiredClaim(target: ConsolidationFidelityManifest) {
 }
 
 describe("deterministic fixture-authored consolidation candidate oracle", () => {
+  test("calibrates the separately authored blind holdout deterministically", () => {
+    const developmentIds = new Set(manifest.cases.map((fixture) => fixture.id));
+    const developmentBodies = new Set(
+      manifest.cases.flatMap((fixture) => fixture.sources.map((source) => source.body)),
+    );
+    const results = gradeFixtureCalibrationManifest(holdout);
+
+    expect(holdout.cases).toHaveLength(4);
+    expect(holdout.cases.every((fixture) => fixture.id.startsWith("holdout-"))).toBe(true);
+    expect(holdout.cases.some((fixture) => fixture.class === "provenance-equivalence")).toBe(true);
+    expect(holdout.cases.some((fixture) => fixture.class === "negation-adversarial")).toBe(true);
+    expect(holdout.cases.some((fixture) => fixture.class === "defensible-compression")).toBe(true);
+    expect(holdout.cases.every((fixture) => !developmentIds.has(fixture.id))).toBe(true);
+    expect(
+      holdout.cases.every((fixture) => fixture.sources.every((source) => !developmentBodies.has(source.body))),
+    ).toBe(true);
+    expect(results.filter((result) => result.fixtureCalibrationLabel === "safe")).toHaveLength(1);
+    expect(results.filter((result) => result.fixtureCalibrationLabel === "lossy")).toHaveLength(3);
+    expect(results.every((result) => result.oraclePassed === (result.fixtureCalibrationLabel === "safe"))).toBe(true);
+  });
+
   test("declares its grading-only purpose and covers the requested fixture classes", () => {
     expect(manifest.purpose).toBe("deterministic-fixture-authored-oracle-for-grading-generated-candidates");
     const classCounts = new Map<string, number>();

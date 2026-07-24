@@ -116,6 +116,8 @@ export interface RegisterDefaultTasksOptions {
    * (currently only the nightly sweep). Defaults to {@link detectServerDefault}.
    */
   serverInstall?: boolean;
+  /** Explicitly permit scheduler creation from an ineligible local invocation. */
+  rebind?: boolean;
   /** Override the injected scheduler primitives (tests). */
   deps?: RegisterDefaultTasksDeps;
 }
@@ -234,6 +236,7 @@ export async function registerDefaultTasks(
       // Manual + non-server-enabled tasks are written disabled so the
       // scheduler entry is inert until the user opts in / runs it manually.
       disabled: !desiredEnabled,
+      ...(options.rebind === true ? { rebind: true } : {}),
     };
     await deps.add(addInput);
     created.push(spec.id);

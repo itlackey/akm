@@ -472,7 +472,8 @@ describe("Reflect size guard — diff-size safety rails", () => {
       ref: "lessons/tiny",
       stashDir: stash,
       config: quietQualityGateConfig(),
-      assetContent: "---\ndescription: tiny\n---\nUse rg.\n",
+      assetContent:
+        "---\ndescription: A tiny repository search lesson\nwhen_to_use: Testing the small-source size guard\n---\nUse rg.\n",
       runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
     expect(result.ok).toBe(true);

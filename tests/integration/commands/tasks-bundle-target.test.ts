@@ -21,7 +21,11 @@ import path from "node:path";
 import { akmTasksAdd, akmTasksRun, akmTasksSetEnabled, akmTasksSync } from "../../../src/commands/tasks/tasks";
 import { saveConfig } from "../../../src/core/config/config";
 import { buildCronLine, CRON_BACKEND, type CronExec, type CronExecResult } from "../../../src/tasks/backends/cron";
-import type { ScheduledTaskContext } from "../../../src/tasks/scheduler-invocation";
+import {
+  type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
+} from "../../../src/tasks/scheduler-invocation";
 import type { TaskDocument } from "../../../src/tasks/schema";
 import {
   type IsolatedAkmStorage,
@@ -193,7 +197,12 @@ describe("bundle-targeted tasks via --target", () => {
       target: { kind: "command", cmd: ["true"] },
       source: { path: path.join(iso.stashDir, "tasks", "baz.yml") },
     };
-    const expectedLine = buildCronLine(task, ["/usr/local/bin/akm"], "/var/log/akm", undefined, SCHEDULED_CONTEXT);
+    const expectedLine = buildCronLine(
+      task,
+      ["/usr/local/bin/akm"],
+      "/var/log/akm",
+      schedulerContextPath(schedulerContextDescriptor(SCHEDULED_CONTEXT, "")),
+    );
     expect(body).toBe(expectedLine);
 
     // Adding with --target stash (the DEFAULT bundle by name) is also byte-identical.

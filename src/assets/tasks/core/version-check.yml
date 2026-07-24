@@ -1,5 +1,5 @@
 version: 2
 schedule: "0 9 * * 1"
-command: akm info --check-version
+command: akm upgrade --check
 enabled: true
 description: Weekly check for new akm releases

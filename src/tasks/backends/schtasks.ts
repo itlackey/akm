@@ -41,8 +41,11 @@ import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import {
   buildScheduledTaskInvocation,
+  parseScheduledTaskArgv,
   resolveScheduledTaskContext,
   type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import {
@@ -88,6 +91,7 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
   const logDir = options.logDir ?? getTaskLogDir();
   const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
   const scheduledContext = options.scheduledContext ?? resolveScheduledTaskContext();
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext, process.env.PATH ?? ""));
   const userSid = options.userSid ?? resolveCurrentUserSid(exec);
   const taskName = (id: string) => `${folder}${id}`;
 
@@ -97,8 +101,9 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       const xml = normalizeXmlForUtf16File(
         buildSchtasksXml(task, akmArgv, logDir, {
           folderPrefix: folder,
-          scheduledContext,
+          contextPath: opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
           userSid,
+          binding: [...(opts?.binding ?? akmArgv)],
           ...(opts?.target !== undefined ? { target: opts.target } : {}),
         }),
       );
@@ -206,11 +211,13 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
             `schtasks /Query /XML for "${taskName(id)}" failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
         });
         const signature = installedSignature(query.stdout);
-        const target = extractSchtasksTarget(query.stdout);
+        const installed = extractSchtasksInvocation(query.stdout);
         return {
           id,
           ...(signature !== undefined ? { signature } : {}),
-          ...(target !== undefined ? { target } : {}),
+          ...(installed?.target !== undefined ? { target: installed.target } : {}),
+          ...(installed?.binding !== undefined ? { binding: installed.binding } : {}),
+          ...(installed?.contextPath !== undefined ? { contextPath: installed.contextPath } : {}),
         };
       });
     },
@@ -218,8 +225,9 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
       const signature = taskXmlSignature(
         buildSchtasksXml(task, akmArgv, logDir, {
           folderPrefix: folder,
-          scheduledContext,
+          contextPath: opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
           userSid,
+          binding: [...(opts?.binding ?? akmArgv)],
           ...(opts?.target !== undefined ? { target: opts.target } : {}),
         }),
       );
@@ -235,9 +243,65 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
  * undefined for the primary/default form.
  */
 export function extractSchtasksTarget(xml: string): string | undefined {
-  const match = xml.match(/'--target'\s+'((?:[^']|'')*)'/);
-  if (!match) return undefined;
-  return match[1]!.replaceAll("''", "'");
+  return extractSchtasksInvocation(xml)?.target;
+}
+
+export function extractSchtasksInvocation(xml: string): ReturnType<typeof parseScheduledTaskArgv> {
+  const argsElement = xml.match(/<Arguments>([\s\S]*?)<\/Arguments>/i);
+  if (!argsElement) return undefined;
+  const commandLine = decodeXml(argsElement[1]!);
+  const invocationStart = findPowerShellInvocationOperator(commandLine);
+  if (invocationStart === undefined) return undefined;
+  return parseScheduledTaskArgv(parsePowerShellSingleQuotedArgs(commandLine, invocationStart + 1));
+}
+
+function findPowerShellInvocationOperator(script: string): number | undefined {
+  let inSingleQuote = false;
+  for (let index = 0; index < script.length; index += 1) {
+    const char = script[index];
+    if (char === "'") {
+      if (inSingleQuote && script[index + 1] === "'") {
+        index += 1;
+      } else {
+        inSingleQuote = !inSingleQuote;
+      }
+      continue;
+    }
+    if (!inSingleQuote && char === "&" && /\s/.test(script[index + 1] ?? "")) return index;
+  }
+  return undefined;
+}
+
+function parsePowerShellSingleQuotedArgs(script: string, start: number): string[] {
+  const argv: string[] = [];
+  let index = start;
+  while (index < script.length) {
+    while (/\s/.test(script[index] ?? "")) index += 1;
+    if (script[index] === ";" || script[index] === '"' || index >= script.length) break;
+    if (script[index] !== "'") return [];
+    index += 1;
+    let value = "";
+    let closed = false;
+    while (index < script.length) {
+      const char = script[index];
+      if (char !== "'") {
+        value += char;
+        index += 1;
+        continue;
+      }
+      if (script[index + 1] === "'") {
+        value += "'";
+        index += 2;
+        continue;
+      }
+      index += 1;
+      closed = true;
+      break;
+    }
+    if (!closed) return [];
+    argv.push(value);
+  }
+  return argv;
 }
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
@@ -247,8 +311,10 @@ export interface BuildSchtasksXmlOptions {
   folderPrefix?: string;
   /** Override the clock used to find the next StartBoundary (tests). */
   now?: () => Date;
-  /** Resolved non-secret AKM directory context embedded in the invocation. */
-  scheduledContext: ScheduledTaskContext;
+  /** Immutable runtime context descriptor loaded by the launcher. */
+  contextPath?: string;
+  /** Bootstrap argv. Defaults to the positional akmArgv for compatibility. */
+  binding?: string[];
   /** Current Windows user SID embedded in the principal. */
   userSid: string;
   /** Non-default bundle embedded as a `--target <bundle>` token. */
@@ -273,10 +339,10 @@ export function buildSchtasksXml(
   const now = options.now ? options.now() : new Date();
   const definition = buildSchtasksDefinition(
     task,
-    akmArgv,
+    options.binding ?? akmArgv,
     logDir,
     folder,
-    options.scheduledContext,
+    options.contextPath,
     options.userSid,
     options.target,
   );
@@ -299,18 +365,15 @@ function buildSchtasksDefinition(
   akmArgv: string[],
   logDir: string,
   folder: string,
-  scheduledContext: ScheduledTaskContext,
+  contextPath: string | undefined,
   userSid: string,
   target?: string,
 ): SchtasksDefinition {
   const spec = parseSchedule(task.schedule, "schtasks");
   const trigger = translateToSchtasks(spec);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
-  const environment = Object.entries(invocation.environment)
-    .map(([key, value]) => `$env:${key}=${quotePowerShell(value)}`)
-    .join("; ");
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, contextPath, target);
   const invoke = `& ${invocation.argv.map((arg) => quotePowerShell(arg)).join(" ")}`;
-  const script = `${environment}; ${invoke}; exit $LASTEXITCODE`;
+  const script = `${invoke}; exit $LASTEXITCODE`;
   const command = "powershell.exe";
   const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script].map(quoteArg).join(" ");
   const logPath = path.join(logDir, `${task.id}.log`);

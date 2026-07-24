@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
-const EMPTY_LESSON = `---\ndescription: Empty body lesson\nwhen_to_use: never\n---\n\n`;
+const EMPTY_LESSON = `---\ndescription: A lesson with an intentionally empty body\nwhen_to_use: Testing empty-diff proposal handling\n---\n\n`;
 // A valid lesson whose body exceeds the personal-stash consolidate band (>200 lines).
 const BIG_LESSON = `---\ndescription: A large consolidated lesson\nwhen_to_use: When the body is intentionally long\n---\n\n${Array.from(
   { length: 300 },

@@ -293,6 +293,31 @@ describe("diff path", () => {
 });
 
 describe("validation failure", () => {
+  test("invalid task is rejected at queue time without replacing an indexed task", async () => {
+    const stash = makeStashDir();
+    const taskDir = path.join(stash, "tasks");
+    fs.mkdirSync(taskDir, { recursive: true });
+    const taskPath = path.join(taskDir, "queued-guard.yml");
+    const original = 'version: 2\nschedule: "0 2 * * *"\nenabled: true\ncommand: ["akm", "index"]\n';
+    fs.writeFileSync(taskPath, original, "utf8");
+    await akmIndex({ stashDir: stash });
+    expect(indexedEntry(taskPath)).toBeDefined();
+
+    expect(() =>
+      createProposal(stash, {
+        ref: "tasks/queued-guard",
+        source: "reflect",
+        force: true,
+        payload: {
+          content: 'version: 2\nschedule: "0 2 * * *"\nenabled: true\nprompt: invalid\ncommand: ["akm", "health"]\n',
+        },
+      }),
+    ).toThrow("invalid task structure");
+    expect(fs.readFileSync(taskPath, "utf8")).toBe(original);
+    expect(indexedEntry(taskPath)).toBeDefined();
+    expect(listProposals(stash, { status: "pending" })).toHaveLength(0);
+  });
+
   test("invalid lesson frontmatter → accept fails non-zero with clear error", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -300,12 +325,22 @@ describe("validation failure", () => {
       ref: "lessons/no-fields",
       source: "distill",
       force: true,
-      payload: { content: `---\ndescription: ""\nwhen_to_use: ""\n---\n\nbody\n` },
+      payload: { content: VALID_LESSON },
     });
     if (isProposalSkipped(proposalResult3)) throw new Error("unexpected skip");
     const proposal = proposalResult3;
 
-    const report = validateProposal(proposal);
+    // Simulate an invalid row queued before canonical lesson validation existed.
+    const state = openStateDatabase();
+    try {
+      state
+        .prepare("UPDATE proposals SET content = ? WHERE id = ?")
+        .run(`---\ndescription: ""\nwhen_to_use: ""\n---\n\nbody\n`, proposal.id);
+    } finally {
+      state.close();
+    }
+
+    const report = validateProposal(getProposal(stash, proposal.id));
     expect(report.ok).toBe(false);
     expect(report.findings.length).toBeGreaterThan(0);
 
@@ -322,6 +357,41 @@ describe("validation failure", () => {
     const stillPending = getProposal(stash, proposal.id);
     expect(stillPending.status).toBe("pending");
     expect(fs.existsSync(path.join(stash, "lessons", "no-fields.md"))).toBe(false);
+  });
+
+  test("queued invalid task cannot replace an indexed task", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const taskDir = path.join(stash, "tasks");
+    fs.mkdirSync(taskDir, { recursive: true });
+    const taskPath = path.join(taskDir, "nightly.yml");
+    const original = 'version: 2\nschedule: "0 1 * * *"\nenabled: true\ncommand: ["akm", "index"]\n';
+    fs.writeFileSync(taskPath, original, "utf8");
+    await akmIndex({ stashDir: stash });
+    expect(indexedEntry(taskPath)).toBeDefined();
+
+    const created = createProposal(stash, {
+      ref: "tasks/nightly",
+      source: "reflect",
+      force: true,
+      payload: { content: original.replace("index", "health") },
+    });
+    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    const state = openStateDatabase();
+    try {
+      state
+        .prepare("UPDATE proposals SET content = ? WHERE id = ?")
+        .run('version: 2\nschedule: "0 1 * * *"\nenabled: true\nprompt: one\ncommand: ["akm", "health"]\n', created.id);
+    } finally {
+      state.close();
+    }
+
+    await expect(akmProposalAccept({ stashDir: stash, id: created.id, config })).rejects.toThrow(
+      "invalid-task-structure",
+    );
+    expect(fs.readFileSync(taskPath, "utf8")).toBe(original);
+    expect(indexedEntry(taskPath)).toBeDefined();
+    expect(getProposal(stash, created.id).status).toBe("pending");
   });
 
   test("empty content → createProposal rejects with INVALID_PROPOSAL", () => {
@@ -448,18 +518,20 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
   test("validation failure → no `promoted` event emitted; proposal stays pending", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
-    // Lesson body that passes createProposal's structural check (non-empty,
-    // valid ref, has frontmatter.description) but fails the deeper lesson
-    // lint at accept-time because the required ## When to use section is
-    // missing. This exercises the validation-failure → no-promote path.
     const proposalResult5 = createProposal(stash, {
       ref: "lessons/invalid",
       source: "distill",
       force: true,
-      payload: { content: "x", frontmatter: { description: "stub" } },
+      payload: { content: VALID_LESSON },
     });
     if (isProposalSkipped(proposalResult5)) throw new Error("unexpected skip");
     const proposal = proposalResult5;
+    const state = openStateDatabase();
+    try {
+      state.prepare("UPDATE proposals SET content = ? WHERE id = ?").run("x", proposal.id);
+    } finally {
+      state.close();
+    }
 
     let threw = false;
     try {
@@ -496,7 +568,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     const second = createProposal(stash, {
       ref: "lessons/dup-test",
       source: "reflect",
-      payload: { content: "Different content, but same ref+source." },
+      payload: { content: VALID_LESSON.replace("Prefer rg", "Prefer fd") },
     });
     expect(isProposalSkipped(second)).toBe(true);
     if (!isProposalSkipped(second)) throw new Error("type guard");
@@ -545,7 +617,7 @@ describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
     const second = createProposal(stash, {
       ref: "lessons/cooldown-test",
       source: "reflect",
-      payload: { content: "Completely different content that is not the same hash." },
+      payload: { content: VALID_LESSON.replace("Prefer rg", "Prefer fd") },
     });
     expect(isProposalSkipped(second)).toBe(true);
     if (!isProposalSkipped(second)) throw new Error("type guard");

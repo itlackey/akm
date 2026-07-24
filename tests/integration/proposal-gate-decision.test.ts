@@ -69,8 +69,8 @@ afterEach(() => {
 });
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg over grep.\n`;
-const EMPTY_LESSON = `---\ndescription: Empty body\nwhen_to_use: never\n---\n\n`;
-const BIG_CONSOLIDATE = `---\ndescription: A large consolidated lesson\nwhen_to_use: long\n---\n\n${Array.from(
+const EMPTY_LESSON = `---\ndescription: A lesson with an intentionally empty body\nwhen_to_use: Testing empty-diff proposal handling\n---\n\n`;
+const BIG_CONSOLIDATE = `---\ndescription: A large consolidated lesson\nwhen_to_use: Testing maximum diff-line proposal handling\n---\n\n${Array.from(
   { length: 300 },
   (_, i) => `line ${i}`,
 ).join("\n")}\n`;

@@ -5,6 +5,7 @@ set -euo pipefail
 readonly CONTAINER_SNAPSHOT="/akm-eval/snapshot"
 readonly CONTAINER_OUT="/akm-eval/out"
 readonly CONTAINER_INPUTS="/akm-eval/inputs"
+readonly CONTAINER_CASES="/akm-eval/cases"
 readonly DEFAULT_IMAGE="akm-eval-twin:local"
 
 die() {
@@ -25,6 +26,7 @@ It always evaluates the AKM build from the current workspace image.
 Host paths:
   --snapshot <dir>                 Required; mounted read-only.
   --out <dir>                      Required; created if needed and mounted writable.
+  --cases-dir <dir>                Private external cases root; mounted read-only.
   --endpoint-metadata <json>       Mounted read-only; repeatable. --endpoint is an alias.
   --endpoint-runtime <json>        Mounted read-only.
   --common-runtime <json>          Mounted read-only.
@@ -86,6 +88,7 @@ next_value() {
 
 snapshot_arg=""
 out_arg=""
+cases_arg=""
 metadata_count=0
 runtime_count=0
 common_runtime_count=0
@@ -117,6 +120,12 @@ while [[ $# -gt 0 ]]; do
       shift
       out_arg="$NEXT_VALUE"
       forwarded+=("--out" "$CONTAINER_OUT")
+      ;;
+    --cases-dir)
+      next_value "$argument" "$@"
+      shift
+      cases_arg="$NEXT_VALUE"
+      forwarded+=("--cases-dir" "$CONTAINER_CASES")
       ;;
     --endpoint-metadata|--endpoint)
       next_value "$argument" "$@"
@@ -197,6 +206,20 @@ fi
 assert_safe_bind_source "$snapshot_path"
 assert_safe_bind_source "$output_path"
 
+cases_path=""
+if [[ -n "$cases_arg" ]]; then
+  [[ -d "$cases_arg" ]] || die "--cases-dir must be an existing directory: $cases_arg"
+  if ! cases_path="$(realpath -e -- "$cases_arg")"; then
+    die "could not resolve --cases-dir: $cases_arg"
+  fi
+  assert_outside_workspace "--cases-dir" "$cases_arg" "$cases_path"
+  assert_safe_bind_source "$cases_path"
+  if is_same_or_below "$snapshot_path" "$cases_path" || is_same_or_below "$cases_path" "$snapshot_path" ||
+     is_same_or_below "$output_path" "$cases_path" || is_same_or_below "$cases_path" "$output_path"; then
+    die "--cases-dir must not overlap --snapshot or --out"
+  fi
+fi
+
 for index in "${!readonly_sources[@]}"; do
   source_path="${readonly_sources[$index]}"
   [[ -f "$source_path" ]] || die "${readonly_labels[$index]} must be an existing file: $source_path"
@@ -223,6 +246,9 @@ mount_args=(
   --mount "type=bind,source=$snapshot_path,target=$CONTAINER_SNAPSHOT,readonly"
   --mount "type=bind,source=$output_path,target=$CONTAINER_OUT"
 )
+if [[ -n "$cases_path" ]]; then
+  mount_args+=(--mount "type=bind,source=$cases_path,target=$CONTAINER_CASES,readonly")
+fi
 
 for index in "${!readonly_sources[@]}"; do
   source_path="${readonly_sources[$index]}"

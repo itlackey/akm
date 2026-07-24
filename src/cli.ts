@@ -128,6 +128,7 @@ import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
 import { getHyphenatedBoolean, getOutputMode, initOutputMode } from "./output/context";
 import { deliverRendered, renderHtml, resolveTemplatePath } from "./output/html-render";
+import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
 function applyEarlyStderrFlags(argv: string[]): void {
@@ -598,6 +599,11 @@ const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 // The wrapper sets `AKM_NODE_ENTRY=1` to opt into the startup block. The test
 // harness never sets it, so importing cli.ts under Bun stays inert as before.
 if (import.meta.main || process.env.AKM_NODE_ENTRY === "1") {
+  try {
+    process.argv = consumeSchedulerContextArg(process.argv);
+  } catch (error: unknown) {
+    emitJsonError(error);
+  }
   // citty reads process.argv directly and does not accept a custom argv array,
   // so we must replace process.argv with the normalized version before runMain.
   process.argv = normalizeShowArgv(process.argv);

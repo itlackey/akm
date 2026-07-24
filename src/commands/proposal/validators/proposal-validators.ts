@@ -6,6 +6,7 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { parseRefInput } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
+import { parseTaskDocument } from "../../../tasks/parser";
 import { parseWorkflow } from "../../../workflows/parser";
 import { looksLikeWorkflowProgram, parseWorkflowProgram } from "../../../workflows/program/parser";
 import type {
@@ -61,25 +62,26 @@ const genericProposalValidator: ProposalValidator = {
   },
 };
 
-const lessonProposalValidator: ProposalValidator = {
-  name: "lesson-proposal-validator",
-  appliesTo(_proposal, ctx) {
-    return ctx.parsedRef?.type === "lesson";
-  },
-  validate(proposal) {
+type CanonicalProposalValidator = (proposal: Proposal, ctx: ProposalValidationContext) => ProposalValidationFinding[];
+
+const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalValidator>> = {
+  lesson(proposal) {
     return lintLessonContent(proposalContent(proposal), `proposal:${proposal.id}`).findings.map((finding) => ({
       kind: finding.kind,
       message: finding.message,
     }));
   },
-};
-
-const workflowProposalValidator: ProposalValidator = {
-  name: "workflow-proposal-validator",
-  appliesTo(_proposal, ctx) {
-    return ctx.parsedRef?.type === "workflow";
+  task(proposal, ctx) {
+    const name = ctx.parsedRef?.name;
+    if (!name) return [];
+    parseTaskDocument({
+      yaml: proposalContent(proposal),
+      filePath: proposal.changes[0]?.path || proposal.ref,
+      id: name,
+    });
+    return [];
   },
-  validate(proposal) {
+  workflow(proposal) {
     const content = proposalContent(proposal);
     if (!content.trim()) return [];
 
@@ -97,10 +99,35 @@ const workflowProposalValidator: ProposalValidator = {
   },
 };
 
+export function hasCanonicalProposalValidator(type: string): boolean {
+  return Object.hasOwn(canonicalProposalValidators, type);
+}
+
+const canonicalProposalValidator: ProposalValidator = {
+  name: "canonical-asset-proposal-validator",
+  appliesTo(_proposal, ctx) {
+    return ctx.parsedRef !== undefined && hasCanonicalProposalValidator(ctx.parsedRef.type);
+  },
+  validate(proposal, ctx) {
+    const type = ctx.parsedRef?.type;
+    const validator = type ? canonicalProposalValidators[type] : undefined;
+    if (!validator) return [];
+    try {
+      return validator(proposal, ctx);
+    } catch (error) {
+      return [
+        {
+          kind: `invalid-${type}-structure`,
+          message: `${type} proposal ${proposal.id} (${proposal.ref}) is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ];
+    }
+  },
+};
+
 export const defaultProposalValidators: ProposalValidator[] = [
   genericProposalValidator,
-  workflowProposalValidator,
-  lessonProposalValidator,
+  canonicalProposalValidator,
   ...defaultProposalQualityValidators,
 ];
 

@@ -33,8 +33,11 @@ import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import {
   buildScheduledTaskInvocation,
+  parseScheduledTaskArgv,
   resolveScheduledTaskContext,
   type ScheduledTaskContext,
+  schedulerContextDescriptor,
+  schedulerContextPath,
 } from "../scheduler-invocation";
 import type { TaskDocument } from "../schema";
 import { type BackendExec, escapeXml, type NodeFs, nodeExec, nodeFs, runOrThrow } from "./exec-utils";
@@ -87,6 +90,7 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
     if (typeof options.envPath === "string") return options.envPath;
     return process.env.PATH ?? "";
   };
+  const defaultContextPath = schedulerContextPath(schedulerContextDescriptor(scheduledContext, pathEnv() ?? ""));
 
   const setEnableState = (id: string, enabled: boolean) => {
     const verb = enabled ? "enable" : "disable";
@@ -100,7 +104,13 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
     install(task: TaskDocument, opts?: TaskInstallOptions) {
       // Capture PATH at install time so launchd (which strips the environment
       // aggressively) can find the same binaries the user sees interactively.
-      const xml = buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext, opts?.target);
+      const xml = buildPlistXml(
+        task,
+        [...(opts?.binding ?? akmArgv)],
+        logDir,
+        opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
+        opts?.target,
+      );
       const file = plistPath(task.id);
       const previousPlist = fsLike.exists(file) ? fsLike.readFile(file) : undefined;
       let previousEnabled = true;
@@ -245,30 +255,62 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
       if (ids.length === 0) return [];
       const disabledLabels = readDisabledLabels(exec);
       return ids.map((id) => {
-        if (!disabledLabels) return { id };
         try {
-          const loaded = exec.run(["launchctl", "print", target(id)]);
-          if (loaded.status !== 0) return { id };
-        } catch {
-          return { id };
-        }
-        try {
-          const raw = fsLike.readFile(plistPath(id));
-          const xml = raw.replace(
-            /<!-- akm-enabled:(?:true|false) -->/,
-            `<!-- akm-enabled:${!disabledLabels.has(label(id))} -->`,
-          );
-          const bundle = extractPlistTarget(raw);
-          return { id, signature: normalizeSignature(xml), ...(bundle !== undefined ? { target: bundle } : {}) };
+          return inspectInstalledLaunchdTask(id, fsLike.readFile(plistPath(id)), disabledLabels, exec);
         } catch {
           return { id };
         }
       });
     },
     expectedSignature(task: TaskDocument, opts?: TaskInstallOptions): string {
-      return normalizeSignature(buildPlistXml(task, akmArgv, logDir, pathEnv(), scheduledContext, opts?.target));
+      return normalizeSignature(
+        buildPlistXml(
+          task,
+          [...(opts?.binding ?? akmArgv)],
+          logDir,
+          opts?.contextPath === null ? undefined : (opts?.contextPath ?? defaultContextPath),
+          opts?.target,
+        ),
+      );
     },
   };
+}
+
+function inspectInstalledLaunchdTask(
+  id: string,
+  raw: string,
+  disabledLabels: Set<string> | undefined,
+  exec: LaunchdExec,
+): InstalledTaskRef {
+  const installed = extractPlistInvocation(raw);
+  const metadata = {
+    ...(installed?.target !== undefined ? { target: installed.target } : {}),
+    ...(installed?.binding !== undefined ? { binding: installed.binding } : {}),
+    ...(installed?.contextPath !== undefined ? { contextPath: installed.contextPath } : {}),
+  };
+  if (!disabledLabels) return { id, ...metadata };
+
+  const jobLabel = `${LAUNCHD_LABEL_PREFIX}${id}`;
+  try {
+    const loaded = exec.run(["launchctl", "print", `gui/${exec.uid()}/${jobLabel}`]);
+    if (loaded.status !== 0) return { id, ...metadata };
+  } catch {
+    return { id, ...metadata };
+  }
+
+  try {
+    const xml = raw.replace(
+      /<!-- akm-enabled:(?:true|false) -->/,
+      `<!-- akm-enabled:${!disabledLabels.has(jobLabel)} -->`,
+    );
+    return {
+      id,
+      signature: normalizeSignature(xml),
+      ...metadata,
+    };
+  } catch {
+    return { id, ...metadata };
+  }
 }
 
 /**
@@ -276,12 +318,14 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
  * `<ProgramArguments>`. Returns undefined for the primary/default form.
  */
 export function extractPlistTarget(xml: string): string | undefined {
+  return extractPlistInvocation(xml)?.target;
+}
+
+export function extractPlistInvocation(xml: string): ReturnType<typeof parseScheduledTaskArgv> {
   const block = xml.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/);
   if (!block) return undefined;
   const args = [...block[1]!.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => decodeXmlEntities(m[1]!));
-  const idx = args.indexOf("--target");
-  if (idx === -1 || idx + 1 >= args.length) return undefined;
-  return args[idx + 1];
+  return parseScheduledTaskArgv(args);
 }
 
 function decodeXmlEntities(value: string): string {
@@ -299,31 +343,23 @@ export function buildPlistXml(
   task: TaskDocument,
   akmArgv: string[],
   logDir: string,
-  pathEnv: string | undefined,
-  scheduledContext: ScheduledTaskContext,
+  contextPath: string | undefined,
   target?: string,
 ): string {
   const spec = parseSchedule(task.schedule, "launchd");
   const trigger = translateToLaunchd(spec);
-  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, scheduledContext, target);
+  const invocation = buildScheduledTaskInvocation(akmArgv, task.id, contextPath, target);
   const argv = invocation.argv;
   const programArgs = argv.map((a) => `      <string>${escapeXml(a)}</string>`).join("\n");
   const logPath = path.join(logDir, `${task.id}.log`);
   const triggerXml = renderLaunchdTrigger(trigger);
-
-  const environment: Record<string, string> = { ...invocation.environment };
-  if (pathEnv !== undefined) environment.PATH = pathEnv;
-  const envEntries = Object.entries(environment)
-    .map(([key, value]) => `    <key>${key}</key>\n    <string>${escapeXml(value)}</string>`)
-    .join("\n");
-  const envVarsXml = `  <key>EnvironmentVariables</key>\n  <dict>\n${envEntries}\n  </dict>\n`;
 
   const xml = launchdTemplate
     .replace("<dict>\n", `<dict>\n  <!-- akm-enabled:${task.enabled} -->\n`)
     .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(task.id))
     .replace("{{PROGRAM_ARGS}}", programArgs)
     .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
-    .replace("{{ENV_VARS}}", envVarsXml)
+    .replace("{{ENV_VARS}}", "")
     .replace("{{TRIGGER_XML}}", triggerXml);
   for (const char of xml) {
     const code = char.codePointAt(0) ?? 0;

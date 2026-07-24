@@ -288,7 +288,10 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA when dispatching via the llm
       ref: "lessons/model-selected",
       content: "# Selected target\n\nUse the model-selected target only when no ref was supplied.\n",
       confidence: 0.75,
-      frontmatterPatch: { description: null, when_to_use: null },
+      frontmatterPatch: {
+        description: "Choose the target returned by unscoped reflection",
+        when_to_use: "Running unscoped reflection with structured output",
+      },
     });
 
     const result = await akmReflect({

@@ -75,7 +75,9 @@
     "lint:fix": "bunx biome check --write src/ tests/ scripts/",
     "format": "bunx biome format --write src/ tests/ scripts/",
     "prepublishOnly": "cp .github/README.npm.md README.md && bun run build",
-    "postpublish": "git checkout -- README.md"
+    "postpublish": "git checkout -- README.md",
+    "build:install": "bun scripts/package-install.ts install-global",
+    "test:package": "bun scripts/package-install.ts test-package"
   },
   "publishConfig": {
     "access": "public"

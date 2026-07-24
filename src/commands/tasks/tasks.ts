@@ -40,6 +40,11 @@ import {
   type TaskRunResult,
 } from "../../tasks/runner";
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
+import {
+  schedulerContextDescriptor,
+  validateSchedulerContextDescriptor,
+  writeSchedulerContextDescriptor,
+} from "../../tasks/scheduler-invocation";
 import type { TaskDocument } from "../../tasks/schema";
 import { normaliseTaskId } from "../../tasks/task-id";
 import { validateTaskDocument } from "../../tasks/validator";
@@ -72,6 +77,8 @@ export interface TasksAddInput {
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
+  /** Explicitly permit scheduler creation from an ineligible local invocation. */
+  rebind?: boolean;
 }
 
 export interface TasksAddResult {
@@ -90,6 +97,12 @@ export interface TaskMutationDeps {
   writeAsset?: typeof writeAssetToSource;
   deleteAsset?: typeof deleteAssetFromSource;
   commitBoundary?: typeof commitWriteTargetBoundary;
+  schedulerRuntime?: () => PreparedSchedulerRuntime;
+}
+
+export interface PreparedSchedulerRuntime {
+  binding: string[];
+  contextPath: string;
 }
 
 export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps = {}): Promise<TasksAddResult> {
@@ -179,13 +192,21 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const installedEntries = await sched.list();
   assertNoForeignSchedule(installedEntries, id, bundle.installTarget);
   const wasInstalled = previousYaml !== undefined && installedEntries.some((entry) => entry.id === id);
+  const installedEntry = installedEntries.find((entry) => entry.id === id);
+  const runtimeOpts = schedulerInstallOptions(
+    installOpts,
+    installedEntry,
+    deps,
+    installedEntry ? false : input.rebind === true,
+    `create scheduler entry for task "${id}"`,
+  );
   let sourceRestoreArmed = false;
   let installSucceeded = false;
 
   try {
     sourceRestoreArmed = true;
     await writeAsset(writeTarget.source, writeTarget.config, ref, yaml);
-    await sched.install(task, installOpts);
+    await sched.install(task, runtimeOpts);
     installSucceeded = true;
     commitBoundary(writeTarget, `Update tasks/${id}`);
   } catch (err) {
@@ -222,7 +243,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
       }
     } else if (installSucceeded && previousTask) {
       try {
-        await sched.install(previousTask, installOpts);
+        await sched.install(previousTask, runtimeOpts);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
         try {
@@ -370,6 +391,19 @@ export async function akmTasksSetEnabled(
   const installedEntries = await sched.list();
   assertNoForeignSchedule(installedEntries, normalised, bundle.installTarget);
   const wasInstalled = installedEntries.some((entry) => entry.id === normalised);
+  const installedEntry = installedEntries.find((entry) => entry.id === normalised);
+  const bindingInspectionEnabled = !deps.backend || deps.schedulerRuntime !== undefined;
+  const preserveNativeToggle =
+    bindingInspectionEnabled && installedEntry && (!installedEntry.binding || !installedEntry.contextPath);
+  const runtimeOpts = preserveNativeToggle
+    ? installOpts
+    : schedulerInstallOptions(
+        installOpts,
+        installedEntry,
+        deps,
+        false,
+        `create scheduler entry for task "${normalised}"`,
+      );
   let sourceRestoreArmed = false;
   let installSucceeded = false;
   try {
@@ -380,7 +414,8 @@ export async function akmTasksSetEnabled(
     // .yml's `schedule:` changed while the task was disabled — re-enabling
     // would silently keep the old cron line. install() renders the block with
     // both the current schedule and the new enabled state, and is idempotent.
-    await sched.install(task, installOpts);
+    if (preserveNativeToggle) await sched.setEnabled(normalised, enabled);
+    else await sched.install(task, runtimeOpts);
     installSucceeded = true;
     commitBoundary(writeTarget, `Update tasks/${normalised}`);
   } catch (err) {
@@ -396,7 +431,9 @@ export async function akmTasksSetEnabled(
     }
     if (installSucceeded) {
       try {
-        if (wasInstalled) await sched.install(previousTask, installOpts);
+        if (wasInstalled && preserveNativeToggle) {
+          await sched.setEnabled(normalised, previousTask.enabled);
+        } else if (wasInstalled) await sched.install(previousTask, runtimeOpts);
         else await sched.uninstall(normalised);
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
@@ -525,8 +562,9 @@ export interface TasksSyncResult {
  * `add --target`.
  */
 export async function akmTasksSync(
-  deps: { backend?: TaskBackend } = {},
+  deps: { backend?: TaskBackend; schedulerRuntime?: () => PreparedSchedulerRuntime } = {},
   bundleTarget?: string,
+  options: { rebind?: boolean } = {},
 ): Promise<TasksSyncResult> {
   const stashDir = resolveTaskInspectDir(bundleTarget);
   // Embed --target only for a genuinely non-primary bundle so a default-bundle
@@ -547,9 +585,7 @@ export async function akmTasksSync(
   // Attribution filter: only entries installed from THIS bundle are reconciled
   // here. Entries carrying a `--target` for a different bundle are invisible to
   // this sync — never removed, never touched.
-  const present = new Map(
-    allEntries.filter((t) => sameBundle(t.target, syncTarget)).map((t) => [t.id, t.signature] as const),
-  );
+  const present = new Map(allEntries.filter((t) => sameBundle(t.target, syncTarget)).map((t) => [t.id, t] as const));
   const installed: string[] = [];
   const updated: string[] = [];
   const unchanged: string[] = [];
@@ -588,8 +624,19 @@ export async function akmTasksSync(
       continue;
     }
     if (!present.has(id)) {
-      await sched.install(task, installOpts);
-      installed.push(id);
+      try {
+        const runtimeOpts = schedulerInstallOptions(
+          installOpts,
+          undefined,
+          deps,
+          options.rebind === true,
+          `create scheduler entry for task "${id}"`,
+        );
+        await sched.install(task, runtimeOpts);
+        installed.push(id);
+      } catch (error) {
+        skipped.push({ id, reason: error instanceof Error ? error.message : String(error) });
+      }
       continue;
     }
     // Already installed — reconcile against the current definition. Compare the
@@ -597,12 +644,34 @@ export async function akmTasksSync(
     // When the backend can't produce a signature (no expectedSignature, or it
     // didn't record one), reinstall unconditionally — install() is idempotent,
     // so the cost is one crontab write and correctness is guaranteed.
-    const installedSig = present.get(id);
-    const expectedSig = sched.expectedSignature?.(task, installOpts);
+    const installedEntry = present.get(id)!;
+    if (!options.rebind && installedEntry.binding && !installedEntry.contextPath) {
+      skipped.push({
+        id,
+        reason: `Installed scheduler entry is legacy; run \`akm tasks sync --rebind\` to migrate it.`,
+      });
+      continue;
+    }
+    if (!options.rebind && !installedEntry.binding && !deps.backend) {
+      skipped.push({
+        id,
+        reason: `Installed scheduler binding could not be read; run \`akm tasks sync --rebind\` to replace it.`,
+      });
+      continue;
+    }
+    const runtimeOpts = schedulerInstallOptions(
+      installOpts,
+      options.rebind ? undefined : installedEntry,
+      deps,
+      options.rebind === true,
+      `rebind scheduler entry for task "${id}"`,
+    );
+    const installedSig = installedEntry.signature;
+    const expectedSig = sched.expectedSignature?.(task, runtimeOpts);
     if (installedSig !== undefined && expectedSig !== undefined && installedSig === expectedSig) {
       unchanged.push(id);
     } else {
-      await sched.install(task, installOpts);
+      await sched.install(task, runtimeOpts);
       updated.push(id);
     }
   }
@@ -632,7 +701,15 @@ function obsoleteBackupTaskReason(task: TaskDocument): string | undefined {
 
 export interface TasksDoctorResult {
   backend: string;
-  akm: { argv: string[]; via: string };
+  akm: { argv: string[]; via: string; kind?: string; eligible?: boolean };
+  caller: { argv: string[]; via: string; kind?: string; eligible?: boolean };
+  bindings: Array<{
+    argv: string[];
+    contextPath?: string;
+    taskIds: string[];
+    status: string[];
+  }>;
+  remediation: "akm tasks sync --rebind";
   logDir: string;
   historyDir: string;
   engine: { defaultEngine?: string; available: string[] };
@@ -652,12 +729,18 @@ export interface TasksDoctorResult {
   };
 }
 
-export async function akmTasksDoctor(input: { target?: string } = {}): Promise<TasksDoctorResult> {
+export async function akmTasksDoctor(
+  input: { target?: string } = {},
+  deps: { backend?: TaskBackend; resolveInvocation?: typeof resolveAkmInvocation } = {},
+): Promise<TasksDoctorResult> {
   const warnings: string[] = [];
-  let invocation: { argv: string[]; via: string } = { argv: [], via: "unresolved" };
+  let invocation: { argv: string[]; via: string; kind?: string; eligible?: boolean } = {
+    argv: [],
+    via: "unresolved",
+  };
   try {
-    const r = resolveAkmInvocation();
-    invocation = { argv: r.argv, via: r.via };
+    const r = (deps.resolveInvocation ?? resolveAkmInvocation)();
+    invocation = { argv: r.argv, via: r.via, kind: r.kind, eligible: r.eligible };
   } catch (err) {
     warnings.push(err instanceof Error ? err.message : String(err));
   }
@@ -670,7 +753,22 @@ export async function akmTasksDoctor(input: { target?: string } = {}): Promise<T
   } catch {
     // doctor must never fail on stash-resolution; the warning is best-effort
   }
-  const backend = backendNameForPlatform();
+  const skipNativeInspection = process.env.BUN_TEST === "1" && !deps.backend;
+  const sched = deps.backend ?? (skipNativeInspection ? undefined : selectBackend());
+  const backend = sched?.name ?? backendNameForPlatform();
+  let installed: InstalledTaskRef[] = [];
+  if (skipNativeInspection) {
+    warnings.push("Native scheduler inspection is skipped inside the bun test harness.");
+  } else {
+    try {
+      installed = await sched!.list();
+    } catch (error) {
+      warnings.push(
+        `Unable to inspect installed ${backend} definitions: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  const bindings = groupInstalledBindings(installed);
   const config = loadConfig();
   const defaultEngine = config.defaults?.engine;
   const engines = Object.keys(config.engines ?? {});
@@ -692,6 +790,9 @@ export async function akmTasksDoctor(input: { target?: string } = {}): Promise<T
   return {
     backend,
     akm: invocation,
+    caller: invocation,
+    bindings,
+    remediation: "akm tasks sync --rebind",
     logDir: getTaskLogDir(),
     historyDir: getTaskHistoryDir(),
     engine: { defaultEngine, available: engines },
@@ -704,6 +805,128 @@ export async function akmTasksDoctor(input: { target?: string } = {}): Promise<T
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+function schedulerInstallOptions(
+  base: { target?: string } | undefined,
+  installed: InstalledTaskRef | undefined,
+  deps: { backend?: TaskBackend; schedulerRuntime?: () => PreparedSchedulerRuntime },
+  explicitRebind: boolean,
+  operation: string,
+): { target?: string; binding?: readonly string[]; contextPath?: string | null } | undefined {
+  if (installed?.binding && !explicitRebind) {
+    if (!installed.contextPath && !(deps.backend && !deps.schedulerRuntime)) {
+      throw new UsageError(
+        `Installed scheduler entry for task "${installed.id}" is legacy; refusing to rewrite it implicitly.`,
+        "INVALID_FLAG_VALUE",
+        "Run `akm tasks sync --rebind` to migrate legacy scheduler entries explicitly.",
+      );
+    }
+    return {
+      ...base,
+      binding: installed.binding,
+      contextPath: installed.contextPath ?? null,
+    };
+  }
+  if (installed && !installed.binding && !(deps.backend && !deps.schedulerRuntime)) {
+    throw new UsageError(
+      `Installed scheduler binding for task "${installed.id}" could not be read; refusing to replace it.`,
+      "INVALID_FLAG_VALUE",
+      "Run `akm tasks sync --rebind` to replace unreadable or legacy scheduler bindings explicitly.",
+    );
+  }
+  // Existing injected backends predate runtime binding inspection. Preserve
+  // their narrow test seam unless a runtime resolver was explicitly injected.
+  if (deps.backend && !deps.schedulerRuntime) return base;
+  const runtime = deps.schedulerRuntime?.() ?? prepareSchedulerRuntime(explicitRebind, operation);
+  return { ...base, binding: runtime.binding, contextPath: runtime.contextPath };
+}
+
+export function prepareSchedulerRuntime(
+  explicitRebind: boolean,
+  operation: string,
+  deps: {
+    resolveInvocation?: typeof resolveAkmInvocation;
+    writeDescriptor?: typeof writeSchedulerContextDescriptor;
+  } = {},
+): PreparedSchedulerRuntime {
+  const invocation = (deps.resolveInvocation ?? resolveAkmInvocation)();
+  if (!invocation.eligible && !explicitRebind) {
+    throw new UsageError(
+      `Refusing to ${operation} from an ineligible ${invocation.kind ?? "unknown"} invocation (${invocation.argv.join(" ")}).`,
+      "INVALID_FLAG_VALUE",
+      "npm-global ownership could not be verified. Run `npm install --global akm-cli` and use that launcher, use a standalone installation, or explicitly repeat the operation with --rebind.",
+    );
+  }
+  const contextPath = (deps.writeDescriptor ?? writeSchedulerContextDescriptor)(schedulerContextDescriptor());
+  return { binding: invocation.argv, contextPath };
+}
+
+function groupInstalledBindings(entries: readonly InstalledTaskRef[]): TasksDoctorResult["bindings"] {
+  const groups = new Map<string, TasksDoctorResult["bindings"][number]>();
+  for (const entry of entries) {
+    const argv = entry.binding ?? [];
+    const status = inspectInstalledBinding(entry);
+    const key = JSON.stringify([argv, entry.contextPath ?? null, status]);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.taskIds.push(entry.id);
+      continue;
+    }
+    groups.set(key, {
+      argv,
+      ...(entry.contextPath !== undefined ? { contextPath: entry.contextPath } : {}),
+      taskIds: [entry.id],
+      status,
+    });
+  }
+  return [...groups.values()].map((group) => ({ ...group, taskIds: group.taskIds.sort() }));
+}
+
+function inspectInstalledBinding(entry: InstalledTaskRef): string[] {
+  const status: string[] = [];
+  if (!entry.binding || entry.binding.length === 0) status.push("missing-binding");
+  if (!entry.contextPath) status.push("legacy");
+  const binding = entry.binding ?? [];
+  if (
+    binding.some(
+      (part) =>
+        /(?:^|[\\/])src[\\/]cli\.ts$|(?:^|[\\/])dist[\\/](?:cli\.js|cli-node\.mjs)$/i.test(part) ||
+        (path.isAbsolute(part) && hasGitAncestor(part)),
+    )
+  ) {
+    status.push("checkout");
+  }
+  if (binding.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
+  if (entry.contextPath) {
+    try {
+      validateSchedulerContextDescriptor(entry.contextPath);
+    } catch {
+      status.push("invalid-context");
+    }
+  }
+  const absolutePaths = [
+    ...binding.filter((part) => path.isAbsolute(part)),
+    ...(entry.contextPath ? [entry.contextPath] : []),
+  ];
+  if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
+  if (status.length === 0) status.push("ok");
+  return status;
+}
+
+function hasGitAncestor(file: string): boolean {
+  let current: string;
+  try {
+    current = path.dirname(fs.realpathSync(file));
+  } catch {
+    return false;
+  }
+  for (;;) {
+    if (fs.existsSync(path.join(current, ".git"))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
 
 function taskAssetRef(id: string): AssetRef {
   return { type: "task", name: id };

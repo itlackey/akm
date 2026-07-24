@@ -26,10 +26,9 @@ export type { ProposalValidationFinding, ProposalValidationReport } from "../pro
 
 /**
  * Validate a proposal payload before promotion. Generic by default — any
- * proposal must parse cleanly and carry a non-empty body. Workflows run their
- * canonical structural parser, and lessons get the extra per-type lint from
- * {@link lintLessonContent}. Other asset types can hook here without changing
- * call sites.
+ * proposal must parse cleanly and carry a non-empty body. Asset types in the
+ * fail-closed canonical registry run their existing parser or validator; types
+ * without one remain on generic validation.
  */
 export function validateProposal(proposal: Proposal): ProposalValidationReport {
   return runProposalValidators(proposal);
