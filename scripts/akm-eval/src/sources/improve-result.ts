@@ -12,6 +12,8 @@
  */
 
 import { Database } from "bun:sqlite";
+import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import { decodeImproveResult, type ImproveResultEnvelope } from "../../../../src/core/improve-result";
 import { pathExists, resolveStateDbPath } from "./paths";
 import { type ReplayPlayer, type ReplayRecorder } from "./replay-log";
@@ -25,19 +27,31 @@ interface ImproveRunRow {
   result_json: string;
 }
 
+const scopedDataDir = new AsyncLocalStorage<string>();
+
+/** Scope legacy improve-result calls to the current EvalContext data directory. */
+export function withImproveResultDataDir<T>(dataDir: string, fn: () => T): T {
+  return scopedDataDir.run(dataDir, fn);
+}
+
+function improveStateDbPath(dataDir?: string): string {
+  const explicitDataDir = dataDir ?? scopedDataDir.getStore();
+  return explicitDataDir ? path.join(explicitDataDir, "state.db") : resolveStateDbPath();
+}
+
 /**
  * List the N most-recent improve run ids in chronological order (oldest
  * first, matching the legacy "lexicographic readdirSync over .akm/runs/*"
  * behaviour the runners depend on). Excludes dry-run rows. When `n <= 0`,
  * returns every non-dry-run row.
  */
-export function listRecentImproveRunIds(n: number): string[] {
+export function listRecentImproveRunIds(n: number, dataDir?: string): string[] {
   // A fresh checkout (or any stash that has never run `improve`) has no
   // state.db. Treat "no database" as "no runs" so read-only history audits
   // skip cleanly instead of throwing on a readonly open of a missing file.
   // This also keeps record/replay deterministic: both passes see [] rather
   // than diverging on whether a later case happened to create state.db.
-  const dbPath = resolveStateDbPath();
+  const dbPath = improveStateDbPath(dataDir);
   if (!pathExists(dbPath)) return [];
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -59,10 +73,10 @@ export function listRecentImproveRunIds(n: number): string[] {
  * Excludes dry-run rows so productivity audits aren't polluted (closes the
  * dry-run artifact-trap recorded in feedback_akm_dryrun_artifact_trap).
  */
-export function resolveImproveRunId(_stashRoot: string, ref: string): string {
+export function resolveImproveRunId(_stashRoot: string, ref: string, dataDir?: string): string {
   // No state.db ⇒ no runs; surface the same "no rows" error the empty-table
   // path gives rather than a raw sqlite "unable to open database file".
-  const dbPath = resolveStateDbPath();
+  const dbPath = improveStateDbPath(dataDir);
   if (!pathExists(dbPath)) {
     throw new Error(`improve_runs row not found: ${ref} (no state.db at ${dbPath})`);
   }
@@ -84,6 +98,8 @@ export function resolveImproveRunId(_stashRoot: string, ref: string): string {
 }
 
 export interface LoadImproveResultOptions {
+  /** Explicit data directory containing state.db. */
+  dataDir?: string;
   /** When set, the resolved row is recorded for later replay. */
   recorder?: ReplayRecorder;
   /**
@@ -118,7 +134,8 @@ export function loadImproveResult(
   if (opts.recorder && opts.player) {
     throw new Error("loadImproveResult: cannot record and play back simultaneously");
   }
-  const runId = resolveImproveRunId(stashRoot, ref);
+  const dbPath = improveStateDbPath(opts.dataDir);
+  const runId = resolveImproveRunId(stashRoot, ref, opts.dataDir);
   const locator = `state.db//improve_runs/${runId}`;
   let raw: string;
   let storedStrategy: string | null | undefined;
@@ -126,7 +143,7 @@ export function loadImproveResult(
   if (opts.player) {
     raw = opts.player.nextImproveResult(locator);
   } else {
-    const db = new Database(resolveStateDbPath(), { readonly: true });
+    const db = new Database(dbPath, { readonly: true });
     try {
       const row = db
         .prepare("SELECT profile AS legacy_profile, strategy, result_json FROM improve_runs WHERE id = ?")

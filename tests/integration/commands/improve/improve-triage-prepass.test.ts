@@ -23,8 +23,11 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { DrainResult } from "../../../../src/commands/proposal/drain";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
+import { readEvents } from "../../../../src/core/events";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import { akmIndex } from "../../../../src/indexer/indexer";
+import { LLM_USAGE_EVENT, LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
+import { emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -115,6 +118,99 @@ describe("akm improve — triage pre-pass", () => {
     },
     TIMEOUT_MS,
   );
+
+  test(
+    "one usage sink covers prepass and long-lived DB phases",
+    async () => {
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        ensureIndexFn: async () => undefined,
+        collectEligibleRefsFn: (async () => ({
+          plannedRefs: [],
+          memorySummary: { eligible: 0, derived: 0 },
+          strategyFilteredRefs: [],
+        })) as never,
+        drainProposalsFn: (async () => {
+          emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 1, model: "prepass" });
+          return emptyDrainResult();
+        }) as never,
+        runImprovePreparationStageFn: (async () => {
+          emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 2, model: "main-run" });
+          return {
+            actionableRefs: [],
+            loopRefs: [],
+            distillOnlyRefs: [],
+            distillCooledRefs: new Set(),
+            signalBearingSet: new Set(),
+            utilityMap: new Map(),
+            actions: [],
+            cleanupWarnings: [],
+            validationFailures: [],
+            schemaRepairs: [],
+            coverageGaps: [],
+            recentErrors: {},
+            consolidation: {
+              schemaVersion: 1,
+              ok: true,
+              shape: "consolidate-result",
+              dryRun: false,
+              previewOnly: false,
+              target: "memory",
+              processed: 0,
+              merged: 0,
+              deleted: 0,
+              promoted: [],
+              contradicted: 0,
+              warnings: [],
+            },
+            consolidationRan: false,
+          };
+        }) as never,
+        runImproveLoopStageFn: (async () => ({
+          reflectsWithErrorContext: 0,
+          memoryRefsForInference: new Set(),
+        })) as never,
+        runImprovePostLoopStageFn: (async () => ({
+          allWarnings: [],
+          memoryInferenceDurationMs: 0,
+          graphExtractionDurationMs: 0,
+        })) as never,
+      });
+
+      expect(result.ok).toBe(true);
+      const usageEvents = readEvents({ type: LLM_USAGE_EVENT }).events;
+      expect(usageEvents.map((event) => event.metadata?.model)).toEqual(["prepass", "main-run"]);
+      const summaries = readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events;
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.metadata).toEqual({ expectedTerminalRecords: 2 });
+    },
+    TIMEOUT_MS,
+  );
+
+  test("a failure before long-lived DB setup disposes the prepass sink once", async () => {
+    await expect(
+      akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        ensureIndexFn: async () => undefined,
+        drainProposalsFn: (async () => {
+          emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 1, model: "prepass" });
+          return emptyDrainResult();
+        }) as never,
+        collectEligibleRefsFn: (async () => {
+          throw new Error("planning failed");
+        }) as never,
+      }),
+    ).rejects.toThrow("planning failed");
+
+    expect(hasLlmUsageSink()).toBe(false);
+    const summaries = readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events;
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.metadata).toEqual({ expectedTerminalRecords: 1 });
+  });
 
   test(
     "passes the frozen named target and config snapshot into triage",

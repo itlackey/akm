@@ -24,15 +24,23 @@
 import { appendEvent, type EventsContext } from "../core/events";
 import { clearLlmUsageSink, hasLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "./usage-telemetry";
 
+type EventsContextSource = EventsContext | (() => EventsContext);
+
 /** Event type for persisted per-call LLM usage telemetry. */
 export const LLM_USAGE_EVENT = "llm_usage";
+/** Event type for the owning sink's terminal-record count marker. */
+export const LLM_USAGE_SUMMARY_EVENT = "llm_usage_summary";
 
 /**
  * Project a usage record into event metadata, dropping `undefined` token
  * fields so an absent-usage call records only `{stage, model, durationMs}`.
  */
 function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
-  const metadata: Record<string, unknown> = { durationMs: record.durationMs };
+  const metadata: Record<string, unknown> = {
+    durationMs: record.durationMs,
+    outcome: record.outcome,
+    modelSource: record.modelSource,
+  };
   if (record.stage !== undefined) metadata.stage = record.stage;
   if (record.engine !== undefined) metadata.engine = record.engine;
   if (record.process !== undefined) metadata.process = record.process;
@@ -42,6 +50,7 @@ function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
   if (record.completionTokens !== undefined) metadata.completionTokens = record.completionTokens;
   if (record.totalTokens !== undefined) metadata.totalTokens = record.totalTokens;
   if (record.reasoningTokens !== undefined) metadata.reasoningTokens = record.reasoningTokens;
+  if (record.errorCode !== undefined) metadata.errorCode = record.errorCode;
   return metadata;
 }
 
@@ -52,15 +61,32 @@ function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
  * test-isolation harness sees a clean sink between tests).
  *
  * `ctx` should carry the same long-lived `state.db` handle the caller already
- * opened for its other events; when omitted, `appendEvent` falls back to its
- * default open-insert-close path.
+ * opened for its other events. A getter is resolved for every append so a
+ * caller can replace its context binding without replacing this owning sink.
+ * When omitted, `appendEvent` falls back to its default open-insert-close path.
  */
-export function installLlmUsagePersistence(ctx?: EventsContext): () => void {
+export function installLlmUsagePersistence(ctx?: EventsContextSource): () => void {
+  let expectedTerminalRecords = 0;
+  let disposed = false;
   setLlmUsageSink((record) => {
-    appendEvent({ eventType: LLM_USAGE_EVENT, metadata: toEventMetadata(record) }, ctx);
+    expectedTerminalRecords += 1;
+    appendEvent(
+      { eventType: LLM_USAGE_EVENT, metadata: toEventMetadata(record) },
+      typeof ctx === "function" ? ctx() : ctx,
+    );
   });
   return () => {
+    if (disposed) return;
+    disposed = true;
     clearLlmUsageSink();
+    try {
+      appendEvent(
+        { eventType: LLM_USAGE_SUMMARY_EVENT, metadata: { expectedTerminalRecords } },
+        typeof ctx === "function" ? ctx() : ctx,
+      );
+    } catch {
+      // Persistence remains best-effort even during run teardown.
+    }
   };
 }
 
@@ -71,7 +97,7 @@ export function installLlmUsagePersistence(ctx?: EventsContext): () => void {
  * enclosing run the existing per-run sink keeps ownership; the returned
  * disposer then does nothing, so the enclosing run's `finally` still clears it.
  */
-export function installLlmUsagePersistenceIfAbsent(ctx?: EventsContext): () => void {
+export function installLlmUsagePersistenceIfAbsent(ctx?: EventsContextSource): () => void {
   if (hasLlmUsageSink()) return () => {};
   return installLlmUsagePersistence(ctx);
 }

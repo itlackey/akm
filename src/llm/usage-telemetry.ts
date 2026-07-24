@@ -6,7 +6,8 @@
  * Per-call LLM usage telemetry (#576).
  *
  * `chatCompletion` captures usage + model + finish_reason + wall-time for
- * EVERY OpenAI-compatible call and emits one {@link LlmUsageRecord} through a
+ * EVERY OpenAI-compatible HTTP attempt and emits one terminal
+ * {@link LlmUsageRecord} through a
  * module-level sink. The sink indirection keeps `client.ts` free of any
  * dependency on the events/db layer: the application wires the sink to
  * persistence at startup / per improve run, and tests can inspect records in
@@ -28,10 +29,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * One record per `chatCompletion` call. Token fields are omitted (not zeroed)
- * when the provider response carried no usable usage block — a best-effort
- * record still captures `durationMs`, `model`, and `finishReason` so the call
- * is never invisible.
+ * One terminal record per chat-completion HTTP attempt. Token fields are
+ * omitted (not zeroed) when the provider response carried no usable usage
+ * block. Failed attempts still capture duration, configured model provenance,
+ * and a bounded error code so retries remain individually visible.
  */
 export interface LlmUsageRecord {
   /** Ambient pipeline stage, e.g. `"memory-inference"`. `undefined` outside any stage scope. */
@@ -40,7 +41,11 @@ export interface LlmUsageRecord {
   engine?: string;
   /** Owning process, e.g. `reflect` or `graphExtraction`. */
   process?: string;
-  /** Model id echoed by the provider response, falling back to the request's configured model. */
+  /** Whether this HTTP attempt completed successfully or terminated with an error. */
+  outcome: "success" | "error";
+  /** Whether `model` came from a nonempty provider response field or the request configuration. */
+  modelSource: "response" | "configured";
+  /** Model id echoed by the provider response, or the request's configured fallback. */
   model?: string;
   /** Wall-clock duration of the HTTP request/response cycle, in milliseconds. */
   durationMs: number;
@@ -51,7 +56,18 @@ export interface LlmUsageRecord {
   reasoningTokens?: number;
   /** OpenAI `finish_reason` (`stop`, `length`, `content_filter`, …), when present. */
   finishReason?: string;
+  /** Bounded failure category. Present only for error outcomes. */
+  errorCode?: LlmUsageErrorCode;
 }
+
+export type LlmUsageErrorCode =
+  | "rate_limited"
+  | "provider_error"
+  | "provider_html_error"
+  | "network_error"
+  | "parse_error"
+  | "timeout"
+  | "unknown_error";
 
 /** Receives one {@link LlmUsageRecord} per LLM call. Must not throw to callers (errors are swallowed). */
 export type LlmUsageSink = (record: LlmUsageRecord) => void;
@@ -141,13 +157,34 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function asLlmUsageErrorCode(value: unknown): LlmUsageErrorCode | undefined {
+  switch (value) {
+    case "rate_limited":
+    case "provider_error":
+    case "provider_html_error":
+    case "network_error":
+    case "parse_error":
+    case "timeout":
+    case "unknown_error":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
 /** Decode durable event metadata with the same validation used by health aggregation. */
 export function decodeLlmUsageRecord(value: unknown): LlmUsageRecord | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
   const durationMs = asFiniteNonNegative(raw.durationMs);
   if (durationMs === undefined) return undefined;
-  const record: LlmUsageRecord = { durationMs };
+  // Historical rows predate terminal provenance. Keep health aggregation
+  // backward-compatible while conservatively treating their model as configured,
+  // never response-observed.
+  const outcome = raw.outcome === "success" || raw.outcome === "error" ? raw.outcome : "success";
+  const modelSource =
+    raw.modelSource === "response" || raw.modelSource === "configured" ? raw.modelSource : "configured";
+  const record: LlmUsageRecord = { durationMs, outcome, modelSource };
   for (const key of ["stage", "engine", "process", "model", "finishReason"] as const) {
     const decoded = asNonEmptyString(raw[key]);
     if (decoded !== undefined) record[key] = decoded;
@@ -156,6 +193,8 @@ export function decodeLlmUsageRecord(value: unknown): LlmUsageRecord | undefined
     const decoded = asFiniteNonNegative(raw[key]);
     if (decoded !== undefined) record[key] = decoded;
   }
+  const errorCode = asLlmUsageErrorCode(raw.errorCode);
+  if (errorCode !== undefined) record.errorCode = errorCode;
   return record;
 }
 

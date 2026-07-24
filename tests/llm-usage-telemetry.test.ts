@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config/config";
-import { chatCompletion } from "../src/llm/client";
+import { chatCompletion, LlmCallError } from "../src/llm/client";
 import {
   clearLlmUsageSink,
   currentLlmStage,
@@ -25,6 +25,10 @@ const CONFIG: LlmConnectionConfig = {
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
+function terminalRecord(overrides: Partial<LlmUsageRecord> = {}): LlmUsageRecord {
+  return { outcome: "success", modelSource: "configured", durationMs: 1, ...overrides };
 }
 
 function fullChatResponse(): Record<string, unknown> {
@@ -51,20 +55,20 @@ describe("usage-telemetry sink lifecycle", () => {
   test("no sink installed is a no-op (hasLlmUsageSink false)", () => {
     expect(hasLlmUsageSink()).toBe(false);
     // Must not throw when no sink is present.
-    emitLlmUsage({ durationMs: 1 });
+    emitLlmUsage(terminalRecord());
   });
 
   test("set then clear toggles hasLlmUsageSink and routing", () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
     expect(hasLlmUsageSink()).toBe(true);
-    emitLlmUsage({ durationMs: 3, model: "m" });
+    emitLlmUsage(terminalRecord({ durationMs: 3, model: "m" }));
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ durationMs: 3, model: "m" });
 
     clearLlmUsageSink();
     expect(hasLlmUsageSink()).toBe(false);
-    emitLlmUsage({ durationMs: 4 });
+    emitLlmUsage(terminalRecord({ durationMs: 4 }));
     expect(records).toHaveLength(1); // cleared sink received nothing
   });
 
@@ -73,7 +77,7 @@ describe("usage-telemetry sink lifecycle", () => {
       throw new Error("sink boom");
     });
     // Would throw if emitLlmUsage did not swallow sink errors.
-    expect(() => emitLlmUsage({ durationMs: 1 })).not.toThrow();
+    expect(() => emitLlmUsage(terminalRecord())).not.toThrow();
   });
 });
 
@@ -86,7 +90,7 @@ describe("withLlmStage ambient attribution", () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
     withLlmStage("reflect", () => {
-      emitLlmUsage({ durationMs: 1 });
+      emitLlmUsage(terminalRecord());
     });
     expect(records[0]?.stage).toBe("reflect");
   });
@@ -98,7 +102,7 @@ describe("withLlmStage ambient attribution", () => {
     async function deepCall(): Promise<void> {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      emitLlmUsage({ durationMs: 2 });
+      emitLlmUsage(terminalRecord({ durationMs: 2 }));
     }
 
     await withLlmStage("memory-inference", async () => {
@@ -116,7 +120,7 @@ describe("withLlmStage ambient attribution", () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
     withLlmStage("reflect", () => {
-      emitLlmUsage({ durationMs: 1, stage: "explicit" });
+      emitLlmUsage(terminalRecord({ stage: "explicit" }));
     });
     expect(records[0]?.stage).toBe("explicit");
   });
@@ -124,7 +128,7 @@ describe("withLlmStage ambient attribution", () => {
   test("stamps durable engine and process attribution", () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
-    withLlmStage("graph-extraction", () => emitLlmUsage({ durationMs: 7 }), {
+    withLlmStage("graph-extraction", () => emitLlmUsage(terminalRecord({ durationMs: 7 })), {
       engine: "local-graph",
       process: "graphExtraction",
     });
@@ -171,7 +175,15 @@ describe("decodeLlmUsageRecord", () => {
         stage: "reflect",
         totalTokens: 9,
       }),
-    ).toEqual({ durationMs: 12, engine: "fast", process: "reflect", stage: "reflect", totalTokens: 9 });
+    ).toEqual({
+      durationMs: 12,
+      engine: "fast",
+      process: "reflect",
+      stage: "reflect",
+      totalTokens: 9,
+      outcome: "success",
+      modelSource: "configured",
+    });
     expect(decodeLlmUsageRecord({ engine: "fast" })).toBeUndefined();
     expect(decodeLlmUsageRecord({ durationMs: -1 })).toBeUndefined();
   });
@@ -190,15 +202,17 @@ describe("chatCompletion usage capture", () => {
     expect(content).toBe("hello");
     expect(records).toHaveLength(1);
     const rec = records[0];
-    expect(rec!.stage).toBe("distill");
-    expect(rec!.model).toBe("served-model-7b");
-    expect(rec!.finishReason).toBe("stop");
-    expect(rec!.promptTokens).toBe(12);
-    expect(rec!.completionTokens).toBe(8);
-    expect(rec!.totalTokens).toBe(20);
-    expect(rec!.reasoningTokens).toBe(5);
-    expect(typeof rec!.durationMs).toBe("number");
-    expect(rec!.durationMs).toBeGreaterThanOrEqual(0);
+    expect(rec?.stage).toBe("distill");
+    expect(rec?.outcome).toBe("success");
+    expect(rec?.model).toBe("served-model-7b");
+    expect(rec?.modelSource).toBe("response");
+    expect(rec?.finishReason).toBe("stop");
+    expect(rec?.promptTokens).toBe(12);
+    expect(rec?.completionTokens).toBe(8);
+    expect(rec?.totalTokens).toBe(20);
+    expect(rec?.reasoningTokens).toBe(5);
+    expect(typeof rec?.durationMs).toBe("number");
+    expect(rec?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   test("absent usage block still records duration + model (token fields omitted)", async () => {
@@ -212,14 +226,16 @@ describe("chatCompletion usage capture", () => {
 
     expect(records).toHaveLength(1);
     const rec = records[0];
-    expect(rec!.durationMs).toBeGreaterThanOrEqual(0);
+    expect(rec?.durationMs).toBeGreaterThanOrEqual(0);
     // Provider omitted `model`, so we fall back to the configured model.
-    expect(rec!.model).toBe("configured-model");
-    expect(rec!.promptTokens).toBeUndefined();
-    expect(rec!.completionTokens).toBeUndefined();
-    expect(rec!.totalTokens).toBeUndefined();
-    expect(rec!.reasoningTokens).toBeUndefined();
-    expect(rec!.finishReason).toBeUndefined();
+    expect(rec?.model).toBe("configured-model");
+    expect(rec?.outcome).toBe("success");
+    expect(rec?.modelSource).toBe("configured");
+    expect(rec?.promptTokens).toBeUndefined();
+    expect(rec?.completionTokens).toBeUndefined();
+    expect(rec?.totalTokens).toBeUndefined();
+    expect(rec?.reasoningTokens).toBeUndefined();
+    expect(rec?.finishReason).toBeUndefined();
   });
 
   test("garbled usage block degrades to duration + model only", async () => {
@@ -236,8 +252,8 @@ describe("chatCompletion usage capture", () => {
     );
 
     expect(records).toHaveLength(1);
-    expect(records[0]!.promptTokens).toBeUndefined();
-    expect(records[0]!.completionTokens).toBeUndefined();
+    expect(records[0]?.promptTokens).toBeUndefined();
+    expect(records[0]?.completionTokens).toBeUndefined();
   });
 
   test("a throwing sink does not fail the LLM call", async () => {
@@ -251,5 +267,66 @@ describe("chatCompletion usage capture", () => {
     );
 
     expect(content).toBe("hello");
+  });
+
+  test("emits one configured-source terminal error for each representative failure", async () => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    const cases: Array<{ code: LlmUsageRecord["errorCode"]; response: () => Response }> = [
+      {
+        code: "network_error",
+        response: () => {
+          throw new Error("offline");
+        },
+      },
+      {
+        code: "timeout",
+        response: () => {
+          throw new DOMException("aborted", "AbortError");
+        },
+      },
+      { code: "provider_error", response: () => new Response("bad request", { status: 400 }) },
+      {
+        code: "provider_html_error",
+        response: () => new Response("<!doctype html><html><body>unavailable</body></html>"),
+      },
+      { code: "parse_error", response: () => new Response("not json") },
+    ];
+
+    for (const failure of cases) {
+      records.length = 0;
+      await expect(
+        withMockedFetch(() => chatCompletion(CONFIG, [{ role: "user", content: "hi" }]), failure.response),
+      ).rejects.toBeInstanceOf(LlmCallError);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        outcome: "error",
+        errorCode: failure.code,
+        model: "configured-model",
+        modelSource: "configured",
+      });
+    }
+  });
+
+  test("emits one terminal record for each retry attempt", async () => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    let calls = 0;
+
+    const content = await withMockedFetch(
+      () =>
+        chatCompletion(CONFIG, [{ role: "user", content: "hi" }], {
+          sleep: async () => {},
+        } as Parameters<typeof chatCompletion>[2] & { sleep: (ms: number) => Promise<void> }),
+      () => {
+        calls += 1;
+        return calls === 1 ? new Response("retry", { status: 500 }) : jsonResponse(fullChatResponse());
+      },
+    );
+
+    expect(content).toBe("hello");
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({ outcome: "error", errorCode: "provider_error" });
+    expect(records[1]).toMatchObject({ outcome: "success", modelSource: "response", model: "served-model-7b" });
   });
 });

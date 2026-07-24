@@ -37,6 +37,25 @@ scripts/akm-eval/bin/akm-eval-collect --from-improve-run latest
 
 # Read-only memory-inference and graph-extraction downstream attribution
 scripts/akm-eval/bin/akm-eval-attribution-rollup --format json
+
+# Capture one immutable full-installation input for control/treatment evaluation
+scripts/akm-eval/bin/akm-eval-snapshot capture \
+  --out "$HOME/.cache/akm-eval/snapshots/baseline" \
+  --producer-version "0.9.0-rc.10" \
+  --producer-commit "$(git rev-parse HEAD)"
+
+# Structural smoke from the same snapshot. If improve invokes an LLM, omitting
+# endpoint identity below intentionally makes the result inconclusive.
+scripts/akm-eval/bin/akm-eval-twin \
+  --snapshot "$HOME/.cache/akm-eval/snapshots/baseline" \
+  --suite improve-smoke \
+  --akm "bun $PWD/src/cli.ts" \
+  --out "$HOME/.cache/akm-eval/results" \
+  --samples 2 --required-samples 2 \
+  --protected-case retrieval-search-returns-hits \
+  --minimum-deterministic-lift 0.01 --protected-loss-margin 0 \
+  --max-treatment-tokens 200000 --max-treatment-calls 100 \
+  --max-treatment-duration-ms 3600000
 ```
 
 Outputs land in `<stash>/.akm/evals/runs/<eval-run-id>/`:
@@ -58,6 +77,112 @@ left untouched.
 
 - `bun` >= 1.0 on `$PATH` (same as the rest of the repo).
 - `akm` on `$PATH` (or override with `--akm <bin>` / `AKM_BIN`).
+
+## Frozen twin evaluation
+
+`akm-eval-snapshot` captures one verified input before either experiment arm is
+created. It copies configured bundle roots, `config.json`, `index.db`, and
+`state.db` into a canonical, private manifest. The SQLite databases are copied
+without content redaction and may contain sensitive historical metadata, so the
+entire snapshot is private-sensitive and must stay on trusted local storage.
+Capture fails rather than silently weakening privacy or reproducibility when it
+encounters literal config secrets, known secret-bearing bundle paths, links,
+executable files, empty nested directories, mutable source trees, or
+non-private source permissions.
+Use repeated `--bundle id=/materialized/path` arguments for configured git,
+website, or npm bundles whose local roots cannot be derived from config.
+
+```sh
+scripts/akm-eval/bin/akm-eval-snapshot verify \
+  "$HOME/.cache/akm-eval/snapshots/baseline"
+```
+
+`akm-eval-twin` materializes independent opaque control and treatment copies
+for each sample. The control is indexed and evaluated without improve; the
+treatment runs the current improve command, reindexes, and evaluates the same
+suite. Zero cases, failed commands, identity drift, incomplete telemetry,
+fingerprint mismatches, and unsupported `candidate-only` execution are
+`inconclusive`, never passes. Full artifacts and retained sandboxes are opt-in;
+the default output contains metrics only.
+
+Decision thresholds are mandatory and predeclared with
+`--minimum-deterministic-lift`, `--protected-loss-margin`,
+`--max-treatment-tokens`, `--max-treatment-calls`,
+`--max-treatment-duration-ms`, and `--required-samples`. At least one case must
+be protected with a `protected`/`regression-guard` suite tag or a repeated
+`--protected-case <id>` argument. The duration budget measures the complete
+improve subprocess wall time; model-call duration remains separate throughput
+telemetry.
+
+Use
+`--endpoint-metadata`, `--endpoint-assignment balanced`, and a mode-0600
+`--endpoint-runtime` file for compatible dual-endpoint runs. Endpoint runtime
+values affect only the treatment improve call and are never serialized. Model
+identity is accepted only when complete `llm_usage` telemetry reports the
+assigned model ID; prompt fingerprints remain operator-attested metadata.
+Use a separate mode-0600 `--common-runtime` file shaped as `{ "env": { ... } }`
+for embedding credentials or other values that must be identical during both
+arms' index, improve base environment, reindex, and evaluation phases.
+
+A conclusive single-endpoint LLM run supplies all private and identity inputs:
+
+```sh
+chmod 600 "$HOME/.config/akm-eval/common-runtime.json" \
+  "$HOME/.config/akm-eval/endpoint-runtime.json"
+
+scripts/akm-eval/bin/akm-eval-twin \
+  --snapshot "$HOME/.cache/akm-eval/snapshots/baseline" \
+  --suite improve-smoke \
+  --akm "bun $PWD/src/cli.ts" \
+  --out "$HOME/.cache/akm-eval/results" \
+  --samples 2 --required-samples 2 \
+  --protected-case retrieval-search-returns-hits \
+  --endpoint-metadata "$HOME/.config/akm-eval/local-a.json" \
+  --endpoint-assignment local-a \
+  --endpoint-runtime "$HOME/.config/akm-eval/endpoint-runtime.json" \
+  --common-runtime "$HOME/.config/akm-eval/common-runtime.json" \
+  --minimum-deterministic-lift 0.01 --protected-loss-margin 0 \
+  --max-treatment-tokens 200000 --max-treatment-calls 100 \
+  --max-treatment-duration-ms 3600000
+```
+
+The endpoint runtime file is keyed by endpoint ID, for example
+`{ "local-a": { "env": { ... } } }`. Endpoint metadata must use the strict
+`EndpointFingerprint` shape in `src/twin-types.ts`; its serving fingerprint is
+the canonical hash produced by `deriveEndpointServingFingerprint`. A completed
+LLM run is still inconclusive unless every request attempt has exact terminal
+accounting and reports a response-observed model matching `modelId`.
+
+For OS-level process isolation, run the same experiment through Docker. This
+bare form is likewise an intentionally inconclusive structural smoke if improve
+invokes an LLM:
+
+```sh
+scripts/akm-eval/bin/akm-eval-twin-docker \
+  --snapshot "$HOME/.cache/akm-eval/snapshots/baseline" \
+  --suite improve-smoke \
+  --out "$HOME/.cache/akm-eval/results" \
+  --samples 2 --required-samples 2 \
+  --protected-case retrieval-search-returns-hits \
+  --minimum-deterministic-lift 0.01 --protected-loss-margin 0 \
+  --max-treatment-tokens 200000 --max-treatment-calls 100 \
+  --max-treatment-duration-ms 3600000
+```
+
+The Docker launcher copies an explicit source allowlist into a private temporary
+build context, builds the current workspace, supplies that build as the AKM
+command, mounts snapshots read-only, and forwards no host environment or
+credentials. Snapshot, output, metadata, and runtime paths must stay outside the
+workspace. Shared credentials belong in `--common-runtime`; treatment endpoint
+routing belongs in `--endpoint-runtime`. Keep bind sources outside `/tmp` and
+`/var/tmp`; Docker daemons using systemd `PrivateTmp` can otherwise mount an
+empty directory.
+
+For a conclusive Docker LLM run, add the same `--endpoint-metadata`,
+`--endpoint-assignment`, `--endpoint-runtime`, and `--common-runtime` arguments
+shown above. When a local endpoint must be reached through the host network on
+Linux, set `AKM_EVAL_TWIN_DOCKER_NETWORK=host`; latency remains endpoint-specific
+and is not interpreted as a treatment effect across different hardware.
 
 ## Replay mode (Phase 6)
 
@@ -391,6 +516,8 @@ machinery is verified and the metrics block is still emitted.
 - `cases/workflow-compliance/` — Phase 3 event-trace compliance suite.
 - `cases/judge-calibration/` — Phase 4 probe suite (8 hand-graded
   probes spread across all four `expectedOutcome` bands).
+- `cases/consolidation-fidelity/` — deterministic claim and provenance
+  preservation fixtures for grading generated consolidation candidates.
 
 Author your own suite by creating a sibling directory. Each case is a
 JSON file matching the `EvalCase` shape in `src/types.ts`.
@@ -470,6 +597,9 @@ scripts/akm-eval/
     akm-eval-replay        dispatches to src/replay.ts (Phase 6)
     akm-eval-recombine-analyze dispatches to the read-only cluster analyzer
     akm-eval-attribution-rollup dispatches to the read-only attribution report
+    akm-eval-snapshot      captures/verifies immutable installation snapshots
+    akm-eval-twin          runs process-isolated no-improve/current-improve twins
+    akm-eval-twin-docker   runs the twin evaluator in a fresh Docker container
   src/
     run.ts                 orchestrator (baseline | akm | paired)
     replay.ts              deterministic replay orchestrator (Phase 6)
@@ -478,6 +608,9 @@ scripts/akm-eval/
     collect.ts             improve-result.json ingestion command
     recombine-analyzer.ts  read-only current-index cluster analysis
     attribution-rollup.ts  read-only downstream attribution report
+    snapshot.ts            installation snapshot CLI
+    twin-run.ts            twin experiment orchestrator and decision gate
+    twin-types.ts          snapshot, endpoint, sample, and result contracts
     types.ts               EvalCase, EvalCaseResult, EvalRunResult
     scoring.ts             weighted aggregation
     report.ts              Markdown renderer

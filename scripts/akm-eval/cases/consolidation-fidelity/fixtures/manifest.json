@@ -1,0 +1,318 @@
+{
+  "schemaVersion": 1,
+  "purpose": "deterministic-fixture-authored-oracle-for-grading-generated-candidates",
+  "cases": [
+    {
+      "id": "lossy-operational-procedure-omitted",
+      "class": "operational-procedure-omitted",
+      "label": "lossy",
+      "description": "A generic summary drops the ordered key-rotation and rollback procedure.",
+      "sources": [
+        {
+          "ref": "memories/key-rotation-runbook",
+          "body": "Pause publishers before rotating the signing credential. Create the replacement, update the canary alias, verify one signed canary artifact, and then resume publishers."
+        },
+        {
+          "ref": "memories/key-rotation-rollback",
+          "body": "If canary verification fails, restore the previous alias before resuming publishers."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Signing credentials should be rotated regularly. Use a canary and follow the standard recovery process if validation reports a problem.",
+        "directProvenance": [
+          "memories/key-rotation-runbook",
+          "memories/key-rotation-rollback"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "pause-before-rotation",
+          "match": "literal",
+          "pattern": "pause publishers before rotating the signing credential"
+        },
+        {
+          "id": "rollback-before-resume",
+          "match": "literal",
+          "pattern": "restore the previous alias before resuming publishers"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "lossy-implementation-invariant-omitted",
+      "class": "implementation-invariant-omitted",
+      "label": "lossy",
+      "description": "The summary mentions checkpoints but loses the atomicity invariant.",
+      "sources": [
+        {
+          "ref": "memories/checkpoint-rename-invariant",
+          "body": "Commit the queue checkpoint only after every artifact rename succeeds. A failed rename must leave the checkpoint at its prior offset."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "The queue processor commits checkpoints while processing artifacts and reports rename failures for later investigation.",
+        "directProvenance": [
+          "memories/checkpoint-rename-invariant"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "all-renames-before-checkpoint",
+          "match": "literal",
+          "pattern": "commit the queue checkpoint only after every artifact rename succeeds"
+        },
+        {
+          "id": "failed-rename-preserves-offset",
+          "match": "regex",
+          "pattern": "failed rename must leave the checkpoint (?:at )?its prior offset"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "lossy-stale-contradiction-retained",
+      "class": "stale-contradiction-retained",
+      "label": "lossy",
+      "description": "The current ordering is retained, but the superseded inverse ordering is also presented as valid.",
+      "sources": [
+        {
+          "ref": "memories/output-lease-current",
+          "body": "Since schema 4, workers acquire the lease before opening the output file."
+        },
+        {
+          "ref": "memories/output-lease-superseded",
+          "body": "Before schema 4, workers could open the output file before acquiring the lease. This ordering is superseded."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Workers acquire the lease before opening the output file. For compatibility, workers may also open the output file before acquiring the lease.",
+        "directProvenance": [
+          "memories/output-lease-current",
+          "memories/output-lease-superseded"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "lease-before-open",
+          "match": "literal",
+          "pattern": "acquire the lease before opening the output file"
+        }
+      ],
+      "forbiddenClaims": [
+        {
+          "id": "superseded-open-before-lease",
+          "match": "literal",
+          "pattern": "open the output file before acquiring the lease"
+        }
+      ]
+    },
+    {
+      "id": "safe-procedure-deduplication",
+      "class": "defensible-compression",
+      "label": "safe",
+      "description": "Repeated deployment instructions are compressed without losing ordered actions.",
+      "sources": [
+        {
+          "ref": "memories/deploy-drain",
+          "body": "Drain the worker queue and wait until queue depth reaches zero before replacing the image."
+        },
+        {
+          "ref": "memories/deploy-health",
+          "body": "After replacing the image, run the health check. Resume workers only after the health check reports green."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "For deployment, drain the worker queue, wait until queue depth reaches zero, and replace the image. Run the health check and resume workers only after the health check reports green.",
+        "directProvenance": [
+          "memories/deploy-drain",
+          "memories/deploy-health"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "zero-depth-before-replace",
+          "match": "regex",
+          "pattern": "wait until queue depth reaches zero.{0,40}replace the image"
+        },
+        {
+          "id": "green-before-resume",
+          "match": "literal",
+          "pattern": "resume workers only after the health check reports green"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "safe-invariant-compression",
+      "class": "defensible-compression",
+      "label": "safe",
+      "description": "Two overlapping implementation notes become one concise atomicity rule.",
+      "sources": [
+        {
+          "ref": "memories/blob-rename-order",
+          "body": "A checkpoint is durable only after both the manifest rename and blob rename have succeeded."
+        },
+        {
+          "ref": "memories/blob-rename-failure",
+          "body": "Any manifest or blob rename failure leaves the checkpoint at the prior offset."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Treat the checkpoint as durable only after both renames succeed; any rename failure leaves the checkpoint at the prior offset.",
+        "directProvenance": [
+          "memories/blob-rename-order",
+          "memories/blob-rename-failure"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "both-renames-before-durable",
+          "match": "literal",
+          "pattern": "durable only after both renames succeed"
+        },
+        {
+          "id": "failure-preserves-offset",
+          "match": "literal",
+          "pattern": "any rename failure leaves the checkpoint at the prior offset"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "safe-superseded-policy-compression",
+      "class": "defensible-compression",
+      "label": "safe",
+      "description": "A superseded value is removed while the current policy is retained.",
+      "sources": [
+        {
+          "ref": "memories/cache-ttl-old",
+          "body": "The cache TTL was 30 seconds. This value was superseded on 2026-01-01."
+        },
+        {
+          "ref": "memories/cache-ttl-current",
+          "body": "The current cache TTL is 90 seconds."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "The current cache TTL is 90 seconds.",
+        "directProvenance": [
+          "memories/cache-ttl-old",
+          "memories/cache-ttl-current"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "current-ttl",
+          "match": "literal",
+          "pattern": "current cache TTL is 90 seconds"
+        }
+      ],
+      "forbiddenClaims": [
+        {
+          "id": "superseded-ttl",
+          "match": "literal",
+          "pattern": "cache TTL is 30 seconds"
+        }
+      ]
+    },
+    {
+      "id": "safe-legacy-current-provenance-equivalence",
+      "class": "provenance-equivalence",
+      "label": "safe",
+      "description": "Legacy and current ref spellings identify the same direct sources in both directions.",
+      "sources": [
+        {
+          "ref": "memory\u003aprovenance-alpha",
+          "body": "Alpha jobs require a signed request."
+        },
+        {
+          "ref": "lab//memories/provenance-beta",
+          "body": "Beta jobs require an expiry timestamp."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Alpha jobs require a signed request, and beta jobs require an expiry timestamp.",
+        "directProvenance": [
+          "memories/provenance-alpha",
+          "lab//memory\u003aprovenance-beta"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "signed-request",
+          "match": "literal",
+          "pattern": "alpha jobs require a signed request"
+        },
+        {
+          "id": "expiry-timestamp",
+          "match": "literal",
+          "pattern": "beta jobs require an expiry timestamp"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "lossy-equal-cardinality-unrelated-text",
+      "class": "cardinality-false-negative",
+      "label": "lossy",
+      "description": "An unrelated candidate has the same distinct-token cardinality and complete provenance but retains no source tokens or claims.",
+      "sources": [
+        {
+          "ref": "memories/cardinality-source",
+          "body": "Operators pause publishers rotate signing credentials update canary aliases verify signatures resume traffic archive previous keys record incident ticket"
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Gardeners prune orchards water citrus seedlings inspect trellises harvest apricots package baskets schedule market deliveries sharpen tools clean sheds",
+        "directProvenance": [
+          "memories/cardinality-source"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "pause-publishers",
+          "match": "literal",
+          "pattern": "pause publishers"
+        },
+        {
+          "id": "update-canary-aliases",
+          "match": "literal",
+          "pattern": "update canary aliases"
+        }
+      ],
+      "forbiddenClaims": []
+    },
+    {
+      "id": "lossy-negated-required-claim",
+      "class": "negation-adversarial",
+      "label": "lossy",
+      "description": "A positive substring is present only inside a statement that negates the required rule.",
+      "sources": [
+        {
+          "ref": "memories/signature-publication-rule",
+          "body": "Workers must verify signatures before publishing artifacts."
+        }
+      ],
+      "calibrationCandidate": {
+        "body": "Workers must not verify signatures before publishing artifacts.",
+        "directProvenance": [
+          "memories/signature-publication-rule"
+        ]
+      },
+      "requiredClaims": [
+        {
+          "id": "verify-before-publish",
+          "match": "literal",
+          "pattern": "verify signatures before publishing artifacts"
+        }
+      ],
+      "forbiddenClaims": [
+        {
+          "id": "negated-verification-rule",
+          "match": "literal",
+          "pattern": "must not verify signatures before publishing artifacts"
+        }
+      ]
+    }
+  ]
+}

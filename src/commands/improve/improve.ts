@@ -190,6 +190,14 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   let improveLockOwnership: LockOwnership | undefined;
   let exitBackstop: (() => void) | undefined;
+  // I1: open a single state.db connection for the main improve run so all
+  // appendEvent calls reuse one handle instead of open/migrate/close per call.
+  let eventsDb: import("../../storage/database").Database | undefined;
+  // Start boundary-pinned for prepass telemetry, then replace this binding with
+  // the long-lived handle after the prepass. The usage sink resolves it per
+  // append, so one owner and counter span both lifecycle phases.
+  let eventsCtx: EventsContext = { dbPath: resolvedStateDbPath };
+  let disposeLlmUsageSink = (): void => {};
   const releaseRunLock = (): void => {
     const ownership = improveLockOwnership;
     if (!ownership) return;
@@ -200,6 +208,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Best-effort cleanup. Exact ownership prevents deleting a successor.
     }
   };
+  const commitStashBatch = makeCommitStashBatch({
+    run: setup,
+    getInitialGitPaths: () => initialGitPaths,
+    // Captured via getter: the live `eventsCtx` binding is reassigned after the
+    // prepass, and the catch-path sync must write through the current context.
+    getEventsCtx: () => eventsCtx,
+  });
 
   if (!options.dryRun) {
     const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
@@ -217,6 +232,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         return buildLockSkippedResult(selectedStrategy.name, scope, options.runId);
       }
       improveLockOwnership = acquisition.ownership;
+      disposeLlmUsageSink = installLlmUsagePersistence(() => eventsCtx);
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
       initialGitPaths =
@@ -243,6 +259,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       return result;
     }
   } catch (err) {
+    // If the live prepass fails, emit its summary and clear the owning sink
+    // before any run teardown. The disposer is idempotent with the main finalizer.
+    disposeLlmUsageSink();
     clearBudgetTimer();
     if (exitBackstop) {
       process.removeListener("exit", exitBackstop);
@@ -251,27 +270,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     releaseRunLock();
     throw err;
   }
-
-  // I1: open a single state.db connection for the entire improve run so all
-  // appendEvent calls reuse one handle instead of open/migrate/close per call.
-  let eventsDb: import("../../storage/database").Database | undefined;
-  // `eventsCtx` is read by the main catch (improve_failed) and finally, so it
-  // lives in the outer scope. It is always assigned at the top of the try.
-  // Pinned to the boundary snapshot so the fallback per-call `appendEvent`
-  // opens (when the long-lived handle below fails to open) never re-read env.
-  let eventsCtx: EventsContext = { dbPath: resolvedStateDbPath };
-  // #576: clears the per-run LLM usage sink. Defaults to a no-op until the sink
-  // is installed inside the try; the `finally` always calls it.
-  let disposeLlmUsageSink = (): void => {};
-
-  const commitStashBatch = makeCommitStashBatch({
-    run: setup,
-    getInitialGitPaths: () => initialGitPaths,
-    // Captured via getter: the live `eventsCtx` binding is reassigned inside
-    // the try below, and the catch-path sync must write through whichever
-    // context is current (#662 / P6/P7 in the chunk-7 ledger).
-    getEventsCtx: () => eventsCtx,
-  });
 
   try {
     try {
@@ -283,12 +281,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // still pinned to the boundary-resolved path, never a live env re-read.
       eventsCtx = { dbPath: resolvedStateDbPath };
     }
-
-    // #576: persist per-call LLM usage telemetry for this run as `llm_usage`
-    // events, reusing the same boundary-pinned events context (and long-lived
-    // handle when available). Disposed in `finally` so the sink never leaks
-    // across runs. Wrapping is best-effort end to end — see usage-telemetry.ts.
-    disposeLlmUsageSink = installLlmUsagePersistence(eventsCtx);
 
     // WI-9.10: construct the run's RunContext here — the first point after
     // run-setup where config/stashDir/eventsCtx/proposalsCtx/sourceRun/dryRun

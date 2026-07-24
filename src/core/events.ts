@@ -117,8 +117,10 @@ export type EventType =
   | "proposal_creation_rejected"
   /** Emitted by the improve loop after each per-asset reflect call — carries `ok`, `durationMs`, `reason`. */
   | "improve_reflect_outcome"
-  /** Per-call LLM usage telemetry (#576) — carries `{stage?, model?, durationMs, *Tokens?, finishReason?}`. */
+  /** Per-attempt LLM usage telemetry (#576) — carries terminal outcome, model provenance, duration, and optional usage. */
   | "llm_usage"
+  /** Owning LLM telemetry sink marker — carries `{expectedTerminalRecords}`. */
+  | "llm_usage_summary"
   /**
    * WS-1 forgetting-safety rank-change report (plan §WS-1 step 7). Emitted once
    * per improve run on the second and subsequent runs, when the stash-wide rank

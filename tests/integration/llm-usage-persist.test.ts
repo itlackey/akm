@@ -3,17 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import path from "node:path";
 import { akmHealth } from "../../src/commands/health";
-import { readEvents } from "../../src/core/events";
+import { type EventsContext, readEvents } from "../../src/core/events";
+import { openStateDatabase } from "../../src/core/state-db";
 import {
   installLlmUsagePersistence,
   installLlmUsagePersistenceIfAbsent,
   LLM_USAGE_EVENT,
+  LLM_USAGE_SUMMARY_EVENT,
 } from "../../src/llm/usage-persist";
 import {
   clearLlmUsageSink,
   emitLlmUsage,
   hasLlmUsageSink,
+  type LlmUsageRecord,
   setLlmUsageSink,
   withLlmStage,
 } from "../../src/llm/usage-telemetry";
@@ -21,6 +25,10 @@ import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from ".
 
 let storage: IsolatedAkmStorage;
 let cleanup: Cleanup = () => {};
+
+function terminalRecord(overrides: Partial<LlmUsageRecord> = {}): LlmUsageRecord {
+  return { outcome: "success", modelSource: "configured", durationMs: 1, ...overrides };
+}
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
@@ -43,18 +51,20 @@ describe("installLlmUsagePersistence", () => {
     withLlmStage(
       "reflect",
       () => {
-        emitLlmUsage({
-          durationMs: 100,
-          model: "m",
-          finishReason: "stop",
-          promptTokens: 10,
-          completionTokens: 5,
-          totalTokens: 15,
-        });
+        emitLlmUsage(
+          terminalRecord({
+            durationMs: 100,
+            model: "m",
+            finishReason: "stop",
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
+          }),
+        );
       },
       { engine: "fast", process: "reflect" },
     );
-    emitLlmUsage({ durationMs: 50, model: "m" }); // unattributed, absent tokens
+    emitLlmUsage(terminalRecord({ durationMs: 50, model: "m" })); // unattributed, absent tokens
 
     dispose();
     expect(hasLlmUsageSink()).toBe(false);
@@ -77,6 +87,70 @@ describe("installLlmUsagePersistence", () => {
     expect(unattributed?.metadata).toMatchObject({ durationMs: 50, model: "m" });
     // Absent token fields are dropped, not zeroed.
     expect(unattributed?.metadata?.promptTokens).toBeUndefined();
+
+    const summaries = readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events;
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.metadata).toEqual({ expectedTerminalRecords: 2 });
+    expect(summaries[0]?.id).toBeGreaterThan(Math.max(...events.map((event) => event.id)));
+
+    dispose();
+    expect(readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events).toHaveLength(1);
+  });
+
+  test("summary counts records offered to the sink when a terminal insert is silently ignored", () => {
+    const db = openStateDatabase();
+    try {
+      db.exec(`
+        CREATE TRIGGER ignore_llm_usage
+        BEFORE INSERT ON events
+        WHEN NEW.event_type = 'llm_usage'
+        BEGIN
+          SELECT RAISE(IGNORE);
+        END;
+      `);
+      const dispose = installLlmUsagePersistence({ db });
+      emitLlmUsage(terminalRecord({ model: "configured-model" }));
+      dispose();
+
+      const rows = db.prepare("SELECT event_type, metadata_json FROM events ORDER BY id").all() as Array<{
+        event_type: string;
+        metadata_json: string;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.event_type).toBe(LLM_USAGE_SUMMARY_EVENT);
+      expect(JSON.parse(rows[0]?.metadata_json ?? "null")).toEqual({ expectedTerminalRecords: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("resolves a context getter for every usage record and the summary", () => {
+    const firstDb = openStateDatabase(path.join(storage.dataDir, "usage-first.db"));
+    const secondDb = openStateDatabase(path.join(storage.dataDir, "usage-second.db"));
+    let eventsCtx: EventsContext = { db: firstDb };
+    try {
+      const dispose = installLlmUsagePersistence(() => eventsCtx);
+      emitLlmUsage(terminalRecord({ model: "prepass" }));
+      eventsCtx = { db: secondDb };
+      emitLlmUsage(terminalRecord({ model: "main-run" }));
+      dispose();
+
+      const firstTypes = firstDb
+        .prepare("SELECT event_type FROM events ORDER BY id")
+        .all()
+        .map((row) => (row as { event_type: string }).event_type);
+      expect(firstTypes).toEqual([LLM_USAGE_EVENT]);
+
+      const secondRows = secondDb.prepare("SELECT event_type, metadata_json FROM events ORDER BY id").all() as Array<{
+        event_type: string;
+        metadata_json: string;
+      }>;
+      expect(secondRows.map((row) => row.event_type)).toEqual([LLM_USAGE_EVENT, LLM_USAGE_SUMMARY_EVENT]);
+      expect(JSON.parse(secondRows[1]?.metadata_json ?? "null")).toEqual({ expectedTerminalRecords: 2 });
+    } finally {
+      firstDb.close();
+      secondDb.close();
+    }
   });
 });
 
@@ -88,12 +162,12 @@ describe("installLlmUsagePersistenceIfAbsent", () => {
     });
 
     const dispose = installLlmUsagePersistenceIfAbsent();
-    emitLlmUsage({ durationMs: 1 });
+    emitLlmUsage(terminalRecord());
     expect(outerCalls).toBe(1); // still the outer sink
 
     dispose(); // no-op: must NOT clear the outer sink
     expect(hasLlmUsageSink()).toBe(true);
-    emitLlmUsage({ durationMs: 1 });
+    emitLlmUsage(terminalRecord());
     expect(outerCalls).toBe(2);
   });
 
@@ -101,7 +175,7 @@ describe("installLlmUsagePersistenceIfAbsent", () => {
     expect(hasLlmUsageSink()).toBe(false);
     const dispose = installLlmUsagePersistenceIfAbsent();
     expect(hasLlmUsageSink()).toBe(true);
-    emitLlmUsage({ durationMs: 7, model: "m" });
+    emitLlmUsage(terminalRecord({ durationMs: 7, model: "m" }));
     dispose();
     expect(readEvents({ type: LLM_USAGE_EVENT }).events).toHaveLength(1);
   });
@@ -113,19 +187,35 @@ describe("akmHealth llmUsage aggregate", () => {
     withLlmStage(
       "reflect",
       () => {
-        emitLlmUsage({ durationMs: 100, promptTokens: 10, completionTokens: 5, totalTokens: 15, reasoningTokens: 2 });
-        emitLlmUsage({ durationMs: 200, promptTokens: 20, completionTokens: 10, totalTokens: 30, reasoningTokens: 3 });
+        emitLlmUsage(
+          terminalRecord({
+            durationMs: 100,
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
+            reasoningTokens: 2,
+          }),
+        );
+        emitLlmUsage(
+          terminalRecord({
+            durationMs: 200,
+            promptTokens: 20,
+            completionTokens: 10,
+            totalTokens: 30,
+            reasoningTokens: 3,
+          }),
+        );
       },
       { engine: "fast", process: "reflect" },
     );
     withLlmStage(
       "distill",
       () => {
-        emitLlmUsage({ durationMs: 40, promptTokens: 4, completionTokens: 2, totalTokens: 6 });
+        emitLlmUsage(terminalRecord({ durationMs: 40, promptTokens: 4, completionTokens: 2, totalTokens: 6 }));
       },
       { engine: "careful", process: "distill" },
     );
-    emitLlmUsage({ durationMs: 10 }); // unattributed, no tokens
+    emitLlmUsage(terminalRecord({ durationMs: 10 })); // unattributed, no tokens
     dispose();
 
     // Seam out the real session-log scan (it walks the host filesystem and is

@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly CONTAINER_SNAPSHOT="/akm-eval/snapshot"
+readonly CONTAINER_OUT="/akm-eval/out"
+readonly CONTAINER_INPUTS="/akm-eval/inputs"
+readonly DEFAULT_IMAGE="akm-eval-twin:local"
+
+die() {
+  printf '[akm-eval-twin-docker] %s\n' "$*" >&2
+  exit 2
+}
+
+print_help() {
+  cat <<'EOF'
+akm-eval-twin-docker - run the frozen-installation twin evaluator in Docker
+
+Usage:
+  akm-eval-twin-docker --snapshot <dir> --out <dir> [akm-eval-twin options]
+
+The launcher accepts akm-eval-twin arguments except --akm, which is rejected.
+It always evaluates the AKM build from the current workspace image.
+
+Host paths:
+  --snapshot <dir>                 Required; mounted read-only.
+  --out <dir>                      Required; created if needed and mounted writable.
+  --endpoint-metadata <json>       Mounted read-only; repeatable. --endpoint is an alias.
+  --endpoint-runtime <json>        Mounted read-only.
+  --common-runtime <json>          Mounted read-only.
+  --endpoint-assignment <value>    Existing JSON files are mounted read-only; endpoint IDs
+                                   and balanced are passed through unchanged.
+
+Environment:
+  AKM_EVAL_TWIN_DOCKER_IMAGE       Image name to build and run (default: akm-eval-twin:local).
+  AKM_EVAL_TWIN_DOCKER_NETWORK     Docker run network; omitted when unset.
+  AKM_EVAL_TWIN_SKIP_BUILD=1       Run the selected image without building it first.
+  AKM_EVAL_TWIN_ALLOW_TMP_MOUNTS=1 Allow bind sources under /tmp or /var/tmp despite the
+                                   systemd PrivateTmp empty-mount risk.
+
+  -h, --help                       Show this help without invoking Docker.
+EOF
+}
+
+is_same_or_below() {
+  local parent="$1"
+  local candidate="$2"
+  if [[ "$parent" == "/" ]]; then
+    [[ "$candidate" == /* ]]
+    return
+  fi
+  [[ "$candidate" == "$parent" || "$candidate" == "$parent/"* ]]
+}
+
+assert_safe_bind_source() {
+  local source="$1"
+  local tmp_root var_tmp_root
+
+  [[ "${AKM_EVAL_TWIN_ALLOW_TMP_MOUNTS:-0}" == "1" ]] && return
+
+  tmp_root="$(realpath -e -- /tmp)"
+  var_tmp_root="$(realpath -e -- /var/tmp)"
+  if is_same_or_below "$tmp_root" "$source" || is_same_or_below "$var_tmp_root" "$source"; then
+    die "refusing temporary bind source $source; systemd PrivateTmp can produce an empty Docker mount (set AKM_EVAL_TWIN_ALLOW_TMP_MOUNTS=1 to override)"
+  fi
+}
+
+assert_outside_workspace() {
+  local label="$1"
+  local original="$2"
+  local resolved="$3"
+  local lexical
+
+  lexical="$(realpath -ms -- "$original")"
+  if is_same_or_below "$workspace" "$lexical" || is_same_or_below "$workspace" "$resolved"; then
+    die "$label must be outside the workspace: $original"
+  fi
+}
+
+next_value() {
+  local option="$1"
+  shift
+  [[ $# -gt 0 ]] || die "missing value for $option"
+  NEXT_VALUE="$1"
+}
+
+snapshot_arg=""
+out_arg=""
+metadata_count=0
+runtime_count=0
+common_runtime_count=0
+assignment_count=0
+forwarded=()
+readonly_sources=()
+readonly_targets=()
+readonly_labels=()
+
+while [[ $# -gt 0 ]]; do
+  argument="$1"
+  shift
+  case "$argument" in
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+    --akm|--akm=*)
+      die "--akm is owned by this launcher and cannot be supplied"
+      ;;
+    --snapshot)
+      next_value "$argument" "$@"
+      shift
+      snapshot_arg="$NEXT_VALUE"
+      forwarded+=("--snapshot" "$CONTAINER_SNAPSHOT")
+      ;;
+    --out)
+      next_value "$argument" "$@"
+      shift
+      out_arg="$NEXT_VALUE"
+      forwarded+=("--out" "$CONTAINER_OUT")
+      ;;
+    --endpoint-metadata|--endpoint)
+      next_value "$argument" "$@"
+      shift
+      metadata_count=$((metadata_count + 1))
+      printf -v container_path '%s/endpoint-metadata-%03d.json' "$CONTAINER_INPUTS" "$metadata_count"
+      readonly_sources+=("$NEXT_VALUE")
+      readonly_targets+=("$container_path")
+      readonly_labels+=("$argument")
+      forwarded+=("$argument" "$container_path")
+      ;;
+    --endpoint-runtime)
+      next_value "$argument" "$@"
+      shift
+      runtime_count=$((runtime_count + 1))
+      printf -v container_path '%s/endpoint-runtime-%03d.json' "$CONTAINER_INPUTS" "$runtime_count"
+      readonly_sources+=("$NEXT_VALUE")
+      readonly_targets+=("$container_path")
+      readonly_labels+=("$argument")
+      forwarded+=("$argument" "$container_path")
+      ;;
+    --common-runtime)
+      next_value "$argument" "$@"
+      shift
+      common_runtime_count=$((common_runtime_count + 1))
+      printf -v container_path '%s/common-runtime-%03d.json' "$CONTAINER_INPUTS" "$common_runtime_count"
+      readonly_sources+=("$NEXT_VALUE")
+      readonly_targets+=("$container_path")
+      readonly_labels+=("$argument")
+      forwarded+=("$argument" "$container_path")
+      ;;
+    --endpoint-assignment)
+      next_value "$argument" "$@"
+      shift
+      if [[ -f "$NEXT_VALUE" ]]; then
+        assignment_count=$((assignment_count + 1))
+        printf -v container_path '%s/endpoint-assignment-%03d.json' "$CONTAINER_INPUTS" "$assignment_count"
+        readonly_sources+=("$NEXT_VALUE")
+        readonly_targets+=("$container_path")
+        readonly_labels+=("$argument")
+        forwarded+=("$argument" "$container_path")
+      else
+        forwarded+=("$argument" "$NEXT_VALUE")
+      fi
+      ;;
+    --suite|--samples|--policy|--improve-args|--protected-case|--minimum-deterministic-lift|--min-deterministic-lift|--protected-loss-margin|--max-treatment-tokens|--max-treatment-calls|--max-treatment-duration-ms|--required-samples|--command-timeout-ms)
+      next_value "$argument" "$@"
+      shift
+      forwarded+=("$argument" "$NEXT_VALUE")
+      ;;
+    *)
+      forwarded+=("$argument")
+      ;;
+  esac
+done
+
+script_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+workspace="$(cd -P "$script_dir/../../.." && pwd)"
+
+[[ -n "$snapshot_arg" ]] || die "--snapshot is required"
+[[ -n "$out_arg" ]] || die "--out is required"
+[[ -d "$snapshot_arg" ]] || die "--snapshot must be an existing directory: $snapshot_arg"
+
+if ! snapshot_path="$(realpath -e -- "$snapshot_arg")"; then
+  die "could not resolve --snapshot: $snapshot_arg"
+fi
+if ! output_path="$(realpath -m -- "$out_arg")"; then
+  die "could not resolve --out: $out_arg"
+fi
+
+assert_outside_workspace "--snapshot" "$snapshot_arg" "$snapshot_path"
+assert_outside_workspace "--out" "$out_arg" "$output_path"
+
+if is_same_or_below "$snapshot_path" "$output_path" || is_same_or_below "$output_path" "$snapshot_path"; then
+  die "--snapshot and --out must not overlap"
+fi
+
+assert_safe_bind_source "$snapshot_path"
+assert_safe_bind_source "$output_path"
+
+for index in "${!readonly_sources[@]}"; do
+  source_path="${readonly_sources[$index]}"
+  [[ -f "$source_path" ]] || die "${readonly_labels[$index]} must be an existing file: $source_path"
+  if ! resolved_source="$(realpath -e -- "$source_path")"; then
+    die "could not resolve ${readonly_labels[$index]}: $source_path"
+  fi
+  assert_outside_workspace "${readonly_labels[$index]}" "$source_path" "$resolved_source"
+  assert_safe_bind_source "$resolved_source"
+  readonly_sources[$index]="$resolved_source"
+done
+
+mkdir -p -- "$output_path"
+[[ -d "$output_path" ]] || die "--out must be a directory: $out_arg"
+output_path="$(realpath -e -- "$output_path")"
+
+# Recheck after creation in case an existing symlink changed the physical path.
+if is_same_or_below "$snapshot_path" "$output_path" || is_same_or_below "$output_path" "$snapshot_path"; then
+  die "--snapshot and --out must not overlap"
+fi
+assert_outside_workspace "--out" "$out_arg" "$output_path"
+assert_safe_bind_source "$output_path"
+
+mount_args=(
+  --mount "type=bind,source=$snapshot_path,target=$CONTAINER_SNAPSHOT,readonly"
+  --mount "type=bind,source=$output_path,target=$CONTAINER_OUT"
+)
+
+for index in "${!readonly_sources[@]}"; do
+  source_path="${readonly_sources[$index]}"
+  mount_args+=(
+    --mount "type=bind,source=$source_path,target=${readonly_targets[$index]},readonly"
+  )
+done
+
+command -v docker >/dev/null 2>&1 || die "docker is required"
+
+image="${AKM_EVAL_TWIN_DOCKER_IMAGE:-$DEFAULT_IMAGE}"
+[[ "$image" != -* ]] || die "invalid AKM_EVAL_TWIN_DOCKER_IMAGE: $image"
+
+build_context=""
+cleanup_build_context() {
+  if [[ -n "$build_context" ]]; then
+    rm -rf -- "$build_context" || true
+  fi
+}
+trap cleanup_build_context EXIT
+
+if [[ "${AKM_EVAL_TWIN_SKIP_BUILD:-0}" != "1" ]]; then
+  umask 077
+  build_context="$(mktemp -d "/tmp/akm-eval-twin-build.XXXXXX")"
+  chmod 700 "$build_context"
+  for file in package.json bun.lock tsconfig.json tsconfig.build.json; do
+    cp -a -- "$workspace/$file" "$build_context/$file"
+  done
+  for directory in schemas src scripts; do
+    cp -a -- "$workspace/$directory" "$build_context/$directory"
+  done
+  docker build \
+    --file "$build_context/scripts/akm-eval/Dockerfile.twin" \
+    --tag "$image" \
+    "$build_context"
+fi
+
+run_args=(run --rm --user "$(id -u):$(id -g)")
+if [[ -n "${AKM_EVAL_TWIN_DOCKER_NETWORK:-}" ]]; then
+  run_args+=(--network "$AKM_EVAL_TWIN_DOCKER_NETWORK")
+fi
+run_args+=("${mount_args[@]}" "$image" "${forwarded[@]}" --akm "bun /app/dist/cli.js")
+
+docker "${run_args[@]}"

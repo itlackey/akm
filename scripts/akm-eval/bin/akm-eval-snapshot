@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# akm-eval-snapshot - capture and verify AKM installation snapshots.
+
+set -euo pipefail
+
+dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../_lib.sh
+source "$dir/../_lib.sh"
+
+require_bun
+
+exec bun run "$dir/../src/snapshot.ts" "$@"

@@ -19,7 +19,13 @@ import { escapeJsonStringControls, parseJsonResponse, stripCodeFences, stripThin
 import { redactSensitiveText } from "../core/redaction";
 import { warnVerbose } from "../core/warn";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
-import { emitLlmUsage, extractUsageTokens, type RawUsage } from "./usage-telemetry";
+import {
+  emitLlmUsage,
+  extractUsageTokens,
+  type LlmUsageErrorCode,
+  type LlmUsageRecord,
+  type RawUsage,
+} from "./usage-telemetry";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
 // to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
@@ -67,13 +73,7 @@ export function redactErrorBody(input: string): string {
 
 // ── Typed error class ───────────────────────────────────────────────────────
 
-export type LlmCallErrorCode =
-  | "rate_limited" // HTTP 429
-  | "provider_error" // HTTP 5xx
-  | "provider_html_error" // body is HTML (e.g. LM Studio web UI) instead of JSON
-  | "network_error" // fetch failed / timeout
-  | "parse_error" // response received but JSON parse failed
-  | "timeout"; // request exceeded timeoutMs
+export type LlmCallErrorCode = Exclude<LlmUsageErrorCode, "unknown_error">;
 
 /**
  * Detect a response body that is an HTML document rather than the expected
@@ -369,104 +369,133 @@ async function chatCompletionAttempt(
         ? { chat_template_kwargs: { enable_thinking: resolvedEnableThinking } }
         : { enable_thinking: resolvedEnableThinking };
 
-  // Wall-clock start for per-call usage telemetry (#576). Captured here so the
+  const requestBody = JSON.stringify({
+    model: config.model,
+    messages,
+    temperature: options?.temperature ?? config.temperature ?? 0.3,
+    ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
+    ...responseFormat,
+    ...thinkingParams,
+    ...config.extraParams,
+  });
+
+  // Wall-clock start for per-attempt usage telemetry (#576). Captured here so the
   // emitted duration covers the full request/response/parse cycle of a single
   // attempt, not the retry-wrapping `chatCompletion`.
   const requestStartedAt = Date.now();
-
-  let response: Response;
+  let terminalFields: Pick<
+    LlmUsageRecord,
+    "model" | "modelSource" | "finishReason" | "promptTokens" | "completionTokens" | "totalTokens" | "reasoningTokens"
+  > = {
+    model: config.model,
+    modelSource: "configured",
+  };
   try {
-    response = await fetchWithTimeout(
-      config.endpoint,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          temperature: options?.temperature ?? config.temperature ?? 0.3,
-          ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
-          ...responseFormat,
-          ...thinkingParams,
-          ...config.extraParams,
-        }),
-      },
-      timeoutMs,
-      options?.signal,
-    );
-  } catch (err) {
-    // fetchWithTimeout throws a plain Error with a message containing
-    // "timed out" for AbortController-driven timeouts, or "aborted" for
-    // caller-driven cancellations. Map both to typed LlmCallError.
-    const msg = err instanceof Error ? err.message : String(err);
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
-    }
-    if (msg.includes("timed out")) {
-      throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
-    }
-    throw new LlmCallError(`Network error: ${msg}`, "network_error");
-  }
-
-  if (!response.ok) {
-    const rawBody = await response.text().catch(() => "");
-    const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
-    const status = response.status;
-    if (status === 429) {
-      throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
-    }
-    if (status >= 500 && isHtmlResponse(rawBody)) {
-      throw new LlmCallError(
-        `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
-        "provider_html_error",
-        status,
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        config.endpoint,
+        {
+          method: "POST",
+          headers,
+          body: requestBody,
+        },
+        timeoutMs,
+        options?.signal,
       );
+    } catch (err) {
+      // fetchWithTimeout throws a plain Error with a message containing
+      // "timed out" for AbortController-driven timeouts, or "aborted" for
+      // caller-driven cancellations. Map both to typed LlmCallError.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
+      }
+      if (msg.includes("timed out")) {
+        throw new LlmCallError(`Request timed out${timeoutMs === null ? "" : ` after ${timeoutMs}ms`}`, "timeout");
+      }
+      throw new LlmCallError(`Network error: ${msg}`, "network_error");
     }
-    if (status >= 500) {
+
+    if (!response.ok) {
+      const rawBody = await response.text().catch(() => "");
+      const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
+      const status = response.status;
+      if (status === 429) {
+        throw new LlmCallError(
+          `LLM request rate limited (429) ${config.endpoint}: ${safeBody}`,
+          "rate_limited",
+          status,
+        );
+      }
+      if (status >= 500 && isHtmlResponse(rawBody)) {
+        throw new LlmCallError(
+          `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
+          "provider_html_error",
+          status,
+        );
+      }
+      if (status >= 500) {
+        throw new LlmCallError(
+          `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
+          "provider_error",
+          status,
+        );
+      }
       throw new LlmCallError(
-        `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
+        `LLM request failed (${status}) ${config.endpoint}: ${safeBody}`,
         "provider_error",
         status,
       );
     }
-    throw new LlmCallError(`LLM request failed (${status}) ${config.endpoint}: ${safeBody}`, "provider_error", status);
-  }
 
-  // A 2xx response is still an error if the body is HTML where JSON was
-  // expected (e.g. a provider serving its web UI). Read the raw body first so
-  // we can categorize an HTML page distinctly from a malformed-JSON parse_error.
-  const rawOkBody = await response.text();
-  if (isHtmlResponse(rawOkBody)) {
-    throw new LlmCallError(
-      `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
-      "provider_html_error",
-      response.status,
-    );
-  }
-  let json: ChatCompletionResponse;
-  try {
-    json = JSON.parse(rawOkBody) as ChatCompletionResponse;
-  } catch {
-    throw new LlmCallError(
-      `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
-      "parse_error",
-      response.status,
-    );
-  }
-  // Per-call usage telemetry (#576). Best-effort and fully isolated: a missing
-  // or garbled usage block still records duration + model, and a throwing sink
-  // can never fail the call (emitLlmUsage swallows its own errors). The stage
-  // is supplied ambiently by emitLlmUsage; no `stage` param is threaded here.
-  emitLlmUsage({
-    model: typeof json.model === "string" && json.model ? json.model : config.model,
-    durationMs: Date.now() - requestStartedAt,
-    finishReason: typeof json.choices?.[0]?.finish_reason === "string" ? json.choices[0].finish_reason : undefined,
-    ...extractUsageTokens(json.usage),
-  });
+    // A 2xx response is still an error if the body is HTML where JSON was
+    // expected (e.g. a provider serving its web UI). Read the raw body first so
+    // we can categorize an HTML page distinctly from a malformed-JSON parse_error.
+    const rawOkBody = await response.text();
+    if (isHtmlResponse(rawOkBody)) {
+      throw new LlmCallError(
+        `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        "provider_html_error",
+        response.status,
+      );
+    }
+    let json: ChatCompletionResponse;
+    try {
+      json = JSON.parse(rawOkBody) as ChatCompletionResponse;
+    } catch {
+      throw new LlmCallError(
+        `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        "parse_error",
+        response.status,
+      );
+    }
 
-  const content = (json.choices?.[0]?.message?.content ?? "").trim();
-  const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
-  return redactSensitiveText(content || reasoning, resolvedKey ? [resolvedKey] : []);
+    const responseModel = typeof json.model === "string" && json.model.trim().length > 0 ? json.model : undefined;
+    terminalFields = {
+      model: responseModel ?? config.model,
+      modelSource: responseModel === undefined ? "configured" : "response",
+      finishReason: typeof json.choices?.[0]?.finish_reason === "string" ? json.choices[0].finish_reason : undefined,
+      ...extractUsageTokens(json.usage),
+    };
+    const content = (json.choices?.[0]?.message?.content ?? "").trim();
+    const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
+    const result = redactSensitiveText(content || reasoning, resolvedKey ? [resolvedKey] : []);
+    emitLlmUsage({
+      ...terminalFields,
+      outcome: "success",
+      durationMs: Date.now() - requestStartedAt,
+    });
+    return result;
+  } catch (err) {
+    emitLlmUsage({
+      ...terminalFields,
+      outcome: "error",
+      durationMs: Date.now() - requestStartedAt,
+      errorCode: err instanceof LlmCallError ? err.code : "unknown_error",
+    });
+    throw err;
+  }
 }
 
 /**

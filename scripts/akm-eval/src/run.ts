@@ -49,8 +49,18 @@ import {
 } from "./sources/llm-judge";
 import { resolveDataDir, resolveEvalsRoot, resolveStashDir } from "./sources/paths";
 import { fingerprintEvalCases } from "./sources/eval-runs";
+import {
+  listRecentImproveRunIds,
+  loadImproveResult,
+  withImproveResultDataDir,
+} from "./sources/improve-result";
 import { ReplayRecorder, setCurrentRecorder } from "./sources/replay-log";
-import { createSandbox, type Sandbox } from "./sources/sandbox";
+import {
+  buildEvalChildEnv,
+  createSandbox,
+  EVAL_STORAGE_ENV_KEYS,
+  type Sandbox,
+} from "./sources/sandbox";
 import type {
   EvalCase,
   EvalCaseResult,
@@ -482,43 +492,105 @@ async function runCase(c: EvalCase, ctx: EvalContext): Promise<EvalCaseResult> {
 }
 
 async function runCases(cases: EvalCase[], ctx: EvalContext): Promise<EvalCaseResult[]> {
-  const collected: EvalCaseResult[] = [];
-  for (const c of cases) {
-    // Check if case requires state.db and skip if it doesn't exist
-    if (c.requires?.requiresStateDb) {
-      const statePath = path.join(ctx.dataDir, "state.db");
-      if (!fs.existsSync(statePath)) {
-        collected.push({
-          caseId: c.id,
-          type: c.type,
-          score: 0,
-          passed: false,
-          skipped: true,
-          skipReason: "state.db not available (skipped in CI environment)",
-          metrics: {},
-          evidence: {},
-          durationMs: 0,
-        });
-        continue;
+  return withImproveResultDataDir(ctx.dataDir, async () => {
+    const collected: EvalCaseResult[] = [];
+    for (const c of cases) {
+      // Check if case requires state.db and skip if it doesn't exist
+      if (c.requires?.requiresStateDb) {
+        const statePath = path.join(ctx.dataDir, "state.db");
+        if (!fs.existsSync(statePath)) {
+          collected.push({
+            caseId: c.id,
+            type: c.type,
+            score: 0,
+            passed: false,
+            skipped: true,
+            skipReason: "state.db not available (skipped in CI environment)",
+            metrics: {},
+            evidence: {},
+            durationMs: 0,
+          });
+          continue;
+        }
       }
-    }
 
-    const stepCtx: EvalContext = { ...ctx, currentResults: collected.slice() };
-    const result = await runCase(c, stepCtx);
-    // Stamp `deterministic` onto the result from the case's `scoring`
-    // block so aggregation can distinguish deterministic from LLM-only
-    // cases (e.g. `judge-calibration` declares `deterministic: false`).
-    // Default is `true` when the case omits the field.
-    const determinismFlagged: EvalCaseResult = {
-      ...result,
-      deterministic: c.scoring?.deterministic !== false,
-    };
-    // Phase 7: optional, side-channel judging. Deterministic score on
-    // `result` is finalised before we touch the judge.
-    const withJudge = await maybeAttachJudgement(c, determinismFlagged, ctx.judge);
-    collected.push(withJudge);
+      const stepCtx: EvalContext = { ...ctx, currentResults: collected.slice() };
+      const result = await runCase(c, stepCtx);
+      // Stamp `deterministic` onto the result from the case's `scoring`
+      // block so aggregation can distinguish deterministic from LLM-only
+      // cases (e.g. `judge-calibration` declares `deterministic: false`).
+      // Default is `true` when the case omits the field.
+      const determinismFlagged: EvalCaseResult = {
+        ...result,
+        deterministic: c.scoring?.deterministic !== false,
+      };
+      // Phase 7: optional, side-channel judging. Deterministic score on
+      // `result` is finalised before we touch the judge.
+      const withJudge = await maybeAttachJudgement(c, determinismFlagged, ctx.judge);
+      collected.push(withJudge);
+    }
+    return collected;
+  });
+}
+
+interface EvalValidityMetric {
+  status: "conclusive" | "inconclusive";
+  executedCaseCount: number;
+  validEvidenceCaseCount: number;
+  errorCaseCount: number;
+  baselineExecutedCaseCount?: number;
+  baselineValidEvidenceCaseCount?: number;
+  baselineErrorCaseCount?: number;
+  reasons: string[];
+}
+
+function resultErrors(result: EvalCaseResult): string[] {
+  return (result.errors ?? []).filter((message) => message.trim() !== "");
+}
+
+function buildValidityMetric(
+  results: EvalCaseResult[],
+  baselineResults?: EvalCaseResult[],
+  runErrors: string[] = [],
+): EvalValidityMetric {
+  const executedCaseCount = results.filter((result) => !result.skipped).length;
+  const errorResults = results.filter((result) => resultErrors(result).length > 0);
+  const validEvidenceCaseCount = results.filter(
+    (result) => !result.skipped && resultErrors(result).length === 0,
+  ).length;
+  const baselineExecutedCaseCount = baselineResults?.filter((result) => !result.skipped).length;
+  const baselineErrorResults = baselineResults?.filter((result) => resultErrors(result).length > 0);
+  const baselineValidEvidenceCaseCount = baselineResults?.filter(
+    (result) => !result.skipped && resultErrors(result).length === 0,
+  ).length;
+  const reasons: string[] = [];
+  if (baselineExecutedCaseCount === 0) reasons.push("baseline executed zero cases");
+  if (
+    baselineExecutedCaseCount !== undefined &&
+    baselineExecutedCaseCount > 0 &&
+    baselineValidEvidenceCaseCount === 0
+  ) {
+    reasons.push("baseline produced no valid case evidence");
   }
-  return collected;
+  for (const result of baselineErrorResults ?? []) {
+    for (const message of resultErrors(result)) reasons.push(`baseline case ${result.caseId} error: ${message}`);
+  }
+  if (executedCaseCount === 0) reasons.push("zero executed cases");
+  if (executedCaseCount > 0 && validEvidenceCaseCount === 0) reasons.push("no valid case evidence");
+  for (const result of errorResults) {
+    for (const message of resultErrors(result)) reasons.push(`case ${result.caseId} error: ${message}`);
+  }
+  reasons.push(...runErrors);
+  return {
+    status: reasons.length > 0 ? "inconclusive" : "conclusive",
+    executedCaseCount,
+    validEvidenceCaseCount,
+    errorCaseCount: errorResults.length,
+    ...(baselineExecutedCaseCount !== undefined ? { baselineExecutedCaseCount } : {}),
+    ...(baselineValidEvidenceCaseCount !== undefined ? { baselineValidEvidenceCaseCount } : {}),
+    ...(baselineErrorResults !== undefined ? { baselineErrorCaseCount: baselineErrorResults.length } : {}),
+    reasons,
+  };
 }
 
 function writeArtifacts(
@@ -606,15 +678,13 @@ async function main(): Promise<number> {
   let activeStashRoot = realStashRoot;
   let activeDataDir = realDataDir;
   let sandbox: Sandbox | undefined;
-  const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+  const env = buildEvalChildEnv();
 
   if (opts.mode === "paired" && opts.sandbox) {
     sandbox = createSandbox({ fixture: realStashRoot, prefix: "akm-eval-paired-" });
     activeStashRoot = sandbox.stashDir;
     activeDataDir = sandbox.dataDir;
-    env.AKM_STASH_DIR = sandbox.env.AKM_STASH_DIR;
-    env.AKM_DATA_DIR = sandbox.env.AKM_DATA_DIR;
-    env.HOME = sandbox.env.HOME;
+    Object.assign(env, sandbox.env);
     // The sandbox starts without a state.db; index it so retrieval runs find content.
     const seed = new AkmCli(opts.akmBin, env).index();
     if (seed.status !== 0) {
@@ -622,6 +692,13 @@ async function main(): Promise<number> {
       if (!opts.keepSandbox) sandbox.cleanup();
       return 2;
     }
+  } else {
+    for (const key of EVAL_STORAGE_ENV_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
+    env.AKM_STASH_DIR = activeStashRoot;
+    env.AKM_DATA_DIR = activeDataDir;
   }
 
   const outRoot = opts.out ? path.resolve(opts.out) : resolveEvalsRoot(realStashRoot);
@@ -666,15 +743,24 @@ async function main(): Promise<number> {
   baseCtx.suiteFingerprint = suiteFingerprint;
   let baselineResults: EvalCaseResult[] | undefined;
   let pairedImproveSummary: Record<string, unknown> | undefined;
+  const pairedImproveErrors: string[] = [];
   let pairedComparison: ReturnType<typeof compareResultsInMemory> | undefined;
 
   if (opts.mode === "paired") {
     // 1) baseline pass.
     baselineResults = await runCases(cases, baseCtx);
 
-    // 2) shell out to akm improve with forwarded args. akm improve writes
-    // its envelope to <stash>/.akm/runs/<id>/improve-result.json regardless
-    // of stdout formatting, so we don't force a --format flag here.
+    // 2) shell out to akm improve with forwarded args. A live run must add one
+    // non-dry-run improve_runs row; command success without that row is not
+    // valid evidence that the treatment was applied.
+    let priorImproveRunIds = new Set<string>();
+    try {
+      priorImproveRunIds = new Set(listRecentImproveRunIds(0, activeDataDir));
+    } catch (err) {
+      pairedImproveErrors.push(
+        `paired improve preflight result inspection failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const impArgs = [...opts.improveArgs];
     const imp = akmCli.improve(impArgs);
     pairedImproveSummary = {
@@ -685,7 +771,32 @@ async function main(): Promise<number> {
       sandbox: opts.sandbox ? sandbox?.root : null,
     };
     if (imp.status !== 0) {
+      pairedImproveErrors.push(`paired improve failed (exit ${String(imp.status)})`);
       process.stderr.write(`[akm-eval] akm improve failed (exit ${imp.status}); continuing with re-eval\n`);
+    }
+    try {
+      const newRunIds = listRecentImproveRunIds(0, activeDataDir).filter((id) => !priorImproveRunIds.has(id));
+      pairedImproveSummary.resultRunIds = newRunIds;
+      if (newRunIds.length === 0) {
+        pairedImproveErrors.push("paired improve produced no new persisted non-dry-run result");
+      } else if (newRunIds.length > 1) {
+        pairedImproveErrors.push(`paired improve produced ${newRunIds.length} new results; expected exactly one`);
+      } else {
+        const loaded = loadImproveResult(activeStashRoot, newRunIds[0]!, { dataDir: activeDataDir });
+        pairedImproveSummary.resultRunId = loaded.runId;
+        pairedImproveSummary.resultOk = loaded.envelope.ok;
+        pairedImproveSummary.resultDryRun = loaded.envelope.dryRun;
+        if (loaded.envelope.ok !== true) {
+          pairedImproveErrors.push(`paired improve result ${loaded.runId} reports ok=false`);
+        }
+        if (loaded.envelope.dryRun !== false) {
+          pairedImproveErrors.push(`paired improve result ${loaded.runId} is a dry-run result`);
+        }
+      }
+    } catch (err) {
+      pairedImproveErrors.push(
+        `paired improve result inspection failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -695,9 +806,13 @@ async function main(): Promise<number> {
 
   const { overall, deterministic, llmJudged } = aggregateScores(results);
   const countsByType = buildCountsByType(results);
-  const errors = results
-    .filter((r) => r.errors && r.errors.length > 0)
-    .flatMap((r) => (r.errors ?? []).map((m) => ({ caseId: r.caseId, message: m })));
+  const validity = buildValidityMetric(results, baselineResults, pairedImproveErrors);
+  const errors = [
+    ...pairedImproveErrors.map((message) => ({ caseId: "paired-improve", message })),
+    ...results
+      .filter((r) => r.errors && r.errors.length > 0)
+      .flatMap((r) => (r.errors ?? []).map((m) => ({ caseId: r.caseId, message: m }))),
+  ];
 
   const scores: EvalRunResult["scores"] = { overall, deterministic };
   // Phase 7: surface llmJudged only when at least one case produced a
@@ -723,7 +838,7 @@ async function main(): Promise<number> {
       inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite), suiteFingerprint },
       scores: { overall: baselineAgg.overall, deterministic: baselineAgg.deterministic },
       countsByType: buildCountsByType(baselineResults),
-      metrics: {},
+      metrics: { validity: buildValidityMetric(baselineResults) },
       errors: [],
       artifacts: {},
     };
@@ -740,7 +855,7 @@ async function main(): Promise<number> {
       inputs: { caseCount: cases.length, caseDir: path.join(casesRoot, opts.suite), suiteFingerprint },
       scores,
       countsByType,
-      metrics: {},
+      metrics: { validity },
       errors: [],
       artifacts: {},
     };
@@ -788,6 +903,7 @@ async function main(): Promise<number> {
     : undefined;
 
   const envelopeMetrics: Record<string, unknown> = {};
+  envelopeMetrics.validity = validity;
   if (pairedImproveSummary) envelopeMetrics.pairedImprove = pairedImproveSummary;
   if (judgeCalibrationMetrics) envelopeMetrics.judgeCalibration = judgeCalibrationMetrics;
   if (reflectQualityMetrics) envelopeMetrics.reflectQuality = reflectQualityMetrics;
@@ -847,6 +963,10 @@ async function main(): Promise<number> {
     process.stderr.write(`[akm-eval] kept sandbox at ${sandbox.root}\n`);
   }
 
+  if (validity.status === "inconclusive") {
+    process.stderr.write(`[akm-eval] inconclusive: ${validity.reasons.join("; ")}\n`);
+    return 2;
+  }
   if (opts.failBelowScore !== undefined && overall < opts.failBelowScore) {
     process.stderr.write(
       `[akm-eval] overall ${overall.toFixed(3)} below --fail-below-score ${opts.failBelowScore}\n`,

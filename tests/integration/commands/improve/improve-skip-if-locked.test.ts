@@ -10,7 +10,10 @@ import path from "node:path";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
+import { readEvents } from "../../../../src/core/events";
 import { acquireMaintenanceBarrier } from "../../../../src/core/maintenance-barrier";
+import { LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
+import { hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -86,6 +89,8 @@ describe("akm improve — skip-if-locked", () => {
     expect(result.actions).toEqual([]);
     expect(planningInvoked).toBe(false);
     expect(fs.existsSync(lockPath)).toBe(true);
+    expect(hasLlmUsageSink()).toBe(false);
+    expect(readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events).toHaveLength(0);
   });
 
   test("returns the same no-op when the maintenance barrier is held", async () => {
