@@ -42,10 +42,36 @@ export interface ValidateSummaryResult {
 }
 
 /**
+ * REAL dispatch identity of one gate-judge invocation.
+ *
+ * A judge call is journaled exactly like a unit (`journalGateEvaluationStart` /
+ * `journalGateEvaluationFinish` in `exec/step-work.ts`): node `<stepId>.gate`,
+ * unit `<stepId>.gate:l<loop>`, under the run's real id. The dispatch request
+ * the judge issues MUST agree with that row, so per-dispatch telemetry, harness
+ * session-id capture, and any harness-side correlation describe the same thing
+ * the journal describes. The identity therefore travels from the caller that
+ * WRITES the row down to the dispatcher, rather than being synthesized twice.
+ */
+export interface JudgeCallIdentity {
+  runId: string;
+  stepId: string;
+  /** The journaled gate row's `node_id` — `<stepId>.gate`. */
+  nodeId: string;
+  /** The journaled gate row's `unit_id` — `<stepId>.gate:l<loop>`. */
+  unitId: string;
+}
+
+/**
  * Judge function: given a fully-rendered prompt, return the raw model text.
  * Injected so the gate can be tested deterministically.
+ *
+ * `identity` is supplied by the caller that journals the gate row (the engine's
+ * completion path); callers with no journaled row — the manual
+ * `akm workflow step complete` path — omit it and the judge falls back to the
+ * run/step identity it was constructed with. It is never synthesized from
+ * placeholders.
  */
-export type SummaryJudge = (prompt: { system: string; user: string }) => Promise<string>;
+export type SummaryJudge = (prompt: { system: string; user: string }, identity?: JudgeCallIdentity) => Promise<string>;
 
 /** The verdict shape a well-formed judge response must parse to. */
 export interface JudgeVerdict {

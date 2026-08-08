@@ -49,6 +49,7 @@ import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/rep
 import { canonicalJson as canonicalJsonString } from "../ir/plan-hash";
 import type {
   FrozenEngineSnapshot,
+  IrExecSpec,
   IrInvocation,
   IrIsolation,
   IrMapReducer,
@@ -61,11 +62,11 @@ import type {
   WorkflowPlanGraph,
 } from "../ir/schema";
 import { type ExpressionScope, resolveReferenceString } from "../program/expressions";
-import { WORKFLOW_MAX_MAP_EXPANSION } from "../resource-limits";
+import { WORKFLOW_MAX_MAP_EXPANSION, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { requireExecutableWorkflowPlan } from "../runtime/plan-classifier";
 import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
 import { GATE_EVALUATION_PHASE } from "../runtime/unit-phases";
-import { parseJudgeVerdict, type SummaryJudge } from "../validate-summary";
+import { type JudgeCallIdentity, parseJudgeVerdict, type SummaryJudge } from "../validate-summary";
 import { enqueueUnitWrite } from "./unit-writer";
 
 /** How much raw unit output is retained in step evidence (full text lives on the unit row). */
@@ -139,10 +140,19 @@ export interface StepWorkUnit {
   /** Journal id root for attempt 0 (`<unitId>` or `<unitId>~l<loop>` in a gate loop). */
   journalBaseId: string;
   runner: IrRuntimeKind;
-  /** Frozen catalog entry used at dispatch. */
+  /** Frozen catalog entry used at dispatch. Absent on `exec` units (they name no engine). */
   engine?: FrozenEngineSnapshot;
   fallbackEngine?: Extract<FrozenEngineSnapshot, { kind: "llm" }>;
   invocation?: IrInvocation;
+  /** Frozen shell command. Present on EXACTLY the `exec` units — mutually exclusive with `invocation`. */
+  exec?: IrExecSpec;
+  /**
+   * `AKM_*` context environment for an exec unit's child (run/step/unit ids,
+   * params, fan-out item + index, declared inputs) — the argv-array analogue of
+   * the prompt context blocks an engine unit receives. Set on exactly the exec
+   * units; see {@link buildExecContextEnv}.
+   */
+  execContext?: Record<string, string>;
   model?: string;
   /** Resolved timeout (unit override else engine default); null = no timeout. */
   timeoutMs: number | null;
@@ -293,13 +303,18 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
   const unitIds = items.map((item) => unitIdFor(template.id, item, isFanOut));
 
   const gateLoop = input.gateLoop ?? 1;
+  // An `exec` unit dispatches a child process instead of an engine call, so it
+  // carries a frozen exec spec and NO invocation (the frozen-plan decoder
+  // enforces that exclusive-or). Everything downstream — identity, hashing,
+  // journaling, retry, budget — is shared; only the dispatch mechanism differs.
+  const frozenExec = template.exec;
   const frozenInvocation = template.invocation;
-  if (!frozenInvocation) return { ok: false, error: `Step "${plan.stepId}" has no frozen invocation.` };
-  const frozenEngine = input.engines?.[frozenInvocation.engine];
-  if (!frozenEngine) {
+  if (!frozenExec && !frozenInvocation) return { ok: false, error: `Step "${plan.stepId}" has no frozen invocation.` };
+  const frozenEngine = frozenInvocation ? input.engines?.[frozenInvocation.engine] : undefined;
+  if (frozenInvocation && !frozenEngine) {
     return { ok: false, error: `Step "${plan.stepId}" references missing frozen engine "${frozenInvocation.engine}".` };
   }
-  const runner: IrRuntimeKind = frozenEngine.kind === "llm" ? "llm" : frozenEngine.runnerKind;
+  const runner: IrRuntimeKind = frozenEngine ? (frozenEngine.kind === "llm" ? "llm" : frozenEngine.runnerKind) : "exec";
   // Taken VERBATIM from the frozen plan — there is no engine-side backstop, by
   // design. The whole timeout decision happens once at freeze time
   // (`ir/freeze.ts` `effectiveTimeout`: unit `timeout:` → document
@@ -312,128 +327,243 @@ export function computeStepWorkList(plan: IrStepPlan, input: WorkListInput): Com
   // collapses both to `timeoutMs: null`, so this layer could not tell them apart
   // even if it wanted to; anything that should bound a unit belongs in
   // `effectiveTimeout`, not here.
-  const timeoutMs = frozenInvocation.timeoutMs;
+  // An exec unit's budget is frozen on its exec spec (there is no engine to
+  // inherit one from); `ir/freeze.ts` resolved it once from unit `timeout:` →
+  // `defaults.timeout` → DEFAULT_EXEC_TIMEOUT_MS.
+  const timeoutMs = frozenExec ? frozenExec.timeoutMs : (frozenInvocation?.timeoutMs ?? null);
 
-  const units: StepWorkUnit[] = items.map((item, index) => {
-    const unitId = unitIds[index]!;
-    // Gate loops (>= 2) journal under `<unitId>~l<loop>` so loop 1's rows are
-    // never clobbered; the content-derived identity (and the prompt's
-    // {{UNIT_ID}}) stays the base id.
-    const journalBaseId = gateLoop > 1 ? `${unitId}~l${gateLoop}` : unitId;
-
-    // Context attachment (workflow-format-unification, spec §4): every unit
-    // receives the run params (already in the preamble), its item + index if
-    // it is a map unit, and the artifacts named by its step's `inputs:`.
-    // Instructions reach the unit byte-exact — never interpolated.
-    const prompt = buildUnitPrompt({
-      runId: input.runId,
-      stepId: plan.stepId,
-      unitId,
-      params: input.params,
-      ...(isFanOut ? { item, itemIndex: index } : {}),
-      ...(resolvedInputs.length > 0 ? { inputs: resolvedInputs } : {}),
-      ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
-      ...(template.schema ? { schema: template.schema } : {}),
-      instructions: template.instructions,
-    });
-    // Canonical dispatch-input envelope (reviewer finding #1). Every field
-    // here is a PLAN-FROZEN input that changes what the backend is actually
-    // asked to do, so a completed unit is reused ONLY when all of them match;
-    // a change to any of them re-dispatches. Key order is FIXED — it is the
-    // hash preimage (JSON.stringify preserves insertion order) — and this is
-    // the ONE place a unit's inputHash is computed (every caller goes through
-    // computeStepWorkList), so a hash that is byte-identical across a fresh
-    // run and a resume is structural, not coincidental.
-    //
-    // Unit identity (workflow-format-unification, spec §2.3/§4) hashes the
-    // FROZEN TEMPLATE BYTES (`template.instructions`, byte-exact, never an
-    // instantiated/interpolated string) + the canonical item JSON + the
-    // declared-input artifact hashes + the params snapshot — instead of a
-    // resolved/spliced prompt string, since there is no more splicing. The
-    // assembled `prompt` above is what the harness SEES; the hash is over the
-    // plan-frozen INPUTS that determine it, which is the same replay contract
-    // the old resolved-prompt hash gave (same inputs ⇒ same hash) with the
-    // interpolation step removed.
-    //
-    // Included beyond the R4 baseline (template/runner/model/schema): resolved
-    // timeoutMs, the env asset ref NAMES, and isolation — each reaches
-    // dispatch (native-executor's UnitDispatchRequest) and a changed one
-    // yields a materially different call. `env` carries NAMES ONLY, never
-    // resolved values: hashing a resolved secret would leak it into a durable
-    // hash oracle and would spuriously re-dispatch on every secret rotation.
-    // `retry`/`onError` are DELIBERATELY excluded — they govern failed-unit
-    // re-dispatch and step-level failure reduction, not a COMPLETED unit's
-    // inputs/output, so a completed row stays valid across policy changes.
-    //
-    // `gateFeedback` IS included (conditionally, so a no-feedback unit's
-    // preimage is byte-identical to before): it is appended to the prompt by
-    // `buildUnitPrompt`, so a gate loop's retry is materially a different ask
-    // than the rejected attempt — omitting it made loop 1 and loop 2 journal
-    // identical hashes for different prompts, breaking the "changed inputs ⇒
-    // changed hash" audit contract. Replay-safe: feedback is re-derived from
-    // the journaled gate decision, so a resumed retry re-hashes identically.
-    //
-    // Ambient config is DELIBERATELY excluded — the model-alias table, the
-    // resolved backend/connection, and the working directory (`ctx.workDir` /
-    // process.cwd()) are NOT plan-frozen. The frozen plan is the identity
-    // boundary (redesign addendum determinism bar #2): config drift under an
-    // in-flight run is out of scope by design.
-    const dispatch = transitiveDispatchSnapshot(frozenEngine, input.engines ?? {});
-    const inputHash = createHash("sha256")
-      .update(
-        canonicalJsonString({
-          hashVersion: 4,
-          template: template.instructions,
-          item: isFanOut ? (item ?? null) : null,
-          inputs: resolvedInputs,
-          params: input.params,
-          dispatch,
-          invocation: frozenInvocation,
-          schema: template.schema ?? null,
-          env: template.env ?? null,
-          isolation: template.isolation ?? "none",
-          ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
-        }),
-      )
-      .digest("hex");
-    const resolved: StepWorkUnit["resolved"] = { ok: true, prompt, inputHash };
-
-    return {
-      unitId,
-      nodeId: template.id,
-      index,
+  const units: StepWorkUnit[] = items.map((item, index) =>
+    buildStepWorkUnit(
+      {
+        plan,
+        input,
+        template,
+        isFanOut,
+        gateLoop,
+        resolvedInputs,
+        runner,
+        timeoutMs,
+        ...(frozenEngine ? { frozenEngine } : {}),
+        ...(frozenInvocation ? { frozenInvocation } : {}),
+        ...(frozenExec ? { frozenExec } : {}),
+      },
+      unitIds[index]!,
       item,
-      isFanOut,
-      journalBaseId,
-      runner,
-      engine: frozenEngine,
-      ...(frozenEngine?.kind === "agent" &&
-      frozenEngine.fallbackLlmEngine &&
-      input.engines?.[frozenEngine.fallbackLlmEngine]?.kind === "llm"
-        ? {
-            fallbackEngine: input.engines[frozenEngine.fallbackLlmEngine] as Extract<
-              FrozenEngineSnapshot,
-              { kind: "llm" }
-            >,
-          }
-        : {}),
-      invocation: frozenInvocation,
-      ...(frozenInvocation.model ? { model: frozenInvocation.model } : {}),
-      timeoutMs,
-      ...(template.schema ? { schema: template.schema } : {}),
-      ...(template.env ? { env: template.env } : {}),
-      ...(template.retry ? { retry: template.retry } : {}),
-      onError: template.onError,
-      ...(template.isolation ? { isolation: template.isolation } : {}),
-      resolved,
-    };
-  });
+      index,
+    ),
+  );
 
   const concurrency = root.kind === "map" ? root.concurrency : 1;
   return {
     ok: true,
     list: { template, reducer, isFanOut, ...(concurrency !== undefined ? { concurrency } : {}), items, units },
   };
+}
+
+/** Everything {@link buildStepWorkUnit} needs, resolved ONCE per step. */
+interface StepWorkUnitContext {
+  plan: IrStepPlan;
+  input: WorkListInput;
+  template: IrUnitNode;
+  isFanOut: boolean;
+  gateLoop: number;
+  resolvedInputs: Array<{ reference: string; value: unknown }>;
+  runner: IrRuntimeKind;
+  timeoutMs: number | null;
+  frozenEngine?: FrozenEngineSnapshot;
+  frozenInvocation?: IrInvocation;
+  frozenExec?: IrExecSpec;
+}
+
+/**
+ * Build ONE unit of the step's work list: its journal id, its assembled prompt,
+ * its exec context env (exec units only), and its canonical input hash.
+ *
+ * Extracted from {@link computeStepWorkList} verbatim — same inputs, same
+ * bytes. It is a separate named pass only because the step-level resolution
+ * (inputs, fan-out items, runner, timeout) and the per-unit instantiation are
+ * two different jobs, and keeping them in one function had grown it past the
+ * repo's 220-line function bar.
+ */
+function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unknown, index: number): StepWorkUnit {
+  const { plan, input, template, isFanOut, resolvedInputs, frozenEngine, frozenInvocation, frozenExec } = ctx;
+  // Gate loops (>= 2) journal under `<unitId>~l<loop>` so loop 1's rows are
+  // never clobbered; the content-derived identity (and the prompt's
+  // {{UNIT_ID}}) stays the base id.
+  const journalBaseId = ctx.gateLoop > 1 ? `${unitId}~l${ctx.gateLoop}` : unitId;
+
+  // Context attachment (workflow-format-unification, spec §4): every unit
+  // receives the run params (already in the preamble), its item + index if
+  // it is a map unit, and the artifacts named by its step's `inputs:`.
+  // Instructions reach the unit byte-exact — never interpolated.
+  //
+  // An EXEC unit consumes no prompt (there is no model to read it), but it is
+  // still assembled here so the two paths stay one code path; the exec
+  // dispatcher simply ignores it. The same context reaches an exec unit through
+  // {@link buildExecContextEnv} instead — attached as environment, never
+  // spliced into argv, which is the argv-array analogue of "data is attached
+  // context, not string splices".
+  const prompt = buildUnitPrompt({
+    runId: input.runId,
+    stepId: plan.stepId,
+    unitId,
+    params: input.params,
+    ...(isFanOut ? { item, itemIndex: index } : {}),
+    ...(resolvedInputs.length > 0 ? { inputs: resolvedInputs } : {}),
+    ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
+    ...(template.schema ? { schema: template.schema } : {}),
+    instructions: template.instructions,
+  });
+  const inputHash = computeUnitInputHash(ctx, item);
+  const resolved: StepWorkUnit["resolved"] = { ok: true, prompt, inputHash };
+
+  return {
+    unitId,
+    nodeId: template.id,
+    index,
+    item,
+    isFanOut,
+    journalBaseId,
+    runner: ctx.runner,
+    ...(frozenEngine ? { engine: frozenEngine } : {}),
+    ...(frozenEngine?.kind === "agent" &&
+    frozenEngine.fallbackLlmEngine &&
+    input.engines?.[frozenEngine.fallbackLlmEngine]?.kind === "llm"
+      ? {
+          fallbackEngine: input.engines[frozenEngine.fallbackLlmEngine] as Extract<
+            FrozenEngineSnapshot,
+            { kind: "llm" }
+          >,
+        }
+      : {}),
+    ...(frozenInvocation ? { invocation: frozenInvocation } : {}),
+    ...(frozenExec ? { exec: frozenExec } : {}),
+    ...(frozenExec ? { execContext: buildExecContextEnv({ ctx, unitId, item, index }) } : {}),
+    ...(frozenInvocation?.model ? { model: frozenInvocation.model } : {}),
+    timeoutMs: ctx.timeoutMs,
+    ...(template.schema ? { schema: template.schema } : {}),
+    ...(template.env ? { env: template.env } : {}),
+    ...(template.retry ? { retry: template.retry } : {}),
+    onError: template.onError,
+    ...(template.isolation ? { isolation: template.isolation } : {}),
+    resolved,
+  };
+}
+
+/**
+ * The `AKM_*` context environment an exec unit's child receives.
+ *
+ * An exec unit's argv is FROZEN and never interpolated (the unified format has
+ * no substitution language at all), so this is how a fan-out item, the run
+ * params, and the step's declared `inputs:` artifacts actually reach a command
+ * — as attached environment, exactly as they reach an engine unit as attached
+ * prompt context. Values are canonical JSON so a command can parse them.
+ *
+ * These are applied on top of the resolved `env:` bindings in the child, so an
+ * engine-authored context variable can never be shadowed by a binding. Params
+ * are DECLARED NON-SECRET (`exec/param-secrets.ts` explains why: they are in
+ * every unit prompt and in the input hash, so they cannot be redacted);
+ * secrets belong in `env:` bindings, which reach the child by name.
+ *
+ * SIZE is not bounded here, on purpose. A workflow artifact has no bound
+ * comparable to an OS environment entry, so `AKM_INPUTS` (and `AKM_PARAMS` /
+ * `AKM_ITEM`) can serialize past what `execve` accepts and make PROCESS CREATION
+ * fail with a bare `E2BIG`. The check belongs at the spawn boundary, where the
+ * failure can be journaled as a unit outcome with an actionable message naming
+ * the variable: `checkExecContextSize` in `exec/exec-unit.ts`, against
+ * `execContextLimits()` for the platform the run is actually on (a Linux run is
+ * checked against Linux's ceiling, not against the smallest supported one).
+ * This function stays PURE and total.
+ */
+function buildExecContextEnv(args: {
+  ctx: StepWorkUnitContext;
+  unitId: string;
+  item: unknown;
+  index: number;
+}): Record<string, string> {
+  const { ctx, unitId, item, index } = args;
+  const env: Record<string, string> = {
+    AKM_RUN_ID: ctx.input.runId,
+    AKM_STEP_ID: ctx.plan.stepId,
+    AKM_UNIT_ID: unitId,
+    AKM_PARAMS: canonicalJson(ctx.input.params) ?? "{}",
+  };
+  if (ctx.isFanOut) {
+    env.AKM_ITEM = canonicalJson(item) ?? "null";
+    env.AKM_ITEM_INDEX = String(index);
+  }
+  if (ctx.resolvedInputs.length > 0) {
+    env.AKM_INPUTS =
+      canonicalJson(Object.fromEntries(ctx.resolvedInputs.map((entry) => [entry.reference, entry.value]))) ?? "{}";
+  }
+  return env;
+}
+
+/**
+ * The canonical dispatch-input envelope (reviewer finding #1). Every field here
+ * is a PLAN-FROZEN input that changes what the backend is actually asked to do,
+ * so a completed unit is reused ONLY when all of them match; a change to any of
+ * them re-dispatches. `canonicalJsonString` sorts keys recursively, so the
+ * preimage is order-independent, and this is the ONE place a unit's inputHash
+ * is computed (every caller goes through {@link computeStepWorkList}) — a hash
+ * that is byte-identical across a fresh run and a resume is structural, not
+ * coincidental.
+ *
+ * Unit identity (workflow-format-unification, spec §2.3/§4) hashes the FROZEN
+ * TEMPLATE BYTES (`template.instructions`, byte-exact, never an
+ * instantiated/interpolated string) + the canonical item JSON + the
+ * declared-input artifacts + the params snapshot — instead of a
+ * resolved/spliced prompt string, since there is no more splicing.
+ *
+ * Included beyond the R4 baseline (template/runner/model/schema): resolved
+ * timeoutMs (via `invocation`/`exec`), the env asset ref NAMES, and isolation —
+ * each reaches dispatch and a changed one yields a materially different call.
+ * `env` carries NAMES ONLY, never resolved values: hashing a resolved secret
+ * would leak it into a durable hash oracle and would spuriously re-dispatch on
+ * every secret rotation. `retry`/`onError` are DELIBERATELY excluded — they
+ * govern failed-unit re-dispatch and step-level failure reduction, not a
+ * COMPLETED unit's inputs/output, so a completed row stays valid across policy
+ * changes.
+ *
+ * `gateFeedback` IS included (conditionally, so a no-feedback unit's preimage
+ * is byte-identical to before): it is appended to the prompt by
+ * `buildUnitPrompt`, so a gate loop's retry is materially a different ask than
+ * the rejected attempt. Replay-safe: feedback is re-derived from the journaled
+ * gate decision, so a resumed retry re-hashes identically.
+ *
+ * `exec` is likewise conditional, which is what made the exec unit ADDITIVE:
+ * an exec unit has no engine and no invocation, and its frozen spec (argv, cwd,
+ * resolved timeout) is exactly what makes its dispatch different — so it gets
+ * its own key, present only on exec units, and `hashVersion` stays 4. Every
+ * previously-frozen llm/agent/sdk unit therefore hashes byte-identically to
+ * before, and no in-flight run re-dispatches work it already completed.
+ *
+ * Ambient config is DELIBERATELY excluded — the model-alias table, the resolved
+ * backend/connection, and the working directory (`ctx.workDir` /
+ * `process.cwd()`) are NOT plan-frozen. The frozen plan is the identity
+ * boundary (redesign addendum determinism bar #2): config drift under an
+ * in-flight run is out of scope by design.
+ */
+function computeUnitInputHash(ctx: StepWorkUnitContext, item: unknown): string {
+  const dispatch = ctx.frozenEngine ? transitiveDispatchSnapshot(ctx.frozenEngine, ctx.input.engines ?? {}) : null;
+  return createHash("sha256")
+    .update(
+      canonicalJsonString({
+        hashVersion: 4,
+        template: ctx.template.instructions,
+        item: ctx.isFanOut ? (item ?? null) : null,
+        inputs: ctx.resolvedInputs,
+        params: ctx.input.params,
+        dispatch,
+        invocation: ctx.frozenInvocation ?? null,
+        ...(ctx.frozenExec ? { exec: ctx.frozenExec } : {}),
+        schema: ctx.template.schema ?? null,
+        env: ctx.template.env ?? null,
+        isolation: ctx.template.isolation ?? "none",
+        ...(ctx.input.gateFeedback ? { gateFeedback: ctx.input.gateFeedback } : {}),
+      }),
+    )
+    .digest("hex");
 }
 
 // ── Prompt assembly (PURE) ───────────────────────────────────────────────────
@@ -684,6 +814,29 @@ export interface ExecutedStepOutcome {
  * Callers own dispatch-specific concerns (replay-divergence, budget) BEFORE
  * calling this; those never occur on the report path (units are journaled).
  */
+/**
+ * The FIRST failed unit's diagnostic, appended to the step summary.
+ *
+ * A failure reason alone is not a diagnosis. `non_zero_exit` says a command
+ * failed; for an exec unit the reason it failed is on stderr, and the summary is
+ * what `akm workflow run` prints and what the failed step row keeps as its
+ * notes. Bounded on both axes: ONE unit (a 10 000-wide fan-out must not turn its
+ * summary into a log) clipped to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP} — the same
+ * bound the journal and `status --units` use.
+ *
+ * Reproducible on both surfaces: the diagnostic is journaled on the unit row and
+ * `unitOutcomeFromRow` restores it as `error`, so a resume that rebuilds its
+ * outcomes from the journal composes the SAME summary a live dispatch did.
+ */
+function firstFailureDiagnostic(failed: UnitOutcome[]): string {
+  const first = failed.find((u) => u.error?.trim());
+  if (!first?.error) return "";
+  const text = first.error.trim();
+  const clipped =
+    text.length > WORKFLOW_UNIT_DIAGNOSTIC_CLIP ? `${text.slice(0, WORKFLOW_UNIT_DIAGNOSTIC_CLIP)}…` : text;
+  return ` First failure diagnostic (${first.unitId}): ${clipped}`;
+}
+
 export function reduceStepOutcomes(
   plan: IrStepPlan,
   reducer: IrMapReducer,
@@ -704,6 +857,7 @@ export function reduceStepOutcomes(
           .map((u) => `${u.unitId} (${u.failureReason ?? "error"})`)
           .join(", ")}.`
       : "") +
+    firstFailureDiagnostic(failed) +
     reducerNote;
 
   let artifactSchemaFailure = false;
@@ -751,8 +905,12 @@ export function reduceEmptyStep(plan: IrStepPlan, reducer: IrMapReducer): Execut
  * failed-row branch keeps the mapping TOTAL, so any reduction driven off the
  * journal yields the same outcome the live dispatch produced. A completed row's
  * text unit journals its output as a JSON string; a schema unit journals the
- * validated structure. A failed row carries its `failure_reason`; any journaled
- * text is surfaced too.
+ * validated structure. A failed row carries its `failure_reason`; the journaled
+ * diagnostic is surfaced as BOTH `text` (unchanged) and `error`, because
+ * `journaledUnitResultJson` (native-executor.ts) writes the failure's `error`
+ * into that column. Recovering it as `error` is what keeps the step summary
+ * byte-identical between a live dispatch and a resume that rebuilt its outcomes
+ * from the journal.
  */
 export function unitOutcomeFromRow(unitId: string, row: WorkflowRunUnitRow, hasSchema: boolean): UnitOutcome {
   let parsed: unknown;
@@ -780,7 +938,7 @@ export function unitOutcomeFromRow(unitId: string, row: WorkflowRunUnitRow, hasS
     unitId,
     ok: false,
     failureReason: row.failure_reason ?? "reported_failure",
-    ...(typeof parsed === "string" ? { text: parsed } : {}),
+    ...(typeof parsed === "string" ? { text: parsed, error: parsed } : {}),
     ...(row.tokens !== null ? { tokens: row.tokens } : {}),
   };
 }
@@ -1419,9 +1577,20 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
           };
           await journalGateEvaluationStart(gateUnit);
         }
+        // The judge dispatch must describe the SAME thing the gate row does, so
+        // the row identity is threaded down to the dispatcher from right here —
+        // the one place that computes it — instead of being re-derived (or, as
+        // before, synthesized as a constant "gate"). Both ids come from the same
+        // helpers `journalGateEvaluationStart/Finish` use.
+        const identity: JudgeCallIdentity = {
+          runId,
+          stepId,
+          nodeId: `${stepId}.gate`,
+          unitId: gateUnitId(stepId, gateLoop),
+        };
         let raw: string;
         try {
-          raw = await innerJudge(prompt);
+          raw = await innerJudge(prompt, identity);
         } catch (err) {
           const detail = err instanceof Error && err.message ? ` (${err.message})` : "";
           judgeState.failure = `the verification judge failed${detail}`;

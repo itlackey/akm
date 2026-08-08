@@ -13,7 +13,8 @@
         "detail": "Step \"announce\" declares no `output:` schema — its unit results are carried as an untyped artifact (permitted). Add an `output:` JSON Schema to type and validate the step artifact.",
         "file": "workflows/all-types-workflow.md",
         "fixed": false,
-        "issue": "workflow-warning"
+        "issue": "workflow-warning",
+        "line": 6
       }
     ]
   },
@@ -24,6 +25,7 @@
     "perType: one entry per type (13 keys — see the note above on the workflow-format-unification re-baseline). Each entry is {subdir, relPath, issues (LintIssue[] from a direct lintAssetFile(ctx, subdir) call, ctx built via the exact LintContext construction lint/index.ts's per-file loop uses)}. `skill` additionally carries `lintDirectoryIssues` (the directory-level missing-skill-md check, lintSkillDirectory).",
     "akmLintFullSweep: the real akmLint({dir: STASH_ROOT}) result ({ok, fixed, flagged, summary}), pinning the CLI entry point's ACTUAL reachable surface for this fixture stash. akmLint()'s STASH_SUBDIRS walk list (lint/index.ts) is [\"agents\",\"commands\",\"memories\",\"skills\",\"workflows\",\"lessons\",\"tasks\",\"knowledge\",\"facts\"] -- 9 of the 14 type dirs; script/secret/wiki/session are never visited by the per-file loop for ANY file. A separate env-dangerous-key pass additionally scans env/ and secrets/, but only .env-suffixed filenames (collectEnvFiles) -- it reaches env/all-types-env.env (matches) but NOT secrets/all-types-secret (bare filename, no .env suffix). Net result for this fixture stash: script, secret, wiki, and session are 100% unreached by akmLint() in production; workflows/all-types-workflow.md IS reached (it always was, being the only form now).",
     "RE-BASELINED (workflow validation-gap fixes): akmLint() now surfaces compileWorkflowPlan()'s non-fatal compile WARNINGS through a separate `warnings` channel ({warnings: LintIssue[], summary.warnings} -- issue code `workflow-warning`; never `flagged`, so --fail-on-flagged is unaffected). The fixture workflow's single step declares no `output:` schema, so akmLintFullSweep now carries exactly one workflow-warning entry; flagged/fixed and every perType issues array stay empty (lintAssetFile still returns errors only -- warnings come from the separate workflowCompileWarnings pass).",
+    "RE-BASELINED (lint line anchors): LintIssue/Diagnostic gained an OPTIONAL `line` (1-indexed) carrying WorkflowError.line all the way from the workflow parse/compile frontend into lint output -- `akm lint` used to drop it, so a finding in a 300-line workflow had no location while the same error rendered as `path:line — message` on the `workflow create` path. The ONLY diff in this golden is the new `line: 6` on akmLintFullSweep's single workflow-warning (the fixture's `- id: announce` step declaration); every whole-file finding (missing-skill-md, orphaned-stub, dangerous-env-key, …) omits the key entirely, so their serialization is byte-identical.",
     "Determinism: LintIssue.file is always ctx.relPath (never absPath). No absolute path appears anywhere in this golden -- normalization is a no-op.",
     "Behavior-parity oracle: the format adapters + the CLI lint sweep must reproduce this lint dispatch byte-for-byte. Sibling of WI-0b.4a's renderer/all-types.json."
   ],

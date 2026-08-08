@@ -188,10 +188,19 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
 
 /** Map one adapter {@link Diagnostic} onto a {@link LintIssue} — see `types.ts`'s `"adapter-diagnostic"` doc comment for the open→closed reconciliation. */
 export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
+  // `line` is optional on both shapes: carry it only when the adapter set one,
+  // so whole-file findings keep their exact existing serialization.
+  const location = typeof diag.line === "number" ? { line: diag.line } : {};
   if (KNOWN_ADAPTER_ISSUE_TYPES.has(diag.issue)) {
-    return { file: diag.file, issue: diag.issue as LintIssueType, detail: diag.detail, fixed: diag.fixed };
+    return { file: diag.file, issue: diag.issue as LintIssueType, detail: diag.detail, fixed: diag.fixed, ...location };
   }
-  return { file: diag.file, issue: "adapter-diagnostic", detail: `[${diag.issue}] ${diag.detail}`, fixed: diag.fixed };
+  return {
+    file: diag.file,
+    issue: "adapter-diagnostic",
+    detail: `[${diag.issue}] ${diag.detail}`,
+    fixed: diag.fixed,
+    ...location,
+  };
 }
 
 /**

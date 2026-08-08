@@ -28,6 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint/index";
+import { formatLintPlain } from "../../src/output/text/lint-format";
 
 const tempDirs: string[] = [];
 
@@ -365,5 +366,98 @@ describe("akm lint — workflow compile warnings surface as warnings (non-fatal)
     const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
     expect(result.flagged.filter((i) => i.issue === "invalid-workflow-structure")).toHaveLength(1);
     expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ── Line anchors: lint findings carry the source line ────────────────────────
+//
+// `WorkflowError` has always been line-anchored (`workflow create` renders
+// `path:line — message`), but `akm lint` DROPPED `err.line`, so an author
+// linting a 300-line workflow got a message with no location. `LintIssue` /
+// `Diagnostic` now carry an OPTIONAL `line`, populated from the workflow
+// frontend and rendered by both the human formatter (`file:line`) and the JSON
+// output. Non-workflow lint sources have no line and are unchanged.
+describe("akm lint — workflow findings carry a line number", () => {
+  /** A workflow whose ONLY error is on a known line (`gate:`, line 8). */
+  const BROKEN_AT_LINE_8 = [
+    "---", // 1
+    "type: workflow", // 2
+    "description: Anchored", // 3
+    "updated: 2026-07-30", // 4
+    "steps:", // 5
+    "  - id: first", // 6
+    "  - id: second", // 7
+    "    gate: { max_loops: 0 }", // 8
+    "---", // 9
+    "", // 10
+    "## first", // 11
+    "", // 12
+    "Do it.", // 13
+    "", // 14
+    "## second", // 15
+    "", // 16
+    "Do it again.", // 17
+    "", // 18
+  ].join("\n");
+
+  test("a structural finding reports the offending line, not just the file", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "anchored.md", BROKEN_AT_LINE_8);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+
+    const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
+    expect(structural).toHaveLength(1);
+    expect(structural[0]!.line).toBe(8);
+    expect(structural[0]!.detail).toContain('"gate.max_loops"');
+  });
+
+  test("the line survives JSON serialization (the `--format json` surface)", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "anchored.md", BROKEN_AT_LINE_8);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const json = JSON.parse(JSON.stringify(result)) as typeof result;
+
+    expect(json.flagged[0]!.line).toBe(8);
+  });
+
+  test("the human formatter renders `file:line` for a line-anchored finding", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "anchored.md", BROKEN_AT_LINE_8);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const text = formatLintPlain(result as unknown as Record<string, unknown>) ?? "";
+
+    expect(text).toContain(`${path.join("workflows", "anchored.md")}:8  [invalid-workflow-structure]`);
+  });
+
+  test("compile warnings are line-anchored too", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "untyped.md", CLEAN_WORKFLOW);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+
+    expect(result.warnings).toHaveLength(1);
+    // The `- id: only` step declaration is line 6 of CLEAN_WORKFLOW.
+    expect(result.warnings[0]!.line).toBe(6);
+    const text = formatLintPlain(result as unknown as Record<string, unknown>) ?? "";
+    expect(text).toContain(":6  [workflow-warning]");
+  });
+
+  test("a whole-file finding from a non-workflow source carries NO line (field stays optional)", async () => {
+    const stashDir = makeTempStash();
+    const skillDir = path.join(stashDir, "skills", "no-md");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "notes.md"), "# notes\n", "utf8");
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "skills" });
+
+    const missing = result.flagged.filter((i) => i.issue === "missing-skill-md");
+    expect(missing).toHaveLength(1);
+    expect(missing[0]!.line).toBeUndefined();
+    expect(Object.hasOwn(missing[0]!, "line")).toBe(false);
+    const text = formatLintPlain(result as unknown as Record<string, unknown>) ?? "";
+    expect(text).toContain(`${path.join("skills", "no-md")}  [missing-skill-md]`);
   });
 });

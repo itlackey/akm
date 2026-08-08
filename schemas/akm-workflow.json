@@ -148,7 +148,7 @@
     },
     "jsonSchemaObject": {
       "type": "object",
-      "description": "A JSON Schema declaration. The parser validates it as a schema definition against the runtime's enforced subset (src/core/json-schema.ts checkJsonSchemaDefinition): typo'd type names and keywords outside the subset (e.g. pattern, $ref, oneOf) are authoring-time errors, not silent no-ops."
+      "description": "A JSON Schema declaration. The parser validates it as a schema definition against the runtime's enforced subset (src/core/json-schema.ts checkJsonSchemaDefinition): typo'd type names and keywords outside the subset (e.g. $ref, const, format, patternProperties) are authoring-time errors, not silent no-ops."
     },
     "retry": {
       "type": "object",
@@ -213,11 +213,77 @@
         }
       }
     },
-    "unit": {
+    "exec": {
       "type": "object",
-      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim.",
+      "description": "Run a shell command as this unit instead of dispatching to an engine. `command` is an ARGV ARRAY and there is no shell-string form: the child is spawned directly, so shell metacharacters (`;` `|` `&&` `$(…)` `>` `*`) are inert literal argument bytes — the quoting/injection class simply does not exist. Write the interpreter explicitly (e.g. [\"bash\", \"-lc\", \"a | b\"]) when a pipeline is really wanted. stdout is the promoted step artifact with trailing newlines stripped (like shell `$(…)`); when the unit declares an `output` schema, stdout must instead be exactly one JSON value, which is validated against it. A non-zero exit fails the unit with failure reason `non_zero_exit`, honoring `retry:` and `on_error:` like any other unit. The child's environment is an ALLOWLIST by default (PATH, HOME, locale/temp vars, the Windows process-creation essentials) — widen it with `pass_env` or `inherit_env`.",
+      "required": ["command"],
       "additionalProperties": false,
       "properties": {
+        "command": {
+          "type": "array",
+          "description": "argv; command[0] is the program, resolved through PATH. Never shell-parsed.",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Optional RELATIVE working directory inside the unit's working directory (its fresh worktree under `isolation: worktree`). Absolute paths, Windows drive letters, \"~\", and \"..\" segments are rejected here, and containment is re-checked against the resolved base — symlinks included — before the command is spawned.",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!/|\\\\|~|[A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+        },
+        "pass_env": {
+          "type": "array",
+          "description": "Extra environment variable NAMES copied through from akm's own environment on top of the default allowlist — for a per-machine toolchain variable (e.g. CARGO_HOME) that no committed `env:` asset could carry. NAMES ONLY: values never appear in a workflow, and unlike `env:` bindings these values are NOT redacted from the command's output, so never list a credential here.",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "inherit_env": {
+          "type": "boolean",
+          "description": "Give the command akm's ENTIRE environment instead of the default allowlist. Opt in only when a command genuinely needs the caller's whole environment (a wrapper script, a toolchain with many ambient variables); prefer `pass_env` or `env:` bindings, which keep what the command can see explicit in the frontmatter diff. Dispatch-significant: toggling it changes the unit's input hash."
+        }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim. Declaring `exec` turns the step into a shell-command unit: it names no engine, so `engine`, `model`, and `llm` are rejected alongside it.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["exec"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["engine"]
+                },
+                {
+                  "required": ["model"]
+                },
+                {
+                  "required": ["llm"]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "properties": {
+        "exec": {
+          "$ref": "#/definitions/exec"
+        },
         "engine": {
           "$ref": "#/definitions/engineName",
           "description": "Named engine selected when the workflow run is created."
@@ -268,7 +334,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 64,
-          "description": "Max concurrent units for this step; capped by the engine's global limit."
+          "description": "Max concurrent units for this step. Defaults to workflow.defaultMapConcurrency (4 when unset) — a map step is parallel by default since 0.9.1; write 1 for serial execution. The effective width is the minimum of this, workflow.maxConcurrency, the selected engine's concurrency, and the host CPU cap."
         },
         "reducer": {
           "$ref": "#/definitions/reducer"

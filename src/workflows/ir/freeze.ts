@@ -21,14 +21,16 @@ import {
 import { resolveLlmModel, resolveModel } from "../../integrations/agent/model-aliases";
 import { getBuiltinAgentProfile } from "../../integrations/agent/profiles";
 import { HARNESS_BY_ID } from "../../integrations/harnesses";
-import { workflowMaxConcurrency } from "../concurrency-policy";
+import { defaultLlmEngineConcurrency, defaultMapConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
 import type { ProgramUnit } from "../program/schema";
+import { DEFAULT_EXEC_TIMEOUT_MS } from "../resource-limits";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 import { compileWorkflowPlan, type WorkflowPlanDraft, type WorkflowUnitDraft } from "./compile";
 import type {
   FrozenAgentEngine,
   FrozenEngineSnapshot,
   FrozenLlmEngine,
+  IrExecSpec,
   IrGateNode,
   IrInvocation,
   IrStepPlan,
@@ -49,11 +51,27 @@ export interface FrozenWorkflow {
   engineAnnouncement?: string;
 }
 
+export interface FreezeOptions {
+  /**
+   * Test seam for the compile pass. Production always leaves this unset and
+   * gets {@link compilePlan} (→ `compileWorkflowPlan`). It exists so a test can
+   * hand this boundary a draft step list that is REORDERED or FILTERED relative
+   * to `asset.document.steps` and prove that override attribution still follows
+   * `stepId` rather than array position — the invariant the positional lookup
+   * used to depend on without ever stating it.
+   */
+  compile?: (asset: WorkflowAsset) => WorkflowPlanDraft & { warnings: import("../schema").WorkflowError[] };
+}
+
 /**
  * The only source-to-runtime boundary. Source compilation remains pure; engine
  * selection and every dispatch-significant setting are resolved here once.
  */
-export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: AkmConfig): FrozenWorkflow {
+export function compileResolveFreezeWorkflow(
+  asset: WorkflowAsset,
+  inputConfig: AkmConfig,
+  options: FreezeOptions = {},
+): FrozenWorkflow {
   // Applied ONCE, before any resolution: every engine lookup below (selection,
   // snapshots, the gate judge) then sees one config and needs no fallback
   // awareness of its own.
@@ -62,10 +80,18 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
   // `defaults.engine` is the lowest-precedence selector, so a document- or
   // unit-level `engine:` still wins and must not be reported as opencode's.
   let usedFallbackEngine = false;
-  const preliminary = compilePlan(asset);
+  const preliminary = (options.compile ?? compilePlan)(asset);
   const engines: Record<string, FrozenEngineSnapshot> = {};
   const maxConcurrency = frozenConcurrency(config);
+  const mapDefaultConcurrency = frozenMapDefaultConcurrency(config);
   const documentDefaults = asset.document.defaults;
+  // Keyed by stepId, NOT by array position. Compile is 1:1 and order-preserving
+  // today, so `asset.document.steps[index]` happened to line up with
+  // `preliminary.steps[index]` — but nothing enforces that, and a compile pass
+  // that ever filtered or reordered steps would silently attribute one step's
+  // engine/model/timeout overrides to a different step. Every draft step
+  // already carries its `stepId`, so look the source up by it.
+  const sourceStepsById = new Map(asset.document.steps.map((step) => [step.id, step]));
 
   const freezeInvocation = (unit: ProgramUnit | undefined, stepId: string): IrInvocation => {
     const layers: EngineUseConfig[] = [...(documentDefaults ? [documentDefaults] : []), ...(unit ? [unit] : [])];
@@ -100,13 +126,45 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
     return { engine: name, model, timeoutMs, ...(llm ? { llm } : {}) };
   };
 
+  /**
+   * Resolve an exec unit's wall-clock budget at the single freeze boundary:
+   * unit `timeout:` → document `defaults.timeout` → {@link DEFAULT_EXEC_TIMEOUT_MS}.
+   * There is no engine layer to consult — an exec unit names no engine — and
+   * `null` (the author's `timeout: none`) is honored as genuinely unbounded,
+   * exactly like `effectiveTimeout`'s null.
+   */
+  const freezeExec = (exec: NonNullable<WorkflowUnitDraft["exec"]>, unit: ProgramUnit | undefined): IrExecSpec => {
+    const layers = [...(documentDefaults ? [documentDefaults] : []), ...(unit ? [unit] : [])];
+    let timeoutMs: number | null = DEFAULT_EXEC_TIMEOUT_MS;
+    for (let index = layers.length - 1; index >= 0; index--) {
+      if (Object.hasOwn(layers[index] ?? {}, "timeoutMs")) {
+        timeoutMs = layers[index]?.timeoutMs ?? null;
+        break;
+      }
+    }
+    return {
+      command: [...exec.command] as [string, ...string[]],
+      ...(exec.cwd ? { cwd: exec.cwd } : {}),
+      // Env-scope keys are frozen structurally (the draft already dropped an
+      // empty `passEnv` and a false `inheritEnv`), so the default allowlist
+      // stays the ABSENCE of both keys — one encoding per state, which is what
+      // keeps the canonical hash preimage stable.
+      ...(exec.passEnv && exec.passEnv.length > 0 ? { passEnv: [...exec.passEnv] } : {}),
+      ...(exec.inheritEnv ? { inheritEnv: true as const } : {}),
+      timeoutMs,
+    };
+  };
+
   const freezeUnit = (node: WorkflowUnitDraft, stepId: string, unit?: ProgramUnit): IrUnitNode => ({
     kind: "unit",
     id: node.id,
     instructions: node.instructions,
     templating: node.templating ?? "verbatim",
     ...(node.inputs && node.inputs.length > 0 ? { inputs: node.inputs } : {}),
-    invocation: freezeInvocation(unit, stepId),
+    // An exec unit dispatches a child process, so it freezes an exec spec and
+    // NO invocation — engine selection is skipped entirely, which is why an
+    // exec-only workflow runs on an install with no engines configured at all.
+    ...(node.exec ? { exec: freezeExec(node.exec, unit) } : { invocation: freezeInvocation(unit, stepId) }),
     ...(node.schema ? { schema: node.schema } : {}),
     ...(node.retry ? { retry: node.retry } : {}),
     onError: node.onError,
@@ -115,8 +173,8 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
     ...(node.source ? { source: node.source } : {}),
   });
 
-  const steps: IrStepPlan[] = preliminary.steps.map((step, index) => {
-    const sourceStep = asset.document.steps[index];
+  const steps: IrStepPlan[] = preliminary.steps.map((step) => {
+    const sourceStep = sourceStepsById.get(step.stepId);
     const sourceUnit = sourceStep?.map ? sourceStep.map.unit : sourceStep?.unit;
     const root = step.root
       ? step.root.kind === "map"
@@ -125,7 +183,9 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
             id: step.root.id,
             over: step.root.over,
             template: freezeUnit(step.root.template, step.stepId, sourceUnit),
-            concurrency: step.root.concurrency ?? 1,
+            // `?? ` — not `||` — keeps an authored `concurrency: 1` (explicit
+            // opt-out, serial) distinguishable from an unset one (the default).
+            concurrency: step.root.concurrency ?? mapDefaultConcurrency,
             reducer: step.root.reducer,
             ...(step.root.source ? { source: step.root.source } : {}),
           }
@@ -255,7 +315,7 @@ function addSnapshot(config: AkmConfig, name: string, target: Record<string, Fro
       kind: "llm",
       endpoint: engine.endpoint,
       model: exactModel(config, name, engine, []) as string,
-      concurrency: engine.concurrency ?? 1,
+      concurrency: defaultLlmEngineConcurrency(engine.endpoint, engine.concurrency),
       ...(engine.provider ? { provider: engine.provider } : {}),
       ...(resolved.credential ? { credential: resolved.credential } : {}),
       ...(engine.temperature !== undefined ? { temperature: engine.temperature } : {}),
@@ -310,4 +370,15 @@ function freezeGateJudge(config: AkmConfig, engines: Record<string, FrozenEngine
 function frozenConcurrency(config: AkmConfig): number {
   const configured = config.workflow?.maxConcurrency;
   return workflowMaxConcurrency(typeof configured === "number" && Number.isFinite(configured) ? configured : undefined);
+}
+
+/**
+ * Width to freeze into a `map` node that declared no `concurrency:`. Resolved
+ * HERE, at the single freeze boundary, so the number lands in `plan_json` and
+ * an in-flight run keeps the width it started with even if this default (or
+ * the config key) changes underneath it.
+ */
+function frozenMapDefaultConcurrency(config: AkmConfig): number {
+  const configured = config.workflow?.defaultMapConcurrency;
+  return defaultMapConcurrency(typeof configured === "number" ? configured : undefined);
 }

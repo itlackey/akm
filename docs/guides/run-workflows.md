@@ -140,10 +140,15 @@ so following a run's events is safe to pipe into logs or dashboards.
 
 ## Security: workflow sources are executed code
 
-Workflow steps that include shell commands run with **the full environment
-and PATH of the user invoking `akm workflow run`** — same as if the user had
-typed those commands in their shell. There is no sandbox, no env-var
-allowlist, and no separation between trusted and untrusted workflows. AKM
+Workflow steps that include shell commands run with **the full filesystem and
+network access of the user invoking `akm workflow run`** — same as if the user
+had typed those commands in their shell. There is no sandbox and no separation
+between trusted and untrusted workflows. An `exec` unit's *environment* is
+narrowed to an allowlist by default
+([Workflow Schema](../reference/workflow-schema.md#the-childs-environment-is-an-allowlist)),
+which bounds accidental exposure of unrelated credentials — but a command that
+runs at all can still read those credentials off disk, so it is a hygiene
+boundary, not a containment one. AKM
 directly orchestrates workflows as a defined execution surface — it does not
 blindly execute arbitrary indexed content — but that orchestration still runs
 the workflow's own declared shell commands with your full access once you
@@ -161,9 +166,11 @@ treat package dependencies**:
   equivalent to piping a stranger's bash script into your shell. Read the
   workflow file first (`akm show workflows/<name>`) before running it.
 - **Audit before run** for any workflow that touches secrets, deploys to
-  production, or writes outside the project tree. Workflow steps can read
-  any environment variable visible to the akm process — including secrets
-  exported by your shell or injected via `akm env run` / `akm secret run`.
+  production, or writes outside the project tree. Read the `env:` bindings a
+  workflow declares, and read its `exec.pass_env` / `exec.inherit_env` lines —
+  `inherit_env: true` hands that command every environment variable visible to
+  the akm process, including secrets exported by your shell or injected via
+  `akm env run` / `akm secret run`.
 - **Pin known-good versions** when adding workflow sources from a registry
   or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update
   deliberately rather than via `akm bundle update --all`. A trusted workflow

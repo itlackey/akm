@@ -113,6 +113,16 @@ value is clamped to `1..64`. When absent, AKM derives the cap once from the CPU
 count (`min(16, max(1, cores - 2))`) and freezes it into the run plan, so resume
 does not change policy on a different host or after config edits.
 
+`workflow.defaultMapConcurrency` is the width a `map` step freezes when it
+declares no `concurrency:` of its own. Unset means **4** — map steps are
+parallel by default as of 0.9.1. An explicit value is clamped to `1..64`; set
+it to `1` to restore the pre-0.9.1 serial-by-default fan-out for every workflow
+on this machine. It is only a default: an authored `map.concurrency` always
+wins, and it never raises a step past `workflow.maxConcurrency`, the selected
+engine's `concurrency`, or the host CPU cap. An LLM engine that declares no
+`engines.<name>.concurrency` gets **1** on a loopback endpoint (a local model
+server holds one loaded model) and **4** on a remote one.
+
 `workflow.judgeEngine` names the LLM or agent engine used to verify every
 non-empty workflow `### gate` rubric. It is required when a workflow declares
 completion criteria and is frozen into each new run, so later config edits do

@@ -7,8 +7,8 @@
  * unification). One format now: reads the frontmatter+body document via
  * `parseWorkflow` and projects the validated `WorkflowDocument` down to the
  * public `ShowResponse` shape and into search hints for the indexer,
- * including a compact per-step orchestration summary (engine/model,
- * `map.over` reference, route table) when the step declares one.
+ * including a compact per-step orchestration summary (engine/model or an exec
+ * unit's argv, `map.over` reference, route table) when the step declares one.
  */
 
 import { displayRef } from "../core/asset/resolve-ref";
@@ -78,20 +78,54 @@ function projectParameters(document: WorkflowDocument): WorkflowParameter[] | un
  * compiler does (per-unit override wins), `fanOut.over` carries the raw
  * reference string, and `route` carries the explicit input + branch table.
  * Returns undefined when the step declares nothing worth summarizing.
+ *
+ * ## exec units
+ *
+ * An `exec` unit runs a shell command and names NO engine — the parser rejects
+ * `engine`/`model`/`llm` alongside `exec:`. Merging `defaults.engine` into its
+ * summary would make `show` state something untrue about what will run, so the
+ * two fields are suppressed and the argv is projected instead, under `exec`
+ * (field presence carries the dispatch kind, exactly like `fanOut`/`route`
+ * carry the step kind).
+ *
+ * `timeoutMs` still merges the defaults: an exec unit really does inherit
+ * `defaults.timeout`, so that number stays true for it.
+ *
+ * The argv is shown IN FULL, never clipped. It is authored literally in the
+ * asset — the `${{ … }}` interpolation language is gone, so nothing in it is
+ * resolved from the environment, from a secret ref, or from a prior step's
+ * output — which makes it (a) safe to display, since every byte is already
+ * visible in the workflow file `show` is rendering, and (b) pointless to clip:
+ * the whole finding this projection answers is `show` describing something
+ * other than what runs, and a truncated argv is that same bug in miniature.
+ * The parser bounds it anyway (`WORKFLOW_MAX_EXEC_ARGV` entries of
+ * `WORKFLOW_MAX_EXEC_ARG_BYTES`), and it is far smaller than the step
+ * `instructions` this same projection already carries whole.
  */
 function summarizeStepOrchestration(
   step: WorkflowStep,
   defaults: ProgramDefaults | undefined,
 ): WorkflowStepOrchestrationSummary | undefined {
   const unit = step.unit ?? step.map?.unit;
-  const engine = unit?.engine ?? defaults?.engine;
-  const model = unit?.model ?? defaults?.model;
+  const exec = unit?.exec;
+  const engine = exec ? undefined : (unit?.engine ?? defaults?.engine);
+  const model = exec ? undefined : (unit?.model ?? defaults?.model);
   const timeoutMs = unit?.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;
 
   const summary: WorkflowStepOrchestrationSummary = {
     ...(engine !== undefined ? { engine } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(exec
+      ? {
+          exec: {
+            command: [...exec.command],
+            ...(exec.cwd !== undefined ? { cwd: exec.cwd } : {}),
+            ...(exec.passEnv !== undefined ? { passEnv: [...exec.passEnv] } : {}),
+            ...(exec.inheritEnv === true ? { inheritEnv: true as const } : {}),
+          },
+        }
+      : {}),
     ...(step.map
       ? {
           fanOut: {

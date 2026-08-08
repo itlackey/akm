@@ -15,15 +15,14 @@
  * NEVER imports an LLM SDK. Agents are reachable only via shell-out;
  * this is a pre-emptive guarantee against the #222 invariant.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { collectAllowlistedEnv, supplementPathForSchedulerContext } from "../../core/spawn-env";
 import {
   runManagedSubprocess,
   type SpawnedSubprocess,
   type SpawnFn,
   type StreamReadResult,
+  streamCaptureFailure,
 } from "../../core/subprocess";
 import { getCommandBuilder } from "./builders";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
@@ -160,83 +159,21 @@ export interface AgentRunResult {
   sessionId?: string;
 }
 
-/**
- * Supplement `existingPath` with well-known user binary directories when
- * running in a scheduler context (cron/launchd) where PATH is stripped.
- *
- * Detection heuristic: if the current PATH does not contain the user's home
- * directory, we are likely in a stripped scheduler env. In an interactive
- * shell the user's home almost always appears (e.g. ~/.bun/bin, ~/.cargo/bin).
- *
- * Only directories that actually exist on disk are prepended, and only if
- * they are not already present, so interactive-shell PATH ordering is never
- * disturbed.
- */
-export function supplementPathForSchedulerContext(existingPath: string): string {
-  const home = os.homedir();
-  // If PATH already contains the home directory, we are in an interactive
-  // shell — skip supplementation entirely.
-  if (existingPath.split(path.delimiter).some((d) => d.startsWith(home))) {
-    return existingPath;
-  }
-  const candidates = pathCandidatesForCurrentPlatform(home);
-  const existing = new Set(existingPath.split(path.delimiter).filter(Boolean));
-  const toAdd = candidates.filter((d) => !existing.has(d) && fs.existsSync(d));
-  if (toAdd.length === 0) return existingPath;
-  return [...toAdd, existingPath].filter(Boolean).join(path.delimiter);
-}
-
-function pathCandidatesForCurrentPlatform(home: string): string[] {
-  if (process.platform === "win32") {
-    // Windows: Bun + Cargo + Scoop + Chocolatey + system tools. Order favors
-    // user-local installs over machine-global so the user's chosen toolchain
-    // wins. These paths are commonly stripped from Task Scheduler / service
-    // environments, mirroring the cron/launchd problem on POSIX.
-    const localAppData = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
-    const userProfile = process.env.USERPROFILE ?? home;
-    const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
-    return [
-      path.join(userProfile, ".bun", "bin"),
-      path.join(localAppData, "Programs", "bun"),
-      path.join(userProfile, ".cargo", "bin"),
-      path.join(localAppData, "Programs", "Git", "cmd"),
-      path.join(userProfile, "scoop", "shims"),
-      path.join(programFiles, "Git", "cmd"),
-      "C:\\ProgramData\\chocolatey\\bin",
-    ];
-  }
-  return [
-    path.join(home, ".bun", "bin"),
-    path.join(home, ".cargo", "bin"),
-    path.join(home, ".local", "bin"),
-    "/opt/homebrew/bin",
-    "/opt/homebrew/sbin",
-    "/usr/local/bin",
-  ];
-}
+// `supplementPathForSchedulerContext` moved to `core/spawn-env` when the
+// workflow `exec` unit adopted the same allowlist mechanism. Re-exported here
+// because it is this module's long-standing published name.
+export { supplementPathForSchedulerContext };
 
 /**
  * Build the child env. Starts empty and copies through:
- *   • Every name in `profile.envPassthrough`.
+ *   • Every name in `profile.envPassthrough` (via the shared
+ *     {@link collectAllowlistedEnv}, which also supplements PATH for
+ *     scheduler contexts where the inherited PATH is stripped).
  *   • Every entry in `profile.env`.
  *   • Every entry in `options.env` (highest precedence).
- *
- * PATH is supplemented with well-known user binary directories when running
- * in a scheduler context (cron/launchd) where the inherited PATH is stripped.
- * See {@link supplementPathForSchedulerContext}.
  */
 function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
-  const source = options.envSource ?? process.env;
-  const env: Record<string, string> = {};
-  for (const name of profile.envPassthrough) {
-    const value = source[name];
-    if (value !== undefined) env[name] = value;
-  }
-  // Supplement PATH after passthrough so the scheduler-context fix applies to
-  // the value actually coming from the environment source.
-  if (env.PATH !== undefined) {
-    env.PATH = supplementPathForSchedulerContext(env.PATH);
-  }
+  const env = collectAllowlistedEnv(profile.envPassthrough, options.envSource ?? process.env);
   if (profile.env) {
     for (const [k, v] of Object.entries(profile.env)) env[k] = v;
   }
@@ -246,20 +183,20 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
   return env;
 }
 
+/**
+ * This path's phrasing of the SHARED incomplete-capture verdict
+ * ({@link streamCaptureFailure} in `core/subprocess.ts`). The classification
+ * lives in the primitive so the agent path and the workflow `exec` path cannot
+ * drift apart on what "the capture did not complete" means; only the sentence
+ * naming the profile is local. Message text is unchanged from the inlined copy.
+ */
 function streamFailureMessage(
   profileName: string,
   stdout: StreamReadResult,
   stderr: StreamReadResult,
 ): string | undefined {
-  const failures: string[] = [];
-  if (stdout.error)
-    failures.push(`stdout read failed: ${stdout.error instanceof Error ? stdout.error.message : String(stdout.error)}`);
-  if (stderr.error)
-    failures.push(`stderr read failed: ${stderr.error instanceof Error ? stderr.error.message : String(stderr.error)}`);
-  if (stdout.timedOut) failures.push("stdout drain timed out");
-  if (stderr.timedOut) failures.push("stderr drain timed out");
-  if (failures.length === 0) return undefined;
-  return `agent CLI "${profileName}" output capture failed: ${failures.join("; ")}`;
+  const failures = streamCaptureFailure(stdout, stderr);
+  return failures === undefined ? undefined : `agent CLI "${profileName}" output capture failed: ${failures}`;
 }
 
 /**

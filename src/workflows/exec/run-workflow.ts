@@ -504,9 +504,12 @@ function workflowSummaryJudge(
   plan: WorkflowPlanGraph,
   stepPlan: IrStepPlan,
   signal: AbortSignal | undefined,
+  owner: { runId: string; stepId: string },
 ): SummaryJudge | null {
   if (options.summaryJudge !== undefined) return options.summaryJudge;
-  return frozenSummaryJudge(plan, stepPlan.gate.judge, signal, options.dispatcher ?? defaultUnitDispatcher);
+  // The judge dispatches under the REAL run/step identity; the per-loop gate row
+  // identity is threaded in per call by the completion path that journals it.
+  return frozenSummaryJudge(plan, stepPlan.gate.judge, signal, options.dispatcher ?? defaultUnitDispatcher, owner);
 }
 
 /**
@@ -968,7 +971,10 @@ async function driveRun(
     // verify. No gate loop is consumed and nothing is dispatched.
     let summaryJudge: SummaryJudge | null;
     try {
-      summaryJudge = workflowSummaryJudge(options, plan, stepPlan, dispatchSignal);
+      summaryJudge = workflowSummaryJudge(options, plan, stepPlan, dispatchSignal, {
+        runId: next.run.id,
+        stepId: step.id,
+      });
     } catch (error) {
       const detail = error instanceof Error && error.message ? ` (${error.message})` : "";
       const notes = judgeFailureNotes(

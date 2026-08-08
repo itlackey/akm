@@ -357,6 +357,18 @@ export function workflowCompileWarnings(relPath: string, raw: string, parsePath:
   return workflowFrontendDiagnostics(relPath, raw, parsePath).warnings;
 }
 
+/**
+ * The `Diagnostic.line` fragment for a line-anchored workflow finding. Every
+ * `WorkflowError` carries a 1-indexed `line`; this used to be DROPPED here, so
+ * an author linting a 300-line workflow got a message with no location while
+ * the same error rendered as `path:line — message` on the `workflow create`
+ * path. Spread (`...lineOf(err)`) rather than assigned, so a nonsense line
+ * never materializes the optional key on a whole-file finding.
+ */
+function lineOf(err: { line?: number }): { line?: number } {
+  return typeof err.line === "number" && Number.isFinite(err.line) && err.line > 0 ? { line: err.line } : {};
+}
+
 /** Shared parse+compile pass behind {@link workflowStructureDiagnostics} / {@link workflowCompileWarnings}. */
 function workflowFrontendDiagnostics(
   relPath: string,
@@ -376,6 +388,7 @@ function workflowFrontendDiagnostics(
           issue: "invalid-workflow-structure",
           detail: err.message ?? String(err),
           fixed: false,
+          ...lineOf(err),
         });
       }
       return { errors, warnings };
@@ -388,6 +401,7 @@ function workflowFrontendDiagnostics(
           issue: "invalid-workflow-structure",
           detail: err.message,
           fixed: false,
+          ...lineOf(err),
         });
       }
       return { errors, warnings };
@@ -398,6 +412,7 @@ function workflowFrontendDiagnostics(
         issue: "workflow-warning",
         detail: warning.message,
         fixed: false,
+        ...lineOf(warning),
       });
     }
   } catch (e) {

@@ -1622,6 +1622,10 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "defaultMapConcurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
         "judgeEngine": {
           "type": "string",
           "maxLength": 63,
@@ -3267,6 +3271,10 @@
           "type": "object",
           "properties": {
             "maxConcurrency": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "defaultMapConcurrency": {
               "type": "integer",
               "exclusiveMinimum": 0
             },

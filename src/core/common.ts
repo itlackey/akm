@@ -306,6 +306,24 @@ export function hasErrnoCode(error: unknown, code: string): boolean {
   return (error as Record<string, unknown>).code === code;
 }
 
+/**
+ * True when `value` is a RELATIVE path that cannot leave its base directory:
+ * no absolute form (POSIX `/`, Windows `\` or a `C:` drive prefix), no `~`
+ * home expansion, and no `..` segment under either separator.
+ *
+ * This is the SYNTACTIC half of containment — cheap, string-only, usable at
+ * authoring time before any directory exists. It is deliberately paired with
+ * (never a substitute for) {@link isWithin}, which resolves symlinks against a
+ * real base at use time. Workflow `exec` units run both: the parser and the
+ * frozen-plan decoder reject uncontained spellings, and the executor re-checks
+ * the resolved path before spawning.
+ */
+export function isContainedRelativePath(value: string): boolean {
+  if (value === "" || value.startsWith("/") || value.startsWith("\\") || value.startsWith("~")) return false;
+  if (/^[A-Za-z]:/.test(value)) return false;
+  return !value.split(/[/\\]+/).includes("..");
+}
+
 export function isWithin(candidate: string, root: string): boolean {
   const resolvedRoot = safeRealpath(root);
   const resolvedCandidate = safeRealpath(candidate);

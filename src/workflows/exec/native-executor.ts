@@ -135,7 +135,6 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensitiveValue } from "../../core/redaction";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import { insertEventStrict } from "../../storage/repositories/events-repository";
@@ -145,6 +144,13 @@ import {
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import type { FrozenEngineSnapshot, IrBudget, IrInvocation, IrStepPlan } from "../ir/schema";
+import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
+// The ONE dispatch redaction contract, shared with the gate-judge path
+// (exec/frozen-judge.ts). Re-exported for existing importers of this module.
+import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
+// The exec (shell) unit runner — a leaf that owns argv spawning, containment,
+// and the process-outcome → failure-reason mapping.
+import { runExecUnit } from "./exec-unit";
 import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
 // (this module + run-workflow.ts) on both the fresh-execution and the resume
@@ -161,6 +167,7 @@ import {
 } from "./step-work";
 import type { UnitDispatcher, UnitDispatchRequest, UnitDispatchResult } from "./unit-dispatch";
 
+export { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
 export type { UnitDispatcher, UnitDispatchRequest, UnitDispatchResult } from "./unit-dispatch";
 
 import { enqueueUnitWrite } from "./unit-writer";
@@ -210,10 +217,12 @@ export interface StepExecutionContext {
   /** Plan-local engine catalog, frozen at run start. */
   engines?: Record<string, FrozenEngineSnapshot>;
   /**
-   * Base directory for `isolation: worktree` units — the git repository the
-   * per-attempt detached worktrees are minted from. Defaults to
-   * `process.cwd()` (the directory the engine invocation runs in); injected
-   * by tests so no chdir is needed.
+   * The engine invocation's working directory. Two uses:
+   *   - the git repository `isolation: worktree` mints its per-attempt
+   *     detached worktrees from;
+   *   - the base directory a NON-isolated `exec` unit spawns in (an isolated
+   *     one spawns in its worktree instead).
+   * Defaults to `process.cwd()`; injected by tests so no chdir is needed.
    */
   workDir?: string;
   /**
@@ -708,7 +717,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
   if (!workUnit.resolved.ok) {
     return { unitId, ok: false, failureReason: "expression_error", error: workUnit.resolved.error };
   }
-  if (!workUnit.engine || !workUnit.invocation) {
+  // An `exec` unit legitimately carries neither — it spawns a child process
+  // instead of calling an engine. Every OTHER kind must have both.
+  if (!workUnit.exec && (!workUnit.engine || !workUnit.invocation)) {
     return {
       unitId,
       ok: false,
@@ -729,9 +740,17 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     unitId,
     nodeId: workUnit.nodeId,
     prompt,
-    engine: workUnit.engine,
+    ...(workUnit.engine ? { engine: workUnit.engine } : {}),
     ...(workUnit.fallbackEngine ? { fallbackEngine: workUnit.fallbackEngine } : {}),
-    invocation: workUnit.invocation,
+    ...(workUnit.invocation ? { invocation: workUnit.invocation } : {}),
+    ...(workUnit.exec ? { exec: workUnit.exec } : {}),
+    ...(workUnit.execContext ? { execContext: workUnit.execContext } : {}),
+    // A NON-isolated exec unit spawns in the engine invocation's working
+    // directory. `dispatchJournaledAttempt` overwrites this with the unit's
+    // fresh worktree when `isolation: worktree` is in play. Only exec units get
+    // it: handing an agent unit a cwd it never had would change harness
+    // behavior, and the agent path already takes its cwd from its profile.
+    ...(workUnit.exec && ctx.workDir !== undefined ? { cwd: ctx.workDir } : {}),
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
@@ -849,6 +868,53 @@ interface JournaledAttemptInput {
   worktreeBase?: string;
 }
 
+/**
+ * What a finished attempt writes to `workflow_run_steps`' unit row
+ * `result_json` — the ONE durable, human-facing surface for a dispatch outcome
+ * (`akm workflow status --units` reads exactly this, and the step summary is
+ * built from the same text).
+ *
+ * A SUCCESS journals its promoted value, unchanged.
+ *
+ * A FAILURE journals its DIAGNOSTIC. Before this, only `result`/`text` were
+ * written: `outcome.error` — the one field that says WHY — reached nothing
+ * durable, because `buildEvidence` deliberately drops it from the deterministic
+ * evidence graph and nothing else persisted it. For an engine unit that mostly
+ * cost detail; for an `exec` unit it lost the diagnostic entirely, since a
+ * command that fails and explains itself on stderr with empty stdout left
+ * `status --units` showing a bare `non_zero_exit`.
+ *
+ * Three constraints hold:
+ *
+ *   - REDACTION — the caller journals only `redactUnitOutcome(...)` output, so
+ *     `error` has already been through the shared dispatch redaction contract
+ *     (`exec/dispatch-redaction.ts`) with this dispatch's resolved `env:`
+ *     values. It is scrubbed by construction, exactly like `text`.
+ *   - BOUNDS — clipped to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}, the same bound
+ *     `status --units` renders with, so a runaway command cannot use the journal
+ *     as its log file.
+ *   - HASHES — `result_json` is an OUTPUT. The unit input hash
+ *     (`computeUnitInputHash`) is computed from plan-frozen INPUTS only
+ *     (template bytes, item, declared inputs, params, dispatch/invocation/exec
+ *     snapshots, env ref names, isolation), and reuse compares the stored
+ *     `input_hash` against that. Nothing here is a hash preimage input, so no
+ *     completed unit re-dispatches because of it.
+ *
+ * Partial output on a failed unit is kept ALONGSIDE the diagnostic rather than
+ * replacing it: a tool that fails after printing its real complaint on stdout
+ * is common, and the reason lives on whichever stream that tool chose.
+ */
+export function journaledUnitResultJson(outcome: UnitOutcome): string | null {
+  if (outcome.result !== undefined) return JSON.stringify(outcome.result);
+  if (outcome.ok) return outcome.text ? JSON.stringify(outcome.text) : null;
+  const parts = [outcome.error, outcome.text].filter((part): part is string => Boolean(part && part.trim()));
+  if (parts.length === 0) return null;
+  const joined = parts.join("\n--- unit output ---\n");
+  return JSON.stringify(
+    joined.length > WORKFLOW_UNIT_DIAGNOSTIC_CLIP ? `${joined.slice(0, WORKFLOW_UNIT_DIAGNOSTIC_CLIP)}…` : joined,
+  );
+}
+
 /** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
 async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
   const { plan, workUnit, ctx, dispatcher, attemptId, inputHash } = input;
@@ -888,8 +954,8 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
           parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
           phase: null,
           runner: workUnit.runner,
-          engine: request.engine.name,
-          model: request.invocation.model,
+          engine: request.engine?.name ?? null,
+          model: request.invocation?.model ?? null,
           inputHash,
           worktreePath: worktreePath ?? null,
           startedAt,
@@ -943,12 +1009,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
             runId: ctx.runId,
             unitId: attemptId,
             status: outcome.ok ? "completed" : "failed",
-            resultJson:
-              outcome.result !== undefined
-                ? JSON.stringify(outcome.result)
-                : outcome.text
-                  ? JSON.stringify(outcome.text)
-                  : null,
+            resultJson: journaledUnitResultJson(outcome),
             tokens: outcome.tokens ?? null,
             failureReason: outcome.failureReason ?? null,
             // Harness-native session id (P2): journaled so resume can replay the
@@ -1047,6 +1108,27 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   return outcome;
 }
 
+/**
+ * Strict JSON parse for an `exec` unit's declared-schema output: stdout must be
+ * EXACTLY one JSON value (leading/trailing whitespace tolerated, nothing else).
+ *
+ * Deliberately NOT `parseEmbeddedJsonResponse` — that scan strips code fences
+ * and hunts for a JSON island inside prose, which is the right forgiving
+ * behavior for an LLM and the wrong one for a command, where it would silently
+ * promote a JSON fragment found in unrelated log noise as the typed artifact.
+ * Returning `undefined` makes `runStructured` report `parse_error` (a real
+ * member of the retry taxonomy), so `retry.on: [parse_error]` still works.
+ */
+function parseExecJson(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Transport failures surface as this sentinel so runStructured doesn't retry them. */
 class UnitTransportError extends Error {
   constructor(readonly result: UnitDispatchResult) {
@@ -1084,8 +1166,22 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   try {
     if (request.schema) {
       const schema = request.schema;
+      const isExec = request.exec !== undefined;
       const structured = await runStructured<unknown>({
         dispatch: dispatchOnce,
+        // An exec unit's stdout must be EXACTLY one JSON value. The default
+        // embedded-JSON scan (fences, think-blocks, "find the JSON inside the
+        // prose") is right for an LLM and wrong for a command: it would happily
+        // pluck a JSON fragment out of unrelated log noise and promote it as
+        // the typed artifact. A command that claims a schema prints JSON.
+        ...(isExec ? { parse: parseExecJson } : {}),
+        // ...and it gets exactly ONE attempt. `runStructured`'s corrective
+        // retry re-dispatches with feedback, which for a command means running
+        // a SIDE-EFFECTING process a second time with byte-identical argv — it
+        // cannot produce different output, and it can produce a second
+        // deployment. Declared `retry:` still applies (the executor's own loop),
+        // because that is a policy the author opted into per failure reason.
+        ...(isExec ? { maxAttempts: 1 } : {}),
         validate: (candidate) => {
           const errors = validateJsonSchemaSubset(candidate, schema);
           return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
@@ -1190,15 +1286,49 @@ export function buildAgentDispatchRequest(
   return {
     prompt,
     ...(request.systemPrompt ? { systemPrompt: request.systemPrompt } : {}),
-    ...(request.invocation.model ? { model: request.invocation.model } : {}),
-    ...(request.invocation.model ? { modelIsExact: true } : {}),
+    ...(request.invocation?.model ? { model: request.invocation.model } : {}),
+    ...(request.invocation?.model ? { modelIsExact: true } : {}),
     ...(request.schema ? { schema: request.schema } : {}),
   };
 }
 
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
+  // `exec` units are dispatched FIRST and separately: they name no engine, so
+  // none of the engine-resolution below applies. `feedback` is deliberately
+  // ignored — a corrective re-prompt is meaningless to a fixed argv, and
+  // `dispatchUnit` already pins exec structured output to a single attempt.
+  if (request.exec) {
+    return runExecUnit({
+      unitId: request.unitId,
+      exec: request.exec,
+      // Worktree isolation supplies `cwd`; otherwise the unit runs in the
+      // engine invocation's own working directory.
+      baseDir: request.cwd ?? process.cwd(),
+      ...(request.env ? { env: request.env } : {}),
+      ...(request.execContext ? { context: request.execContext } : {}),
+      // A declared `output:` schema is what makes an output-cap overflow fatal:
+      // stdout must then parse as exactly one JSON value, which a truncated
+      // prefix cannot. Without one, overflow is marked in the artifact and the
+      // command's own exit code decides the unit. See `exec-unit.ts`.
+      ...(request.schema ? { hasOutputSchema: true } : {}),
+      timeoutMs: request.timeoutMs,
+      ...(request.signal ? { signal: request.signal } : {}),
+    });
+  }
+  if (!request.engine || !request.invocation) {
+    return {
+      ok: false,
+      text: "",
+      failureReason: "dispatch_error",
+      error: `unit "${request.unitId}" has neither a frozen engine snapshot nor an exec command to dispatch.`,
+    };
+  }
+  const engineRequest = request as UnitDispatchRequest & {
+    engine: FrozenEngineSnapshot;
+    invocation: IrInvocation;
+  };
   const prompt = feedback ? `${request.prompt}\n\n${feedback}` : request.prompt;
-  const resolved = frozenUnitRunner(request);
+  const resolved = frozenUnitRunner(engineRequest);
 
   // `env` bindings can only reach a child process. The agent (CLI) runner
   // spawns one per call, and the sdk runner now injects them for real via the
@@ -1317,38 +1447,6 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   };
 };
 
-function collectWorkflowDispatchSensitiveValues(
-  workUnit: StepWorkUnit,
-  env: Record<string, string> | undefined,
-): string[] {
-  const values = new Set<string>(Object.values(env ?? {}));
-  const addCredential = (engine: FrozenEngineSnapshot | undefined): void => {
-    if (!engine) return;
-    if (engine.kind === "llm") {
-      for (const name of engine.credential?.names ?? []) {
-        const value = process.env[name]?.trim();
-        if (value) values.add(value);
-      }
-      return;
-    }
-    for (const name of engine.envPassthrough) {
-      const value = process.env[name];
-      if (!isEnvPassthroughValueSafeToExpose(name, value) && value) values.add(value);
-    }
-  };
-  addCredential(workUnit.engine);
-  addCredential(workUnit.fallbackEngine);
-  return collectSensitiveValues(values);
-}
-
-function redactUnitOutcome(outcome: UnitOutcome, sensitiveValues: readonly string[]): UnitOutcome {
-  const redacted = redactSensitiveValue(outcome, sensitiveValues);
-  if (outcome.failureReason !== undefined && redacted.failureReason !== outcome.failureReason) {
-    redacted.failureReason = "reported_failure";
-  }
-  return redacted;
-}
-
 /**
  * Map a typed {@link import("../../llm/client").LlmCallErrorCode} into the
  * persisted `AgentFailureReason` taxonomy (agent/spawn.ts) — the ONLY
@@ -1407,7 +1505,9 @@ type ResolvedUnitRunner =
     };
 
 /** Reconstruct the existing RunnerSpec substrate from the frozen allowlist only. */
-function frozenUnitRunner(request: UnitDispatchRequest): ResolvedUnitRunner {
+function frozenUnitRunner(
+  request: UnitDispatchRequest & { engine: FrozenEngineSnapshot; invocation: IrInvocation },
+): ResolvedUnitRunner {
   const snapshot = request.engine;
   if (snapshot.kind === "llm") {
     return { kind: "llm", connection: materializeFrozenLlm(snapshot, request.invocation) };

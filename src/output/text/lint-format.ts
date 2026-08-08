@@ -30,9 +30,19 @@ function glyphFor(fixed: LintIssue["fixed"]): { glyph: string; severityRank: num
   return { glyph: "⚠", severityRank: 1 };
 }
 
+/**
+ * `file:line` when the finding is line-anchored (workflow parse/compile
+ * errors), bare `file` otherwise. `LintIssue.line` is optional precisely
+ * because most lint sources are whole-file, so their headline is byte-identical
+ * to what it has always been.
+ */
+function locationOf(issue: LintIssue): string {
+  return typeof issue.line === "number" ? `${issue.file}:${issue.line}` : issue.file;
+}
+
 function issueEntry(issue: LintIssue): StatusEntry {
   const { glyph, severityRank } = glyphFor(issue.fixed);
-  return { severityRank, glyph, headline: `${issue.file}  [${issue.issue}]  ${issue.detail}` };
+  return { severityRank, glyph, headline: `${locationOf(issue)}  [${issue.issue}]  ${issue.detail}` };
 }
 
 function renderIssueSection(title: string, issues: readonly LintIssue[]): string[] {

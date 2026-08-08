@@ -527,7 +527,7 @@ Returns type-specific payloads:
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` — the whole document, or one section via `#fragment` |
-| workflow | `workflowTitle`, `workflowParameters`, `steps` |
+| workflow | `workflowTitle`, `workflowParameters`, `steps` (each step's `orchestration` summary names its engine/model, or — for an [exec step](https://github.com/itlackey/akm/blob/main/docs/reference/workflow-schema.md#what-akm-show-reports-for-an-exec-step) — its `exec.command` and no engine at all) |
 | memory | `content` |
 | env | `keys` (key names only — values and comment text never returned) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |

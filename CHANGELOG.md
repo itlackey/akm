@@ -6,6 +6,201 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`exec` workflow units — run a shell command as a workflow step.** A step
+  whose `unit:` block declares `exec:` runs a command directly instead of
+  dispatching to an LLM or an agent, so deterministic work (test suites,
+  builds, lint, scripts) no longer costs a model dispatch, its latency, its
+  tokens, or its nondeterminism.
+
+  ```yaml
+  - id: test
+    unit:
+      exec:
+        command: ["bun", "run", "test:unit"]
+        pass_env: [CARGO_HOME]   # optional: widen the default env allowlist
+      timeout: "10m"
+      retry: { max: 1, on: [timeout] }
+  ```
+
+  - **`command:` is an argv array; there is no shell-string spelling.** The
+    child is spawned directly, so `;`, `|`, `&&`, `$(…)` and `*` inside an
+    argument are inert literal bytes — the quoting/injection class is
+    structurally absent, not defended against. Write `["bash", "-lc", "…"]`
+    when a pipeline is genuinely wanted, and own that choice in the diff.
+  - **An exec unit names no engine.** It rejects `engine`/`model`/`llm`, spends
+    no tokens, and a workflow made only of exec steps runs on an install with
+    no engine configured at all.
+  - **Everything else about a unit still applies:** `timeout`, `retry`,
+    `on_error`, `output`, `env`, `isolation: worktree`, `map` fan-out and its
+    concurrency limits, the unit journal, budget accounting, and replay/reuse
+    (a completed exec unit is never re-run on resume).
+  - **Output rule:** stdout is the promoted artifact with trailing newlines
+    stripped (like shell `$(…)`); with an `output:` schema on the unit, stdout
+    must be exactly one JSON value, strictly parsed and validated. stderr is a
+    diagnostic channel only. A schema miss is *not* re-prompted — a fixed argv
+    cannot answer feedback, but re-running it could deploy twice.
+  - **Exit codes:** non-zero → `non_zero_exit`, wall-clock expiry → `timeout`,
+    cancellation → `aborted`, failure to start (or a capture that never
+    completed) → `spawn_failed`. All are pre-existing `retry.on` reasons — the
+    failure taxonomy is unchanged. With the default `on_error: fail`, a non-zero
+    exit fails the step and the run, which is what makes a `test` step a gate.
+  - **A partial capture is never promoted as the artifact.** Exiting 0 does not
+    prove stdout was read to the end: a pipe can error, and a background
+    descendant holding the stdout handle open after the command leader exits
+    keeps the pipe alive past the drain deadline. Both leave a *prefix* of the
+    real output, so the unit fails `spawn_failed` — the same treatment, via the
+    same shared classifier, that the agent-dispatch path already gave the
+    identical condition.
+  - **Everything the command can spend is bounded — without inventing failures.**
+    Alongside the wall-clock timeout, akm bounds the memory it spends on the
+    command's behalf and the environment it can hand the command. Both bounds are
+    built so that they only ever *explain* a failure that was going to happen
+    anyway; neither fails a run that would otherwise have succeeded.
+
+    **Retained output: 8 MiB per stream, drain-and-discard.** akm keeps at most
+    8 MiB of stdout and 8 MiB of stderr. Past the cap it keeps *reading* the pipe
+    and throws the extra bytes away, so the child never blocks on backpressure:
+    the command runs to completion and its real exit code decides the unit. A
+    verbose-but-passing test suite is not failed over its log volume. What
+    overflow costs is completeness of the artifact, and that is never hidden —
+    a step with **no** `output:` schema succeeds and its artifact is the retained
+    head with a `__akm_exec_output_truncated__` block appended (naming bytes
+    written vs bytes retained), so truncated data can never be mistaken for
+    complete data by `steps.<id>.output`, a gate judge, or a human. A step **with**
+    an `output:` schema still fails `exec_output_limit`: stdout must parse as
+    exactly one JSON value, a truncated prefix cannot, and promoting it would
+    corrupt every downstream reference to the typed artifact.
+
+    **Context environment: this platform's ceiling, not the smallest one.** The
+    engine-authored `AKM_*` context is capped at **96 KiB per variable / 128 KiB
+    total** on Linux, macOS and BSD, and at **32 767 bytes per variable / 64 000
+    bytes total** on Windows. The numbers cite their sources: Linux's
+    `MAX_ARG_STRLEN` (`32 * PAGE_SIZE` = 131 072 bytes per `argv`/`environ`
+    string), macOS's 256 KiB `ARG_MAX` over argv + environ combined, and Win32
+    `SetEnvironmentVariable`'s 32 767-character per-variable limit. Crossing the
+    bound fails `exec_context_too_large` *before* the spawn, with an error naming
+    the variable, its size, this platform's limit and where that limit comes from
+    — replacing a bare `E2BIG` from the spawn syscall that named neither the
+    variable nor the data behind it. Converting that inevitable failure into an
+    actionable one is the check's *only* job, so it uses the ceiling of the
+    platform the run is on: previously it applied Windows' limit everywhere and
+    refused spawns Linux and macOS would have accepted. Workflows that must also
+    run on Windows should stay under the smaller bound — that is documented
+    guidance now, not something a Linux host enforces.
+
+    `exec_output_limit` and `exec_context_too_large` keep their meanings and
+    their place outside the `retry.on` vocabulary, alongside `exec_cwd_escape`:
+    each is deterministic, so re-dispatching could only spend the budget again.
+    `PROGRAM_RETRY_REASONS` is unchanged.
+  - **A failing command's stderr survives to a durable surface.** The unit
+    journal now keeps each failed unit's redacted diagnostic (clipped to 2000
+    characters), and the step summary carries the first failure's. For an exec
+    unit that is the difference between `akm workflow status --units` saying
+    `non_zero_exit` and it saying *why* — a command that explains itself only on
+    stderr with empty stdout previously left no diagnostic anywhere durable.
+    This is an output surface only: the unit input hash is computed from
+    plan-frozen inputs, so no completed unit re-dispatches because of it.
+  - **The child's environment is an ALLOWLIST, not an inheritance.** The
+    command starts from an empty environment and receives `PATH`, `HOME`, the
+    identity/locale/temp/terminal variables, the Windows process-creation
+    essentials (`SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `PATHEXT`)
+    and the Windows home/config roots, plus `AKM_EVENT_SOURCE` — then the
+    unit's `env:` bindings, then the `AKM_*` context. `exec.pass_env: [NAME…]`
+    adds a few more names (for a per-machine toolchain variable like
+    `CARGO_HOME`, which a committed `env:` asset cannot express);
+    `exec.inherit_env: true` opts all the way back into akm's whole
+    environment. Both keys live inside `exec:` because the unit-level `env:`
+    key already means "env asset binding refs", and both are dispatch-
+    significant, so both are in the input hash.
+
+    This is not a claim to stop a determined attacker — a command that runs at
+    all can read the same credentials off disk. It bounds **accidental**
+    exposure (the invoking shell or CI job routinely exports tokens for
+    unrelated services), makes the environment surface **explicit and
+    reviewable**, and **matches the convention akm already applies** to
+    agent-harness children (`profile.envPassthrough`), which now share one
+    mechanism with exec units instead of two.
+  - **Security:** commands run inside the existing workflow trust model.
+    Secrets come from `env:` bindings by NAME — the frozen plan and the replay
+    hash carry only ref names, and resolved values are scrubbed from stdout,
+    stderr, and failure diagnostics by the same redaction contract every other
+    dispatch uses, before anything is journaled. `cwd:` is relative and
+    `..`-free, re-checked against the resolved base (symlinks included) before
+    spawning.
+  - **Cancellation is real:** the child is spawned in its own process group and
+    gets a SIGTERM→SIGKILL ladder on timeout or abort, so `--timeout` / Ctrl-C
+    stop a running command without orphaning its children.
+  - **No replay churn:** the exec spec was added to the unit input-hash preimage
+    as a key present only on exec units, so `hashVersion` stays 4 and every
+    previously-frozen llm/agent/sdk unit hashes byte-identically — runs already
+    in flight neither re-dispatch nor diverge. The env-scope keys are inside
+    that same spec and are frozen only in their non-default form (`inherit_env`
+    only when `true`, `pass_env` only when non-empty), so an exec unit that says
+    nothing about its environment hashes byte-identically too.
+
+  See [Workflow Schema: Exec (shell) units](docs/reference/workflow-schema.md#exec-shell-units)
+  and the worked example in
+  [Author's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#deterministic-steps-run-a-command-gate-on-it).
+
+### Changed
+
+- **The workflow JSON Schema subset now enforces `allOf`/`anyOf`/`oneOf`/`not`.**
+  A step `output:` or `params:` schema may use the combinators, and the runtime
+  evaluates them instead of rejecting them at parse time. Evaluation stays
+  bounded — nesting is capped at 64 levels and one validation at 100 000 checks,
+  and exhausting either is reported as an error rather than a truncated pass.
+
+  `pattern` is **not** part of the subset. It is a recognized-but-unsupported
+  keyword like `format` or `const`: using one is a loud, line-anchored authoring
+  error naming the keyword, so no schema silently fails to constrain what it
+  looks like it constrains. Enforcing it would mean screening every author
+  regex for catastrophic backtracking before the match — and any such screen
+  also refuses regexes authors legitimately write (the usual hand-rolled email
+  pattern among them), which is authoring friction with no workflow asking for
+  it. Where a string's shape matters, `enum` lists the allowed values,
+  `minLength`/`maxLength` bound the size, and a step's `### gate` rubric can
+  check a shape and explain a mismatch. The `format` hint now points at `enum`
+  rather than at `pattern`.
+
+- **Workflow `map` steps now fan out in parallel by default.** A `map` step
+  that declares no `concurrency:` freezes a width of **4** instead of 1, and an
+  LLM engine that declares no `engines.<name>.concurrency` freezes **4** for a
+  remote endpoint (loopback endpoints stay at **1** — a local model server holds
+  one loaded model and returns HTTP 500 under concurrent inference). Both
+  defaults previously froze 1, which made every fan-out serial unless the author
+  opted in at two independent layers, and left `workflow.maxConcurrency` and the
+  host CPU cap binding on nothing.
+
+  This is a behavior change on a patch release, so every escape hatch is
+  explicit:
+  - `map.concurrency: 1` on a step is honored exactly as before — an authored
+    `1` is kept distinct from an unset field and always wins.
+  - New config key **`workflow.defaultMapConcurrency`** sets the default for
+    every workflow on the machine. `akm config set workflow.defaultMapConcurrency 1`
+    restores the pre-0.9.1 serial default wholesale.
+  - `engines.<name>.concurrency` pins any engine's own limit (and is now clamped
+    to `1..64` at freeze time instead of freezing a plan the decoder would then
+    refuse to load).
+  - **Runs already in flight are unaffected.** Both values are frozen into
+    `plan_json` when a run starts and the frozen-plan decoder requires them, so
+    a resumed run keeps the widths it began with. The new defaults apply only to
+    runs started after the upgrade.
+
+  The effective width remains the minimum of the step's `concurrency`, the run's
+  frozen `workflow.maxConcurrency`, the selected engine's concurrency, and the
+  current host's CPU cap.
+
+### Fixed
+
+- Workflow freeze attributed per-step `engine`/`model`/`timeout`/`llm` overrides
+  by matching the compiled draft step list against the source document
+  **positionally**. That was correct only because compilation happens to be 1:1
+  and order-preserving; a compile pass that filtered or reordered steps would
+  have silently applied one step's overrides to another. Attribution is now
+  keyed by `stepId`.
+
 ## [0.9.0] - 2026-08-06
 
 0.9.0 is the format-neutral **bundle / adapter** refactor: it replaces the flat

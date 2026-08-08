@@ -395,4 +395,14 @@ export interface Diagnostic {
   detail: string;
   /** `true` = fix applied; `false` = not fixable or no fix requested; `"failed"` = fix attempted but threw. */
   fixed: boolean | "failed";
+  /**
+   * 1-indexed line in `file` the finding refers to, when the producing check
+   * knows one. OPTIONAL by design: most adapter checks are whole-file
+   * (`missing-skill-md`, `orphaned-stub`) and have no line to report. The
+   * workflow frontend anchors every parse/compile error to a line
+   * (`WorkflowError.line`), and that anchor now travels all the way to
+   * `akm lint`'s human and JSON output instead of being dropped at this
+   * boundary.
+   */
+  line?: number;
 }

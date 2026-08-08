@@ -54,6 +54,15 @@ export interface LintIssue {
   detail: string;
   /** `true` = fix applied; `false` = not fixable or no fix requested; `"failed"` = fix attempted but threw. */
   fixed: boolean | "failed";
+  /**
+   * 1-indexed line in `file`, when the producing check knows one — the same
+   * optional field `Diagnostic.line` carries (`core/adapter/types.ts`), kept
+   * OPTIONAL because most lint checks are whole-file and have no location.
+   * Workflow parse/compile findings are line-anchored
+   * (`WorkflowError.line`), so `akm lint` renders them as `file:line` in text
+   * output and emits `"line": <n>` in `--format json`.
+   */
+  line?: number;
 }
 
 export interface LintContext {

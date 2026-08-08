@@ -104,17 +104,28 @@ export interface WorkflowParameter {
 }
 
 /**
- * Read-only projection of a YAML workflow-program step's orchestration
- * declarations for `show` (`summarizeProgramStepOrchestration` in
- * src/workflows/program/project.ts). `fanOut.over` and `route.input` carry raw
- * reference strings from the closed grammar (`params.<name>` /
- * `steps.<id>.output…`, no `${{ }}` delimiters); the full JSON Schema is reduced
- * to a presence flag to keep show output compact.
+ * Read-only projection of a workflow step's orchestration declarations for
+ * `show` (`summarizeStepOrchestration` in src/workflows/renderer.ts).
+ * `fanOut.over` and `route.input` carry raw reference strings from the closed
+ * grammar (`params.<name>` / `steps.<id>.output…`, no `${{ }}` delimiters); the
+ * full JSON Schema is reduced to a presence flag to keep show output compact.
+ *
+ * The step's dispatch kind is carried by FIELD PRESENCE, the same way `fanOut`
+ * and `route` carry the step kind: `exec` present means the step runs a shell
+ * command, and `engine`/`model` are then absent because an exec unit names no
+ * engine — it must never be described as running on the workflow's default one.
  */
 export interface WorkflowStepOrchestrationSummary {
   engine?: string;
   model?: string;
   timeoutMs?: number | null;
+  /**
+   * An exec (shell) unit's dispatch. `command` is the argv verbatim — the
+   * words that will actually be spawned, never shell-parsed and never clipped,
+   * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
+   * child's environment SCOPE by variable name; no value is ever projected.
+   */
+  exec?: { command: string[]; cwd?: string; passEnv?: string[]; inheritEnv?: true };
   fanOut?: { over: string; concurrency?: number; reducer?: string };
   hasSchema?: boolean;
   env?: string[];

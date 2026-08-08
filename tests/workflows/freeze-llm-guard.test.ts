@@ -87,8 +87,8 @@ describe("bug 7 — llm overrides on a non-llm engine throw at freeze", () => {
     ].join("\n");
     const plan = freezeWorkflow(markdown);
     const root = plan.steps[0]!.root as IrUnitNode;
-    expect(root.invocation.engine).toBe("test-llm");
-    expect(root.invocation.llm).toEqual({ temperature: 0 });
+    expect(root.invocation!.engine).toBe("test-llm");
+    expect(root.invocation!.llm).toEqual({ temperature: 0 });
   });
 
   test("the SDK fallback path is unaffected: an agent engine WITHOUT llm overrides still freezes", () => {
@@ -98,9 +98,9 @@ describe("bug 7 — llm overrides on a non-llm engine throw at freeze", () => {
     // not fire on it.
     const plan = freezeWorkflow(workflow([]));
     const root = plan.steps[0]!.root as IrUnitNode;
-    expect(root.invocation.engine).toBe("test-agent");
-    expect(root.invocation.llm).toBeUndefined();
-    expect(root.invocation.model).toBe("test-model"); // resolved via the test-llm fallback
+    expect(root.invocation!.engine).toBe("test-agent");
+    expect(root.invocation!.llm).toBeUndefined();
+    expect(root.invocation!.model).toBe("test-model"); // resolved via the test-llm fallback
     expect(plan.execution.engines["test-agent"]).toMatchObject({ kind: "agent", fallbackLlmEngine: "test-llm" });
   });
 });

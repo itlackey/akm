@@ -244,6 +244,13 @@ describe("golden fixture: lint output parity (WI-0b.4b)", () => {
           "workflow's single step declares no `output:` schema, so akmLintFullSweep now carries exactly one " +
           "workflow-warning entry; flagged/fixed and every perType issues array stay empty (lintAssetFile still " +
           "returns errors only -- warnings come from the separate workflowCompileWarnings pass).",
+        "RE-BASELINED (lint line anchors): LintIssue/Diagnostic gained an OPTIONAL `line` (1-indexed) carrying " +
+          "WorkflowError.line all the way from the workflow parse/compile frontend into lint output -- `akm lint` " +
+          "used to drop it, so a finding in a 300-line workflow had no location while the same error rendered as " +
+          "`path:line — message` on the `workflow create` path. The ONLY diff in this golden is the new " +
+          "`line: 6` on akmLintFullSweep's single workflow-warning (the fixture's `- id: announce` step " +
+          "declaration); every whole-file finding (missing-skill-md, orphaned-stub, dangerous-env-key, …) omits " +
+          "the key entirely, so their serialization is byte-identical.",
         "Determinism: LintIssue.file is always ctx.relPath (never absPath). No absolute path appears " +
           "anywhere in this golden -- normalization is a no-op.",
         "Behavior-parity oracle: the format adapters + the CLI lint sweep must reproduce this lint dispatch " +

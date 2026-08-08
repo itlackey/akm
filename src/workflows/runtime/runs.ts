@@ -35,6 +35,7 @@ import {
   utf8Bytes,
   WORKFLOW_EVIDENCE_TRUNCATION_PREVIEW_CHARS,
   WORKFLOW_MAX_EVIDENCE_JSON_BYTES,
+  WORKFLOW_UNIT_DIAGNOSTIC_CLIP,
 } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
@@ -99,9 +100,16 @@ export interface WorkflowUnitDiagnostic {
   failureReason: string | null;
   sessionId: string | null;
   /**
-   * The row's `result_json` rendered as text (a completed unit's result, or any
-   * partial/error text a failed unit produced), clipped to
-   * {@link UNIT_DIAGNOSTIC_CLIP} chars. Null when the row journaled no result.
+   * The row's `result_json` rendered as text, clipped to
+   * {@link UNIT_DIAGNOSTIC_CLIP} chars. Null when the row journaled nothing.
+   *
+   * For a COMPLETED unit that is its result. For a FAILED unit it is the
+   * dispatch diagnostic the journal kept — already scrubbed by the dispatch
+   * redaction contract before it was written. For an `exec` unit that is where
+   * a failing command's stderr lands, and it is frequently the ONLY explanation
+   * of the failure: `failure_reason: non_zero_exit` says a command failed, and a
+   * command that explains itself on stderr with empty stdout would otherwise say
+   * nothing at all here.
    */
   diagnostic: string | null;
   startedAt: string | null;
@@ -122,12 +130,20 @@ export interface WorkflowUnitDiagnostic {
   claimExpiresAt: string | null;
   engine: string | null;
   /** Journaled resolved runtime kind for a frozen-engine unit. */
-  runtimeKind: "llm" | "agent" | "sdk" | null;
+  runtimeKind: "llm" | "agent" | "sdk" | "exec" | null;
   platform: string | null;
 }
 
-/** Clip bound for a unit's `result_json` on the `--units` diagnostic surface. */
-const UNIT_DIAGNOSTIC_CLIP = 2000;
+/**
+ * Clip bound for a unit's `result_json` on the `--units` diagnostic surface.
+ *
+ * The SAME constant the dispatch path clips with before journaling
+ * (`exec/native-executor.ts`), so a diagnostic is never stored larger than the
+ * surface that renders it. Re-clipped here regardless, because rows written by
+ * other producers (a driver-reported completion, an older akm) carry whatever
+ * they carry.
+ */
+const UNIT_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP;
 
 function toUnitDiagnostic(
   row: WorkflowRunUnitRow,
@@ -167,8 +183,15 @@ function toUnitDiagnostic(
     claimHolder: row.claim_holder,
     claimExpiresAt: row.claim_expires_at,
     engine: row.engine ?? null,
+    // `exec` units carry no engine by construction (they spawn a command), so
+    // the engine-presence guard that validates the three ENGINE runners must
+    // not be applied to them — it would erase the only kind label they have.
     runtimeKind:
-      row.engine && (row.runner === "llm" || row.runner === "agent" || row.runner === "sdk") ? row.runner : null,
+      row.runner === "exec"
+        ? "exec"
+        : row.engine && (row.runner === "llm" || row.runner === "agent" || row.runner === "sdk")
+          ? row.runner
+          : null,
     platform: plannedEngine?.kind === "agent" ? plannedEngine.platform : null,
   };
 }
@@ -708,7 +731,13 @@ export async function completeWorkflowStep(
     if (input.signal?.aborted) throw interruptionReason(input.signal);
     const judge =
       input.summaryJudge === undefined
-        ? frozenSummaryJudge(preflight.plan, preflight.stepPlan.gate.judge, input.signal)
+        ? // Manual completion journals no gate row, so there is no `<stepId>.gate:l<loop>`
+          // identity to agree with — but the dispatch still names the REAL run and
+          // step (frozen-judge falls back to the gate node id for the unit id).
+          frozenSummaryJudge(preflight.plan, preflight.stepPlan.gate.judge, input.signal, undefined, {
+            runId: input.runId,
+            stepId: input.stepId,
+          })
         : input.summaryJudge;
     if (criteria.length > 0 && !judge) {
       throw new ConfigError(

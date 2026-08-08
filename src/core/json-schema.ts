@@ -15,12 +15,31 @@
  *   Supported: `type` (string | string[] — string, number, integer, boolean,
  *   object, array, null), `properties`, `required`, `items`,
  *   `additionalProperties: false`, `enum` (primitives), `minItems`,
- *   `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`.
+ *   `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, and the
+ *   combinators `allOf`, `anyOf`, `oneOf`, `not`.
  *
- *   Ignored (permissive): `$ref`, `allOf`/`anyOf`/`oneOf`/`not`, `pattern`,
- *   `format`, and every other keyword. Unknown keywords never throw — a
- *   schema using them simply constrains less. Callers needing full JSON
- *   Schema semantics should validate downstream.
+ *   Ignored (permissive): `$ref`, `pattern`, `format`, `patternProperties`,
+ *   tuple-form `items`, schema-form `additionalProperties`, and every other
+ *   keyword. Unknown keywords never throw — a schema using them simply
+ *   constrains less. Callers needing full JSON Schema semantics should
+ *   validate downstream.
+ *
+ *   `pattern` is deliberately NOT evaluated. Matching an author-supplied regex
+ *   with the platform `RegExp` inside a synchronous gate decision would need a
+ *   static safety analysis to stay bounded, and any such analysis rejects
+ *   legitimate patterns — machinery that makes authoring fail for no benefit
+ *   the workflows here ask for. `pattern` is a recognized-but-unsupported
+ *   keyword instead: {@link checkJsonSchemaDefinition} reports it loudly at
+ *   authoring time, so nobody writes one believing it is enforced.
+ *
+ * ## Totality and bounds
+ *
+ * Evaluation is TOTAL and BOUNDED. Recursion is capped at
+ * {@link MAX_VALIDATION_DEPTH} and the whole evaluation shares a single
+ * node-visit budget ({@link MAX_VALIDATION_NODES}); exhausting either emits an
+ * explicit error rather than silently accepting the value — the subset never
+ * fails open. The schema tree is finite and acyclic (no `$ref`), so combinator
+ * branching multiplies work by schema size, never exponentially.
  *
  * Returns a flat list of human-readable error strings (empty = valid), each
  * prefixed with a JSON-pointer-ish path — the shape `runStructured`'s
@@ -36,9 +55,19 @@
  * change {@link validateJsonSchemaSubset}'s permissive evaluation semantics.
  */
 
+/** Deepest schema nesting {@link validateJsonSchemaSubset} evaluates. */
+const MAX_VALIDATION_DEPTH = 64;
+
+/** Total (schema node × value node) visits one {@link validateJsonSchemaSubset} call may make. */
+const MAX_VALIDATION_NODES = 100_000;
+
 export function validateJsonSchemaSubset(value: unknown, schema: Record<string, unknown>): string[] {
   const errors: string[] = [];
-  validateNode(value, schema, "$", errors);
+  const budget = { nodes: MAX_VALIDATION_NODES, exceeded: false };
+  validateNode(value, schema, "$", { errors, budget, depth: 0 });
+  if (budget.exceeded) {
+    errors.push(`$: schema evaluation exceeded the limit of ${MAX_VALIDATION_NODES} checks and was stopped`);
+  }
   return errors;
 }
 
@@ -63,7 +92,8 @@ export interface SchemaDefinitionIssue {
 
 /** Human-readable list of the keywords {@link validateJsonSchemaSubset} enforces (for error messages). */
 export const JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS =
-  "type, enum, properties, required, items, additionalProperties: false, minItems, maxItems, minLength, maxLength, minimum, maximum";
+  "type, enum, properties, required, items, additionalProperties: false, minItems, maxItems, " +
+  "minLength, maxLength, minimum, maximum, allOf, anyOf, oneOf, not";
 
 const KNOWN_TYPE_NAMES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
 
@@ -86,10 +116,6 @@ const UNSUPPORTED_KEYWORDS = new Set([
   "$anchor",
   "$dynamicRef",
   "$dynamicAnchor",
-  "allOf",
-  "anyOf",
-  "oneOf",
-  "not",
   "if",
   "then",
   "else",
@@ -117,6 +143,36 @@ const UNSUPPORTED_KEYWORDS = new Set([
   "contentEncoding",
   "contentMediaType",
   "contentSchema",
+]);
+
+/**
+ * Per-keyword follow-up for the `"unsupported"` message. Where the subset can
+ * express the same intent, name the keyword that does it; where it cannot, say
+ * so plainly rather than sending the author to another unsupported keyword.
+ */
+const UNSUPPORTED_KEYWORD_HINTS = new Map<string, string>([
+  ["$ref", `inline the referenced schema (the subset resolves no references, so it cannot follow "$ref")`],
+  ["$defs", `inline the definitions at their use sites — "$ref" is not resolved, so "$defs" can never be reached`],
+  [
+    "definitions",
+    `inline the definitions at their use sites — "$ref" is not resolved, so "definitions" can never be reached`,
+  ],
+  ["const", `use a single-value "enum" (e.g. enum: [pass])`],
+  [
+    "pattern",
+    `use "enum" when the allowed strings can be listed, or "minLength"/"maxLength" for a size bound — ` +
+      `a regular-expression constraint is not expressible in the subset; check the shape in the step's gate rubric instead`,
+  ],
+  [
+    "format",
+    `"format" is annotation-only in JSON Schema 2020-12 and the subset enforces no string-shape keyword — ` +
+      `use "enum" when the allowed values can be listed, otherwise check the shape in the step's gate rubric`,
+  ],
+  ["patternProperties", `declare the properties explicitly under "properties", or drop the constraint`],
+  ["if", `use "anyOf"/"oneOf" to express the alternatives directly`],
+  ["then", `use "anyOf"/"oneOf" to express the alternatives directly`],
+  ["else", `use "anyOf"/"oneOf" to express the alternatives directly`],
+  ["uniqueItems", `drop the constraint, or validate uniqueness in the step's gate rubric`],
 ]);
 
 const MAX_DEFINITION_DEPTH = 64;
@@ -171,12 +227,14 @@ function checkDefinitionNode(
 
   for (const keyword of Object.keys(schema)) {
     if (UNSUPPORTED_KEYWORDS.has(keyword)) {
+      const hint = UNSUPPORTED_KEYWORD_HINTS.get(keyword);
       pushIssue(
         issues,
         [...path, keyword],
         keyword,
         "unsupported",
-        `keyword "${keyword}" is not enforced by the workflow schema subset — the schema would silently not constrain what it looks like it constrains`,
+        `keyword "${keyword}" is not enforced by the workflow schema subset — the schema would silently not ` +
+          `constrain what it looks like it constrains${hint ? `; ${hint}` : ""}`,
       );
     }
   }
@@ -205,6 +263,42 @@ function checkDefinitionNode(
 
   if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) {
     pushIssue(issues, [...path, "enum"], "enum", "malformed", `"enum" must be a non-empty array of allowed values`);
+  }
+
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = schema[keyword];
+    if (branches === undefined) continue;
+    if (!Array.isArray(branches) || branches.length === 0) {
+      pushIssue(
+        issues,
+        [...path, keyword],
+        keyword,
+        "malformed",
+        `"${keyword}" must be a non-empty array of schema objects`,
+      );
+      continue;
+    }
+    branches.forEach((branch, index) => {
+      if (isPlainObject(branch)) {
+        checkDefinitionNode(branch, [...path, keyword, index], issues, depth + 1);
+      } else {
+        pushIssue(
+          issues,
+          [...path, keyword, index],
+          keyword,
+          "malformed",
+          `"${keyword}[${index}]" must be a schema object`,
+        );
+      }
+    });
+  }
+
+  if (schema.not !== undefined) {
+    if (isPlainObject(schema.not)) {
+      checkDefinitionNode(schema.not, [...path, "not"], issues, depth + 1);
+    } else {
+      pushIssue(issues, [...path, "not"], "not", "malformed", `"not" must be a schema object`);
+    }
   }
 
   if (schema.required !== undefined) {
@@ -318,7 +412,86 @@ function matchesType(actual: JsonTypeName, expected: string): boolean {
   return expected === "number" && actual === "integer";
 }
 
-function validateNode(value: unknown, schema: Record<string, unknown>, path: string, errors: string[]): void {
+/**
+ * Evaluation state. `budget` is SHARED by every nested/branch evaluation of one
+ * {@link validateJsonSchemaSubset} call, so combinator branching cannot buy
+ * more work than the whole call is allowed; `errors` is per-branch (a
+ * combinator evaluates its branches into a scratch list).
+ */
+interface EvalCtx {
+  errors: string[];
+  budget: { nodes: number; exceeded: boolean };
+  depth: number;
+}
+
+/** Evaluate `schema` against `value` in a scratch error list, sharing the caller's budget. */
+function branchErrors(value: unknown, schema: Record<string, unknown>, path: string, ctx: EvalCtx): string[] {
+  const errors: string[] = [];
+  validateNode(value, schema, path, { errors, budget: ctx.budget, depth: ctx.depth + 1 });
+  return errors;
+}
+
+/** The schemas of a combinator keyword, or `[]` when the keyword is absent/malformed (permissive). */
+function combinatorBranches(schema: Record<string, unknown>, keyword: string): Record<string, unknown>[] {
+  const raw = schema[keyword];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isPlainObject);
+}
+
+/** First error of each failing branch, truncated — enough to act on without dumping every branch. */
+function summarizeBranchFailures(failures: Array<{ index: number; errors: string[] }>): string {
+  const shown = failures.slice(0, 3).map((f) => `${f.index + 1}: ${f.errors[0] ?? "no match"}`);
+  if (failures.length > shown.length) shown.push(`…${failures.length - shown.length} more`);
+  return shown.join("; ");
+}
+
+function validateCombinators(value: unknown, schema: Record<string, unknown>, path: string, ctx: EvalCtx): void {
+  for (const branch of combinatorBranches(schema, "allOf")) {
+    // `allOf` failures ARE the value's failures — surface them verbatim.
+    ctx.errors.push(...branchErrors(value, branch, path, ctx));
+  }
+
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    const branches = combinatorBranches(schema, keyword);
+    if (branches.length === 0) continue;
+    const failures: Array<{ index: number; errors: string[] }> = [];
+    const matched: number[] = [];
+    branches.forEach((branch, index) => {
+      const errors = branchErrors(value, branch, path, ctx);
+      if (errors.length === 0) matched.push(index + 1);
+      else failures.push({ index, errors });
+    });
+    if (matched.length === 0) {
+      ctx.errors.push(
+        `${path}: value matches none of the ${branches.length} "${keyword}" schemas (${summarizeBranchFailures(failures)})`,
+      );
+    } else if (keyword === "oneOf" && matched.length > 1) {
+      ctx.errors.push(
+        `${path}: value matches ${matched.length} "oneOf" schemas (branches ${matched.join(", ")}); exactly one must match`,
+      );
+    }
+  }
+
+  const not = schema.not;
+  if (isPlainObject(not) && branchErrors(value, not, path, ctx).length === 0) {
+    ctx.errors.push(`${path}: value must not match the "not" schema`);
+  }
+}
+
+function validateNode(value: unknown, schema: Record<string, unknown>, path: string, ctx: EvalCtx): void {
+  const errors = ctx.errors;
+  if (ctx.depth > MAX_VALIDATION_DEPTH) {
+    errors.push(`${path}: schema nesting exceeds the depth limit of ${MAX_VALIDATION_DEPTH}`);
+    return;
+  }
+  if (ctx.budget.nodes <= 0) {
+    // Fail CLOSED: a truncated evaluation never returns "valid" — the wrapper
+    // turns the exhausted budget into a top-level error.
+    ctx.budget.exceeded = true;
+    return;
+  }
+  ctx.budget.nodes--;
+
   const actual = typeOf(value);
 
   const declared = schema.type;
@@ -339,6 +512,11 @@ function validateNode(value: unknown, schema: Record<string, unknown>, path: str
       return;
     }
   }
+
+  // Combinators are type-agnostic, so they run BEFORE the per-type branches
+  // below (each of which returns). A schema with no combinator keyword is
+  // untouched by this call.
+  validateCombinators(value, schema, path, ctx);
 
   if (actual === "string" && typeof value === "string") {
     if (typeof schema.minLength === "number" && value.length < schema.minLength) {
@@ -370,7 +548,11 @@ function validateNode(value: unknown, schema: Record<string, unknown>, path: str
     const items = schema.items;
     if (items && typeof items === "object" && !Array.isArray(items)) {
       value.forEach((element, index) => {
-        validateNode(element, items as Record<string, unknown>, `${path}[${index}]`, errors);
+        validateNode(element, items as Record<string, unknown>, `${path}[${index}]`, {
+          errors,
+          budget: ctx.budget,
+          depth: ctx.depth + 1,
+        });
       });
     }
     return;
@@ -398,7 +580,11 @@ function validateNode(value: unknown, schema: Record<string, unknown>, path: str
       for (const [key, propSchema] of Object.entries(properties)) {
         if (!Object.hasOwn(record, key)) continue;
         if (propSchema && typeof propSchema === "object" && !Array.isArray(propSchema)) {
-          validateNode(record[key], propSchema as Record<string, unknown>, `${path}.${key}`, errors);
+          validateNode(record[key], propSchema as Record<string, unknown>, `${path}.${key}`, {
+            errors,
+            budget: ctx.budget,
+            depth: ctx.depth + 1,
+          });
         }
       }
     }

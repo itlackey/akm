@@ -71,10 +71,18 @@ export class UnitCapExceededError extends Error {
 export interface ScheduleOptions {
   /**
    * Requested per-step concurrency; clamped to {@link maxUnitConcurrency}.
-   * DEFAULTS TO 1 (not the cap): the repo's LLM-defaults rule is "works
-   * correctly for the lowest common denominator — a slow local model on a
-   * single-threaded server" (AGENTS.md). A fan-out that wants parallelism
-   * declares `concurrency:` explicitly; the engine cap only ever clamps.
+   *
+   * In production this is ALWAYS set: the fan-out default is policy, and policy
+   * is resolved once at freeze time (`ir/freeze.ts`, `concurrency-policy.ts#
+   * defaultMapConcurrency`) so the chosen width lands in `plan_json` and an
+   * in-flight run keeps it. The frozen-plan decoder requires an integer
+   * `concurrency` on every map node, so a decoded plan can never arrive here
+   * without one, and a solo (non-map) step passes a literal 1.
+   *
+   * The `?? 1` fallback below therefore only covers a caller that names no
+   * width at all — a direct/test invocation, or a hand-built plan that skipped
+   * the decoder. Unspecified fails SAFE (serial); it is not the map default,
+   * because widening work nobody asked to widen is the wrong way to be wrong.
    */
   concurrency?: number;
   signal?: AbortSignal;

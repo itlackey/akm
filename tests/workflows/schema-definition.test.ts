@@ -62,23 +62,79 @@ describe("checkJsonSchemaDefinition (core/json-schema.ts)", () => {
   test("subset-ignored keywords are reported as unsupported, one per keyword", () => {
     const issues = checkJsonSchemaDefinition({
       type: "string",
-      pattern: "^x-",
       format: "email",
+      const: "x",
     });
     expect(issues.map((issue) => [issue.kind, issue.keyword]).sort()).toEqual([
+      ["unsupported", "const"],
       ["unsupported", "format"],
-      ["unsupported", "pattern"],
     ]);
+    // The unsupported message points at what the subset DOES support instead —
+    // never at another keyword the subset also refuses.
+    const format = issues.find((issue) => issue.keyword === "format");
+    expect(format!.message).toContain("annotation-only");
+    expect(format!.message).toContain(`use "enum"`);
+    expect(format!.message).not.toContain(`use "pattern"`);
   });
 
-  test("$ref / combinators / schema-form additionalProperties are unsupported", () => {
+  test("$ref / schema-form additionalProperties stay unsupported", () => {
     const refIssues = checkJsonSchemaDefinition({ $ref: "#/defs/x" });
     expect(refIssues.map((issue) => issue.keyword)).toEqual(["$ref"]);
-    const combinator = checkJsonSchemaDefinition({ oneOf: [{ type: "string" }] });
-    expect(combinator.map((issue) => issue.keyword)).toEqual(["oneOf"]);
+    expect(refIssues[0]!.message).toContain("inline the referenced schema");
     const additional = checkJsonSchemaDefinition({ type: "object", additionalProperties: { type: "string" } });
     expect(additional.map((issue) => issue.keyword)).toEqual(["additionalProperties"]);
     expect(additional[0]!.kind).toBe("unsupported");
+  });
+
+  test("the combinators are SUPPORTED — a well-formed one produces no issues", () => {
+    expect(
+      checkJsonSchemaDefinition({
+        oneOf: [{ type: "string", enum: ["ok"] }, { type: "integer" }],
+        allOf: [{ type: ["string", "integer"] }],
+        anyOf: [{ minLength: 1 }, { minimum: 0 }],
+        not: { type: "null" },
+      }),
+    ).toEqual([]);
+  });
+
+  test("combinator branches are checked recursively, with a pointer into the branch", () => {
+    const issues = checkJsonSchemaDefinition({ oneOf: [{ type: "string" }, { type: "strig" }] });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.kind).toBe("malformed");
+    expect(issues[0]!.pointer).toBe("$.oneOf.1.type");
+  });
+
+  test("a malformed combinator (empty / non-array / non-object branch) is an error", () => {
+    expect(checkJsonSchemaDefinition({ oneOf: [] })[0]!.message).toContain("non-empty array of schema objects");
+    expect(checkJsonSchemaDefinition({ anyOf: { type: "string" } })[0]!.kind).toBe("malformed");
+    expect(checkJsonSchemaDefinition({ allOf: ["string"] })[0]!.message).toContain(`"allOf[0]" must be a schema`);
+    expect(checkJsonSchemaDefinition({ not: "string" })[0]!.message).toContain(`"not" must be a schema object`);
+  });
+
+  test("`pattern` is UNSUPPORTED — reported like every other keyword the subset ignores", () => {
+    // The runtime does not evaluate `pattern`, so a schema carrying one would
+    // constrain nothing where its author expects a shape check. That is the
+    // loud author-time error, not a regex analysis: no pattern is "accepted"
+    // or "rejected" on its own merits, and no legitimate regex is refused for
+    // a property of the regex itself.
+    for (const pattern of ["^v\\d+$", "^(a+)+$", "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"]) {
+      const issues = checkJsonSchemaDefinition({ type: "string", pattern });
+      expect(issues).toHaveLength(1);
+      expect(issues[0]!.kind).toBe("unsupported");
+      expect(issues[0]!.keyword).toBe("pattern");
+      expect(issues[0]!.pointer).toBe("$.pattern");
+      expect(issues[0]!.message).toContain(`keyword "pattern" is not enforced`);
+      // The hint names a keyword the subset actually has.
+      expect(issues[0]!.message).toContain(`use "enum"`);
+    }
+
+    // Nested occurrences are located precisely, same as any other keyword.
+    const nested = checkJsonSchemaDefinition({
+      type: "object",
+      properties: { version: { type: "string", pattern: "^v\\d+$" } },
+    });
+    expect(nested).toHaveLength(1);
+    expect(nested[0]!.pointer).toBe("$.properties.version.pattern");
   });
 
   test("malformed structural keywords are errors (required / properties / enum / items)", () => {
@@ -116,7 +172,7 @@ describe("bug 10 — workflow parser rejects malformed / unsupported schemas", (
     expect(errors[0]!.message).toContain('unknown type "strig"');
   });
 
-  test("`pattern:` in an output schema is a parser error naming the unsupported keyword and the supported subset", () => {
+  test("`format:` in an output schema is a parser error naming the unsupported keyword and the supported subset", () => {
     const markdown = [
       "---",
       "type: workflow",
@@ -124,7 +180,54 @@ describe("bug 10 — workflow parser rejects malformed / unsupported schemas", (
       "  - id: work",
       "    output:",
       "      type: string",
-      "      pattern: '^ok$'",
+      "      format: email",
+      "---",
+      "",
+      "## work",
+      "",
+      "Do it.",
+      "",
+    ].join("\n");
+    const errors = parseErrors(markdown);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.line).toBe(7); // the `format:` line
+    expect(errors[0]!.message).toContain('keyword "format" is not enforced');
+    expect(errors[0]!.message).toContain("Supported JSON Schema keywords:");
+    // The supported list must name the keywords that ARE enforced now, and
+    // must not advertise one that is not.
+    expect(errors[0]!.message).toContain("oneOf");
+    expect(errors[0]!.message).not.toContain("pattern");
+  });
+
+  test("`oneOf:` in an output schema parses cleanly (the combinators are enforced)", () => {
+    const markdown = [
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: work",
+      "    output:",
+      "      type: object",
+      "      properties:",
+      "        result: { oneOf: [{ type: string }, { type: integer }] }",
+      "---",
+      "",
+      "## work",
+      "",
+      "Do it.",
+      "",
+    ].join("\n");
+    expect(parseErrors(markdown)).toHaveLength(0);
+  });
+
+  test("`pattern:` in an output schema is a line-anchored authoring error naming the keyword", () => {
+    const markdown = [
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: work",
+      "    output:",
+      "      type: string",
+      "      pattern: '^\\d+\\.\\d+\\.\\d+$'",
       "---",
       "",
       "## work",
@@ -137,6 +240,35 @@ describe("bug 10 — workflow parser rejects malformed / unsupported schemas", (
     expect(errors[0]!.line).toBe(7); // the `pattern:` line
     expect(errors[0]!.message).toContain('keyword "pattern" is not enforced');
     expect(errors[0]!.message).toContain("Supported JSON Schema keywords:");
+  });
+
+  test("an ordinary author regex is treated exactly like any other unsupported keyword", () => {
+    // The common email regex used to be REJECTED by a safety analysis that had
+    // to reason about the regex itself. There is no such analysis now: this is
+    // the same "not enforced" message `format` or `const` gets, with no claim
+    // about the pattern's own shape.
+    const markdown = [
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: work",
+      "    output:",
+      "      type: string",
+      "      pattern: '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'",
+      "---",
+      "",
+      "## work",
+      "",
+      "Do it.",
+      "",
+    ].join("\n");
+    const errors = parseErrors(markdown);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.line).toBe(7);
+    expect(errors[0]!.message).toContain('keyword "pattern" is not enforced');
+    // No regex-shape vocabulary survives anywhere in the diagnostic.
+    expect(errors[0]!.message).not.toContain("backtrack");
+    expect(errors[0]!.message).not.toContain("forced by the input");
   });
 
   test("a params schema gets the same definition checking", () => {
