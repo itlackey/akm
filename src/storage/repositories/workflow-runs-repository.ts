@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { openStateDatabase, withImmediateTransaction } from "../../core/state-db";
+import { borrowScopedStateDb, withStateDbScope } from "../../core/state-db-scope";
 import type { WorkflowRunStatus, WorkflowRunStepStatus } from "../../sources/types";
 import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
@@ -507,8 +508,10 @@ export class WorkflowRunsRepository {
   //
   // Writes to `workflow_run_units` should go through the serialized writer
   // queue (`src/workflows/exec/unit-writer.ts`) when N units may complete
-  // concurrently — SQLite has a single writer and `withWorkflowRunsRepo`
-  // opens a fresh connection per call.
+  // concurrently — SQLite has a single writer per database FILE, and outside a
+  // {@link withWorkflowRunsConnection} scope `withWorkflowRunsRepo` opens a
+  // fresh connection per call (so N concurrent writers would contend against
+  // each other for the write lock).
 
   getUnitsForRun(runId: string): WorkflowRunUnitRow[] {
     return this.db
@@ -656,26 +659,89 @@ export class WorkflowRunsRepository {
       );
     }
   }
+
+  /**
+   * Finish a unit row ONLY while it is still the exact row a specific dispatch
+   * inserted: `running`, with that dispatch's `started_at`. The native
+   * executor's guarded finish (single-driver invariant): a run stolen by
+   * another engine re-dispatches the unit through {@link insertUnit}, which
+   * REPLACES the row (fresh `started_at`, bumped `attempts`) — the stale
+   * driver's finish then matches NOTHING instead of clobbering the new
+   * driver's live dispatch. Returns whether the row was finished; a zero-row
+   * match is a caller-classified outcome here (the executor distinguishes
+   * "replaced by another driver" from "row vanished"), unlike
+   * {@link finishUnit}'s loud throw, whose callers guarantee their row exists.
+   */
+  finishUnitFromDispatch(input: FinishUnitInput & { dispatchStartedAt: string }): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE workflow_run_units
+           SET status = ?, result_json = ?, tokens = ?, failure_reason = ?, session_id = ?, finished_at = ?
+           WHERE run_id = ? AND unit_id = ? AND status = 'running' AND started_at = ?`,
+      )
+      .run(
+        input.status,
+        input.resultJson,
+        input.tokens,
+        input.failureReason,
+        input.sessionId ?? null,
+        input.finishedAt,
+        input.runId,
+        input.unitId,
+        input.dispatchStartedAt,
+      );
+    return Number(result.changes) === 1;
+  }
 }
 
 /**
- * Open state.db (bound to {@link StorageLocations.stateDb}, the post-cutover
- * home of the `workflow_runs` / `workflow_run_steps` / `workflow_run_units`
- * tables), run `fn` against a {@link WorkflowRunsRepository}, and close the
- * connection exactly once when `fn` settles.
+ * Run `fn` against a {@link WorkflowRunsRepository} bound to state.db
+ * ({@link StorageLocations.stateDb}, the post-cutover home of the
+ * `workflow_runs` / `workflow_run_steps` / `workflow_run_units` tables).
  *
- * Fresh-connection-per-call, mirroring the former workflow.db loan pattern:
- * `openStateDatabase` acquires its own maintenance activity + asserts the
- * current ledger, and the repository owns all table-scoped SQL, so the merge
- * into state.db is a zero-SQL-rewrite repoint. Repository read methods fully
- * materialise their results, so closing here never truncates lazy iteration
- * (WS5 connection-lifetime rule).
+ * Connection lifetime — BORROW-OR-OWN (mirrors `withStateDb`'s `borrowed`
+ * option and `appendEvent`'s `ctx.db` seam):
+ *
+ *   - Inside a {@link withWorkflowRunsConnection} scope, the ambient handle is
+ *     BORROWED and left open for the rest of the scope. A wide `map` fan-out
+ *     therefore opens ONE connection for the whole step instead of two per unit
+ *     (insert + finish) — `openStateDatabase` registers a maintenance activity
+ *     lockfile and opens a read-only ledger-preflight handle on every call, so
+ *     the per-call cost is milliseconds, not microseconds.
+ *   - Outside a scope the behaviour is unchanged: open a fresh connection, run
+ *     `fn`, close it in a `finally`.
+ *
+ * Repository read methods fully materialise their results, so closing an owned
+ * handle here never truncates lazy iteration (WS5 connection-lifetime rule).
+ * The signature and semantics are identical in both modes — reuse is purely an
+ * internal optimisation and no caller needs to know which mode it is in.
  */
 export async function withWorkflowRunsRepo<T>(fn: (repo: WorkflowRunsRepository) => T | Promise<T>): Promise<T> {
-  const db = openStateDatabase(resolveStorageLocations().stateDb);
+  const stateDb = resolveStorageLocations().stateDb;
+  const borrowed = borrowScopedStateDb(stateDb);
+  if (borrowed) return await Promise.resolve(fn(new WorkflowRunsRepository(borrowed)));
+  const db = openStateDatabase(stateDb);
   try {
     return await Promise.resolve(fn(new WorkflowRunsRepository(db)));
   } finally {
     db.close();
   }
+}
+
+/**
+ * Run `fn` with ONE state.db connection shared by every `withWorkflowRunsRepo`
+ * call (and every {@link import("../../core/events").appendEvent}) inside its
+ * async extent. The handle opens on first use and closes when `fn` settles;
+ * nesting joins the outer scope.
+ *
+ * Correctness under concurrency: `bun:sqlite` statements and
+ * `withImmediateTransaction` bodies run synchronously to completion, so
+ * logically concurrent units cannot interleave statements on the shared handle
+ * in a single-threaded event loop — sharing REMOVES in-process writer
+ * contention instead of creating it. Cross-process arbitration (WAL,
+ * `busy_timeout`, the run lease) is untouched. See `core/state-db-scope.ts` for
+ * the escaped-async-work guard.
+ */
+export function withWorkflowRunsConnection<T>(fn: () => Promise<T>): Promise<T> {
+  return withStateDbScope(fn, { path: resolveStorageLocations().stateDb });
 }

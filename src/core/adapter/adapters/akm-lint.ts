@@ -341,41 +341,74 @@ export function matchWorkflowPlaceholder(body: string): string | null {
  * legacy behavior). NEVER writes.
  */
 export function workflowStructureDiagnostics(relPath: string, raw: string, parsePath: string): Diagnostic[] {
-  if (parsePath.includes("/.cache/") || parsePath.includes("/registry/")) return [];
-  const diagnostics: Diagnostic[] = [];
+  return workflowFrontendDiagnostics(relPath, raw, parsePath).errors;
+}
+
+/**
+ * Non-fatal compile WARNINGS for a workflow (`compileWorkflowPlan`'s
+ * `warnings` — e.g. a step with no `output:` schema, or a reference to an
+ * undeclared param). Emitted as `workflow-warning` Diagnostics so `akm lint`
+ * can surface them in its human and JSON output WITHOUT failing anything:
+ * the lint sweep (`commands/lint/index.ts`) routes this issue code into its
+ * separate `warnings` channel, never `flagged`, so `--fail-on-flagged` and
+ * the adapter `validate()` error surface are unaffected.
+ */
+export function workflowCompileWarnings(relPath: string, raw: string, parsePath: string): Diagnostic[] {
+  return workflowFrontendDiagnostics(relPath, raw, parsePath).warnings;
+}
+
+/** Shared parse+compile pass behind {@link workflowStructureDiagnostics} / {@link workflowCompileWarnings}. */
+function workflowFrontendDiagnostics(
+  relPath: string,
+  raw: string,
+  parsePath: string,
+): { errors: Diagnostic[]; warnings: Diagnostic[] } {
+  const none = { errors: [], warnings: [] };
+  if (parsePath.includes("/.cache/") || parsePath.includes("/registry/")) return none;
+  const errors: Diagnostic[] = [];
+  const warnings: Diagnostic[] = [];
   try {
     const result = parseWorkflow(raw, { path: parsePath });
     if (!result.ok) {
       for (const err of result.errors ?? []) {
-        diagnostics.push({
+        errors.push({
           file: relPath,
           issue: "invalid-workflow-structure",
           detail: err.message ?? String(err),
           fixed: false,
         });
       }
-      return diagnostics;
+      return { errors, warnings };
     }
     const compiled = compileWorkflowPlan(result.document, path.basename(parsePath, path.extname(parsePath)));
     if (!compiled.ok) {
       for (const err of compiled.errors) {
-        diagnostics.push({
+        errors.push({
           file: relPath,
           issue: "invalid-workflow-structure",
           detail: err.message,
           fixed: false,
         });
       }
+      return { errors, warnings };
+    }
+    for (const warning of compiled.warnings) {
+      warnings.push({
+        file: relPath,
+        issue: "workflow-warning",
+        detail: warning.message,
+        fixed: false,
+      });
     }
   } catch (e) {
-    diagnostics.push({
+    errors.push({
       file: relPath,
       issue: "invalid-workflow-structure",
       detail: `workflow parser error: ${e instanceof Error ? e.message : String(e)}`,
       fixed: false,
     });
   }
-  return diagnostics;
+  return { errors, warnings };
 }
 
 /**

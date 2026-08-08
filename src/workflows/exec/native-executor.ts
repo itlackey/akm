@@ -9,28 +9,31 @@
  * persistence through the serialized writer queue, and `workflow_unit_*`
  * events for observability.
  *
- * Data flow (redesign addendum, R1): workflow-authored templates go through
- * the deterministic `${{ … }}` expression language (`program/expressions.ts`)
- * — but ONLY for nodes the frontend marked `templating: "expressions"` (YAML
- * program units). Classic linear markdown instructions are `"verbatim"`:
- * opaque data handed to the agent byte-exact (the stable CLI contract — a
- * literal `${{` there is content, never grammar). Expression templates are
- * parsed ONCE per step and resolved per unit against `{ params, stepOutputs,
- * item, item_index }`; `map.over` resolves as a single whole-value reference.
- * Substituted content is data, never re-scanned — the P1 `{{item}}` re-scan
- * injection class is structurally impossible. There is NO ambient key search:
- * a `steps.<id>.output.<path>` reference addresses INTO that step's recorded
+ * Data flow (workflow-format-unification, spec §2.3): there is NO
+ * interpolation language. A unit's instructions are the step's body prose
+ * BYTE-EXACT — prose is never scanned for reference syntax, so a literal `${{`
+ * in a body is content, not grammar. Data reaches the unit as ATTACHED
+ * STRUCTURED CONTEXT rather than string splices: `buildUnitPrompt`
+ * (`exec/step-work.ts`) wraps the verbatim instructions with JSON blocks for
+ * the run params, a map unit's item + index, and the artifacts named by the
+ * step's `inputs:`. Because nothing is ever substituted INTO the prose, the P1
+ * `{{item}}` re-scan injection class is structurally impossible.
+ *
+ * References survive only in the three whole-value FRONTMATTER positions the
+ * closed two-root grammar occupies (`program/expressions.ts`): `map.over`,
+ * `route.input`, and each `inputs[]` entry. They resolve ONCE per step against
+ * `{ params, stepOutputs }`. There is NO ambient key search: a
+ * `steps.<id>.output.<path>` reference addresses INTO that step's recorded
  * output explicitly.
  *
- * Step outputs (`${{ steps.<id>.output… }}`): every engine-executed step
- * journals a promoted ARTIFACT under `evidence.output` — the solo unit's
- * result/text, the collect reducer's per-item array, or the vote reducer's
- * winner — and that artifact is what the expression scope exposes
- * ({@link projectStepOutput}). The documented addressing
- * (`steps.discover.output.files`) therefore resolves against real step
- * results, never the raw evidence envelope (peer review R1). Steps completed
- * manually (no `output` key in their evidence) expose their recorded evidence
- * object as-is.
+ * Step outputs (`steps.<id>.output…`): every engine-executed step journals a
+ * promoted ARTIFACT under `evidence.output` — the solo unit's result/text, the
+ * collect reducer's per-item array, or the vote reducer's winner — and that
+ * artifact is what the reference scope exposes ({@link projectStepOutput}).
+ * The documented addressing (`steps.discover.output.files`) therefore resolves
+ * against real step results, never the raw evidence envelope (peer review R1).
+ * Steps completed manually (no `output` key in their evidence) expose their
+ * recorded evidence object as-is.
  *
  * Empty free-text outputs (peer review): a SUCCESSFUL schemaless unit that
  * returns the empty string is normalized to "no output" — {@link dispatchUnit}
@@ -42,8 +45,8 @@
  * "empty == absent", not special-cased anywhere:
  *   - a SOLO empty step promotes `output = null` (the unit's absent text ??
  *     null); a `collect` fan-out promotes `null` in that item's slot.
- *   - A downstream `${{ steps.x.output }}` of an empty solo step therefore
- *     resolves against `null` and fails LOUDLY at expression resolution
+ *   - A downstream `steps.x.output` reference to an empty solo step therefore
+ *     resolves against `null` and fails LOUDLY at reference resolution
  *     (`… resolved to null`) — a deterministic `expression_error` on BOTH
  *     surfaces, never a silent empty string.
  *   - A SCHEMA unit is unaffected by this normalization: an empty response is
@@ -136,7 +139,11 @@ import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensit
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import { insertEventStrict } from "../../storage/repositories/events-repository";
-import { type WorkflowRunUnitRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
+import {
+  type WorkflowRunUnitRow,
+  withWorkflowRunsConnection,
+  withWorkflowRunsRepo,
+} from "../../storage/repositories/workflow-runs-repository";
 import type { FrozenEngineSnapshot, IrBudget, IrInvocation, IrStepPlan } from "../ir/schema";
 import { LIFETIME_UNIT_CAP, scheduleUnits, UnitCapExceededError } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
@@ -356,21 +363,37 @@ function classifyUnitReuse(
 ): UnitReuseDecision {
   if (!workUnit.resolved.ok) return { kind: "dispatch" };
   const inputHash = workUnit.resolved.inputHash;
-  const maxAttempts = 1 + Math.max(0, workUnit.retry?.max ?? 0);
   const base = workUnit.journalBaseId;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const attemptId = attempt === 0 ? base : `${base}~r${attempt}`;
-    const prior = existingUnits?.get(attemptId);
-    if (!prior || prior.status !== "completed") continue;
-    if (prior.input_hash === inputHash) return { kind: "reuse", row: prior };
-    // Gate-loop rows are NOT replay-deterministic (the prompt embeds a fresh
-    // judge output): a stale loop-N row with a different hash re-dispatches
-    // live. Divergence only guards loop-1 rows, whose inputs ARE a pure
-    // function of (frozen plan, params, journaled results).
-    if (gateLoop > 1) return { kind: "dispatch" };
-    return { kind: "diverge", attemptId };
+  // Scan EVERY journaled attempt row of this unit (`<base>` / `<base>~r<N>`
+  // for ANY N), not just the attempts the CURRENT retry policy allows:
+  // retry/onError are deliberately excluded from the input hash (step-work.ts)
+  // precisely so completed rows stay valid across policy changes — a run
+  // re-invoked with a lowered retry.max must still find the `~rN` row a prior
+  // invocation completed beyond the new max, never re-dispatch finished work.
+  // A completed hash-matching row anywhere wins (reuse); a completed loop-1
+  // row with a DIFFERENT hash — and no matching sibling — is replay divergence.
+  let divergedAttemptId: string | undefined;
+  if (existingUnits) {
+    for (const [attemptId, prior] of existingUnits) {
+      if (prior.status !== "completed" || !isAttemptRowOf(attemptId, base)) continue;
+      if (prior.input_hash === inputHash) return { kind: "reuse", row: prior };
+      // Gate-loop rows are NOT replay-deterministic (the prompt embeds a fresh
+      // judge output): a stale loop-N row with a different hash re-dispatches
+      // live. Divergence only guards loop-1 rows, whose inputs ARE a pure
+      // function of (frozen plan, params, journaled results).
+      if (gateLoop <= 1) divergedAttemptId ??= attemptId;
+    }
   }
+  if (divergedAttemptId !== undefined) return { kind: "diverge", attemptId: divergedAttemptId };
   return { kind: "dispatch" };
+}
+
+/** True when `attemptId` journals an attempt of `base`: the base id itself or `<base>~r<N>`. */
+function isAttemptRowOf(attemptId: string, base: string): boolean {
+  if (attemptId === base) return true;
+  if (!attemptId.startsWith(`${base}~r`)) return false;
+  const suffix = attemptId.slice(base.length + 2);
+  return suffix.length > 0 && /^\d+$/.test(suffix);
 }
 
 /**
@@ -387,8 +410,73 @@ function stepWillDispatch(
   return workUnits.some((u) => u.resolved.ok && classifyUnitReuse(u, existingUnits, gateLoop).kind === "dispatch");
 }
 
-/** Execute one step plan natively. Never throws for unit-level failures. */
-export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+/**
+ * Execute one step plan natively. Never throws for unit-level failures.
+ *
+ * The whole step runs inside ONE state.db connection scope
+ * ({@link withWorkflowRunsConnection}): the journal read, every unit's
+ * insert/finish transaction, and every `workflow_unit_*` event share a single
+ * handle for the step's lifetime instead of opening and closing state.db twice
+ * per unit plus twice per unit's events. The scope closes the handle when the
+ * step settles (success, failure, or throw), so there is no handle to leak and
+ * no lifetime that outlives the step. Everything inside keeps its existing
+ * transaction boundaries — see `core/state-db-scope.ts` for why sharing a
+ * handle across concurrently-scheduled units is safe here.
+ */
+export function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+  return withWorkflowRunsConnection(() => executeStepPlanInConnection(plan, ctx));
+}
+
+/**
+ * Open the step's dispatch budget and the abort signal it trips.
+ *
+ * Budget ceilings (addendum R2): when the frozen plan declares a budget,
+ * dispatch runs under an AbortController CHAINED onto `ctx.signal` — hitting a
+ * ceiling aborts pending and in-flight dispatches, and the step fails hard.
+ * Without a budget the context signal passes through untouched (the no-budget
+ * path is byte-identical to pre-R2 behavior).
+ *
+ * The returned {@link DispatchBudget} is seeded with the run's journaled
+ * dispatch count and token total and consumed per ACTUAL dispatch inside
+ * `runUnit` — never for durable-row reuses, so resuming a large
+ * partially-completed fan-out works.
+ *
+ * `unchainSignal` MUST be called when dispatch finishes (the caller's
+ * `finally`) so the upstream abort listener is removed.
+ */
+function openDispatchBudget(
+  ctx: StepExecutionContext,
+  dispatched: number,
+): { signal: AbortSignal | undefined; budget: DispatchBudget; unchainSignal: (() => void) | undefined } {
+  const declaredBudget =
+    ctx.budget && (ctx.budget.maxUnits !== undefined || ctx.budget.maxTokens !== undefined) ? ctx.budget : undefined;
+  let signal = ctx.signal;
+  let onExceeded: (() => void) | undefined;
+  let unchainSignal: (() => void) | undefined;
+  if (declaredBudget) {
+    const controller = new AbortController();
+    const upstream = ctx.signal;
+    if (upstream) {
+      if (upstream.aborted) {
+        controller.abort();
+      } else {
+        const onUpstreamAbort = () => controller.abort();
+        upstream.addEventListener("abort", onUpstreamAbort, { once: true });
+        unchainSignal = () => upstream.removeEventListener("abort", onUpstreamAbort);
+      }
+    }
+    signal = controller.signal;
+    onExceeded = () => controller.abort();
+  }
+  const budget = new DispatchBudget(dispatched, {
+    tokensUsed: ctx.tokensUsed ?? 0,
+    ...(declaredBudget ? { budget: declaredBudget } : {}),
+    ...(onExceeded ? { onExceeded } : {}),
+  });
+  return { signal, budget, unchainSignal };
+}
+
+async function executeStepPlanInConnection(plan: IrStepPlan, ctx: StepExecutionContext): Promise<StepExecutionResult> {
   const dispatched = ctx.unitsDispatched ?? 0;
 
   // Work-list computation is the SHARED, PURE decision (step-work.ts): resolve
@@ -480,41 +568,10 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
     worktreeBase = base;
   }
 
-  // Budget ceilings (addendum R2): when the frozen plan declares a budget,
-  // dispatch runs under an AbortController CHAINED onto ctx.signal — hitting
-  // a ceiling aborts pending and in-flight dispatches, and the step fails
-  // hard below. Without a budget the context signal passes through untouched
-  // (the no-budget path is byte-identical to pre-R2 behavior).
-  const declaredBudget =
-    ctx.budget && (ctx.budget.maxUnits !== undefined || ctx.budget.maxTokens !== undefined) ? ctx.budget : undefined;
-  let signal = ctx.signal;
-  let onExceeded: (() => void) | undefined;
-  let unchainSignal: (() => void) | undefined;
-  if (declaredBudget) {
-    const controller = new AbortController();
-    const upstream = ctx.signal;
-    if (upstream) {
-      if (upstream.aborted) {
-        controller.abort();
-      } else {
-        const onUpstreamAbort = () => controller.abort();
-        upstream.addEventListener("abort", onUpstreamAbort, { once: true });
-        unchainSignal = () => upstream.removeEventListener("abort", onUpstreamAbort);
-      }
-    }
-    signal = controller.signal;
-    onExceeded = () => controller.abort();
-  }
-
-  // Lifetime-cap + declared-budget accounting: seeded with the run's
-  // journaled dispatch count and token total, consumed per ACTUAL dispatch
-  // inside runUnit — never for durable-row reuses, so resuming a large
-  // partially-completed fan-out works.
-  const budget = new DispatchBudget(dispatched, {
-    tokensUsed: ctx.tokensUsed ?? 0,
-    ...(declaredBudget ? { budget: declaredBudget } : {}),
-    ...(onExceeded ? { onExceeded } : {}),
-  });
+  // Budget ceilings + lifetime-cap accounting, and the budget-chained abort
+  // signal they trip. Extracted verbatim (behavior-identical) — see
+  // {@link openDispatchBudget}.
+  const { signal, budget, unchainSignal } = openDispatchBudget(ctx, dispatched);
 
   let outcomes: Array<UnitOutcome | undefined>;
   const selectedEngine = template.invocation ? ctx.engines?.[template.invocation.engine] : undefined;
@@ -581,6 +638,23 @@ export async function executeStepPlan(plan: IrStepPlan, ctx: StepExecutionContex
         .map((u) => u.error ?? `replay divergence: unit "${u.unitId}" was journaled with different inputs`)
         .join(" "),
     );
+  }
+
+  // A journal-write failure is likewise HARD regardless of on_error: the
+  // unit dispatched (spent tokens, ran side effects) but its result could not
+  // be persisted, so completing the step would promote an artifact the
+  // journal cannot rebuild on resume — and the stuck-`running` row would
+  // wedge or double-dispatch a later invocation. The summary carries the
+  // per-unit cause verbatim.
+  const unjournaled = units.filter((u) => u.failureReason === "journal_write_failed");
+  if (unjournaled.length > 0) {
+    return {
+      ...failedStep(
+        budget.used,
+        unjournaled.map((u) => u.error ?? `unit "${u.unitId}" result could not be journaled`).join(" "),
+      ),
+      tokensUsed: budget.tokens,
+    };
   }
 
   // Failure policy + reducer + typed-artifact validation are the SHARED
@@ -786,7 +860,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   // row — nothing was dispatched (same contract as an expression failure).
   let worktreePath: string | undefined;
   if (input.worktreeBase !== undefined) {
-    const created = createUnitWorktree(input.worktreeBase, ctx.runId, attemptId);
+    const created = await createUnitWorktree(input.worktreeBase, ctx.runId, attemptId);
     if (!created.ok) {
       return { unitId: request.unitId, ok: false, failureReason: "worktree_failed", error: created.error };
     }
@@ -802,24 +876,42 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     request = { ...request, cwd: worktreePath };
   }
 
-  await enqueueUnitWrite(async () => {
-    await withWorkflowRunsRepo((repo) =>
-      repo.insertUnit({
-        runId: ctx.runId,
-        unitId: attemptId,
-        stepId: plan.stepId,
-        nodeId: workUnit.nodeId,
-        parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
-        phase: null,
-        runner: workUnit.runner,
-        engine: request.engine.name,
-        model: request.invocation.model,
-        inputHash,
-        worktreePath: worktreePath ?? null,
-        startedAt: new Date().toISOString(),
-      }),
-    );
-  });
+  const startedAt = new Date().toISOString();
+  try {
+    await enqueueUnitWrite(async () => {
+      await withWorkflowRunsRepo((repo) =>
+        repo.insertUnit({
+          runId: ctx.runId,
+          unitId: attemptId,
+          stepId: plan.stepId,
+          nodeId: workUnit.nodeId,
+          parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
+          phase: null,
+          runner: workUnit.runner,
+          engine: request.engine.name,
+          model: request.invocation.model,
+          inputHash,
+          worktreePath: worktreePath ?? null,
+          startedAt,
+        }),
+      );
+    });
+  } catch (err) {
+    // A failed dispatch-row insert means NOTHING dispatched (the row is the
+    // dispatch's precondition) — fail the unit with the real cause instead of
+    // letting the throw escape into the scheduler, where a swallowed worker
+    // error is indistinguishable from "never claimed" and used to be
+    // misreported as an aborted, never-dispatched unit.
+    if (worktreePath !== undefined && input.worktreeBase !== undefined) {
+      await cleanupUnitWorktree(input.worktreeBase, worktreePath);
+    }
+    return {
+      unitId: request.unitId,
+      ok: false,
+      failureReason: "dispatch_error",
+      error: `unit "${attemptId}" could not journal its dispatch row (nothing was dispatched): ${message(err)}`,
+    };
+  }
   // Ids/status only — instructions and results are workflow-authored content
   // and stay out of the events stream (07 P1-B).
   appendEvent({
@@ -831,52 +923,99 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   const outcome = redactUnitOutcome(await dispatchUnit(request, dispatcher), request.sensitiveValues ?? []);
 
   const finishedAt = new Date().toISOString();
-  await enqueueUnitWrite(() =>
-    withWorkflowRunsRepo((repo) =>
-      repo.immediateTransaction((db) => {
-        const run = repo.getRunById(ctx.runId);
-        if (run?.status !== "active") return;
-        if (ctx.leaseHolder !== undefined && run.engine_lease_holder !== ctx.leaseHolder) return;
-        repo.finishUnit({
-          runId: ctx.runId,
-          unitId: attemptId,
-          status: outcome.ok ? "completed" : "failed",
-          resultJson:
-            outcome.result !== undefined
-              ? JSON.stringify(outcome.result)
-              : outcome.text
-                ? JSON.stringify(outcome.text)
-                : null,
-          tokens: outcome.tokens ?? null,
-          failureReason: outcome.failureReason ?? null,
-          // Harness-native session id (P2): journaled so resume can replay the
-          // harness's own context cache (e.g. `codex exec resume <id>`).
-          sessionId: outcome.sessionId ?? null,
-          finishedAt,
-        });
-        insertEventStrict(db, {
-          eventType: "workflow_unit_finished",
-          ts: finishedAt,
-          ref: ctx.workflowRef,
-          metadata: {
+  // A dispatched unit's outcome is NEVER silently discarded. The single-driver
+  // guard lives at the ROW level (`finishUnitFromDispatch`: still `running`,
+  // still this dispatch's `started_at`): a stolen run's new driver re-dispatches
+  // through insertUnit, which REPLACES the row with a fresh started_at, so the
+  // stale driver's finish matches nothing and can never clobber the new
+  // driver's live dispatch. A row that IS still ours is finished with the real
+  // result even when the run went non-active or the lease moved mid-flight —
+  // dropping it would leave the row `running` and make a later resume
+  // re-dispatch side-effecting work that already ran and already spent tokens.
+  // Persisting a unit result never advances the run; spine advancement stays
+  // lease-guarded in completeWorkflowStep.
+  let journalError: unknown;
+  try {
+    await enqueueUnitWrite(() =>
+      withWorkflowRunsRepo((repo) =>
+        repo.immediateTransaction((db) => {
+          const finished = repo.finishUnitFromDispatch({
             runId: ctx.runId,
-            stepId: plan.stepId,
             unitId: attemptId,
             status: outcome.ok ? "completed" : "failed",
-            ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
-            ...(outcome.tokens !== undefined ? { tokens: outcome.tokens } : {}),
-          },
-        });
-      }),
-    ),
-  );
+            resultJson:
+              outcome.result !== undefined
+                ? JSON.stringify(outcome.result)
+                : outcome.text
+                  ? JSON.stringify(outcome.text)
+                  : null,
+            tokens: outcome.tokens ?? null,
+            failureReason: outcome.failureReason ?? null,
+            // Harness-native session id (P2): journaled so resume can replay the
+            // harness's own context cache (e.g. `codex exec resume <id>`).
+            sessionId: outcome.sessionId ?? null,
+            finishedAt,
+            dispatchStartedAt: startedAt,
+          });
+          if (!finished) {
+            if (!repo.getUnit(ctx.runId, attemptId)) {
+              // The dispatch row vanished (run deleted mid-flight, journal
+              // tampered): the same journaling-bug contract finishUnit throws
+              // for — surfaced below as a journal-write failure, never a no-op.
+              throw new Error(
+                `finishUnit updated no row: no unit "${attemptId}" exists for run "${ctx.runId}". ` +
+                  `The dispatch row this invocation inserted is gone, so the unit's terminal state cannot be journaled.`,
+              );
+            }
+            // The row exists but is no longer this dispatch's `running` row:
+            // another engine invocation re-dispatched (or finished) the unit
+            // after taking the run. Its journal owns the unit now — writing
+            // would clobber a live dispatch — so the outcome is surfaced
+            // loudly instead of silently dropped.
+            warn(
+              `Workflow unit ${attemptId} (run ${ctx.runId}) ${outcome.ok ? "completed" : `failed (${outcome.failureReason ?? "error"})`}, ` +
+                `but its journal row was re-dispatched by another engine invocation mid-flight — refusing to overwrite ` +
+                `the new driver's row. This dispatch's result is not journaled.`,
+            );
+            return;
+          }
+          const run = repo.getRunById(ctx.runId);
+          if (
+            run?.status !== "active" ||
+            (ctx.leaseHolder !== undefined && run.engine_lease_holder !== ctx.leaseHolder)
+          ) {
+            warn(
+              `Workflow unit ${attemptId} (run ${ctx.runId}): the run ` +
+                `${run?.status !== "active" ? `is now ${run?.status ?? "gone"}` : `lease moved to ${run?.engine_lease_holder ?? "(nobody)"}`} ` +
+                `while the unit was in flight; its result was journaled so a resume reuses it instead of re-dispatching.`,
+            );
+          }
+          insertEventStrict(db, {
+            eventType: "workflow_unit_finished",
+            ts: finishedAt,
+            ref: ctx.workflowRef,
+            metadata: {
+              runId: ctx.runId,
+              stepId: plan.stepId,
+              unitId: attemptId,
+              status: outcome.ok ? "completed" : "failed",
+              ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+              ...(outcome.tokens !== undefined ? { tokens: outcome.tokens } : {}),
+            },
+          });
+        }),
+      ),
+    );
+  } catch (err) {
+    journalError = err;
+  }
 
   // Worktree lifecycle epilogue: a CLEAN worktree (`git status --porcelain`
   // empty) is removed; a DIRTY one is retained and logged — the unit left
   // uncollected work, and its journaled worktree_path says where. Cleanup is
   // best-effort observability, never a unit failure.
   if (worktreePath !== undefined && input.worktreeBase !== undefined) {
-    const cleanup = cleanupUnitWorktree(input.worktreeBase, worktreePath);
+    const cleanup = await cleanupUnitWorktree(input.worktreeBase, worktreePath);
     if (cleanup.dirty) {
       warn(
         `Workflow unit ${attemptId} left uncommitted changes in its isolation worktree; retained at ${worktreePath}`,
@@ -884,6 +1023,25 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     } else if (!cleanup.removed) {
       warn(`Workflow unit ${attemptId}: could not clean up isolation worktree ${worktreePath}: ${cleanup.error}`);
     }
+  }
+
+  // A journal-write failure AFTER a successful dispatch is its own loud
+  // failure class: the unit's work ran (and may have succeeded), but its
+  // terminal state could not be recorded, so the row may be stuck `running`.
+  // It must never masquerade as "not dispatched" — the outcome names the unit
+  // and the real cause, and executeStepPlan fails the step hard on it
+  // (out-of-taxonomy reason, so retry.on can never re-dispatch the work).
+  if (journalError !== undefined) {
+    return {
+      unitId: request.unitId,
+      ok: false,
+      failureReason: "journal_write_failed",
+      error:
+        `unit "${attemptId}" dispatched and ${outcome.ok ? "completed" : `failed (${outcome.failureReason ?? "error"})`}, ` +
+        `but its result could not be journaled: ${message(journalError)}`,
+      ...(outcome.tokens !== undefined ? { tokens: outcome.tokens } : {}),
+      ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+    };
   }
 
   return outcome;

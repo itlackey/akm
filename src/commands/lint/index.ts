@@ -12,6 +12,7 @@ import {
   nameOrTypeDiagnostics,
   ORPHANED_STUB_DETAIL,
   taskDiagnostics,
+  workflowCompileWarnings,
   workflowStructureDiagnostics,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
@@ -40,7 +41,13 @@ export interface AkmLintResult {
   ok: boolean;
   fixed: LintIssue[];
   flagged: LintIssue[];
-  summary: { fixed: number; flagged: number };
+  /**
+   * Non-fatal advisories (issue code `workflow-warning`: workflow compile
+   * warnings such as a step missing its `output:` schema). Kept OUT of
+   * `flagged` so `--fail-on-flagged` never fails a run over an advisory.
+   */
+  warnings: LintIssue[];
+  summary: { fixed: number; flagged: number; warnings: number };
 }
 
 export interface AkmLintOptions {
@@ -176,6 +183,7 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "missing-description",
   "broken-xref",
   "broken-source",
+  "workflow-warning",
 ]);
 
 /** Map one adapter {@link Diagnostic} onto a {@link LintIssue} — see `types.ts`'s `"adapter-diagnostic"` doc comment for the open→closed reconciliation. */
@@ -224,7 +232,11 @@ async function lintViaAdapter(
     ctx,
   );
 
-  const flagged = diagnostics.map(diagnosticToLintIssue);
+  const mapped = diagnostics.map(diagnosticToLintIssue);
+  // Advisory diagnostics travel in their own channel — never `flagged`, so a
+  // `--fail-on-flagged` gate is not tripped by a non-fatal warning.
+  const warnings = mapped.filter((issue) => issue.issue === "workflow-warning");
+  const flagged = mapped.filter((issue) => issue.issue !== "workflow-warning");
   // The cross-bundle env dangerous-key sweep (see `runEnvDangerousKeyPass`'s
   // doc comment) ran for every non-akm adapter via the STASH_SUBDIRS
   // fallthrough this dispatch replaces — EXCEPT `okf`, which the old code
@@ -243,7 +255,13 @@ async function lintViaAdapter(
       flagged.push(issue);
     }
   }
-  return { ok: true, fixed: [], flagged, summary: { fixed: 0, flagged: flagged.length } };
+  return {
+    ok: true,
+    fixed: [],
+    flagged,
+    warnings,
+    summary: { fixed: 0, flagged: flagged.length, warnings: warnings.length },
+  };
 }
 
 function lintIssueDedupeKey(issue: LintIssue): string {
@@ -446,6 +464,7 @@ function lintAkmSweep(
   const fix = options.fix === true;
   const fixed: LintIssue[] = [];
   const flagged: LintIssue[] = [];
+  const warnings: LintIssue[] = [];
 
   const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
 
@@ -524,6 +543,13 @@ function lintAkmSweep(
       }
 
       if (fileDeleted) continue; // file is gone — skip any remaining checks
+
+      // Workflow compile warnings are non-fatal advisories (`compileWorkflowPlan`'s
+      // `warnings`): surfaced in the result's separate `warnings` channel so
+      // they reach human + JSON lint output without tripping `--fail-on-flagged`.
+      if (subdir === "workflows") {
+        warnings.push(...(workflowCompileWarnings(relPath, raw, filePath) as LintIssue[]));
+      }
     }
   }
 
@@ -546,7 +572,8 @@ function lintAkmSweep(
     ok: true,
     fixed,
     flagged,
-    summary: { fixed: fixed.length, flagged: flagged.length },
+    warnings,
+    summary: { fixed: fixed.length, flagged: flagged.length, warnings: warnings.length },
   };
 }
 

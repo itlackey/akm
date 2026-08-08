@@ -3,8 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import os from "node:os";
+import { WORKFLOW_MAX_CONCURRENCY } from "./resource-limits";
 
-export const WORKFLOW_MAX_CONCURRENCY_CEILING = 64;
+/**
+ * Run-level ceiling on `workflow.maxConcurrency`. It is deliberately the SAME
+ * value the frozen-plan decoder enforces on `execution.maxConcurrency` and on
+ * per-step `map.concurrency` — a clamp above the decoder's bound would freeze
+ * plans the decoder then rejects — so it reads the single shared constant
+ * (`./resource-limits`) rather than repeating the literal.
+ */
+export const WORKFLOW_MAX_CONCURRENCY_CEILING = WORKFLOW_MAX_CONCURRENCY;
 
 export function cpuDerivedUnitConcurrency(cpuCount = os.cpus()?.length ?? 4): number {
   return Math.min(16, Math.max(1, cpuCount - 2));

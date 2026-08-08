@@ -78,6 +78,37 @@ afterEach(() => {
 });
 
 describe("task lifecycle failure handling", () => {
+  // Issue 11: a workflow task's `timeoutMs` is its whole-run bound (the task
+  // runner turns it into the abort signal `akm workflow run --timeout` uses),
+  // so `--timeout-ms` is no longer refused alongside `--workflow`. Engine and
+  // model stay prompt-only — a workflow's engines come from its frozen plan.
+  test("add accepts --timeout-ms on a workflow task and records it in the YAML", async () => {
+    const workflowsDir = path.join(storage.stashDir, "workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "nightly.md"), "# Nightly\n", "utf8");
+
+    const result = await akmTasksAdd(
+      { id: "nightly-wf", schedule: "@daily", workflow: "workflows/nightly", timeoutMs: 900_000 },
+      { backend },
+    );
+
+    expect(result.target).toEqual({ kind: "workflow", ref: "workflows/nightly", params: {}, timeoutMs: 900_000 });
+    expect(fs.readFileSync(result.path, "utf8")).toContain("timeoutMs: 900000");
+  });
+
+  test("add still refuses --engine on a workflow task", async () => {
+    const workflowsDir = path.join(storage.stashDir, "workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "nightly.md"), "# Nightly\n", "utf8");
+
+    await expect(
+      akmTasksAdd(
+        { id: "nightly-engine", schedule: "@daily", workflow: "workflows/nightly", engine: "reviewer" },
+        { backend },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
+  });
+
   test("add refuses to shadow a legacy markdown task without --force", async () => {
     const legacyPath = path.join(storage.stashDir, "tasks", "nightly.md");
     fs.writeFileSync(legacyPath, "---\nschedule: '@daily'\n---\nLegacy task\n", "utf8");

@@ -17,6 +17,14 @@
 export const TASK_SCHEMA_VERSION = 2;
 
 /**
+ * Largest expressible `timeoutMs` — `setTimeout`'s 32-bit signed ceiling
+ * (2^31-1, ~24.8 days). A larger delay overflows and fires almost immediately,
+ * which would silently abort a run seconds after it started instead of hours
+ * later. Mirrored as `maximum` on `timeoutMs` in `schemas/akm-task.json`.
+ */
+export const TASK_MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
  * Lint-level shape problems for a parsed task YAML mapping: the field rules
  * `src/tasks/parser.ts` enforces at load time, phrased as diagnostics. The ONE
  * definition shared by both task linters (`core/adapter/adapters/akm-lint.ts`
@@ -42,6 +50,23 @@ export interface TaskWorkflowTarget {
   /** A workflow ref, e.g. `workflows/daily-backup`. */
   ref: string;
   params: Record<string, unknown>;
+  /**
+   * Whole-run timeout (ms) for the orchestration this task drives — the same
+   * bound `akm workflow run --timeout` applies, expressed in the task file.
+   *
+   *   • `undefined` → `DEFAULT_WORKFLOW_TASK_TIMEOUT_MS` (see `runner.ts`).
+   *     An unattended run is never left unbounded by accident.
+   *   • `null`      → explicit opt-out: run until the workflow itself stops.
+   *   • integer     → that many milliseconds; an explicit value always wins.
+   *
+   * On expiry the runner aborts the run's signal, which the engine treats as a
+   * graceful break at a step boundary — the run stays resumable.
+   */
+  timeoutMs?: number | null;
+  /** Stop after this many spine steps (`akm workflow run --max-steps`). */
+  maxSteps?: number;
+  /** Retry a failed step this many additional times (`--max-retries`). */
+  maxRetries?: number;
 }
 
 export type TaskPromptSource =
@@ -96,8 +121,10 @@ export interface TaskDocument {
   /**
    * Per-task agent timeout override (ms).
    *
-   * Command-task timeout. Prompt task timeout is stored on its engine use;
-   * workflow tasks cannot set a timeout.
+   * Command-task timeout. Prompt task timeout is stored on its engine use, and
+   * a workflow task's whole-run timeout on {@link TaskWorkflowTarget.timeoutMs}
+   * — every target kind reads the same `timeoutMs` YAML key, it just lands
+   * where that kind's dispatch consumes it.
    */
   timeoutMs?: number | null;
 }

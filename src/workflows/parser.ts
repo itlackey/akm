@@ -36,6 +36,7 @@ import { LineCounter, parseDocument } from "yaml";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
+import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
 import { parseReference } from "./program/expressions";
 import {
   PROGRAM_ISOLATION_KINDS,
@@ -59,14 +60,20 @@ import {
 import {
   jsonBytes,
   utf8Bytes,
+  WORKFLOW_ENGINE_NAME_PATTERN,
+  WORKFLOW_MAX_CONCURRENCY,
+  WORKFLOW_MAX_ENGINE_NAME_LENGTH,
   WORKFLOW_MAX_EXTRA_PARAMS_BYTES,
+  WORKFLOW_MAX_GATE_LOOPS,
   WORKFLOW_MAX_INPUTS,
   WORKFLOW_MAX_MAP_EXPANSION,
   WORKFLOW_MAX_PARAMS,
+  WORKFLOW_MAX_RETRIES,
   WORKFLOW_MAX_ROUTE_BRANCHES,
   WORKFLOW_MAX_SCHEMA_BYTES,
   WORKFLOW_MAX_SOURCE_BYTES,
   WORKFLOW_MAX_STEPS,
+  WORKFLOW_MAX_TIMEOUT_MS,
 } from "./resource-limits";
 import {
   type SourceRef,
@@ -554,6 +561,10 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
       ctx.err(["params", paramName], `Param "${paramName}" must be a JSON Schema object (e.g. { type: string }).`);
       continue;
     }
+    if (jsonBytes(value) > WORKFLOW_MAX_SCHEMA_BYTES) {
+      ctx.err(["params", paramName], `Param "${paramName}" schema exceeds the 256 KiB resource limit.`);
+    }
+    checkSchemaDefinition(ctx, value, ["params", paramName], `Param "${paramName}" schema`);
     params[paramName] = value;
   }
   return Object.keys(params).length > 0 ? params : undefined;
@@ -569,8 +580,8 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   checkUnknownKeys(ctx, raw, path, DEFAULTS_KEYS, `"defaults"`);
   const defaults: ProgramDefaults = {};
   if (raw.engine !== undefined) {
-    if (typeof raw.engine === "string" && raw.engine.trim() !== "") defaults.engine = raw.engine.trim();
-    else ctx.err([...path, "engine"], `"defaults.engine" must be a non-empty engine name.`);
+    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `"defaults.engine"`);
+    if (engine !== undefined) defaults.engine = engine;
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
@@ -753,8 +764,8 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   const unit: ProgramUnit = { source: ctx.refAt(path) };
 
   if (raw.engine !== undefined) {
-    if (typeof raw.engine === "string" && raw.engine.trim() !== "") unit.engine = raw.engine.trim();
-    else ctx.err([...path, "engine"], `${stepLabel} "engine" must be a non-empty engine name.`);
+    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `${stepLabel} "engine"`);
+    if (engine !== undefined) unit.engine = engine;
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();
@@ -815,10 +826,18 @@ function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progra
 
   let concurrency: number | undefined;
   if (raw.concurrency !== undefined) {
-    if (typeof raw.concurrency === "number" && Number.isInteger(raw.concurrency) && raw.concurrency > 0) {
+    if (
+      typeof raw.concurrency === "number" &&
+      Number.isInteger(raw.concurrency) &&
+      raw.concurrency > 0 &&
+      raw.concurrency <= WORKFLOW_MAX_CONCURRENCY
+    ) {
       concurrency = raw.concurrency;
     } else {
-      ctx.err([...path, "concurrency"], `${stepLabel} "concurrency" must be a positive integer.`);
+      ctx.err(
+        [...path, "concurrency"],
+        `${stepLabel} "concurrency" must be an integer from 1 through ${WORKFLOW_MAX_CONCURRENCY}.`,
+      );
     }
   }
 
@@ -950,10 +969,18 @@ function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
 
   const gate: ProgramGate = {};
   if (raw.max_loops !== undefined) {
-    if (typeof raw.max_loops === "number" && Number.isInteger(raw.max_loops) && raw.max_loops >= 1) {
+    if (
+      typeof raw.max_loops === "number" &&
+      Number.isInteger(raw.max_loops) &&
+      raw.max_loops >= 1 &&
+      raw.max_loops <= WORKFLOW_MAX_GATE_LOOPS
+    ) {
       gate.maxLoops = raw.max_loops;
     } else {
-      ctx.err([...path, "max_loops"], `${stepLabel} "gate.max_loops" must be an integer >= 1.`);
+      ctx.err(
+        [...path, "max_loops"],
+        `${stepLabel} "gate.max_loops" must be an integer from 1 through ${WORKFLOW_MAX_GATE_LOOPS}.`,
+      );
     }
   }
   return gate;
@@ -962,6 +989,30 @@ function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
 // ---------------------------------------------------------------------------
 // Field helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Engine names must already satisfy the frozen-plan grammar
+ * (`WORKFLOW_ENGINE_NAME_PATTERN`, max 63 chars) at parse time — the decoder
+ * enforces the same bound on persisted plans, and a name that only fails there
+ * surfaces as an unlocated "Invalid frozen workflow plan" at `workflow run`.
+ */
+function parseEngineName(ctx: Ctx, raw: unknown, path: Path, label: string): string | undefined {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    ctx.err(path, `${label} must be a non-empty engine name.`);
+    return undefined;
+  }
+  const name = raw.trim();
+  if (!WORKFLOW_ENGINE_NAME_PATTERN.test(name) || name.length > WORKFLOW_MAX_ENGINE_NAME_LENGTH) {
+    ctx.err(
+      path,
+      `${label} has an invalid engine name ${JSON.stringify(name)}. Engine names are lowercase words of letters ` +
+        `and digits separated by single dashes, starting with a letter (e.g. "code-review-llm"), at most ` +
+        `${WORKFLOW_MAX_ENGINE_NAME_LENGTH} characters.`,
+    );
+    return undefined;
+  }
+  return name;
+}
 
 function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramRetry | undefined {
   if (raw === undefined) return undefined;
@@ -972,8 +1023,11 @@ function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Prog
   checkUnknownKeys(ctx, raw, path, RETRY_KEYS, `${stepLabel} "retry"`);
 
   let ok = true;
-  if (!(typeof raw.max === "number" && Number.isInteger(raw.max) && raw.max >= 0)) {
-    ctx.err([...path, "max"], `${stepLabel} "retry.max" is required and must be a non-negative integer.`);
+  if (!(typeof raw.max === "number" && Number.isInteger(raw.max) && raw.max >= 0 && raw.max <= WORKFLOW_MAX_RETRIES)) {
+    ctx.err(
+      [...path, "max"],
+      `${stepLabel} "retry.max" is required and must be an integer from 0 through ${WORKFLOW_MAX_RETRIES}.`,
+    );
     ok = false;
   }
   const on: ProgramRetry["on"] = [];
@@ -1002,7 +1056,7 @@ function parseRetry(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Prog
 function parseTimeoutField(ctx: Ctx, raw: unknown, path: Path, label: string): number | null | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw === "number") {
-    if (Number.isInteger(raw) && raw > 0) return raw;
+    if (Number.isInteger(raw) && raw > 0) return checkTimeoutCeiling(ctx, raw, path, label, String(raw));
     ctx.err(path, `${label} has a non-positive timeout ${JSON.stringify(raw)}. ${TIMEOUT_HINT}.`);
     return undefined;
   }
@@ -1024,7 +1078,23 @@ function parseTimeoutField(ctx: Ctx, raw: unknown, path: Path, label: string): n
     ctx.err(path, `${label} has a non-positive timeout "${raw}". Use a positive duration or "none".`);
     return undefined;
   }
-  return timeoutMs;
+  return checkTimeoutCeiling(ctx, timeoutMs, path, label, raw);
+}
+
+/**
+ * Timeouts freeze into `IrInvocation.timeoutMs`, whose decoder bound is
+ * `WORKFLOW_MAX_TIMEOUT_MS` (setTimeout's 32-bit signed ceiling). Enforce the
+ * same ceiling here so an oversized duration fails with a line anchor instead
+ * of an unlocated decode error at `workflow run`.
+ */
+function checkTimeoutCeiling(ctx: Ctx, timeoutMs: number, path: Path, label: string, raw: string): number | undefined {
+  if (timeoutMs <= WORKFLOW_MAX_TIMEOUT_MS) return timeoutMs;
+  ctx.err(
+    path,
+    `${label} has a timeout "${raw}" above the maximum of ${WORKFLOW_MAX_TIMEOUT_MS} ms (about 24.8 days). ` +
+      `Use a shorter duration or "none" for no timeout.`,
+  );
+  return undefined;
 }
 
 function parseEnumField(
@@ -1107,7 +1177,30 @@ function parseSchemaObject(ctx: Ctx, raw: unknown, path: Path, label: string): R
   if (jsonBytes(raw) > WORKFLOW_MAX_SCHEMA_BYTES) {
     ctx.err(path, `${label} exceeds the 256 KiB resource limit.`);
   }
+  checkSchemaDefinition(ctx, raw, path, label);
   return raw;
+}
+
+/**
+ * Validate an author-declared schema AS a schema (`output:` and `params`
+ * declarations). The runtime enforces only a JSON Schema subset
+ * (`core/json-schema.ts`); a typo'd `type` or a keyword the subset ignores
+ * would silently constrain nothing at run time — a gate depending on a no-op
+ * schema is worse than a loud failure here, so both are parse ERRORS.
+ */
+function checkSchemaDefinition(ctx: Ctx, schema: Record<string, unknown>, path: Path, label: string): void {
+  for (const issue of checkJsonSchemaDefinition(schema)) {
+    const issuePath = [...path, ...issue.path];
+    if (issue.kind === "unsupported") {
+      ctx.err(
+        issuePath,
+        `${label} (at ${issue.pointer}): ${issue.message}. Supported JSON Schema keywords: ` +
+          `${JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS}.`,
+      );
+    } else {
+      ctx.err(issuePath, `${label} is not a valid JSON Schema (at ${issue.pointer}): ${issue.message}.`);
+    }
+  }
 }
 
 function checkReferenceSyntax(ctx: Ctx, text: string, path: Path, label: string): void {

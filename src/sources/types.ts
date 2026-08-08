@@ -106,9 +106,10 @@ export interface WorkflowParameter {
 /**
  * Read-only projection of a YAML workflow-program step's orchestration
  * declarations for `show` (`summarizeProgramStepOrchestration` in
- * src/workflows/program/project.ts). `fanOut.over` and `route.input` carry
- * raw `${{ … }}` expressions; the full JSON Schema is reduced to a presence
- * flag to keep show output compact.
+ * src/workflows/program/project.ts). `fanOut.over` and `route.input` carry raw
+ * reference strings from the closed grammar (`params.<name>` /
+ * `steps.<id>.output…`, no `${{ }}` delimiters); the full JSON Schema is reduced
+ * to a presence flag to keep show output compact.
  */
 export interface WorkflowStepOrchestrationSummary {
   engine?: string;

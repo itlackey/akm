@@ -367,6 +367,7 @@ describe("tasks run attempt observability", () => {
           currentStepId: null,
         },
         executed: [],
+        stepsProcessed: 0,
         done: true,
       }),
     });

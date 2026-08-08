@@ -63,7 +63,7 @@ function frozenPlan(): WorkflowPlanGraph {
           kind: "unit",
           id: "review",
           instructions: "Review the change.",
-          templating: "expressions",
+          templating: "verbatim",
           invocation: { engine: "fast", model: "qwen", timeoutMs: 600000 },
           onError: "fail",
           isolation: "none",
@@ -268,7 +268,7 @@ describe("workflow engine v3 contracts", () => {
     }
   });
 
-  test("decoder enforces resource, retry, topology, route, dependency, and expression bounds", () => {
+  test("decoder enforces resource, retry, topology, route, removed-key, and expression bounds", () => {
     const invalid: WorkflowPlanGraph[] = [];
 
     const concurrency = frozenPlan();
@@ -314,9 +314,20 @@ describe("workflow engine v3 contracts", () => {
     }
     invalid.push(selfExpression);
 
-    const forwardDependency = secondStep(frozenPlan());
-    stepAt(forwardDependency, 0).dependsOn = ["second"];
-    invalid.push(forwardDependency);
+    // `dependsOn` is REMOVED from `IrStepPlan` (ordering is `sequenceIndex`;
+    // data dependencies are `inputs:` / `steps.<id>.output` references). No
+    // frontend ever emitted it, so the only way it can appear is a hand-crafted
+    // plan — which the strict decoder now rejects as an unknown step key.
+    const removedDependsOn = secondStep(frozenPlan());
+    Object.assign(stepAt(removedDependsOn, 0), { dependsOn: ["second"] });
+    invalid.push(removedDependsOn);
+
+    // `templating: "expressions"` is likewise removed: the `${{ … }}`
+    // interpolation language is gone and nothing could ever emit the value, so
+    // the only remaining alternative is `"verbatim"`.
+    const removedTemplating = frozenPlan();
+    Object.assign(stepAt(removedTemplating, 0).root as object, { templating: "expressions" });
+    invalid.push(removedTemplating);
 
     const backwardRoute = secondStep(frozenPlan());
     const backwardRouteStep = stepAt(backwardRoute, 1);

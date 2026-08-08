@@ -10,7 +10,7 @@ import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import type { AgentRunResult } from "../../src/integrations/agent";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { resolveAkmInvocation } from "../../src/tasks/resolve-akm-bin";
-import { exitCodeForStatus, readTaskHistory, runTask } from "../../src/tasks/runner";
+import { DEFAULT_WORKFLOW_TASK_TIMEOUT_MS, exitCodeForStatus, readTaskHistory, runTask } from "../../src/tasks/runner";
 import { withEnv } from "../_helpers/sandbox";
 
 type FakeWorkflowRunner = (options: { target: string; params?: Record<string, unknown> }) => Promise<{
@@ -269,6 +269,212 @@ describe("runTask — workflow target", () => {
       expect(result.status).toBe(expected);
     });
   }
+
+  // ── issue 11: whole-run timeout for unattended workflow tasks ─────────────
+  //
+  // The runner used to call `runWorkflowSteps({ target, params })` with no
+  // signal, no maxSteps and no maxRetries: a scheduled run had no abort path
+  // at all, so one wedged agent unit hung the task indefinitely. It now wires
+  // an AbortController + timer exactly like `akm workflow run --timeout`
+  // (src/commands/workflow-cli.ts) and threads the run bounds the task file
+  // declares.
+
+  /** Records what the runner passed to `runWorkflowSteps`. */
+  interface CapturedRunOptions {
+    target: string;
+    params?: Record<string, unknown>;
+    signal?: AbortSignal;
+    maxSteps?: number;
+    maxRetries?: number;
+  }
+
+  function runSummary(id: string, target: string, status: "active" | "completed") {
+    return {
+      id,
+      workflowRef: target,
+      workflowTitle: "Noop",
+      status,
+      params: {},
+      createdAt: "2025-01-01T00:00:00Z",
+      updatedAt: "2025-01-01T00:00:00Z",
+      completedAt: status === "completed" ? "2025-01-01T00:00:00Z" : null,
+      currentStepId: status === "active" ? "step-2" : null,
+    };
+  }
+
+  /**
+   * A workflow orchestrator that never finishes on its own — it resolves only
+   * when the caller's signal aborts, reproducing the engine's documented abort
+   * contract (`driveRun` in src/workflows/exec/run-workflow.ts breaks at the
+   * next step boundary, keeps the journal + lease, and returns the still-`active`
+   * — i.e. resumable — run with `aborted: true`).
+   */
+  function wedgedWorkflowRunner(captured: CapturedRunOptions[]) {
+    return async (options: CapturedRunOptions) => {
+      captured.push(options);
+      await new Promise<void>((resolve) => {
+        if (options.signal?.aborted) return resolve();
+        options.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return {
+        run: runSummary("run-wedged", options.target, "active"),
+        executed: [],
+        stepsProcessed: 0,
+        aborted: true,
+      };
+    };
+  }
+
+  /** An orchestrator that completes immediately, so only the wiring is observed. */
+  function instantWorkflowRunner(captured: CapturedRunOptions[]) {
+    return async (options: CapturedRunOptions) => {
+      captured.push(options);
+      return { run: runSummary("run-fast", options.target, "completed"), executed: [], stepsProcessed: 0, done: true };
+    };
+  }
+
+  test("a declared timeout aborts the run and reports it as resumable", async () => {
+    writeTask(
+      "wf-timeout",
+      ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", "timeoutMs: 100", ""].join("\n"),
+    );
+    const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
+    const captured: CapturedRunOptions[] = [];
+
+    const promise = runTask("wf-timeout", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: wedgedWorkflowRunner(captured) as never,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+    await fireWhenRegistered(timers, 100);
+    const result = await promise;
+
+    // The signal reached runWorkflowSteps and actually fired.
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.signal).toBeInstanceOf(AbortSignal);
+    expect(captured[0]!.signal?.aborted).toBe(true);
+    // A timed-out attempt is a task failure even though the ENGINE stopped
+    // cleanly, so cron/launchd see a non-zero exit instead of a silent success.
+    expect(result.status).toBe("failed");
+    expect(exitCodeForStatus(result.status)).toBe(1);
+    // The aborted run is left resumable, and its id is surfaced for that.
+    expect(result.detail?.runId).toBe("run-wedged");
+    expect(result.detail?.error).toContain("akm workflow resume run-wedged");
+    const log = fs.readFileSync(result.log, "utf8");
+    expect(log).toContain("timed_out=true timeout_ms=100");
+    expect(log).toContain("run_id=run-wedged status=active");
+    expect(readRunLogRows("wf-timeout").some((row) => row.line.includes("timed_out=true timeout_ms=100"))).toBe(true);
+  });
+
+  test("an explicit timeout overrides the unattended default", async () => {
+    writeTask(
+      "wf-explicit",
+      ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", "timeoutMs: 60000", ""].join("\n"),
+    );
+    const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
+    const captured: CapturedRunOptions[] = [];
+
+    const result = await runTask("wf-explicit", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: instantWorkflowRunner(captured) as never,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(timers.map((timer) => timer.ms)).toEqual([60_000]);
+    expect(timers[0]!.ms).not.toBe(DEFAULT_WORKFLOW_TASK_TIMEOUT_MS);
+    expect(captured[0]!.signal?.aborted).toBe(false);
+  });
+
+  test("applies the unattended default timeout when the task declares none", async () => {
+    writeTask("wf-default", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", ""].join("\n"));
+    const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
+    const captured: CapturedRunOptions[] = [];
+
+    const result = await runTask("wf-default", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: instantWorkflowRunner(captured) as never,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(timers.map((timer) => timer.ms)).toEqual([DEFAULT_WORKFLOW_TASK_TIMEOUT_MS]);
+    // Bounded, but generously: an aborted run is resumable, so the default errs
+    // long rather than cutting a legitimate multi-step run short.
+    expect(DEFAULT_WORKFLOW_TASK_TIMEOUT_MS).toBe(6 * 60 * 60 * 1000);
+  });
+
+  test("`timeoutMs: null` opts a workflow task out of any whole-run timeout", async () => {
+    writeTask(
+      "wf-unbounded",
+      ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", "timeoutMs: null", ""].join("\n"),
+    );
+    const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
+    const captured: CapturedRunOptions[] = [];
+
+    const result = await runTask("wf-unbounded", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: instantWorkflowRunner(captured) as never,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(timers).toEqual([]);
+    // The signal is still threaded — only the timer is gone.
+    expect(captured[0]!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("threads declared maxSteps / maxRetries into the orchestrator", async () => {
+    writeTask(
+      "wf-bounds",
+      [
+        "version: 2",
+        'schedule: "@daily"',
+        "workflow: workflows/noop",
+        "params:",
+        "  region: us-east-1",
+        "maxSteps: 4",
+        "maxRetries: 2",
+        "",
+      ].join("\n"),
+    );
+    const captured: CapturedRunOptions[] = [];
+
+    const result = await runTask("wf-bounds", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: instantWorkflowRunner(captured) as never,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(captured[0]!.maxSteps).toBe(4);
+    expect(captured[0]!.maxRetries).toBe(2);
+    expect(captured[0]!.params).toEqual({ region: "us-east-1" });
+  });
+
+  test("omits maxSteps / maxRetries when the task declares none", async () => {
+    writeTask("wf-nobounds", ["version: 2", 'schedule: "@daily"', "workflow: workflows/noop", ""].join("\n"));
+    const captured: CapturedRunOptions[] = [];
+
+    await runTask("wf-nobounds", {
+      stashDir,
+      logDir,
+      runWorkflowStepsImpl: instantWorkflowRunner(captured) as never,
+    });
+
+    // Absent, not zero: `maxRetries: 0` and "unset" mean the same thing to the
+    // engine today, but passing undefined keeps the engine's own default.
+    expect(captured[0]).not.toHaveProperty("maxSteps");
+    expect(captured[0]).not.toHaveProperty("maxRetries");
+  });
 });
 
 describe("runTask — command target", () => {

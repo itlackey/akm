@@ -184,7 +184,7 @@ describe("parseTaskDocument", () => {
   test("rejects permissive scalar forms under the current schema", () => {
     const yaml = ["version: 2", 'schedule: "@daily"', "command: echo x", "timeoutMs: 1.5"].join("\n");
     expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(
-      'Key "timeoutMs" must be a positive integer or null',
+      'Key "timeoutMs" must be an integer from 1 through 2147483647, or null',
     );
   });
 
@@ -198,8 +198,78 @@ describe("parseTaskDocument", () => {
   test("rejects profile and wrong-target fields", () => {
     const yaml = ["version: 2", 'schedule: "@daily"', "prompt: do thing", "profile: opencode"].join("\n");
     expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
-    const workflow = ["version: 2", 'schedule: "@daily"', "workflow: workflows/foo", "timeoutMs: 1"].join("\n");
+    // A workflow's engines come from its frozen plan, so `engine` stays
+    // prompt-only. (`timeoutMs` is NOT in this list any more — issue 11 gave
+    // workflow tasks a whole-run timeout; see the run-bound tests below.)
+    const workflow = ["version: 2", 'schedule: "@daily"', "workflow: workflows/foo", "engine: reviewer"].join("\n");
     expect(() => parseTaskDocument({ yaml: workflow, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
+  });
+
+  // ── issue 11: workflow-task run bounds ────────────────────────────────────
+  //
+  // A scheduled workflow task used to reach `runWorkflowSteps` with no signal,
+  // no maxSteps and no maxRetries, so an unattended run could hang forever.
+  // The task file now declares the same three bounds `akm workflow run` takes
+  // as flags; the runner turns `timeoutMs` into the abort signal.
+
+  test("parses workflow-task run bounds (timeoutMs / maxSteps / maxRetries)", () => {
+    const yaml = [
+      "version: 2",
+      'schedule: "@daily"',
+      "workflow: workflows/daily-backup",
+      "timeoutMs: 900000",
+      "maxSteps: 12",
+      "maxRetries: 2",
+      "",
+    ].join("\n");
+    const task = parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" });
+    expect(task.target).toEqual({
+      kind: "workflow",
+      ref: "workflows/daily-backup",
+      params: {},
+      timeoutMs: 900000,
+      maxSteps: 12,
+      maxRetries: 2,
+    });
+    // The document-level `timeoutMs` stays the command-target field; a workflow
+    // task's whole-run bound lives on its target.
+    expect(task.timeoutMs).toBeUndefined();
+  });
+
+  test("keeps `timeoutMs: null` expressible as the workflow no-timeout opt-out", () => {
+    const yaml = ["version: 2", 'schedule: "@daily"', "workflow: workflows/foo", "timeoutMs: null", ""].join("\n");
+    const task = parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" });
+    expect(task.target.kind === "workflow" && task.target.timeoutMs).toBeNull();
+  });
+
+  test("omits the run bounds when the workflow task declares none", () => {
+    const yaml = ["version: 2", 'schedule: "@daily"', "workflow: workflows/foo", ""].join("\n");
+    const task = parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" });
+    // Absent, not null: the runner distinguishes "take the default" from the
+    // explicit `null` opt-out.
+    expect(task.target).toEqual({ kind: "workflow", ref: "workflows/foo", params: {} });
+  });
+
+  test("rejects out-of-range workflow run bounds and overflowing timeouts", () => {
+    const cases = [
+      "maxSteps: 0",
+      "maxSteps: 1.5",
+      "maxRetries: -1",
+      "maxRetries: 101",
+      `timeoutMs: ${2 ** 31}`,
+      "timeoutMs: 0",
+    ];
+    for (const bound of cases) {
+      const yaml = ["version: 2", 'schedule: "@daily"', "workflow: workflows/foo", bound].join("\n");
+      expect(() => parseTaskDocument({ yaml, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
+    }
+  });
+
+  test("keeps maxSteps / maxRetries off prompt and command targets", () => {
+    const prompt = ["version: 2", 'schedule: "@daily"', "prompt: do thing", "maxSteps: 3"].join("\n");
+    expect(() => parseTaskDocument({ yaml: prompt, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
+    const command = ["version: 2", 'schedule: "@daily"', "command: echo hi", "maxRetries: 1"].join("\n");
+    expect(() => parseTaskDocument({ yaml: command, filePath: "/stash/tasks/x.yml", id: "x" })).toThrow(UsageError);
   });
 
   test("rejects task with neither workflow nor prompt nor command", () => {

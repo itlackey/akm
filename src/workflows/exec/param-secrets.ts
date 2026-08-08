@@ -7,9 +7,10 @@
  *
  * ## Why params are declared NON-SECRET
  *
- * A workflow's run params are interpolated into every unit prompt
- * (`buildUnitPrompt` → `{{PARAMS_JSON}}` + `${{ params.* }}` references) and,
- * critically, are part of the unit's **input hash**. The prompt an executor runs
+ * A workflow's run params are attached to every unit prompt as structured
+ * context (`buildUnitPrompt` substitutes them into the engine preamble's
+ * `{{PARAMS_JSON}}` placeholder — prose instructions are never interpolated)
+ * and, critically, are part of the unit's **input hash**. The prompt an executor runs
  * must be byte-identical to the one the hash was taken over — redacting a param
  * would change the prompt, break the input-hash contract, and make a resumed or
  * replayed run diverge from the original. So params CANNOT be redacted and are

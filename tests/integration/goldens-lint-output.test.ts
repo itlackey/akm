@@ -238,6 +238,12 @@ describe("golden fixture: lint output parity (WI-0b.4b)", () => {
           "env/all-types-env.env (matches) but NOT secrets/all-types-secret (bare filename, no .env suffix). Net " +
           "result for this fixture stash: script, secret, wiki, and session are 100% unreached by akmLint() in " +
           "production; workflows/all-types-workflow.md IS reached (it always was, being the only form now).",
+        "RE-BASELINED (workflow validation-gap fixes): akmLint() now surfaces compileWorkflowPlan()'s non-fatal " +
+          "compile WARNINGS through a separate `warnings` channel ({warnings: LintIssue[], summary.warnings} -- " +
+          "issue code `workflow-warning`; never `flagged`, so --fail-on-flagged is unaffected). The fixture " +
+          "workflow's single step declares no `output:` schema, so akmLintFullSweep now carries exactly one " +
+          "workflow-warning entry; flagged/fixed and every perType issues array stay empty (lintAssetFile still " +
+          "returns errors only -- warnings come from the separate workflowCompileWarnings pass).",
         "Determinism: LintIssue.file is always ctx.relPath (never absPath). No absolute path appears " +
           "anywhere in this golden -- normalization is a no-op.",
         "Behavior-parity oracle: the format adapters + the CLI lint sweep must reproduce this lint dispatch " +

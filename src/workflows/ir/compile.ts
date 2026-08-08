@@ -297,8 +297,10 @@ function checkInputReference(text: string, index: number, check: ReferenceCheck)
 
 /**
  * Collect the document's non-fatal WARNINGS — advisories that never fail
- * compilation, never change the frozen plan or its hash, and are surfaced by
- * lint output (human + JSON) and as `warn()` lines at `workflow run`.
+ * compilation, never change the frozen plan or its hash, and are surfaced as
+ * `workflow-warning` entries in `akm lint`'s separate `warnings` channel
+ * (human + JSON output, via `core/adapter/adapters/akm-lint.ts#
+ * workflowCompileWarnings`) and as `warn()` lines at `workflow run`.
  *
  *   A. A unit/map step with NO step-level `output:` schema carries its units'
  *      raw results as an untyped artifact — permitted, but worth flagging.

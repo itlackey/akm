@@ -28,6 +28,14 @@ export type LintIssueType =
   | "broken-xref"
   | "broken-source"
   /**
+   * Non-fatal workflow compile ADVISORY (`compileWorkflowPlan().warnings` —
+   * e.g. a step with no `output:` schema, or a `params.<name>` reference to an
+   * undeclared param). Routed into `AkmLintResult.warnings`, never `flagged`,
+   * so `--fail-on-flagged` ignores it (see
+   * `core/adapter/adapters/akm-lint.ts#workflowCompileWarnings`).
+   */
+  | "workflow-warning"
+  /**
    * Fallback for a `Diagnostic.issue` code this union does not (yet) name.
    * `Diagnostic.issue` (`core/adapter/types.ts`) is deliberately an OPEN
    * `string` — any current or future `BundleAdapter.validate()` may emit a

@@ -199,7 +199,10 @@ const workflowRunCommand = defineJsonCommand({
       });
       const rendered = { ...result, ...(timedOut ? { timedOut: true as const } : {}) };
       output("workflow-run", rendered);
-      if (result.run.status === "failed" || result.gateRejection || result.aborted) {
+      // `blocked` is a stopped, unverified run — a verification-judge failure
+      // leaves it there for `akm workflow resume` — so it must not exit 0 and
+      // read as success to a script (it maps to 1 for scheduled tasks too).
+      if (result.run.status === "failed" || result.run.status === "blocked" || result.gateRejection || result.aborted) {
         process.exitCode = signalExitCode ?? EXIT_CODES.GENERAL;
       }
     } finally {

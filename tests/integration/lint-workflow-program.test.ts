@@ -200,3 +200,170 @@ describe("akm lint --type workflows", () => {
     expect(structural[0]!.file).toContain("broken.md");
   });
 });
+
+// ── Bug 9 regression: bounds that used to be decoder-only now fail lint ──────
+//
+// gate.max_loops / map.concurrency / engine names were only bounded by the
+// strict frozen-plan decoder (`decodeWorkflowPlanV3`), so `akm lint` passed
+// and `workflow run` later failed with an unlocated "Invalid frozen workflow
+// plan: …". The parser now enforces the shared bounds
+// (src/workflows/resource-limits.ts) with line-anchored messages, which lint
+// surfaces as `invalid-workflow-structure` findings.
+describe("akm lint — decoder-only bounds now fail at lint time", () => {
+  test("gate.max_loops above the shared bound is a lint finding", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(
+      stashDir,
+      "loops.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: only",
+        "    gate: { max_loops: 101 }",
+        "---",
+        "",
+        "## only",
+        "",
+        "Do it.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
+    expect(structural).toHaveLength(1);
+    expect(structural[0]!.detail).toContain('"gate.max_loops" must be an integer from 1 through 100');
+  });
+
+  test("map.concurrency above the shared bound is a lint finding", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(
+      stashDir,
+      "fanout.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: only",
+        "    map: { over: params.items, concurrency: 65 }",
+        "---",
+        "",
+        "## only",
+        "",
+        "Do it.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
+    expect(structural).toHaveLength(1);
+    expect(structural[0]!.detail).toContain('"concurrency" must be an integer from 1 through 64');
+  });
+
+  test("an engine name outside the frozen-plan grammar is a lint finding", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(
+      stashDir,
+      "engine.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: only",
+        "    unit: { engine: My_Engine }",
+        "---",
+        "",
+        "## only",
+        "",
+        "Do it.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
+    expect(structural).toHaveLength(1);
+    expect(structural[0]!.detail).toContain('invalid engine name "My_Engine"');
+  });
+});
+
+// ── Bug 9 regression: compile warnings surface through lint output ───────────
+//
+// `compileWorkflowPlan` emits non-fatal warnings (step missing `output:`
+// schema; reference to an undeclared param), and its doc comment claims they
+// surface in lint output — but the lint path used to drop `compiled.warnings`
+// entirely, so they only ever appeared at run start. They now travel in the
+// result's separate `warnings` channel (issue code `workflow-warning`), which
+// is exactly what `akm lint --format json` serializes (lint is a passthrough
+// output shape) — kept out of `flagged` so `--fail-on-flagged` is unaffected.
+describe("akm lint — workflow compile warnings surface as warnings (non-fatal)", () => {
+  test("a step with no output: schema yields a workflow-warning in the warnings channel, not flagged", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "untyped.md", CLEAN_WORKFLOW);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+
+    expect(result.flagged).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({ issue: "workflow-warning", fixed: false });
+    expect(result.warnings[0]!.file).toContain("untyped.md");
+    expect(result.warnings[0]!.detail).toContain('Step "only" declares no `output:` schema');
+    expect(result.summary).toEqual({ fixed: 0, flagged: 0, warnings: 1 });
+  });
+
+  test("a reference to an undeclared param is a workflow-warning too", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(
+      stashDir,
+      "typo-param.md",
+      [
+        "---",
+        "type: workflow",
+        "updated: 2026-07-30",
+        "params:",
+        "  items: { type: array }",
+        "steps:",
+        "  - id: only",
+        "    output: { type: array }",
+        "    map: { over: params.itmes }",
+        "---",
+        "",
+        "## only",
+        "",
+        "Do it.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+
+    expect(result.flagged).toHaveLength(0);
+    const warnings = result.warnings.filter((i) => i.issue === "workflow-warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.detail).toContain('"params.itmes" references a param not declared in `params:`');
+  });
+
+  test("warnings survive JSON round-tripping of the lint result (the JSON output surface)", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "untyped.md", CLEAN_WORKFLOW);
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    // `lint` is a passthrough output shape (src/output/shapes/passthrough.ts):
+    // `--format json` serializes the result object verbatim.
+    const json = JSON.parse(JSON.stringify(result)) as typeof result;
+    expect(json.warnings).toHaveLength(1);
+    expect(json.warnings[0]!.issue).toBe("workflow-warning");
+    expect(json.summary.warnings).toBe(1);
+  });
+
+  test("a structurally-broken workflow yields errors, and no warnings from the aborted compile", async () => {
+    const stashDir = makeTempStash();
+    writeWorkflowFile(stashDir, "broken.md", ["---", "type: workflow", "description: Broken", "---", ""].join("\n"));
+
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    expect(result.flagged.filter((i) => i.issue === "invalid-workflow-structure")).toHaveLength(1);
+    expect(result.warnings).toHaveLength(0);
+  });
+});

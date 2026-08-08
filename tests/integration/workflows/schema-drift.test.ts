@@ -14,6 +14,14 @@ import {
   PROGRAM_RETRY_REASONS,
   PROGRAM_STEP_ID_PATTERN,
 } from "../../../src/workflows/program/schema";
+import {
+  WORKFLOW_ENGINE_NAME_PATTERN,
+  WORKFLOW_MAX_CONCURRENCY,
+  WORKFLOW_MAX_ENGINE_NAME_LENGTH,
+  WORKFLOW_MAX_GATE_LOOPS,
+  WORKFLOW_MAX_RETRIES,
+  WORKFLOW_MAX_TIMEOUT_MS,
+} from "../../../src/workflows/resource-limits";
 
 /**
  * `schemas/akm-workflow.json` stays in sync with the TypeScript vocabulary
@@ -43,6 +51,35 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   test("id and param-name patterns match", () => {
     expect(schema.definitions.identifier!.pattern).toBe(PROGRAM_STEP_ID_PATTERN.source);
     expect(schema.properties.params!.propertyNames?.pattern).toBe(PROGRAM_PARAM_NAME_PATTERN.source);
+  });
+
+  test("dispatch-significant bounds match the shared resource-limits constants", () => {
+    // The parser, the frozen-plan decoder, and this published schema all read
+    // the SAME constants (src/workflows/resource-limits.ts) — this pin keeps
+    // the hand-maintained JSON mirror from drifting.
+    const gate = schema.definitions.gate as { properties?: Record<string, { maximum?: number }> };
+    expect(gate.properties?.max_loops?.maximum).toBe(WORKFLOW_MAX_GATE_LOOPS);
+
+    const map = schema.definitions.map as { properties?: Record<string, { maximum?: number }> };
+    expect(map.properties?.concurrency?.maximum).toBe(WORKFLOW_MAX_CONCURRENCY);
+
+    const retry = schema.definitions.retry as { properties?: Record<string, { maximum?: number }> };
+    expect(retry.properties?.max?.maximum).toBe(WORKFLOW_MAX_RETRIES);
+
+    const timeout = schema.definitions.timeout as unknown as { oneOf: Array<{ type?: string; maximum?: number }> };
+    const integerForm = timeout.oneOf.find((branch) => branch.type === "integer");
+    expect(integerForm?.maximum).toBe(WORKFLOW_MAX_TIMEOUT_MS);
+  });
+
+  test("engine names carry the frozen-plan grammar (pattern + max length) everywhere they appear", () => {
+    const engineName = schema.definitions.engineName as unknown as { pattern?: string; maxLength?: number };
+    expect(engineName.pattern).toBe(WORKFLOW_ENGINE_NAME_PATTERN.source);
+    expect(engineName.maxLength).toBe(WORKFLOW_MAX_ENGINE_NAME_LENGTH);
+
+    const defaults = schema.definitions.defaults as { properties?: Record<string, { $ref?: string }> };
+    expect(defaults.properties?.engine?.$ref).toBe("#/definitions/engineName");
+    const unit = schema.definitions.unit as { properties?: Record<string, { $ref?: string }> };
+    expect(unit.properties?.engine?.$ref).toBe("#/definitions/engineName");
   });
 
   test("budget block keys match the parser's vocabulary", () => {

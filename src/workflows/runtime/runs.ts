@@ -31,6 +31,11 @@ import { compileResolveFreezeWorkflow } from "../ir/freeze";
 import { materializeWorkflowParameterFlags, validateWorkflowParams, type WorkflowParameterFlag } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import { decodeWorkflowPlanV3, type FrozenEngineSnapshot, WORKFLOW_IR_VERSION } from "../ir/schema";
+import {
+  utf8Bytes,
+  WORKFLOW_EVIDENCE_TRUNCATION_PREVIEW_CHARS,
+  WORKFLOW_MAX_EVIDENCE_JSON_BYTES,
+} from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
 import { type CheckinDirective, evaluateCheckin } from "./checkin";
@@ -560,6 +565,101 @@ export async function abandonWorkflowRun(runId: string): Promise<WorkflowRunDeta
   });
 }
 
+// ── Step-evidence persistence bound (issue C) ────────────────────────────────
+
+/**
+ * Marker key stamped on every value this module replaced because it did not fit
+ * in `workflow_run_steps.evidence_json`. It is deliberately ugly and unique so a
+ * truncated value can NEVER be mistaken for real workflow data by a downstream
+ * `steps.<id>.output…` reference, by `akm workflow status`, or by a human
+ * reading the row.
+ */
+export const WORKFLOW_EVIDENCE_TRUNCATED_MARKER = "__akm_evidence_truncated__";
+
+/** The replacement value persisted in place of an over-cap evidence entry. */
+export interface TruncatedEvidenceValue {
+  readonly [WORKFLOW_EVIDENCE_TRUNCATED_MARKER]: true;
+  /** Human-readable explanation, including that the full value is unrecoverable from this row. */
+  readonly reason: string;
+  /** Serialized size of the value that was dropped. */
+  readonly originalBytes: number;
+  /** The cap that was exceeded. */
+  readonly limitBytes: number;
+  /** Leading slice of the dropped value's JSON — evidence for debugging, NEVER usable as data. */
+  readonly preview?: string;
+}
+
+function truncatedEvidenceValue(
+  json: string,
+  what: string,
+  limitBytes: number,
+  withPreview: boolean,
+): TruncatedEvidenceValue {
+  return {
+    [WORKFLOW_EVIDENCE_TRUNCATED_MARKER]: true,
+    reason:
+      `${what} exceeded the ${limitBytes}-byte evidence_json persistence cap and was NOT stored. ` +
+      `The complete value existed only in the live step result; it cannot be recovered from this row. ` +
+      `Reduce the step's fan-out or have it emit a reference (path, id) instead of inline bulk data.`,
+    originalBytes: utf8Bytes(json),
+    limitBytes,
+    ...(withPreview ? { preview: json.slice(0, WORKFLOW_EVIDENCE_TRUNCATION_PREVIEW_CHARS) } : {}),
+  } as TruncatedEvidenceValue;
+}
+
+/**
+ * Bound what a step's evidence costs in ONE SQLite row.
+ *
+ * `buildEvidence` (exec/step-work.ts) promotes `evidence.output` UNCLIPPED by
+ * design: gates judge the full promoted artifact and the in-memory
+ * {@link StepExecutionResult} carries it to the caller intact. Nothing bounded
+ * the PERSISTED form, though — a `collect` reducer over a fan-out capped only by
+ * `WORKFLOW_MAX_MAP_EXPANSION` (10 000 units) can serialize to hundreds of
+ * megabytes. This is the write boundary, so the bound lives here rather than in
+ * the shared step-semantics module.
+ *
+ * Over-cap values are REPLACED (largest top-level entry first, until the row
+ * fits) with a {@link TruncatedEvidenceValue} envelope. Nothing is silently
+ * shortened: a consumer either sees the real value or sees an object whose
+ * marker key says the data is gone. `preview` is intentionally not shaped like
+ * the original, so an expression reaching INTO a truncated artifact
+ * (`steps.x.output.files`) fails loudly at resolution instead of quietly
+ * resolving against a half-array.
+ *
+ * Returns the JSON to persist plus the keys that were replaced (empty in the
+ * overwhelmingly common case, where nothing is copied or re-serialized twice).
+ */
+export function clipStepEvidenceForPersistence(
+  evidence: Record<string, unknown> | undefined,
+  limitBytes: number = WORKFLOW_MAX_EVIDENCE_JSON_BYTES,
+): { json: string | null; truncatedKeys: string[] } {
+  if (!evidence) return { json: null, truncatedKeys: [] };
+  // Throws exactly as the previous inline `JSON.stringify` did on unserializable
+  // evidence — that contract is unchanged. Every stringify below operates on a
+  // subtree of a value already proven serializable here.
+  let json = JSON.stringify(evidence);
+  if (json === undefined) return { json: null, truncatedKeys: [] };
+  if (utf8Bytes(json) <= limitBytes) return { json, truncatedKeys: [] };
+
+  const clipped: Record<string, unknown> = { ...evidence };
+  const truncatedKeys: string[] = [];
+  const bySizeDesc = Object.keys(evidence)
+    .map((key) => ({ key, json: JSON.stringify(evidence[key]) ?? "null" }))
+    .sort((a, b) => b.json.length - a.json.length);
+  for (const entry of bySizeDesc) {
+    clipped[entry.key] = truncatedEvidenceValue(entry.json, `Step evidence "${entry.key}"`, limitBytes, true);
+    truncatedKeys.push(entry.key);
+    json = JSON.stringify(clipped);
+    if (utf8Bytes(json) <= limitBytes) return { json, truncatedKeys };
+  }
+  // Pathological shape (so many keys that even the envelopes overflow): persist
+  // ONE whole-object marker. Still unambiguous, still bounded.
+  return {
+    json: JSON.stringify(truncatedEvidenceValue(JSON.stringify(evidence), "Step evidence", limitBytes, false)),
+    truncatedKeys: Object.keys(evidence),
+  };
+}
+
 export async function completeWorkflowStep(
   input: CompleteWorkflowStepInput,
 ): Promise<WorkflowRunDetail | SummaryValidationFailure> {
@@ -670,10 +770,25 @@ export async function completeWorkflowStep(
       if (input.signal?.aborted) throw interruptionReason(input.signal);
 
       const completedAt = new Date().toISOString();
+      // Bound the single-row cost of the promoted artifact (issue C). The
+      // caller's in-memory evidence object is never mutated — a clipped COPY is
+      // serialized — so the live step result, the gate's artifact judging, and
+      // this invocation's downstream `steps.<id>.output` scope all keep the
+      // complete value.
+      const persistedEvidence = clipStepEvidenceForPersistence(input.evidence);
+      if (persistedEvidence.truncatedKeys.length > 0) {
+        warn(
+          `Workflow run ${run.id} step "${input.stepId}": evidence exceeded the ` +
+            `${WORKFLOW_MAX_EVIDENCE_JSON_BYTES}-byte persistence cap; ` +
+            `${persistedEvidence.truncatedKeys.map((k) => `"${k}"`).join(", ")} ` +
+            `${persistedEvidence.truncatedKeys.length === 1 ? "was" : "were"} stored as a truncation marker. ` +
+            `Steps that reference this step's output on resume will fail loudly rather than read partial data.`,
+        );
+      }
       repo.updateStepCompletion({
         status: input.status,
         notes: input.notes?.trim() || null,
-        evidenceJson: input.evidence ? JSON.stringify(input.evidence) : null,
+        evidenceJson: persistedEvidence.json,
         summary: summary || null,
         completedAt,
         runId: run.id,

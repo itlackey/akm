@@ -10,14 +10,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type GateFeedback } from "../../../src/workflows/exec/step-work";
 import type { WorkflowPlanGraph } from "../../../src/workflows/ir/schema";
-import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
+import { getWorkflowStatus, resumeWorkflowRun } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
@@ -326,17 +325,23 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     });
   });
 
-  test("no judge fails closed without journaling a gate row", async () => {
+  test("no judge fails closed: the run blocks for resume without journaling a gate row", async () => {
     seedRun({ steps: [{ id: "extract", criteria: ["a fact was extracted"] }] });
-    await expect(
-      runWorkflowSteps({
-        target: RUN_ID,
-        dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
-        loadPlan: usePlan(GATED_WF),
-        summaryJudge: null,
-      }),
-    ).rejects.toBeInstanceOf(ConfigError);
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps[0]?.status).toBe("pending");
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => ({ ok: true, text: '{"fact": "bun is fast"}' }),
+      loadPlan: usePlan(GATED_WF),
+      summaryJudge: null,
+    });
+    // A missing judge is verifier INFRASTRUCTURE failure: never a completion
+    // (fail-closed), never an honest rejection — the run blocks for resume.
+    expect(result.done).toBeUndefined();
+    expect(result.gateRejection).toBeUndefined();
+    expect(result.judgeFailure?.stepId).toBe("extract");
+    expect(result.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("blocked");
+    expect(status.workflow.steps[0]?.status).toBe("blocked");
     await withWorkflowRunsRepo((repo) => {
       const rows = repo.getUnitsForStep(RUN_ID, "extract");
       expect(rows.map((r) => r.unit_id)).toEqual(["extract:solo"]); // no gate rows
@@ -906,6 +911,184 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
       // Loop 1 journaled under the base id (not ~l2), loop 2 under ~l2.
       expect(ids).toEqual(["work.gate:l1", "work.gate:l2", "work:solo", "work:solo~l2"]);
     });
+  });
+});
+
+// ── Judge outage must not burn the gate budget (bug 3 regression) ────────────
+//
+// A THROWN judge call and a MALFORMED verdict are verifier INFRASTRUCTURE
+// failures, not verdicts. Pre-fix, validateStepSummary converted both into
+// `complete: false`, indistinguishable from an honest rejection — the bounded
+// gate loop then consumed a loop and re-dispatched the step's ENTIRE unit
+// subgraph with "The verification judge failed…" as feedback, burning
+// max_loops of real agent work on a transient outage. Now: no loop consumed,
+// no re-dispatch, the step (and run) block for `akm workflow resume`, and the
+// errored gate row journals NO verdict so resume's loop derivation
+// (activeGateLoop/recoverGateFeedback) starts at the SAME loop and reuses the
+// journaled units. Honest rejections keep looping exactly as before (the
+// max_loops suites above pin that).
+
+describe("judge outage — infrastructure failure blocks for resume instead of burning gate loops", () => {
+  /** Drive LOOPED_WF once with a failing judge, then resume with a healthy one. */
+  async function outageThenRecovery(brokenJudge: SummaryJudge, expectedCause: string): Promise<void> {
+    seedRun({ steps: LOOPED_STEPS });
+    const workPrompts: string[] = [];
+    let wrapUpDispatches = 0;
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
+      if (req.nodeId === "work") workPrompts.push(req.prompt);
+      if (req.nodeId === "wrap-up") wrapUpDispatches++;
+      return { ok: true, text: `did ${req.unitId}` };
+    };
+
+    const failed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: usePlan(LOOPED_WF),
+      summaryJudge: brokenJudge,
+    });
+
+    // ONE dispatch of the work unit — the outage did NOT re-dispatch the
+    // subgraph with judge-failure feedback (the pre-fix behavior).
+    expect(workPrompts).toHaveLength(1);
+    expect(workPrompts[0]).not.toContain("Completion-gate feedback");
+    expect(wrapUpDispatches).toBe(0);
+    // Not a gate rejection: the run blocks for resume with the judge failure.
+    expect(failed.done).toBeUndefined();
+    expect(failed.gateRejection).toBeUndefined();
+    expect(failed.judgeFailure?.stepId).toBe("work");
+    expect(failed.judgeFailure?.message).toContain(expectedCause);
+    expect(failed.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    expect(failed.run.status).toBe("blocked");
+    const blocked = await getWorkflowStatus(RUN_ID);
+    expect(blocked.workflow.steps[0]!.status).toBe("blocked");
+
+    // The errored gate row journals NO verdict (result_json NULL, status
+    // failed): resume must not mistake it for a rejection and advance the loop.
+    await withWorkflowRunsRepo((repo) => {
+      const gate = repo.getUnitsForStep(RUN_ID, "work").find((r) => r.unit_id === "work.gate:l1");
+      expect(gate?.status).toBe("failed");
+      expect(gate?.result_json).toBeNull();
+    });
+
+    // Resume with a HEALTHY judge: the gate re-evaluates at the SAME loop (1),
+    // reusing the journaled work unit — no re-dispatch — and the run completes.
+    await resumeWorkflowRun(RUN_ID);
+    let judgeCalls = 0;
+    const recovered = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: usePlan(LOOPED_WF),
+      summaryJudge: async () => {
+        judgeCalls++;
+        return '{"complete": true, "missing": []}';
+      },
+    });
+    expect(recovered.done).toBe(true);
+    expect(judgeCalls).toBe(1);
+    expect(workPrompts).toHaveLength(1); // still ONE work dispatch, ever
+    expect(wrapUpDispatches).toBe(1);
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "work");
+      // No ~l2 rows: the outage consumed no loop, and resume reused loop 1.
+      expect(rows.map((r) => r.unit_id).sort()).toEqual(["work.gate:l1", "work:solo"]);
+      const gate = rows.find((r) => r.unit_id === "work.gate:l1");
+      expect(gate?.status).toBe("completed");
+      expect(JSON.parse(gate?.result_json ?? "null")).toEqual({ complete: true, missing: [] });
+    });
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("completed");
+  }
+
+  test("a THROWN judge blocks for resume: no loop consumed, no re-dispatch, journaled units reused on recovery", async () => {
+    await outageThenRecovery(async () => {
+      throw new Error("judge endpoint unreachable");
+    }, "the verification judge failed (judge endpoint unreachable)");
+  });
+
+  test("a MALFORMED verdict is infrastructure failure too — fail-closed but never an honest rejection", async () => {
+    await outageThenRecovery(async () => "certainly! here is my verdict: it looks great", "malformed verdict");
+  });
+
+  test("an outage on loop 2 keeps loop 1's rejection: resume re-judges loop 2 over its journaled units", async () => {
+    // The errored gate row must not read as a rejection to activeGateLoop (it
+    // would skip to a loop the plan never budgeted) nor erase loop 1's stored
+    // feedback for recoverGateFeedback (loop 2's prompt — and therefore its
+    // unit hash — must be reproduced exactly, or resume re-dispatches work).
+    seedRun({ steps: LOOPED_STEPS });
+    const workPrompts: string[] = [];
+    const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
+      if (req.nodeId === "work") workPrompts.push(req.prompt);
+      return { ok: true, text: `did ${req.unitId}` };
+    };
+    let judgeCalls = 0;
+    const failed = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: usePlan(LOOPED_WF),
+      summaryJudge: async () => {
+        judgeCalls++;
+        if (judgeCalls === 1)
+          return '{"complete": false, "missing": ["the work is thorough"], "feedback": "Add the analysis."}';
+        throw new Error("judge endpoint unreachable");
+      },
+    });
+
+    expect(failed.judgeFailure?.stepId).toBe("work");
+    expect(failed.gateRejection).toBeUndefined();
+    expect(failed.run.status).toBe("blocked");
+    expect(workPrompts).toHaveLength(2); // loop 1, then loop 2 with feedback
+    expect(workPrompts[1]).toContain("Add the analysis.");
+    await withWorkflowRunsRepo((repo) => {
+      const byId = new Map(repo.getUnitsForStep(RUN_ID, "work").map((r) => [r.unit_id, r]));
+      expect(JSON.parse(byId.get("work.gate:l1")?.result_json ?? "null")).toMatchObject({ complete: false });
+      expect(byId.get("work.gate:l2")?.status).toBe("failed");
+      expect(byId.get("work.gate:l2")?.result_json).toBeNull();
+    });
+
+    await resumeWorkflowRun(RUN_ID);
+    const recovered = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher,
+      loadPlan: usePlan(LOOPED_WF),
+      summaryJudge: async () => '{"complete": true, "missing": []}',
+    });
+
+    expect(recovered.done).toBe(true);
+    // Loop 2's units were rehydrated from the journal, and the outage bought no
+    // extra loop — a loop-3 attempt would exceed max_loops 2 and fail the gate.
+    expect(workPrompts).toHaveLength(2);
+    await withWorkflowRunsRepo((repo) => {
+      const rows = repo.getUnitsForStep(RUN_ID, "work");
+      expect(rows.map((r) => r.unit_id).sort()).toEqual(["work.gate:l1", "work.gate:l2", "work:solo", "work:solo~l2"]);
+      const gate2 = rows.find((r) => r.unit_id === "work.gate:l2");
+      expect(gate2?.status).toBe("completed");
+      expect(JSON.parse(gate2?.result_json ?? "null")).toEqual({ complete: true, missing: [] });
+    });
+  });
+
+  test("an honest rejection still consumes loops and exhausts to gateRejection (unchanged)", async () => {
+    // Companion pin to the outage tests: the judge RESPONDS with a well-formed
+    // negative verdict → the bounded loop re-dispatches with feedback and
+    // exhausts to gateRejection, exactly as the max_loops suite above proves.
+    seedRun({ steps: LOOPED_STEPS });
+    let dispatches = 0;
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "meh" };
+      },
+      loadPlan: usePlan(LOOPED_WF),
+      summaryJudge: async () => '{"complete": false, "missing": ["the work is thorough"], "feedback": "Not enough."}',
+    });
+    expect(dispatches).toBe(2); // both loops ran
+    expect(result.judgeFailure).toBeUndefined();
+    expect(result.gateRejection).toEqual({
+      stepId: "work",
+      missing: ["the work is thorough"],
+      feedback: "Not enough.",
+    });
+    expect(result.run.status).toBe("active"); // gate rejections leave the run active
   });
 });
 

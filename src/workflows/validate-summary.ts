@@ -47,6 +47,28 @@ export interface ValidateSummaryResult {
  */
 export type SummaryJudge = (prompt: { system: string; user: string }) => Promise<string>;
 
+/** The verdict shape a well-formed judge response must parse to. */
+export interface JudgeVerdict {
+  complete: boolean;
+  missing?: unknown;
+  feedback?: unknown;
+}
+
+/**
+ * Parse the judge's raw response into a well-formed verdict, or `undefined`
+ * when the response is malformed (unparseable, or missing a boolean
+ * `complete`). This is the ONE verdict parser: {@link validateStepSummary}
+ * fails closed through it, and the engine's gate wrapper (step-work.ts) uses
+ * the same function to classify a malformed verdict as verifier
+ * INFRASTRUCTURE failure — never an honest rejection that would consume a
+ * gate loop — so the two classifications cannot drift.
+ */
+export function parseJudgeVerdict(raw: string): JudgeVerdict | undefined {
+  const parsed = parseJsonResponse<{ complete?: unknown; missing?: unknown; feedback?: unknown }>(raw);
+  if (!parsed || typeof parsed.complete !== "boolean") return undefined;
+  return parsed as JudgeVerdict;
+}
+
 const JUDGE_SYSTEM = validateSummaryJudgePrompt;
 
 function buildUserPrompt(input: ValidateSummaryInput): string {
@@ -101,8 +123,8 @@ export async function validateStepSummary(
     };
   }
 
-  const parsed = parseJsonResponse<{ complete?: unknown; missing?: unknown; feedback?: unknown }>(raw);
-  if (!parsed || typeof parsed.complete !== "boolean") {
+  const parsed = parseJudgeVerdict(raw);
+  if (!parsed) {
     return {
       complete: false,
       missing: criteria,

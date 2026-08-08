@@ -220,6 +220,118 @@ describe("WorkflowRunsRepository reads", () => {
   });
 });
 
+describe("WorkflowRunsRepository — finishUnitFromDispatch (guarded finish)", () => {
+  const STARTED_AT = "2026-01-05T00:00:00.000Z";
+
+  function insertRunning(repo: WorkflowRunsRepository, startedAt = STARTED_AT): void {
+    repo.insertUnit({
+      runId: RUN_A,
+      unitId: "fetch:solo",
+      stepId: "step-1",
+      nodeId: "fetch",
+      parentUnitId: null,
+      phase: null,
+      runner: "llm",
+      model: null,
+      inputHash: "hash-1",
+      startedAt,
+    });
+  }
+
+  test("finishes exactly the running row inserted by the identified dispatch", async () => {
+    await withWorkflowRunsRepo((repo) => {
+      insertRunning(repo);
+      const finished = repo.finishUnitFromDispatch({
+        runId: RUN_A,
+        unitId: "fetch:solo",
+        status: "completed",
+        resultJson: JSON.stringify("done"),
+        tokens: 5,
+        failureReason: null,
+        sessionId: "sess-1",
+        finishedAt: "2026-01-05T00:00:09.000Z",
+        dispatchStartedAt: STARTED_AT,
+      });
+      expect(finished).toBe(true);
+      const row = repo.getUnit(RUN_A, "fetch:solo");
+      expect(row?.status).toBe("completed");
+      expect(row?.result_json).toBe(JSON.stringify("done"));
+      expect(row?.tokens).toBe(5);
+      expect(row?.session_id).toBe("sess-1");
+      expect(row?.finished_at).toBe("2026-01-05T00:00:09.000Z");
+    });
+  });
+
+  test("matches nothing when the row was re-dispatched (different started_at) — the live row is untouched", async () => {
+    await withWorkflowRunsRepo((repo) => {
+      insertRunning(repo);
+      // A second driver re-dispatched the unit: insertUnit REPLACES the row
+      // with a fresh started_at (and bumps attempts).
+      insertRunning(repo, "2026-01-05T00:01:00.000Z");
+      const finished = repo.finishUnitFromDispatch({
+        runId: RUN_A,
+        unitId: "fetch:solo",
+        status: "completed",
+        resultJson: JSON.stringify("stale result"),
+        tokens: null,
+        failureReason: null,
+        finishedAt: "2026-01-05T00:01:05.000Z",
+        dispatchStartedAt: STARTED_AT, // the STALE dispatch's started_at
+      });
+      expect(finished).toBe(false);
+      const row = repo.getUnit(RUN_A, "fetch:solo");
+      expect(row?.status).toBe("running");
+      expect(row?.started_at).toBe("2026-01-05T00:01:00.000Z");
+      expect(row?.result_json).toBeNull();
+    });
+  });
+
+  test("matches nothing once the row is terminal (a finish is never overwritten)", async () => {
+    await withWorkflowRunsRepo((repo) => {
+      insertRunning(repo);
+      repo.finishUnit({
+        runId: RUN_A,
+        unitId: "fetch:solo",
+        status: "failed",
+        resultJson: null,
+        tokens: null,
+        failureReason: "timeout",
+        finishedAt: "2026-01-05T00:00:09.000Z",
+      });
+      const finished = repo.finishUnitFromDispatch({
+        runId: RUN_A,
+        unitId: "fetch:solo",
+        status: "completed",
+        resultJson: JSON.stringify("late"),
+        tokens: null,
+        failureReason: null,
+        finishedAt: "2026-01-05T00:00:10.000Z",
+        dispatchStartedAt: STARTED_AT,
+      });
+      expect(finished).toBe(false);
+      const row = repo.getUnit(RUN_A, "fetch:solo");
+      expect(row?.status).toBe("failed");
+      expect(row?.failure_reason).toBe("timeout");
+    });
+  });
+
+  test("returns false (no throw) when no row exists — the caller classifies the zero-row case", async () => {
+    const finished = await withWorkflowRunsRepo((repo) =>
+      repo.finishUnitFromDispatch({
+        runId: RUN_A,
+        unitId: "ghost:solo",
+        status: "completed",
+        resultJson: null,
+        tokens: null,
+        failureReason: null,
+        finishedAt: "2026-01-05T00:00:09.000Z",
+        dispatchStartedAt: STARTED_AT,
+      }),
+    );
+    expect(finished).toBe(false);
+  });
+});
+
 describe("WorkflowRunsRepository connection lifetime", () => {
   test("read results survive after the scope (connection) closes", async () => {
     const steps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(RUN_A));

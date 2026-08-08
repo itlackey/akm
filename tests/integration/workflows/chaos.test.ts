@@ -992,9 +992,11 @@ describe("chaos: replay divergence via a tampered params row (plan_hash does not
 // The completion gate journals its judge call as a `<stepId>.gate:l<loop>` unit
 // row (running → terminal). A judge that THROWS, returns MALFORMED JSON, or
 // rejects WITHOUT feedback must each converge on a DEFINED, documented outcome
-// on a DEFINED, documented outcome — never a stuck
-// `running` gate row and never an unhandled crash. A judge throw or unparseable
-// verdict fails CLOSED; only a well-formed `complete: true` advances.
+// — never a stuck `running` gate row and never an unhandled crash. A judge
+// throw or unparseable verdict fails CLOSED as verifier INFRASTRUCTURE failure
+// (the step blocks for `akm workflow resume`, the errored gate row journals NO
+// verdict, and no gate loop is consumed); only a well-formed `complete: true`
+// advances, and only a well-formed `complete: false` counts as a rejection.
 
 const JUDGE_GATE_WF = [
   "---",
@@ -1019,7 +1021,7 @@ describe("chaos: gate judge failures journal a terminal gate row", () => {
     throw new Error("judge backend exploded");
   };
 
-  test("engine: a THROWING judge finishes the gate row FAILED and rejects completion", async () => {
+  test("engine: a THROWING judge finishes the gate row FAILED and blocks the step for resume", async () => {
     writeProgram("judge-gate", JUDGE_GATE_WF);
     const started = await startWorkflowRun("workflows/judge-gate", {});
     const runId = started.run.id;
@@ -1031,21 +1033,21 @@ describe("chaos: gate judge failures journal a terminal gate row", () => {
     });
 
     expect(result.done).toBeUndefined();
-    expect(result.gateRejection).toMatchObject({
-      stepId: "work",
-      missing: ["- the work is thorough"],
-    });
+    // Infrastructure failure, not a verdict: no gateRejection, no gate loop
+    // consumed — the run blocks with the judge failure surfaced for resume.
+    expect(result.gateRejection).toBeUndefined();
+    expect(result.judgeFailure).toMatchObject({ stepId: "work" });
+    expect(result.judgeFailure?.message).toContain("judge backend exploded");
     const status = await getWorkflowStatus(runId);
-    expect(status.run.status).toBe("active");
-    expect(status.workflow.steps[0]?.status).toBe("pending");
+    expect(status.run.status).toBe("blocked");
+    expect(status.workflow.steps[0]?.status).toBe("blocked");
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "work"));
     const gate = rows.find((u) => u.node_id === "work.gate");
     expect(gate?.unit_id).toBe("work.gate:l1");
     expect(gate?.status).toBe("failed"); // finished — NOT left running
-    expect(JSON.parse(gate?.result_json ?? "null")).toMatchObject({
-      complete: false,
-      missing: ["- the work is thorough"],
-    });
+    // An errored evaluation journals NO verdict: the synthesized fail-closed
+    // rejection must never read as an honest rejection on resume.
+    expect(gate?.result_json).toBeNull();
     expect(gate?.failure_reason).toBe("dispatch_error");
   });
 
@@ -1061,19 +1063,16 @@ describe("chaos: gate judge failures journal a terminal gate row", () => {
     });
 
     expect(result.done).toBeUndefined();
-    expect(result.gateRejection).toMatchObject({
-      stepId: "work",
-      missing: ["- the work is thorough"],
-    });
+    // A verdict that cannot be parsed is a broken VERIFIER, not an honest
+    // rejection: fail closed by blocking for resume, without burning a loop.
+    expect(result.gateRejection).toBeUndefined();
+    expect(result.judgeFailure).toMatchObject({ stepId: "work" });
+    expect(result.judgeFailure?.message).toContain("malformed verdict");
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "work"));
     const gate = rows.find((u) => u.node_id === "work.gate");
-    // The judge returned (did not throw), so the row is terminal and records
-    // the fail-closed rejection rather than a dispatch failure.
-    expect(gate?.status).toBe("completed");
-    expect(JSON.parse(gate?.result_json ?? "null")).toMatchObject({
-      complete: false,
-      missing: ["- the work is thorough"],
-    });
+    // Terminal (never stuck running), errored, and verdict-free.
+    expect(gate?.status).toBe("failed");
+    expect(gate?.result_json).toBeNull();
   });
 
   test("engine: complete:false with NO feedback → a defined rejection carrying default feedback, no crash", async () => {

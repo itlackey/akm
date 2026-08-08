@@ -80,24 +80,24 @@ function makeGitRepoWithGitignore(): string {
   return dir;
 }
 
-function mustCreate(repo: string, attemptId: string): { path: string; preservedLeftover?: string } {
-  const result = createUnitWorktree(repo, RUN_ID, attemptId);
+async function mustCreate(repo: string, attemptId: string): Promise<{ path: string; preservedLeftover?: string }> {
+  const result = await createUnitWorktree(repo, RUN_ID, attemptId);
   if (!result.ok) throw new Error(`createUnitWorktree failed: ${result.error}`);
   return result;
 }
 
 describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy dirty work)", () => {
-  test("a DIRTY leftover at the attempt path is moved aside intact, not deleted", () => {
+  test("a DIRTY leftover at the attempt path is moved aside intact, not deleted", async () => {
     const repo = makeGitRepo();
 
     // First invocation mints the worktree; the unit leaves uncollected work
     // and the tree is RETAINED (e.g. the engine crashed before the step
     // completed). Re-running the same content-derived attempt id must not
     // destroy it.
-    const first = mustCreate(repo, "work:solo");
+    const first = await mustCreate(repo, "work:solo");
     fs.writeFileSync(path.join(first.path, "uncollected-work.txt"), "important\n");
 
-    const second = mustCreate(repo, "work:solo");
+    const second = await mustCreate(repo, "work:solo");
     expect(second.path).toBe(first.path);
     // Fresh checkout — the dirty file is not in the new worktree…
     expect(fs.existsSync(path.join(second.path, "uncollected-work.txt"))).toBe(false);
@@ -109,11 +109,11 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
     expect(fs.readFileSync(path.join(preserved, "uncollected-work.txt"), "utf8")).toBe("important\n");
   });
 
-  test("a CLEAN leftover is removed and re-created (no retained copies pile up)", () => {
+  test("a CLEAN leftover is removed and re-created (no retained copies pile up)", async () => {
     const repo = makeGitRepo();
 
-    const first = mustCreate(repo, "work:solo");
-    const second = mustCreate(repo, "work:solo");
+    const first = await mustCreate(repo, "work:solo");
+    const second = await mustCreate(repo, "work:solo");
 
     expect(second.path).toBe(first.path);
     expect(second.preservedLeftover).toBeUndefined();
@@ -122,7 +122,7 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
     expect(siblings.filter((name) => name.includes(".retained-"))).toEqual([]);
   });
 
-  test("an UNVERIFIABLE leftover (status probe fails) is moved aside, never deleted", () => {
+  test("an UNVERIFIABLE leftover (status probe fails) is moved aside, never deleted", async () => {
     const repo = makeGitRepo();
 
     // A half-created directory that is NOT a valid worktree — `git status`
@@ -131,7 +131,7 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
     fs.mkdirSync(dest, { recursive: true });
     fs.writeFileSync(path.join(dest, "partial.txt"), "maybe important\n");
 
-    const created = mustCreate(repo, "work2:solo");
+    const created = await mustCreate(repo, "work2:solo");
     expect(created.path).toBe(dest);
     expect(created.preservedLeftover).toBeDefined();
     const preserved = created.preservedLeftover as string;
@@ -140,14 +140,14 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
     expect(fs.existsSync(path.join(created.path, "README.md"))).toBe(true);
   });
 
-  test("successive dirty leftovers get DISTINCT retained paths (no overwrite)", () => {
+  test("successive dirty leftovers get DISTINCT retained paths (no overwrite)", async () => {
     const repo = makeGitRepo();
 
-    const first = mustCreate(repo, "work:solo");
+    const first = await mustCreate(repo, "work:solo");
     fs.writeFileSync(path.join(first.path, "gen-1.txt"), "one\n");
-    const second = mustCreate(repo, "work:solo");
+    const second = await mustCreate(repo, "work:solo");
     fs.writeFileSync(path.join(second.path, "gen-2.txt"), "two\n");
-    const third = mustCreate(repo, "work:solo");
+    const third = await mustCreate(repo, "work:solo");
 
     const preservedFirst = second.preservedLeftover as string;
     const preservedSecond = third.preservedLeftover as string;
@@ -163,9 +163,9 @@ describe.skipIf(!GIT)("createUnitWorktree — leftover handling (never destroy d
 describe.skipIf(!GIT)(
   "cleanupUnitWorktree — the honest 'uncollected work' contract (ignored files are disposable)",
   () => {
-    test("a worktree whose ONLY residue is .gitignore-matched files probes clean and IS removed", () => {
+    test("a worktree whose ONLY residue is .gitignore-matched files probes clean and IS removed", async () => {
       const repo = makeGitRepoWithGitignore();
-      const wt = mustCreate(repo, "build:solo").path;
+      const wt = (await mustCreate(repo, "build:solo")).path;
 
       // The unit produced ONLY files the repo's own .gitignore declares
       // disposable (a build dir + a log). `git status --porcelain` (no
@@ -175,21 +175,21 @@ describe.skipIf(!GIT)(
       fs.writeFileSync(path.join(wt, "build", "out.o"), "artifact\n");
       fs.writeFileSync(path.join(wt, "debug.log"), "noise\n");
 
-      const cleanup = cleanupUnitWorktree(repo, wt);
+      const cleanup = await cleanupUnitWorktree(repo, wt);
       expect(cleanup.removed).toBe(true);
       expect(cleanup.dirty).toBe(false);
       expect(cleanup.error).toBeUndefined();
       expect(fs.existsSync(wt)).toBe(false);
     });
 
-    test("an untracked UNIGNORED file is real uncollected work → dirty, retained (the contract boundary)", () => {
+    test("an untracked UNIGNORED file is real uncollected work → dirty, retained (the contract boundary)", async () => {
       const repo = makeGitRepoWithGitignore();
-      const wt = mustCreate(repo, "build:solo").path;
+      const wt = (await mustCreate(repo, "build:solo")).path;
 
       // A file the .gitignore does NOT match is genuine uncollected work.
       fs.writeFileSync(path.join(wt, "result.txt"), "keep me\n");
 
-      const cleanup = cleanupUnitWorktree(repo, wt);
+      const cleanup = await cleanupUnitWorktree(repo, wt);
       expect(cleanup.dirty).toBe(true);
       expect(cleanup.removed).toBe(false);
       // Retained intact — the caller logs the path.

@@ -57,7 +57,7 @@
       "description": "A bare reference string: params.<name> or steps.<id>.output(.<ident>|[<int>])*. No ${{ }} delimiters — every position this appears in is a whole-value frontmatter field. Full grammar validation happens at compile time, not here."
     },
     "timeout": {
-      "description": "Duration: \"<n>ms\" | \"<n>s\" | \"<n>m\" | \"none\" (bare integers are milliseconds).",
+      "description": "Duration: \"<n>ms\" | \"<n>s\" | \"<n>m\" | \"none\" (bare integers are milliseconds). Must resolve to at most 2147483647 ms (setTimeout's 32-bit signed ceiling) — the parser enforces the same ceiling on the string form.",
       "oneOf": [
         {
           "type": "string",
@@ -65,9 +65,17 @@
         },
         {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 2147483647
         }
       ]
+    },
+    "engineName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "description": "Named engine: lowercase dash-separated words of letters and digits, starting with a letter. Same grammar the frozen-plan decoder enforces (src/workflows/resource-limits.ts WORKFLOW_ENGINE_NAME_PATTERN)."
     },
     "onError": {
       "description": "Failure policy: fail the step on the first unit failure (default), or record failures and let the gate decide.",
@@ -140,7 +148,7 @@
     },
     "jsonSchemaObject": {
       "type": "object",
-      "description": "A JSON Schema declaration (validated as a schema by the compiler, not here)."
+      "description": "A JSON Schema declaration. The parser validates it as a schema definition against the runtime's enforced subset (src/core/json-schema.ts checkJsonSchemaDefinition): typo'd type names and keywords outside the subset (e.g. pattern, $ref, oneOf) are authoring-time errors, not silent no-ops."
     },
     "retry": {
       "type": "object",
@@ -151,6 +159,7 @@
         "max": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 100,
           "description": "Maximum retry attempts per unit."
         },
         "on": {
@@ -186,8 +195,7 @@
       "additionalProperties": false,
       "properties": {
         "engine": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/definitions/engineName"
         },
         "model": {
           "type": "string",
@@ -211,8 +219,7 @@
       "additionalProperties": false,
       "properties": {
         "engine": {
-          "type": "string",
-          "minLength": 1,
+          "$ref": "#/definitions/engineName",
           "description": "Named engine selected when the workflow run is created."
         },
         "model": {
@@ -260,6 +267,7 @@
         "concurrency": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 64,
           "description": "Max concurrent units for this step; capped by the engine's global limit."
         },
         "reducer": {
@@ -314,6 +322,7 @@
         "max_loops": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 100,
           "description": "Evaluator-optimizer loop bound."
         }
       }

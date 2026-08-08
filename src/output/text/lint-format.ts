@@ -45,15 +45,21 @@ export function formatLintPlain(r: Record<string, unknown>): string | null {
 
   const fixed = Array.isArray(r.fixed) ? (r.fixed as LintIssue[]) : [];
   const flagged = Array.isArray(r.flagged) ? (r.flagged as LintIssue[]) : [];
-  const summary = r.summary as { fixed?: number; flagged?: number } | undefined;
+  const warnings = Array.isArray(r.warnings) ? (r.warnings as LintIssue[]) : [];
+  const summary = r.summary as { fixed?: number; flagged?: number; warnings?: number } | undefined;
 
   const lines: string[] = [];
   if (typeof r.ok === "boolean") lines.push(`ok: ${r.ok}`);
-  lines.push(`summary: fixed=${summary?.fixed ?? fixed.length} flagged=${summary?.flagged ?? flagged.length}`);
+  lines.push(
+    `summary: fixed=${summary?.fixed ?? fixed.length} flagged=${summary?.flagged ?? flagged.length}` +
+      ` warnings=${summary?.warnings ?? warnings.length}`,
+  );
 
-  // Flagged (still needs attention) surfaces before fixed (already handled)
-  // so a scan of the output hits the actionable items first.
+  // Flagged (still needs attention) surfaces before warnings (advisory,
+  // non-fatal) and fixed (already handled), so a scan of the output hits the
+  // actionable items first.
   lines.push("", ...renderIssueSection("flagged", flagged));
+  lines.push("", ...renderIssueSection("warnings", warnings));
   lines.push("", ...renderIssueSection("fixed", fixed));
 
   return lines.join("\n").trim();

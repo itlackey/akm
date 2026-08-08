@@ -67,7 +67,7 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
   const maxConcurrency = frozenConcurrency(config);
   const documentDefaults = asset.document.defaults;
 
-  const freezeInvocation = (unit: ProgramUnit | undefined): IrInvocation => {
+  const freezeInvocation = (unit: ProgramUnit | undefined, stepId: string): IrInvocation => {
     const layers: EngineUseConfig[] = [...(documentDefaults ? [documentDefaults] : []), ...(unit ? [unit] : [])];
     const name = selectedEngine(config, layers);
     if (!name)
@@ -83,23 +83,30 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
     addSnapshot(config, name, engines);
     const model = exactModel(config, name, engine, layers);
     const timeoutMs = effectiveTimeout(config, engine, layers);
-    const llm = engine.kind === "llm" ? mergedLlmOverrides(layers) : undefined;
+    // Merge llm overrides REGARDLESS of engine kind so a non-llm engine with
+    // overrides anywhere in its layer stack (unit `llm:` or document
+    // `defaults.llm`) is detected instead of silently dropped. SDK engines'
+    // legitimate LLM *fallback* (`llmEngine`) is a separate mechanism — it
+    // never contributes to `layers`, so it cannot false-positive here.
+    const llm = mergedLlmOverrides(layers);
     if (engine.kind !== "llm" && llm !== undefined) {
       throw new ConfigError(
-        `Workflow engine "${name}" is an agent engine and cannot receive llm overrides.`,
+        `Workflow step "${stepId}" uses engine "${name}", which is an agent engine and cannot receive llm: ` +
+          `overrides — llm: tuning (from the step's unit or defaults.llm) applies only to engines of kind "llm". ` +
+          `Remove the llm: block or select an LLM engine for this step.`,
         "INVALID_CONFIG_FILE",
       );
     }
     return { engine: name, model, timeoutMs, ...(llm ? { llm } : {}) };
   };
 
-  const freezeUnit = (node: WorkflowUnitDraft, unit?: ProgramUnit): IrUnitNode => ({
+  const freezeUnit = (node: WorkflowUnitDraft, stepId: string, unit?: ProgramUnit): IrUnitNode => ({
     kind: "unit",
     id: node.id,
     instructions: node.instructions,
     templating: node.templating ?? "verbatim",
     ...(node.inputs && node.inputs.length > 0 ? { inputs: node.inputs } : {}),
-    invocation: freezeInvocation(unit),
+    invocation: freezeInvocation(unit, stepId),
     ...(node.schema ? { schema: node.schema } : {}),
     ...(node.retry ? { retry: node.retry } : {}),
     onError: node.onError,
@@ -117,12 +124,12 @@ export function compileResolveFreezeWorkflow(asset: WorkflowAsset, inputConfig: 
             kind: "map" as const,
             id: step.root.id,
             over: step.root.over,
-            template: freezeUnit(step.root.template, sourceUnit),
+            template: freezeUnit(step.root.template, step.stepId, sourceUnit),
             concurrency: step.root.concurrency ?? 1,
             reducer: step.root.reducer,
             ...(step.root.source ? { source: step.root.source } : {}),
           }
-        : freezeUnit(step.root, sourceUnit)
+        : freezeUnit(step.root, step.stepId, sourceUnit)
       : undefined;
     const criteria = step.gate.criteria;
     const judge = criteria.length === 0 ? null : freezeGateJudge(config, engines);

@@ -2247,13 +2247,39 @@ Each task targets exactly one of `--workflow <ref>`, `--prompt <text-or-ref>`,
 or `--command <shell>`. Task YAML is strict and begins with `version: 2`.
 Prompt targets dispatch through `--engine` or `defaults.engine` and may set
 `model`, `timeoutMs`, and LLM request overrides; command tasks may set only
-`timeoutMs`; workflow tasks may set only `params`. `task add` accepts
-`--engine`, `--model`, `--timeout-ms`, `--params`, `--name`, `--when-to-use`,
-`--description`, and `--tags`. A v1 task is diagnosed by sync and doctor
-but is never rewritten or executed.
+`timeoutMs`; workflow tasks may set `params`, `timeoutMs`, `maxSteps`, and
+`maxRetries`. `task add` accepts `--engine`, `--model`, `--timeout-ms`,
+`--params`, `--name`, `--when-to-use`, `--description`, and `--tags`
+(`maxSteps` / `maxRetries` are YAML-only — set them in the file and run `akm
+task sync`). A v1 task is diagnosed by sync and doctor but is never rewritten
+or executed.
 
 A workflow-target task executes the same native orchestration as `akm workflow
 run`; it does not stop after creating a run. Completion maps to task
 `completed`, while workflow failure or verifier rejection maps to task
 `failed`. The task schema's `params` mapping remains the non-CLI way a scheduled
 definition supplies its new-run parameter snapshot.
+
+**Workflow-task run bounds.** `timeoutMs`, `maxSteps`, and `maxRetries` are the
+task-file spellings of `akm workflow run --timeout`, `--max-steps`, and
+`--max-retries`. Unlike the interactive command, a scheduled workflow task gets
+a **default whole-run timeout of 6 hours**
+(`DEFAULT_WORKFLOW_TASK_TIMEOUT_MS`): nobody is at the terminal to Ctrl-C an
+unattended run, so without one a single wedged unit hangs the task forever. An
+explicit `timeoutMs` always wins, and `timeoutMs: null` opts out entirely. On
+expiry the runner aborts the run's signal, which the engine treats as a
+graceful break at the next step boundary — the journal is kept and the run
+stays resumable with `akm workflow resume <run-id>` (the run id is in the task
+run's `detail.error` and log). The attempt itself is recorded as `failed`, so
+the OS scheduler sees a non-zero exit.
+
+```yaml
+version: 2
+schedule: "@daily"
+workflow: workflows/nightly-report
+params:
+  region: us-east-1
+timeoutMs: 3600000   # 1h whole-run bound (omit for the 6h default, null for none)
+maxSteps: 20         # optional
+maxRetries: 1        # optional
+```

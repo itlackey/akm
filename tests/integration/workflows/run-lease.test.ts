@@ -393,11 +393,19 @@ describe("engine run lease (single driver)", () => {
     await expect(running).rejects.toThrow(/lost its run lease mid-dispatch/);
     expect((await getWorkflowStatus(started.run.id)).run.status).toBe("failed");
     expect(await readLease(started.run.id)).toEqual(leaseBefore);
+    // The dispatch row is still this invocation's, so the outcome is journaled
+    // even though the run was abandoned mid-flight: leaving it `running` would
+    // strand a lie in the journal and make a resume re-dispatch side-effecting
+    // work that already ran. Losing the lease bars advancing the spine, not
+    // recording what a unit actually did.
     const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
     expect(units).toHaveLength(1);
-    expect(units[0]).toMatchObject({ status: "running", result_json: null, finished_at: null });
+    expect(units[0]).toMatchObject({ status: "completed", result_json: JSON.stringify("stale result") });
+    expect(units[0]?.finished_at).toBeTruthy();
     const db = openStateDatabase(resolveStorageLocations().stateDb);
     try {
+      // The event stream stays consistent with the journal — a completed row
+      // without its finish event would make `akm log --run` contradict `status`.
       const successfulFinishes = db
         .prepare(
           `SELECT COUNT(*) AS count FROM events
@@ -406,7 +414,16 @@ describe("engine run lease (single driver)", () => {
              AND json_extract(metadata_json, '$.status') = 'completed'`,
         )
         .get(started.run.id) as { count: number };
-      expect(successfulFinishes.count).toBe(0);
+      expect(successfulFinishes.count).toBe(1);
+      // The abandoned run's spine never advanced despite the journaled unit.
+      const stepCompletions = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM events
+           WHERE event_type = 'workflow_step_completed'
+             AND json_extract(metadata_json, '$.runId') = ?`,
+        )
+        .get(started.run.id) as { count: number };
+      expect(stepCompletions.count).toBe(0);
     } finally {
       db.close();
     }

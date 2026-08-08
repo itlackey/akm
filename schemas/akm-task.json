@@ -25,21 +25,37 @@
     "params": { "type": "object" },
     "engine": { "type": "string", "minLength": 1 },
     "model": { "type": "string", "minLength": 1 },
-    "timeoutMs": { "type": ["integer", "null"], "minimum": 1 },
+    "timeoutMs": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Timeout in milliseconds, or null to disable it. Prompt tasks: the engine timeout. Command tasks: the subprocess timeout. Workflow tasks: the whole-run timeout — omit it to take the unattended default (DEFAULT_WORKFLOW_TASK_TIMEOUT_MS in src/tasks/runner.ts), null to run unbounded."
+    },
+    "maxSteps": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Workflow tasks only: stop after executing this many workflow steps (`akm workflow run --max-steps`)."
+    },
+    "maxRetries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Workflow tasks only: retry a failed workflow step this many additional times (`akm workflow run --max-retries`)."
+    },
     "llm": { "$ref": "#/definitions/llm" }
   },
   "oneOf": [
     {
       "required": ["workflow"],
-      "not": { "anyOf": [{ "required": ["prompt"] }, { "required": ["command"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["timeoutMs"] }, { "required": ["llm"] }] }
+      "not": { "anyOf": [{ "required": ["prompt"] }, { "required": ["command"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["llm"] }] }
     },
     {
       "required": ["prompt"],
-      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["command"] }, { "required": ["params"] }] }
+      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["command"] }, { "required": ["params"] }, { "required": ["maxSteps"] }, { "required": ["maxRetries"] }] }
     },
     {
       "required": ["command"],
-      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["prompt"] }, { "required": ["params"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["llm"] }] }
+      "not": { "anyOf": [{ "required": ["workflow"] }, { "required": ["prompt"] }, { "required": ["params"] }, { "required": ["engine"] }, { "required": ["model"] }, { "required": ["llm"] }, { "required": ["maxSteps"] }, { "required": ["maxRetries"] }] }
     }
   ],
   "definitions": {

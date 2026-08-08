@@ -127,9 +127,14 @@ Three gaps land directly on features akm already has and relies on:
 2. **No error classification.** akm's `isRetryEligibleFailure` (`src/workflows/exec/step-work.ts:831`)
    retries only when `retry.on.includes(failureReason)`. Under OpenWorkflow you would re-implement
    this by catching inside the step and re-throwing or returning a discriminated result.
-3. **No per-step timeout.** akm has `DEFAULT_UNIT_TIMEOUT_MS = 600_000`
-   (`src/workflows/exec/step-work.ts:76`). Workaround is a `Promise.race` inside every step — easy,
-   but it is akm's code again, not the library's.
+3. **No per-step timeout.** akm resolves one at freeze time — `effectiveTimeout`
+   (`src/workflows/ir/freeze.ts`) layers the unit's `timeout:`, the document's `defaults.timeout`,
+   `engines.<name>.timeoutMs`, then the engine-kind default (`DEFAULT_LLM_TIMEOUT_MS = 600_000`;
+   `DEFAULT_AGENT_TIMEOUT_MS = null`, i.e. agent units are unbounded unless declared) — and freezes
+   the result into `IrInvocation.timeoutMs`, which dispatch applies verbatim. There is no engine-side
+   backstop on top of it, deliberately: `timeout: none` freezes to `null` and must stay unbounded.
+   Workaround is a `Promise.race` inside every step — easy, but it is akm's code again, not the
+   library's.
 
 **Hard capacity ceiling.** `WORKFLOW_STEP_LIMIT = 1000` step attempts per run, enforced, and
 retries count against it (`worker/step-history.ts:8`; `apps/docs/docs/retries.mdx`). akm permits

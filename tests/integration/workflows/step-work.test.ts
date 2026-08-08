@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { WorkflowRunUnitRow } from "../../../src/storage/repositories/workflow-runs-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
@@ -217,6 +216,38 @@ describe("computeStepWorkList — dispatch-input hash envelope (reviewer finding
     // a COMPLETED unit's inputs/output, so they must not invalidate a cached row.
     expect(hashOf({ retry: { max: 2, on: ["timeout"] } })).toBe(baseline);
     expect(hashOf({ onError: "continue" })).toBe(baseline);
+  });
+});
+
+describe("computeStepWorkList — the frozen timeout reaches dispatch VERBATIM (no engine-side backstop)", () => {
+  // The whole timeout decision belongs to `ir/freeze.ts` (`effectiveTimeout`:
+  // unit `timeout:` → document `defaults.timeout` → `engines.<name>.timeoutMs` →
+  // the engine-kind default). By the time a plan is frozen, `timeoutMs: null`
+  // means genuinely unbounded — reached either by an author writing
+  // `timeout: none` (an explicit, documented opt-out) or by
+  // `DEFAULT_AGENT_TIMEOUT_MS`, which is itself null. The frozen IR collapses
+  // both to the same `null`, so this layer CANNOT distinguish them and must not
+  // guess: a "safety ceiling" applied here would silently cap an explicit opt
+  // out. A now-deleted `DEFAULT_UNIT_TIMEOUT_MS` constant used to claim such a
+  // ceiling existed while being referenced nowhere; these tests pin the real
+  // contract so the claim cannot come back as behavior.
+  function timeoutOf(timeoutMs: number | null): number | null {
+    const step = soloStep("Build it.");
+    (step.root as IrUnitNode).invocation = { ...SDK_INVOCATION, timeoutMs };
+    const wl = computeStepWorkList(step, { runId: "r", params: {}, stepOutputs: {}, engines: FROZEN_ENGINES });
+    if (!wl.ok) throw new Error(wl.error);
+    return wl.list.units[0]!.timeoutMs;
+  }
+
+  test("an explicit `timeout: none` (frozen null) stays unbounded — nothing re-imposes a cap", () => {
+    expect(timeoutOf(null)).toBeNull();
+  });
+
+  test("a frozen numeric timeout passes through unchanged, however large or small", () => {
+    expect(timeoutOf(5_000)).toBe(5_000);
+    expect(timeoutOf(600_000)).toBe(600_000);
+    // Above the old 600_000 "ceiling": it must NOT be clamped down to it.
+    expect(timeoutOf(3_600_000)).toBe(3_600_000);
   });
 });
 
@@ -1025,10 +1056,23 @@ the work is thorough
 `;
 
 describe("fail-closed validation gates", () => {
-  test("no judge refuses completion without journaling a gate row", async () => {
+  // Bug fix (judge outage must not burn the gate budget): a missing judge, a
+  // THROWN judge call, and a malformed verdict are verifier INFRASTRUCTURE
+  // failures, not verdicts. Each blocks the step for `akm workflow resume`
+  // (kind "judge-failed"), consumes no gate loop, and journals the gate row —
+  // when the judge was actually invoked — as an ERRORED row with NO verdict,
+  // so activeGateLoop/recoverGateFeedback never mistake it for a rejection.
+  test("no judge blocks the step for resume without journaling a gate row", async () => {
     seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(GATED_WF));
-    await expect(finalizeExecutedStep(finalizeArgs({ summaryJudge: null }))).rejects.toBeInstanceOf(ConfigError);
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("pending");
+    const fin = await finalizeExecutedStep(finalizeArgs({ summaryJudge: null }));
+    expect(fin.kind).toBe("judge-failed");
+    if (fin.kind === "judge-failed") {
+      expect(fin.summary).toContain("no verification judge is available");
+      expect(fin.summary).toContain(`akm workflow resume ${RUN_ID}`);
+    }
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("blocked");
+    expect(status.workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
     expect(rows.some((row) => row.unit_id === "work.gate:l1")).toBe(false);
   });
@@ -1041,54 +1085,57 @@ describe("fail-closed validation gates", () => {
     expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("completed");
   });
 
-  test("a judge that throws rejects completion and leaves a failed gate row", async () => {
+  test("a judge that throws blocks the step and journals an errored gate row with NO verdict", async () => {
     seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(GATED_WF));
     const judge: SummaryJudge = async () => {
       throw new Error("LLM unreachable");
     };
     const fin = await finalizeExecutedStep(finalizeArgs({ summaryJudge: judge }));
-    expect(fin).toMatchObject({
-      kind: "gate-exhausted",
-      gateRejection: { stepId: "work", missing: ["the work is thorough"] },
-    });
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("pending");
+    expect(fin.kind).toBe("judge-failed");
+    if (fin.kind === "judge-failed") {
+      expect(fin.summary).toContain("the verification judge failed (LLM unreachable)");
+      expect(fin.summary).toContain(`akm workflow resume ${RUN_ID}`);
+    }
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("blocked");
+    expect(status.workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
     const gate = rows.find((r) => r.unit_id === "work.gate:l1");
+    // The errored evaluation journals NO verdict: result_json NULL, so gate
+    // recovery treats it as empty (loop 1 again), never as a rejection.
     expect(gate?.status).toBe("failed");
-    expect(JSON.parse(gate?.result_json ?? "null")).toMatchObject({
-      complete: false,
-      missing: ["the work is thorough"],
-    });
+    expect(gate?.result_json).toBeNull();
   });
 
-  test("an unparseable verdict rejects completion and journals the rejection", async () => {
+  test("a malformed verdict blocks the step like infrastructure failure — not an honest rejection", async () => {
     seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(GATED_WF));
     const judge: SummaryJudge = async () => "not json at all";
     const fin = await finalizeExecutedStep(finalizeArgs({ summaryJudge: judge }));
-    expect(fin).toMatchObject({
-      kind: "gate-exhausted",
-      gateRejection: { stepId: "work", missing: ["the work is thorough"] },
-    });
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("pending");
+    expect(fin.kind).toBe("judge-failed");
+    if (fin.kind === "judge-failed") {
+      expect(fin.summary).toContain("malformed verdict");
+    }
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("blocked");
+    expect(status.workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
     const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(RUN_ID, "work"));
     const gate = rows.find((r) => r.unit_id === "work.gate:l1");
-    expect(gate?.status).toBe("completed");
-    expect(JSON.parse(gate?.result_json ?? "null")).toMatchObject({
-      complete: false,
-      missing: ["the work is thorough"],
-    });
+    expect(gate?.status).toBe("failed");
+    expect(gate?.result_json).toBeNull();
   });
 
-  test("the engine also refuses to bypass validation when no judge is configured", async () => {
+  test("the engine also refuses to bypass validation when no judge is configured — run blocked, resumable", async () => {
     seedRun([{ id: "work", criteria: ["the work is thorough"] }], plan(GATED_WF));
-    await expect(
-      runWorkflowSteps({
-        target: RUN_ID,
-        loadPlan: async () => plan(GATED_WF),
-        dispatcher: async () => ({ ok: true, text: "did the work" }),
-        summaryJudge: null,
-      }),
-    ).rejects.toBeInstanceOf(ConfigError);
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("pending");
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      loadPlan: async () => plan(GATED_WF),
+      dispatcher: async () => ({ ok: true, text: "did the work" }),
+      summaryJudge: null,
+    });
+    expect(result.done).toBeUndefined();
+    expect(result.judgeFailure?.stepId).toBe("work");
+    expect(result.judgeFailure?.message).toContain("no verification judge is available");
+    expect(result.run.status).toBe("blocked");
+    expect((await getWorkflowStatus(RUN_ID)).workflow.steps.find((s) => s.id === "work")?.status).toBe("blocked");
   });
 });

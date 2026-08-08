@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { _setWarnSinkForTests, type WarnSinkForTests } from "../../../src/core/warn";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import { codexBuilder } from "../../../src/integrations/harnesses/codex/agent-builder";
 import { copilotBuilder } from "../../../src/integrations/harnesses/copilot/agent-builder";
@@ -28,6 +29,7 @@ import type { FrozenAgentEngine, IrStepPlan, WorkflowPlanGraph } from "../../../
 import { PROGRAM_RETRY_REASONS } from "../../../src/workflows/program/schema";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { makeSandboxDir, withEnv, withMockedFetch, writeSandboxConfig } from "../../_helpers/sandbox";
+import { withSeam } from "../../_helpers/seams";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
@@ -1541,9 +1543,12 @@ Do second.
     expect(dispatches).toBe(0);
   });
 
-  test("asserts reserved dependsOn edges before dispatching (peer review #6)", async () => {
-    // No frontend emits dependsOn today, but a frozen plan may carry the
-    // reserved edges — the engine still honors them as an ordering contract.
+  test("rejects a plan carrying the removed dependsOn key before dispatching", async () => {
+    // `dependsOn` was an IR-only surface no frontend ever emitted: ordering
+    // comes from `sequenceIndex` and data dependencies from `inputs:` /
+    // `steps.<id>.output` references. It is gone from `IrStepPlan`, so the
+    // strict decoder now refuses a hand-crafted plan that carries it — and
+    // refuses it BEFORE any unit is dispatched.
     seedRun({
       params: { flavor: "vanilla" },
       steps: [
@@ -1552,7 +1557,9 @@ Do second.
       ],
     });
     const outOfOrder = plan(TWO_STEP_WF);
-    outOfOrder.steps[0] = { ...outOfOrder.steps[0]!, dependsOn: ["second"] };
+    // `dependsOn` is not part of `IrStepPlan` any more — a hand-crafted plan is
+    // the only way one can appear, so build it the way an attacker/drift would.
+    outOfOrder.steps[0] = { ...outOfOrder.steps[0]!, dependsOn: ["second"] } as unknown as IrStepPlan;
     let dispatches = 0;
     await expect(
       runWorkflowSteps({
@@ -1563,7 +1570,7 @@ Do second.
         },
         loadPlan: useFrozenPlan(outOfOrder),
       }),
-    ).rejects.toThrow(/invalid dependency/);
+    ).rejects.toThrow(/unknown key dependsOn/);
     expect(dispatches).toBe(0);
   });
 
@@ -1974,10 +1981,12 @@ Branch c2.
   });
 
   test("cascaded routing survives resume: a journaled skipped router keeps its targets skipped", async () => {
-    // Stop right after branch-router was journaled as skipped, then resume
-    // with fresh in-memory bookkeeping: seedJournaledRouteDecisions must
-    // cascade from the SKIPPED status (there is no journaled decision to
-    // replay — the router never decided anything).
+    // Stop after branch-router was journaled as skipped (maxSteps: 2 covers
+    // classify + safe — a route-SKIPPED step no longer consumes the step
+    // budget), then resume with fresh in-memory bookkeeping:
+    // seedJournaledRouteDecisions must cascade from the SKIPPED status (there
+    // is no journaled decision to replay — the router never decided anything),
+    // or the resume would dispatch c1 and c2.
     seedRun({ params: { pick: "right" }, steps: CASCADE_STEPS });
     const first = await runWorkflowSteps({
       target: RUN_ID,
@@ -1985,7 +1994,8 @@ Branch c2.
       dispatcher: async () => ({ ok: true, text: "done" }),
       loadPlan: usePlan(CASCADE_WF),
     });
-    expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "branch-router"]);
+    expect(first.executed.map((s) => s.stepId)).toEqual(["classify", "branch-router", "safe"]);
+    expect(first.done).toBeUndefined(); // c1/c2 still pending — resume decides them
 
     const dispatched: string[] = [];
     const resumed = await runWorkflowSteps({
@@ -1997,7 +2007,7 @@ Branch c2.
       loadPlan: usePlan(CASCADE_WF),
     });
     expect(resumed.done).toBe(true);
-    expect(dispatched).toEqual(["safe"]);
+    expect(dispatched).toEqual([]); // nothing left to dispatch — c1/c2 cascade-skip
     const status = await getWorkflowStatus(RUN_ID);
     const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
     expect(byId.get("c1")).toBe("skipped");
@@ -2606,5 +2616,282 @@ Build the assigned item.
     expect(result.summary).toContain("isolation: worktree");
     expect(preflightCalls).toBe(1);
     expect(dispatches).toBe(0);
+  });
+});
+
+// ── Mid-dispatch run-state changes + journal-write failures ─────────────────
+
+const SOLO_WF = `---
+type: workflow
+steps:
+  - id: fetch
+---
+
+## fetch
+
+Fetch the thing.
+`;
+
+function mutateDb(sql: string, ...params: unknown[]): void {
+  const db = openStateDatabase(path.join(tmpDir, "state.db"));
+  try {
+    db.prepare(sql).run(...(params as never[]));
+  } finally {
+    db.close();
+  }
+}
+
+async function captureWarns<T>(run: () => Promise<T>): Promise<{ result: T; warns: string[] }> {
+  const warns: string[] = [];
+  const result = await withSeam(
+    _setWarnSinkForTests,
+    ((level, args) => {
+      if (level === "warn") warns.push(args.map(String).join(" "));
+    }) as WarnSinkForTests,
+    run,
+  );
+  return { result, warns };
+}
+
+describe("executeStepPlan — a dispatched unit's outcome is never silently discarded", () => {
+  test("a run flipped non-active mid-dispatch still journals the completed outcome; resume reuses it", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    const stepPlan = plan(SOLO_WF).steps[0]!;
+    const { result, warns } = await captureWarns(() =>
+      executeStepPlan(stepPlan, {
+        runId: RUN_ID,
+        workflowRef: "workflows/demo",
+        params: {},
+        evidence: {},
+        dispatcher: async () => {
+          // The run is abandoned WHILE the unit is in flight — the row is still
+          // this dispatch's, so the outcome must be finished, not dropped.
+          mutateDb("UPDATE workflow_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+          return { ok: true, text: "expensive result" };
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    // The row is NOT left `running` — the outcome that already spent tokens is journaled.
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, "fetch:solo");
+      expect(row?.status).toBe("completed");
+      expect(JSON.parse(row?.result_json ?? "null")).toBe("expensive result");
+    });
+    expect(warns.some((w) => w.includes("is now failed"))).toBe(true);
+
+    // A resume of the reopened run reuses the journaled result — it must never
+    // silently re-dispatch side-effecting work that already ran.
+    mutateDb("UPDATE workflow_runs SET status = 'active' WHERE id = ?", RUN_ID);
+    const second = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.units[0]!.text).toBe("expensive result");
+  });
+
+  test("a lease moved mid-dispatch still journals the outcome (row untouched by the new driver); the new driver reuses it", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    mutateDb(
+      "UPDATE workflow_runs SET engine_lease_holder = 'engine-A', engine_lease_until = '2099-01-01T00:00:00.000Z' WHERE id = ?",
+      RUN_ID,
+    );
+    const stepPlan = plan(SOLO_WF).steps[0]!;
+    const { result, warns } = await captureWarns(() =>
+      executeStepPlan(stepPlan, {
+        runId: RUN_ID,
+        workflowRef: "workflows/demo",
+        leaseHolder: "engine-A",
+        params: {},
+        evidence: {},
+        dispatcher: async () => {
+          mutateDb("UPDATE workflow_runs SET engine_lease_holder = 'engine-B' WHERE id = ?", RUN_ID);
+          return { ok: true, text: "paid-for result" };
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnit(RUN_ID, "fetch:solo")?.status).toBe("completed");
+    });
+    expect(warns.some((w) => w.includes("lease moved to engine-B"))).toBe(true);
+
+    // The new driver's invocation finds a completed hash-matching row — reuse,
+    // never a re-dispatch of already-run work.
+    const second = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      leaseHolder: "engine-B",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.units[0]!.text).toBe("paid-for result");
+  });
+
+  test("a row the new driver already RE-DISPATCHED mid-flight is never clobbered; the stale outcome is surfaced loudly", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    const stepPlan = plan(SOLO_WF).steps[0]!;
+    const { warns } = await captureWarns(() =>
+      executeStepPlan(stepPlan, {
+        runId: RUN_ID,
+        workflowRef: "workflows/demo",
+        params: {},
+        evidence: {},
+        dispatcher: async () => {
+          // A new driver stole the run and re-dispatched the SAME unit: its
+          // insertUnit REPLACED the row with a fresh started_at. The stale
+          // driver's finish must match nothing.
+          await withWorkflowRunsRepo((repo) =>
+            repo.insertUnit({
+              runId: RUN_ID,
+              unitId: "fetch:solo",
+              stepId: "fetch",
+              nodeId: "fetch",
+              parentUnitId: null,
+              phase: null,
+              runner: "llm",
+              model: null,
+              inputHash: "new-driver-hash",
+              startedAt: "2099-01-01T00:00:00.000Z",
+            }),
+          );
+          return { ok: true, text: "stale result" };
+        },
+      }),
+    );
+    // The new driver's live dispatch row is untouched.
+    await withWorkflowRunsRepo((repo) => {
+      const row = repo.getUnit(RUN_ID, "fetch:solo");
+      expect(row?.status).toBe("running");
+      expect(row?.started_at).toBe("2099-01-01T00:00:00.000Z");
+      expect(row?.result_json).toBeNull();
+    });
+    expect(warns.some((w) => w.includes("re-dispatched by another engine invocation"))).toBe(true);
+  });
+});
+
+describe("executeStepPlan — journal-write failures are reported accurately (never as 'not dispatched')", () => {
+  test("a finish that cannot be journaled fails the step naming the unit and the journal failure", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    const stepPlan = plan(SOLO_WF).steps[0]!;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        // The dispatch row vanishes while the unit is in flight (journal
+        // tampered / row lost): the finish write throws, and the throw must
+        // surface as a journal failure for a unit that DID dispatch — not be
+        // swallowed by the scheduler into an "aborted / not dispatched" misreport.
+        mutateDb("DELETE FROM workflow_run_units WHERE run_id = ? AND unit_id = ?", RUN_ID, "fetch:solo");
+        return { ok: true, text: "dispatched fine" };
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain('unit "fetch:solo"');
+    expect(result.summary).toContain("could not be journaled");
+    expect(result.summary).not.toContain("was not dispatched");
+  });
+
+  const CONTINUE_SOLO_WF = `---
+type: workflow
+steps:
+  - id: fetch
+    unit: { on_error: continue }
+---
+
+## fetch
+
+Fetch the thing.
+`;
+
+  test("on_error: continue does NOT soften a journal-write failure — the step still fails hard", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    const stepPlan = plan(CONTINUE_SOLO_WF).steps[0]!;
+    const result = await executeStepPlan(stepPlan, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        mutateDb("DELETE FROM workflow_run_units WHERE run_id = ? AND unit_id = ?", RUN_ID, "fetch:solo");
+        return { ok: true, text: "dispatched fine" };
+      },
+    });
+    // The live artifact would be unjournalable — a resume could never rebuild
+    // it — so on_error: continue must not let the step pass.
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("could not be journaled");
+  });
+});
+
+describe("executeStepPlan — retry-policy changes never hide completed attempt rows", () => {
+  const RETRY3_WF = `---
+type: workflow
+steps:
+  - id: fetch
+    unit:
+      retry: { max: 3, on: [timeout] }
+---
+
+## fetch
+
+Fetch the thing.
+`;
+
+  test("a unit completed at attempt ~r2 under retry.max 3 is reused when re-invoked with no retry budget", async () => {
+    seedRun({ steps: [{ id: "fetch", title: "Fetch" }] });
+    let call = 0;
+    const first = await executeStepPlan(plan(RETRY3_WF).steps[0]!, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        call++;
+        return call < 3
+          ? { ok: false, text: "", failureReason: "timeout", error: "timed out" }
+          : { ok: true, text: "finally" };
+      },
+    });
+    expect(first.ok).toBe(true);
+    expect(call).toBe(3); // completed at ~r2
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnit(RUN_ID, "fetch:solo~r2")?.status).toBe("completed");
+    });
+
+    // Re-invoked under a plan with NO retry declared: retry/on_error are
+    // excluded from the input hash by design, so the completed ~r2 row must
+    // still be found and reused — lowering retry.max between runs must never
+    // make finished work invisible and re-dispatch it.
+    const second = await executeStepPlan(plan(SOLO_WF).steps[0]!, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        throw new Error("must not re-dispatch");
+      },
+    });
+    expect(second.ok).toBe(true);
+    // The reduced outcome carries the content-derived base id, rehydrated from
+    // the `~r2` attempt row.
+    expect(second.units[0]!.unitId).toBe("fetch:solo");
+    expect(second.units[0]!.text).toBe("finally");
+    await withWorkflowRunsRepo((repo) => {
+      expect(repo.getUnitsForStep(RUN_ID, "fetch")).toHaveLength(3); // no new rows
+    });
   });
 });

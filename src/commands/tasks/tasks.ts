@@ -125,9 +125,13 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
       "INVALID_FLAG_VALUE",
     );
   }
-  if (input.workflow && (input.engine !== undefined || input.model !== undefined || input.timeoutMs !== undefined)) {
+  // `--timeout-ms` IS valid on a workflow task: it is the whole-run bound the
+  // task runner turns into an abort signal (issue 11), the same one
+  // `akm workflow run --timeout` applies interactively. Engine and model stay
+  // prompt-only — a workflow's engines come from its frozen plan.
+  if (input.workflow && (input.engine !== undefined || input.model !== undefined)) {
     throw new UsageError(
-      "Workflow tasks accept only --params; engine, model, and timeout are prompt-task fields.",
+      "Workflow tasks accept --params and --timeout-ms; engine and model are prompt-task fields.",
       "INVALID_FLAG_VALUE",
     );
   }
@@ -858,6 +862,7 @@ function renderTaskYaml(input: RenderInput): string {
     if (input.params) {
       obj.params = parseJsonObjectArg(input.params);
     }
+    if (input.timeoutMs !== undefined) obj.timeoutMs = input.timeoutMs;
   } else if (input.prompt) {
     obj.prompt = input.prompt;
     if (input.engine) obj.engine = input.engine;

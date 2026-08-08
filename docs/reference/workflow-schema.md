@@ -305,6 +305,48 @@ step with the validation errors in its summary. This is fail-fast on purpose:
 a bounded gate loop (see [Gates and verification](#gates-and-verification))
 can re-run the step with those errors as corrective feedback.
 
+### The enforced JSON Schema subset
+
+`output` and `params` schemas are validated **as schemas** at parse time
+(`akm lint --type workflows`, `akm workflow create`), because the runtime
+enforces only a subset of JSON Schema:
+
+`type`, `enum`, `properties`, `required`, `items`, `additionalProperties:
+false`, `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`,
+`maximum`.
+
+Anything outside it is an authoring **error**, not a silent no-op. A typo'd
+type name (`type: strig`) and a recognized-but-unenforced keyword (`pattern`,
+`format`, `const`, `$ref`, `allOf`/`anyOf`/`oneOf`, `patternProperties`,
+schema-form `additionalProperties`, tuple-form `items`, …) both fail with the
+offending keyword named and its location anchored to the line. A gate that
+depends on a schema constraining nothing is worse than a loud failure.
+Annotation keywords (`description`, `title`, `default`, `examples`) constrain
+nothing in full JSON Schema either, so they pass through untouched.
+
+### Bounds
+
+These are enforced identically by the parser, the published JSON Schema, and
+the frozen-plan decoder (they share one set of constants in
+`src/workflows/resource-limits.ts`), so a document that lints clean cannot
+fail later at `akm workflow run`:
+
+| Field | Bound |
+| --- | --- |
+| `gate.max_loops` | 1 – 100 |
+| `map.concurrency` | 1 – 64 |
+| `retry.max` | 0 – 100 |
+| `timeout` | ≤ 2147483647 ms (~24.8 days), or `none` |
+| `engine` names | `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, ≤ 63 chars |
+
+`timeout` is resolved **once, at freeze time**, and the frozen value is what
+dispatch applies — there is no separate engine-side ceiling on top of it. The
+first of these that is set wins: the unit's `timeout`, then the document's
+`defaults.timeout`, then `engines.<name>.timeoutMs`, then the engine-kind
+default — **10m for `kind: llm` engines, and none for agent engines**, which
+manage their own process lifetime. Writing `timeout: none` is an explicit opt
+out and leaves the unit genuinely unbounded; nothing later re-imposes a cap.
+
 ## Routing
 
 A `route` step makes classify-and-dispatch first-class: the engine resolves

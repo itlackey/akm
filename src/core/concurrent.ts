@@ -12,6 +12,10 @@
  * preempt those too). Unclaimed items stay `undefined` in the result,
  * indistinguishable from individual failures by design: callers already
  * treat `undefined` as "no result".
+ *
+ * A thrown `fn` is SWALLOWED (its slot stays `undefined`) — a caller that
+ * must report failure detail, or distinguish "threw" from "never claimed",
+ * catches inside `fn` and returns an explicit outcome value instead.
  */
 export async function concurrentMap<T, R>(
   items: T[],
