@@ -11,19 +11,25 @@
  * docs/plans/index-fragment-vectors.md, "Indexing is a set difference"). When
  * no identity is known yet (a fresh index, or one whose prior identity was
  * dropped), every candidate hash is pending; the identity is learned from
- * whichever provider response lands first and adopted from then on. Every
- * committed batch re-derives the identity actually observed and adopts it
- * the moment it differs from what is currently active — a model swap
- * (`embedding.model` changed, or the gateway now serving a different model)
- * is caught as soon as the provider reports it, rather than mixing a new
- * model's vectors into an old identity's rows (docs/plans/index-redesign.md,
- * rule 1: identity is content-addressed on what the provider actually
- * returned). Units already embedded under an identity this call abandons
- * simply become "missing" again under the new one and drain on a later call
- * (rule 4: embedding is a queue, always resumable from the same set
- * difference). A drain also does nothing when sqlite-vec is unavailable:
- * `upsertUnitVectors` cannot persist a vector without it, so the whole
- * pending set is reported `skipped` without ever calling the provider.
+ * whichever provider response lands first and adopted from then on. Adoption
+ * happens AT MOST ONCE per `drainEmbeddingQueue` call, decided by the FIRST
+ * committed batch this call sees (docs/plans/index-redesign.md, rule 1:
+ * identity is content-addressed on what the provider actually returned) — a
+ * model swap (`embedding.model` changed, or the gateway now serving a
+ * different model) is still caught, just not any faster than the NEXT call's
+ * own first batch. A later batch THIS SAME call observes reporting a
+ * DIFFERENT identity than the one already adopted is left missing rather
+ * than switched to: a provider whose responses alternate between two models
+ * across batches of one call (a load-balanced gateway, a blue/green rollout
+ * behind one endpoint) must not thrash the store between them — embed, then
+ * delete, then re-embed, never converging. Those rows simply become
+ * "missing" again under whatever identity this call adopted, and a LATER
+ * call, whose own first batch observes the alternate identity, adopts it
+ * then and purges the one left behind (rule 4: embedding is a queue, always
+ * resumable from the same set difference). A drain also does nothing when
+ * sqlite-vec is unavailable: `upsertUnitVectors` cannot persist a vector
+ * without it, so the whole pending set is reported `skipped` without ever
+ * calling the provider.
  *
  * Reuses `embedBatch` / `RemoteEmbedder` (src/llm/embedder.ts,
  * src/llm/embedders/remote.ts) for the batching, retry, back-off and
@@ -85,19 +91,50 @@ export interface DrainOptions {
 }
 
 /**
- * Consecutive-failure threshold that stops dispatching further provider
- * batches. Mirrors materialize-embeddings.ts's own (unexported)
- * `CIRCUIT_BREAKER_THRESHOLD`, #954 — reimplemented here at the same value
- * rather than imported, since that file is private and slated for deletion
- * by B5; the underlying stop-dispatch MECHANISM (`onSkip` returning `false`)
- * is still the real `RemoteEmbedder`'s, reused unmodified. Two independent
- * streaks share it: 3 consecutive single-document failures (a multi-document
+ * Failure threshold, within the recent window below, that stops dispatching
+ * further provider batches. Mirrors materialize-embeddings.ts's own
+ * (unexported) `CIRCUIT_BREAKER_THRESHOLD`, #954 — reimplemented here at the
+ * same value rather than imported, since that file is private and slated for
+ * deletion by B5; the underlying stop-dispatch MECHANISM (`onSkip` returning
+ * `false`) is still the real `RemoteEmbedder`'s, reused unmodified. Two
+ * independent streaks share it: single-document failures (a multi-document
  * timeout is not yet evidence of a dead endpoint — `RemoteEmbedder` retries
- * and splits it smaller before ever reporting it this small), or 3
- * consecutive network errors at ANY size (never retried, trusted
- * immediately).
+ * and splits it smaller before ever reporting it this small), or network
+ * errors at ANY size (never retried, trusted immediately). Storage-write
+ * failures (E5b — `upsertUnitVectors`'s own per-row result) feed the SAME two
+ * streaks: a sustained STORAGE failure (contention, permissions, a full
+ * disk) must stop paying for provider requests just as surely as a
+ * sustained PROVIDER failure, even while the provider itself keeps
+ * succeeding.
  */
 const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+/**
+ * Recent-history window (in settled batch-starts) the two streaks above are
+ * evaluated over, in place of a plain "reset to zero on any success" counter
+ * (round-2 field finding): with concurrent dispatch (default 2, up to 16)
+ * outcomes settle out of dispatch order, so a degraded endpoint failing MOST
+ * requests never tripped the breaker as long as occasional successes
+ * interleaved — reproduced with a 67% failure rate dispatching the entire
+ * pending set. `CIRCUIT_BREAKER_THRESHOLD` failures within the last
+ * `CIRCUIT_BREAKER_WINDOW` settled batch-starts of a streak's own kind (see
+ * {@link pushBreakerOutcome}) trips it: a genuinely dead endpoint (no
+ * successes at all) still trips in exactly `CIRCUIT_BREAKER_THRESHOLD`
+ * batches, same as before; a single success now only AGES a failure out of
+ * the window over time rather than erasing the whole run's evidence at once.
+ */
+const CIRCUIT_BREAKER_WINDOW = CIRCUIT_BREAKER_THRESHOLD * 2;
+
+/** Record one settled batch-start's outcome into a breaker streak's window, capped at {@link CIRCUIT_BREAKER_WINDOW}. */
+function pushBreakerOutcome(window: boolean[], isFailure: boolean): void {
+  window.push(isFailure);
+  if (window.length > CIRCUIT_BREAKER_WINDOW) window.shift();
+}
+
+/** Failures currently recorded in a breaker streak's window. */
+function breakerFailureCount(window: boolean[]): number {
+  return window.reduce((n, isFailure) => n + (isFailure ? 1 : 0), 0);
+}
 
 /**
  * Prefix of the per-committed-batch progress line (`"${DRAIN_BATCH_PROGRESS_PREFIX}N: …"`,
@@ -255,23 +292,29 @@ export async function drainEmbeddingQueue(
   let embedded = 0;
   let failed = 0;
   let batchNumber = 0;
-  let consecutiveSingleDocFailures = 0;
-  let consecutiveNetworkErrorFailures = 0;
+  // Two independent circuit-breaker streaks (single-document failures,
+  // network errors at any size) — see CIRCUIT_BREAKER_WINDOW above.
+  const singleDocFailureWindow: boolean[] = [];
+  const networkErrorFailureWindow: boolean[] = [];
+  // Whether this CALL has already decided the identity its first committed
+  // row observed (E1) — adoption happens at most once per call; see the
+  // module doc comment and the identity block in `onBatch` below.
+  let identityDecidedThisCall = false;
 
   const onSkip: EmbeddingSkipHandler = (skip: EmbeddingBatchSkip) => {
     failed++;
     if (!skip.batchStart) return undefined;
     if (skip.reason === "context-window-exceeded") {
       // Proves the provider IS reachable; not evidence of a dead endpoint.
-      consecutiveSingleDocFailures = 0;
-      consecutiveNetworkErrorFailures = 0;
+      singleDocFailureWindow.length = 0;
+      networkErrorFailureWindow.length = 0;
       return undefined;
     }
-    consecutiveSingleDocFailures = skip.batchSize === 1 ? consecutiveSingleDocFailures + 1 : 0;
-    consecutiveNetworkErrorFailures = skip.failureKind === "network-error" ? consecutiveNetworkErrorFailures + 1 : 0;
+    pushBreakerOutcome(singleDocFailureWindow, skip.batchSize === 1);
+    pushBreakerOutcome(networkErrorFailureWindow, skip.failureKind === "network-error");
     if (
-      consecutiveSingleDocFailures >= CIRCUIT_BREAKER_THRESHOLD ||
-      consecutiveNetworkErrorFailures >= CIRCUIT_BREAKER_THRESHOLD
+      breakerFailureCount(singleDocFailureWindow) >= CIRCUIT_BREAKER_THRESHOLD ||
+      breakerFailureCount(networkErrorFailureWindow) >= CIRCUIT_BREAKER_THRESHOLD
     ) {
       return false;
     }
@@ -288,30 +331,39 @@ export async function drainEmbeddingQueue(
     for (let k = 0; k < indices.length; k++) {
       const embedding = embeddings[k];
       if (!embedding) continue;
-      // Re-derived on every committed batch (concurrent dispatch aside,
-      // onBatch calls run one at a time — JS is single-threaded — so within
-      // one drain call this only differs from `identity` on the very first
-      // batch, or the batch where the provider's response actually changes),
-      // not just when `identity` is still null: a model swap — config
-      // `embedding.model` changed, or the gateway now serving a different
-      // model — must be caught the moment the provider reports it, not
-      // silently mixed into the old identity's rows. Adopting it drops
-      // whatever was stored under the identity being left behind (at the
-      // newly observed width); units embedded under that old identity that
-      // are not part of THIS call simply become "missing" again under the
-      // new one and drain on a later call.
       const learned = deriveObservedEmbeddingIdentity(config.embedding, model, embedding.length);
-      if (learned && learned !== identity) {
-        identity = learned;
-        setMeta(db, "embeddingIdentity", identity);
-        dropOtherIdentities(db, identity, embedding.length);
+      if (!identityDecidedThisCall) {
+        // This call's FIRST committed row decides the identity it adopts
+        // (E1) — learned once, not re-derived per batch: a provider whose
+        // responses alternate between models WITHIN one call (a
+        // load-balanced gateway, a blue/green rollout behind one endpoint)
+        // must not thrash the store between them (embed, delete, re-embed,
+        // never converging). A genuine model change is still caught, just
+        // not until the NEXT call's own first batch observes it and purges
+        // whatever this call left behind.
+        identityDecidedThisCall = true;
+        if (learned && learned !== identity) {
+          identity = learned;
+          setMeta(db, "embeddingIdentity", identity);
+          dropOtherIdentities(db, identity, embedding.length);
+        }
       }
       const currentIdentity = identity;
-      if (currentIdentity === null) continue;
+      if (currentIdentity === null || learned !== currentIdentity) {
+        // Either nothing has ever been learned, or a LATER batch this same
+        // call reported an identity different from the one already adopted
+        // — left missing rather than switched to; it becomes "missing"
+        // again under whatever identity this call is using, and a later
+        // call, whose own first batch observes it, picks it up. Counted in
+        // `skipped` below (attempted minus embedded minus failed), not
+        // `embedded`.
+        continue;
+      }
       const hash = orderedHashes[indices[k] as number];
       if (hash) rows.push({ hash, identity: currentIdentity, vector: embedding });
     }
 
+    let storageBreakerTripped = false;
     if (rows.length > 0) {
       // upsertUnitVectors commits each row in its own transaction — this IS
       // "each provider batch commits durably" (a wrapping db.transaction()
@@ -323,10 +375,27 @@ export async function drainEmbeddingQueue(
       const result = upsertUnitVectors(db, rows);
       embedded += result.inserted;
       failed += result.failed;
+      if (result.failed > 0) {
+        // E5b: a write failure is just as much evidence of a broken run as
+        // a provider failure — a sustained STORAGE failure (contention,
+        // permissions, a full disk) must not keep dispatching every
+        // remaining batch to a perfectly healthy provider at full cost
+        // while every write silently fails. One event per committed batch
+        // (the "count batch starts, not documents" rule onSkip already
+        // applies to provider failures), fed into the SAME two streaks.
+        pushBreakerOutcome(singleDocFailureWindow, true);
+        pushBreakerOutcome(networkErrorFailureWindow, true);
+        if (
+          breakerFailureCount(singleDocFailureWindow) >= CIRCUIT_BREAKER_THRESHOLD ||
+          breakerFailureCount(networkErrorFailureWindow) >= CIRCUIT_BREAKER_THRESHOLD
+        ) {
+          storageBreakerTripped = true;
+        }
+      }
     }
     if (embeddings.some((embedding) => embedding !== undefined)) {
-      consecutiveSingleDocFailures = 0;
-      consecutiveNetworkErrorFailures = 0;
+      pushBreakerOutcome(singleDocFailureWindow, false);
+      pushBreakerOutcome(networkErrorFailureWindow, false);
     }
 
     batchNumber++;
@@ -335,6 +404,18 @@ export async function drainEmbeddingQueue(
       const label =
         outcome && outcome.outcome !== "stored" ? `failed: ${outcome.reason ?? "unknown"}` : `${rows.length} stored`;
       opts.onProgress(`${DRAIN_BATCH_PROGRESS_PREFIX}${batchNumber}: ${docCount} docs → ${label}`);
+    }
+
+    if (storageBreakerTripped) {
+      // onBatch has no `false`-return stop-dispatch contract the way onSkip
+      // does (a storage failure can trip this even when the provider itself
+      // keeps succeeding, so onSkip is never called at all) — this reuses
+      // RemoteEmbedder's own documented mechanism instead: a throw from
+      // onBatch stops the pool from dispatching any further provider
+      // request, and is rethrown once every in-flight batch has settled.
+      throw new Error(
+        `Circuit breaker: ${CIRCUIT_BREAKER_THRESHOLD} storage write failures while embedding; stopping further provider requests this call.`,
+      );
     }
   };
 

@@ -435,7 +435,13 @@ export class RemoteEmbedder implements Embedder {
 
   async embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector> {
     const headers = this.buildHeaders();
-    const body: { input: string; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
+    const body: {
+      input: string;
+      model: string;
+      dimensions?: number;
+      options?: { num_ctx?: number };
+      truncate?: boolean;
+    } = {
       input: text,
       model: this.model,
     };
@@ -445,6 +451,9 @@ export class RemoteEmbedder implements Embedder {
     const ollamaOpts = resolveOllamaOptions(this.config);
     if (ollamaOpts) {
       body.options = ollamaOpts;
+    }
+    if (isOllamaNativeEmbedEndpoint(this.endpoint)) {
+      body.truncate = false;
     }
     const timeoutMs = resolveEmbeddingTimeoutMs(this.config);
 
@@ -954,7 +963,13 @@ export class RemoteEmbedder implements Embedder {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<{ vectors: EmbeddingVector[]; model?: string }> {
-    const body: { input: string[]; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
+    const body: {
+      input: string[];
+      model: string;
+      dimensions?: number;
+      options?: { num_ctx?: number };
+      truncate?: boolean;
+    } = {
       input: batch,
       model: this.model,
     };
@@ -963,6 +978,9 @@ export class RemoteEmbedder implements Embedder {
     }
     if (ollamaOpts) {
       body.options = ollamaOpts;
+    }
+    if (isOllamaNativeEmbedEndpoint(this.endpoint)) {
+      body.truncate = false;
     }
 
     // See embed(): `signal` goes through the 4th parameter, not the
@@ -1076,6 +1094,34 @@ export function normalizeEmbeddingEndpoint(endpoint: string): string {
 
   parsed.pathname = normalizedPath ? `${normalizedPath}/embeddings` : "/embeddings";
   return parsed.toString();
+}
+
+/**
+ * True when `endpoint`'s normalized path is Ollama's native `/api/embed`
+ * route (see {@link normalizeEmbeddingEndpoint}) rather than an
+ * OpenAI-compatible `/embeddings` route. Gates `truncate: false` on the
+ * request body (round-2 field finding): akm never sent `truncate` at all, so
+ * Ollama's default — silently truncate an over-budget input and still return
+ * 200 — meant a unit denser than the calibrated chars-per-token ratio was
+ * embedded from a truncated prefix and stored as a complete, correct-looking
+ * vector: never counted `failed` or `skipped`, coverage reporting it done,
+ * that content's search quality silently degraded forever. `truncate: false`
+ * makes an over-budget request fail loudly instead, so it flows into the
+ * existing context-window handling (split-and-retry, ultimately a genuine
+ * `skipped` unit) rather than a silent truncation. Scoped to the native
+ * route specifically because that is the one shape this field evidence is
+ * about — an OpenAI-compatible endpoint ignores the unknown field either
+ * way, so this is not a safety boundary, just not sending an option that
+ * does nothing elsewhere.
+ */
+function isOllamaNativeEmbedEndpoint(endpoint: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizeEmbeddingEndpoint(endpoint));
+  } catch {
+    return false;
+  }
+  return parsed.pathname.replace(/\/+$/, "").endsWith("/embed");
 }
 
 function embeddingEndpointPathHint(endpoint: string): string {

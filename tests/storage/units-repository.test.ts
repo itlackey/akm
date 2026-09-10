@@ -422,6 +422,35 @@ describe("units-repository", () => {
         expect(dropOtherIdentities(unavailable, IDENTITY_A, DIM)).toEqual({ removed: 0 });
       });
     });
+
+    test("E6: recreates units_vec at the new width even with nothing stale yet", () => {
+      withTempDb((db) => {
+        // Nothing has ever been embedded — zero rows under ANY identity, the
+        // exact shape of a fresh index whose configured `embedding.dimension`
+        // does not match what the provider actually returns. `staleCount`
+        // stays 0 in this scenario no matter how many times this is called,
+        // so a width check gated behind `staleCount > 0` could never recreate
+        // the table `ensureSchema`/`withTempDb` already created at DIM — every
+        // real write would keep failing "Dimension mismatch for inserted
+        // vector" forever (round-2 finding).
+        const newDim = 8;
+        const result = dropOtherIdentities(db, IDENTITY_A, newDim);
+        expect(result.removed).toBe(0);
+
+        // The table was actually recreated at the new width: a vector at the
+        // OLD width (DIM) is now rejected, one at newDim inserts and is
+        // searchable.
+        const oldWidthAttempt = upsertUnitVectors(db, [{ hash: "old", identity: IDENTITY_A, vector: vector(0) }]);
+        expect(oldWidthAttempt).toEqual({ inserted: 0, failed: 1 });
+
+        const newWidthAttempt = upsertUnitVectors(db, [
+          { hash: "a1", identity: IDENTITY_A, vector: [1, 2, 3, 4, 5, 6, 7, 8] },
+        ]);
+        expect(newWidthAttempt).toEqual({ inserted: 1, failed: 0 });
+        const hits = searchUnits(db, [1, 2, 3, 4, 5, 6, 7, 8], 1, IDENTITY_A);
+        expect(hits.map((h) => h.hash)).toEqual(["a1"]);
+      });
+    });
   });
 
   describe("lifecycle: units/units_vec survive destructive index operations", () => {

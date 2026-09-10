@@ -315,6 +315,55 @@ describe("RemoteEmbedder.embedBatch: request window/slots come from packing, not
     );
     expect(requests).toEqual([{ options: { num_ctx: 2048 } }]);
   });
+
+  test("E4: a request against Ollama's native /api/embed route carries truncate: false, on both the single-text and batch paths", async () => {
+    const singleRequests: Array<{ truncate?: boolean }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:11434/api/embed", model: "test-model" });
+        await embedder.embed("hello");
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { truncate?: boolean };
+        singleRequests.push({ truncate: body.truncate });
+        return jsonResponse({ data: [{ embedding: [1, 0] }] });
+      },
+    );
+    expect(singleRequests).toEqual([{ truncate: false }]);
+
+    const batchRequests: Array<{ truncate?: boolean }> = [];
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:11434/api/embed", model: "test-model" });
+        await embedder.embedBatch(["hello"]);
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { truncate?: boolean };
+        batchRequests.push({ truncate: body.truncate });
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    expect(batchRequests).toEqual([{ truncate: false }]);
+  });
+
+  test("an OpenAI-compatible /embeddings endpoint never sends truncate", async () => {
+    let sentTruncate: unknown = "unset";
+    await withMockedFetch(
+      async () => {
+        const embedder = new RemoteEmbedder({
+          endpoint: "https://api.example.com/v1/embeddings",
+          model: "test-model",
+        });
+        await embedder.embedBatch(["hello"]);
+      },
+      async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { truncate?: boolean };
+        sentTruncate = body.truncate;
+        return jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] });
+      },
+    );
+    expect(sentTruncate).toBeUndefined();
+  });
 });
 
 describe("RemoteEmbedder.embedBatch: packing.charsPerToken governs the token estimate (index redesign, B5/R4)", () => {

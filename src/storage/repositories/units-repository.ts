@@ -250,6 +250,28 @@ export function listMissingHashes(db: Database, hashes: readonly string[], ident
  * sized table would have rejected — so nothing behind `keep` is lost by the
  * drop.
  *
+ * The width check runs UNCONDITIONALLY, independent of `staleCount` (E6): a
+ * fresh index (or one whose only prior identity was already dropped) has
+ * zero rows under any identity, so gating the width check behind
+ * `staleCount > 0` — the round-2 shape of this bug — meant a `units_vec`
+ * created at a stale/misconfigured width (e.g. `embedding.dimension` set to
+ * a value the provider does not actually return) could never be corrected:
+ * every write fails "Dimension mismatch for inserted vector", the row this
+ * call itself just tried to write is discarded, `units` stays empty, and
+ * `staleCount` stays 0 forever — not even `akm index --reembed` (which
+ * reaches this same function) can recover, only deleting index.db could.
+ * Checking the width regardless of `staleCount` costs nothing extra when
+ * nothing is stale (`unitsVecDimension` is one cheap `sqlite_master` read)
+ * and fixes exactly this: the very first call for a new width recreates the
+ * table before anything is ever written under it.
+ *
+ * The drop/create/delete (or delete-stale-rows/delete) sequence runs in ONE
+ * transaction (E5a): as two separate autocommit statements, a concurrent
+ * `upsertUnitVectors` landing between the `DROP TABLE` and the `CREATE
+ * TABLE` would silently lose an already-paid-for embedding (counted
+ * `failed` and discarded) rather than simply retrying against the
+ * recreated table.
+ *
  * A no-op when sqlite-vec is unavailable: `units`/`units_vec` only ever gain
  * rows when a vector was actually written (see {@link upsertUnitVectors}), so
  * there is nothing to remove and no vec0 table this could safely touch.
@@ -258,25 +280,30 @@ export function dropOtherIdentities(db: Database, keep: string, dim: number): { 
   if (!isVecAvailable(db)) return { removed: 0 };
   ensureUnitTables(db, dim);
 
-  const staleCount = (db.prepare("SELECT COUNT(*) AS n FROM units WHERE identity != ?").get(keep) as { n: number }).n;
-  if (staleCount === 0) return { removed: 0 };
-
   const currentDim = unitsVecDimension(db);
-  if (currentDim !== undefined && currentDim !== dim) {
-    db.exec("DROP TABLE IF EXISTS units_vec");
-    createUnitsVecTable(db, dim);
-  } else {
-    const staleIds = (
-      db.prepare("SELECT unit_id FROM units WHERE identity != ?").all(keep) as { unit_id: number }[]
-    ).map((row) => row.unit_id);
-    for (let offset = 0; offset < staleIds.length; offset += SQLITE_CHUNK_SIZE) {
-      const chunk = staleIds.slice(offset, offset + SQLITE_CHUNK_SIZE);
-      const placeholders = chunk.map(() => "?").join(",");
-      db.prepare(`DELETE FROM units_vec WHERE unit_id IN (${placeholders})`).run(...chunk);
-    }
-  }
+  const widthChanged = currentDim !== undefined && currentDim !== dim;
 
-  db.prepare("DELETE FROM units WHERE identity != ?").run(keep);
+  const staleCount = (db.prepare("SELECT COUNT(*) AS n FROM units WHERE identity != ?").get(keep) as { n: number }).n;
+  if (staleCount === 0 && !widthChanged) return { removed: 0 };
+
+  const run = db.transaction(() => {
+    if (widthChanged) {
+      db.exec("DROP TABLE IF EXISTS units_vec");
+      createUnitsVecTable(db, dim);
+    } else {
+      const staleIds = (
+        db.prepare("SELECT unit_id FROM units WHERE identity != ?").all(keep) as { unit_id: number }[]
+      ).map((row) => row.unit_id);
+      for (let offset = 0; offset < staleIds.length; offset += SQLITE_CHUNK_SIZE) {
+        const chunk = staleIds.slice(offset, offset + SQLITE_CHUNK_SIZE);
+        const placeholders = chunk.map(() => "?").join(",");
+        db.prepare(`DELETE FROM units_vec WHERE unit_id IN (${placeholders})`).run(...chunk);
+      }
+    }
+    db.prepare("DELETE FROM units WHERE identity != ?").run(keep);
+  });
+  run();
+
   return { removed: staleCount };
 }
 
