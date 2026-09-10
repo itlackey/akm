@@ -50,6 +50,7 @@ import {
   probeStateDbRoundTrip,
 } from "./health/metrics";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
+import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { collectSurfacesAdvisories, type EgressConfigView } from "./health/surfaces";
 import { buildPerRunSummaries } from "./health/task-runs";
@@ -713,6 +714,12 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     // above — started here, alongside it, and awaited later.
     const versionDriftPromise = collectVersionDriftAdvisory(Boolean(options.probe), { cliVersion: pkgVersion });
     versionDriftPromise.catch(() => undefined);
+    // #953: same --probe-gated, best-effort discipline as versionDriftPromise
+    // above.
+    const schedulerBinaryDriftPromise = collectSchedulerBinaryAdvisory(Boolean(options.probe), {
+      cliVersion: pkgVersion,
+    });
+    schedulerBinaryDriftPromise.catch(() => undefined);
     const taskHistory = gatherTaskHistoryPhase(db, logsDb, since, stateDbPath, now);
     const { tableNames, missingTables, probe } = taskHistory;
 
@@ -737,6 +744,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const engineProbes = await engineProbesPromise;
     const versionDrift = await versionDriftPromise;
+    const schedulerBinaryDrift = await schedulerBinaryDriftPromise;
 
     // Read once, shared by the `thinking-control` check (#949) and the
     // `metrics.llmUsage` report field below — same window, same aggregate.
@@ -772,6 +780,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       activeImproveStrategyEngines,
       engineLastUsed,
       improveRunsInLookbackWindow,
+      schedulerBinaryDrift,
     };
     for (const check of HEALTH_CHECKS) {
       const result = check.run(checkContext);

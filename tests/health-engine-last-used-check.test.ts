@@ -30,10 +30,11 @@ function run(
 }
 
 describe("engine-last-used check (#950)", () => {
-  test("is registered as an advisory check, last in the registry", () => {
+  test("is registered as an advisory check, directly before the #953 scheduler-binary advisory", () => {
     expect(check).toBeDefined();
     expect(check?.channel).toBe("advisory");
-    expect(HEALTH_CHECKS.at(-1)?.name).toBe("engine-last-used");
+    expect(HEALTH_CHECKS.at(-1)?.name).toBe("scheduler-binary");
+    expect(HEALTH_CHECKS.at(-2)?.name).toBe("engine-last-used");
   });
 
   test("unknown when no engine is bound to an enabled improve process", () => {
