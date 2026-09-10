@@ -18,6 +18,8 @@
 import { parseMarkdownToc } from "../../core/asset/markdown";
 import { type MarkdownFragment, splitMarkdownFragments } from "../../core/asset/markdown-fragments";
 import { hashEmbeddableText } from "../../core/hash";
+import { getMarkdownFragmentContent, hasMarkdownFragmentContent, type IndexDocument } from "../passes/metadata";
+import { buildSearchFields } from "../search/search-fields";
 
 /**
  * Separator between the entry name and a fragment's section title in a unit
@@ -139,4 +141,45 @@ export function deriveUnits(source: UnitSource, maxChars: number): EmbeddingUnit
   }
 
   return units;
+}
+
+/**
+ * `UnitSource` from an already-parsed `IndexDocument` — `buildSearchFields`
+ * for the structured fields, the entry's own carried markdown for fragments.
+ * Shared by `reconcile.ts` (a freshly-parsed entry) and `enrich.ts` (the same
+ * entry merged with LLM-enriched description/tags/searchHints, index-redesign
+ * B5e) — a leaf in `units/`, not either caller, so importing it never creates
+ * a reconcile.ts ↔ enrich.ts cycle.
+ *
+ * `hasMarkdownFragmentContent`/`getMarkdownFragmentContent` is the `akm`
+ * adapter's own line-structure-preserving fragment projection
+ * (`applyPreContributorFields`, gated `.md`-only and excluding sensitive
+ * types), set during `recognize` and present ONLY for that adapter (or a
+ * caller that re-tags a derived copy via `setMarkdownFragmentContent`, as
+ * `enrich.ts` does). Every other adapter (`okf`, ...) never calls it, so
+ * `hasMarkdownFragmentContent` is always false for their entries — falling
+ * straight to `null` here would leave their body content in `entries_fts`'s
+ * single per-entry `content` column (`buildSearchFields`, unconditional) but
+ * in NO unit at all, an asymmetry that would silently blank a whole
+ * adapter's fragment search once unit coverage is complete
+ * (index-redesign-contract.md B3). `entry.content` — the same field already
+ * surfaced through search hits and `show`, so already that adapter's own
+ * public-safe projection — is the fallback fragment source for exactly this
+ * case.
+ */
+export function toUnitSource(entryId: number, entry: IndexDocument): UnitSource {
+  const fields = buildSearchFields(entry);
+  const safeMarkdown = hasMarkdownFragmentContent(entry)
+    ? (getMarkdownFragmentContent(entry) ?? null)
+    : typeof entry.content === "string" && entry.content.trim()
+      ? entry.content
+      : null;
+  return {
+    entryId,
+    name: fields.name,
+    description: fields.description,
+    tags: fields.tags,
+    hints: fields.hints,
+    safeMarkdown,
+  };
 }

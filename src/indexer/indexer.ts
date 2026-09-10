@@ -10,8 +10,9 @@ import { type BundleRef, makeBundleRef } from "../core/asset/asset-ref";
 import type { AssetRef } from "../core/asset/resolve-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { isHttpUrl } from "../core/common";
-import type { AkmConfig } from "../core/config/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config/config";
 import { AkmError, TransientError } from "../core/errors";
+import { defaultConcurrencyForEndpoint } from "../core/loopback";
 import { getDbPath } from "../core/paths";
 import { isSqliteContentionError, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
@@ -204,6 +205,28 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("index interrupted");
   }
+}
+
+/**
+ * Bounded-pool width for the metadata-enrichment pass (`./enrich.ts`,
+ * index-redesign B5e). An explicit `llmConfig.concurrency` wins (schema
+ * field, though `resolveLlmEngineUse` never populates it on this path — see
+ * AGENTS.md's LLM Defaults section — so this branch is effectively dead in
+ * production but kept for direct callers/tests); otherwise it is
+ * auto-derived from the endpoint via the ONE shared local-vs-remote
+ * classifier (`defaultConcurrencyForEndpoint`, `core/loopback.ts`), also used
+ * by the embedding pool (`resolveEmbeddingConcurrency`,
+ * `src/llm/embedders/remote.ts`): 1 for a loopback endpoint (a local model
+ * server serves one inference at a time; parallel requests cause "Model
+ * reloaded" / HTTP 500 errors), 2 for a remote one. `./enrich.ts` calls
+ * `defaultConcurrencyForEndpoint` directly rather than this wrapper to avoid
+ * an indexer.ts → enrich.ts → indexer.ts import cycle (the same reason
+ * `src/llm/embedders/remote.ts` cannot import this wrapper either); the two
+ * stay behaviorally identical since the override branch never fires here.
+ */
+export function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
+  if (typeof llmConfig?.concurrency === "number") return llmConfig.concurrency;
+  return defaultConcurrencyForEndpoint(llmConfig?.endpoint);
 }
 
 // ── Source ownership bookkeeping ────────────────────────────────────────────
