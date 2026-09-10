@@ -58,13 +58,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   learned utility scores. **`akm index --reembed`** now means "drop the
   active embedding identity's vectors, then re-embed every unit from
   scratch."
-- **`akm index --skip-if-locked` keeps its purpose by a different
-  mechanism.** Index runs no longer take a rebuild lock — every write is a
-  short, idempotent, content-addressed transaction under SQLite's own busy
-  timeout — so there is no lock to test before starting. The flag now decides
-  how a genuine collision is reported: a run that would otherwise fail with
-  exit 75 instead skips gracefully (`skipped.reason: "contended"`, exit 0), so
-  a scheduled or hook-driven run still never fails on a double launch.
+- **`akm index --skip-if-locked` is deprecated and does nothing.** Index
+  runs no longer take a rebuild lock — every write is a short, idempotent,
+  content-addressed transaction, so two concurrent runs converge instead of
+  contending. Passing the flag prints one deprecation warning; kept only so
+  an existing script does not fail on an unknown flag.
 - **The derived `index.db` generation changes from v23 to v24.** The first
   read (or explicit `akm index`) after upgrade re-derives `entries` and
   every unit from files, and embeds the full corpus once against the

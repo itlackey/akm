@@ -275,18 +275,22 @@ keeps the same identity — and its stored vectors — automatically, while a
 genuine model or dimension change lands under a different identity and its
 units are simply "missing" until the next drain.
 
-**`--skip-if-locked`:** if another akm process is writing the index right
-now, skip gracefully (exit 0 with
-`{ ok: true, skipped: { reason: "contended", code } }`) instead of failing.
-Index runs no longer take a rebuild lock — every write is a short, idempotent,
-content-addressed transaction under SQLite's own busy timeout, so there is no
-lock to test before starting; the flag decides how a genuine collision is
-REPORTED. Without it, a collision that outlasts the busy timeout surfaces as
-exit 75 (`TransientError`, code `INDEX_DB_CONTENDED` or
-`MAINTENANCE_BARRIER_BUSY`) so an interactive run is told the truth. A hook,
-cron job, or scheduled task that invokes `akm index` directly should pass it
-so a double launch never fails the job (the shipped `index-refresh` task
-does).
+**`--skip-if-locked`:** deprecated, no effect — index runs no longer take a
+rebuild lock, so there is nothing left to skip around. Passing it prints one
+deprecation warning; the run proceeds exactly as an ordinary `akm index`
+would. Kept only so an existing script or scheduled task does not fail on an
+unknown flag. If index.db is genuinely busy (a second connection holds a
+write transaction) long enough to exhaust the driver's own SQLite
+`busy_timeout`, the run fails with exit 75 (`TransientError`, code
+`INDEX_DB_CONTENDED`) instead of the raw driver error at exit 70 — the same
+retry-shortly contract as `STATE_DB_CONTENDED`, so a scheduler can branch on
+it instead of alerting.
+Locks that do still exist (`akm improve`, `akm workflow run`) are registered through a brief
+internal barrier shared by every akm lock and lease; two runs launched close enough together to
+collide on that registration step retry briefly and then, if it is still busy, exit 75 (code
+`MAINTENANCE_BARRIER_BUSY`) rather than the config-error exit 78 a 2026-09-10 field report
+found — a busy registration barrier is ordinary contention between two legitimate runs, never a
+broken config file.
 
 In text mode, the default CLI UI shows a spinner with processed-versus-total
 source counts; structured output modes (`json`, `yaml`, `jsonl`) stay clean
