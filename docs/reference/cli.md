@@ -232,17 +232,15 @@ semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
 
-**Progress in non-verbose JSON mode (default output format, #954):** even
-without `--verbose`, phase-start messages and the embedding heartbeat
-(`Still generating embeddings: X/N stored, F failed; waiting on embedding
-provider.`) are now written to stderr, and a failed embedding batch logs at
-the default level instead of `--verbose`-only — a long-running index build
-against a slow or unresponsive provider is no longer silent until the whole
-run finishes. Text-mode output keeps its spinner instead (no stderr line
-growth); JSON stdout output is unaffected either way. The high-frequency
-per-batch `Embedded N/M entries.` line stays out of non-verbose stderr (it
-fires after every committed batch) — pass `--verbose` for that level of
-detail.
+**Progress in non-verbose JSON/yaml/jsonl mode:** every phase's progress
+line — including drain's own per-batch and done-summary lines (`[embed]
+endpoint ...`, `[drain] batch N: ...`, `[drain] done: ...`) — reaches stderr
+regardless of `--verbose`: a long-running index build against a slow or
+unresponsive provider is no longer silent until the whole run finishes. In
+this output mode `--verbose` currently makes no further difference to what
+reaches stderr. Text mode is where `--verbose` still matters: without it,
+progress updates a single spinner line in place; with it, every line is
+printed as it arrives instead. JSON stdout output is unaffected either way.
 
 **Reconcile, not a walk-and-rebuild pipeline:** `akm index` diffs every
 configured root's files against the index (stat cache: unchanged files are
@@ -268,10 +266,14 @@ failure) has its entire existing snapshot preserved rather than partially
 wiped over a transient scan failure.
 
 **`--reembed`:** drops the active embedding identity's vectors, then the
-drain re-embeds every unit from scratch under that identity — independent of
-the embedding-model-rename compatibility check ordinary indexing already
-does (telling a config-only rename of `embedding.model` apart from a genuine
-model change, and keeping stored vectors when they are still compatible).
+drain re-embeds every unit from scratch under that identity. Ordinary
+indexing does not need a separate rename-compatibility check: the identity a
+unit's vector is keyed under is exactly what the provider's response
+reported (model id and vector width), so a config-only rename of
+`embedding.model` that still resolves to the same server-reported model
+keeps the same identity — and its stored vectors — automatically, while a
+genuine model or dimension change lands under a different identity and its
+units are simply "missing" until the next drain.
 
 **`--skip-if-locked`:** deprecated, no effect — index runs no longer take a
 rebuild lock, so there is nothing left to skip around. Passing it prints one
@@ -315,11 +317,15 @@ Returns a JSON object with:
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
 
 `semanticSearch.status` values:
-- `"ready-vec"` — native sqlite-vec extension active (fastest)
-- `"ready-js"` — pure JS fallback active (correct but slower at scale)
+- `"ready-vec"` — embeddings present, `sqlite-vec` active
 - `"pending"` — not yet initialized (run `akm index` to set up)
-- `"blocked"` — setup failed (see `reason` and `message` fields)
 - `"disabled"` — semantic search is turned off in config
+
+(`"ready-js"`, a pure-JS cosine fallback for when the extension was
+unavailable, is retired — the unit vector store has no BLOB fallback to fall
+back to. A degraded/failed embedding run is reflected here as `"pending"`,
+not a separate `"blocked"` value; see `akm index`'s own `verification.semanticStatus`,
+which does distinguish `"blocked"`, for that detail.)
 
 Use `akm info` to verify that semantic search is working after setup.
 

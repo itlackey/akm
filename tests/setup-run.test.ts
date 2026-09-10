@@ -135,11 +135,11 @@ function makeIndexResult(): IndexResponse {
       message: "semantic search verified",
       semanticSearchEnabled: true,
       semanticSearchMode: "auto",
-      semanticStatus: "ready-js",
+      semanticStatus: "ready-vec",
       embeddingProvider: "local",
       entryCount: 3,
       embeddingCount: 3,
-      vecAvailable: false,
+      vecAvailable: true,
     },
   };
 }

@@ -52,7 +52,7 @@ describe("akm bundle update: no-op fallback reports a real semanticStatus (#954)
     expect(result.processed).toEqual([]);
     expect(result.index.totalEntries).toBe(0);
     // The fallback never ran a real embedding pass — it must not report a
-    // verified status ("ready-js"/"ready-vec"/"blocked"), only "disabled".
+    // verified status ("ready-vec"/"blocked"), only "disabled".
     expect(result.index.semanticStatus).toBe("disabled");
   });
 
@@ -63,8 +63,8 @@ describe("akm bundle update: no-op fallback reports a real semanticStatus (#954)
 
     expect(result.processed).toEqual([]);
     expect(result.index.totalEntries).toBe(0);
-    // "pending", not "ready-js"/"ready-vec" — nothing was actually verified
-    // this run, so the fallback must not claim otherwise.
+    // "pending", not "ready-vec" — nothing was actually verified this run,
+    // so the fallback must not claim otherwise.
     expect(result.index.semanticStatus).toBe("pending");
   });
 });

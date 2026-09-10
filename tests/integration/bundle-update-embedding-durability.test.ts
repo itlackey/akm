@@ -175,8 +175,9 @@ describe("akm bundle update: post-commit embedding pass durability (#954)", () =
       releaseSecondBatch.resolve();
       const result = await updatePromise;
 
-      expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
+      // retired (index redesign, B5) — units_vec is a vec0-only store.
+      expect(result.index.semanticStatus).toBe("ready-vec");
       const finalReader = openReadonlyExistingDatabase(getDbPath());
       if (!finalReader) throw new Error("expected an existing index after the update completed");
       try {

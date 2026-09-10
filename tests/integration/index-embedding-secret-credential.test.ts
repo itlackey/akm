@@ -314,8 +314,9 @@ describe("akm bundle update: post-commit embedding pass carries the secret:// cr
     try {
       const result = await akmUpdate({ target: id, stashDir: storage.stashDir });
 
-      expect(result.index.semanticStatus).toBeDefined();
-      expect(["ready-vec", "ready-js"]).toContain(result.index.semanticStatus as string);
+      // "ready-js" (the JS-cosine fallback for a BLOB-vector table) is
+      // retired (index redesign, B5) — units_vec is a vec0-only store.
+      expect(result.index.semanticStatus).toBe("ready-vec");
       expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer bundle-update-store-secret-value");
     } finally {
       syncSpy.mockRestore();
