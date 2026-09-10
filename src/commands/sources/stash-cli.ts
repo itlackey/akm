@@ -43,11 +43,11 @@ import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
-import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
+import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DRAIN_BATCH_PROGRESS_PREFIX } from "../../indexer/drain";
 import { akmIndex } from "../../indexer/indexer";
@@ -77,6 +77,19 @@ import { assembleInfo } from "./info";
  */
 function isDetailProgressLine(message: string): boolean {
   return message.startsWith(DRAIN_BATCH_PROGRESS_PREFIX) || message.startsWith(RECONCILE_ROOT_PROGRESS_PREFIX);
+}
+
+/**
+ * Whether `error` is akm reporting that another process holds the index (or
+ * the shared lock-registration barrier) right now — the two transient codes a
+ * concurrent `akm index` can legitimately produce. Both mean "retry shortly",
+ * which is exactly what `--skip-if-locked` turns into a graceful skip.
+ */
+function isIndexContentionError(error: unknown): error is TransientError {
+  return (
+    error instanceof TransientError &&
+    (error.code === "INDEX_DB_CONTENDED" || error.code === "MAINTENANCE_BARRIER_BUSY")
+  );
 }
 
 export const indexStatusCommand = defineJsonCommand({
@@ -125,9 +138,11 @@ export const indexCommand = defineGroupCommand({
     "skip-if-locked": {
       type: "boolean",
       description:
-        "Deprecated, no effect. Index runs no longer take a rebuild lock (docs/plans/index-redesign.md) — " +
-        "every write is a short, idempotent, content-addressed transaction, so two concurrent index runs " +
-        "converge instead of contending. Kept only so existing scripts do not fail on an unknown flag.",
+        "If another akm process is writing the index right now, skip gracefully (exit 0 with a " +
+        "`skipped` envelope) instead of failing with the transient contention error. Index runs no " +
+        "longer take a rebuild lock, so there is no lock to test up front — the flag decides how a " +
+        "genuine collision is REPORTED. Use it for scheduled or hook-driven runs so a double launch " +
+        "never fails the job.",
       default: false,
     },
   },
@@ -142,9 +157,6 @@ export const indexCommand = defineGroupCommand({
       throw new UsageError(
         "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
       );
-    }
-    if (args["skip-if-locked"]) {
-      warn("[index] --skip-if-locked is deprecated and has no effect — index runs no longer take a rebuild lock.");
     }
     const outputMode = getOutputMode();
     const controller = new AbortController();
@@ -203,6 +215,18 @@ export const indexCommand = defineGroupCommand({
     } catch (error) {
       if (spin) {
         spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
+      }
+      // `--skip-if-locked` is what a scheduled or hook-driven run passes so a
+      // double launch never fails the job. There is no rebuild lock left to
+      // test before starting (docs/plans/index-redesign.md rule 5), so the
+      // flag instead decides how a genuine collision is REPORTED: a
+      // contention-shaped transient error becomes a graceful skip (exit 0
+      // with a `skipped` envelope) rather than exit 75. Without the flag the
+      // transient error still surfaces, so an interactive run is told the
+      // truth. Nothing else is swallowed — any other failure rethrows.
+      if (args["skip-if-locked"] && isIndexContentionError(error)) {
+        output("index", { ok: true, skipped: { reason: "contended", code: error.code } });
+        return;
       }
       throw error;
     } finally {
