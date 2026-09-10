@@ -196,21 +196,48 @@ export async function reconcileRoots(
   return counts;
 }
 
-/** The same per-file step for a known list of paths (the write paths call this inline). */
+/**
+ * The same per-file step for a known list of paths (the write paths call this
+ * inline).
+ *
+ * `opts.root`, when given, is used directly to build the component/adapter
+ * context (the same direct derivation `reconcileRoots` uses for its own
+ * roots) instead of resolving `bundleId` back to a root through the
+ * configured-sources lookup (`resolveBundleRoot`, below). A write-path caller
+ * that already knows the exact stash directory it just wrote to (every
+ * caller of `indexWrittenAssets` does) should pass it: `bundleId` alone can
+ * resolve to the WRONG root for a bundle that is not (yet, or ever) a
+ * `bundles.<key>` config entry — for example a proposal's ad hoc named write
+ * target — silently deriving a corrupt, path-traversal-laced conceptId
+ * rather than a clean no-op. Omit `opts.root` only when no root is at hand
+ * (e.g. a caller working purely from a configured bundle id); the id must
+ * then match a real `bundles` entry or this is a documented no-op.
+ */
 export async function reconcilePaths(
   db: Database,
   paths: readonly string[],
   bundleId: string,
+  opts?: { root?: string },
 ): Promise<ReconcileCounts> {
   const counts = emptyCounts();
   if (paths.length === 0) return counts;
 
   const config = loadConfig();
-  const root = resolveBundleRoot(bundleId, config);
-  if (!root) return counts;
+  let rootPath: string;
+  let ctx: RootContext;
+  if (opts?.root) {
+    const resolvedCtx = resolveRootContext(opts.root, bundleId);
+    if (!resolvedCtx) return counts;
+    rootPath = opts.root;
+    ctx = resolvedCtx;
+  } else {
+    const resolvedRoot = resolveBundleRoot(bundleId, config);
+    if (!resolvedRoot) return counts;
+    rootPath = resolvedRoot.rootPath;
+    ctx = { bundleId, component: resolvedRoot.component, adapter: resolvedRoot.adapter };
+  }
 
   const maxChars = unitMaxChars(await probeProviderLimits(config.embedding ?? {}));
-  const ctx: RootContext = { bundleId, component: root.component, adapter: root.adapter };
 
   for (const rawPath of paths) {
     counts.scanned++;
@@ -219,7 +246,7 @@ export async function reconcilePaths(
       if (deleteFileAndEntryByPath(db, absPath)) counts.removed++;
       continue;
     }
-    const file = buildFileContext(root.rootPath, absPath);
+    const file = buildFileContext(rootPath, absPath);
     const classified = classifyFile(ctx, file, getFileState(db, absPath));
     if (classified === "unchanged") counts.unchanged++;
     else if (classified === "unindexable") {
@@ -342,6 +369,16 @@ function applyChange(
   if (hasMarkdownFragmentContent(entry)) setMarkdownFragmentContent(entryWithSize, getMarkdownFragmentContent(entry));
 
   return withImmediateTransaction(db, () => {
+    // A materialized file has one current owner: if `entries` already holds a
+    // row at this exact path under a DIFFERENT item_ref — the same physical
+    // file reconciled earlier under another bundle identity (a config change,
+    // or a write path with no stable configured bundle to anchor to) — drop
+    // that stale row before publishing the canonical one below, mirroring
+    // the pre-redesign write path's own supersede check
+    // (index-written-assets.ts's prior `supersededIds` logic). Without this a
+    // second identity's reconcile leaves two rows at one file_path and any
+    // plain `WHERE file_path = ?` lookup can return either.
+    supersedeOtherItemRefsAtPath(db, file.absPath, provenance.itemRef);
     const written = renameSource
       ? repointOrInsert(db, renameSource.path, file.absPath, entryWithSize, searchText, provenance, hash)
       : upsertOrInsert(db, file.absPath, entryWithSize, searchText, provenance, hash);
@@ -445,6 +482,16 @@ function repointEntry(
     entry,
     hasMarkdownFragmentContent(entry) ? (getMarkdownFragmentContent(entry) ?? null) : undefined,
   );
+}
+
+/** Delete any `entries` row at `filePath` whose `item_ref` is not `keepItemRef` (cascade removes its `entry_units`). Must run inside the caller's own transaction. */
+function supersedeOtherItemRefsAtPath(db: Database, filePath: string, keepItemRef: string): void {
+  const staleIds = (
+    db.prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?").all(filePath, keepItemRef) as {
+      id: number;
+    }[]
+  ).map((row) => row.id);
+  if (staleIds.length > 0) deleteEntriesByIds(db, staleIds);
 }
 
 /** Delete a gone path's `entries` row (cascade removes `entry_units`) and its `files` row. Returns whether anything existed. */

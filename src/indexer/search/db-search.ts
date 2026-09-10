@@ -713,7 +713,7 @@ async function collectSearchSignals(
   /** Set only on the units search path (index-redesign-contract.md B3). */
   unitScored?: RankedEntryInput[];
 }> {
-  if (hasUnitsFtsRows(db)) {
+  if (hasFullUnitsCoverage(db)) {
     return collectUnitSearchSignals(db, query, candidateLimit, typeFilter, excludeTypes, config);
   }
   const startedAt = Date.now();
@@ -737,24 +737,38 @@ async function collectSearchSignals(
 // ── Units search (index-redesign-contract.md B3) ────────────────────────────
 
 /**
- * Whether `units_fts` exists and has at least one row — the switch B3 wires
- * between the old path (`entries_fts` + `searchVec`, fused by
- * `combineSearchScores`) and the new one (`searchUnitsLexical` + stage-1's
- * `searchUnits`, fused by `fuseByEntry`). `units_fts` is created and
- * populated together with `entry_units` by the same reconcile pass (B1), so
- * a positive result here implies `entry_units` is also usable. A missing
- * table (an index.db from before this design, or a fresh one before the
- * first reconcile) is the ordinary "not yet migrated" case, not an error.
+ * Whether every current `entries` row is reachable through `entry_units` —
+ * the switch B3 wires between the old path (`entries_fts` + `searchVec`,
+ * fused by `combineSearchScores`) and the new one (`searchUnitsLexical` +
+ * stage-1's `searchUnits`, fused by `fuseByEntry`).
+ *
+ * Full coverage, not merely "at least one unit row exists": `akm index`'s
+ * full walk does not run reconcile yet (that rewire is module B5's — see
+ * docs/plans/index-redesign-contract.md), so TODAY only the write path
+ * (module B2, `indexWrittenAssets` → `reconcilePaths`) ever populates
+ * `entry_units`. A single write-path call after an ordinary `akm index` run
+ * would otherwise flip this switch for the WHOLE index.db — the old path's
+ * FTS-indexed entries stay in `entries_fts`, but the units path can only
+ * ever surface an entry reachable via `entry_units`, so every entry the
+ * full walk indexed would silently vanish from every search until the next
+ * full reindex. Requiring full coverage keeps every existing search test
+ * (and, in production, an ordinary index) on the old, complete path until
+ * reconcile has genuinely covered the whole index — the "bridge during the
+ * first pass" A4's contract already describes for the semantic branch,
+ * applied here to the switch as a whole. A missing `entry_units` table (an
+ * index.db from before this design) is the ordinary "not yet migrated"
+ * case, not an error.
  */
-function hasUnitsFtsRows(db: Database): boolean {
+function hasFullUnitsCoverage(db: Database): boolean {
   try {
-    // bun:sqlite's `.get()` returns `null` for a query with no matching row
-    // (not `undefined`) — `index-schema.ts` wires `ensureFileAndUnitTextTables`
-    // into every index.db's schema ensure now (B1), so `units_fts` always
-    // EXISTS even before the first reconcile ever runs; an `!== undefined`
-    // check here would misread that ordinary empty-table case as "has rows"
-    // and wrongly switch every search onto the (then-empty) units path.
-    return db.prepare("SELECT 1 FROM units_fts LIMIT 1").get() != null;
+    const totalEntries = (db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }).n;
+    if (totalEntries === 0) return false;
+    const uncovered = db
+      .prepare(
+        "SELECT 1 FROM entries e WHERE NOT EXISTS (SELECT 1 FROM entry_units eu WHERE eu.entry_id = e.id) LIMIT 1",
+      )
+      .get();
+    return uncovered == null;
   } catch {
     return false;
   }
