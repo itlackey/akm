@@ -35,10 +35,17 @@ export const DEFAULT_REMOTE_BATCH_SIZE = 100;
  * a batch of 100 small docs (~400 KB, ~100K tokens) took 14.8s against a
  * healthy local endpoint — half the 30s request timeout — and a single
  * 128 KB (~24K token) document alone was rejected by the endpoint as
- * exceeding its context size. 8000 tokens keeps a batch's estimated size
- * comfortably under both the timeout and common local-model context windows.
+ * exceeding its context size.
+ *
+ * Lowered from 8000 to 6000 (#954, field report on beta.1): the 4-chars-
+ * per-token estimator undercounts dense technical text by 7-55%, so 8000
+ * against an 8192-token llama.cpp embedder regularly landed real requests
+ * over the endpoint's context window. 6000 is the value the field confirmed
+ * stops that steady trickle of rejections; `embedBatch`'s run-scoped
+ * adaptive budget below still shrinks further, for an endpoint where even
+ * this is not enough.
  */
-export const DEFAULT_TOKEN_BUDGET = 8000;
+export const DEFAULT_TOKEN_BUDGET = 6000;
 
 /** Cheap token estimator: 4 chars ≈ 1 token. Used in verbose logging and error messages. */
 export function estimateTokenCount(text: string): number {
@@ -230,9 +237,15 @@ export interface EmbeddingBatchOutcome {
    * "retrying": a request timeout is about to back off and retry the SAME
    * request once (#954) — nothing has failed or succeeded yet;
    * `embeddings` are all `undefined` and there is nothing to commit.
+   * "budget-lowered" (#954, field report on beta.1): a one-time notice,
+   * fired at most once per `embedBatch` call, that the FIRST context-size
+   * rejection of the run has shrunk the effective request budget for every
+   * batch not yet dispatched — see {@link RemoteEmbedder.embedBatch}.
+   * Nothing has failed or succeeded for `indices` itself; `embeddings` are
+   * all `undefined` and there is nothing to commit.
    */
-  outcome: "stored" | "failed" | "retrying";
-  /** Present for "failed" (the failure reason) and "retrying" (why it is retrying). Absent for "stored". */
+  outcome: "stored" | "failed" | "retrying" | "budget-lowered";
+  /** Present for "failed" (the failure reason), "retrying" (why it is retrying), and "budget-lowered" (the new budget). Absent for "stored". */
   reason?: string;
 }
 
@@ -375,6 +388,23 @@ export function buildTokenBoundedBatches(texts: readonly string[], tokenBudget: 
   return batches;
 }
 
+/**
+ * Shrink factor applied to the effective request budget on the first
+ * context-size rejection of an `embedBatch` run (#954, field report on
+ * beta.1): one 25% cut absorbs the estimator's measured undercount without
+ * repeatedly re-shrinking mid-run — see the "shrink at most once" rule on
+ * {@link RemoteEmbedder.embedBatch}.
+ */
+const ADAPTIVE_BUDGET_SHRINK_FACTOR = 0.75;
+
+/**
+ * Floor on the adaptive-budget shrink above, as a multiple of
+ * `maxInputTokens` (#954): a request budget below twice the per-document cap
+ * could no longer batch more than one document per request, defeating the
+ * point of batching at all.
+ */
+const ADAPTIVE_BUDGET_FLOOR_MULTIPLIER = 2;
+
 export class RemoteEmbedder implements Embedder {
   private readonly endpoint: string;
   private readonly model: string;
@@ -495,6 +525,18 @@ export class RemoteEmbedder implements Embedder {
    * {@link scaleEmbeddingTimeoutMs}, so a dead server is detected in seconds
    * on a small batch rather than always waiting out the full configured
    * `embedding.timeoutMs`.
+   *
+   * Run-scoped adaptive budget (#954, field report on beta.1): the FIRST
+   * context-size rejection of the run shrinks the effective request budget
+   * by {@link ADAPTIVE_BUDGET_SHRINK_FACTOR} (floored at
+   * {@link ADAPTIVE_BUDGET_FLOOR_MULTIPLIER} times `maxInputTokens`) for
+   * every batch not yet dispatched — the still-planned tail of `texts` is
+   * re-batched with `buildTokenBoundedBatches` at the smaller budget, and a
+   * `budget-lowered` `onBatch` event reports it once. This never touches the
+   * split-and-retry of the rejected batch itself (above), and never fires a
+   * second time in the same run even if a later batch is also rejected — a
+   * static configured budget that is simply too big for the endpoint should
+   * self-correct once, not ratchet down forever.
    */
   async embedBatch(
     texts: string[],
@@ -512,10 +554,72 @@ export class RemoteEmbedder implements Embedder {
     // request budget too, so a config author setting it for one purpose
     // silently changed the other. `maxTokens` is the sole knob for the
     // request budget now; unset falls back to DEFAULT_TOKEN_BUDGET.
-    const tokenBudget = this.config.maxTokens ?? DEFAULT_TOKEN_BUDGET;
+    //
+    // `effectiveTokenBudget` (#954) starts at the configured/default value
+    // and MAY shrink once, on the run's first context-size rejection — see
+    // `maybeShrinkBudget` below. `textBatches` is mutated in place (spliced)
+    // by that shrink rather than reassigned, so the in-flight
+    // `concurrentMap` pool below (which reads this same array by reference)
+    // picks up the re-planned tail without restarting.
+    let effectiveTokenBudget = this.config.maxTokens ?? DEFAULT_TOKEN_BUDGET;
     const maxCount = this.config.batchSize ?? DEFAULT_REMOTE_BATCH_SIZE;
-    const textBatches = buildTokenBoundedBatches(texts, tokenBudget, maxCount);
+    const maxInputTokens = this.config.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+    const textBatches = buildTokenBoundedBatches(texts, effectiveTokenBudget, maxCount);
     const configuredTimeoutMs = resolveEmbeddingTimeoutMs(this.config);
+    // How many of `textBatches` concurrentMap has already claimed (its own
+    // `nextIndex`, mirrored here so a budget shrink knows where the
+    // not-yet-dispatched tail begins). Assigned, not incremented, at the top
+    // of `runProviderBatch` — batches are claimed in strictly increasing
+    // order, so the highest `batchIndex` seen so far IS the claimed count.
+    let dispatchedBatchCount = 0;
+    // Set once the run's first context-size rejection has shrunk the budget
+    // (#954) — guards `maybeShrinkBudget` so it never fires twice.
+    let budgetShrunk = false;
+
+    // On the FIRST context-size rejection of this `embedBatch` call, shrink
+    // `effectiveTokenBudget` and re-plan every batch `concurrentMap` has not
+    // yet claimed from the smaller budget. Never touches `rejectedIndices`
+    // itself — the caller's own split-and-retry handles that batch — and is
+    // a no-op after the first call (`budgetShrunk`).
+    const maybeShrinkBudget = (
+      rejectedIndices: number[],
+      rejectedBatchIndex: number,
+      rejectedRequestTokens: number,
+    ): void => {
+      if (budgetShrunk) return;
+      budgetShrunk = true;
+      const floor = ADAPTIVE_BUDGET_FLOOR_MULTIPLIER * maxInputTokens;
+      effectiveTokenBudget = Math.max(Math.round(effectiveTokenBudget * ADAPTIVE_BUDGET_SHRINK_FACTOR), floor);
+
+      const notYetDispatched = textBatches.slice(dispatchedBatchCount);
+      const remainingIndices = notYetDispatched.flatMap((batch) => batch.indices);
+      if (remainingIndices.length > 0) {
+        const remainingTexts = remainingIndices.map((i) => texts[i] as string);
+        const replanned = buildTokenBoundedBatches(remainingTexts, effectiveTokenBudget, maxCount).map((batch) => ({
+          indices: batch.indices.map((localIndex) => remainingIndices[localIndex] as number),
+          oversized: batch.oversized,
+        }));
+        textBatches.splice(dispatchedBatchCount, textBatches.length - dispatchedBatchCount, ...replanned);
+      }
+
+      warnVerbose(
+        `[embed] provider rejected a ${rejectedRequestTokens}-token request as over its context; request budget lowered to ${effectiveTokenBudget} for the rest of this run`,
+      );
+      commitBatch(
+        rejectedIndices,
+        rejectedIndices.map(() => undefined),
+        undefined,
+        {
+          batchIndex: rejectedBatchIndex,
+          batchCount: textBatches.length,
+          docCount: rejectedIndices.length,
+          requestTokens: rejectedRequestTokens,
+          elapsedMs: 0,
+          outcome: "budget-lowered",
+          reason: `provider rejected ${rejectedRequestTokens.toLocaleString()} tokens as over its context; request budget lowered to ${effectiveTokenBudget} for the rest of this run`,
+        },
+      );
+    };
 
     // Stops the pool from claiming any FURTHER provider batch once the
     // caller's onBatch has failed once (the materializer's transaction
@@ -606,7 +710,7 @@ export class RemoteEmbedder implements Embedder {
 
       const batch = indices.map((i) => texts[i] as string);
       const requestTokens = batch.reduce((sum, text) => sum + estimateTokenCount(text), 0);
-      const requestTimeoutMs = scaleEmbeddingTimeoutMs(configuredTimeoutMs, requestTokens, tokenBudget);
+      const requestTimeoutMs = scaleEmbeddingTimeoutMs(configuredTimeoutMs, requestTokens, effectiveTokenBudget);
       const requestStart = Date.now();
       let batchEmbeddings: (EmbeddingVector | undefined)[];
       let responseModel: string | undefined;
@@ -624,6 +728,15 @@ export class RemoteEmbedder implements Embedder {
         // A caller abort must still propagate — it is not a "this batch
         // failed" condition, it means stop entirely.
         if (signal?.aborted) throw err;
+        if (err instanceof ContextExceededError) {
+          // #954: the run's FIRST context-size rejection (any size) shrinks
+          // the budget for everything not yet dispatched; a no-op after the
+          // first call. Deliberately BEFORE the split below — it must fire
+          // for a single-document rejection too (which never reaches the
+          // `indices.length > 1` split branch), and it never touches this
+          // batch's own split-and-retry.
+          maybeShrinkBudget(indices, batchIndex, requestTokens);
+        }
         if (err instanceof ContextExceededError && indices.length > 1) {
           const mid = Math.ceil(indices.length / 2);
           await requestAndCommit(indices.slice(0, mid), batchIndex, false, timeoutAttempt);
@@ -732,13 +845,19 @@ export class RemoteEmbedder implements Embedder {
     };
 
     const runProviderBatch = async (textBatch: TextBatch, batchIndex: number): Promise<void> => {
+      // Claimed in strictly increasing order by `concurrentMap` below, so
+      // the highest `batchIndex` seen so far is exactly how many batches it
+      // has claimed (#954) — see `maybeShrinkBudget`'s doc comment above.
+      // Assigned synchronously at entry, before any `await`, so this always
+      // matches `concurrentMap`'s own `nextIndex` at the moment of claim.
+      dispatchedBatchCount = batchIndex;
       if (textBatch.oversized) {
         const idx = textBatch.indices[0] as number;
         const estTokens = estimateTokenCount(texts[idx] as string);
         onSkip?.({
           index: idx,
           reason: "context-window-exceeded",
-          message: `Document estimated at ${estTokens} tokens exceeds the ${tokenBudget}-token embedding budget; skipped.`,
+          message: `Document estimated at ${estTokens} tokens exceeds the ${effectiveTokenBudget}-token embedding budget; skipped.`,
           batchStart: true,
           batchSize: 1,
         });
