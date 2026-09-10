@@ -322,6 +322,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single document that still fails this way is skipped, as
   `context-window-exceeded`; every other failure (network error, 5xx, malformed
   response) keeps the prior skip-the-whole-batch behavior.
+- **The default per-request token budget is lower, and adapts mid-run after a
+  context-size rejection (#954, field report on beta.1).**
+  `embedding.maxTokens`'s default dropped from 8000 to 6000: the 4-chars-per-
+  token estimator undercounts dense technical text by 7-55%, so 8000 regularly
+  overshot a real 8192-token endpoint. On an `akm index` run's first
+  context-size rejection, the effective request budget additionally shrinks to
+  three quarters of its current value (floored at twice
+  `embedding.maxInputTokens`) for every request not yet sent, and one
+  default-level line reports the new value; it never shrinks a second time in
+  the same run. Users who set `embedding.maxTokens` explicitly keep it as the
+  starting point but still benefit from this same-run recovery.
 - **Embedding requests are dispatched through a small in-flight window instead of
   strictly sequentially (#954).** The window defaults to 1 request at a time for
   a loopback endpoint and 2 for a remote one; the actual throughput knob is

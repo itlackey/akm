@@ -217,12 +217,13 @@ truncated.
 
 **Request batching** — `RemoteEmbedder.embedBatch` (`src/llm/embedders/remote.ts`)
 groups (already-capped) texts into provider requests bounded by an estimated
-token budget (`embedding.maxTokens`, default 8000 tokens) and a
+token budget (`embedding.maxTokens`, default 6000 tokens, lowered from 8000
+by #954 — see below) and a
 document-count safety cap (`embedding.batchSize`, default 100) — the token
 budget is what actually keeps a request inside the endpoint's context window
 and the per-request timeout; the count cap only guards against many tiny
 documents packing an oversized request. With the 512-token per-document cap
-above, a request carries about 16 documents by default. A single document
+above, a request carries about 11 documents by default. A single document
 whose own estimate still exceeds the token budget (only possible when
 `maxInputTokens` is configured larger than `maxTokens`) is isolated and
 skipped before ever going over HTTP. `embedding.contextLength` does NOT feed
@@ -268,6 +269,22 @@ batch size`, `ubatch`, #954) is split in half and retried recursively
 rather than discarded whole, down to individual documents; a single
 document that still fails this way becomes a
 `context-window-exceeded` skip.
+
+**Run-scoped adaptive budget** (#954, field report on beta.1) — the
+4-chars-per-token estimator undercounts dense technical text by 7-55%,
+which the default budget change above only partly absorbs: an endpoint with
+a smaller real context window, or a configured `embedding.maxTokens` too big
+for it, still sees a steady trickle of rejections. On the FIRST context-size
+rejection of an `embedBatch` run, the effective request budget shrinks to
+three quarters of its current value — floored at twice
+`embedding.maxInputTokens`, so it can never drop below batching at least one
+document per request — for every batch not yet dispatched; the still-planned
+tail of pending documents is re-batched at the smaller budget
+(`buildTokenBoundedBatches`), and one default-level line reports the new
+value. This never touches the rejected batch's OWN split-and-retry above,
+and never fires a second time in the same run even if a later batch is also
+rejected — a budget that is simply too big for the endpoint should
+self-correct once per run, not ratchet down indefinitely.
 
 **Timeout back-off-and-retry** (#954, 2026-09-09 field-review follow-up)
 — a request TIMEOUT never drops its batch outright: field

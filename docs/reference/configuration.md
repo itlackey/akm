@@ -405,7 +405,7 @@ apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
 | Key | Default | Bounds |
 | --- | --- | --- |
 | `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching (#956). A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
-| `embedding.maxTokens` | `8000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 16 documents by default. |
+| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. Lowered from 8000 to 6000 (#954): the 4-chars-per-token estimator undercounts dense technical text by 7-55%, so 8000 regularly overshot an 8192-token endpoint's real context window. |
 | `embedding.batchSize` | `100` | Per-REQUEST document-COUNT safety cap, independent of the token budget — guards against many tiny documents packing an oversized request. |
 | `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above (#956) — the two used to share this one field, so setting it for the server's context window silently changed request batching too. |
 | `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
@@ -420,6 +420,18 @@ proportionally smaller timeout —
 dead endpoint is still detected in seconds on the common case of small
 documents. Set `embedding.timeoutMs` lower to fail fast against a
 known-fast endpoint, or higher for a slow local server on large batches.
+
+`embedding.maxTokens` (or its default) is also a run-scoped adaptive
+starting point, not a hard ceiling (#954): on the FIRST rejection of an
+`akm index` run for exceeding the endpoint's context window, akm shrinks
+the request budget to three quarters of its current value — floored at
+twice `embedding.maxInputTokens` — for every request not yet sent, and
+prints one line naming the new value. This never changes the rejected
+request's own split-and-retry (below), never shrinks a second time in the
+same run, and never grows the budget back up. Users who set
+`embedding.maxTokens` explicitly are unaffected by the LOWERED DEFAULT
+above but still benefit from this same-run recovery if their own value
+turns out to be too high for the endpoint.
 
 A request TIMEOUT (not a rejection for exceeding the context window) never
 drops its batch immediately: field confirmation showed that once akm
@@ -447,10 +459,10 @@ serves parallel requests — a local server started with a multi-slot flag
 single-slot model server, which the default already protects from
 reload-thrash. Request SIZE remains the first throughput lever regardless:
 `embedding.batchSize` (a document-count cap, default 100) together with
-`embedding.maxTokens` (an estimated token budget per request, default 8000
+`embedding.maxTokens` (an estimated token budget per request, default 6000
 — NOT `embedding.contextLength`, see the table above) control how many
 documents land in one request — with the default 512-token
-`embedding.maxInputTokens` document cap, that is about 16-32 documents,
+`embedding.maxInputTokens` document cap, that is about 11 documents,
 taking about the same wall time as a single one against a healthy endpoint.
 
 ## Search tuning
