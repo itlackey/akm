@@ -31,9 +31,15 @@ import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
+import { _setVecUnavailableForTests } from "../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-function mockEmbeddingServer(dim: number): { url: string; server: ReturnType<typeof Bun.serve> } {
+function mockEmbeddingServer(dim: number): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+  embeddingRequestCount: () => number;
+} {
+  let embeddingRequests = 0;
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -41,6 +47,7 @@ function mockEmbeddingServer(dim: number): { url: string; server: ReturnType<typ
       if (pathname === "/props" || pathname === "/api/show") {
         return new Response(null, { status: 404 });
       }
+      embeddingRequests++;
       const body = (await request.json()) as { input?: unknown };
       const count = Array.isArray(body.input) ? body.input.length : 1;
       const vector = Array.from({ length: dim }, (_, i) => (i + 1) / dim);
@@ -54,7 +61,7 @@ function mockEmbeddingServer(dim: number): { url: string; server: ReturnType<typ
       );
     },
   });
-  return { url: `http://localhost:${server.port}`, server };
+  return { url: `http://localhost:${server.port}`, server, embeddingRequestCount: () => embeddingRequests };
 }
 
 describe("index verification truthfulness", () => {
@@ -113,6 +120,34 @@ describe("index verification truthfulness", () => {
     expect(result.verification.semanticStatus).toBe("blocked");
     expect(result.verification.ok).toBe(false);
     expect(result.verification.guidance).toBeDefined();
+  });
+
+  test("a missing sqlite-vec extension reports blocked and never calls the embedding provider", async () => {
+    // 22c2e858 made buildIndexVerification's `!vecAvailable` branch report
+    // `blocked`/`ok: false` with sqlite-vec guidance instead of a status that
+    // can never resolve, and 262c2da6 made drainEmbeddingQueue skip the
+    // provider entirely rather than burn requests it can never persist. Real
+    // hosts without the optional extension can't be produced in a test, so
+    // this drives it through the same _setVecUnavailableForTests seam
+    // loadVecExtension checks — end to end through akmIndex(), not by
+    // constructing an IndexVerification by hand.
+    const mock = mockEmbeddingServer(8);
+    server = mock.server;
+    configureEmbedding(mock.url, 8);
+    _setVecUnavailableForTests(true);
+
+    try {
+      const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+
+      expect(result.verification.vecAvailable).toBe(false);
+      expect(result.verification.semanticStatus).toBe("blocked");
+      expect(result.verification.ok).toBe(false);
+      expect(result.verification.message).toContain("sqlite-vec");
+      expect(result.verification.guidance).toBeTruthy();
+      expect(mock.embeddingRequestCount()).toBe(0);
+    } finally {
+      _setVecUnavailableForTests(false);
+    }
   });
 
   test("a clean vec run still reports ready-vec (control)", async () => {
